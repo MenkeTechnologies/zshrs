@@ -6642,28 +6642,72 @@ pub fn paramsubst(
                     // the first key, uppercase variants return all
                     // matching keys. `(i)/(I)` use glob, `(k)/(K)` are
                     // exact-only.
-                    let match_against_key = flags.contains('k')
-                        || flags.contains('K')
-                        || flags.contains('i')
-                        || flags.contains('I');
+                    // On an ASSOCIATION, k/K and i/I all match against KEYS
+                    // (zshparam(1) "Subscript Flags": r/R match values, k/K
+                    // match keys returning the value, i/I match keys returning
+                    // the key), while r/R switch back to matching VALUES.
+                    // Because C's switch is SEQUENTIAL (c:1390-1483), the last
+                    // direction letter decides: `(ir)` matches VALUES (the `r`
+                    // wins) and `(ri)` matches KEYS. An order-blind contains()
+                    // made any flag string holding an `i` match keys, so
+                    // `${m[(ir)v1]}` searched the keys for "v1" and came back
+                    // empty where zsh returns `v1`. Bug #1050.
+                    let match_against_key = {
+                        let mut mk = false;
+                        for fc in flags.chars() {
+                            match fc {
+                                'k' | 'K' | 'i' | 'I' => mk = true,
+                                'r' | 'R' => mk = false,
+                                _ => {}
+                            }
+                        }
+                        mk
+                    };
                     // c:Src/params.c — (n.N.) with negative N flips
                     // the direction. (n.-1.r) → R semantics (all matches);
                     // (n.-1.R) → r (single match). Verified vs
                     // /opt/homebrew/bin/zsh: typeset -A h=(a 1 b 1 c 2);
                     // ${h[(n.-1.r)1]} → "1 1"; ${h[(n.-1.R)1]} → "1".
+                    // c:Src/params.c:1390-1483 — SEQUENTIAL switch; only the LAST
+                    // direction letter survives, so `(ir)` ends ind=0 and `(ri)`
+                    // ends ind=1. Bug #1050.
+                    let (seq_ind, seq_down) = {
+                        let (mut ind, mut down) = (false, false);
+                        for fc in flags.chars() {
+                            match fc {
+                                'r' | 'k' => {
+                                    ind = false;
+                                    down = false;
+                                }
+                                'R' | 'K' => {
+                                    ind = false;
+                                    down = true;
+                                }
+                                'i' => {
+                                    ind = true;
+                                    down = false;
+                                }
+                                'I' => {
+                                    ind = true;
+                                    down = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        (ind, down)
+                    };
                     let neg_n = num.map_or(false, |n| n < 0);
-                    let mut return_all =
-                        flags.contains('R') || flags.contains('K') || flags.contains('I');
+                    let mut return_all = seq_down;
                     if neg_n {
                         return_all = !return_all;
                     }
                     // `(i)/(I)` on assoc returns the KEY directly (zsh
                     // semantics) regardless of the outer (k) flag; `(k)/
                     // (K)` continues to return the value per Bug #77.
-                    let force_return_key = flags.contains('i') || flags.contains('I');
+                    let force_return_key = seq_ind;
                     // `(i)/(I)` use glob matching against keys (not
                     // exact); `(k)/(K)` are exact-only per C source.
-                    let key_glob = flags.contains('i') || flags.contains('I');
+                    let key_glob = seq_ind;
                     let exact = flags.contains('e'); // c:1419 e flag — literal compare
                                                      // c:Src/params.c:665-681 scanparamvals — when the outer
                                                      // `(k)` paramflag is set (SCANPM_WANTKEYS bit), the hash
@@ -6859,8 +6903,60 @@ pub fn paramsubst(
                 if sub == "*" || sub == "@" {
                     // c:2916 (full array)
                     arr.join(" ")
-                } else if let Some((flags, num, beg, pat)) =
-                    (|s: &str| -> Option<(String, Option<i64>, Option<i64>, String)> {
+                } else if let Some((flags, num, beg, pat, flag_ind, flag_down)) = {
+                    // c:Src/params.c:1390-1483 — the subscript-flag switch is
+                    // SEQUENTIAL, and every direction arm RESETS the others, so
+                    // the LAST one wins: `(ri)` ends ind=1 (return the INDEX)
+                    // while `(ir)` ends ind=0 (return the VALUE). Deriving these
+                    // with `flags.contains('i')` is order-blind and answered `2`
+                    // for both, where zsh gives `2` and `y`.
+                    //
+                    // `keymatch` is the only field gated on the parameter being
+                    // a hash (`case 'k': keymatch = ishash;` c:1400/1405). This
+                    // is the ARRAY path, so ishash is 0, keymatch stays 0, and
+                    // k/K reduce to exactly r/R — which is what zsh does:
+                    // `a=(1 2 3); ${a[(k)*]}` is `1` and `${a[(K)*]}` is `3`.
+                    // Returns (rev, ind, down). Bug #1050.
+                    let subscript_flag_state = |f: &str| -> (bool, bool, bool) {
+                        let (mut rev, mut ind, mut down) = (false, false, false);
+                        for fc in f.chars() {
+                            match fc {
+                                'r' => {
+                                    rev = true;
+                                    ind = false;
+                                    down = false;
+                                } // c:1394
+                                'R' => {
+                                    rev = true;
+                                    down = true;
+                                    ind = false;
+                                } // c:1398
+                                'k' => {
+                                    rev = true;
+                                    ind = false;
+                                    down = false;
+                                } // c:1402
+                                'K' => {
+                                    rev = true;
+                                    down = true;
+                                    ind = false;
+                                } // c:1407
+                                'i' => {
+                                    rev = true;
+                                    ind = true;
+                                    down = false;
+                                } // c:1412
+                                'I' => {
+                                    rev = true;
+                                    ind = true;
+                                    down = true;
+                                } // c:1416
+                                _ => {}
+                            }
+                        }
+                        (rev, ind, down)
+                    };
+                    (|s: &str| -> Option<(String, Option<i64>, Option<i64>, String, bool, bool)> {
                         // c:Src/params.c:1411-1418 — `(i)/(I)/(r)/(R)`
                         // array subscript flags. Per C:
                         //   (i)pat: rev=ind=1, down=0 → first match, INDEX
@@ -6895,7 +6991,11 @@ pub fn paramsubst(
                         let mut chars = body.chars().peekable();
                         while let Some(c) = chars.next() {
                             match c {
-                                'I' | 'R' | 'i' | 'r' | 'e' => flags.push(c),
+                                // k/K were missing here, so `${a[(k)*]}` hit the
+                                // `_ => return None` arm and fell through to the
+                                // math path, erroring where zsh returns the
+                                // first match. c:1400-1410 accepts them.
+                                'I' | 'R' | 'i' | 'r' | 'e' | 'k' | 'K' => flags.push(c),
                                 'n' | 'b' => {
                                     let delim = chars.next()?;
                                     let mut numstr = String::new();
@@ -6918,16 +7018,15 @@ pub fn paramsubst(
                         }
                         // c:Src/params.c:1419 — `(e)` ALONE doesn't trigger
                         // the search arm; require at least one search letter.
-                        let has_search = flags.contains('I')
-                            || flags.contains('R')
-                            || flags.contains('i')
-                            || flags.contains('r');
-                        if !has_search {
+                        // `rev` from the sequential switch — c:1575 `if (!rev)`
+                        // is exactly what decides search-vs-mathevalarg.
+                        let (rev, ind, down) = subscript_flag_state(&flags);
+                        if !rev {
                             return None;
                         }
-                        Some((flags, num, beg, pat))
+                        Some((flags, num, beg, pat, ind, down))
                     })(sub)
-                {
+                } {
                     let (flags, num, beg, pat) = (flags, num, beg, pat);
                     // c:Src/params.c:1564-1572 — `if (needtok) { ...
                     // singsub(&s); ... }`. The subscript expression
@@ -6958,7 +7057,7 @@ pub fn paramsubst(
                     // the index (`${(v)h[(i)b]}` → the element, not 3).
                     // `ind` is the subscript's own i/I flag. Gated so a
                     // bare `${a[(R)y]}` (no (k)/(v)) is unchanged.
-                    let ind = flags.contains('I') || flags.contains('i'); // c:1412/1416 ind=1
+                    let ind = flag_ind; // c:1412/1416 ind=1, sequential (see above)
                     let return_index = if (hkeys & SCANPM_WANTKEYS) != 0 {
                         ind || (hvals & SCANPM_WANTVALS) == 0 // c:1513
                     } else if (hvals & SCANPM_WANTVALS) != 0 {
@@ -6966,7 +7065,7 @@ pub fn paramsubst(
                     } else {
                         ind // c:1518
                     };
-                    let down = flags.contains('I') || flags.contains('R'); // c:1416/c:1418 down=1
+                    let down = flag_down; // c:1416/c:1418 down=1, sequential (see above)
                     let exact = flags.contains('e'); // c:Src/params.c:1419 e flag — literal compare, no glob
                     let nth = num.unwrap_or(1).max(1) as usize;
                     // c:Src/params.c — `(b.N.)` is 1-based offset
@@ -7194,15 +7293,47 @@ pub fn paramsubst(
                             match c {
                                 's' | 'n' | 'b' => {
                                     let delim = chars.next()?;
+                                    // c:Src/subst.c:1348 — get_strarg "Returns a
+                                    // pointer to the final delimiter", or
+                                    // end-of-string when there is none. getarg
+                                    // then hits `if (!*t) goto flagerr`
+                                    // (c:Src/params.c:1434/1447/1463), whose
+                                    // handler resets every flag and sets
+                                    // `s = *str - 1` (c:1479-1482) so the WHOLE
+                                    // subscript — parens included — goes to
+                                    // mathevalarg. Silently accepting the
+                                    // unterminated arg instead made
+                                    // `${dup[(nX2)1]}` strip the flag block and
+                                    // return element 1, where zsh reports
+                                    // `bad math expression`. Returning None
+                                    // routes to the whole-subscript mathevali
+                                    // fallback below, which is exactly what
+                                    // flagerr produces. Bug #1051.
+                                    let mut closed = false;
                                     for cc in chars.by_ref() {
                                         if cc == delim {
+                                            closed = true;
                                             break;
                                         }
+                                    }
+                                    if !closed {
+                                        return None;
                                     }
                                 }
                                 // (e) exact / (p) print-escape are bare
                                 // modifiers; the remainder is the index.
-                                'e' | 'p' => {}
+                                //
+                                // (w)/(f) belong here too on an ARRAY: C's
+                                // word branch is `if (word && !v->scanflags)`
+                                // (c:Src/params.c:1602), and an ordinary array
+                                // subscript HAS scanflags set, so the branch
+                                // never engages and the plain element index
+                                // applies. Verified: `a=('a b' c d)` gives the
+                                // same `a b` / `c` / `d` for `${a[(w)N]}` as for
+                                // `${a[N]}`. Excluding them sent `(ws.:.)1` and
+                                // `(s.:.w)1` to the whole-subscript math
+                                // fallback, which errors where zsh indexes.
+                                'e' | 'p' | 'w' | 'f' => {}
                                 _ => return None,
                             }
                         }
@@ -7395,9 +7526,23 @@ pub fn paramsubst(
                     // override. Bug: array index-flag-start slices.
                     {
                         let t = start_str.trim();
+                        // `inv` is C's `ind`, set by the SEQUENTIAL switch where
+                        // each direction arm resets the others (c:1390-1483), so
+                        // only the LAST direction letter decides. An
+                        // `any(i|I)` test rejected `(Ir)`/`(ir)` — whose final
+                        // arm is `r`, leaving ind=0 — which zsh accepts as a
+                        // bound. Bug #1050.
                         let start_is_inv = t.starts_with('(')
                             && t.find(')').map_or(false, |c| {
-                                t[1..c].chars().any(|ch| ch == 'i' || ch == 'I')
+                                let mut ind = false;
+                                for ch in t[1..c].chars() {
+                                    match ch {
+                                        'i' | 'I' => ind = true,
+                                        'r' | 'R' | 'k' | 'K' => ind = false,
+                                        _ => {}
+                                    }
+                                }
+                                ind
                             });
                         if start_is_inv {
                             zerr("invalid subscript"); // c:2121
@@ -7463,6 +7608,13 @@ pub fn paramsubst(
                                         .map(|c| match c {
                                             'r' => 'i',
                                             'R' => 'I',
+                                            // On a non-hash, k/K are r/R
+                                            // (c:1400/1405 gate only `keymatch`
+                                            // on ishash), so they need the same
+                                            // value→index remap to serve as a
+                                            // range BOUND. Bug #1050.
+                                            'k' => 'i',
+                                            'K' => 'I',
                                             o => o,
                                         })
                                         .collect();
@@ -8047,10 +8199,37 @@ pub fn paramsubst(
                             }
                         })(sub)
                     {
-                        let return_index = flags.contains('I') || flags.contains('i');
-                        // (K) requests ALL matches like (R); (k) the first like (r).
-                        let want_last =
-                            flags.contains('I') || flags.contains('R') || flags.contains('K');
+                        // c:Src/params.c:1390-1483 — SEQUENTIAL switch: the last
+                        // direction letter wins, so `(ir)` ends ind=0 (VALUE)
+                        // and `(ri)` ends ind=1 (INDEX). An order-blind
+                        // contains() answered INDEX for both. (K) requests the
+                        // last match like (R); (k) the first like (r).
+                        // Bug #1050.
+                        let (return_index, want_last) = {
+                            let (mut ind, mut down) = (false, false);
+                            for fc in flags.chars() {
+                                match fc {
+                                    'r' | 'k' => {
+                                        ind = false;
+                                        down = false;
+                                    }
+                                    'R' | 'K' => {
+                                        ind = false;
+                                        down = true;
+                                    }
+                                    'i' => {
+                                        ind = true;
+                                        down = false;
+                                    }
+                                    'I' => {
+                                        ind = true;
+                                        down = true;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            (ind, down)
+                        };
                         let exact = flags.contains('e'); // c:1419 e — literal compare, no glob
                         let nth = num.unwrap_or(1).max(1) as usize; // c:1432 (n.N.)
                                                                     // c:Src/params.c — `(b.N.)` is a 1-based begin offset;
@@ -8203,10 +8382,17 @@ pub fn paramsubst(
                                 match c {
                                     's' => {
                                         let delim = chars.next()?;
+                                        // Unterminated delimiter -> C's
+                                        // flagerr (see the n/b arm below).
+                                        let mut closed = false;
                                         for cc in chars.by_ref() {
                                             if cc == delim {
+                                                closed = true;
                                                 break;
                                             }
+                                        }
+                                        if !closed {
+                                            return None;
                                         }
                                     }
                                     // (e) exact / (p) print-escape are bare
@@ -8222,10 +8408,23 @@ pub fn paramsubst(
                                     // and errored "bad math expression".
                                     'n' | 'b' => {
                                         let delim = chars.next()?;
+                                        // c:Src/subst.c:1348 get_strarg returns
+                                        // end-of-string when the delimiter never
+                                        // recurs, and getarg then does
+                                        // `if (!*t) goto flagerr`
+                                        // (c:Src/params.c:1434/1447), handing the
+                                        // WHOLE subscript to mathevalarg.
+                                        // Returning None reaches that fallback.
+                                        // Bug #1051.
+                                        let mut closed = false;
                                         for cc in chars.by_ref() {
                                             if cc == delim {
+                                                closed = true;
                                                 break;
                                             }
+                                        }
+                                        if !closed {
+                                            return None;
                                         }
                                     }
                                     _ => return None,
@@ -8407,7 +8606,16 @@ pub fn paramsubst(
                                     let mut it = body.chars();
                                     while let Some(c) = it.next() {
                                         match c {
-                                            'r' | 'R' | 'i' | 'I' | 'e' => flags.push(c),
+                                            // k/K reduce to r/R on a non-hash
+                                            // (c:1400/1405 gate only `keymatch`
+                                            // on ishash; `rev = 1` is
+                                            // unconditional), so a range BOUND
+                                            // accepts them too. Omitting them
+                                            // made `${s[(k)d?,(k)h?]}` fall back
+                                            // to the full string. Bug #1050.
+                                            'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'K' => {
+                                                flags.push(c)
+                                            }
                                             'n' | 'b' => {
                                                 let d = match it.next() {
                                                     Some(d) => d,
@@ -8439,10 +8647,30 @@ pub fn paramsubst(
                                             }
                                         }
                                     }
+                                    // "is this bound a SEARCH?" is C's `rev`,
+                                    // which k/K set too (c:1400/1405). Bug #1050.
                                     if ok
-                                        && flags.chars().any(|c| matches!(c, 'r' | 'R' | 'i' | 'I'))
+                                        && flags
+                                            .chars()
+                                            .any(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K'))
                                     {
-                                        let want_last = flags.contains('R') || flags.contains('I');
+                                        // `down` per C's SEQUENTIAL switch — the
+                                        // last direction letter wins, so `(rI)`
+                                        // is down=1 but `(Ir)` is down=0. An
+                                        // order-blind `contains()` made both
+                                        // down=1. Same rule as the array search
+                                        // above; c:Src/params.c:1390-1483.
+                                        let want_last = {
+                                            let mut down = false;
+                                            for fc in flags.chars() {
+                                                match fc {
+                                                    'r' | 'i' | 'k' => down = false,
+                                                    'R' | 'I' | 'K' => down = true,
+                                                    _ => {}
+                                                }
+                                            }
+                                            down
+                                        };
                                         let exact = flags.contains('e'); // c:1450 (e)
                                         let nth = nth.max(1) as usize;
                                         // c:1571 singsub the subscript text first.
@@ -8825,7 +9053,8 @@ pub fn paramsubst(
                     .trim_start_matches('(')
                     .split(')')
                     .next()
-                    .map(|flags| flags.contains(|c| matches!(c, 'r' | 'R' | 'i' | 'I')))
+                    // C's `rev` — k/K set it as well (c:1400/1405). Bug #1050.
+                    .map(|flags| flags.contains(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K')))
                     .unwrap_or(false);
             used_subexp
                 || (is_flag_form && !raw_value.is_empty())
@@ -10339,7 +10568,19 @@ pub fn paramsubst(
                         // a filename glob — only a SOURCE-literal glob in the
                         // default word sets the flag.
                         let __dg = pretokenize_src_pat(default);
-                        if crate::ported::pattern::haswilds(&__dg) {
+                        // FILENAME GENERATION treats a TOP-LEVEL `|` as
+                        // alternation — `${x:-a|b}` matches the file `b` — but
+                        // the PATTERN callers this closure is shared with do
+                        // not: verified against zsh, `s=abc; ${s/a|b/X}`,
+                        // `${s#a|b}`, `${s%b|c}`, `${arr[@]:#a|b}` and
+                        // `${a[(r)a|b]}` all leave the subject untouched. So
+                        // pretokenize_src_pat is right to emit a literal `\|`
+                        // at depth 0, and the filename-generation exception
+                        // belongs here rather than in the shared closure.
+                        // Nested `|` (inside `(...)`) already becomes Bar and
+                        // is caught by haswilds. Bug #1053.
+                        let __toplevel_bar = __dg.contains("\\|");
+                        if crate::ported::pattern::haswilds(&__dg) || __toplevel_bar {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }
@@ -10395,7 +10636,10 @@ pub fn paramsubst(
                     }
                     if !qt {
                         let __dg = pretokenize_src_pat(default); // c:globlist (default-word glob)
-                        if crate::ported::pattern::haswilds(&__dg) {
+                        // Top-level `|` is alternation for FILENAME
+                        // GENERATION though literal for the shared pattern
+                        // callers — see the `:-` site above. Bug #1053.
+                        if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }
@@ -10622,7 +10866,10 @@ pub fn paramsubst(
                     }
                     if !qt {
                         let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
-                        if crate::ported::pattern::haswilds(&__dg) {
+                        // Top-level `|` is alternation for FILENAME
+                        // GENERATION though literal for the shared pattern
+                        // callers — see the `:-` site above. Bug #1053.
+                        if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }
@@ -10665,7 +10912,10 @@ pub fn paramsubst(
                     }
                     if !qt {
                         let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
-                        if crate::ported::pattern::haswilds(&__dg) {
+                        // Top-level `|` is alternation for FILENAME
+                        // GENERATION though literal for the shared pattern
+                        // callers — see the `:-` site above. Bug #1053.
+                        if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }
@@ -16878,6 +17128,13 @@ pub fn paramsubst(
                                         .map(|c| match c {
                                             'r' => 'i',
                                             'R' => 'I',
+                                            // On a non-hash, k/K are r/R
+                                            // (c:1400/1405 gate only `keymatch`
+                                            // on ishash), so they need the same
+                                            // value→index remap to serve as a
+                                            // range BOUND. Bug #1050.
+                                            'k' => 'i',
+                                            'K' => 'I',
                                             o => o,
                                         })
                                         .collect();

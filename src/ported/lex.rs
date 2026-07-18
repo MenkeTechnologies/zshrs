@@ -1670,10 +1670,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // Under SHGLOB, a `)` inside `${...}` or substitution context
             // ends the token rather than being added.
             LX2_OUTPAR => {
+                // c:Src/lex.c:989-990 — `if ((sub || in_brace_param) &&
+                // isset(SHGLOB)) break;`. As with LX2_INPAR above, C's `break`
+                // exits the SWITCH and falls through to `add(c)` (c:1417) with
+                // `c` still the raw `)`; it does NOT end the token. LX2_BAR
+                // just below already ports this shape correctly with `add(c)`.
+                // Bug #1052.
                 if (sub || in_brace_param > 0) && isset(SHGLOB) {
-                    break;
-                }
-                if in_brace_param > 0 || sub {
+                    add(c);
+                } else if in_brace_param > 0 || sub {
                     add(Outpar);
                 } else if pct > 0 {
                     pct -= 1;
@@ -1912,9 +1917,19 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 // substitution context breaks; and `(` after a non-
                 // empty lexbuf is a break unless KSHGLOB is also set
                 // (KSH-style `name(...)` pattern matching).
+                // c:Src/lex.c:1080-1081 — `if (sub || in_brace_param) break;`.
+                // That `break` leaves the SWITCH, not the token loop: `c` is
+                // still the literal `(`, so the common `add(c)` after the
+                // switch (c:1417) emits it and lexing CONTINUES to the closing
+                // `}`. A Rust `break` exits the lexer loop and ENDS the token,
+                // so `${(t)PATH}` under SHGLOB stopped at the `(` with
+                // in_brace_param still 1 and died "closing brace expected".
+                // The `goto brk` case below is a REAL token break and stays a
+                // Rust `break`. Bug #1052.
+                let mut shglob_literal_inpar = false;
                 if isset(SHGLOB) {
                     if sub || in_brace_param > 0 {
-                        break;
+                        shglob_literal_inpar = true;
                     }
                     // c:1084 — `!KSHGLOB && lexbuf.len → goto brk`. In sh
                     // emulation (SHGLOB, no KSHGLOB) a `(` after existing
@@ -1926,13 +1941,17 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     // zsh: `emulate sh; [[ ab =~ (a)(b) ]]` works. Without this
                     // exception, `--bash` (KSHGLOB off) split the regex and
                     // par_cond failed with "condition expected".
-                    if unset(KSHGLOB)
+                    else if unset(KSHGLOB)
                         && LEX_INCOND.get() <= 1
                         && LEX_LEXBUF.with_borrow(|b| b.len) > 0
                     {
                         break;
                     }
                 }
+                if shglob_literal_inpar {
+                    // c:1417 `add(c)` with `c` still the raw `(`.
+                    add(c);
+                } else {
                 // c:1086-1135 — when `(` appears inside a Stringg and
                 // is immediately followed by `)`, the string
                 // terminates at the `(`. The `()` is then re-lexed as
@@ -1965,10 +1984,11 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         break;
                     }
                 }
-                if in_brace_param == 0 {
-                    pct += 1;
+                    if in_brace_param == 0 {
+                        pct += 1;
+                    }
+                    add(Inpar);
                 }
-                add(Inpar);
             }
 
             // c:1137 — `case LX2_INBRACE:` — `{`.
@@ -2097,10 +2117,17 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // then the in_brace_param/sub guard that keeps `<` as
             // a literal character.
             LX2_INANG => {
-                // c:1188 — `if (isset(SHGLOB) && sub) break;`.
+                // c:1188 — `if (isset(SHGLOB) && sub) break;`. Same
+                // switch-vs-loop distinction the c:1209 case below already
+                // documents: C's `break` falls through to the post-switch
+                // `add(c)` (c:1417) with `c` still the raw `<`, so the token
+                // continues and the `<` is LITERAL. Ending the token here made
+                // `emulate sh -c '${a[(r)<->]}'` keep numeric-range-glob
+                // semantics and match `1`, where zsh compares against the
+                // literal text `<->` and finds nothing. Bug #1052.
                 if isset(SHGLOB) && sub {
-                    break;
-                }
+                    add(c);
+                } else {
                 // c:1190-1198 — `e = hgetc(); if (!(in_brace_param ||
                 // sub) && e == '(') { add(Inang); skipcomm(); c =
                 // Outpar; break; }`. `<(...)` process-sub only when
@@ -2162,6 +2189,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             break;
                         }
                     }
+                }
                 }
             }
 

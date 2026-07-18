@@ -785,6 +785,12 @@ jobs:
       # so 200 already covers it several times over. Bug #1048.
       - name: Fuzz — jobs
         run: ./target/debug/parity-fuzz --mode jobs --count 200 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/jobs.txt --out target/parity-fuzz/ci-jobs.txt
+      # EXTENDEDGLOB operators (`#`/`##`/`^`) next to a parameter expansion,
+      # with the option turned on by a `setopt` INSIDE the script. Passing
+      # `-o extendedglob` on the command line masks the whole bug class, so
+      # the generator never does. Bug #1049.
+      - name: Fuzz — extglob
+        run: ./target/debug/parity-fuzz --mode extglob --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/extglob.txt --out target/parity-fuzz/ci-extglob.txt
       - name: Upload divergence corpora
         if: failure()
         uses: actions/upload-artifact@v4

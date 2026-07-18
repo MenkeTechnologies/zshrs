@@ -2761,10 +2761,41 @@ pub(crate) fn getarg<'a>(
     let flags_start = 0_usize;
     let mut flags_end = 0_usize;
     let mut bad = false;
+    // Sequential direction state per c:1390-1483 (see the flag arm below).
+    let mut seq_ind = false;
+    let mut seq_down = false;
     while i < bytes.len() && bytes[i] != b')' {
         let c = bytes[i] as char;
         match c {
             'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'K' | 'w' | 'f' | 'p' => {
+                // c:Src/params.c:1390-1483 — the switch is SEQUENTIAL and each
+                // direction arm RESETS the others, so only the LAST direction
+                // letter survives: `(Ir)` ends down=0 (FIRST match) while `(rI)`
+                // ends down=1 (LAST). Tracking it HERE rather than re-scanning
+                // the finished `flags` slice matters because that slice still
+                // contains the `n`/`b` ARGUMENT text (e.g. "n:2:"), whose
+                // characters must not be re-read as flags. `keymatch` is gated
+                // on ishash (c:1400/1405); on the array path it stays 0, so k/K
+                // reduce to r/R. Bug #1050.
+                match c {
+                    'r' | 'k' => {
+                        seq_ind = false;
+                        seq_down = false;
+                    }
+                    'R' | 'K' => {
+                        seq_ind = false;
+                        seq_down = true;
+                    }
+                    'i' => {
+                        seq_ind = true;
+                        seq_down = false;
+                    }
+                    'I' => {
+                        seq_ind = true;
+                        seq_down = true;
+                    }
+                    _ => {}
+                }
                 i += 1;
                 flags_end = i;
             }
@@ -2845,7 +2876,7 @@ pub(crate) fn getarg<'a>(
     if let Some(map) = assoc {
         let exact = flags.contains('e');
         let key_match = flags.contains('k') || flags.contains('K');
-        let return_index = flags.contains('i') || flags.contains('I');
+        let return_index = seq_ind; // c:1412/1416 ind, sequential
         // c:Src/params.c — on a HASH, i/I/k/K all match against KEYS while
         // r/R match against VALUES (zsh 5.9: `${h[(i)KEY]}`→KEY,
         // `${h[(r)VAL]}`→VAL, `${h[(i)VAL]}`→empty). k/K are exact key
@@ -3006,7 +3037,7 @@ pub(crate) fn getarg<'a>(
         let exact = flags.contains('e');
         let word = flags.contains('w') || flags.contains('f');
         let _ = word;
-        let return_index = flags.contains('i') || flags.contains('I');
+        let return_index = seq_ind; // c:1412/1416 ind, sequential
         // c:Src/params.c:2091 — `if (start > 0 && (isset(KSHARRAYS) ||
         // (v->pm->node.flags & PM_HASHED))) start--;`. The search loop below
         // yields a 1-BASED index, but under KSHARRAYS the shell's indices are
@@ -3042,7 +3073,9 @@ pub(crate) fn getarg<'a>(
             return None;
         }
         // c:1488-1491 — negative `num` flips reverse direction.
-        let reverse = (flags.contains('R') || flags.contains('I')) ^ neg_num_flips;
+        // c:1488-1491 — negative num flips the direction; `down` itself is the
+        // sequential last-direction-letter value, not an order-blind contains().
+        let reverse = seq_down ^ neg_num_flips;
         // C params.c:1668-1685 implicit `*` wrap fires only when
         // `v->scanflags` is unset; in standard subscript callsites
         // scanflags IS set, so the wrap does NOT engage. Verified
@@ -3200,7 +3233,7 @@ pub(crate) fn getarg<'a>(
             || flags.contains('i')
             || flags.contains('I');
         if any_search {
-            let return_index = flags.contains('i') || flags.contains('I');
+            let return_index = seq_ind; // c:1412/1416 ind, sequential
             let want_last = flags.contains('I') || flags.contains('R');
             // Negative `num` flips direction (c:1488-1491).
             let want_last = want_last ^ neg_num_flips;
