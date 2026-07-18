@@ -1277,6 +1277,9 @@ pub fn zshrs_main() {
     // `--bash` so it matches /bin/bash.
     if matches!(shell_mode(), ShellMode::Bash) && !zsh_style_requested {
         zsh::ported::options::opt_state_set("ignorebraces", false);
+        // Enable bash-only param expansion syntax (`${!var}` indirect,
+        // `${v^^}` case-mod) in the subst layer.
+        zsh::extensions::dash_mode::set_bash_mode(true);
     }
 
     if parity_mode_selected {
