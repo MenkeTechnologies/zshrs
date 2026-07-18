@@ -522,6 +522,13 @@ fn bash_case_and_at_transforms() {
     // `${v^PAT}` upper-cases the first char only if it matches the pattern.
     assert_eq!(bash(r#"v=hello; printf '%s' "${v^h}""#), "Hello");
     assert_eq!(bash(r#"v=hello; printf '%s' "${v^l}""#), "hello");
+    // `${v@a}` — attribute-flag letters (empty for a plain var), bash order.
+    assert_eq!(bash(r#"x=5; printf '[%s]' "${x@a}""#), "[]");
+    assert_eq!(bash(r#"declare -r r=1; printf '%s' "${r@a}""#), "r");
+    assert_eq!(bash(r#"declare -i n=2; printf '%s' "${n@a}""#), "i");
+    assert_eq!(bash(r#"declare -a a=(1); printf '%s' "${a@a}""#), "a");
+    assert_eq!(bash(r#"declare -A m=([k]=v); printf '%s' "${m@a}""#), "A");
+    assert_eq!(bash(r#"declare -rix v=5; printf '%s' "${v@a}""#), "irx");
 
     // `@`/`~` transforms are a bad substitution under --zsh (rc 1, no output).
     let out = Command::new(zshrs_bin())
@@ -606,6 +613,33 @@ fn bash_arith_subscript_and_assoc_keys() {
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
     assert_eq!(zsh("a=(10 20 30); echo $(( a[1] ))"), "10");
+}
+
+#[test]
+fn bash_shopt_q() {
+    // bash `shopt -q OPT` is quiet — no output, exit 0 iff every named option
+    // is set, else 1. Previously `-q` was mistaken for an option name.
+    let run = |script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (
+            String::from_utf8_lossy(&out.stdout).trim_end().to_owned(),
+            out.status.success(),
+        )
+    };
+    // Unset option: quiet, non-zero, no output.
+    let (out, ok) = run("shopt -q nullglob");
+    assert_eq!(out, "");
+    assert!(!ok);
+    // After enabling, quiet + success.
+    let (out, ok) = run("shopt -s nullglob; shopt -q nullglob");
+    assert_eq!(out, "");
+    assert!(ok);
+    // Multiple options: success only if ALL are set.
+    assert!(!run("shopt -s nullglob; shopt -q nullglob extglob").1);
+    assert!(run("shopt -s nullglob extglob; shopt -q nullglob extglob").1);
 }
 
 #[test]
