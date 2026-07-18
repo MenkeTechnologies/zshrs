@@ -803,6 +803,37 @@ fn bash_prefix_name_matching() {
 }
 
 #[test]
+fn bash_replacement_backslash_strip() {
+    // bash strips a source-literal backslash before ANY char in a
+    // `${var/pat/repl}` replacement (`\~`→`~`, `\&`→`&`, `\\`→`\`) — but NOT
+    // from an EXPANDED value, and `\$` still defangs expansion. zsh keeps the
+    // literal backslash, so this is gated to --bash.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(bash(r#"v=abc; echo "${v/b/\~}""#), "a~c");
+    assert_eq!(bash(r#"v=abc; echo "${v//b/\x}""#), "axc");
+    assert_eq!(bash(r#"v=abc; echo "${v/b/\&}""#), "a&c");
+    assert_eq!(bash(r#"v=abc; echo "${v/b/x\\y}""#), r#"ax\yc"#); // \\ → one \
+    // Not stripped from a spliced value; \$ defangs expansion.
+    assert_eq!(bash(r#"v=abc; x="\~"; echo "${v/b/$x}""#), r#"a\~c"#);
+    assert_eq!(bash(r#"v=abc; echo "${v/b/\$x}""#), "a$xc");
+    // Ordinary replacements are unaffected.
+    assert_eq!(bash(r#"v=aXbXcX; echo "${v//X/-}""#), "a-b-c-");
+
+    // --zsh keeps the literal backslash (matching real zsh).
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", r#"v=abc; echo "${v/b/\~}""#])
+        .output()
+        .expect("spawn");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), r#"a\~c"#);
+}
+
+#[test]
 fn bash_special_variables() {
     // bash special vars that alias zsh natives (or are synthesized) under
     // --bash: PIPESTATUS≈pipestatus, FUNCNAME≈funcstack, BASH_VERSINFO/
@@ -829,6 +860,16 @@ fn bash_special_variables() {
     assert_eq!(bash(r#"[[ ${BASH_VERSINFO[0]} -ge 4 ]] && echo modern"#), "modern");
     // BASH_VERSION — non-empty `X.Y.Z(...)-release` shape.
     assert!(bash(r#"echo "$BASH_VERSION""#).contains("-release"));
+    // `declare -p` of the synthesized specials produces the bash array form.
+    assert_eq!(
+        bash(r#"true|false; declare -p PIPESTATUS"#),
+        r#"declare -a PIPESTATUS=([0]="0" [1]="1")"#
+    );
+    assert_eq!(
+        bash(r#"f(){ declare -p FUNCNAME; }; f"#),
+        r#"declare -a FUNCNAME=([0]="f")"#
+    );
+    assert!(bash(r#"declare -p BASH_VERSINFO"#).starts_with("declare -ar BASH_VERSINFO=(["));
 
     // --zsh must NOT expose the bash names (empty), but zsh natives still work.
     let zsh = |script: &str| -> String {

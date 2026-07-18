@@ -129,6 +129,42 @@ pub fn bash_versinfo() -> Vec<String> {
     ]
 }
 
+/// Strip source-literal backslash escapes from a `${var/pat/REPL}` replacement
+/// under `--bash`. bash removes a `\` before ANY char in the LITERAL
+/// replacement (`\~`→`~`, `\&`→`&`, `\\`→`\`), but NOT from expanded values
+/// (`${v/p/$x}` with x=`\~` stays `\~`). This runs on the tokenized replacement
+/// BEFORE `singsub`, where source-literal backslashes are raw `\` (0x5c) while
+/// expansion-defanging escapes (`\$`/`` \` ``/`\"`) are Bnull markers (0x9f) and
+/// spliced values aren't present yet — so touching only raw `\` is exactly the
+/// bash rule. A trailing lone `\` is kept.
+pub fn strip_replacement_backslashes(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{9f}' {
+            // Bnull marker: the following char is an ALREADY-cooked literal (a
+            // `\\`/`\$`/`` \` `` the DQ lexer defanged). Keep both bytes so it
+            // survives — bash does not re-strip an already-processed backslash.
+            out.push(c);
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else if c == '\\' {
+            // Raw source-literal backslash: strip it, the next char is literal.
+            match chars.next() {
+                Some(next) => out.push(next),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Resolve a bash special ARRAY name (`PIPESTATUS`, `FUNCNAME`,
 /// `BASH_VERSINFO`) to its value in `--bash` mode by aliasing the zsh-native
 /// special or synthesizing it. Returns `None` for any other name (or outside

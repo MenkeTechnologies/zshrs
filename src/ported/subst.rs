@@ -10644,6 +10644,12 @@ pub fn paramsubst(
                 // substitution"). Mirror the `//` arm: keep raw_repl,
                 // compile once, re-singsub per match when needed.
                 let raw_repl = parts.get(1).copied().unwrap_or("").to_string();
+                // !!! BASH-MODE GATE !!! bash strips source-literal backslashes.
+                let raw_repl = if crate::dash_mode::bash_mode() {
+                    crate::dash_mode::strip_replacement_backslashes(&raw_repl)
+                } else {
+                    raw_repl
+                };
                 let prog_opt = if pat.is_empty() {
                     None
                 } else {
@@ -10807,6 +10813,14 @@ pub fn paramsubst(
                         i += 1;
                     }
                     out
+                } else {
+                    raw_repl
+                };
+                // !!! BASH-MODE GATE !!! bash strips source-literal backslashes
+                // from the replacement (`\~`→`~`, `\&`→`&`, `\\`→`\`) but not
+                // from expanded values; run it on the pre-singsub raw form.
+                let raw_repl = if crate::dash_mode::bash_mode() {
+                    crate::dash_mode::strip_replacement_backslashes(&raw_repl)
                 } else {
                     raw_repl
                 };
@@ -11500,6 +11514,13 @@ pub fn paramsubst(
                         i += 1;
                     }
                     out
+                } else {
+                    raw_repl
+                };
+                // !!! BASH-MODE GATE !!! bash strips source-literal backslashes
+                // from the replacement; run it on the pre-singsub raw form.
+                let raw_repl = if crate::dash_mode::bash_mode() {
+                    crate::dash_mode::strip_replacement_backslashes(&raw_repl)
                 } else {
                     raw_repl
                 };
