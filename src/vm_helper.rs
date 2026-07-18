@@ -1569,6 +1569,9 @@ impl ShellExecutor {
             ztest_run_failed: std::sync::atomic::AtomicBool::new(false),
             ztest_suppress_stdout: false,
         };
+        // Publish the session worker pool so preprompt-time async hooks
+        // (async_precmd) can reach it without an entered executor context.
+        crate::async_precmd::set_session_pool(std::sync::Arc::clone(&exec.worker_pool));
         // Mirror env-derived path arrays into the `arrays` table so
         // user-level `fpath` / `path` array reads see the inherited
         // entries. zsh: `fpath+=…` should append to the inherited
@@ -3926,6 +3929,35 @@ mod tests {
         let mut exec = ShellExecutor::new();
         let status = exec.execute_script("true").unwrap();
         assert_eq!(status, 0);
+    }
+
+    /// Phase 3 diagnostic: a worker must be able to run a USER-DEFINED function
+    /// (defined on the main executor) — the function source lives in the shared
+    /// shfunctab, and the worker lazy-compiles it from there. Its `typeset -g`
+    /// must reach the global param table. This is what `async_precmd` needs.
+    #[test]
+    fn phase3_worker_runs_user_defined_function() {
+        let _g = crate::test_util::global_state_lock();
+        let mut main = ShellExecutor::new();
+        main.execute_script("phase3fn() { typeset -g PHASE3_FN_RESULT=fn_ran }")
+            .unwrap();
+        // sanity: it ran on main? (define only — not called yet)
+        assert_eq!(getsparam("PHASE3_FN_RESULT"), None);
+
+        let pool = std::sync::Arc::new(crate::worker::WorkerPool::new(2));
+        let pool2 = std::sync::Arc::clone(&pool);
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        pool.submit(move || {
+            let mut wex = ShellExecutor::new_worker(pool2);
+            let _ = wex.execute_script_zsh_pipeline("phase3fn");
+            let _ = tx.send(());
+        });
+        rx.recv().expect("worker completed");
+        assert_eq!(
+            getsparam("PHASE3_FN_RESULT"),
+            Some("fn_ran".to_string()),
+            "worker could not run the user-defined function from shared shfunctab"
+        );
     }
 
     /// Phase 1 of the in-process thread-execution model: prove a shell body
