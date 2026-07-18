@@ -2713,10 +2713,55 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         let outer_stage_fds = stage_fds_park(last_in_fd, -1);
 
-        // Run the last stage's bytecode on a sub-VM with the host
-        // wired up. The host points back at the executor so reads
-        // (`read x`) update the parent's variables directly.
-        let last_stage_status = {
+        // Run the last stage's bytecode on a sub-VM with the host wired up.
+        // By default (zsh semantics) the sub-VM runs IN THIS PROCESS so the
+        // last stage's reads/assignments update the parent's state directly
+        // (`echo x | read v` sets $v; `cmd | mapfile arr` sets arr).
+        //
+        // !!! BASH-MODE GATE !!! bash forks EVERY pipeline stage (unless
+        // `shopt -s lastpipe`), so the last stage runs in a SUBSHELL and its
+        // variable/array assignments do NOT persist — `echo x | read v; echo
+        // $v` prints an empty line, `cmd | mapfile arr` leaves arr unset.
+        // Fork the last stage under `--bash` to match. The parent's existing
+        // `stage_fds_take()` below closes its `last_in_fd` copy; the forked
+        // child inherits the parked pipe fd and installs it onto stdin, and
+        // the writer stages (already forked) supply its input.
+        let last_stage_status = if crate::dash_mode::bash_mode() {
+            let last_chunk = stages_vec.into_iter().last().unwrap();
+            crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
+            match unsafe { libc::fork() } {
+                -1 => 1,
+                0 => {
+                    // Subshell child: run the last stage, then _exit with its
+                    // status. Reset SIGPIPE + drop the EXIT trap like the
+                    // other pipeline children above.
+                    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+                    if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                        t.remove("EXIT");
+                    }
+                    let mut stage_vm = fusevm::VM::new(last_chunk);
+                    stage_vm.last_status = parent_status;
+                    register_builtins(&mut stage_vm);
+                    stage_vm.set_shell_host(Box::new(ZshrsHost));
+                    let _ = stage_vm.run();
+                    let st = stage_vm.last_status;
+                    let _ = std::io::stdout().flush();
+                    let _ = std::io::stderr().flush();
+                    unsafe { libc::_exit(st) };
+                }
+                pid => {
+                    let mut status: i32 = 0;
+                    unsafe { libc::waitpid(pid, &mut status, 0) };
+                    if libc::WIFEXITED(status) {
+                        libc::WEXITSTATUS(status)
+                    } else if libc::WIFSIGNALED(status) {
+                        128 + libc::WTERMSIG(status)
+                    } else {
+                        1
+                    }
+                }
+            }
+        } else {
             let last_chunk = stages_vec.into_iter().last().unwrap();
             crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
             let mut stage_vm = fusevm::VM::new(last_chunk);
