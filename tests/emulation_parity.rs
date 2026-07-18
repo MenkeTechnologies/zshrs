@@ -783,6 +783,31 @@ fn bash_shopt_q() {
 }
 
 #[test]
+fn bash_extglob() {
+    // bash `shopt -s extglob` enables the ksh-style extended patterns
+    // `@()`/`*()/+()/?()/!()` — mapped to zsh's `kshglob`, which supports the
+    // identical syntax. Works in `[[ ]]`, `case`, and parameter expansion.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(bash("shopt -s extglob; [[ abc == @(abc|xyz) ]] && echo m"), "m");
+    assert_eq!(bash("shopt -s extglob; [[ aaa == +(a) ]] && echo p"), "p");
+    assert_eq!(bash("shopt -s extglob; [[ color == colo?(u)r ]] && echo o"), "o");
+    assert_eq!(bash("shopt -s extglob; [[ foo == !(bar) ]] && echo n"), "n");
+    assert_eq!(
+        bash(r#"shopt -s extglob; v="  trim  "; echo "[${v##+([[:space:]])}]""#),
+        "[trim  ]"
+    );
+    // shopt -q tracks it.
+    assert_eq!(bash("shopt -q extglob && echo on || echo off"), "off");
+    assert_eq!(bash("shopt -s extglob; shopt -q extglob && echo on"), "on");
+}
+
+#[test]
 fn bash_printf_time_format() {
     // bash/ksh `printf '%(FMT)T' TS` renders TS (epoch seconds) via strftime;
     // a negative or missing TS means "now". zsh's printf lacks this directive.
