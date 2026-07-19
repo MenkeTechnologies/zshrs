@@ -1537,6 +1537,86 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                   // BUILTIN_EVAL fast-path leaked the outer "zsh" prefix
                                   // through, breaking the `(eval):N:` convention zsh uses
                                   // for in-eval errors. Bug #420.
+        // c:Src/builtin.c:6209 — `execode(prog, 1, 0, "eval");`. execode
+        // (c:Src/exec.c:1245-1266) APPENDS its context argument to
+        // `zsh_eval_context` for the duration of the body, so code inside
+        // `eval` sees `cmdarg:eval` (and `cmdarg:shfunc:eval` when the eval is
+        // in a function). zshrs pushed "shfunc" and, since #1065, "cmdsubst",
+        // but never "eval". Popped on every return path by the guard, matching
+        // execode's stack discipline. Bug #1065 (eval leg).
+        let sync_eval_ctx = |stack: &[String]| {
+            let joined = stack.join(":");
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                    pm.u_arr = Some(stack.to_vec());
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+                if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                    pm.u_str = Some(joined);
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
+        };
+        if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+            ctx.push("eval".to_string());
+            sync_eval_ctx(&ctx);
+        }
+        struct EvalCtxGuard<F: Fn(&[String])>(F);
+        impl<F: Fn(&[String])> Drop for EvalCtxGuard<F> {
+            fn drop(&mut self) {
+                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                    ctx.pop();
+                    (self.0)(&ctx);
+                }
+            }
+        }
+        let _eval_ctx_guard = EvalCtxGuard(sync_eval_ctx);
+        // c:Src/builtin.c:6163-6178 — `eval` pushes a funcstack frame named
+        // "(eval)" (tp = FS_EVAL), gated on `ineval = !isset(EVALLINENO)` /
+        // `if (!ineval)` — i.e. pushed when EVAL_LINENO is SET, which is the
+        // zsh default. zshrs already set `scriptname = "(eval)"` (below) but
+        // never pushed the frame, so `eval '…${#funcstack}'` reported 0 where
+        // zsh reports 1, and inside a function `${(j:,:)funcstack}` was `f`
+        // rather than `(eval),f`. Both shells already agreed under
+        // `unsetopt evallineno` (no frame), so the option gate is load-bearing
+        // and is mirrored here. Popped on every return path by the guard.
+        // Bug #1066.
+        let eval_pushed_frame = crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO);
+        if eval_pushed_frame {
+            let caller = {
+                let stk = crate::ported::modules::parameter::FUNCSTACK
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                stk.last()
+                    .map(|f| f.name.clone()) // c:6167 funcstack->name
+                    .or_else(|| crate::ported::utils::argzero()) // c:6167 argzero
+            };
+            let frame = crate::ported::zsh_h::funcstack {
+                prev: None, // c:6166 (Vec-stack: index encodes link)
+                name: "(eval)".to_string(), // c:6166 fstack.name = scriptname
+                filename: None,
+                caller,
+                flineno: 0,
+                lineno: 0,                             // c:6169
+                tp: crate::ported::zsh_h::FS_EVAL,     // c:6170
+            };
+            crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(frame); // c:6178 funcstack = &fstack
+        }
+        struct EvalFuncstackGuard(bool);
+        impl Drop for EvalFuncstackGuard {
+            fn drop(&mut self) {
+                if self.0 {
+                    crate::ported::modules::parameter::FUNCSTACK
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .pop();
+                }
+            }
+        }
+        let _eval_fs_guard = EvalFuncstackGuard(eval_pushed_frame);
         let oscriptname = crate::ported::utils::scriptname_get();
         crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
         // Recursion backstop — c:Src/jobs.c:1878-1884. zsh caps eval recursion
@@ -11669,6 +11749,28 @@ impl fusevm::ShellHost for ZshrsHost {
                     libc::dup2(write_end, libc::STDOUT_FILENO);
                     libc::close(write_end);
                 }
+                // c:Src/exec.c:5101/5150 — `execode(prog, 0, 1, out ?
+                // "outsubst" : "insubst");`. execode (c:1245-1266) APPENDS its
+                // context for the duration of the body, so `<(cmd)` — whose child WRITES (out=1) — runs as `…:outsubst`.
+                // zshrs's ported getproc carries these citations but is NOT the
+                // live path (established in #1062) — the VM forks here instead,
+                // so the push belongs in this child. No pop needed: this runs
+                // INSIDE the forked child and dies with it. Bug #1069 (procsub
+                // legs).
+                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                    ctx.push("outsubst".to_string());
+                    let joined = ctx.join(":");
+                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                        if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                            pm.u_arr = Some(ctx.clone());
+                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                        }
+                        if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                            pm.u_str = Some(joined);
+                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                        }
+                    }
+                }
                 crate::fusevm_disasm::maybe_print_stdout("process_subst_in", &sub_for_child);
                 let mut vm = fusevm::VM::new(sub_for_child);
                 register_builtins(&mut vm);
@@ -11770,6 +11872,28 @@ impl fusevm::ShellHost for ZshrsHost {
                     libc::close(write_end);
                     libc::dup2(read_end, libc::STDIN_FILENO);
                     libc::close(read_end);
+                }
+                // c:Src/exec.c:5101/5150 — `execode(prog, 0, 1, out ?
+                // "outsubst" : "insubst");`. execode (c:1245-1266) APPENDS its
+                // context for the duration of the body, so `>(cmd)` — whose child READS (out=0) — runs as `…:insubst`.
+                // zshrs's ported getproc carries these citations but is NOT the
+                // live path (established in #1062) — the VM forks here instead,
+                // so the push belongs in this child. No pop needed: this runs
+                // INSIDE the forked child and dies with it. Bug #1069 (procsub
+                // legs).
+                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                    ctx.push("insubst".to_string());
+                    let joined = ctx.join(":");
+                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                        if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                            pm.u_arr = Some(ctx.clone());
+                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                        }
+                        if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                            pm.u_str = Some(joined);
+                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                        }
+                    }
                 }
                 crate::fusevm_disasm::maybe_print_stdout("process_subst_out:child", &sub_for_child);
                 let mut vm = fusevm::VM::new(sub_for_child);

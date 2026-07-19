@@ -169,6 +169,338 @@ recent `--dash/--ash` commits on origin/main, not from this change.
 
 ---
 
+## #1070 — execution errors printed a bare `:0` line number inside a one-line function — fixed
+
+**Status:** `fixed` 2026-07-19 — verified in a scratch build (repo tree still
+does not compile upstream).
+
+```
+$ zsh   -fc 'f(){ nosuchcmd }; f'          → f: command not found: nosuchcmd
+$ zshrs -c  '…same…'                        → f:0: command not found: nosuchcmd   ✗
+$ zsh   -fc 'f(){ /nonexistent-abs }; f'   → f: no such file or directory: …
+$ zshrs -c  '…same…'                        → f:0: no such file or directory: …   ✗
+$ zsh   -fc 'f(){ /etc/hosts }; f'         → f: permission denied: /etc/hosts
+$ zshrs -c  '…same…'                        → f:0: permission denied: …           ✗
+```
+
+C prints the line number ONLY when it is non-zero — `Src/utils.c:301`:
+
+```c
+if ((unset(SHINSTDIN) || locallevel) && lineno)
+    fprintf(file, "%lld: ", lineno);
+```
+
+Inside a one-line function definition `lineno` is 0, and BOTH shells agree
+`$LINENO` is 0 there — the difference was purely whether the zero got printed.
+
+zshrs's ported `zerrmsg` already had the `&& lineno != 0` guard faithfully. The
+bug was in SIX direct-emit sites in vm_helper.rs that hand-rolled
+`"{}:{}: …", sn, lineno()` instead. Those sites bypass `zerr` DELIBERATELY —
+their own comments explain that routing through `zerr` would set `errflag` and
+abort a script zsh continues — so the fix keeps the direct emission and
+replicates the C condition in one shared `zerr_prefix` helper. Sixth instance of
+"a reimplementation shadowing a faithful port" (cf. #1027 / #1031 / #1044 /
+#1050 / #1063).
+
+All three message shapes were affected identically (command not found, no such
+file or directory, permission denied), in both the `if` and `else` arms of the
+absolute-path check — hence six sites, not three.
+
+Verified that a REAL line number still prints: multi-line function bodies give
+`f:1:` / `f:2:`, a multi-line script file gives `<path>:2:`, a sourced
+multi-line file gives `f:1:`, top level gives `zsh:1:`, and `eval` gives
+`(eval):1:` — all matching. Load-bearing: reverting to the hand-rolled prefix
+(revert VERIFIED by direct probe first — `f:0:` vs zsh's `f:`) reports 24 new
+divergences over 400 cases; restored, 0 across 1600 cases on four seeds.
+
+---
+
+## #1069 — `ZSH_EVAL_CONTEXT` missing `globqual`, `style`, `insubst`, `outsubst` — fixed
+
+**Status:** `fixed` 2026-07-19 — verified in a scratch build (repo tree still
+does not compile upstream).
+
+```
+$ zsh   -fc "print -r -- *(e:'REPLY=\$ZSH_EVAL_CONTEXT':N)"   → cmdarg:globqual …
+$ zshrs -c  '…same…'                                            → cmdarg …          ✗
+$ zsh   -fc "zstyle -e ':x' k 'reply=(\$ZSH_EVAL_CONTEXT)'; …" → cmdarg:style
+$ zshrs -c  '…same…'                                            → cmdarg             ✗
+```
+
+Two more callers of the `execode(prog, …, context)` mechanism (c:Src/exec.c:
+1245-1266), both of which zshrs already had ported and cited but without the
+context push:
+
+* `Src/glob.c:3919` — `execode(prog, 1, 0, "globqual");` for the `(e:'…':)`
+  qualifier body. zshrs's site (glob.rs, `// c:3919`) called `execute_script`
+  directly.
+* `Src/Modules/zutil.c:419` — `execode(p->eval, 1, 0, "style");` for a
+  `zstyle -e` body. zshrs's `evalstyle` (zutil.rs, `// c:419`) likewise.
+
+Completes the sweep begun in #1065/#1067: the context names now match for
+`cmdarg`, `toplevel`, `file`, `cmdsubst`, `eval`, `shfunc`, `trap`, `globqual`
+and `style`.
+
+Verified composition (`cmdarg:shfunc:globqual`, `cmdarg:shfunc:style`), the pop
+(a plain glob and a plain `zstyle` read after the eval both return to `cmdarg`),
+and that a non-`-e` `zstyle` is unaffected. Load-bearing: reverting both pushes
+(revert VERIFIED by direct probe first — bare `cmdarg` in each) reports 6 new
+divergences over 400 cases; restored, 0 across 1600 cases on four seeds. Swept
+cmdsub / glob / subscript / func / special / emulate / default / assign /
+zstyle / zutil — all 0.
+
+**Process-substitution legs also fixed** (c:Src/exec.c:5101/5150,
+`execode(prog, 0, 1, out ? "outsubst" : "insubst")`), after tracing the live
+route. As #1062 established, the ported `getproc` carries those citations but is
+never reached — the VM forks in fusevm_bridge.rs instead, so the pushes belong
+in those two forked children. No pop is needed there: the increment dies with
+the child.
+
+The naming is counter-intuitive and the PAIR is what pins it: `<(cmd)`'s child
+WRITES and gets `outsubst`; `>(cmd)`'s child READS and gets `insubst`. Verified
+`cmdarg:outsubst`, `cmdarg:shfunc:outsubst`, `cmdarg:insubst`,
+`cmdarg:shfunc:insubst`, and that the parent returns to `cmdarg` afterwards.
+
+A probe trap worth recording: for the `>(…)` direction the context must be read
+INSIDE the child (`print x > >(print $ZSH_EVAL_CONTEXT)`). Writing
+`print $ZSH_EVAL_CONTEXT > >(cat)` evaluates it in the PARENT and reports plain
+`cmdarg` in both shells — it looks like a passing test while proving nothing.
+
+Load-bearing: reverting both pushes (revert VERIFIED by direct probe first —
+bare `cmdarg` in each direction) reports 8 new divergences over 400 cases;
+restored, 0 across 1600 cases on four seeds. Swept cmdsub / glob / subscript /
+func / special / emulate / default / assign / procsub / redir — all 0.
+
+With these the eval-context family is COMPLETE for every reachable caller:
+`cmdarg`, `toplevel`, `file`, `cmdsubst`, `eval`, `shfunc`, `trap`, `globqual`,
+`style`, `insubst`, `outsubst`.
+
+---
+
+## #1068 — `ZSH_SUBSHELL` not incremented for pipeline stages / background forks — port-bug
+
+**Status:** `port-bug` — NOT fixed. A first attempt regressed a working case and
+was reverted; the analysis below is the useful part.
+
+```
+$ zsh   -fc 'print -r -- $ZSH_SUBSHELL | cat'   → 1
+$ zshrs -c  '…same…'                             → 0   ✗
+$ zsh   -fc 'print -r -- $ZSH_SUBSHELL &'        → 1
+$ zshrs -c  '…same…'                             → 0   ✗
+```
+
+C increments in `entersubsh` (`Src/exec.c:1161`, `zsh_subshell++`) with the
+comment "Increment the visible parameter ZSH_SUBSHELL even if this is a fake
+subshell" — so EVERY forked child counts.
+
+Current state, mapped:
+
+| construct | zsh | zshrs |
+|---|---|---|
+| top level | 0 | 0 |
+| `( … )` | 1 | 1 |
+| `( ( … ) )` | 2 | 2 |
+| `$( … )` | 1 | 1 |
+| `cat \| print …` (LAST stage, no fork) | 0 | 0 |
+| `( … ) \| cat` | 1 | 1 |
+| `print … \| cat` (non-last stage) | 1 | **0** |
+| `{ … } \| cat` | 1 | **0** |
+| `f \| cat` | 1 | **0** |
+| `$( … \| cat )` | 2 | **1** |
+| `print … &` | 1 | **0** |
+
+**Why the obvious fix is wrong.** Adding the increment at the pipeline-child
+fork site fixes all five failing rows but BREAKS `( … ) | cat`, which goes
+1 -> 2. The reason is structural: zshrs runs `( … )` as an IN-PROCESS
+simulation with its own bump (fusevm_bridge.rs, "in-process equivalent" of
+entersubsh), while a pipeline stage is a REAL fork. For `( … ) | cat` zsh forks
+exactly once — the `( )` IS the stage — whereas zshrs would count the real fork
+AND the simulated subshell.
+
+So the fix cannot simply mirror C's "one increment per entersubsh": zshrs has
+two different mechanisms (real fork, simulated subshell) that must together
+produce exactly one increment when they coincide. A workable approach is a
+one-shot flag set at pipeline-stage fork time which the in-process `( )` handler
+consumes and skips its own bump for — but that is coordination logic with no C
+counterpart, so it needs deliberate design rather than a quick patch. The
+attempt was reverted; nothing is generated for this.
+
+---
+
+## #1067 — `ZSH_EVAL_CONTEXT` missing `toplevel` (script file) and `file` (source) — fixed
+
+**Status:** `fixed` 2026-07-19 — verified in a scratch build (repo tree still
+does not compile upstream).
+
+Both come from ONE C line, `Src/init.c:220`:
+
+```c
+execode(prog, 0, 0, toplevel ? "toplevel" : "file");
+```
+
+**A. Script file / stdin had NO base context at all.**
+```
+$ zsh   -f script.zsh   → top=toplevel
+                          fn=toplevel:shfunc
+                          sub=toplevel:cmdsubst
+$ zshrs -f script.zsh   → top=            (empty)
+                          fn=shfunc
+                          sub=cmdsubst                                ✗
+```
+zshrs pushed `cmdarg` only on the `-c` path (c:init.c:1535) and nothing for a
+script file or piped stdin, so the base was empty and EVERY nested construct
+lost it too — the `-c` invocation happened to look right only because that one
+path had its own push.
+
+**B. `source` / `.` did not append `file`.**
+```
+$ zsh   -fc 'source lib.zsh'   → cmdarg:file
+$ zshrs -c  '…same…'            → cmdarg      ✗
+```
+
+Found by probing the funcstack/eval-state family after #1065 and #1066 — the
+same "per-construct state at a known C site" seam. Note `funcstack` was ALREADY
+correct for sourced files (the sourced path pushes its own FS_SOURCE frame);
+only the eval-context component was missing, so the two mechanisms had drifted
+apart at the same site.
+
+Verified on 12 shapes: `source` and `.`, composition at every depth
+(`shfunc:file`, `eval:file`, `cmdsubst:file`, `trap:file`), NESTED source
+giving `file:file`, pop after return, and a FAILED `source` still popping.
+Script-file mode additionally verified end to end — all four lines of a probe
+script now match, including the sourced-from-script `toplevel:file`.
+
+Load-bearing for the `file` leg: removing the push (revert VERIFIED by direct
+probe first — `cmdarg` vs `cmdarg:file`) reports 14 new divergences over 400
+cases; restored, 0 across 1600 cases on four seeds. Swept cmdsub / func /
+special / subscript / emulate / default / assign / nest / builtin — all 0.
+
+The `toplevel` leg is NOT fuzz-gated and the generator says so: this harness
+always invokes `-c`, whose context is `cmdarg`, so the script-file arm is
+unreachable from it. It is verified manually instead.
+
+---
+
+## #1066 — `eval` did not push an `(eval)` FUNCSTACK frame — fixed
+
+**Status:** `fixed` 2026-07-19 — verified in a scratch build (repo tree still
+does not compile upstream).
+
+```
+$ zsh   -fc 'zmodload zsh/parameter; eval "print -r -- \${#funcstack}"'   → 1
+$ zshrs -c  '…same…'                                                       → 0   ✗
+$ zsh   -fc 'zmodload zsh/parameter; f(){ eval "print -r -- \"\${(j:,:)funcstack}\"" }; f'
+                                                                           → (eval),f
+$ zshrs -c  '…same…'                                                       → f   ✗
+```
+
+C's `bin_eval` (`Src/builtin.c:6163-6178`) pushes a funcstack frame named
+`"(eval)"` with `tp = FS_EVAL`, gated on
+`ineval = !isset(EVALLINENO); if (!ineval) { … }` — i.e. the frame is pushed
+when EVAL_LINENO is SET, which is the zsh default.
+
+zshrs already set `scriptname = "(eval)"` at that site but never pushed the
+frame. Found while probing the funcstack family right after #1065's eval
+context leg — the two are siblings (`ZSH_EVAL_CONTEXT` and `funcstack` are both
+per-eval state), and the same site was missing both.
+
+The option gate is load-bearing, not incidental: under `unsetopt evallineno`
+BOTH shells push nothing, so a fix that pushed unconditionally would newly
+diverge there. That row is generated.
+
+Verified on 14 shapes: the frame itself, `${funcstack[1]}` = `(eval)`, nesting
+(`eval 'eval …'` → 2), BOTH orderings against real function frames
+(`f(){ eval … }` → `(eval),f` and `eval 'f'` → `f,(eval)`), the `evallineno`
+on/off pair, and pop discipline via `eval ''`, `eval 'exit 3'` and the
+after-eval reading. Plain function frames (`f`, and nested `g,f`) are unchanged.
+
+Load-bearing: removing the push (revert VERIFIED by direct probe first — 0 vs
+zsh's 1) reports 16 new divergences over 400 cases; restored, 0 across 1600
+cases on four seeds. Swept cmdsub / func / special / subscript / emulate /
+default / assign / nest — all 0.
+
+---
+
+## #1065 — `ZSH_EVAL_CONTEXT` missing `cmdsubst` / `eval` / `trap` entries — fixed
+
+**Status:** `fixed` 2026-07-19 for the `cmdsubst` leg — verified in a scratch
+build (the repo tree still does not compile; see the upstream note).
+
+```
+$ zsh   -fc 'print -r -- $(print -r -- $ZSH_EVAL_CONTEXT)'   → cmdarg:cmdsubst
+$ zshrs -c  '…same…'                                          → cmdarg           ✗
+$ zsh   -fc 'f(){ print -r -- $ZSH_EVAL_CONTEXT }; print -r -- $(f)'
+                                                              → cmdarg:cmdsubst:shfunc
+$ zshrs -c  '…same…'                                          → cmdarg:shfunc    ✗
+```
+
+`execode` (`Src/exec.c:1245-1266`) APPENDS its `context` argument to
+`zsh_eval_context` for the duration of the body it runs, and each caller names
+its context: `"cmdarg"` for `-c` (init.c:1535), `"cmdsubst"` for command
+substitution (exec.c:4784, subst.c:2046), `"shfunc"` (exec.c:6195), `"eval"`
+(builtin.c:6209), `"trap"` (signals.c:1170).
+
+zshrs already had the machinery and the `shfunc` push (exec.rs, citing
+c:1251-1266, with a Drop guard that pops on every return path) — the
+command-substitution site simply never pushed. Fixed by mirroring that same
+push/pop guard in `run_command_substitution`, next to the cmdstack (#1059) and
+job-table (#1048) swaps that path already performs.
+
+Probed the whole context set to bound it. zshrs was CORRECT for `cmdarg`,
+`shfunc`, and for NOT pushing on subshells `( … )` or blocks `{ … }`. Three
+were missing; this fixes one:
+
+| construct | zsh | zshrs before | now |
+|---|---|---|---|
+| `$(…)` / backticks | `cmdarg:cmdsubst` | `cmdarg` | fixed |
+| `$(f)` | `cmdarg:cmdsubst:shfunc` | `cmdarg:shfunc` | fixed |
+| `eval '…'` | `cmdarg:eval` | `cmdarg` | fixed |
+| `f(){ eval '…' }` | `cmdarg:shfunc:eval` | `cmdarg:shfunc` | fixed |
+| trap handler | `cmdarg:trap` | `cmdarg` | fixed |
+
+**eval leg** (c:Src/builtin.c:6209 `execode(prog, 1, 0, "eval")`) fixed the same
+way, at the BUILTIN_EVAL site in fusevm_bridge.rs which already cited that
+execode call. Verified on ten shapes including both nesting ORDERS —
+`eval '$(…)'` gives `cmdarg:eval:cmdsubst` while `$(eval '…')` gives
+`cmdarg:cmdsubst:eval`, and `eval 'eval …'` gives `cmdarg:eval:eval`. A
+single-context probe cannot tell those apart, so the ordering rows are the
+load-bearing ones. Pop verified via `eval ''`, `eval 'exit 3'`, and the
+after-eval reading. Load-bearing: 25 new divergences over 400 cases with the
+push removed (revert verified by direct probe first), 0 restored across 1200
+cases on three seeds.
+
+**trap leg** (c:Src/signals.c:1170) fixed after tracing the delivery path.
+The obvious site was WRONG: `dotrapargs` carries the `c:1170 execode(…,
+"trap")` citation and re-parses the handler text, but patching it had NO
+observable effect. Instrumenting the whole chain showed a delivered signal goes
+`zhandler` -> `dotrap` and never enters `dotrapargs`; `dotrap` runs the body
+itself through `execute_script` (its own `c:1268` citation). Push installed
+there instead. Same "ported but bypassed" family as #1058/#1059/#1062 — the
+citation pointed at the faithful port, not at the code that actually runs.
+
+With all three legs done the full context matrix matches on 13 shapes, covering
+every pairing: `shfunc:eval`, `cmdsubst:eval`, `eval:cmdsubst`, `shfunc:trap`,
+`trap:cmdsubst`, plus the negatives (`( … )` and `{ … }` push nothing) and the
+after-handler reading proving the pop. Load-bearing for the trap leg: 14 new
+divergences over 400 cases with the push removed (revert verified by direct
+probe first), 0 restored across 1600 cases on four seeds.
+
+Pop discipline verified explicitly, since a push without a matching pop would
+grow the stack across commands: nested `$( $( … ) )` gives
+`cmdarg:cmdsubst:cmdsubst`, a loop repeats `cmdarg:cmdsubst` rather than
+accumulating, the stack returns to `cmdarg` after the substitution, and an
+early `$(exit 3)` still pops. The array form `${zsh_eval_context[*]}` and
+`${#zsh_eval_context}` also match.
+
+Gated in the `cmdsub` mode with the nested/sequential/loop rows as the
+load-bearing ones — they catch a LEAK as well as a missing push. Load-bearing:
+removing the push (revert VERIFIED by direct probe first — `cmdarg` vs
+`cmdarg:cmdsubst`) reports 77 new divergences over 400 cases; restored, 0 across
+1200 cases on three seeds. Swept cmdsub / subscript / default / emulate / func /
+special / assign / nest — all 0.
+
+---
+
 ## #1064 — `builtin NAME`'s "no such builtin" ignores the command's stderr redirection — port-bug
 
 **Status:** `port-bug` — surfaced while gating #1063.

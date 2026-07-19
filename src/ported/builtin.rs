@@ -12099,6 +12099,41 @@ pub fn bin_dot(
         .map(|s| s.len())
         .unwrap_or(0)
         >= crate::ported::jobs::MAX_MAXJOBS;
+    // c:Src/init.c:220 — `execode(prog, 0, 0, toplevel ? "toplevel" : "file");`
+    // A SOURCED file is the `"file"` arm, so its body runs with `file`
+    // appended to `zsh_eval_context`: `toplevel:file` at top level,
+    // `toplevel:shfunc:file` inside a function, `toplevel:eval:file` inside an
+    // eval. zshrs pushed nothing here, so the component was missing at every
+    // depth. funcstack was already correct (the sourced path pushes its own
+    // FS_SOURCE frame just below) — only the eval-context entry was absent.
+    // Popped on every return path by the guard. Bug #1067.
+    let sync_eval_ctx = |stack: &[String]| {
+        let joined = stack.join(":");
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                pm.u_arr = Some(stack.to_vec());
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                pm.u_str = Some(joined);
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+        }
+    };
+    if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+        ctx.push("file".to_string());
+        sync_eval_ctx(&ctx);
+    }
+    struct SourceCtxGuard<F: Fn(&[String])>(F);
+    impl<F: Fn(&[String])> Drop for SourceCtxGuard<F> {
+        fn drop(&mut self) {
+            if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                ctx.pop();
+                (self.0)(&ctx);
+            }
+        }
+    }
+    let _source_ctx_guard = SourceCtxGuard(sync_eval_ctx);
     let mut result = if over_limit {
         crate::ported::utils::zerr("job table full or recursion limit exceeded");
         128 - 2 // c:6143 — SOURCE_ERROR = 2 → 126

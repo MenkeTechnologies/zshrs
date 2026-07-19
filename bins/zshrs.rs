@@ -2052,6 +2052,31 @@ pub fn zshrs_main() {
         // init_exec which isn't reached on this code path, so set
         // ZSH_ARGZERO directly. Without this, ZSH_ARGZERO carried
         // argv[0] (the zshrs binary path) instead of the script path.
+        // c:Src/init.c:220 — `execode(prog, 0, 0, toplevel ? "toplevel" : "file");`
+        // The main input loop names its context "toplevel", so a SCRIPT FILE
+        // (and stdin) runs with `ZSH_EVAL_CONTEXT=toplevel` where `-c` uses
+        // "cmdarg" (c:init.c:1535). zshrs pushed "cmdarg" only on the `-c`
+        // path and pushed NOTHING here, so a script file saw an EMPTY context
+        // and every nested construct lost its base too — `shfunc` instead of
+        // `toplevel:shfunc`, `cmdsubst` instead of `toplevel:cmdsubst`.
+        // No pop: like the `-c` push, the script invocation owns the stack for
+        // the whole run. Bug #1067.
+        if let Ok(mut ctx) = zsh::ported::exec::zsh_eval_context.lock() {
+            if ctx.is_empty() {
+                ctx.push("toplevel".to_string());
+                let joined = ctx.join(":");
+                if let Ok(mut tab) = zsh::ported::params::paramtab().write() {
+                    if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                        pm.u_arr = Some(ctx.clone());
+                        pm.node.flags &= !(zsh::ported::zsh_h::PM_UNSET as i32);
+                    }
+                    if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                        pm.u_str = Some(joined);
+                        pm.node.flags &= !(zsh::ported::zsh_h::PM_UNSET as i32);
+                    }
+                }
+            }
+        }
         zsh::ported::params::setsparam("ZSH_ARGZERO", &args[1]);
         match executor.execute_script_file(&args[1]) {
             Err(e) => {

@@ -884,7 +884,39 @@ pub fn evalstyle(code: &str) -> Vec<String> {
     unsetparam("reply");
     // c:419 — execode(p->eval, 1, 0, "style"): execute the style body so
     // it can set `$reply`. Runs on the live session executor.
-    let _ = crate::ported::exec::execute_script_zsh_pipeline(code);
+    {
+        // c:Src/Modules/zutil.c:419 — `execode(p->eval, 1, 0, "style");`.
+        // A `zstyle -e` body runs with `style` appended to the eval context.
+        // Popped on every return path. Bug #1069.
+        let sync_eval_ctx = |stack: &[String]| {
+            let joined = stack.join(":");
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                    pm.u_arr = Some(stack.to_vec());
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+                if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                    pm.u_str = Some(joined);
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
+        };
+        if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+            ctx.push("style".to_string());
+            sync_eval_ctx(&ctx);
+        }
+        struct StyleCtxGuard<F: Fn(&[String])>(F);
+        impl<F: Fn(&[String])> Drop for StyleCtxGuard<F> {
+            fn drop(&mut self) {
+                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                    ctx.pop();
+                    (self.0)(&ctx);
+                }
+            }
+        }
+        let _ctx_guard = StyleCtxGuard(sync_eval_ctx);
+        let _ = crate::ported::exec::execute_script_zsh_pipeline(code);
+    }
     // c:420-425 — restore errflag preserving INT bit only.
     let cur = errflag.load(Ordering::Relaxed);
     errflag.store(ef | (cur & ERRFLAG_INT), Ordering::Relaxed);
