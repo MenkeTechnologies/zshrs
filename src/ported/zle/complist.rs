@@ -1390,9 +1390,23 @@ pub fn compprintfmt(
 
     let mut l = 0i32; // c:1075
     let mut cc = 0i32;
+    let mut dopr = dopr; // c:1229 — literal branch may downgrade to 2 (measure-only)
     let _ = doesc;
-    let _ = ml;
     let _ = stop;
+
+    // c:1075 — `stat = !fmt`: captured BEFORE the mstatus/mlistp fallback
+    // reassigns fmt. Only stat-mode (caller passed NULL/empty) emits the
+    // count/position fields and applies whole-prompt width truncation.
+    let stat = fmt.is_empty();
+
+    // Cached terminal width (c:1261 uses zterm_columns for truncation) and the
+    // listing geometry the count fields need (listdat.nlist / listdat.nlines,
+    // comp.h c:348-349).
+    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let (nlist, nlines) = listdat
+        .get()
+        .and_then(|m| m.lock().ok().map(|g| (g.nlist, g.nlines)))
+        .unwrap_or((0, 0));
 
     // c:1077-1086 — fmt fallback to mstatus / mlistp when caller passed NULL.
     let owned: String;
@@ -1416,6 +1430,15 @@ pub fn compprintfmt(
         fmt
     };
 
+    let out_fd = {
+        let fd = SHTTY.load(Ordering::Relaxed);
+        if fd >= 0 {
+            fd
+        } else {
+            1
+        }
+    };
+
     // c:1087-end — escape dispatch loop. Implement the daily-driver
     // subset (the LIST_PACKED escape arms that LISTPROMPT users hit).
     let mut chars = fmt_str.chars().peekable();
@@ -1432,6 +1455,9 @@ pub fn compprintfmt(
                     break;
                 }
             }
+            // c:1118 — `m` flag: this escape produced a count/position field
+            // in `nc` that needs the c:1257-1266 truncation-and-print path.
+            let mut m_field: Option<String> = None;
             match chars.next() {
                 // c:1119
                 Some('%') => {
@@ -1441,54 +1467,182 @@ pub fn compprintfmt(
                     cc += 1;
                 } // c:1120
                 Some('n') => {
-                    // c:1141
-                    let s = n.to_string();
-                    if dopr == 1 {
-                        let fd = SHTTY.load(Ordering::Relaxed);
-                        let out_fd = if fd >= 0 { fd } else { 1 };
-                        let _ = write_loop(out_fd, s.as_bytes());
+                    // c:1127 — only outside stat mode.
+                    if !stat {
+                        let s = n.to_string();
+                        if dopr == 1 {
+                            let _ = write_loop(out_fd, s.as_bytes());
+                        }
+                        l += s.len() as i32;
+                        cc += s.len() as i32;
                     }
-                    l += s.len() as i32;
-                    cc += s.len() as i32;
                 }
-                Some('p') => {
-                    // c:1155 line position
-                    let mlbeg = MLBEG.load(Ordering::SeqCst);
-                    let mlines = MLINES.load(Ordering::SeqCst);
-                    let s = if mlbeg <= 0 && mlines < MLEND.load(Ordering::SeqCst) {
-                        "Top".to_string()
-                    } else if mlbeg + MLEND.load(Ordering::SeqCst) - MLBEG.load(Ordering::SeqCst)
-                        >= mlines
-                    {
-                        "Bot".to_string()
-                    } else {
-                        format!("{}%", mlbeg.max(0) * 100 / mlines.max(1))
-                    };
-                    if dopr == 1 {
-                        let fd = SHTTY.load(Ordering::Relaxed);
-                        let out_fd = if fd >= 0 { fd } else { 1 };
-                        let _ = write_loop(out_fd, s.as_bytes());
+                // c:1138-1183 — text-attribute toggles: zero-width, emit
+                // nothing (the terminal grid the parity harness reads keeps
+                // attributes off-cell).
+                Some('B') | Some('b') | Some('S') | Some('s') | Some('U') | Some('u')
+                | Some('f') | Some('k') => {}
+                // c:1162-1183 — %F / %K optionally carry a `{colour}` payload
+                // that must be consumed so it does not leak into the output.
+                Some('F') | Some('K') => {
+                    if chars.peek() == Some(&'{') {
+                        chars.next(); // '{'
+                        for cp in chars.by_ref() {
+                            if cp == '}' {
+                                break;
+                            }
+                        }
                     }
-                    l += s.len() as i32;
-                    cc += s.len() as i32;
+                }
+                // c:1184-1192 — %H optionally carries a `{highlight}` payload.
+                Some('H') => {
+                    if chars.peek() == Some(&'{') {
+                        chars.next(); // '{'
+                        for cp in chars.by_ref() {
+                            if cp == '}' {
+                                break;
+                            }
+                        }
+                    }
+                }
+                // c:1193-1203 — %{...%}: `arg` declares the visible width; the
+                // literal payload (up to the closing `%}`) prints verbatim but
+                // does not count toward cc beyond `arg`.
+                Some('{') => {
+                    if arg != 0 {
+                        cc += arg;
+                    }
+                    while let Some(&cp) = chars.peek() {
+                        if cp == '%' {
+                            chars.next(); // '%'
+                            if chars.peek() == Some(&'}') {
+                                chars.next(); // '}'
+                                break;
+                            }
+                        } else {
+                            if dopr == 1 {
+                                let mut buf = [0u8; 4];
+                                let bs = cp.encode_utf8(&mut buf).as_bytes();
+                                let _ = write_loop(out_fd, bs);
+                            }
+                            chars.next();
+                        }
+                    }
+                }
+                // c:1204 — %m: "current/total" matches, unpadded.
+                Some('m') => {
+                    if stat {
+                        let v = if n != 0 {
+                            MLASTM.load(Ordering::SeqCst)
+                        } else {
+                            MSELECT.load(Ordering::SeqCst)
+                        };
+                        m_field = Some(format!("{}/{}", v, nlist));
+                    }
+                }
+                // c:1211 — %M: same value, left-justified to width 9.
+                Some('M') => {
+                    if stat {
+                        let v = if n != 0 {
+                            MLASTM.load(Ordering::SeqCst)
+                        } else {
+                            MSELECT.load(Ordering::SeqCst)
+                        };
+                        m_field = Some(format!("{:<9}", format!("{}/{}", v, nlist)));
+                    }
+                }
+                // c:1219 — %l: "line+1/nlines", unpadded.
+                Some('l') => {
+                    if stat {
+                        m_field = Some(format!("{}/{}", ml + 1, nlines));
+                    }
+                }
+                // c:1225 — %L: same value, left-justified to width 9.
+                Some('L') => {
+                    if stat {
+                        m_field = Some(format!("{:<9}", format!("{}/{}", ml + 1, nlines)));
+                    }
+                }
+                // c:1232 — %p: scroll position (Top / NN% / Bottom).
+                Some('p') => {
+                    if stat {
+                        let s = if ml == nlines - 1 {
+                            "Bottom".to_string()
+                        } else {
+                            let cond = if n != 0 {
+                                MFIRSTL.load(Ordering::SeqCst) != 0
+                            } else {
+                                MLBEG.load(Ordering::SeqCst) > 0
+                                    || ml != MFIRSTL.load(Ordering::SeqCst)
+                            };
+                            if cond {
+                                format!("{}%", ((ml + 1) * 100) / nlines.max(1))
+                            } else {
+                                "Top".to_string()
+                            }
+                        };
+                        m_field = Some(s);
+                    }
+                }
+                // c:1244 — %P: padded forms of %p.
+                Some('P') => {
+                    if stat {
+                        let s = if ml == nlines - 1 {
+                            "Bottom".to_string()
+                        } else {
+                            let cond = if n != 0 {
+                                MFIRSTL.load(Ordering::SeqCst) != 0
+                            } else {
+                                MLBEG.load(Ordering::SeqCst) > 0
+                                    || ml != MFIRSTL.load(Ordering::SeqCst)
+                            };
+                            if cond {
+                                format!("{:2}%   ", ((ml + 1) * 100) / nlines.max(1))
+                            } else {
+                                "Top   ".to_string()
+                            }
+                        };
+                        m_field = Some(s);
+                    }
                 }
                 Some(_) => {
                     let _ = arg;
                 } // c:other-escape
                 None => break,
             }
+            // c:1257-1266 — `if (m && dopr)`: truncate the field so it fits in
+            // the remaining `zterm_columns - 2 - cc` columns, print, advance cc.
+            if let Some(nc) = m_field {
+                if dopr != 0 {
+                    let maxl = (zterm_columns - 2 - cc).max(0) as usize;
+                    let out = if nc.len() > maxl { &nc[..maxl] } else { &nc[..] };
+                    if dopr == 1 {
+                        let _ = write_loop(out_fd, out.as_bytes());
+                    }
+                    cc += out.len() as i32; // c:1265
+                }
+            }
         } else {
-            // c:literal char
+            // c:1269 — literal char (ANSI escape bytes included: every byte
+            // counts width 1 toward cc, which is what truncates the whole
+            // prompt at the terminal edge).
+            cc += 1; // c:1270
+            // c:1272 — once we reach the right margin (or a newline) in stat
+            // mode, downgrade to measure-only so the tail is counted, not printed.
+            if (cc >= zterm_columns - 2 || c == '\n') && stat {
+                dopr = 2; // c:1273
+            }
             if dopr == 1 {
-                let fd = SHTTY.load(Ordering::Relaxed);
-                let out_fd = if fd >= 0 { fd } else { 1 };
                 let mut buf = [0u8; 4];
                 let bs = c.encode_utf8(&mut buf).as_bytes();
                 let _ = write_loop(out_fd, bs);
             }
             l += 1;
-            cc += 1;
         }
+    }
+    // c:1323 — reset mfirstl after a stat print with an explicit match number.
+    if stat && n != 0 {
+        MFIRSTL.store(-1, Ordering::SeqCst);
     }
     let _ = l;
     cc // c:return
