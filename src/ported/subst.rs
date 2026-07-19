@@ -905,28 +905,16 @@ fn stringsubst(
                 if end < chars.len() && depth == 0 {
                     // c:237
                     let cmd: String = chars[cmd_open + 1..end].iter().collect(); // c:237
-                                                                                 // \$(< file) shorthand — read file contents directly
-                                                                                 // without spawning a process. Direct port of subst.c
-                                                                                 // around line 250 which checks for the leading
-                                                                                 // `<` redirect-only form and calls readoutput
-                                                                                 // instead of getoutput.
-                    let trimmed = cmd.trim_start();
-                    let output = if let Some(rest) = trimmed.strip_prefix('<') {
-                        // c:Src/subst.c — `$(<filename)` runs the file
-                        // path through parameter expansion first. zsh
-                        // accepts `$(<$tf)` etc.; route through singsub
-                        // so the path arg gets the same prefork/multsub
-                        // as a quoted operand.
-                        let path = singsub(rest.trim());
-                        std::fs::read_to_string(path.trim()).unwrap_or_default()
-                    } else {
-                        // c:exec.c:4712 — `getoutput(cmd, 1)`. Caller
-                        // here is splicing the result into a string
-                        // (str3 = format!("{}{}{}", ...)), which is
-                        // the qt=1 / "$(...)" path. Join the Vec back
-                        // for the string concat.
-                        getoutput(&cmd, 1).join("")
-                    };
+                    // c:subst.c:399 — `getoutput(str2 + 1, qt || …)`. The
+                    // `$(<file)` fast path is handled INSIDE getoutput (the
+                    // port of exec.c simple_redir_name / REDIR_READ), which
+                    // correctly distinguishes a lone `<file` read-redirect from
+                    // a here-document or a command body that merely starts with
+                    // `<`. The prior adhoc `strip_prefix('<')` mis-fired on a
+                    // here-doc inside a double-quoted `"$(...)"` (docker's
+                    // `_retrieve_cache` serialized cache), emptying it → the
+                    // docker completer produced 0 matches.
+                    let output = getoutput(&cmd, 1).join("");
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() {
                         // c:237
