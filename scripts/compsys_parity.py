@@ -398,6 +398,119 @@ BUILTIN_CASES = [
 ]
 
 
+def parse_zstyle_statements(path):
+    """Split a zstyle fixture into individual statements (one per non-comment,
+    non-blank line). Each `zstyle ...` line is independent, so a random subset
+    of them is a valid config — the parity bar is that ANY such combo renders
+    byte-identically on zsh and zshrs."""
+    out = []
+    with open(path) as f:
+        for line in f:
+            s = line.rstrip("\n")
+            if not s.strip() or s.strip().startswith("#"):
+                continue
+            out.append(s)
+    return out
+
+
+def run_cases_against(init_file, cases, args, env):
+    """Run every case through `zsh -f` and `zshrs --zsh -f`, both sourcing
+    init_file. Returns (passed, failed, fail_records) where each fail_record is
+    (case, ref_grid, test_grid, diffs|None)."""
+    ref_argv = [args.zsh, "-f", "-i"]
+    test_argv = [args.zshrs, "--zsh", "-f", "-i"]
+    source_cmd = f"source {shlex.quote(init_file)}\n".encode()
+
+    def capture(argv, label, case):
+        sess = ShellSession(argv, env, args.rows, args.cols, label, args.settle)
+        try:
+            sess.drain_settled(max_wait=3.0, first_wait=2.0)
+            sess.send(source_cmd)
+            if not sess.wait_for_prompt(timeout=25.0):
+                return None
+            return run_case(sess, case)
+        finally:
+            sess.close()
+
+    passed = failed = 0
+    fails = []
+    for case in cases:
+        ref_grid = capture(ref_argv, "zsh", case)
+        test_grid = capture(test_argv, "zshrs", case)
+        if ref_grid is None or test_grid is None:
+            failed += 1
+            fails.append((case, ref_grid, test_grid, None))
+            continue
+        diffs = diff_grids(ref_grid, test_grid)
+        if diffs:
+            failed += 1
+            fails.append((case, ref_grid, test_grid, diffs))
+        else:
+            passed += 1
+    return passed, failed, fails
+
+
+def run_random_combos(args, dump, fpath_dirs, env):
+    """Fuzz random subsets of the user's zstyles: for each of N seeded combos,
+    keep each statement with probability `--combo-keep`, run the combo commands,
+    and report + save any combo whose completion output diverges. Each combo is
+    independently reproducible from (seed, index); failing combos are written to
+    a dir so they can be replayed with `--zstyle <that file>`."""
+    import random
+
+    statements = parse_zstyle_statements(args.zstyle)
+    commands = [c.strip() for c in args.combo_commands.split(",") if c.strip()]
+    cases = [
+        Case(f"cmd{i}", (b if b.endswith(" ") else b + " "), ["tab"])
+        for i, b in enumerate(commands)
+    ]
+    outdir = os.path.join(tempfile.gettempdir(), f"compsys_parity_failing_combos_{args.seed}")
+    os.makedirs(outdir, exist_ok=True)
+
+    print(f"# random-combo fuzz: {args.random_combos} combos x {len(cases)} cmds")
+    print(f"# base zstyle: {args.zstyle} ({len(statements)} statements)")
+    print(f"# seed={args.seed}  keep-prob={args.combo_keep}  geom={args.rows}x{args.cols}")
+    print(f"# failing combos saved to: {outdir}")
+    print()
+
+    fail_combos = 0
+    for n in range(args.random_combos):
+        rng = random.Random(f"{args.seed}:{n}")
+        subset = [s for s in statements if rng.random() < args.combo_keep]
+        d = tempfile.mkdtemp(prefix=f"combo_{args.seed}_{n}_")
+        combo_path = os.path.join(d, "zstyle.zsh")
+        with open(combo_path, "w") as f:
+            f.write(f"# random combo seed={args.seed} index={n}: "
+                    f"{len(subset)}/{len(statements)} statements\n")
+            f.write("\n".join(subset) + "\n")
+        init_file = build_init_file(dump, fpath_dirs, combo_path)
+        passed, failed, fails = run_cases_against(init_file, cases, args, env)
+        tag = "OK  " if failed == 0 else "FAIL"
+        print(f"[{tag}] combo {n:3d}  {len(subset):3d}/{len(statements)} styles  "
+              f"{passed} pass / {failed} fail")
+        if failed:
+            fail_combos += 1
+            saved = os.path.join(outdir, f"combo_{args.seed}_{n}.zsh")
+            with open(saved, "w") as f, open(combo_path) as src:
+                f.write(src.read())
+            for (case, rg, tg, diffs) in fails:
+                if diffs is None:
+                    print(f"       {case.buffer!r}: a shell never reached prompt")
+                else:
+                    print(f"       {case.buffer!r}: {len(diffs)} rows differ")
+                    if args.verbose:
+                        for i, a, b in diffs[:6]:
+                            print(f"         row {i:2d}: zsh={a!r}")
+                            print(f"                 zshrs={b!r}")
+            print(f"       -> replay: scripts/compsys_parity.py "
+                  f"--zstyle {saved} --case '{cases[0].buffer}' --keys tab -v")
+
+    print()
+    print(f"# {args.random_combos - fail_combos}/{args.random_combos} combos byte-identical, "
+          f"{fail_combos} diverged")
+    return 1 if fail_combos else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="compsys parity harness")
     ap.add_argument("--zshrs", default=default_zshrs())
@@ -414,6 +527,13 @@ def main():
     ap.add_argument("--zstyle", default=os.path.join(REPO, "scripts", "parity_zstyle.zsh"),
                     help="zstyle fixture sourced into both shells")
     ap.add_argument("--no-zstyle", action="store_true", help="skip the zstyle fixture")
+    ap.add_argument("--random-combos", type=int, default=0, metavar="N",
+                    help="fuzz N random subsets of the zstyle fixture (parity must hold for ALL)")
+    ap.add_argument("--seed", type=int, default=0, help="RNG seed for --random-combos (reproducible)")
+    ap.add_argument("--combo-keep", type=float, default=0.5,
+                    help="per-statement keep probability for random combos (default 0.5)")
+    ap.add_argument("--combo-commands", default="git ,ssh -,cd /,kill -,echo $PA",
+                    help="comma-separated buffers to complete in each random combo")
     ap.add_argument("--rows", type=int, default=24)
     ap.add_argument("--cols", type=int, default=80)
     ap.add_argument("--settle", type=int, default=250, help="quiet window ms")
@@ -439,6 +559,9 @@ def main():
     zstyle_file = None if args.no_zstyle else args.zstyle
     if not os.path.exists(args.zshrs):
         sys.exit(f"zshrs binary not found: {args.zshrs} (run: cargo build --bin zshrs)")
+
+    if args.random_combos > 0:
+        return run_random_combos(args, dump, fpath_dirs, child_env())
 
     if args.case is not None:
         cases = [Case("adhoc", args.case, [k.strip() for k in args.keys.split(",") if k.strip()])]
