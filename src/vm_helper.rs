@@ -2658,7 +2658,19 @@ impl ShellExecutor {
             // compinit didn't register as autoload stubs — see the fuller
             // note in dispatch_function_call.
             if name.starts_with('_') && crate::ported::utils::getshfunc(name).is_none() {
-                let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
+                // c:6219 getfpfunc — gate the stub on the definition file
+                // actually existing in $fpath, mirroring zsh's `compdef -na`
+                // (only autoloads `_`-names present in fpath). Without this a
+                // `_`-name with no file (e.g. a fasd completer trigger absent
+                // from this fpath) got a phantom PM_UNDEFINED stub, and
+                // loadautofn then leaked "function definition file not found"
+                // to the terminal during completion. test_only=1 is a pure
+                // probe; dump_out is preserved so .zwc-dump autoloads resolve.
+                let mut _dir: Option<String> = None;
+                let mut _dump = None;
+                if crate::ported::exec::getfpfunc(name, &mut _dir, None, 1, &mut _dump).is_some() {
+                    let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
+                }
             }
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
                 // c:Src/exec.c:5684-5704 (loadautofn) —
@@ -2806,7 +2818,19 @@ impl ShellExecutor {
             // the stub below and loadautofn reads the file. Gated to `_`
             // names so ordinary commands still fall through to PATH.
             if name.starts_with('_') && crate::ported::utils::getshfunc(name).is_none() {
-                let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
+                // c:6219 getfpfunc — gate the stub on the definition file
+                // actually existing in $fpath, mirroring zsh's `compdef -na`
+                // (only autoloads `_`-names present in fpath). Without this a
+                // `_`-name with no file (e.g. a fasd completer trigger absent
+                // from this fpath) got a phantom PM_UNDEFINED stub, and
+                // loadautofn then leaked "function definition file not found"
+                // to the terminal during completion. test_only=1 is a pure
+                // probe; dump_out is preserved so .zwc-dump autoloads resolve.
+                let mut _dir: Option<String> = None;
+                let mut _dump = None;
+                if crate::ported::exec::getfpfunc(name, &mut _dir, None, 1, &mut _dump).is_some() {
+                    let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
+                }
             }
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
                 // c:Src/exec.c:5684-5704 (loadautofn) — `autoload -U` records

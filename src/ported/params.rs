@@ -2377,7 +2377,15 @@ pub fn createparam(
     // docs/BUGS.md #1039 (D).
     if (pm.node.flags as u32 & PM_SPECIAL) == 0 {
         let inherited = pm.old.as_ref().and_then(|old| {
-            if (old.node.flags as u32 & PM_SPECIAL) != 0 {
+            // c:2087-2089 — a HIDDEN special (PM_HIDE, e.g. the `commands`
+            // special-hash) is NOT kept special when a `local`/`typeset`
+            // shadows it: C sets newspecial=NS_NORMAL for such a name, so the
+            // shadow decays to the plainly-requested type. Re-stamping it
+            // special made `local -a commands` in the brew completer fail with
+            // "can't change type of a special parameter".
+            if (old.node.flags as u32 & PM_SPECIAL) != 0
+                && (old.node.flags as u32 & PM_HIDE) == 0
+            {
                 Some((
                     old.gsu_s.clone(),
                     old.gsu_i.clone(),

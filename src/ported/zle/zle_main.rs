@@ -79,7 +79,22 @@ pub fn zsetterm() -> io::Result<()> {
             *g = crate::ported::utils::gettyinfo(); // c: gettyinfo(&shttyinfo)
         }
     }
-    let mut termios = termios::Termios::from_fd(TTYFD.load(SeqCst))?;
+    // c:210 — zsh's setterm() targets SHTTY (the ZLE tty), not fd 0. The
+    // completion machinery closes fd 0 while running completer subprocesses, so
+    // a `tcsetattr(fd 0)` here fails with EBADF and the re-raw (VMIN=1) is
+    // silently skipped — leaving the tty non-blocking, so the list-prompt
+    // pager's read on SHTTY returned EOF immediately and never blocked. Target
+    // SHTTY with an fd-0 fallback for the non-interactive case (where at the
+    // normal prompt SHTTY == dup(0), so this is a no-op).
+    let tty_fd = {
+        let s = SHTTY.load(SeqCst);
+        if s >= 0 {
+            s
+        } else {
+            TTYFD.load(SeqCst)
+        }
+    };
+    let mut termios = termios::Termios::from_fd(tty_fd)?;
 
     // c:240 — disable canonical + echo + flusho.
     termios.c_lflag &= !(termios::ICANON | termios::ECHO);
@@ -169,7 +184,7 @@ pub fn zsetterm() -> io::Result<()> {
     // reverses the swap so the net effect inside zsh is none.
     termios.c_iflag |= (libc::INLCR | libc::ICRNL) as libc::tcflag_t;
 
-    termios::tcsetattr(TTYFD.load(SeqCst), termios::TCSANOW, &termios)?;
+    termios::tcsetattr(tty_fd, termios::TCSANOW, &termios)?;
     Ok(())
 }
 
