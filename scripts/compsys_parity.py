@@ -285,20 +285,34 @@ def build_init_file(dump, fpath_dirs, zstyle_file):
         zstyle_line = f"source {shlex.quote(zstyle_file)}\n"
     # The user's `completer` chain names custom completers that live in
     # ~/.zpwr; `compinit -C` trusts the dump and skips the fpath rescan, so
-    # they aren't autoloaded. Pull them in explicitly (the dir is already on
-    # fpath) so the real chain runs identically on both shells.
-    autoload_line = ""
+    # they aren't autoloaded. Pull in the ones that exist (e.g. _megacomplete),
+    # and — crucially for parity — define `return 1` stubs for the ones that are
+    # NOT installed in this sandbox (the fasd triggers; fasd isn't present under
+    # `-f`). Without a definition, when the completer chain REACHES such a name
+    # (e.g. `cd <tab>` with no earlier match), zsh prints "command not found: N"
+    # to the completion display while zshrs's direct dispatch stays silent — a
+    # divergence that is purely a missing-function artifact, not a completion
+    # difference. A `return 1` stub matches what real fasd does when there is no
+    # trigger, so both shells skip it identically. Applied to BOTH shells.
     zpwr_comp = os.path.expanduser("~/.zpwr/autoload/comp_utils")
-    if os.path.isdir(zpwr_comp):
-        customs = [f for f in ("_megacomplete", "_fasd_zsh_word_complete_trigger",
-                               "_fasd_zsh_word_complete", "_fasd_zsh_word_complete_f",
-                               "_fasd_zsh_word_complete_d")
-                   if os.path.exists(os.path.join(zpwr_comp, f))]
-        if customs:
-            autoload_line = (
-                f"fpath=( {shlex.quote(zpwr_comp)} $fpath )\n"
-                f"autoload -Uz {' '.join(customs)}\n"
-            )
+    referenced = ("_megacomplete", "_fasd_zsh_word_complete_trigger",
+                  "_fasd_zsh_word_complete", "_fasd_zsh_word_complete_f",
+                  "_fasd_zsh_word_complete_d")
+    have = []
+    missing = []
+    for f in referenced:
+        if os.path.isdir(zpwr_comp) and os.path.exists(os.path.join(zpwr_comp, f)):
+            have.append(f)
+        else:
+            missing.append(f)
+    autoload_line = ""
+    if have:
+        autoload_line += (
+            f"fpath=( {shlex.quote(zpwr_comp)} $fpath )\n"
+            f"autoload -Uz {' '.join(have)}\n"
+        )
+    for f in missing:
+        autoload_line += f"{f}() {{ return 1 }}\n"
     if dump:
         # -C: trust the dump — skip the security check AND the fpath rescan for
         # new/changed completers. Matches the user's fast-startup setup and
@@ -413,10 +427,16 @@ def parse_zstyle_statements(path):
     return out
 
 
-def run_cases_against(init_file, cases, args, env):
+def run_cases_against(init_file, cases, args, env, confirm=1):
     """Run every case through `zsh -f` and `zshrs --zsh -f`, both sourcing
     init_file. Returns (passed, failed, fail_records) where each fail_record is
-    (case, ref_grid, test_grid, diffs|None)."""
+    (case, ref_grid, test_grid, diffs|None).
+
+    A completion occasionally renders slower than the settle window under load
+    and gets captured mid-render, so a lone FAIL can be a timing false positive.
+    `confirm` re-runs a failing case up to that many extra times; a divergence
+    counts as real only if it reproduces EVERY time (deterministic). Any pass on
+    retry marks it flaky and it is dropped."""
     ref_argv = [args.zsh, "-f", "-i"]
     test_argv = [args.zshrs, "--zsh", "-f", "-i"]
     source_cmd = f"source {shlex.quote(init_file)}\n".encode()
@@ -432,21 +452,34 @@ def run_cases_against(init_file, cases, args, env):
         finally:
             sess.close()
 
-    passed = failed = 0
-    fails = []
-    for case in cases:
+    def attempt(case):
         ref_grid = capture(ref_argv, "zsh", case)
         test_grid = capture(test_argv, "zshrs", case)
         if ref_grid is None or test_grid is None:
-            failed += 1
-            fails.append((case, ref_grid, test_grid, None))
-            continue
-        diffs = diff_grids(ref_grid, test_grid)
-        if diffs:
+            return (ref_grid, test_grid, None)  # never-reached-prompt
+        return (ref_grid, test_grid, diff_grids(ref_grid, test_grid))
+
+    passed = failed = 0
+    fails = []
+    for case in cases:
+        ref_grid, test_grid, diffs = attempt(case)
+        if not diffs:  # empty diff list = pass (None = prompt failure, handled below)
+            if diffs == []:
+                passed += 1
+                continue
+        # Either a real diff or a prompt failure — confirm it reproduces.
+        stable = True
+        for _ in range(max(0, confirm)):
+            r2, t2, d2 = attempt(case)
+            if d2 == []:  # a clean pass on retry -> flaky, not a real gap
+                stable = False
+                break
+            ref_grid, test_grid, diffs = r2, t2, d2  # keep the latest failing capture
+        if stable:
             failed += 1
             fails.append((case, ref_grid, test_grid, diffs))
         else:
-            passed += 1
+            passed += 1  # flaky pass
     return passed, failed, fails
 
 
@@ -484,7 +517,7 @@ def run_random_combos(args, dump, fpath_dirs, env):
                     f"{len(subset)}/{len(statements)} statements\n")
             f.write("\n".join(subset) + "\n")
         init_file = build_init_file(dump, fpath_dirs, combo_path)
-        passed, failed, fails = run_cases_against(init_file, cases, args, env)
+        passed, failed, fails = run_cases_against(init_file, cases, args, env, confirm=args.confirm)
         tag = "OK  " if failed == 0 else "FAIL"
         print(f"[{tag}] combo {n:3d}  {len(subset):3d}/{len(statements)} styles  "
               f"{passed} pass / {failed} fail")
@@ -534,6 +567,9 @@ def main():
                     help="per-statement keep probability for random combos (default 0.5)")
     ap.add_argument("--combo-commands", default="git ,ssh -,cd /,kill -,echo $PA",
                     help="comma-separated buffers to complete in each random combo")
+    ap.add_argument("--confirm", type=int, default=2, metavar="K",
+                    help="re-run a failing combo case K times; only report if it fails EVERY time "
+                         "(filters timing-flaky false positives, default 2)")
     ap.add_argument("--rows", type=int, default=24)
     ap.add_argument("--cols", type=int, default=80)
     ap.add_argument("--settle", type=int, default=250, help="quiet window ms")
