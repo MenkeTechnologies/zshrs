@@ -278,14 +278,35 @@ pub fn _main_complete(args: &[String]) -> i32 {
 
     // sh:122-133  list-prompt / select-prompt / select-scroll styles
     let ctx_default = format!(":completion:{}:default", curcontext);
+    // sh:128,132,136 — each of list-prompt / select-prompt / select-scroll,
+    // when set, ALSO does `zmodload -i zsh/complist`. This loads the module
+    // whose `boot_` registers `complistmatches` as the `comp_list_matches`
+    // hookfunc — the scroll-paged listing. Without it the hookdef stays at the
+    // plain `ilistmatches`, so `LISTPROMPT` is set but never read and long
+    // lists dump / fall back to the "see all N possibilities" query instead of
+    // paging. The port had this `zmodload` on the menu path (sh:306/322) but
+    // dropped it here, so list-prompt paging never fired.
+    let load_complist = || {
+        let mut ops_i = make_ops();
+        ops_i.ind[b'i' as usize] = 1;
+        let _ = crate::ported::module::bin_zmodload(
+            "zmodload",
+            &["zsh/complist".to_string()],
+            &ops_i,
+            0,
+        );
+    };
     if let Some(v) = lookupstyle(&ctx_default, "list-prompt").first() {
         let _ = setsparam("LISTPROMPT", v);
+        load_complist(); // sh:128
     }
     if let Some(v) = lookupstyle(&ctx_default, "select-prompt").first() {
         let _ = setsparam("MENUPROMPT", v);
+        load_complist(); // sh:132
     }
     if let Some(v) = lookupstyle(&ctx_default, "select-scroll").first() {
         let _ = setsparam("MENUSCROLL", v);
+        load_complist(); // sh:136
     }
 
     // sh:31-33  global tag-tracking state init

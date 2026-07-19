@@ -1095,13 +1095,24 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                 'W' => dat.prpre = take(&mut p, &mut idx), // c:725
                 'i' => dat.ipre = take(&mut p, &mut idx), // c:729
                 'I' => dat.isuf = take(&mut p, &mut idx), // c:733
-                'J' => dat.group = take(&mut p, &mut idx), // c:737
+                // c:800/808 — `if (!*sp) *sp = ...`: take FIRST option only.
+                // The argument is always consumed, but dat.group is assigned
+                // only when still empty. Last-wins here made `_files`/_path_files'
+                // inner `-J globbed-files`/`-J directories` overwrite _arguments'
+                // outer `-J argument-rest`, splitting one group into duplicates.
+                'J' => {
+                    let v = take(&mut p, &mut idx); // c:737 (arg always consumed)
+                    if dat.group.is_none() {
+                        dat.group = v;
+                    }
+                }
                 'V' => {
-                    // c:741 -V — unsorted group.
+                    // c:741 -V — unsorted group; first-wins like -J.
+                    let v = take(&mut p, &mut idx); // c:744 (arg always consumed)
                     if dat.group.is_none() {
                         dat.aflags |= CAF_NOSORT; // c:742-743
+                        dat.group = v;
                     }
-                    dat.group = take(&mut p, &mut idx); // c:744
                 }
                 'X' => dat.exp = take(&mut p, &mut idx), // c:757
                 'x' => dat.mesg = take(&mut p, &mut idx), // c:761

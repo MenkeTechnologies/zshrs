@@ -1328,7 +1328,6 @@ pub fn asklistscroll(ml: i32) -> i32 {
 /// if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
 /// return 0;
 /// ```
-#[allow(unused_variables)]
 pub fn compprintnl(ml: i32) -> i32 {
     // c:1054
     // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
@@ -1336,8 +1335,21 @@ pub fn compprintnl(ml: i32) -> i32 {
     let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
     let _ = write_loop(out_fd, b"\x1b[K\n");
-    // c:1058-1063 — scroll-prompt branch needs `mscroll`/`mrestlines`/
-    //                `asklistscroll` substrate; skipped until those land.
+    // c:1058 — `if (mscroll && !--mrestlines && (ask = asklistscroll(ml)))
+    //           return ask;`. This is the per-newline half of the scroll
+    //          pager; `printfmt` handles the column-wrap half the same way
+    //          (c:824). Without it, MRESTLINES was only decremented on wraps,
+    //          so grouped/one-per-line listings never hit the page boundary
+    //          and dumped the whole list instead of paging with LISTPROMPT.
+    if MSCROLL.load(Ordering::SeqCst) != 0 {
+        let rest = MRESTLINES.fetch_sub(1, Ordering::SeqCst) - 1;
+        if rest == 0 {
+            let ask = asklistscroll(ml);
+            if ask != 0 {
+                return ask;
+            }
+        }
+    }
     0
 }
 
