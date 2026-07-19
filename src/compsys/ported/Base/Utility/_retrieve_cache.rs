@@ -29,13 +29,15 @@
 //! ```
 //!
 //! `. "$_cache_path"` — sources the cache file in the current
-//! shell. Our port dispatches via the `source` builtin (real
-//! `bin_dot`) when wired; without an executor, the load step is a
-//! no-op and we return success when the file exists + is fresh.
+//! shell via `execute_script(". '<path>'")`, running the real `.`
+//! builtin (`bin_dot`) through the executor pipeline so the cached
+//! parameters are restored at the caller's locallevel. Without an
+//! executor in scope the load step is a no-op and we still return
+//! success when the file exists + is fresh.
 
 use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_message::_message;
-use crate::ported::exec::dispatch_function_call;
+use crate::ported::exec::execute_script;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::getsparam;
 use std::path::Path;
@@ -85,8 +87,19 @@ pub fn _retrieve_cache(args: &[String]) -> i32 {
         if _cache_invalid(&[cache_ident]) == 0 {
             return 1;
         }
-        // sh:23  source the cache file
-        let _ = dispatch_function_call("source", &[cache_path]);
+        // sh:23  `. "$_cache_path"` — source the cache file in the
+        // current shell so the cached parameters (e.g.
+        // `_docker_subcommands`) are restored in the caller's scope.
+        // `source` is a BUILTIN (bin_dot), not a shell function, so
+        // `dispatch_function_call("source", …)` found no shfunc/Rust
+        // port and silently no-op'd: the file was never sourced, yet
+        // this returned 0 ("loaded"), so the completer skipped
+        // regeneration and produced 0 matches (docker <tab> under
+        // `use-cache on`). Run the real `.` builtin through the
+        // executor pipeline — it restores the params at the current
+        // locallevel exactly like zsh's `. file` inside a function.
+        let quoted = format!("'{}'", cache_path.replace('\'', "'\\''"));
+        let _ = execute_script(&format!(". {}", quoted));
         // sh:24
         0
     } else {
