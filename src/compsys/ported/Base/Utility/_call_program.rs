@@ -152,6 +152,18 @@ pub fn _call_program(args: &[String]) -> i32 {
         let _ = so.write_all(&output.stdout);
         let _ = so.flush();
     }
+    // sh — upstream `_call_program` does `exec {err_fd}>&2` when fd 2 is a
+    // redirect (caller's `2>&1` capture) and `>/dev/null` when fd 2 is the tty.
+    // Mirror the stdout gate: re-emit stderr only when fd 2 is NOT a tty, so a
+    // helper that writes its result to stderr and is captured via `2>&1` (e.g.
+    // docker/tar subcommand listers) is seen, while live-display completion
+    // (fd 2 = tty) still discards it (no screen leak).
+    if !output.stderr.is_empty() && unsafe { libc::isatty(2) } == 0 {
+        use std::io::Write as _;
+        let mut se = std::io::stderr();
+        let _ = se.write_all(&output.stderr);
+        let _ = se.flush();
+    }
     if output.status.success() {
         0
     } else {
