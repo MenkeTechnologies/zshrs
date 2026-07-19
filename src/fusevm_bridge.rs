@@ -4014,7 +4014,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if crate::dash_mode::bash_mode() && !key.contains(',') {
                 key.trim().parse::<usize>().ok().and_then(|i| {
                     with_executor(|exec| {
-                        if exec.assoc(&name).is_none() {
+                        if !exec.has_assoc(&name) {
                             let old_len = exec.array(&name).map(|a| a.len()).unwrap_or(0);
                             Some((name.clone(), old_len, i))
                         } else {
@@ -4066,9 +4066,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // canonical port currently only handles literal int / string
         // keys, so pre-resolve here.
         let resolved_key = with_executor(|exec| {
-            let is_indexed = exec.array(&name).is_some();
-            let is_assoc = exec.assoc(&name).is_some();
-            let is_scalar = !is_indexed && !is_assoc && exec.scalar(&name).is_some();
+            // Existence probes only — use the non-cloning `has_*`
+            // checks. `exec.assoc()` / `exec.array()` return owned
+            // clones of the whole map/vector, so probing `.is_some()`
+            // here copied the entire associative array on every
+            // `h[k]=v` (O(n) per store → O(n²) for a fill loop). The
+            // profiler flagged `ShellExecutor::assoc → IndexMap::clone`
+            // as the dominant cost.
+            let is_indexed = exec.has_array(&name);
+            let is_assoc = exec.has_assoc(&name);
+            let is_scalar = !is_indexed && !is_assoc && exec.has_scalar(&name);
             // c:Src/params.c::getindex — `(i)pat` / `(I)pat` / `(R)pat`
             // / `(r)pat` subscript flags on an indexed array LHS resolve
             // to a numeric index (first / last match of pat). On a
@@ -5500,7 +5507,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Routes through canonical assignaparam(name, [value],
             // ASSPM_AUGMENT) — Src/params.c:3357 c:3402-3412 augment
             // path prepends prior scalar / appends to existing array.
-            if exec.array(&name).is_some() {
+            // Existence probe uses the non-cloning `has_array` — the
+            // owning `exec.array()` clone here made `arr+=x` in a loop
+            // O(n²) (see the assoc-store fix above).
+            if exec.has_array(&name) {
                 // c:Src/params.c — under KSHARRAYS a bare array name
                 // addresses element 0 (ksh), so `a+=X` (scalar augment)
                 // CONCATENATES onto the first element ("firstlast second"),
@@ -5536,7 +5546,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 return;
             }
-            if exec.assoc(&name).is_some() {
+            if exec.has_assoc(&name) {
                 eprintln!("zshrs: {}: cannot use += on assoc without (key val)", name);
                 return;
             }
