@@ -1,5 +1,15 @@
 # subst.c → subst_port.rs: Faithful Port Plan
 
+> **SUPERSEDED — this plan was executed.** The target file `src/subst_port.rs`
+> no longer exists; it was moved to `src/ported/subst.rs` (commit `b8e737fa2a`,
+> "reorg"). The core objective below — replace the small-dispatcher
+> `paramsubst` with a 1:1 port of C's single large function — is done:
+> `paramsubst` is now one function spanning `src/ported/subst.rs:3123`–`18679`
+> (~15,500 lines), and the file is ~23,900 lines total. The "currently
+> structured as a 206-line dispatcher" starting-state and `src/subst_port.rs`
+> paths throughout this document are therefore **historical**; they describe
+> the pre-port state, not the current tree. Kept as a record of the plan.
+
 ## Why this exists
 
 `src/subst_port.rs` is currently structured as a tiny dispatcher (`paramsubst` = 206 lines) that calls many small helpers (`parse_brace_param`, `apply_param_flags`, `apply_operator_with_flags_full`, `scalar_char_subscript`, `get_param_value`, `get_param_with_subscript`, etc.). That decomposition broke the C source's invariant: in `Src/subst.c`, paramsubst is **2849 lines as one function** (subst.c:1625-4473) with shared local state — `aval`, `isarr`, `val`, `qt`, `spbreak`, `spsep`, `sep`, `nojoin`, `aspar`, `subexp`, `ms_flags`, `quoted_array_with_offset`, `casmod`, `pf_flags`, `quoteerr`, `chkset`, `quoted` — threaded through every flag arm, every operator arm, and the post-processing block.
