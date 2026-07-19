@@ -2840,6 +2840,7 @@ pub fn complistmatches(
 
     // c:2044-2045 — `mscroll = 0; mlistp = NULL;`
     MSCROLL.store(0, Ordering::SeqCst);
+    MLISTP.lock().unwrap().clear(); // c:2045 — mlistp = NULL
 
     // c:2048-2076 — LISTPROMPT / asklist branch. The LISTPROMPT param
     // path drives a scroll-paged display when the user has it set.
@@ -2850,11 +2851,20 @@ pub fn complistmatches(
         SHOWINGLIST.store(0, Ordering::SeqCst);
         LISTSHOWN.store(0, Ordering::SeqCst);
         LASTLISTLEN.store(0, Ordering::SeqCst);
-        if listprompt.is_some() {
+        if let Some(lp) = &listprompt {
             // c:2060
             // c:2061 — clearflag = (USEZLE && !termflags && dolastprompt)
             CLEARFLAG.store(if usezle { 1 } else { 0 }, Ordering::SeqCst);
             MSCROLL.store(1, Ordering::SeqCst); // c:2062
+            // c:2049-2052 — `mlistp = dupstring(listprompt); if (!*mlistp)
+            //   mlistp = default;`. MLISTP feeds compprintfmt (the scroll
+            //   status line); the port set MSCROLL but never populated MLISTP,
+            //   so the "At %p: Hit TAB…" line rendered as empty (absent).
+            *MLISTP.lock().unwrap() = if lp.is_empty() {
+                "%SAt %p: Hit TAB for more, or the character to insert%s".to_string()
+            } else {
+                lp.clone()
+            };
         } else {
             // c:2063
             CLEARFLAG.store(1, Ordering::SeqCst); // c:2064
