@@ -1145,7 +1145,13 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
         if !prefix.is_empty() {
             let wb = crate::ported::zle::compcore::WB.load(Relaxed);
             let we = crate::ported::zle::compcore::WE.load(Relaxed);
-            if we > wb && wb >= 0 {
+            // c:783-790 — C foredel(we-wb)+inststr is UNCONDITIONAL; foredel(0)
+            // is a safe no-op for the empty word (we == wb, e.g. `ssh-keygen
+            // <tab>`), so a genuine shared prefix still inserts. Safe now that
+            // join_clines no longer wrongly wipes a no-common-prefix anchor
+            // (compmatch.rs) — chmod's prefix is empty here, so `!prefix
+            // .is_empty()` above already gates it out.
+            if we >= wb && wb >= 0 {
                 let span = we - wb;
                 crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:785
                 // c:786 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on

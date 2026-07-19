@@ -4034,6 +4034,18 @@ pub fn join_clines(
                     break;
                 }
                 // c:2931-2935 — clear o's data and cut its chain.
+                // c: `o->word = o->line = o->orig = NULL; o->wlen = 0;
+                //     free_cline(o->next); o->next = NULL; o->flags |= CLF_MISS;`
+                // NOTE: C does NOT break/continue here — it falls through to
+                // the equal-anchor merge tail below (min/max update + join_psfx)
+                // and then the loop-tail advance `o = o->next`. Because o->next
+                // was just cleared, that advance makes o NULL, the while loop
+                // exits, and the post-loop `if (o)` cleanup is skipped — so the
+                // blanked head node is returned intact. Breaking here instead
+                // jumped straight to the post-loop truncation, which nuked the
+                // blanked node and returned an empty list (join wiped ainfo->line
+                // to None on a no-common-prefix set like chmod's a/u/g/o/=/+/-,
+                // letting a later candidate survive unreduced).
                 if let Some(o_ref) = (*oo_slot).as_deref_mut() {
                     o_ref.word = None;
                     o_ref.line = None;
@@ -4042,7 +4054,7 @@ pub fn join_clines(
                     o_ref.next = None;
                     o_ref.flags |= CLF_MISS;
                 }
-                break;
+                // fall through to the merge tail (c:2940-2959) + advance.
             }
 
             // c:2940-2959 — equal-anchor merge path.
