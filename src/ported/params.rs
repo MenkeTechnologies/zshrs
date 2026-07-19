@@ -7483,6 +7483,42 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         && (prior_flags as u32 & PM_ARRAY) != 0
         && (prior_flags as u32 & PM_UNSET) == 0
     {
+        // Fast in-place append. `arr+=(x)` in a loop is the hot path.
+        // The general branch below clones the prior array, re-collects
+        // [old…, new…], re-stores it, and then clones the whole `param`
+        // for the return value — four O(n) copies per call, so N appends
+        // are O(N²) (this is the "terrible slowness for array append"
+        // the profiler pinned on `Vec<String>::clone` under
+        // `assignaparam`). For a plain array — no special setfn, no env
+        // tie (`ename`), no PM_UNIQUE dedupe, no colon-tie, not the
+        // `argv`/`@`/`*` positional alias — push the new elements
+        // straight onto `pm.u_arr` under the write lock (amortized O(k))
+        // and return a cheap non-None marker. Every non-test caller uses
+        // the return only via `.is_none()` for the error path.
+        let is_special = (prior_flags as u32 & (PM_SPECIAL | PM_UNIQUE)) != 0;
+        let is_positional = name == "argv" || name == "@" || name == "*";
+        let is_colon_tie = TIED_COLON_ARRAYS.iter().any(|(a, _)| *a == name);
+        if !is_special && !is_positional && !is_colon_tie {
+            let mut tab = paramtab().write().unwrap();
+            if let Some(pm) = tab.get_mut(name) {
+                if pm.ename.is_none()
+                    && (pm.node.flags as u32 & (PM_SPECIAL | PM_UNIQUE)) == 0
+                {
+                    pm.u_arr.get_or_insert_with(Vec::new).extend(val);
+                    pm.u_str = None;
+                    pm.u_hash = None;
+                    // c:2712 setarrvalue head — clears UNSET on first write.
+                    pm.node.flags &= !((PM_UNSET | PM_DECLARED) as i32);
+                    let mut marker = param::default();
+                    marker.node.nam = name.to_string();
+                    marker.node.flags = pm.node.flags;
+                    return Some(Box::new(marker));
+                }
+            }
+            // Param vanished or grew a tie under the lock — fall back to
+            // the general read-modify-write path below.
+            drop(tab);
+        }
         let prior_arr = {
             let tab = paramtab().read().unwrap();
             tab.get(name)

@@ -908,11 +908,31 @@ impl ShellExecutor {
         getsparam(name).is_some()
     }
 
-    /// Test whether an array parameter exists in paramtab. Routes
-    /// through canonical `getaparam` (PM_TYPE check + digit-first-name
-    /// rejection).
+    /// Test whether an array parameter exists in paramtab. Mirrors
+    /// `getaparam(name).is_some()` (PM_ARRAY + populated `u_arr`, with
+    /// digit-first-name rejection and nameref deref) WITHOUT cloning the
+    /// backing vector — `getaparam` returns an owned `Vec<String>`, so a
+    /// bare existence probe on a large array copied every element. Hot in
+    /// the subscript-store dispatch (`a[i]=v` in a loop), so keep it a
+    /// flag read.
     pub fn has_array(&self, name: &str) -> bool {
-        getaparam(name).is_some()
+        if name.starts_with(|c: char| c.is_ascii_digit()) {
+            return false;
+        }
+        let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+            crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+            _ => name.to_string(),
+        };
+        crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(resolved.as_str()).map(|p| {
+                    (p.node.flags as u32 & crate::ported::zsh_h::PM_ARRAY) != 0
+                        && p.u_arr.is_some()
+                })
+            })
+            .unwrap_or(false)
     }
 
     /// Test whether an associative array parameter exists. Reads
