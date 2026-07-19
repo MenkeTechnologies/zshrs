@@ -4259,7 +4259,7 @@ pub fn domenuselect(
                 CLEARLIST.store(0, Ordering::SeqCst);
                 CLEARFLAG.store(1, Ordering::SeqCst);
             }
-            complistmatches(std::ptr::null_mut(), std::ptr::null_mut()); // c:2589 zrefresh()
+            zrefresh(); // c:2589
             *STATUSLINE.lock().unwrap() = None; // c:2590
 
             INSELECT.store(1, Ordering::SeqCst); // c:2591
