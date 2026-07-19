@@ -205,7 +205,7 @@ checklist below stays within them:
 
 | PORT.md rule | How this plan complies |
 |---|---|
-| `src/ported/` is FROZEN — no new files | All work modifies existing files in the 89-file set. |
+| `src/ported/` is FROZEN — no new files | All work modifies existing files in the 106-file set. |
 | No new `fn` names not in `docs/zsh_c_functions.txt` | All work modifies state holders (`static …` declarations); no new `fn` introduced. |
 | Rule 2: every `fn` must carry `/// Port of … from Src/…:NNNN` | All converted holders keep their existing `/// Port of file-static <c_name> from Src/<file>.c:<NNNN>` doc-comment (already present at e.g. `zle/compctl.rs:212-213, 220-221`). Same form applies to converted statics. |
 | Rule 1: no abstractions without C counterpart | "Bag-of-globals" structs that aggregate file-`static`s with no matching C struct (e.g. former `MathState` at `math.rs:539`, deleted at `math.rs:599`) are explicit anti-pattern below. |

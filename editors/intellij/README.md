@@ -87,7 +87,7 @@ The `zshrs` binary must be on `$PATH`, or configured under *Settings → Tools �
 | Declaration | `local` / `typeset` / `declare` / `export` / `readonly` / `integer` / `float` / `private` |
 | Modifier | `alias` / `setopt` / `zstyle` / `zmodload` / `autoload` / `bindkey` / `compdef` / `zcompile` |
 | I/O | `source` / `.` / `eval` / `exec` / `echo` / `print` / `printf` / `read` / `trap` |
-| Builtins | full canonical set from `ported::builtin::BUILTINS` (156 entries) |
+| Builtins | full canonical set from `ported::builtin::BUILTINS` (159 entries) |
 | Variables | `$name`, `${name}`, `${(P)var}`, `$0…$9`, `$?`, `$!`, `$$`, `$#`, `$*`, `$@`, `$-`, `$_` |
 | Operators | `|`, `|&`, `&&`, `||`, `&`, `=`, `+=`, `:=`, `?=`, `=~`, `==` |
 | Redirects | `>`, `>>`, `<`, `<<`, `<<<`, `&>`, `2>&1`, `>&`, `>|` |
@@ -169,7 +169,7 @@ Pinned by 8 tests under `lsp::tests::code_actions_*`.
 | Tab | Source registry | Count |
 |-----|-----------------|------:|
 | **All** | merged union (last-write-wins on collisions) | 1439 |
-| **Builtins** | `ported::builtin::BUILTINS` | 156 |
+| **Builtins** | `ported::builtin::BUILTINS` | 159 |
 | **Keywords** | `ported::hashtable::RESWDS` (all reserved words per `man zshmisc`; declaration commands appear in both tabs) | 31 |
 | **Options** | `zsh_option_docs::OPTION_DOCS` ∪ `OPTION_ALIASES` (canonical CAPS form per `man zshoptions`) | 756 |
 | **Special vars** | `zsh_special_var_docs::SPECIAL_VAR_DOCS` ∪ `SPECIAL_VAR_ALIASES` | 279 |
@@ -450,7 +450,7 @@ The Rust side lives in:
 | `src/compsys/mod.rs` | `COMPSYS_FN_NAMES` const (52) — Rust-native completion functions |
 | `src/ported/hashtable.rs` | `RESWDS` const — canonical reserved-word table (port of `Src/hashtable.c:1076-1108`) |
 | `src/ported/options.rs` | `ZSH_OPTIONS_SET` — canonical setopt registry (197 entries) |
-| `src/ported/builtin.rs` | `BUILTINS` — canonical builtin registry (156 entries) |
+| `src/ported/builtin.rs` | `BUILTINS` — canonical builtin registry (159 entries) |
 | `src/ported/lex.rs` + `parse.rs` | Tokenizer + AST used by LSP diagnostics + DAP statement boundaries |
 
 ---
