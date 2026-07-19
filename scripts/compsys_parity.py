@@ -487,16 +487,18 @@ def saved_path(outdir, seed, n):
     return os.path.join(outdir, f"combo_{seed}_{n}.zsh")
 
 
-def run_multitab(init_file, buffer, presses, args, env):
+def run_keyseq(init_file, buffer, keys, args, env):
     """Drive `zsh -f` and `zshrs --zsh -f` in LOCKSTEP: source init, type
-    `buffer`, then press TAB `presses` times, capturing + byte-diffing BOTH
-    screens AFTER EACH press — so the menu-cycle / list-prompt paging
-    progression is verified at every step, not just the final frame.
+    `buffer`, then send each key in `keys` one at a time, capturing +
+    byte-diffing BOTH screens AFTER EACH keystroke. `keys` may mix "tab",
+    arrows ("down"/"up"/...), and literal filter characters ("a".."z") — so
+    menu-cycling, list-prompt paging, arrow navigation, AND interactive-filter
+    narrowing (typing letters to filter the menu) are all verified per-key.
 
-    Returns (fail_press, records): fail_press is the 1-based index of the first
-    press whose screens diverge (0 if all match); records is
-    [(press_idx, ref_grid, test_grid, diffs), ...]. Stops at the first
-    divergence (the two shells desync past that point)."""
+    Returns (fail_step, records): fail_step is the 1-based index of the first
+    key whose screens diverge (0 if all match); records is
+    [(step, key, ref_grid, test_grid, diffs), ...]. Stops at first divergence
+    (the two shells desync past that point)."""
     source_cmd = f"source {shlex.quote(init_file)}\n".encode()
     ref = ShellSession([args.zsh, "-f", "-i"], env, args.rows, args.cols, "zsh", args.settle)
     test = ShellSession([args.zshrs, "--zsh", "-f", "-i"], env, args.rows, args.cols, "zshrs", args.settle)
@@ -505,7 +507,7 @@ def run_multitab(init_file, buffer, presses, args, env):
             s.drain_settled(max_wait=3.0, first_wait=2.0)
             s.send(source_cmd)
             if not s.wait_for_prompt(timeout=25.0):
-                return (1, [(1, None, None, None)])
+                return (1, [(1, "(init)", None, None, None)])
         for s in (ref, test):
             s.fresh_prompt()
         if buffer:
@@ -514,24 +516,41 @@ def run_multitab(init_file, buffer, presses, args, env):
             for s in (ref, test):
                 s.drain_settled(max_wait=2.0, first_wait=1.0)
         records = []
-        for p in range(1, presses + 1):
+        for step, key in enumerate(keys, 1):
             for s in (ref, test):
-                s.send_key("tab")
-            # first press is cold (autoload chain) → long first-byte wait; later
-            # presses are warm menu redraws.
-            fw = 8.0 if p == 1 else 4.0
+                s.send_key(key)
+            # the FIRST completion keystroke is cold (autoload chain) → long
+            # first-byte wait; later keys are warm menu redraws / filter edits.
+            fw = 8.0 if step == 1 else 4.0
             for s in (ref, test):
                 s.drain_settled(max_wait=12.0, first_wait=fw)
             rg = normalize_rows(ref.grid())
             tg = normalize_rows(test.grid())
             diffs = diff_grids(rg, tg)
-            records.append((p, rg, tg, diffs))
+            records.append((step, key, rg, tg, diffs))
             if diffs:
-                return (p, records)
+                return (step, records)
         return (0, records)
     finally:
         ref.close()
         test.close()
+
+
+def gen_keyseq(rng, length):
+    """Generate a random lockstep key path: always start with a TAB (list +
+    enter menu-select), then a random mix of more TABs (cycle/page), arrows
+    (menu navigation), and literal letters (interactive filter narrowing)."""
+    seq = ["tab"]
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    for _ in range(max(0, length - 1)):
+        r = rng.random()
+        if r < 0.35:
+            seq.append("tab")
+        elif r < 0.60:
+            seq.append(rng.choice(["down", "up", "left", "right"]))
+        else:
+            seq.append(rng.choice(letters))  # interactive-filter keystroke
+    return seq
 
 
 def run_random_combos(args, dump, fpath_dirs, env):
@@ -549,7 +568,7 @@ def run_random_combos(args, dump, fpath_dirs, env):
     os.makedirs(outdir, exist_ok=True)
 
     print(f"# random-combo fuzz: {args.random_combos} combos x {len(commands)} cmds "
-          f"x {presses} TAB presses (parity asserted after EACH press)")
+          f"x {presses}-key paths (TAB/arrow/filter-letter, parity asserted after EACH key)")
     print(f"# base zstyle: {args.zstyle} ({len(statements)} statements)")
     print(f"# seed={args.seed}  keep-prob={args.combo_keep}  confirm={args.confirm}  geom={args.rows}x{args.cols}")
     print(f"# failing combos saved to: {outdir}")
@@ -569,36 +588,39 @@ def run_random_combos(args, dump, fpath_dirs, env):
 
         combo_failed = False
         combo_fail_lines = []
-        for b in commands:
+        for ci, b in enumerate(commands):
             buffer = b if b.endswith(" ") else b + " "
-            # Multi-press with confirmation: re-run the whole lockstep sequence
-            # up to `confirm` times; a divergence counts only if it reproduces
-            # at the same press index (filters timing-flaky captures).
-            fail_press, records = run_multitab(init_file, buffer, presses, args, env)
+            # Random per-command key path (seeded): TAB list/cycle/page + arrow
+            # menu nav + literal-letter interactive filtering, asserted per key.
+            keys = gen_keyseq(random.Random(f"{args.seed}:{n}:{ci}:keys"), presses)
+            # Confirmation: re-run the whole lockstep up to `confirm` times; a
+            # divergence counts only if it reproduces at the same step index.
+            fail_step, records = run_keyseq(init_file, buffer, keys, args, env)
             for _ in range(max(0, args.confirm)):
-                if fail_press == 0:
+                if fail_step == 0:
                     break
-                fp2, rec2 = run_multitab(init_file, buffer, presses, args, env)
-                if fp2 != fail_press:
-                    fail_press = 0  # not reproducible at the same press → flaky
+                fs2, rec2 = run_keyseq(init_file, buffer, keys, args, env)
+                if fs2 != fail_step:
+                    fail_step = 0  # not reproducible at the same step → flaky
                     break
                 records = rec2
-            if fail_press:
+            if fail_step:
                 combo_failed = True
-                p, rg, tg, diffs = records[-1]
+                step, key, rg, tg, diffs = records[-1]
+                pre = "+".join(keys[:step])
                 if diffs is None:
                     combo_fail_lines.append(f"       {buffer!r}: a shell never reached prompt")
                 else:
                     combo_fail_lines.append(
-                        f"       {buffer!r}: diverges at TAB press #{p} ({len(diffs)} rows differ)")
+                        f"       {buffer!r}: diverges at step #{step} (key {key!r}, path {pre}) "
+                        f"({len(diffs)} rows differ)")
                     if args.verbose:
                         for i, a, bb in diffs[:6]:
                             combo_fail_lines.append(f"         row {i:2d}: zsh={a!r}")
                             combo_fail_lines.append(f"                 zshrs={bb!r}")
-                    tabs = ",".join(["tab"] * p)
                     combo_fail_lines.append(
                         f"       -> replay: scripts/compsys_parity.py --zstyle {saved_path(outdir, args.seed, n)} "
-                        f"--case '{buffer}' --keys {tabs} -v")
+                        f"--case '{buffer}' --keys {','.join(keys[:step])} -v")
         tag = "OK  " if not combo_failed else "FAIL"
         print(f"[{tag}] combo {n:3d}  {len(subset):3d}/{len(statements)} styles")
         if combo_failed:
@@ -638,8 +660,9 @@ def main():
     ap.add_argument("--combo-commands", default="git ,ssh -,cd /,kill -,echo $PA",
                     help="comma-separated buffers to complete in each random combo")
     ap.add_argument("--presses", type=int, default=5, metavar="N",
-                    help="press TAB N times per combo case, asserting byte-parity after EACH press "
-                         "(exercises menu-cycle / list-prompt paging; default 5)")
+                    help="length of the random key path per combo case (TAB cycle/page + arrow "
+                         "menu-nav + literal-letter interactive filter), parity asserted after "
+                         "EACH key; default 5")
     ap.add_argument("--confirm", type=int, default=2, metavar="K",
                     help="re-run a failing combo case K times; only report if it fails EVERY time "
                          "(filters timing-flaky false positives, default 2)")
