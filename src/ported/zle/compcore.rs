@@ -657,6 +657,25 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         let _ = crate::ported::params::setsparam("ISUFFIX", "");
         let _ = crate::ported::params::setsparam("QIPREFIX", "");
         let _ = crate::ported::params::setsparam("QISUFFIX", "");
+
+        // c:720-723 — `complastprefix = ztrdup(compprefix);
+        //              complastsuffix = ztrdup(compsuffix);`.
+        // Captured here (before the completion fn runs and before any
+        // `compset -P/-S` strips $PREFIX/$SUFFIX) so `domenuselect`'s
+        // interactive status line can render the search buffer as
+        // `interactive: <prefix>[]<suffix>` (setmstatus, complist.c:2234).
+        if let Ok(mut g) = crate::ported::zle::complete::COMPLASTPREFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = pre.clone(); // c:722
+        }
+        if let Ok(mut g) = crate::ported::zle::complete::COMPLASTSUFFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = suf.clone(); // c:723
+        }
     }
 
     // c:591-617 — context selection.
