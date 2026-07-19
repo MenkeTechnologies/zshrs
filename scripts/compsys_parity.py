@@ -483,6 +483,57 @@ def run_cases_against(init_file, cases, args, env, confirm=1):
     return passed, failed, fails
 
 
+def saved_path(outdir, seed, n):
+    return os.path.join(outdir, f"combo_{seed}_{n}.zsh")
+
+
+def run_multitab(init_file, buffer, presses, args, env):
+    """Drive `zsh -f` and `zshrs --zsh -f` in LOCKSTEP: source init, type
+    `buffer`, then press TAB `presses` times, capturing + byte-diffing BOTH
+    screens AFTER EACH press — so the menu-cycle / list-prompt paging
+    progression is verified at every step, not just the final frame.
+
+    Returns (fail_press, records): fail_press is the 1-based index of the first
+    press whose screens diverge (0 if all match); records is
+    [(press_idx, ref_grid, test_grid, diffs), ...]. Stops at the first
+    divergence (the two shells desync past that point)."""
+    source_cmd = f"source {shlex.quote(init_file)}\n".encode()
+    ref = ShellSession([args.zsh, "-f", "-i"], env, args.rows, args.cols, "zsh", args.settle)
+    test = ShellSession([args.zshrs, "--zsh", "-f", "-i"], env, args.rows, args.cols, "zshrs", args.settle)
+    try:
+        for s in (ref, test):
+            s.drain_settled(max_wait=3.0, first_wait=2.0)
+            s.send(source_cmd)
+            if not s.wait_for_prompt(timeout=25.0):
+                return (1, [(1, None, None, None)])
+        for s in (ref, test):
+            s.fresh_prompt()
+        if buffer:
+            for s in (ref, test):
+                s.type_text(buffer)
+            for s in (ref, test):
+                s.drain_settled(max_wait=2.0, first_wait=1.0)
+        records = []
+        for p in range(1, presses + 1):
+            for s in (ref, test):
+                s.send_key("tab")
+            # first press is cold (autoload chain) → long first-byte wait; later
+            # presses are warm menu redraws.
+            fw = 8.0 if p == 1 else 4.0
+            for s in (ref, test):
+                s.drain_settled(max_wait=12.0, first_wait=fw)
+            rg = normalize_rows(ref.grid())
+            tg = normalize_rows(test.grid())
+            diffs = diff_grids(rg, tg)
+            records.append((p, rg, tg, diffs))
+            if diffs:
+                return (p, records)
+        return (0, records)
+    finally:
+        ref.close()
+        test.close()
+
+
 def run_random_combos(args, dump, fpath_dirs, env):
     """Fuzz random subsets of the user's zstyles: for each of N seeded combos,
     keep each statement with probability `--combo-keep`, run the combo commands,
@@ -493,16 +544,14 @@ def run_random_combos(args, dump, fpath_dirs, env):
 
     statements = parse_zstyle_statements(args.zstyle)
     commands = [c.strip() for c in args.combo_commands.split(",") if c.strip()]
-    cases = [
-        Case(f"cmd{i}", (b if b.endswith(" ") else b + " "), ["tab"])
-        for i, b in enumerate(commands)
-    ]
+    presses = max(1, args.presses)
     outdir = os.path.join(tempfile.gettempdir(), f"compsys_parity_failing_combos_{args.seed}")
     os.makedirs(outdir, exist_ok=True)
 
-    print(f"# random-combo fuzz: {args.random_combos} combos x {len(cases)} cmds")
+    print(f"# random-combo fuzz: {args.random_combos} combos x {len(commands)} cmds "
+          f"x {presses} TAB presses (parity asserted after EACH press)")
     print(f"# base zstyle: {args.zstyle} ({len(statements)} statements)")
-    print(f"# seed={args.seed}  keep-prob={args.combo_keep}  geom={args.rows}x{args.cols}")
+    print(f"# seed={args.seed}  keep-prob={args.combo_keep}  confirm={args.confirm}  geom={args.rows}x{args.cols}")
     print(f"# failing combos saved to: {outdir}")
     print()
 
@@ -517,26 +566,47 @@ def run_random_combos(args, dump, fpath_dirs, env):
                     f"{len(subset)}/{len(statements)} statements\n")
             f.write("\n".join(subset) + "\n")
         init_file = build_init_file(dump, fpath_dirs, combo_path)
-        passed, failed, fails = run_cases_against(init_file, cases, args, env, confirm=args.confirm)
-        tag = "OK  " if failed == 0 else "FAIL"
-        print(f"[{tag}] combo {n:3d}  {len(subset):3d}/{len(statements)} styles  "
-              f"{passed} pass / {failed} fail")
-        if failed:
-            fail_combos += 1
-            saved = os.path.join(outdir, f"combo_{args.seed}_{n}.zsh")
-            with open(saved, "w") as f, open(combo_path) as src:
-                f.write(src.read())
-            for (case, rg, tg, diffs) in fails:
+
+        combo_failed = False
+        combo_fail_lines = []
+        for b in commands:
+            buffer = b if b.endswith(" ") else b + " "
+            # Multi-press with confirmation: re-run the whole lockstep sequence
+            # up to `confirm` times; a divergence counts only if it reproduces
+            # at the same press index (filters timing-flaky captures).
+            fail_press, records = run_multitab(init_file, buffer, presses, args, env)
+            for _ in range(max(0, args.confirm)):
+                if fail_press == 0:
+                    break
+                fp2, rec2 = run_multitab(init_file, buffer, presses, args, env)
+                if fp2 != fail_press:
+                    fail_press = 0  # not reproducible at the same press → flaky
+                    break
+                records = rec2
+            if fail_press:
+                combo_failed = True
+                p, rg, tg, diffs = records[-1]
                 if diffs is None:
-                    print(f"       {case.buffer!r}: a shell never reached prompt")
+                    combo_fail_lines.append(f"       {buffer!r}: a shell never reached prompt")
                 else:
-                    print(f"       {case.buffer!r}: {len(diffs)} rows differ")
+                    combo_fail_lines.append(
+                        f"       {buffer!r}: diverges at TAB press #{p} ({len(diffs)} rows differ)")
                     if args.verbose:
-                        for i, a, b in diffs[:6]:
-                            print(f"         row {i:2d}: zsh={a!r}")
-                            print(f"                 zshrs={b!r}")
-            print(f"       -> replay: scripts/compsys_parity.py "
-                  f"--zstyle {saved} --case '{cases[0].buffer}' --keys tab -v")
+                        for i, a, bb in diffs[:6]:
+                            combo_fail_lines.append(f"         row {i:2d}: zsh={a!r}")
+                            combo_fail_lines.append(f"                 zshrs={bb!r}")
+                    tabs = ",".join(["tab"] * p)
+                    combo_fail_lines.append(
+                        f"       -> replay: scripts/compsys_parity.py --zstyle {saved_path(outdir, args.seed, n)} "
+                        f"--case '{buffer}' --keys {tabs} -v")
+        tag = "OK  " if not combo_failed else "FAIL"
+        print(f"[{tag}] combo {n:3d}  {len(subset):3d}/{len(statements)} styles")
+        if combo_failed:
+            fail_combos += 1
+            with open(saved_path(outdir, args.seed, n), "w") as f, open(combo_path) as src:
+                f.write(src.read())
+            for line in combo_fail_lines:
+                print(line)
 
     print()
     print(f"# {args.random_combos - fail_combos}/{args.random_combos} combos byte-identical, "
@@ -567,6 +637,9 @@ def main():
                     help="per-statement keep probability for random combos (default 0.5)")
     ap.add_argument("--combo-commands", default="git ,ssh -,cd /,kill -,echo $PA",
                     help="comma-separated buffers to complete in each random combo")
+    ap.add_argument("--presses", type=int, default=5, metavar="N",
+                    help="press TAB N times per combo case, asserting byte-parity after EACH press "
+                         "(exercises menu-cycle / list-prompt paging; default 5)")
     ap.add_argument("--confirm", type=int, default=2, metavar="K",
                     help="re-run a failing combo case K times; only report if it fails EVERY time "
                          "(filters timing-flaky false positives, default 2)")
