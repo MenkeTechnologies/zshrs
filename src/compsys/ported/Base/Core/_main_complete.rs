@@ -426,6 +426,19 @@ pub fn _main_complete(args: &[String]) -> i32 {
         completer_num += 1;
     }
 
+    // Flush the still-open match group at completer completion, before the
+    // `$compstate[nmatches]` menu decision reads it. In C the file-scope
+    // `matches` list is a pointer-alias of the open group's `lmatches`, so
+    // `permmatches` always counts the live matches; the Rust port copies
+    // instead, so an unflushed open group (e.g. git's `common-commands` left
+    // open by `_describe`/`_arguments`, 23 matches) counts 0 here even though
+    // the matches exist — the decision then skips menu-select (interactive
+    // never starts for git). endcmgroup(None) flushes that group ONCE, at this
+    // single post-loop point (nm: git 0→23, cd 0→16), so the count is correct.
+    // It is NOT a per-read change in permmatches (which would perturb every
+    // mid-completer-loop read, e.g. kill's `_tags` iterations, and short-circuit
+    // kill's flow — verified: kill nm 3→3 here, unchanged). c:begcmgroup alias.
+    crate::ported::zle::compcore::endcmgroup(None);
     // Snapshot for the warnings/format branch
     let nm: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse().ok())
