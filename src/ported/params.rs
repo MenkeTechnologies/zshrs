@@ -1726,6 +1726,22 @@ pub fn createparamtable() {
     setsparam("TMPPREFIX", &ztrdup_metafy(DEFAULT_TMPPREFIX)); // c:870
     setsparam("TIMEFMT", &ztrdup_metafy(DEFAULT_TIMEFMT)); // c:871
 
+    // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
+    // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. In C these are
+    // globals that the NULLCMD/READNULLCMD IPDEF specials read
+    // lazily; the stored-param port instead needs the value written
+    // into the table. The add_special() loop above re-inserts these
+    // specials with a null u_str, so the seed MUST run after it — do
+    // it here (before the env-import loop below) so an exported
+    // NULLCMD/READNULLCMD still wins, exactly like TIMEFMT. Without
+    // this, the interactive/setupvals path (which calls
+    // createparamtable, unlike -fc) left NULLCMD unset: sourcing a
+    // completion cache that uses the `$(<<\EOF ...)` NULLCMD idiom
+    // (e.g. _docker's docker_subcommands cache) hit "redirection with
+    // no command" and populated 0 matches under `use-cache on`.
+    setsparam("NULLCMD", "cat"); // c:1214
+    setsparam("READNULLCMD", crate::ported::config_h::DEFAULT_READNULLCMD); // c:1215
+
     // c:873-876 — HOST from gethostname() (ztrdup_metafy wrap c:875).
     let mut host_buf = [0u8; 256];
     let host_rc = unsafe { libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256) };
