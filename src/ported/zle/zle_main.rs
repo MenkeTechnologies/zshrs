@@ -613,6 +613,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         // for the full rationale; SIGCHLD from prompt-segment
         // subprocesses interrupts this read constantly).
         let mut eintr_retries = 0i32;
+        let mut die = false; // c:865 — bounds the EIO tty-reattach retry to one pass
         let n = loop {
             let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
             let errno = std::io::Error::last_os_error().raw_os_error();
@@ -636,6 +637,24 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             {
                 eintr_retries += 1;
                 continue; // c:917 — retry the interrupted read
+            }
+            // c:929-936 — EIO means the shell lost the terminal's foreground
+            // process group (a completer helper subprocess got the tty via
+            // tcsetpgrp under job control and exited without restoring it).
+            // C reattaches (attachtty(mypgrp)) with MONITOR forced on,
+            // repaints, and retries once (bounded by `die`) rather than
+            // reporting EOF. See the simple-read path below for the full
+            // rationale — without this, tar/docker <tab> exited the editor.
+            if n == -1 && errno == Some(libc::EIO) && !die {
+                let mon = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR); // c:929
+                crate::ported::options::opt_state_set("monitor", true); // c:930
+                crate::ported::utils::attachtty(
+                    crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed),
+                ); // c:931
+                crate::ported::zle::zle_refresh::zrefresh(); // c:932
+                crate::ported::options::opt_state_set("monitor", mon); // c:933
+                die = true; // c:934
+                continue; // c:865 for(;;) re-reads after the reattach
             }
             break n;
         };
@@ -688,6 +707,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     // (native-p10k renders spawn subprocesses per prompt, so SIGCHLD
     // made this fire constantly).
     let mut eintr_retries = 0i32;
+    let mut die = false; // c:865 — bounds the EIO tty-reattach retry to one pass
     let n = loop {
         let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
         let errno = std::io::Error::last_os_error().raw_os_error();
@@ -711,6 +731,29 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         {
             eintr_retries += 1;
             continue; // c:917 — retry the interrupted read
+        }
+        // c:929-936 — `else if (errno == EIO && !die) { ret = opts[MONITOR];
+        // opts[MONITOR] = 1; attachtty(mypgrp); zrefresh(); opts[MONITOR] =
+        // ret; die = 1; }`. A read that fails with EIO means the shell is no
+        // longer the foreground process group of its controlling terminal: a
+        // completer helper (tar/docker `_call_program` subprocess run under
+        // job control) was granted the tty via tcsetpgrp and exited without
+        // handing it back, so ttpgrp != mypgrp and read() → EIO. C does NOT
+        // treat this as EOF — it forces MONITOR on so attachtty runs, reclaims
+        // the tty for the shell pgrp, repaints, and retries the read once
+        // (bounded by `die`). Returning None here instead made ZLE see a
+        // spurious EOF and exit the line editor mid-completion (tar/docker
+        // <tab> drew the match list then the shell terminated).
+        if n == -1 && errno == Some(libc::EIO) && !die {
+            let mon = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR); // c:929
+            crate::ported::options::opt_state_set("monitor", true); // c:930
+            crate::ported::utils::attachtty(
+                crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed),
+            ); // c:931
+            crate::ported::zle::zle_refresh::zrefresh(); // c:932
+            crate::ported::options::opt_state_set("monitor", mon); // c:933
+            die = true; // c:934
+            continue; // c:865 for(;;) re-reads after the reattach
         }
         break n;
     };
