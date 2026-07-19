@@ -1114,7 +1114,19 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                         dat.group = v;
                     }
                 }
-                'X' => dat.exp = take(&mut p, &mut idx), // c:757
+                'X' => {
+                    // c:800/808 — `if (!*sp) *sp = ...`: take FIRST -X only
+                    // (same shared-`sp` first-wins as -J/-V above). The arg is
+                    // always consumed, but dat.exp is assigned only when empty,
+                    // so an outer _arguments/_description `-X <label>` wrapping
+                    // an inner completer's `-X <label>` keeps the OUTER label
+                    // (curl: 'URL' over 'URL prefix'; scp: 'remote host name'
+                    // over 'host'). Last-wins here over-reported the inner one.
+                    let v = take(&mut p, &mut idx); // c:757 (arg always consumed)
+                    if dat.exp.is_none() {
+                        dat.exp = v;
+                    }
+                }
                 'x' => dat.mesg = take(&mut p, &mut idx), // c:761
                 'd' => dat.disp = take(&mut p, &mut idx), // c:765
                 'O' => dat.opar = take(&mut p, &mut idx), // c:749
