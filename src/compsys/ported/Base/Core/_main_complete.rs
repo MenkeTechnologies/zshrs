@@ -591,13 +591,41 @@ pub fn _main_complete(args: &[String]) -> i32 {
         set_compstate_str("insert", "");
         set_compstate_str("list", "list force");
     } else if nm == 0 && comp_mesg.is_empty() && old_list != "keep" {
-        // sh:353-371  warnings format emission
+        // sh:353-371  warnings format emission.
+        //
+        // Rust-only guard (no C counterpart): the warning fires when
+        // `$compstate[nmatches]` reads 0. In zsh `nmatches` is a live GSU
+        // integer that always reflects the running match count, so a group
+        // that produced matches (e.g. git's `common-commands`, 23 rows) keeps
+        // nm > 0 and this branch never runs. In the port `nmatches` is a
+        // cached counter recomputed by `permmatches`; a group whose matches
+        // still sit in the file-scope `matches`/`fmatches` accumulators —
+        // added by `compadd` but not yet flushed into the group's `lmatches`
+        // by `endcmgroup` — is invisible to that counter, so nm reads a stale
+        // 0 even though live matches exist. Re-check the live accumulators
+        // here (read-only; does not touch the count the completer loop /
+        // `_tags` already consumed) and suppress the warning when real matches
+        // are pending. Without this git's `common-commands` group gets a
+        // spurious `-<<No Matches for `common commands'>>-` header above its
+        // 23 rows; zsh emits none.
+        let live_pending = {
+            use crate::ported::zle::compcore as cc;
+            let m = cc::matches
+                .get()
+                .map(|l| l.lock().map(|g| g.len()).unwrap_or(0))
+                .unwrap_or(0);
+            let fm = cc::fmatches
+                .get()
+                .map(|l| l.lock().map(|g| g.len()).unwrap_or(0))
+                .unwrap_or(0);
+            m + fm
+        };
         let lastdescr = getaparam("_lastdescr").unwrap_or_default();
         let warn_format = lookupstyle(&format!(":completion:{}:warnings", curcontext), "format")
             .first()
             .cloned()
             .unwrap_or_default();
-        if !lastdescr.is_empty() && !warn_format.is_empty() {
+        if live_pending == 0 && !lastdescr.is_empty() && !warn_format.is_empty() {
             set_compstate_str("list", "list force");
             set_compstate_str("insert", "");
             let quoted: Vec<String> = lastdescr.iter().map(|d| format!("`{}'", d)).collect();
