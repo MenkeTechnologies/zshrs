@@ -13718,9 +13718,41 @@ impl ShellExecutor {
                 unsafe { libc::close(saved) };
             }
         }
+        // c:Src/utils.c:redup — `if (x != y) { dup2(x, y); zclose(x); }`.
+        // When fd 0 was already CLOSED before this heredoc runs,
+        // `File::open` returns the lowest free descriptor, which is 0
+        // itself — so `read_fd == STDIN_FILENO`. C's redup skips both the
+        // dup2 (a no-op for equal fds) AND the close in that case, leaving
+        // the just-opened temp file installed at fd 0. Unconditionally
+        // dropping the File here closed that fd back to nothing, so an
+        // external NULLCMD (`cat`) inherited a closed fd 0 and failed with
+        // EBADF (`cat <<EOF` inside `$(...)` when exec 0<&- closed stdin).
         let read_fd = AsRawFd::as_raw_fd(&file);
-        unsafe { libc::dup2(read_fd, libc::STDIN_FILENO) };
-        drop(file);
+        if read_fd != libc::STDIN_FILENO {
+            // dup2 installs a fresh fd 0 with FD_CLOEXEC clear (dup2 never
+            // copies the flag), then we close the CLOEXEC-tagged source.
+            unsafe { libc::dup2(read_fd, libc::STDIN_FILENO) };
+            drop(file); // c:redup zclose(x)
+        } else {
+            // File::open reused fd 0. Rust opens with O_CLOEXEC, so fd 0
+            // now carries FD_CLOEXEC and would be auto-closed when an
+            // external NULLCMD (`cat`) exec's — the child then reads a
+            // closed fd 0 and fails with EBADF. zsh opens the heredoc temp
+            // via `open(s, O_RDONLY|O_NOCTTY)` (no CLOEXEC), so its child
+            // inherits the fd. Clear the flag to match, then keep fd 0 open
+            // (redup's x==y arm: no dup2, no close).
+            unsafe {
+                let flags = libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD);
+                if flags >= 0 {
+                    libc::fcntl(
+                        libc::STDIN_FILENO,
+                        libc::F_SETFD,
+                        flags & !libc::FD_CLOEXEC,
+                    );
+                }
+            }
+            std::mem::forget(file);
+        }
     }
 
     /// Spawn an external command using zshrs's full dispatch logic
