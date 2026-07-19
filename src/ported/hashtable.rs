@@ -383,13 +383,16 @@ impl shfunc_table {
     /// the parent's function set before the subshell body runs, so
     /// `subshell_end` can restore it (matches C fork-copy semantics
     /// at `Src/exec.c::entersubsh`).
-    pub fn snapshot(&self) -> HashMap<String, Box<shfunc>> {
-        self.table.clone()
+    pub fn snapshot(&self) -> std::sync::Arc<HashMap<String, Box<shfunc>>> {
+        std::sync::Arc::new(self.table.clone())
     }
     /// `restore` — replace the internal table with a saved snapshot.
     /// Called by `subshell_end` after the subshell body completes.
-    pub fn restore(&mut self, snap: HashMap<String, Box<shfunc>>) {
-        self.table = snap;
+    /// Takes the `Arc`-shared snapshot stored in `SubshellSnapshot`;
+    /// unwraps in place when uniquely owned (the common case), else
+    /// clones out of the shared handle.
+    pub fn restore(&mut self, snap: std::sync::Arc<HashMap<String, Box<shfunc>>>) {
+        self.table = std::sync::Arc::try_unwrap(snap).unwrap_or_else(|arc| (*arc).clone());
     }
     /// `add` — see implementation.
     pub fn add(&mut self, func: shfunc) -> Option<shfunc> {
