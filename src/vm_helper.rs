@@ -719,6 +719,30 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     program
 }
 
+
+/// Build the `scriptname[:lineno]` prefix zsh puts on an execution error.
+///
+/// c:Src/utils.c:301 — `zerrmsg` prints the line number ONLY when it is
+/// non-zero: `if ((unset(SHINSTDIN) || locallevel) && lineno) fprintf(file,
+/// "%lld: ", lineno);`. The command-not-found / no-such-file / permission-denied
+/// sites below emit DIRECTLY rather than through `zerr` (deliberately — see
+/// their comments, routing through zerr would set errflag and abort a script
+/// that zsh continues), but they hand-rolled `"{}:{}"` and so printed a bare
+/// `:0` inside a one-line function where zsh prints no line number at all:
+/// `f(){ nosuchcmd }; f` gave `f:0: command not found:` vs zsh's `f: command
+/// not found:`. Mirrors the C condition exactly. Bug #1070.
+fn zerr_prefix(sn: &str) -> String {
+    let lineno = crate::ported::lex::lineno();
+    let ll = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    if (crate::ported::zsh_h::unset(crate::ported::zsh_h::SHINSTDIN) || ll != 0)
+        && lineno != 0
+    {
+        format!("{}:{}", sn, lineno)
+    } else {
+        sn.to_string()
+    }
+}
+
 impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
     /// (`Src/params.c:3350 setsparam`). The single store.
@@ -3160,12 +3184,7 @@ impl ShellExecutor {
                 // report the right line). Emitted directly (not via
                 // zerr) to avoid setting errflag — command-not-found is
                 // non-fatal and the script must continue.
-                eprintln!(
-                    "{}:{}: command not found: {}",
-                    sn,
-                    crate::ported::lex::lineno(),
-                    cmd
-                );
+                eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
                 return Ok(127);
             }
         }
@@ -3236,19 +3255,9 @@ impl ShellExecutor {
                         // tried directly), not "command not found"
                         // (which implies PATH search).
                         if cmd.starts_with('/') {
-                            eprintln!(
-                                "{}:{}: no such file or directory: {}",
-                                sn,
-                                crate::ported::lex::lineno(),
-                                cmd
-                            );
+                            eprintln!("{}: no such file or directory: {}", zerr_prefix(&sn), cmd);
                         } else {
-                            eprintln!(
-                                "{}:{}: command not found: {}",
-                                sn,
-                                crate::ported::lex::lineno(),
-                                cmd
-                            );
+                            eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
                         }
                         Ok(127)
                     } else {
@@ -3302,31 +3311,16 @@ impl ShellExecutor {
                         // tried directly), not "command not found"
                         // (which implies PATH search).
                         if cmd.starts_with('/') {
-                            eprintln!(
-                                "{}:{}: no such file or directory: {}",
-                                sn,
-                                crate::ported::lex::lineno(),
-                                cmd
-                            );
+                            eprintln!("{}: no such file or directory: {}", zerr_prefix(&sn), cmd);
                         } else {
-                            eprintln!(
-                                "{}:{}: command not found: {}",
-                                sn,
-                                crate::ported::lex::lineno(),
-                                cmd
-                            );
+                            eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
                         }
                         Ok(127)
                     } else if e.kind() == io::ErrorKind::PermissionDenied {
                         // zsh: non-executable file → "permission denied"
                         // on stderr and exit 126 (POSIX "command found
                         // but not executable").
-                        eprintln!(
-                            "{}:{}: permission denied: {}",
-                            sn,
-                            crate::ported::lex::lineno(),
-                            cmd
-                        );
+                        eprintln!("{}: permission denied: {}", zerr_prefix(&sn), cmd);
                         Ok(126)
                     } else {
                         Err(format!("{}: {}: {}", sn, cmd, e))
@@ -3714,6 +3708,44 @@ impl ShellExecutor {
                 let saved_shell_exiting = SHELL_EXITING.swap(0, Relaxed);
                 let saved_retflag = RETFLAG.swap(0, Relaxed);
                 let saved_breaks = BREAKS.swap(0, Relaxed);
+                // c:Src/exec.c:4784 — `execode(prog, 0, 1, "cmdsubst");`.
+                // execode (c:1245-1266) APPENDS its `context` argument to
+                // `zsh_eval_context` for the duration of the body, so code
+                // inside `$(…)` / backticks sees `cmdarg:cmdsubst` where the
+                // top level sees just `cmdarg`. zshrs pushed "shfunc" at the
+                // function-call site but never pushed "cmdsubst", so
+                // `$(print $ZSH_EVAL_CONTEXT)` reported `cmdarg` and
+                // `$(f)` reported `cmdarg:shfunc` instead of
+                // `cmdarg:cmdsubst:shfunc`. Popped on every return path by the
+                // guard below, mirroring execode's stack discipline.
+                // Bug #1065.
+                let sync_eval_ctx = |stack: &[String]| {
+                    let joined = stack.join(":");
+                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                        if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                            pm.u_arr = Some(stack.to_vec());
+                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                        }
+                        if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                            pm.u_str = Some(joined);
+                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                        }
+                    }
+                };
+                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                    ctx.push("cmdsubst".to_string());
+                    sync_eval_ctx(&ctx);
+                }
+                struct CmdsubstEvalCtxGuard<F: Fn(&[String])>(F);
+                impl<F: Fn(&[String])> Drop for CmdsubstEvalCtxGuard<F> {
+                    fn drop(&mut self) {
+                        if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                            ctx.pop();
+                            (self.0)(&ctx);
+                        }
+                    }
+                }
+                let _cs_eval_ctx_guard = CmdsubstEvalCtxGuard(sync_eval_ctx);
                 SUBSHELL_DEPTH.fetch_add(1, Relaxed);
                 let _ctx = ExecutorContext::enter(self);
                 let _ = vm.run();

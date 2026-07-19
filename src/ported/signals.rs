@@ -1708,6 +1708,43 @@ pub fn dotrap(sig: i32) -> i32 {
         } else {
             None
         };
+        // c:1268/1170 — `execode((Eprog)sigfn, 1, 0, "trap");`. execode
+        // (c:Src/exec.c:1245-1266) APPENDS its context argument to
+        // `zsh_eval_context` for the duration of the body, so a trap handler
+        // sees `cmdarg:trap`. zshrs dispatches the raw-text body through
+        // `execute_script` instead of a compiled Eprog, which bypasses execode
+        // and lost the push with it. NB the sibling site in `dotrapargs` looks
+        // like the right place and is NOT — instrumenting showed a delivered
+        // signal reaches `zhandler` -> `dotrap` and never enters dotrapargs,
+        // so the push belongs here. Popped on every return path by the guard.
+        // Bug #1065 (trap leg).
+        let sync_eval_ctx = |stack: &[String]| {
+            let joined = stack.join(":");
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                    pm.u_arr = Some(stack.to_vec());
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+                if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                    pm.u_str = Some(joined);
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
+        };
+        if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+            ctx.push("trap".to_string());
+            sync_eval_ctx(&ctx);
+        }
+        struct TrapCtxGuard<F: Fn(&[String])>(F);
+        impl<F: Fn(&[String])> Drop for TrapCtxGuard<F> {
+            fn drop(&mut self) {
+                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                    ctx.pop();
+                    (self.0)(&ctx);
+                }
+            }
+        }
+        let _trap_ctx_guard = TrapCtxGuard(sync_eval_ctx);
         let _ = crate::ported::exec::execute_script(&body); // c:1268
         if let Some(b) = exit_stash {
             if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {

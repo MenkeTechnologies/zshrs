@@ -3951,6 +3951,21 @@ fn gen_builtin(seed: u64) -> Vec<String> {
                     "builtin builtin print x 2>&1; print rc=$?",
                     "pf(){ builtin print inner }; pf 2>&1; print rc=$?",
                     "command nosuchcommand-xyz 2>&1; print rc=$?",
+                    // Execution-error prefix: c:Src/utils.c:301 prints the line
+                    // number ONLY when non-zero — `if ((unset(SHINSTDIN) ||
+                    // locallevel) && lineno)`. Inside a ONE-LINE function
+                    // lineno is 0 (both shells agree $LINENO is 0 there), so
+                    // zsh emits `f: command not found:` with NO `:0`. zshrs
+                    // hand-rolled `"{}:{}"` at six direct-emit sites and printed
+                    // the bare `:0`. The top-level rows pin that a REAL line
+                    // number is still printed. Bug #1070.
+                    "efn(){ nosuchcmd-xyz }; efn 2>&1; print rc=$?",
+                    "nosuchcmd-xyz 2>&1; print rc=$?",
+                    "efn(){ /nonexistent-abs-xyz }; efn 2>&1; print rc=$?",
+                    "/nonexistent-abs-xyz 2>&1; print rc=$?",
+                    "efn(){ /etc/hosts }; efn 2>&1; print rc=$?",
+                    "eg(){ nosuchcmd-xyz }; ef(){ eg }; ef 2>&1; print rc=$?",
+                    "efn(){ eval 'nosuchcmd-xyz' }; efn 2>&1; print rc=$?",
                 ],
             );
             stmts.push(probe.to_string());
@@ -4103,7 +4118,113 @@ fn gen_cmdsub(seed: u64) -> Vec<String> {
         "IFS=$' \\t\\n'".to_string(),
     ];
     for _ in 0..rng.gen_range(2..=4) {
-        let stmt = match rng.gen_range(0..12) {
+        let stmt = match rng.gen_range(0..13) {
+            // ZSH_EVAL_CONTEXT inside a command substitution. execode
+            // (c:Src/exec.c:1245-1266) APPENDS its `context` argument for the
+            // duration of the body, and getoutput passes "cmdsubst"
+            // (c:4784) — so `$(…)` sees `cmdarg:cmdsubst` where the top level
+            // sees `cmdarg`. zshrs pushed "shfunc" at the function-call site
+            // but never "cmdsubst". The NESTED and SEQUENTIAL rows are the
+            // load-bearing ones: they pin that the entry is POPPED again, so a
+            // leak (stack growing across commands) is caught as well as a
+            // missing push. Bug #1065.
+            12 => {
+                let probe = pick(
+                    &mut rng,
+                    &[
+                        r#"print -r -- $(print -r -- $ZSH_EVAL_CONTEXT)"#,
+                        r#"print -r -- `print -r -- $ZSH_EVAL_CONTEXT`"#,
+                        r#"cf(){ print -r -- $ZSH_EVAL_CONTEXT }; print -r -- $(cf)"#,
+                        r#"cf(){ print -r -- $(print -r -- $ZSH_EVAL_CONTEXT) }; cf"#,
+                        r#"print -r -- $(print -r -- $(print -r -- $ZSH_EVAL_CONTEXT))"#,
+                        r#"print -r -- $(print -r -- $ZSH_EVAL_CONTEXT); print -r -- $ZSH_EVAL_CONTEXT"#,
+                        r#"for i in 1 2; do print -r -- $(print -r -- $ZSH_EVAL_CONTEXT); done"#,
+                        r#"print -r -- $(exit 3); print -r -- $ZSH_EVAL_CONTEXT"#,
+                        r#"print -r -- $(print -r -- ${zsh_eval_context[*]})"#,
+                        r#"print -r -- $(print -r -- ${#zsh_eval_context})"#,
+                        // eval pushes "eval" (c:Src/builtin.c:6209). The
+                        // ORDERING rows matter: cmdsubst-inside-eval and
+                        // eval-inside-cmdsubst must nest in opposite orders,
+                        // which a single-context probe cannot distinguish.
+                        r#"eval 'print -r -- $ZSH_EVAL_CONTEXT'"#,
+                        r#"ef(){ eval 'print -r -- $ZSH_EVAL_CONTEXT' }; ef"#,
+                        r#"eval 'print -r -- $(print -r -- $ZSH_EVAL_CONTEXT)'"#,
+                        r#"print -r -- $(eval 'print -r -- $ZSH_EVAL_CONTEXT')"#,
+                        r#"ef(){ print -r -- $ZSH_EVAL_CONTEXT }; eval 'ef'"#,
+                        r#"eval 'print x'; print -r -- $ZSH_EVAL_CONTEXT"#,
+                        r#"eval ''; print -r -- $ZSH_EVAL_CONTEXT"#,
+                        // trap pushes "trap" (c:Src/signals.c:1170). The
+                        // `sleep` makes delivery deterministic — the handler
+                        // has run before the next statement is read. Delivered
+                        // signals reach zhandler -> dotrap, NOT dotrapargs,
+                        // which is why the push lives at dotrap's
+                        // execute_script call.
+                        r#"trap 'print -r -- $ZSH_EVAL_CONTEXT' USR1; kill -USR1 $$; sleep 0.05"#,
+                        r#"tf(){ trap 'print -r -- $ZSH_EVAL_CONTEXT' USR1; kill -USR1 $$; sleep 0.05 }; tf"#,
+                        r#"trap 'print -r -- $(print -r -- $ZSH_EVAL_CONTEXT)' USR1; kill -USR1 $$; sleep 0.05"#,
+                        r#"trap 'print x' USR1; kill -USR1 $$; sleep 0.05; print -r -- $ZSH_EVAL_CONTEXT"#,
+                        // eval also pushes an "(eval)" FUNCSTACK frame
+                        // (c:Src/builtin.c:6163-6178, tp=FS_EVAL), gated on
+                        // EVAL_LINENO. The unsetopt row is load-bearing: both
+                        // shells push NOTHING there, so a fix that ignored the
+                        // option gate would be caught. Ordering rows pin that
+                        // the frame nests correctly against real function
+                        // frames. Bug #1066.
+                        r#"zmodload zsh/parameter; eval 'print -r -- ${#funcstack}'"#,
+                        r#"zmodload zsh/parameter; eval 'print -r -- ${funcstack[1]}'"#,
+                        r#"zmodload zsh/parameter; uf(){ eval 'print -r -- "${(j:,:)funcstack}"' }; uf"#,
+                        r#"zmodload zsh/parameter; uf(){ print -r -- "${(j:,:)funcstack}" }; eval 'uf'"#,
+                        r#"zmodload zsh/parameter; eval 'eval "print -r -- \${#funcstack}"'"#,
+                        r#"zmodload zsh/parameter; unsetopt evallineno; eval 'print -r -- ${#funcstack}'"#,
+                        r#"zmodload zsh/parameter; eval 'print x'; print -r -- ${#funcstack}"#,
+                        r#"zmodload zsh/parameter; eval ''; print -r -- ${#funcstack}"#,
+                        // `source`/`.` append "file" to the context
+                        // (c:Src/init.c:220 — execode(..., toplevel ?
+                        // "toplevel" : "file")). Fixture is written with an
+                        // ABSOLUTE path and never removed, so a minimizer that
+                        // drops a leading statement cannot write into the repo.
+                        // The nested row pins `file:file`; the error row pins
+                        // that a FAILED source still pops. Bug #1067.
+                        // (The "toplevel" arm of that same C line cannot be
+                        // fuzzed here — this harness always invokes `-c`, whose
+                        // context is "cmdarg"; it is verified manually.)
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; source $d/l.zsh"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; sf(){ source $d/l.zsh }; sf"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; eval "source $d/l.zsh""#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; print -r -- $(source $d/l.zsh)"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; source $d/l.zsh; print -r -- "$ZSH_EVAL_CONTEXT""#,
+                        r#"source /nonexistent-zshrs-fuzz 2>/dev/null; print -r -- "$ZSH_EVAL_CONTEXT""#,
+                        // `(e:…:)` glob qualifiers run their body with
+                        // "globqual" appended (c:Src/glob.c:3919) and `zstyle -e`
+                        // bodies with "style" (c:Src/Modules/zutil.c:419). The
+                        // trailing plain-read rows pin the POP. Fixture uses an
+                        // absolute path and is never removed. Bug #1069.
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq; mkdir -p $d; : > $d/a; cd $d; print -r -- *(e:'REPLY=$ZSH_EVAL_CONTEXT':N)"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq; mkdir -p $d; : > $d/a; cd $d; gf(){ print -r -- *(e:'REPLY=$ZSH_EVAL_CONTEXT':N) }; gf"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq; mkdir -p $d; : > $d/a; cd $d; print -r -- *(N); print -r -- $ZSH_EVAL_CONTEXT"#,
+                        r#"zmodload zsh/zutil; zstyle -e ':x' k 'reply=($ZSH_EVAL_CONTEXT)'; zstyle -a ':x' k r; print -r -- "$r""#,
+                        r#"zmodload zsh/zutil; zstyle -e ':x' k 'reply=($ZSH_EVAL_CONTEXT)'; zstyle -a ':x' k r; print -r -- "$ZSH_EVAL_CONTEXT""#,
+                        r#"zmodload zsh/zutil; yf(){ zstyle -e ':y' k 'reply=($ZSH_EVAL_CONTEXT)'; zstyle -a ':y' k r; print -r -- "$r" }; yf"#,
+                        r#"zmodload zsh/zutil; zstyle ':z' k plain; zstyle -a ':z' k r; print -r -- "$r""#,
+                        // Process substitution: c:Src/exec.c:5101/5150
+                        // `execode(prog, 0, 1, out ? "outsubst" : "insubst")`.
+                        // NB the naming is counter-intuitive and the pair is
+                        // what pins it: `<(cmd)`'s child WRITES and is
+                        // "outsubst"; `>(cmd)`'s child READS and is "insubst".
+                        // The `>(…)` rows must read the context INSIDE the
+                        // child — putting $ZSH_EVAL_CONTEXT on the redirect
+                        // source evaluates it in the PARENT and proves nothing.
+                        // `sleep` makes the child's output ordering
+                        // deterministic (see #1062 for why it is needed).
+                        r#"cat <(print -r -- $ZSH_EVAL_CONTEXT)"#,
+                        r#"pf(){ cat <(print -r -- $ZSH_EVAL_CONTEXT) }; pf"#,
+                        r#"cat <(print -r -- $ZSH_EVAL_CONTEXT); print -r -- $ZSH_EVAL_CONTEXT"#,
+                        r#"print x > >(print -r -- "child=$ZSH_EVAL_CONTEXT"); sleep 0.1"#,
+                        r#"pf(){ print x > >(print -r -- "child=$ZSH_EVAL_CONTEXT") }; pf; sleep 0.1"#,
+                    ],
+                );
+                probe.to_string()
+            }
             // Trailing newlines are ALL stripped, quoted or not.
             0 => r#"print -r -- "[$(printf 'a\n\n\n')]""#.to_string(),
             // `$(<file)` — the fork-free read path.

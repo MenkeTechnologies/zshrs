@@ -3223,7 +3223,40 @@ pub fn qualsheval(filename: &str, _buf: &libc::stat, _data: i64, expr: &str) -> 
                                                          // (resolve the live executor on demand). Direct ShellExecutor
                                                          // reach-in from src/ported/ is forbidden — see memory
                                                          // feedback_no_exec_script_from_ported.
-    let rc = crate::ported::exec::execute_script(expr).unwrap_or(1); // c:3919
+    let rc = {
+        // c:Src/glob.c:3919 — `execode(prog, 1, 0, "globqual");`. execode
+        // (c:Src/exec.c:1245-1266) APPENDS its context for the duration, so
+        // code inside an `(e:'…':)` / `(+cmd)` glob qualifier sees
+        // `cmdarg:globqual`. Popped on every return path. Bug #1069.
+        let sync_eval_ctx = |stack: &[String]| {
+            let joined = stack.join(":");
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                    pm.u_arr = Some(stack.to_vec());
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+                if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                    pm.u_str = Some(joined);
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
+        };
+        if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+            ctx.push("globqual".to_string());
+            sync_eval_ctx(&ctx);
+        }
+        struct GlobQualCtxGuard<F: Fn(&[String])>(F);
+        impl<F: Fn(&[String])> Drop for GlobQualCtxGuard<F> {
+            fn drop(&mut self) {
+                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
+                    ctx.pop();
+                    (self.0)(&ctx);
+                }
+            }
+        }
+        let _ctx_guard = GlobQualCtxGuard(sync_eval_ctx);
+        crate::ported::exec::execute_script(expr).unwrap_or(1) // c:3919
+    };
     let ret = LASTVAL.load(Ordering::Relaxed); // c:3921 ret = lastval
     let _ = rc;
     // c:3924 — `errflag = ef | (errflag & ERRFLAG_INT);`. Restore
