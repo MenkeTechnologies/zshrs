@@ -36,12 +36,12 @@ singleton coordinator
 optional shell-session recorder
 .PP
 .B src/ported/
-holds the strict 1:1 ports (89 files; every function maps to a real
+holds the strict 1:1 ports (106 files; every function maps to a real
 .IB Src/ x .c
 zsh function, enforced by
 .BR tests/port_purity.rs ).
 .B src/extensions/
-holds zshrs-only code (31 files: AOT, daemon coordination, plugin/
+holds zshrs-only code (88 files: AOT, daemon coordination, plugin/
 script/autoload caches, fish-style autosuggestions/abbreviations/
 syntax highlighting, the persistent worker pool, ZWC bytecode helpers).
 .SH "THE COMPILED PIPELINE"
@@ -1895,7 +1895,7 @@ fusevm bytecode is the only executor.
 .B no_tree_walker_dispatch
 \(em no Rust call-site re-introduces an
 .BR execlist / execpline / execcmd
-shape; pinned at 96 tests.
+shape; pinned at 160 tests.
 .IP "" 4
 .B port_purity
 \(em every

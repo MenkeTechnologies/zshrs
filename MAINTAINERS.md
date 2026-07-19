@@ -20,7 +20,7 @@ _To be populated when the maintainer team is assembled._
 | (TBD) | Lead maintainer | release management, CI |
 | (TBD) | Shell core / executor | `src/ported/exec.rs`, `src/extensions/canonical_apply.rs`, `bins/zshrs.rs` |
 | (TBD) | Strict-port surface (FROZEN) | `src/ported/**` (106 files), `tests/port_purity.rs`, `docs/PORT.md`, `docs/zsh_c_functions.txt` |
-| (TBD) | Extensions / non-port | `src/extensions/**` (42 files) — non-C-ancestor features |
+| (TBD) | Extensions / non-port | `src/extensions/**` (88 files) — non-C-ancestor features |
 | (TBD) | Daemon / IPC | `daemon/server.rs`, `daemon/ops.rs`, `daemon/state.rs` |
 | (TBD) | Recorder / canonical | `bins/zshrs-recorder.rs`, `src/recorder/`, `daemon/canonical.rs` |
 | (TBD) | Job supervisor / pty | `daemon/jobs.rs`, `daemon/zjob_builtin.rs` |
