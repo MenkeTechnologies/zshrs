@@ -2315,8 +2315,17 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
     // which is why `compadd -k commands` previously added the literal
     // word "commands" instead of every command name.
     let result = if keys {
-        // SCANPM_WANTKEYS — assoc keys (gethkparam handles special hashes).
-        crate::ported::params::gethkparam(name)
+        // SCANPM_WANTKEYS — assoc keys (gethkparam handles special hashes,
+        // returning Some incl. Some(empty)). But `compadd -k` on a REGULAR
+        // array (e.g. `_setopt`'s `local -a onopts`) must add its ELEMENTS:
+        // C's `fetchvalue(SCANPM_WANTKEYS)` ignores WANTKEYS for a non-hash and
+        // returns the value array. gethkparam returns None for a non-hash, so
+        // fall back to the elements — without this, `setopt`/`unsetopt <tab>`
+        // (and any `compadd -k <plain-array>`) produced ZERO matches.
+        match crate::ported::params::gethkparam(name) {
+            Some(k) => Some(k),
+            None => crate::ported::params::getaparam(name),
+        }
     } else {
         // SCANPM_WANTVALS — plain-array elements, else assoc values.
         crate::ported::params::getaparam(name)

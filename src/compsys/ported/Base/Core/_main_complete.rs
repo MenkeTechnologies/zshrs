@@ -136,6 +136,32 @@ pub fn _main_complete(args: &[String]) -> i32 {
     // resolved comp="" for every command, and everything fell to
     // -default- file completion (option completion dead shell-wide).
     crate::fusevm_bridge::drain_compinit_bg_hook();
+    // sh:25 — `_comp_caller_options=(${(kv)options[@]})` from the `_comp_setup`
+    // eval, captured HERE, BEFORE CompSetupGuard flips options to the compsys
+    // set — so it reflects the USER's option preferences, not compsys's. Every
+    // completer that consults the caller's options reads this assoc: `_setopt`/
+    // `_unsetopt` (`${(k)_comp_caller_options[(R)on]}`), `_files`/`_path_files`/
+    // `_expand`/`_have_glob_qual` (`[[ $_comp_caller_options[extendedglob] == on ]]`).
+    // The CompSetupGuard applies only the setopt half of _comp_setup, so this
+    // assoc was never populated: `setopt <tab>` produced ZERO matches and the
+    // extendedglob-gated `_path_files` branches were dead. zsh makes it `local
+    // -A`; the global here is re-snapshotted every completion, so no staleness.
+    {
+        use crate::ported::options::{opt_state_get, ZSH_OPTIONS_SET};
+        let mut kv: Vec<String> = Vec::with_capacity(ZSH_OPTIONS_SET.len() * 2);
+        for name in ZSH_OPTIONS_SET.iter() {
+            kv.push(name.to_string());
+            kv.push(
+                if opt_state_get(name).unwrap_or(false) {
+                    "on"
+                } else {
+                    "off"
+                }
+                .to_string(),
+            );
+        }
+        let _ = crate::ported::params::sethparam("_comp_caller_options", kv);
+    }
     // sh:25 — `eval "$_comp_setup"` (options + IFS half); restores on
     // every return path via Drop.
     let _comp_setup = CompSetupGuard::apply();
