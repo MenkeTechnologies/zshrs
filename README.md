@@ -71,7 +71,7 @@ zshrs replaces `fork + exec` with a persistent worker thread pool, compiles ever
                  └──────────────────────────────────────┘
 ```
 
-The **8 Bourne-family dialects** are the emulation drop-ins `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash` (the C-shell `--csh` mode is separate). All eight compile through the same fusevm core.
+The **8 Bourne-family dialects** are the emulation drop-ins `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash` (the C-shell `--csh` mode is separate). All eight compile through the same fusevm core, and each is verified against its **real reference shell** by the parity matrix in [`tests/emulation_parity.rs`](tests/emulation_parity.rs). zsh mode is additionally cross-checked against real `zsh` by a **differential fuzz harness** ([`bins/parity-fuzz.rs`](bins/parity-fuzz.rs)) that runs thousands of grammar-driven, seed-replayable snippets through both shells and flags any stdout/exit divergence.
 
 ---
 
