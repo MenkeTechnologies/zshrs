@@ -442,17 +442,22 @@ pub fn _description(args: &[String]) -> i32 {
             //   parts into the zformat argv as `m:msg r:num o:opts`.
             if let Some(d) = argv.first().cloned() {
                 let (stripped, m_msg, r_num, o_opts) = extract_description_parts(&d);
-                if !m_msg.is_empty() || !r_num.is_empty() || !o_opts.is_empty() {
-                    argv[0] = stripped;
-                    if !m_msg.is_empty() {
-                        extra_args.push(format!("m:{}", m_msg));
-                    }
-                    if !r_num.is_empty() {
-                        extra_args.push(format!("r:{}", r_num));
-                    }
-                    if !o_opts.is_empty() {
-                        extra_args.push(format!("o:{}", o_opts));
-                    }
+                // sh:83 — `argv+=( h:${1%%…} )`: push the annotation-stripped
+                // description as `h:`; `$1` (argv[0]) is NOT modified, so the
+                // `d:$1` below keeps the FULL description. The previous code
+                // overwrote argv[0] with `stripped`, so any description carrying
+                // a trailing `(msg)`/`(num)`/`[opts]` annotation (e.g. `_setopt`'s
+                // 'zsh options (set)') lost that suffix from its group header —
+                // rendered `-<<zsh options>>-` vs zsh's `-<<zsh options (set)>>-`.
+                extra_args.push(format!("h:{}", stripped));
+                if !m_msg.is_empty() {
+                    extra_args.push(format!("m:{}", m_msg)); // sh:84
+                }
+                if !r_num.is_empty() {
+                    extra_args.push(format!("r:{}", r_num)); // sh:85
+                }
+                if !o_opts.is_empty() {
+                    extra_args.push(format!("o:{}", o_opts)); // sh:86
                 }
             }
         }
