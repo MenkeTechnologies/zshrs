@@ -5976,7 +5976,17 @@ impl ZshCompiler {
         // Without this, `${(M)arr:#*\\(#e)}` falls through to the
         // EXPAND_TEXT bridge which scalar-flattens.
         let try_bridge_array = !has_bnull || (untoked.starts_with("${(") && untoked.contains(":#"));
-        if try_bridge_array {
+        // Guard: this fast path is for a SINGLE `${(flags)…}` expansion.
+        // `strip_prefix("${") + strip_suffix('}')` alone does NOT verify the
+        // leading `${` matches the FINAL `}` — for two adjacent expansions
+        // `${(@)^a}Y${(@)^b}` the `need_array` trigger (`@` flag + a `${` in
+        // the tail) fired on the SECOND expansion's opener, fed the whole
+        // word to BRIDGE_BRACE_ARRAY as one body, and the trailing array
+        // joined (`1YA B` instead of `1YA 1YB 2YA 2YB`). Require the leading
+        // `${` to span the word so multi-expansion words fall through to the
+        // segment splitter. (A trailing literal — `…${(@)^b}Z` — already
+        // dodged this via the failed `strip_suffix('}')`.)
+        if try_bridge_array && braced_expansion_spans_word(&untoked) {
             if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
                 if let Some(close) = matching_paren_close(inner) {
                     let flag_chain = &inner[1..close];
@@ -6171,28 +6181,7 @@ impl ZshCompiler {
             // `${`'s matching close (counting `${` opens / `}` closes) to
             // be the last char so a multi-expansion word falls through to
             // the segment splitter instead.
-            let leading_brace_spans_word = untoked.starts_with("${") && {
-                let ub = untoked.as_bytes();
-                let mut d = 0i32;
-                let mut k = 0usize;
-                let mut spans = false;
-                while k < ub.len() {
-                    if ub[k] == b'$' && k + 1 < ub.len() && ub[k + 1] == b'{' {
-                        d += 1;
-                        k += 2;
-                        continue;
-                    }
-                    if ub[k] == b'}' {
-                        d -= 1;
-                        if d == 0 {
-                            spans = k + 1 == ub.len();
-                            break;
-                        }
-                    }
-                    k += 1;
-                }
-                spans
-            };
+            let leading_brace_spans_word = braced_expansion_spans_word(&untoked);
             if let Some(inner) = untoked
                 .strip_prefix("${")
                 .and_then(|s| s.strip_suffix('}'))
@@ -6760,6 +6749,33 @@ impl ZshCompiler {
                         }
                     }
                 }
+                // A word that MIXES a plan9 (`^`) expansion with a non-plan9
+                // (splice/scalar) expansion — `"${(@)^a}${(@)b}"` — cannot be
+                // folded by a SINGLE concat operator: plan9 cross-products while
+                // splice sticks first/last, and the per-pair fold loses the
+                // "growing edge" that zsh threads through the whole word
+                // (c:Src/subst.c:4316-4437). Route these to the atomic
+                // BUILTIN_WORD_ASSEMBLE_PLAN9 assembler, which ports the edge
+                // tracking. Uniform words (all-plan9, all-splice) keep the fast
+                // fold — only the genuinely-mixed shape takes this path.
+                let mixed_plan9 = has_plan9_seg
+                    && segs.iter().any(|seg| {
+                        matches!(seg, WordSegment::Expansion(e) if !is_plan9_expansion(e))
+                    });
+                if mixed_plan9 {
+                    // Descriptor: one char per segment, `'1'` = plan9 (`^`),
+                    // `'0'` = splice/scalar/literal. Pushed FIRST so it sits at
+                    // the bottom of this word's stack region (popped last).
+                    let desc: String = segs
+                        .iter()
+                        .map(|seg| match seg {
+                            WordSegment::Expansion(e) if is_plan9_expansion(e) => '1',
+                            _ => '0',
+                        })
+                        .collect();
+                    let idx = self.builder.add_constant(Value::str(desc.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                }
                 for (i, seg) in segs.iter().enumerate() {
                     match seg {
                         WordSegment::Literal(lit) => {
@@ -6797,7 +6813,9 @@ impl ZshCompiler {
                             self.word_seg_depth -= 1;
                         }
                     }
-                    if i > 0 {
+                    // Mixed plan9/splice words defer ALL combination to the
+                    // atomic assembler below — no per-pair concat here.
+                    if i > 0 && !mixed_plan9 {
                         if let Some(b) = concat_builtin {
                             // c:Src/options.c — RC_EXPAND_PARAM
                             // applies UNQUOTED only. When the parent
@@ -6819,6 +6837,17 @@ impl ZshCompiler {
                             self.builder.emit(Op::Concat, 0);
                         }
                     }
+                }
+                if mixed_plan9 {
+                    // Pop the descriptor + all N segment values (argc = N + 1).
+                    let argc = (segs.len() + 1) as u8;
+                    self.builder.emit(
+                        Op::CallBuiltin(
+                            crate::fusevm_bridge::BUILTIN_WORD_ASSEMBLE_PLAN9,
+                            argc,
+                        ),
+                        0,
+                    );
                 }
                 // c:Src/subst.c:184-188 — prefork's `uremnode` deletes an EMPTY
                 // word once the expansion is ASSEMBLED. Order is the whole
@@ -9951,14 +9980,18 @@ fn is_splice_expansion(s: &str) -> bool {
         return true;
     }
     if let Some(inner) = pq.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
-        // c:Src/subst.c:2551 — a leading `^` (RC_EXPAND_PARAM) makes the
+        // c:Src/subst.c:2551 — a `^` (RC_EXPAND_PARAM) flag makes the
         // expansion DISTRIBUTE (cross-product) with surrounding text, NOT
-        // first/last splice — even when it also carries `[@]`/`[*]`.
-        // `"${^arr[@]}"/suffix` must cross-product the suffix onto every
-        // element (handled by is_distribute_expansion); treating it as a
-        // splice here ran CONCAT_SPLICE (first/last sticking) so only the
-        // last element got the suffix. `^^` turns RC_EXPAND off → splice.
-        if inner.starts_with('^') && !inner.starts_with("^^") {
+        // first/last splice — even when it also carries `[@]`/`[*]` or the
+        // `(@)` flag. `"${^arr[@]}"/suffix` and `"pre${(@)^a}"` must cross-
+        // product onto EVERY element; treating either as a splice runs
+        // CONCAT_SPLICE (first/last sticking) so only the boundary elements
+        // get the surrounding text. Defer BOTH the on (`^`) and off (`^^`)
+        // cases to the plan9 / plan9-off arms so the `^^` form routes to
+        // SPLICE_NOPLAN9 (which ignores the rcexpandparam OPTION) rather than
+        // SPLICE (which re-checks it). The `^` may sit after a `(…)` flag
+        // group, so scan position-independently via `plan9_flag_state`.
+        if plan9_flag_state(inner).is_some() {
             return false;
         }
         if inner.contains("[@]") || inner.contains("[*]") {
@@ -10059,6 +10092,49 @@ fn is_splice_expansion(s: &str) -> bool {
 /// BUILTIN_CONCAT_SPLICE_NOPLAN9 re-reads that option at runtime — so, exactly
 /// as with `^`, the compiler is the only place that knows `^^` was written.
 fn is_plan9_off_expansion(s: &str) -> bool {
+    // Mirror of `is_plan9_expansion`: `^^` (even `^` run) forces plan9 OFF,
+    // including after a `(…)` flag group (`${(@)^^a}`).
+    with_braced_inner(s, |inner| plan9_flag_state(inner) == Some(false))
+}
+
+/// Net plan9 (RC_EXPAND_PARAM) state carried by a `^` shorthand flag in a
+/// braced-expansion body `inner` (the text between `${` and `}`).
+///
+/// Returns `Some(true)` when a `^` flag forces RC_EXPAND ON, `Some(false)`
+/// when `^^` forces it OFF, `None` when no `^` flag is present.
+///
+/// c:Src/subst.c:2550-2557 — the flag loop processes `^` AFTER the optional
+/// parenthesised flag group, so the flag sits either at the very start
+/// (`${^a}`) or right after `(…)` (`${(@)^a}`). Skip a leading `(…)` group
+/// first, then count the `^` run: each `^` toggles plan9, so an odd count is
+/// ON and an even count is OFF. (`${^(@)a}` is a zsh "bad substitution" — `^`
+/// never precedes the group — so only the after-group position is handled.)
+///
+/// Limitation: a `^` interleaved with other shorthand flags (`${(@)~^a}`) or
+/// used as a `(s:^:)`/`(j:^:)` delimiter is not treated as plan9 — the same
+/// scope the surrounding classifiers already assume.
+fn plan9_flag_state(inner: &str) -> Option<bool> {
+    let mut rest = inner;
+    // Skip a leading `(…)` flag group (a `^` delimiter INSIDE it is not a
+    // plan9 flag). `find(')')` matches the existing classifiers' paren scan.
+    if let Some(after_open) = rest.strip_prefix('(') {
+        if let Some(close) = after_open.find(')') {
+            rest = &after_open[close + 1..];
+        }
+    }
+    let carets = rest.chars().take_while(|&c| c == '^').count();
+    if carets == 0 {
+        None
+    } else {
+        Some(carets % 2 == 1)
+    }
+}
+
+/// Strip a word segment down to the `${…}` body, applying the same DQ /
+/// Qstring normalization every plan9/splice/distribute classifier uses, and
+/// hand the inner text to `f`. Returns `false` when the segment is not a
+/// `${…}` braced expansion.
+fn with_braced_inner(s: &str, f: impl FnOnce(&str) -> bool) -> bool {
     let pq = crate::lex::untokenize_preserve_quotes(s);
     let normalized: String = pq
         .trim_start_matches('"')
@@ -10076,41 +10152,23 @@ fn is_plan9_off_expansion(s: &str) -> bool {
         .strip_prefix("${")
         .and_then(|t| t.strip_suffix('}'))
     {
-        Some(inner) => inner.starts_with("^^"),
+        Some(inner) => f(inner),
         None => false,
     }
 }
 
-/// True for a `${^name}` segment — RC_EXPAND_PARAM forced ON by the flag
-/// (c:Src/subst.c:2551-2557 `plan9 = 1`).
+/// True for a `${^name}` / `${(@)^name}` segment — RC_EXPAND_PARAM forced ON
+/// by the `^` flag (c:Src/subst.c:2551-2557 `plan9 = 1`).
 ///
 /// A subset of `is_distribute_expansion`: those shapes all cross-product, but
 /// only plan9 DELETES the word when the array is empty (c:4362 `uremnode`), so
 /// the two need different concat builtins. `${^^name}` is excluded — the
 /// doubled flag turns plan9 back OFF (c:2554). Same Qstring-aware normalization
 /// as `is_distribute_expansion`, so a DQ-wrapped `"${^a}"` is recognised too.
+/// The `^` may follow a `(…)` flag group (`${(@)^a}`), so `plan9_flag_state`
+/// looks past it rather than only at the first character.
 fn is_plan9_expansion(s: &str) -> bool {
-    let pq = crate::lex::untokenize_preserve_quotes(s);
-    let normalized: String = pq
-        .trim_start_matches('"')
-        .trim_end_matches('"')
-        .chars()
-        .map(|c| {
-            if c == crate::ported::zsh_h::Qstring {
-                '$'
-            } else {
-                c
-            }
-        })
-        .collect();
-    match normalized
-        .strip_prefix("${")
-        .and_then(|t| t.strip_suffix('}'))
-    {
-        // c:2551-2557 — single `^` on, doubled `^^` off.
-        Some(inner) => inner.starts_with('^') && !inner.starts_with("^^"),
-        None => false,
-    }
+    with_braced_inner(s, |inner| plan9_flag_state(inner) == Some(true))
 }
 
 fn is_distribute_expansion(s: &str) -> bool {
@@ -10194,6 +10252,38 @@ fn word_is_single_dq_span(s: &str) -> bool {
         }
     }
     depth0_dnull == 2
+}
+
+/// True when the leading `${` of `untoked` matches the word's FINAL `}` —
+/// i.e. the whole word is ONE braced expansion, not two adjacent ones
+/// (`${a}${b}`, `${(@)^a}Y${(@)^b}`) that merely start with `${` and end
+/// with `}`. Counts `${` opens against `}` closes; the word spans only if
+/// the depth first returns to zero exactly at the last char. Adjacent-
+/// expansion words return false so the caller falls through to the segment
+/// splitter instead of feeding the whole word to paramsubst as one body
+/// (which swallows the trailing expansion and joins its array).
+fn braced_expansion_spans_word(untoked: &str) -> bool {
+    if !untoked.starts_with("${") {
+        return false;
+    }
+    let ub = untoked.as_bytes();
+    let mut depth = 0i32;
+    let mut k = 0usize;
+    while k < ub.len() {
+        if ub[k] == b'$' && k + 1 < ub.len() && ub[k + 1] == b'{' {
+            depth += 1;
+            k += 2;
+            continue;
+        }
+        if ub[k] == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return k + 1 == ub.len();
+            }
+        }
+        k += 1;
+    }
+    false
 }
 
 fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
@@ -13835,5 +13925,136 @@ mod tests {
         // (The compiler may set it to "" if not called via the script
         // path — this test pins whichever default it picks.)
         let _ = chunk.source;
+    }
+
+    // ── plan9 (`^` RC_EXPAND_PARAM) cross-product classification ──────
+    // c:Src/subst.c:2550-2557 — the `^` flag toggles RC_EXPAND and may
+    // sit AFTER the `(…)` flag group (`${(@)^a}`), not only at the start
+    // (`${^a}`). `plan9_flag_state` skips the group then counts the `^`
+    // run (odd → ON, even → OFF).
+    #[test]
+    fn plan9_flag_state_parses_position_and_toggle() {
+        assert_eq!(plan9_flag_state("^a"), Some(true)); // ${^a}
+        assert_eq!(plan9_flag_state("(@)^a"), Some(true)); // ${(@)^a}
+        assert_eq!(plan9_flag_state("^^a"), Some(false)); // ${^^a}
+        assert_eq!(plan9_flag_state("(@)^^a"), Some(false)); // ${(@)^^a}
+        assert_eq!(plan9_flag_state("(@)a"), None); // ${(@)a} — splice, no `^`
+        assert_eq!(plan9_flag_state("a"), None); // ${a}
+        // A `^` used as a `(s:^:)` split delimiter is INSIDE the group,
+        // not a plan9 flag — the paren skip must swallow it.
+        assert_eq!(plan9_flag_state("(s:^:)a"), None);
+    }
+
+    /// True when the chunk (recursively) calls the given builtin id.
+    fn calls_builtin(chunk: &fusevm::Chunk, id: u16) -> bool {
+        has_op(chunk, |op| matches!(op, Op::CallBuiltin(b, _) if *b == id))
+    }
+
+    // A DQ word carrying `${(@)^a}` cross-products the surrounding text
+    // onto EVERY element (`"pre${(@)^a}"` → `prea preb prec`), so the
+    // compiler must pick BUILTIN_CONCAT_PLAN9, not BUILTIN_CONCAT_SPLICE
+    // (which sticks the prefix to the first element only — the bug the
+    // `(@)` shape triggered by matching is_splice_expansion first).
+    #[test]
+    fn dq_at_caret_word_compiles_to_plan9_concat() {
+        let chunk = compile_src(r#"echo "PRE${(@)^a}""#);
+        assert!(
+            calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_CONCAT_PLAN9),
+            "\"PRE${{(@)^a}}\" must emit CONCAT_PLAN9 (cross-product)"
+        );
+        assert!(
+            !calls_builtin(&chunk, crate::vm_helper::BUILTIN_CONCAT_SPLICE),
+            "\"PRE${{(@)^a}}\" must NOT emit CONCAT_SPLICE (first/last sticking)"
+        );
+    }
+
+    // `${(@)^^a}` — doubled `^^` forces RC_EXPAND OFF, so the word
+    // SPLICES and must ignore the `rcexpandparam` OPTION: emit
+    // SPLICE_NOPLAN9, never PLAN9.
+    #[test]
+    fn dq_at_double_caret_word_compiles_to_splice_noplan9() {
+        let chunk = compile_src(r#"echo "PRE${(@)^^a}""#);
+        assert!(
+            calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_CONCAT_SPLICE_NOPLAN9),
+            "\"PRE${{(@)^^a}}\" must emit SPLICE_NOPLAN9"
+        );
+        assert!(
+            !calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_CONCAT_PLAN9),
+            "\"PRE${{(@)^^a}}\" must NOT cross-product"
+        );
+    }
+
+    // A word that is TWO adjacent braced expansions merely starts with
+    // `${` and ends with `}` — it is NOT a single expansion. The
+    // bridge-array fast path (`${(@)…${…}}`) must not swallow the whole
+    // word: `${(@)^a}Y${(@)^b}` used to route to BRIDGE_BRACE_ARRAY as one
+    // body and join the trailing array. The span check falls it through to
+    // the segment splitter instead.
+    #[test]
+    fn braced_expansion_spans_word_rejects_adjacent_expansions() {
+        assert!(braced_expansion_spans_word("${(@)^a}")); // single
+        assert!(braced_expansion_spans_word("${(@)${a}}")); // genuinely nested
+        assert!(!braced_expansion_spans_word("${(@)^a}Y${(@)^b}")); // two adjacent
+        assert!(!braced_expansion_spans_word("${a}${b}")); // two adjacent, bare
+        assert!(!braced_expansion_spans_word("${(@)^a}${(@)b}")); // plan9 + splice
+        assert!(!braced_expansion_spans_word("Y${a}")); // not brace-led
+    }
+
+    // End-to-end: two adjacent plan9 expansions cross-product the whole
+    // word (`"${(@)^a}-${(@)^b}"` → `1-A 1-B 2-A 2-B`), so the compiler
+    // must take the segment path (two CONCAT_PLAN9 folds), NOT route the
+    // whole word to a single BRIDGE_BRACE_ARRAY body (which joined the
+    // second array).
+    #[test]
+    fn adjacent_plan9_expansions_take_segment_path() {
+        let chunk = compile_src(r#"echo "${(@)^a}-${(@)^b}""#);
+        assert!(
+            calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_CONCAT_PLAN9),
+            "adjacent plan9 expansions must fold via CONCAT_PLAN9 (segment path)"
+        );
+    }
+
+    // A word mixing a plan9 (`^`) expansion with a non-plan9 (splice)
+    // expansion — `"${(@)^a}${(@)b}"` — can't be folded by one concat
+    // operator, so it routes to the atomic WORD_ASSEMBLE_PLAN9 assembler.
+    #[test]
+    fn mixed_plan9_splice_word_uses_word_assembler() {
+        let chunk = compile_src(r#"echo "${(@)^a}${(@)b}""#);
+        assert!(
+            calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_WORD_ASSEMBLE_PLAN9),
+            "mixed plan9+splice must route to WORD_ASSEMBLE_PLAN9"
+        );
+    }
+
+    // Guard: a UNIFORM word (all segments plan9, or all splice) must NOT
+    // take the assembler path — the per-pair concat fold is correct and
+    // cheaper there.
+    #[test]
+    fn uniform_plan9_word_does_not_use_word_assembler() {
+        let chunk = compile_src(r#"echo "${(@)^a}-${(@)^b}""#);
+        assert!(
+            !calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_WORD_ASSEMBLE_PLAN9),
+            "all-plan9 word must fold via CONCAT_PLAN9, not the assembler"
+        );
+        assert!(
+            calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_CONCAT_PLAN9),
+            "all-plan9 word folds via CONCAT_PLAN9"
+        );
+    }
+
+    // Regression guard: a plain `${(@)a}` (no `^`) keeps its first/last
+    // splice classification — the fix must not over-broaden to every
+    // `(@)` form.
+    #[test]
+    fn dq_at_word_without_caret_stays_splice() {
+        let chunk = compile_src(r#"echo "PRE${(@)a}""#);
+        assert!(
+            calls_builtin(&chunk, crate::vm_helper::BUILTIN_CONCAT_SPLICE),
+            "\"PRE${{(@)a}}\" must still emit CONCAT_SPLICE"
+        );
+        assert!(
+            !calls_builtin(&chunk, crate::fusevm_bridge::BUILTIN_CONCAT_PLAN9),
+            "\"PRE${{(@)a}}\" must NOT cross-product"
+        );
     }
 }

@@ -7089,6 +7089,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         concat_splice(lhs, rhs)
     });
 
+    // See BUILTIN_WORD_ASSEMBLE_PLAN9's doc comment for the stack contract.
+    vm.register_builtin(BUILTIN_WORD_ASSEMBLE_PLAN9, |vm, argc| {
+        // Pop argc values: descriptor was pushed FIRST (bottom), segments
+        // after it, so popping top-first then reversing yields
+        // [descriptor, seg0, …, seg(n-1)].
+        let mut popped: Vec<Value> = Vec::with_capacity(argc as usize);
+        for _ in 0..argc {
+            popped.push(vm.pop());
+        }
+        popped.reverse();
+        let mut it = popped.into_iter();
+        let descriptor = it.next().map(|v| v.to_str()).unwrap_or_default();
+        let plan9_flags: Vec<bool> = descriptor.chars().map(|c| c == '1').collect();
+        let segments: Vec<Value> = it.collect();
+        word_assemble_plan9(&segments, &plan9_flags)
+    });
+
     // `[[ a -ef b ]]` — same-inode test. Resolves both paths via fs::metadata
     // (follows symlinks the way zsh's -ef does) and compares (dev, inode).
     // Returns false on any I/O error (path missing, permission denied, etc.).
@@ -10310,6 +10327,92 @@ fn concat_plan9(lhs: Value, rhs: Value) -> Value {
     }
 }
 
+/// Flatten one word-segment `Value` into its element strings: an Array splats
+/// to its items, a scalar is a single element.
+fn word_seg_elems(v: &Value) -> Vec<String> {
+    match v {
+        Value::Array(items) => items.iter().map(|i| i.as_str_cow().into_owned()).collect(),
+        other => vec![other.as_str_cow().into_owned()],
+    }
+}
+
+/// Assemble a DQ word from its segments, mixing plan9 (`^`, cross-product) and
+/// non-plan9 (splice) segments in one pass — see BUILTIN_WORD_ASSEMBLE_PLAN9.
+///
+/// c:Src/subst.c:4316-4437 — zsh threads a "growing edge" (`aptr`/`fstr`)
+/// through the whole word: an element stays active until a splice freezes all
+/// but the last. `active_lo` is the index where that active tail begins.
+///   * plan9 segment  → every active element crosses with EVERY new element;
+///     all results stay active (c:4316-4350 cartesian). An empty plan9 array
+///     deletes the word (c:4362 `uremnode`).
+///   * splice segment → every active element takes the FIRST new element, the
+///     remaining new elements append as fresh words; the last becomes the new
+///     growing edge (c:4366-4437 first/last join). A single-element splice keeps
+///     the whole active tail active (nothing frozen). An empty splice array
+///     contributes nothing and leaves the word intact.
+fn word_assemble_plan9(segments: &[Value], plan9_flags: &[bool]) -> Value {
+    let mut words: Vec<String> = Vec::new();
+    let mut active_lo: usize = 0;
+    let mut started = false;
+    for (i, seg) in segments.iter().enumerate() {
+        let plan9 = plan9_flags.get(i).copied().unwrap_or(false);
+        let elems = word_seg_elems(seg);
+        if plan9 && elems.is_empty() {
+            // c:4362-4365 — plan9 empty array deletes the whole word.
+            return Value::Array(Vec::new());
+        }
+        if !started {
+            started = true;
+            words = elems;
+            // plan9 → the whole first array is the growing edge; splice/scalar
+            // → only its last element grows, earlier ones are finalized words.
+            active_lo = if plan9 {
+                0
+            } else {
+                words.len().saturating_sub(1)
+            };
+            continue;
+        }
+        if plan9 {
+            let mut new_active =
+                Vec::with_capacity(words[active_lo..].len() * elems.len());
+            for a in &words[active_lo..] {
+                for r in &elems {
+                    new_active.push(format!("{a}{r}"));
+                }
+            }
+            let frozen_len = active_lo;
+            words.truncate(frozen_len);
+            words.extend(new_active);
+            active_lo = frozen_len; // all cross-products stay active
+        } else {
+            if elems.is_empty() {
+                // Non-plan9 empty array contributes nothing; word survives.
+                continue;
+            }
+            let frozen_len = active_lo;
+            let r0 = &elems[0];
+            let head: Vec<String> = words[active_lo..]
+                .iter()
+                .map(|a| format!("{a}{r0}"))
+                .collect();
+            words.truncate(frozen_len);
+            words.extend(head);
+            words.extend(elems[1..].iter().cloned());
+            active_lo = if elems.len() == 1 {
+                frozen_len // single-element splice: head stays the growing edge
+            } else {
+                words.len() - 1 // multi: only the last appended word grows
+            };
+        }
+    }
+    match words.len() {
+        0 => Value::Array(Vec::new()),
+        1 => Value::str(words.pop().unwrap()),
+        _ => Value::Array(words.into_iter().map(Value::str).collect()),
+    }
+}
+
 fn nodes_to_value(nodes: Vec<String>) -> Value {
     // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{a1}`)
     //   sentinel and other INULL bytes that paramsubst's splat block
@@ -11026,6 +11129,22 @@ pub const BUILTIN_CONCAT_PLAN9: u16 = 646;
 /// Routes straight to `concat_splice`, C's non-plan9 join-first-and-last path
 /// (c:4366-4437).
 pub const BUILTIN_CONCAT_SPLICE_NOPLAN9: u16 = 647;
+/// Atomic word assembler for a DQ word that MIXES a plan9 (`^`) segment with a
+/// non-plan9 (splice/scalar) segment — e.g. `"${(@)^a}${(@)b}"`.
+///
+/// The per-pair concat fold (CONCAT_PLAN9 / CONCAT_SPLICE picked ONCE for the
+/// whole word) cannot express a word where segment A distributes but segment B
+/// splices: a single operator does full-cross OR first/last-splice, never both,
+/// and it loses track of which trailing elements are still the "growing edge".
+/// zsh (Src/subst.c:4316-4437) instead threads a growing edge through the whole
+/// word — an element is "active" until a splice freezes all but the last.
+///
+/// This builtin ports that edge-tracking directly. Stack (bottom→top):
+///   descriptor, seg0, seg1, …, seg(n-1)     with argc = n + 1
+/// where `descriptor` is an n-char string, one char per segment: `'1'` = plan9
+/// (`^`), `'0'` = splice/scalar/literal. Each segment value is an Array (splat)
+/// or scalar (1 element). Result is the assembled Array (or scalar / deleted).
+pub const BUILTIN_WORD_ASSEMBLE_PLAN9: u16 = 652;
 /// `break N`/`continue N` runtime-count validator (see registration).
 pub const BUILTIN_BREAK_COUNT_VALIDATE: u16 = 648;
 /// `[[ -r/-w/-x file ]]` via access(2) (doaccess) — see handler.
@@ -13988,5 +14107,80 @@ impl ShellExecutor {
         }
 
         self.execute_external(cmd, &rest_vec, &[]).unwrap_or(127)
+    }
+}
+
+#[cfg(test)]
+mod word_assemble_tests {
+    use super::{word_assemble_plan9, Value};
+
+    fn arr(xs: &[&str]) -> Value {
+        Value::Array(xs.iter().map(|s| Value::str(*s)).collect())
+    }
+    fn out(v: Value) -> Vec<String> {
+        match v {
+            Value::Array(items) => items.iter().map(|i| i.to_str()).collect(),
+            other => vec![other.to_str()],
+        }
+    }
+
+    // The edge-tracking fold (c:Src/subst.c:4316-4437). A naive per-segment
+    // operator gets s,p,p and p,s,p wrong because it forgets which trailing
+    // elements are still the "growing edge". These pin the exact zsh output
+    // (verified against zsh 5.9) for every plan9/splice permutation.
+    #[test]
+    fn plan9_then_splice() {
+        // "${(@)^a}${(@)b}" a=(1 2) b=(A B) -> 1A 2A B
+        let r = word_assemble_plan9(&[arr(&["1", "2"]), arr(&["A", "B"])], &[true, false]);
+        assert_eq!(out(r), vec!["1A", "2A", "B"]);
+    }
+    #[test]
+    fn splice_then_plan9() {
+        // "${(@)a}${(@)^b}" -> 1 2A 2B
+        let r = word_assemble_plan9(&[arr(&["1", "2"]), arr(&["A", "B"])], &[false, true]);
+        assert_eq!(out(r), vec!["1", "2A", "2B"]);
+    }
+    #[test]
+    fn plan9_then_plan9_is_full_cross() {
+        let r = word_assemble_plan9(&[arr(&["1", "2"]), arr(&["A", "B"])], &[true, true]);
+        assert_eq!(out(r), vec!["1A", "1B", "2A", "2B"]);
+    }
+    #[test]
+    fn splice_then_splice() {
+        let r = word_assemble_plan9(&[arr(&["1", "2"]), arr(&["A", "B"])], &[false, false]);
+        assert_eq!(out(r), vec!["1", "2A", "B"]);
+    }
+    #[test]
+    fn plan9_splice_plan9_growing_edge() {
+        // "${(@)^a}${(@)b}${(@)^c}" -> 1A 2A Bp Bq  (only B, the edge, distributes)
+        let r = word_assemble_plan9(
+            &[arr(&["1", "2"]), arr(&["A", "B"]), arr(&["p", "q"])],
+            &[true, false, true],
+        );
+        assert_eq!(out(r), vec!["1A", "2A", "Bp", "Bq"]);
+    }
+    #[test]
+    fn splice_plan9_plan9_keeps_frozen_prefix() {
+        // "${(@)a}${(@)^b}${(@)^c}" -> 1 2Ap 2Aq 2Bp 2Bq  (1 stays frozen)
+        let r = word_assemble_plan9(
+            &[arr(&["1", "2"]), arr(&["A", "B"]), arr(&["p", "q"])],
+            &[false, true, true],
+        );
+        assert_eq!(out(r), vec!["1", "2Ap", "2Aq", "2Bp", "2Bq"]);
+    }
+    #[test]
+    fn empty_plan9_array_deletes_word() {
+        // "${(@)^a}${(@)b}" with a=() -> word deleted
+        let r = word_assemble_plan9(&[Value::Array(vec![]), arr(&["A", "B"])], &[true, false]);
+        assert!(out(r).is_empty(), "plan9 empty array deletes the word");
+    }
+    #[test]
+    fn leading_literal_then_mixed() {
+        // "X${(@)^a}${(@)b}" -> X1A X2A B
+        let r = word_assemble_plan9(
+            &[Value::str("X"), arr(&["1", "2"]), arr(&["A", "B"])],
+            &[false, true, false],
+        );
+        assert_eq!(out(r), vec!["X1A", "X2A", "B"]);
     }
 }
