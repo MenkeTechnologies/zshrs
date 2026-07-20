@@ -116,8 +116,10 @@ pub fn _message(args: &[String]) -> i32 {
         let _ = setsparam("_comp_mesg", "yes");
 
         // sh:10-15 — `$2` becomes the tag when >2 args, else
-        //   inherit from $curtag.
-        let (tag, descr): (String, String) = if args.len() > 3 {
+        //   inherit from $curtag. `$#` counts `-e` as $1, so with
+        //   `args` including "-e" at index 0 the predicate is
+        //   `args.len() > 2` (matching zsh `(( $# > 2 ))`).
+        let (tag, descr): (String, String) = if args.len() > 2 {
             // shift drops original $1, so new $2 is original $3
             (
                 args.get(1).cloned().unwrap_or_default(),
