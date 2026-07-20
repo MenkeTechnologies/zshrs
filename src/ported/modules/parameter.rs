@@ -1092,9 +1092,7 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                             std::collections::HashMap<String, String>,
                         > = std::cell::RefCell::new(std::collections::HashMap::new());
                     }
-                    if let Some(hit) =
-                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned())
-                    {
+                    if let Some(hit) = FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned()) {
                         hit
                     } else {
                         let out = match crate::ported::exec::parse_string(text, 0) {

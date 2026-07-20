@@ -322,10 +322,7 @@ pub fn killwholeline() -> i32 {
         // (CUT_FRONT|CUT_RAW) : CUT_RAW);` — include the trailing '\n'
         // if there is one; kill routes through cuttext (CUTBUF).
         let drop = i - ZLECS.load(SeqCst) + (if i != ZLELL.load(SeqCst) { 1 } else { 0 });
-        forekill(
-            drop as i32,
-            if _fg { CUT_FRONT | CUT_RAW } else { CUT_RAW },
-        );
+        forekill(drop as i32, if _fg { CUT_FRONT | CUT_RAW } else { CUT_RAW });
         n -= 1;
     }
     CLEARLIST.store(1, SeqCst); // c:209 `clearlist = 1;`
@@ -887,7 +884,7 @@ pub fn pastebuf(buf: &crate::ported::zle::zle_h::cutbuffer, mult: i32, position:
             mult -= 1;
         }
         YANKE.store(ZLECS.load(SeqCst), SeqCst); // c:600 `yanke = zlecs;`
-        // c:601-602 — `if (zlecs && invicmdmode()) DECCS();`
+                                                 // c:601-602 — `if (zlecs && invicmdmode()) DECCS();`
         let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
         if ZLECS.load(SeqCst) != 0 && crate::ported::zle::zle_h::invicmdmode(&kn) {
             crate::ported::zle::zle_move::deccs();
@@ -1037,8 +1034,8 @@ pub fn putreplaceselection() -> i32 {
 pub fn yankpop() -> i32 {
     // c:741
     let kctstart = KCT.load(SeqCst); // c:744 `int kctstart = kct;`
-    // c:747-750 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
-    //              { kctbuf = NULL; return 1; }`
+                                     // c:747-750 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
+                                     //              { kctbuf = NULL; return 1; }`
     let last = LASTCMD.load(SeqCst) as i32;
     if (last & ZLE_YANK) == 0
         || KILLRING.lock().unwrap().is_empty()
@@ -1837,8 +1834,13 @@ pub fn makesuffix(n: i32) {
     // c:1602-1603 — `suffixchars = getsparam_u("ZLE_REMOVE_SUFFIX_CHARS")`.
     let suffix_chars = crate::ported::params::getsparam("ZLE_REMOVE_SUFFIX_CHARS")
         .unwrap_or_else(|| " \t\n;&|".to_string()); // default
-    addsuffixstring(crate::ported::zle::zle_h::SUFTYP_POSSTR, 0, &suffix_chars, n); // c:1605
-    // c:1607-1609 — ZLE_SPACE_SUFFIX_CHARS added second so it takes precedence.
+    addsuffixstring(
+        crate::ported::zle::zle_h::SUFTYP_POSSTR,
+        0,
+        &suffix_chars,
+        n,
+    ); // c:1605
+       // c:1607-1609 — ZLE_SPACE_SUFFIX_CHARS added second so it takes precedence.
     if let Some(space_chars) = crate::ported::params::getsparam("ZLE_SPACE_SUFFIX_CHARS") {
         if !space_chars.is_empty() {
             addsuffixstring(

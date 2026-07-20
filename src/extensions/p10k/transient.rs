@@ -137,14 +137,24 @@ fn transient_char(state: &str, default_fg: &str) -> String {
     // `prompt_prompt_char` (segment "prompt_char" under the
     // `prompt_`-prefixing probe), so the probe chain here hits
     // POWERLEVEL9K_PROMPT_CHAR_<STATE>_FOREGROUND etc.
-    let fg = translate_color_min(&p9k_param("prompt_char", Some(state), "FOREGROUND", default_fg));
+    let fg = translate_color_min(&p9k_param(
+        "prompt_char",
+        Some(state),
+        "FOREGROUND",
+        default_fg,
+    ));
     // p10k:590-595 — `_p9k_foreground`: `%F{c}` or `%f` for default.
     let fg_seq = if fg.is_empty() {
         "%f".to_string()
     } else {
         format!("%F{{{fg}}}")
     };
-    let ce = p9k_param("prompt_char", Some(state), "CONTENT_EXPANSION", "${P9K_CONTENT}");
+    let ce = p9k_param(
+        "prompt_char",
+        Some(state),
+        "CONTENT_EXPANSION",
+        "${P9K_CONTENT}",
+    );
     let glyph = match ce.as_str() {
         "" => "", // empty expansion hides the char (render.rs policy)
         "${P9K_CONTENT}" | "$P9K_CONTENT" => "\u{276F}", // ❯ (p10k:8319)

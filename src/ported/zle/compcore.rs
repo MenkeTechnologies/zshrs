@@ -28,10 +28,9 @@ use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::zle::comp_h::{
     Aminfo, Brinfo, Cadata, Ccmakedat, Cexpl, Cline, Cmatch, Cmgroup, Cmlist, Menuinfo, CAF_ALL,
     CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT,
-    CAF_UNIQALL,
-    CAF_UNIQCON, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT, CGF_UNIQALL, CGF_UNIQCON,
-    CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_PARBR, CMF_PARNEST,
-    CMF_ROWS,
+    CAF_UNIQALL, CAF_UNIQCON, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT, CGF_UNIQALL,
+    CGF_UNIQCON, CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_PARBR,
+    CMF_PARNEST, CMF_ROWS,
 };
 use crate::ported::zle::complete::{
     COMPIPREFIX, COMPLIST, COMPPREFIX, COMPQSTACK, COMPSUFFIX, INCOMPFUNC,
@@ -158,10 +157,10 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     set_compstate_str("pattern_insert", "menu"); // c:320
     forcelist.store(0, Ordering::Relaxed); // c:322
     haspattern.store(0, Ordering::Relaxed); // c:323
-    // c:324 — complistmax mirrors the LISTMAX parameter for every
-    // completion; asklist reads it to decide when to prompt "do you wish
-    // to see all N possibilities?". Leaving the static at 0 made large
-    // command lists (`l<Tab>`, 230 matches) dump without asking.
+                                            // c:324 — complistmax mirrors the LISTMAX parameter for every
+                                            // completion; asklist reads it to decide when to prompt "do you wish
+                                            // to see all N possibilities?". Leaving the static at 0 made large
+                                            // command lists (`l<Tab>`, 230 matches) dump without asking.
     crate::ported::zle::complete::COMPLISTMAX
         .store(env_iparam("LISTMAX") as i64, Ordering::Relaxed); // c:324
 
@@ -468,10 +467,7 @@ pub fn before_complete(lst: &mut i32) -> i32 {
             }
             // c:1272 — minfo.cur = valid_match(...); set before do_single so
             // the insertion state stays consistent with the advanced cursor.
-            if let Ok(mut mst) = MINFO
-                .get_or_init(|| Mutex::new(Menuinfo::default()))
-                .lock()
-            {
+            if let Ok(mut mst) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
                 mst.cur = mc.clone().map(Box::new);
             }
             if let Some(ref m) = mc {
@@ -1658,8 +1654,8 @@ pub fn set_comp_sep() -> i32 {
     };
     use crate::ported::zle::zle_utils::{zle_restore_positions, zle_save_positions};
     use crate::ported::zsh_h::{
-        COMPLETEINWORD, ENDINPUT, GETKEY_UPDATE_OFFSET, GETKEYS_DOLLARS_QUOTE, LEXERR, LEXFLAGS_ZLE,
-        Meta, STRING_LEX,
+        Meta, COMPLETEINWORD, ENDINPUT, GETKEYS_DOLLARS_QUOTE, GETKEY_UPDATE_OFFSET, LEXERR,
+        LEXFLAGS_ZLE, STRING_LEX,
     };
 
     // ── single-byte-metafied <-> char-per-byte String conversions ──
@@ -2113,7 +2109,11 @@ pub fn set_comp_sep() -> i32 {
     // c:1857-1935 — publish the results.
     // c:1861-1868 — prepend the active quote char to compqstack.
     {
-        let head = if instr == QT_NONE { QT_BACKSLASH } else { instr };
+        let head = if instr == QT_NONE {
+            QT_BACKSLASH
+        } else {
+            instr
+        };
         let mut new_qstack = String::new();
         if let Some(hc) = char::from_u32(head as u32) {
             new_qstack.push(hc);
@@ -2162,9 +2162,17 @@ pub fn set_comp_sep() -> i32 {
     }
 
     // c:1912-1925 — fold qp/qs into the quoted ignored prefix/suffix.
-    let cqip = tricat(&snap(&COMPQIPREFIX), &snap(&COMPIPREFIX), &multiquote(&qp, 1));
+    let cqip = tricat(
+        &snap(&COMPQIPREFIX),
+        &snap(&COMPIPREFIX),
+        &multiquote(&qp, 1),
+    );
     put(&COMPQIPREFIX, cqip);
-    let cqis = tricat(&multiquote(&qs, 1), &snap(&COMPISUFFIX), &snap(&COMPQISUFFIX));
+    let cqis = tricat(
+        &multiquote(&qs, 1),
+        &snap(&COMPISUFFIX),
+        &snap(&COMPQISUFFIX),
+    );
     put(&COMPQISUFFIX, cqis);
     put(&COMPIPREFIX, String::new());
     put(&COMPISUFFIX, String::new());
@@ -2690,9 +2698,8 @@ pub fn addmatches(
                 // through comp_match's own output, and instmatch re-inserts
                 // dat.ppre from the Cmatch, so the probe's `pline` is unused).
                 crate::ported::zle::compmatch::start_match();
-                let ml = crate::ported::zle::compmatch::match_str(
-                    &lpre, ppre, None, 0, None, 0, 0, 1,
-                );
+                let ml =
+                    crate::ported::zle::compmatch::match_str(&lpre, ppre, None, 0, None, 0, 0, 1);
                 if ml >= 0 {
                     // c:2318-2325 — matcher matched the prefix.
                     let cut = (ml as usize).min(lpre.len());
@@ -2713,7 +2720,11 @@ pub fn addmatches(
         }
     }
     if ppre_nomatch {
-        return if mnum.load(Ordering::Relaxed) == _nm { 1 } else { 0 };
+        return if mnum.load(Ordering::Relaxed) == _nm {
+            1
+        } else {
+            0
+        };
     }
 
     // c:2360-2389 — when `$compstate[pattern_match]` is set, compile the
@@ -3977,9 +3988,9 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
             // c:3259
             // Now sort the array (it contains matches).                     // c:3260
             MATCHORDER.store(flags, Ordering::Relaxed); // c:3261
-            // c:3262 — C `qsort(rp, n, sizeof(Cmatch), matchcmp)`. Must use the
-            // qsort-tolerant sort: matchcmp→zstrcmp is not a strict weak order
-            // (numeric/natural sort), which makes Rust's sort_by PANIC.
+                                                        // c:3262 — C `qsort(rp, n, sizeof(Cmatch), matchcmp)`. Must use the
+                                                        // qsort-tolerant sort: matchcmp→zstrcmp is not a strict weak order
+                                                        // (numeric/natural sort), which makes Rust's sort_by PANIC.
             crate::tolerant_sort::qsort_tolerant(&mut rp, matchcmp);
 
             if (flags & CGF_UNIQCON) == 0 {
@@ -4043,7 +4054,7 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                 // c:3302 didn't use -1 or -2
                 MATCHORDER.store(flags, Ordering::Relaxed); // c:3306
                 let mut sp: Vec<Cmatch> = rp.clone(); // c:3309-3312 zhalloc + memcpy
-                // c:3313 — qsort matchcmp; tolerant sort (non-total-order cmp).
+                                                      // c:3313 — qsort matchcmp; tolerant sort (non-total-order cmp).
                 crate::tolerant_sort::qsort_tolerant(&mut sp, matchcmp);
 
                 let mut del = false; // c:3303

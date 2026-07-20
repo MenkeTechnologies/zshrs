@@ -53,8 +53,7 @@ pub fn count_entries(path: &str) -> Option<u64> {
     }
     let map = unsafe { memmap2::Mmap::map(&f).ok()? };
     let bytes: &[u8] = &map;
-    let extended = bytes.starts_with(b": ")
-        || bytes.windows(3).take(65536).any(|w| w == b"\n: ");
+    let extended = bytes.starts_with(b": ") || bytes.windows(3).take(65536).any(|w| w == b"\n: ");
     let mut count: u64 = 0;
     let mut prev_cont = false; // previous line ended in `\`
     let mut line_start = 0usize;
@@ -182,7 +181,11 @@ pub fn page_older_until(min_ev: i64) -> bool {
 /// first parsed entry). `start > 0` aligns forward past the partial
 /// first entry; the caller's floor at `end` guarantees the tail cuts
 /// on an entry boundary.
-fn read_entries_between(path: &str, start: u64, end: u64) -> Option<(Vec<crate::ported::zsh_h::histent>, u64)> {
+fn read_entries_between(
+    path: &str,
+    start: u64,
+    end: u64,
+) -> Option<(Vec<crate::ported::zsh_h::histent>, u64)> {
     use std::io::{Read, Seek, SeekFrom};
     if end <= start {
         return Some((Vec::new(), start));

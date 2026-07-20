@@ -9,11 +9,10 @@ use crate::ported::params::{paramtab, setaparam};
 use crate::ported::utils::{imeta_byte, metafy, strpfx};
 use crate::ported::zsh_h::{
     isset, zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, GETKEYS_BINDKEY, PROMPTBANG,
-    PROMPTPERCENT,
-    TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR,
-    TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK,
-    TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK,
-    TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR,
+    PROMPTPERCENT, TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR,
+    TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT,
+    TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT,
+    TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR,
 };
 use crate::zsh_h::Meta;
 use crate::DPUTS;
@@ -344,11 +343,7 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
             sptr -= 1; // c:145 loop step
         }
         // c:151-152 — `if (*sptr == '/' && sptr[1] && sptr != modp) sptr++;`
-        if sptr < bytes.len()
-            && bytes[sptr] == b'/'
-            && sptr + 1 < bytes.len()
-            && sptr != 0
-        {
+        if sptr < bytes.len() && bytes[sptr] == b'/' && sptr + 1 < bytes.len() && sptr != 0 {
             sptr += 1;
         }
         display[sptr.min(display.len())..].to_string() // c:153
@@ -1547,22 +1542,22 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         fallthrough = arg > 0; // c:681-682
                     }
                     if fallthrough {
-                    // c:684-694 — emit the glitch placeholders. Nularg prints
-                    // nothing but countprompt charges it ONE column each
-                    // (c:1183-1184 `else if (*str == Nularg) w++;`), which is
-                    // the entire point of both escapes: `%G` tells the expander
-                    // that something invisible still occupies a cell, and
-                    // `%N{…%}` says the invisible span occupies N of them.
-                    //
-                    // There was no `G` arm at all, so `%G` fell to the
-                    // unknown-escape default and emitted nothing. Nothing
-                    // downstream was wrong — countprompt already had its Nularg
-                    // arm and prompttrunc already measured with countprompt —
-                    // there was simply never a Nularg in the buffer to count.
-                    // Effects: `%G%(1l.t.f)` took the false branch where zsh
-                    // takes the true one, and every truncation spent the
-                    // invisible column on a real character
-                    // (`%5<<abcdefghij%G` → `fghij`, zsh `ghij`).
+                        // c:684-694 — emit the glitch placeholders. Nularg prints
+                        // nothing but countprompt charges it ONE column each
+                        // (c:1183-1184 `else if (*str == Nularg) w++;`), which is
+                        // the entire point of both escapes: `%G` tells the expander
+                        // that something invisible still occupies a cell, and
+                        // `%N{…%}` says the invisible span occupies N of them.
+                        //
+                        // There was no `G` arm at all, so `%G` fell to the
+                        // unknown-escape default and emitted nothing. Nothing
+                        // downstream was wrong — countprompt already had its Nularg
+                        // arm and prompttrunc already measured with countprompt —
+                        // there was simply never a Nularg in the buffer to count.
+                        // Effects: `%G%(1l.t.f)` took the false branch where zsh
+                        // takes the true one, and every truncation spent the
+                        // invisible column on a real character
+                        // (`%5<<abcdefghij%G` → `fghij`, zsh `ghij`).
                         let n = if arg > 0 { arg } else { 1 }; // c:685/691
                         addbufspc(bv, n as i32);
                         for _ in 0..n {
@@ -2073,29 +2068,29 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         let mut t0: i32 = 0;
                         let mut h: i32 = 0;
                         countprompt(&line, &mut t0, &mut h, 0); // c:668
-                        // c:669 — `arg = zterm_columns - t0 + arg;`. C reads the
-                        // zterm_columns GLOBAL, which `IPDEF5("COLUMNS",
-                        // &zterm_columns, zlevar_gsu)` (c:params.c:355) aliases to
-                        // $COLUMNS — so the param IS the value, and getiparam is
-                        // the port's equivalent (it has no valptr aliasing).
-                        //
-                        // This previously called adjustcolumns() and clamped a
-                        // non-positive result to 80. Neither is in the C, and both
-                        // were wrong: adjustcolumns re-probes the tty (C does not
-                        // probe here at all), and the 80 clamp turned C's
-                        // "zterm_columns is legitimately 0 without a terminal"
-                        // into a fake 80-column terminal, so `%-5<<` never
-                        // truncated where zsh truncates to 1 (c:670-671 clamps the
-                        // NEGATIVE result to 1, which is the whole point).
-                        //
-                        // The clamp used to be load-bearing for a different
-                        // reason: zshrs never called adjustwinsize(0), so
-                        // $COLUMNS was 0 even at a real terminal and dropping the
-                        // clamp would have truncated every interactive prompt to
-                        // one character. That call now happens at init
-                        // (vm_helper, c:init.c:1276), so $COLUMNS is the true
-                        // width when there is a tty and 0 only when there isn't —
-                        // exactly C's zterm_columns.
+                                                                // c:669 — `arg = zterm_columns - t0 + arg;`. C reads the
+                                                                // zterm_columns GLOBAL, which `IPDEF5("COLUMNS",
+                                                                // &zterm_columns, zlevar_gsu)` (c:params.c:355) aliases to
+                                                                // $COLUMNS — so the param IS the value, and getiparam is
+                                                                // the port's equivalent (it has no valptr aliasing).
+                                                                //
+                                                                // This previously called adjustcolumns() and clamped a
+                                                                // non-positive result to 80. Neither is in the C, and both
+                                                                // were wrong: adjustcolumns re-probes the tty (C does not
+                                                                // probe here at all), and the 80 clamp turned C's
+                                                                // "zterm_columns is legitimately 0 without a terminal"
+                                                                // into a fake 80-column terminal, so `%-5<<` never
+                                                                // truncated where zsh truncates to 1 (c:670-671 clamps the
+                                                                // NEGATIVE result to 1, which is the whole point).
+                                                                //
+                                                                // The clamp used to be load-bearing for a different
+                                                                // reason: zshrs never called adjustwinsize(0), so
+                                                                // $COLUMNS was 0 even at a real terminal and dropping the
+                                                                // clamp would have truncated every interactive prompt to
+                                                                // one character. That call now happens at init
+                                                                // (vm_helper, c:init.c:1276), so $COLUMNS is the true
+                                                                // width when there is a tty and 0 only when there isn't —
+                                                                // exactly C's zterm_columns.
                         let cols = crate::ported::params::getiparam("COLUMNS") as i32;
                         arg = cols - t0 + arg; // c:669
                         if arg <= 0 {
@@ -2697,9 +2692,9 @@ pub fn prompttrunc(
         w = bv.bp; // c:1320
         bv.fm_pos += 1; // c:1321 — past the closing truncchar
         bv.trunccount = bv.dontcount; // c:1322
-        // c:1323 — `putpromptchar(doprint, endchar);` — expand EVERYTHING
-        // that follows (to the end of the prompt or to `endchar`); the
-        // truncation applies to all of it, not just to a bracketed span.
+                                      // c:1323 — `putpromptchar(doprint, endchar);` — expand EVERYTHING
+                                      // that follows (to the end of the prompt or to `endchar`); the
+                                      // truncation applies to all of it, not just to a bracketed span.
         putpromptchar(bv, doprint, endchar); // c:1323
         bv.trunccount = 0; // c:1324
         ptr = w; // c:1325
@@ -2717,9 +2712,8 @@ pub fn prompttrunc(
             // c:1344
             let fullen = bv.bp - ptr; // c:1355
             let ntrunc = t.len(); // c:1357
-            // c:1359 — `twidth = MB_METASTRWIDTH(t);`
-            let twidth =
-                crate::ported::zsh_h::MB_METASTRWIDTH(&String::from_utf8_lossy(&t)) as i32;
+                                  // c:1359 — `twidth = MB_METASTRWIDTH(t);`
+            let twidth = crate::ported::zsh_h::MB_METASTRWIDTH(&String::from_utf8_lossy(&t)) as i32;
             if twidth < bv.truncwidth {
                 // c:1360
                 let mut maxwidth = bv.truncwidth - twidth; // c:1361
@@ -3780,9 +3774,9 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
         if rest.starts_with("hl=") {
             // c:2042-2047 — named highlight group (.zle.hlgroups resolver).
             pos += 3; // c:2043
-            // c:2044 — parsehighlight up to ','. No .zle.hlgroups substrate:
-            // mirror C's hash-absent path (*atr = TXT_ERROR), consuming to
-            // the endchar without touching on_var (c:2045-2046 skipped).
+                      // c:2044 — parsehighlight up to ','. No .zle.hlgroups substrate:
+                      // mirror C's hash-absent path (*atr = TXT_ERROR), consuming to
+                      // the endchar without touching on_var (c:2045-2046 skipped).
             let seg = &spec[pos..];
             pos += seg.find(',').unwrap_or(seg.len());
             found = true; // c:2047
@@ -3790,7 +3784,7 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
             let is_fg = bytes[pos] == b'f'; // c:2049
             pos += 3; // c:2051
             let atr = match_colour(Some(&mut pos), spec, is_fg, 0); // c:2052
-            // c:2053-2056
+                                                                    // c:2053-2056
             match bytes.get(pos).copied() {
                 Some(b',') => pos += 1,
                 Some(c) if c != b' ' => break,
@@ -3838,7 +3832,7 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
             if bytes.get(pos) == Some(&b'%') {
                 pos += 1;
             } // c:2077-2078
-            // c:2079-2080 — invert sense (0 => fully opaque) into fg field.
+              // c:2079-2080 — invert sense (0 => fully opaque) into fg field.
             mask |= (100 - o1 as zattr) << TXT_ATTR_FG_COL_SHIFT;
             let mut o_bg = o1; // c:2074 opacity retained for bg when no '/'
             if bytes.get(pos) == Some(&b'/') {
@@ -3856,7 +3850,7 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
                 o_bg = o2;
             }
             mask |= (100 - o_bg as zattr) << TXT_ATTR_BG_COL_SHIFT; // c:2089
-            // c:2090-2093
+                                                                    // c:2090-2093
             match bytes.get(pos).copied() {
                 Some(b',') => pos += 1,
                 Some(c) if c != b' ' => break,
@@ -3873,7 +3867,7 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
                 if spec[pos..].starts_with(name) {
                     // c:2098
                     let mut vp = pos + name.len(); // c:2099 — val = teststr + strlen(name)
-                    // c:2101-2104
+                                                   // c:2101-2104
                     match bytes.get(vp).copied() {
                         Some(b',') => vp += 1,
                         Some(c) if c != b' ' => break, // c:2104 — break the hl loop
@@ -4127,21 +4121,22 @@ pub struct colour_sequences {
 /// post-condition identical while making a pre-`setupvals` read (unit
 /// tests, `trashzle()` cursor moves) yield the defaults instead of an
 /// empty prefix that would compose a malformed escape.
-pub static fg_bg_sequences: std::sync::LazyLock<std::sync::Mutex<[colour_sequences; 2]>> = // c:2324
+pub static fg_bg_sequences: std::sync::LazyLock<std::sync::Mutex<[colour_sequences; 2]>> =
+    // c:2324
     std::sync::LazyLock::new(|| {
-        std::sync::Mutex::new([
-            colour_sequences {
-                start: TC_COL_FG_START.to_string(),
-                end: TC_COL_FG_END.to_string(),
-                def: TC_COL_FG_DEFAULT.to_string(),
-            },
-            colour_sequences {
-                start: TC_COL_BG_START.to_string(),
-                end: TC_COL_BG_END.to_string(),
-                def: TC_COL_BG_DEFAULT.to_string(),
-            },
-        ])
-    });
+            std::sync::Mutex::new([
+                colour_sequences {
+                    start: TC_COL_FG_START.to_string(),
+                    end: TC_COL_FG_END.to_string(),
+                    def: TC_COL_FG_DEFAULT.to_string(),
+                },
+                colour_sequences {
+                    start: TC_COL_BG_START.to_string(),
+                    end: TC_COL_BG_END.to_string(),
+                    def: TC_COL_BG_DEFAULT.to_string(),
+                },
+            ])
+        });
 
 /// Port of `static char *colseq_buf` from `Src/prompt.c:2332`.
 /// We need a buffer for colour sequence composition. It may
@@ -5246,9 +5241,11 @@ mod tests {
             "the `%{{...%}}` escape span must be zero-width; got w={w} \
              (marker-convention mismatch re-inflates prompt width → hang)"
         );
-        assert_eq!(h, 1, "a single-line prompt must count as height 1; got h={h}");
+        assert_eq!(
+            h, 1,
+            "a single-line prompt must count as height 1; got h={h}"
+        );
     }
-
 
     /// c:134 — `promptpath` with `tilde=false` MUST NOT substitute ~
     /// even when `home` is a prefix. Pin the inverse branch so a

@@ -1343,9 +1343,7 @@ fn par_cmd() -> Option<ZshCommand> {
             // = `\u{9e}`/`\u{9d}`/`\u{85}`); emitting it raw printed the
             // marker bytes and dropped the visible quotes. Untokenize to
             // the display form: Dnull→`"`, Snull→`'`, Stringg→`$`, Bnull→`\`.
-            let bad = crate::ported::lex::untokenize_preserve_quotes(
-                &tokstr().unwrap_or_default(),
-            );
+            let bad = crate::ported::lex::untokenize_preserve_quotes(&tokstr().unwrap_or_default());
             zerr(&format!("parse error near `{}'", bad));
             // Reset state before returning so the outer loop's None
             // detection unwinds cleanly.
@@ -2367,8 +2365,7 @@ fn par_funcdef() -> Option<ZshCommand> {
                 // parse time (the cascade of "command not found: -zui_std_*"
                 // and "bad substitution" while sourcing stdlib.lzui).
                 let sc: Vec<char> = s.chars().collect();
-                let is_trace_opt =
-                    sc.len() == 2 && (sc[0] == '-' || sc[0] == Dash) && sc[1] == 'T';
+                let is_trace_opt = sc.len() == 2 && (sc[0] == '-' || sc[0] == Dash) && sc[1] == 'T';
                 if is_trace_opt {
                     tracing = true;
                     zshlex();
@@ -2595,9 +2592,7 @@ fn par_funcdef() -> Option<ZshCommand> {
             let body_source = input_slice(unbraced_body_start, pos())
                 .map(|s| {
                     s.trim()
-                        .trim_end_matches(|c: char| {
-                            c == ';' || c == '\n' || c.is_whitespace()
-                        })
+                        .trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace())
                         .to_string()
                 })
                 .filter(|s| !s.is_empty());
@@ -2813,11 +2808,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                         // `exec {1}>&-`) is a valid fd var. The prior check also
                         // required the first char to be `_`/alphabetic, which
                         // rejected `{1}`/`{2}`/`{12}` — zsh accepts them.
-                        if !name.is_empty()
-                            && name
-                                .bytes()
-                                .all(crate::ported::ztype_h::iident)
-                        {
+                        if !name.is_empty() && name.bytes().all(crate::ported::ztype_h::iident) {
                             let varid = name.to_string();
                             words.pop();
                             if let Some(mut redir) = par_redir() {
@@ -4809,7 +4800,11 @@ pub fn build_cur_dump(
             crate::ported::lex::set_noaliases(ona); // c:3506 / c:3511
             let loaded: Option<eprog> = match dump_out {
                 // c:3509-3510 — `if (prog->dump) prog = dupeprog(prog, 1);`
-                Some((p, _)) => Some(if p.dump.is_some() { dupeprog(&p, true) } else { p }),
+                Some((p, _)) => Some(if p.dump.is_some() {
+                    dupeprog(&p, true)
+                } else {
+                    p
+                }),
                 None => match found {
                     // zshrs's `getfpfunc` only materializes an `Eprog`
                     // for `.zwc` digest hits; a plain autoload source
@@ -9747,9 +9742,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                 let body_source = input_slice(unbraced_body_start, pos())
                     .map(|s| {
                         s.trim()
-                            .trim_end_matches(|c: char| {
-                                c == ';' || c == '\n' || c.is_whitespace()
-                            })
+                            .trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace())
                             .to_string()
                     })
                     .filter(|s| !s.is_empty());

@@ -565,7 +565,9 @@ mod default_alternate_words_keep_arrays {
     /// Nested array parameter in the default arm.
     #[test]
     fn array_in_default_arm_stays_array() {
-        assert_parity(r#"unset u; arr=(x y z); a=(${u-$arr}); b=(${u-${arr[@]}}); print $#a $#b $b[3]"#);
+        assert_parity(
+            r#"unset u; arr=(x y z); a=(${u-$arr}); b=(${u-${arr[@]}}); print $#a $#b $b[3]"#,
+        );
     }
 
     /// Alternate arms (`+` / `:+`) with the var set.
@@ -606,7 +608,9 @@ mod quoted_empty_subscript_word_survives {
 
     #[test]
     fn standalone_quoted_empty_subscript_is_one_arg() {
-        assert_parity(r#"setopt rcexpandparam; v=""; set -- x${v[-1]}y "${v[-1]}"; print -r -- argc=$#"#);
+        assert_parity(
+            r#"setopt rcexpandparam; v=""; set -- x${v[-1]}y "${v[-1]}"; print -r -- argc=$#"#,
+        );
     }
 
     #[test]

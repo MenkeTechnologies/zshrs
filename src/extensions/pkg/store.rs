@@ -177,8 +177,11 @@ impl InstalledIndex {
         }
         let body = toml::to_string_pretty(&self)
             .map_err(|e| PkgError::Other(format!("serialize {}: {}", INSTALLED_FILE, e)))?;
-        std::fs::write(&path, format!("# znative — auto-generated. Do not edit.\n{}", body))
-            .map_err(|e| PkgError::Io(format!("write {}: {}", path.display(), e)))?;
+        std::fs::write(
+            &path,
+            format!("# znative — auto-generated. Do not edit.\n{}", body),
+        )
+        .map_err(|e| PkgError::Io(format!("write {}: {}", path.display(), e)))?;
         Ok(())
     }
 

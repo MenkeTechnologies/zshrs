@@ -55,7 +55,10 @@ pub fn note_subscript_set(name: &str, old_len: usize, i: usize) {
 /// dense empty). Returns nothing; callers keep the dense Vec's slot as "".
 pub fn note_unset(name: &str, i: usize) {
     HOLES.with(|h| {
-        h.borrow_mut().entry(name.to_string()).or_default().insert(i);
+        h.borrow_mut()
+            .entry(name.to_string())
+            .or_default()
+            .insert(i);
     });
 }
 

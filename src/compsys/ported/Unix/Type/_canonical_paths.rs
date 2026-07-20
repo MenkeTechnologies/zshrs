@@ -78,7 +78,11 @@ fn lexical_normalize(path: &str) -> String {
         path.to_string()
     } else {
         let pwd = getsparam("PWD")
-            .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned()))
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
             .unwrap_or_else(|| "/".to_string());
         format!("{}/{}", pwd.trim_end_matches('/'), path)
     };

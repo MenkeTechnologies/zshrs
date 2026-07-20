@@ -335,9 +335,11 @@ impl style_table {
     /// `zstyle -g out ':s:sub' k` returns NOTHING (":s:sub" != ":s:*"),
     /// whereas `zstyle -s ':s:sub' k out` matches and yields "v".
     pub fn get_exact(&self, pattern: &str, style: &str) -> Option<&[String]> {
-        self.styles
-            .get(style)
-            .and_then(|pats| pats.iter().find(|p| p.pat == pattern).map(|p| p.vals.as_slice()))
+        self.styles.get(style).and_then(|pats| {
+            pats.iter()
+                .find(|p| p.pat == pattern)
+                .map(|p| p.vals.as_slice())
+        })
     }
 
     /// WARNING: NOT IN ZUTIL.C — method on the Rust-only `style_table`
@@ -1131,7 +1133,7 @@ pub fn bin_zstyle(
         //   args[1] = stylename (only that style is listed; error if absent).
         let context = args.first().map(|s| s.as_str()); // c:551/556 context
         let stylename = args.get(1).map(|s| s.as_str()); // c:552 stylename
-        // c:562-570 — validate the context pattern up front (invalid → rc 1).
+                                                         // c:562-570 — validate the context pattern up front (invalid → rc 1).
         if let Some(c) = context {
             let mut pat = c.to_string();
             crate::ported::glob::tokenize(&mut pat);

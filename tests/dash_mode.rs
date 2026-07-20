@@ -64,10 +64,21 @@ fn dash_mode_sets_ksharrays() {
 fn dash_mode_matches_sh_option_presets() {
     // dash IS sh for every emulation option — the two modes must agree on
     // the full EMULATE_SH delta set.
-    for opt in ["shwordsplit", "posixbuiltins", "ksharrays", "shglob", "bsdecho"] {
+    for opt in [
+        "shwordsplit",
+        "posixbuiltins",
+        "ksharrays",
+        "shglob",
+        "bsdecho",
+    ] {
         let dash = run_dash_mode(&format!("print -r -- ${{options[{opt}]}}")).0;
         let sh = Command::new(zshrs_bin())
-            .args(["--sh", "-f", "-c", &format!("print -r -- ${{options[{opt}]}}")])
+            .args([
+                "--sh",
+                "-f",
+                "-c",
+                &format!("print -r -- ${{options[{opt}]}}"),
+            ])
             .output()
             .expect("spawn");
         assert_eq!(
@@ -108,7 +119,10 @@ fn dash_rejects_arith_base_num() {
     ] {
         let (out, code) = run_dash_mode(script);
         assert_eq!(out, "", "`{script}` should produce no output under --dash");
-        assert_ne!(code, 0, "`{script}` non-POSIX arith base must error under --dash");
+        assert_ne!(
+            code, 0,
+            "`{script}` non-POSIX arith base must error under --dash"
+        );
     }
     // But plain POSIX bases still work.
     assert_eq!(run_dash_mode("echo $((0x1f))").0, "31\n");
@@ -178,7 +192,10 @@ fn dash_echo_is_xsi() {
 fn dash_printf_no_percent_q() {
     let (out, code) = run_dash_mode("printf '%q' 'a b'");
     assert_eq!(out, "");
-    assert_ne!(code, 0, "printf %q must be an invalid directive under --dash");
+    assert_ne!(
+        code, 0,
+        "printf %q must be an invalid directive under --dash"
+    );
 }
 
 // ── posix-faithful field splitting: trailing empty field dropped ───────
@@ -206,7 +223,13 @@ fn sh_zsh_combo_keeps_zsh_split() {
     // `--sh --zsh` selects zsh-style emulation: the trailing empty field is
     // KEPT (zsh behavior), proving the --zsh opt-out works.
     let out = Command::new(zshrs_bin())
-        .args(["--sh", "--zsh", "-f", "-c", "IFS=:; v=a:b:; set -- $v; printf '%s' \"$#\""])
+        .args([
+            "--sh",
+            "--zsh",
+            "-f",
+            "-c",
+            "IFS=:; v=a:b:; set -- $v; printf '%s' \"$#\"",
+        ])
         .output()
         .expect("spawn");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "3");
@@ -220,7 +243,12 @@ fn read_backslash_escapes_ifs() {
     // field — x="a b", y="". dash/ksh/bash/zsh all agree; this was wrong
     // in zshrs across every mode before the fix.
     let out = Command::new(zshrs_bin())
-        .args(["--dash", "-f", "-c", "read x y; printf '[%s][%s]' \"$x\" \"$y\""])
+        .args([
+            "--dash",
+            "-f",
+            "-c",
+            "read x y; printf '[%s][%s]' \"$x\" \"$y\"",
+        ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -237,7 +265,12 @@ fn read_backslash_escapes_ifs() {
 fn read_backslash_escapes_custom_ifs() {
     // Escaped separator (`a\:b`) is literal; the unescaped `:` splits.
     let out = Command::new(zshrs_bin())
-        .args(["--dash", "-f", "-c", "IFS=:; read x y; printf '[%s][%s]' \"$x\" \"$y\""])
+        .args([
+            "--dash",
+            "-f",
+            "-c",
+            "IFS=:; read x y; printf '[%s][%s]' \"$x\" \"$y\"",
+        ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -273,7 +306,11 @@ fn dash_printf_d_numeric_contract() {
             .args(["--dash", "-f", "-c", "printf '%d' \"$1\"", "_", arg])
             .output()
             .expect("spawn");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), *want_out, "printf %d {arg:?} output");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            *want_out,
+            "printf %d {arg:?} output"
+        );
         assert_eq!(out.status.success(), *want_ok, "printf %d {arg:?} exit");
     }
 }
@@ -289,7 +326,10 @@ fn printf_d_math_eval_kept_in_zsh_and_ksh() {
             .output()
             .expect("spawn");
         assert_eq!(String::from_utf8_lossy(&out.stdout), "0");
-        assert!(out.status.success(), "{mode}: printf %d A should exit 0 (math var)");
+        assert!(
+            out.status.success(),
+            "{mode}: printf %d A should exit 0 (math var)"
+        );
     }
     let out = Command::new(zshrs_bin())
         .args(["--zsh", "-f", "-c", "printf '%d' 1+1"])
@@ -407,5 +447,8 @@ fn dash_mode_help_lists_flag() {
         .output()
         .expect("zshrs --help failed");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("--dash"), "--help missing --dash:\n{stdout}");
+    assert!(
+        stdout.contains("--dash"),
+        "--help missing --dash:\n{stdout}"
+    );
 }

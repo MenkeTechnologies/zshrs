@@ -560,7 +560,11 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // shadowed below by the decoded form, and the option state that feeds
     // the fingerprint is unchanged between here and the store (patcompstart
     // only reads options), so get/put keys match.
-    let exp_orig: String = if cacheable { exp.to_string() } else { String::new() };
+    let exp_orig: String = if cacheable {
+        exp.to_string()
+    } else {
+        String::new()
+    };
     // Hold the compile mutex for the entire body — `patcompstart`
     // resets every file-scope static (`Src/pattern.c:267-281`) and the
     // emit/parse helpers mutate them in sequence. C is single-threaded
@@ -1081,10 +1085,10 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
     // the piece bytes, truncate, emit P_COUNT, then re-append.
     let mut last_piece_off: i64 = -1; // start offset of preceding piece
     let mut prev_chain_tail: i64 = -1; // tail of chain BEFORE preceding piece (-1 if piece was first)
-    // Flags the preceding patcomppiece reported. P_HSTART marks a piece that
-    // already had a closure applied (`a#`, `a##`, or an earlier `(#cN,M)`) —
-    // patcomppiece sets `*flagp = P_HSTART` on every such arm, mirroring C
-    // (c:1626/1629/1636/1640/1643). Used below to reject a stacked count.
+                                       // Flags the preceding patcomppiece reported. P_HSTART marks a piece that
+                                       // already had a closure applied (`a#`, `a##`, or an earlier `(#cN,M)`) —
+                                       // patcomppiece sets `*flagp = P_HSTART` on every such arm, mirroring C
+                                       // (c:1626/1629/1636/1640/1643). Used below to reject a stacked count.
     let mut last_piece_flags: i32 = 0;
     *flagp = P_PURESTR;
 
@@ -3181,8 +3185,7 @@ pub fn pattryrefs(
             // A sole leading BRANCH (next == 0: no alternative) wraps
             // the whole program — step inside it.
             if op_at(off)? == P_BRANCH {
-                let next =
-                    u32::from_le_bytes(buf[off + I_NEXT..off + I_NEXT + 4].try_into().ok()?);
+                let next = u32::from_le_bytes(buf[off + I_NEXT..off + I_NEXT + 4].try_into().ok()?);
                 if next != 0 {
                     return None; // real alternation — full matcher
                 }
@@ -4914,7 +4917,7 @@ pub fn patmatch(
                     if state.errsfound < max_errs {
                         if let Some(c) = string[s_off..].chars().next() {
                             state.errsfound += 1; // c:3466 ++errsfound
-                            // c:3475 CHARINC(patinput) + continue (retry P_END).
+                                                  // c:3475 CHARINC(patinput) + continue (retry P_END).
                             return patmatch(
                                 code,
                                 scan,
@@ -5035,8 +5038,7 @@ pub fn patmatch(
                                         // Unicode folds allocation-free.
                                         if a != b
                                             && (if a.is_ascii() && b.is_ascii() {
-                                                a.to_ascii_lowercase()
-                                                    != b.to_ascii_lowercase()
+                                                a.to_ascii_lowercase() != b.to_ascii_lowercase()
                                             } else {
                                                 !a.to_lowercase().eq(b.to_lowercase())
                                             })

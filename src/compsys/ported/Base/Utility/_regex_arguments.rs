@@ -34,12 +34,10 @@ use crate::compsys::ported::_message::_message;
 use crate::ported::glob::remnulargs;
 use crate::ported::lex::{parse_subst_string, untokenize};
 use crate::ported::modules::zutil::bin_zregexparse;
-use crate::ported::params::{
-    getaparam, getiparam, getsparam, setaparam, unsetparam,
-};
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compset;
-use crate::ported::zsh_h::{options, QT_DOLLARS, MAX_OPS};
+use crate::ported::zsh_h::{options, MAX_OPS, QT_DOLLARS};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -148,7 +146,9 @@ pub fn _regex_arguments(args: &[String]) -> i32 {
 pub fn dispatch_if_registered(funcname: &str) -> Option<i32> {
     let known = {
         let g = registry();
-        g.as_ref().map(|m| m.contains_key(funcname)).unwrap_or(false)
+        g.as_ref()
+            .map(|m| m.contains_key(funcname))
+            .unwrap_or(false)
     };
     if known {
         Some(dispatch_registered(funcname))
@@ -199,11 +199,7 @@ pub fn dispatch_registered(funcname: &str) -> i32 {
     // kept as a raw byte in `_ra_line`: `rmatch` byte-indexes `subj`
     // and `pattry`es it against patterns that also carry raw NUL (the
     // shell decoded `$'\0'` before calling us), so both sides agree.
-    let mut zargs: Vec<String> = vec![
-        "_ra_p1".to_string(),
-        "_ra_p2".to_string(),
-        _ra_line.clone(),
-    ];
+    let mut zargs: Vec<String> = vec!["_ra_p1".to_string(), "_ra_p2".to_string(), _ra_line.clone()];
     zargs.extend(regex.iter().cloned());
     let mut ops = make_ops();
     ops.ind[b'c' as usize] = 1; // -c (completion mode)

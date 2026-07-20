@@ -58,7 +58,9 @@ fn cwd() -> PathBuf {
 }
 
 fn home() -> PathBuf {
-    envv("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    envv("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// mtime in epoch seconds; -1 when the path can't be stat'd — mirrors
@@ -110,8 +112,7 @@ fn cache_set(key: &str, files: &[PathBuf], vals: Vec<String>) -> Vec<String> {
 /// the current $PATH string (zsh's `commands` hash rebuilds on PATH
 /// change; this mirrors that invalidation).
 fn have_cmd(name: &str) -> Option<PathBuf> {
-    static CMD_CACHE: OnceLock<Mutex<HashMap<String, (String, Option<PathBuf>)>>> =
-        OnceLock::new();
+    static CMD_CACHE: OnceLock<Mutex<HashMap<String, (String, Option<PathBuf>)>>> = OnceLock::new();
     let path_var = envv("PATH").unwrap_or_default();
     let m = CMD_CACHE.get_or_init(Default::default);
     if let Ok(guard) = m.lock() {
@@ -174,7 +175,10 @@ fn run_cmd(
             if merge_stderr {
                 text.push_str(&String::from_utf8_lossy(&out.stderr));
             }
-            Some((out.status.success(), text.trim_end_matches('\n').to_string()))
+            Some((
+                out.status.success(),
+                text.trim_end_matches('\n').to_string(),
+            ))
         }
         Err(e) => {
             tracing::debug!(target: "p10k", cmd = %bin.display(), %e, "command failed to spawn");
@@ -210,7 +214,8 @@ fn cached_cmd(
         Some(v) => v,
         None => {
             // p10k:2419-2426 — run once, remember (exit-ok, output)
-            let (ok, text) = run_cmd(&bin, args, merge_stderr, &[]).unwrap_or((false, String::new()));
+            let (ok, text) =
+                run_cmd(&bin, args, merge_stderr, &[]).unwrap_or((false, String::new()));
             cache_set(
                 &key,
                 &files,
@@ -234,7 +239,11 @@ fn read_word(path: &Path) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
     let first_line = content.lines().next()?.trim_end_matches('\r');
     let word = first_line.split_whitespace().next()?.to_string();
-    if word.is_empty() { None } else { Some(word) }
+    if word.is_empty() {
+        None
+    } else {
+        Some(word)
+    }
 }
 
 /// Port of `_p9k_read_pyenv_like_version_file` (p10k:4248-4266): first
@@ -247,14 +256,20 @@ fn read_pyenv_like_version_file(path: &Path, prefix: &str) -> Option<String> {
     let mut versions: Vec<String> = Vec::new();
     for line in content.lines() {
         // p10k:4261 — `${MATCH[(w)1]}` first word, `##\#*` drops comments
-        let Some(word) = line.split_whitespace().next() else { continue };
+        let Some(word) = line.split_whitespace().next() else {
+            continue;
+        };
         if word.starts_with('#') {
             continue;
         }
         versions.push(word.strip_prefix(prefix).unwrap_or(word).to_string());
     }
     let joined = versions.join(":"); // p10k:4262 — `${(j.:.)versions}`
-    if joined.is_empty() { None } else { Some(joined) }
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
 }
 
 /// Port of `_p9k_upglob` (p10k:265-292) for a literal file name: walk
@@ -283,7 +298,9 @@ fn upfind_pred(pred: &dyn Fn(&Path) -> bool) -> Option<PathBuf> {
 /// True when any entry of `dir` has one of `exts` as its extension —
 /// the `*.(java|class|...)` half of glob-style upglobs.
 fn dir_has_ext(dir: &Path, exts: &[&str]) -> bool {
-    let Ok(rd) = fs::read_dir(dir) else { return false };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return false;
+    };
     for entry in rd.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -309,7 +326,11 @@ fn esc(s: &str) -> String {
 
 /// p10k:8390-8396 — `_p9k_color1`: 7 under COLOR_SCHEME=light, else 0.
 fn color1() -> String {
-    if p9k_global("COLOR_SCHEME", "") == "light" { "7".into() } else { "0".into() }
+    if p9k_global("COLOR_SCHEME", "") == "light" {
+        "7".into()
+    } else {
+        "0".into()
+    }
 }
 
 /// Segment constructor. Arguments keep p10k's `_p9k_prompt_segment`
@@ -327,7 +348,11 @@ fn seg(
         None
     } else {
         let g = icon(icon_key);
-        if g.is_empty() { None } else { Some(g.to_string()) }
+        if g.is_empty() {
+            None
+        } else {
+            Some(g.to_string())
+        }
     };
     Segment {
         name: name.to_string(),
@@ -590,7 +615,9 @@ fn pyenv_compute(force_show: bool) -> Option<(String, Option<String>)> {
     // the first that lands inside the versions dir names the
     // interpreter version.
     let versions_dir = tool.root().join("versions");
-    let versions_real = versions_dir.canonicalize().unwrap_or_else(|_| versions_dir.clone());
+    let versions_real = versions_dir
+        .canonicalize()
+        .unwrap_or_else(|_| versions_dir.clone());
     let mut python_version: Option<String> = None;
     for name in v.split(':') {
         let cand = versions_dir.join(name);
@@ -624,7 +651,14 @@ fn segment_pyenv() -> Option<Vec<Segment>> {
                 }
             }
             // p10k:4342 — blue bg, color1 fg, PYTHON_ICON
-            one(seg("pyenv", None, "blue", &color1(), "PYTHON_ICON", esc(&v)))
+            one(seg(
+                "pyenv",
+                None,
+                "blue",
+                &color1(),
+                "PYTHON_ICON",
+                esc(&v),
+            ))
         }
         None => {
             let _ = unsetparam("P9K_PYENV_PYTHON_VERSION"); // p10k:4272
@@ -655,7 +689,11 @@ fn python_version() -> Option<String> {
         .chars()
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect();
-    if ver.is_empty() { None } else { Some(ver) }
+    if ver.is_empty() {
+        None
+    } else {
+        Some(ver)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -669,13 +707,22 @@ fn segment_direnv() -> Option<Vec<Segment>> {
         return hidden();
     }
     // p10k:4985 — `_p9k_prompt_segment $0 $_p9k_color1 yellow DIRENV_ICON 0 '$DIRENV_DIR' ''`
-    one(seg("direnv", None, &color1(), "yellow", "DIRENV_ICON", String::new()))
+    one(seg(
+        "direnv",
+        None,
+        &color1(),
+        "yellow",
+        "DIRENV_ICON",
+        String::new(),
+    ))
 }
 
 /// p10k:4221-4241 — prompt_virtualenv.
 fn segment_virtualenv() -> Option<Vec<Segment>> {
     // init cond p10k:4244 — `'$VIRTUAL_ENV'`
-    let Some(venv) = envv("VIRTUAL_ENV") else { return hidden() };
+    let Some(venv) = envv("VIRTUAL_ENV") else {
+        return hidden();
+    };
 
     let mut msg = String::new();
     // p10k:4223-4225 — optional interpreter version prefix
@@ -695,7 +742,12 @@ fn segment_virtualenv() -> Option<Vec<Segment>> {
     let mut generics = p9k_param_arr("virtualenv", None, "GENERIC_NAMES");
     if generics.is_empty() {
         // p10k:7510 — default: virtualenv venv .venv env
-        generics = vec!["virtualenv".into(), "venv".into(), ".venv".into(), "env".into()];
+        generics = vec![
+            "virtualenv".into(),
+            "venv".into(),
+            ".venv".into(),
+            "env".into(),
+        ];
     }
     let v = if generics.iter().any(|g| glob_match(g, &base)) {
         vpath
@@ -733,7 +785,14 @@ fn segment_virtualenv() -> Option<Vec<Segment>> {
         _ => {}
     }
     // p10k:4231/4235/4238 — blue bg, color1 fg, PYTHON_ICON
-    one(seg("virtualenv", None, "blue", &color1(), "PYTHON_ICON", msg))
+    one(seg(
+        "virtualenv",
+        None,
+        "blue",
+        &color1(),
+        "PYTHON_ICON",
+        msg,
+    ))
 }
 
 /// p10k:1131-1144 — prompt_anaconda.
@@ -763,7 +822,7 @@ fn segment_anaconda() -> Option<Vec<Segment>> {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let l = p9k_param("anaconda", None, "LEFT_DELIMITER", "(");  // p10k:7258
+    let l = p9k_param("anaconda", None, "LEFT_DELIMITER", "("); // p10k:7258
     let r = p9k_param("anaconda", None, "RIGHT_DELIMITER", ")"); // p10k:7259
     msg.push_str(&format!("{l}{}{r}", esc(&base)));
     // p10k:1143 — blue bg, color1 fg, PYTHON_ICON
@@ -779,7 +838,12 @@ fn segment_node_version() -> Option<Vec<Segment>> {
     // PROJECT_ONLY (default 0, p10k:7413; the user's config: true)
     // hides the segment
     let out = match upfind("package.json") {
-        Some(dir) => cached_cmd(false, Some(&dir.join("package.json")), "node", &["--version"]),
+        Some(dir) => cached_cmd(
+            false,
+            Some(&dir.join("package.json")),
+            "node",
+            &["--version"],
+        ),
         None => {
             if p9k_param_bool("node_version", None, "PROJECT_ONLY", false) {
                 return hidden();
@@ -793,7 +857,14 @@ fn segment_node_version() -> Option<Vec<Segment>> {
         return hidden();
     };
     // p10k:2444 — green bg, white fg, NODE_ICON
-    one(seg("node_version", None, "green", "white", "NODE_ICON", esc(v)))
+    one(seg(
+        "node_version",
+        None,
+        "green",
+        "white",
+        "NODE_ICON",
+        esc(v),
+    ))
 }
 
 /// p10k:2185-2202 — prompt_go_version.
@@ -833,7 +904,14 @@ fn segment_go_version() -> Option<Vec<Segment>> {
         }
     }
     // p10k:2201 — green bg, grey93 fg, GO_ICON
-    one(seg("go_version", None, "green", "grey93", "GO_ICON", esc(&v)))
+    one(seg(
+        "go_version",
+        None,
+        "green",
+        "grey93",
+        "GO_ICON",
+        esc(&v),
+    ))
 }
 
 /// p10k:3144-3196 — prompt_rust_version.
@@ -855,9 +933,8 @@ fn segment_rust_version() -> Option<Vec<Segment>> {
     // change to enumerate overrides that RUSTUP_TOOLCHAIN or
     // rust-toolchain cover in typical setups; the toolchain only
     // feeds the cache key here.)
-    let toolchain = envv("RUSTUP_TOOLCHAIN").or_else(|| {
-        upfind("rust-toolchain").and_then(|d| read_word(&d.join("rust-toolchain")))
-    });
+    let toolchain = envv("RUSTUP_TOOLCHAIN")
+        .or_else(|| upfind("rust-toolchain").and_then(|d| read_word(&d.join("rust-toolchain"))));
     // p10k:3160-3162 — rustup settings are cache witnesses
     let rustup_home = envv("RUSTUP_HOME")
         .map(PathBuf::from)
@@ -889,8 +966,15 @@ fn segment_rust_version() -> Option<Vec<Segment>> {
         return hidden(); // p10k:3193 — `[[ -n $v ]] || return`
     }
     let _ = setsparam("P9K_RUST_VERSION", &full); // p10k:3194
-    // p10k:3195 — darkorange bg, color1 fg, RUST_ICON
-    one(seg("rust_version", None, "darkorange", &color1(), "RUST_ICON", esc(&v)))
+                                                  // p10k:3195 — darkorange bg, color1 fg, RUST_ICON
+    one(seg(
+        "rust_version",
+        None,
+        "darkorange",
+        &color1(),
+        "RUST_ICON",
+        esc(&v),
+    ))
 }
 
 /// p10k:2663-2667 — prompt_os_icon: the per-OS glyph resolved at init
@@ -909,10 +993,21 @@ fn segment_os_icon() -> Option<Vec<Segment>> {
         "LINUX_ICON"
     };
     let glyph = icon(key);
-    let glyph = if glyph.is_empty() { icon("LINUX_ICON") } else { glyph };
+    let glyph = if glyph.is_empty() {
+        icon("LINUX_ICON")
+    } else {
+        glyph
+    };
     // p10k:2665 — `_p9k_prompt_segment "$0" "black" "white" '' 0 '' "$_p9k_os_icon"`
     // (the glyph IS the content; no separate visual identifier)
-    one(seg("os_icon", None, "black", "white", "", glyph.to_string()))
+    one(seg(
+        "os_icon",
+        None,
+        "black",
+        "white",
+        "",
+        glyph.to_string(),
+    ))
 }
 
 /// p10k:8352-8386 — map /etc/os-release ID to a LINUX_*_ICON key.
@@ -971,7 +1066,12 @@ fn segment_java_version() -> Option<Vec<Segment>> {
     // config: true): a java project marker up the tree
     if p9k_param_bool("java_version", None, "PROJECT_ONLY", false) {
         const NAMES: &[&str] = &[
-            "pom.xml", "build.gradle.kts", "build.sbt", "deps.edn", "project.clj", "build.boot",
+            "pom.xml",
+            "build.gradle.kts",
+            "build.sbt",
+            "deps.edn",
+            "project.clj",
+            "build.boot",
         ];
         const EXTS: &[&str] = &["java", "class", "jar", "gradle", "clj", "cljc"];
         let found = upfind_pred(&|dir: &Path| {
@@ -1026,7 +1126,9 @@ fn segment_package() -> Option<Vec<Segment>> {
     let _ = unsetparam("P9K_PACKAGE_NAME"); // p10k:2218
     let _ = unsetparam("P9K_PACKAGE_VERSION");
     // p10k:2219 — `_p9k_upglob package.json && return`
-    let Some(dir) = upfind("package.json") else { return hidden() };
+    let Some(dir) = upfind("package.json") else {
+        return hidden();
+    };
     let file = dir.join("package.json");
     let key = format!("package {}", file.display());
     let files = vec![file.clone()];
@@ -1065,13 +1167,22 @@ fn segment_package() -> Option<Vec<Segment>> {
     let _ = setsparam("P9K_PACKAGE_NAME", &name); // p10k:2266-2267
     let _ = setsparam("P9K_PACKAGE_VERSION", &version);
     // p10k:2268 — cyan bg, color1 fg, PACKAGE_ICON, version content
-    one(seg("package", None, "cyan", &color1(), "PACKAGE_ICON", esc(&version)))
+    one(seg(
+        "package",
+        None,
+        "cyan",
+        &color1(),
+        "PACKAGE_ICON",
+        esc(&version),
+    ))
 }
 
 /// p10k:3221-3230 — prompt_rvm.
 fn segment_rvm() -> Option<Vec<Segment>> {
     // p10k:3222 — `[[ $GEM_HOME == *rvm* && $ruby_string != $rvm_path/bin/ruby ]]`
-    let Some(gem_home) = envv("GEM_HOME") else { return hidden() };
+    let Some(gem_home) = envv("GEM_HOME") else {
+        return hidden();
+    };
     if !gem_home.contains("rvm") {
         return hidden();
     }
@@ -1149,7 +1260,9 @@ fn nvm_ls_default(nvm_dir: &Path) -> Option<String> {
     let mut seen = vec![v.clone()];
     loop {
         let alias = nvm_dir.join("alias").join(&v);
-        let Ok(content) = fs::read_to_string(&alias) else { break };
+        let Ok(content) = fs::read_to_string(&alias) else {
+            break;
+        };
         // p10k:2457 — `IFS='' read -r target` (whole first line)
         let target = content
             .lines()
@@ -1183,12 +1296,21 @@ fn nvm_ls_default(nvm_dir: &Path) -> Option<String> {
 
     // p10k:2482-2493 — exact vX.Y.Z: check install dirs
     if v.starts_with('v') && v.matches('.').count() >= 2 {
-        if nvm_dir.join("versions/node").join(&v).join("bin/node").exists()
+        if nvm_dir
+            .join("versions/node")
+            .join(&v)
+            .join("bin/node")
+            .exists()
             || nvm_dir.join(&v).join("bin/node").exists()
         {
             return Some(v);
         }
-        if nvm_dir.join("versions/io.js").join(&v).join("bin/node").exists() {
+        if nvm_dir
+            .join("versions/io.js")
+            .join(&v)
+            .join("bin/node")
+            .exists()
+        {
             return Some(format!("iojs-{v}"));
         }
         return None;
@@ -1256,7 +1378,11 @@ fn nvm_ls_default(nvm_dir: &Path) -> Option<String> {
                 continue;
             }
             // p10k:2521-2526 — keep the max; io.js dirs display as iojs-v...
-            let display = if d.ends_with("io.js") { format!("iojs-{name}") } else { name };
+            let display = if d.ends_with("io.js") {
+                format!("iojs-{name}")
+            } else {
+                name
+            };
             if best.as_ref().map(|(n, _)| nums > *n).unwrap_or(true) {
                 best = Some((nums, display));
             }
@@ -1268,11 +1394,15 @@ fn nvm_ls_default(nvm_dir: &Path) -> Option<String> {
 /// p10k:2530-2560 — `_p9k_nvm_ls_current` + prompt_nvm.
 fn segment_nvm() -> Option<Vec<Segment>> {
     // p10k:2551 — `[[ -n $NVM_DIR ]] && _p9k_nvm_ls_current || return`
-    let Some(nvm_dir_s) = envv("NVM_DIR") else { return hidden() };
+    let Some(nvm_dir_s) = envv("NVM_DIR") else {
+        return hidden();
+    };
     let nvm_dir = PathBuf::from(&nvm_dir_s);
 
     // _p9k_nvm_ls_current (p10k:2530-2545)
-    let Some(node) = have_cmd("node") else { return hidden() }; // p10k:2531-2532
+    let Some(node) = have_cmd("node") else {
+        return hidden();
+    }; // p10k:2531-2532
     let node_real = node.canonicalize().unwrap_or(node);
     let nvm_real = nvm_dir.canonicalize().unwrap_or_else(|_| nvm_dir.clone());
     let current = if node_real.starts_with(nvm_real.join("versions/io.js")) {
@@ -1299,13 +1429,22 @@ fn segment_nvm() -> Option<Vec<Segment>> {
     }
     // p10k:2554 — magenta bg, black fg, NODE_ICON, `${current#v}`
     let shown = current.strip_prefix('v').unwrap_or(&current);
-    one(seg("nvm", None, "magenta", "black", "NODE_ICON", esc(shown)))
+    one(seg(
+        "nvm",
+        None,
+        "magenta",
+        "black",
+        "NODE_ICON",
+        esc(shown),
+    ))
 }
 
 /// p10k:2563-2571 — prompt_nodeenv.
 fn segment_nodeenv() -> Option<Vec<Segment>> {
     // init cond p10k:2574 — `'$NODE_VIRTUAL_ENV'`
-    let Some(nve) = envv("NODE_VIRTUAL_ENV") else { return hidden() };
+    let Some(nve) = envv("NODE_VIRTUAL_ENV") else {
+        return hidden();
+    };
     let mut msg = String::new();
     // p10k:2565-2567 — optional `node --version` prefix (default 1,
     // p10k:7512)
@@ -1370,7 +1509,9 @@ fn segment_nodenv() -> Option<Vec<Segment>> {
     // shell source keeps the raw value (p10k:2594-2596); file/global
     // sources run through the transform (p10k:2631)
     let from_shell = envv("NODENV_VERSION").is_some();
-    let Some(v) = TOOL.resolve() else { return hidden() };
+    let Some(v) = TOOL.resolve() else {
+        return hidden();
+    };
     let v = if from_shell {
         v
     } else {
@@ -1580,7 +1721,7 @@ fn segment_haskell_stack() -> Option<Vec<Segment>> {
         }
     };
     let Some(v) = v else { return hidden() }; // p10k:5606 — `[[ -n $_p9k__ret ]] || return`
-    // p10k:5610-5613 — hide when equal to the global version
+                                              // p10k:5610-5613 — hide when equal to the global version
     if !always_show {
         if let Some(g) = haskell_stack_version(&global_yaml) {
             if g == v {
@@ -1589,7 +1730,14 @@ fn segment_haskell_stack() -> Option<Vec<Segment>> {
         }
     }
     // p10k:5615 — yellow bg, color1 fg, HASKELL_ICON
-    one(seg("haskell_stack", None, "yellow", &color1(), "HASKELL_ICON", esc(&v)))
+    one(seg(
+        "haskell_stack",
+        None,
+        "yellow",
+        &color1(),
+        "HASKELL_ICON",
+        esc(&v),
+    ))
 }
 
 /// p10k:4447-4533 — prompt_kubecontext.
@@ -1600,7 +1748,12 @@ fn segment_kubecontext() -> Option<Vec<Segment>> {
     // p10k:4448 — cache keyed on the kubeconfig file set:
     // `${(s.:.)${KUBECONFIG:-$HOME/.kube/config}}`
     let cfg_files: Vec<PathBuf> = envv("KUBECONFIG")
-        .map(|k| k.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect())
+        .map(|k| {
+            k.split(':')
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from)
+                .collect()
+        })
         .unwrap_or_else(|| vec![home().join(".kube/config")]);
     let vals = match cache_get("kubecontext", &cfg_files) {
         Some(v) => v,
@@ -1638,7 +1791,11 @@ fn segment_kubecontext() -> Option<Vec<Segment>> {
     // p10k:4531 — magenta bg, white fg, KUBERNETES_ICON
     one(seg(
         "kubecontext",
-        if state.is_empty() { None } else { Some(state.as_str()) },
+        if state.is_empty() {
+            None
+        } else {
+            Some(state.as_str())
+        },
         "magenta",
         "white",
         "KUBERNETES_ICON",
@@ -1683,7 +1840,10 @@ fn kubectl_current_context() -> Option<Vec<String>> {
         let tail = &lines[cpos + 1..];
         let name_line_a = format!("  name: {name}");
         let name_line_b = format!("  name: \"{name}\"");
-        if let Some(npos) = tail.iter().position(|l| **l == name_line_a || **l == name_line_b) {
+        if let Some(npos) = tail
+            .iter()
+            .position(|l| **l == name_line_a || **l == name_line_b)
+        {
             for line in tail[..npos].iter().rev() {
                 if *line == "- context:" {
                     break; // p10k:4466-4467
@@ -1750,8 +1910,16 @@ fn kubectl_current_context() -> Option<Vec<String>> {
     // p10k:4514-4519 — classes → state
     let state = classes_state("kubecontext", &text).unwrap_or_default();
     Some(vec![
-        name, namespace, cluster, user, cloud_name, cloud_account, cloud_zone, cloud_cluster,
-        text, state,
+        name,
+        namespace,
+        cluster,
+        user,
+        cloud_name,
+        cloud_account,
+        cloud_zone,
+        cloud_cluster,
+        text,
+        state,
     ])
 }
 
@@ -1800,7 +1968,9 @@ fn segment_terraform() -> Option<Vec<Segment>> {
 /// p10k:1146-1176 — `_p9k_parse_aws_config`: `[profile X]` sections
 /// and their `region = ...` keys.
 fn parse_aws_config(cfg: &Path) -> Vec<(String, String)> {
-    let Ok(content) = fs::read_to_string(cfg) else { return Vec::new() };
+    let Ok(content) = fs::read_to_string(cfg) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     let mut profile: Option<String> = None;
     for line in content.lines() {
@@ -1843,7 +2013,7 @@ fn segment_aws() -> Option<Vec<Segment>> {
         return hidden();
     };
     let _ = setsparam("P9K_AWS_PROFILE", &profile); // p10k:1182
-    // p10k:1183-1189 — classes → state
+                                                    // p10k:1183-1189 — classes → state
     let state = classes_state("aws", &profile);
     // p10k:1191-1203 — region: env, else the profile's region from
     // ${AWS_CONFIG_FILE:-~/.aws/config} (stat-cached); exported for
@@ -1883,7 +2053,14 @@ fn segment_aws() -> Option<Vec<Segment>> {
         }
     }
     // p10k:1206 — red bg, white fg, AWS_ICON
-    one(seg("aws", state.as_deref(), "red", "white", "AWS_ICON", esc(&profile)))
+    one(seg(
+        "aws",
+        state.as_deref(),
+        "red",
+        "white",
+        "AWS_ICON",
+        esc(&profile),
+    ))
 }
 
 /// p10k:1214-1226 — prompt_aws_eb_env.
@@ -1892,7 +2069,9 @@ fn segment_aws_eb_env() -> Option<Vec<Segment>> {
         return hidden(); // init cond p10k:1229 — `'$commands[eb]'`
     }
     // p10k:1215-1216 — nearest .elasticbeanstalk dir
-    let Some(dir) = upfind(".elasticbeanstalk") else { return hidden() };
+    let Some(dir) = upfind(".elasticbeanstalk") else {
+        return hidden();
+    };
     let cfg = dir.join(".elasticbeanstalk/config.yml");
     let key = format!("aws_eb_env {}", dir.display());
     let files = vec![cfg];
@@ -1918,7 +2097,14 @@ fn segment_aws_eb_env() -> Option<Vec<Segment>> {
         return hidden(); // p10k:1224 — `[[ -n $_p9k__cache_val[1] ]] || return`
     }
     // p10k:1225 — black bg, green fg, AWS_EB_ICON
-    one(seg("aws_eb_env", None, "black", "green", "AWS_EB_ICON", esc(&env)))
+    one(seg(
+        "aws_eb_env",
+        None,
+        "black",
+        "green",
+        "AWS_EB_ICON",
+        esc(&env),
+    ))
 }
 
 /// p10k:4582-4602 — prompt_azure. p10k shells out to jq (or `az
@@ -1967,7 +2153,14 @@ fn segment_azure() -> Option<Vec<Segment>> {
     // p10k:4593-4598 — classes → state
     let state = classes_state("azure", &name);
     // p10k:4601 — blue bg, white fg, AZURE_ICON
-    one(seg("azure", state.as_deref(), "blue", "white", "AZURE_ICON", esc(&name)))
+    one(seg(
+        "azure",
+        state.as_deref(),
+        "blue",
+        "white",
+        "AZURE_ICON",
+        esc(&name),
+    ))
 }
 
 /// p10k:4608-4661 — prompt_gcloud + `_p9k_gcloud_prefetch`. The async
@@ -1985,9 +2178,11 @@ fn segment_gcloud() -> Option<Vec<Segment>> {
         return hidden();
     };
     let _ = setsparam("P9K_GCLOUD_CONFIGURATION", &configuration); // p10k:4625
-    // p10k:4626-4632 — describe the active configuration, stat-cached
-    // on its config file
-    let cfg_file = home().join(format!(".config/gcloud/configurations/config_{configuration}"));
+                                                                   // p10k:4626-4632 — describe the active configuration, stat-cached
+                                                                   // on its config file
+    let cfg_file = home().join(format!(
+        ".config/gcloud/configurations/config_{configuration}"
+    ));
     let key = format!("gcloud {configuration}");
     let files = vec![cfg_file];
     let vals = match cache_get(&key, &files) {
@@ -2028,7 +2223,7 @@ fn segment_gcloud() -> Option<Vec<Segment>> {
     }
     if !project_id.is_empty() {
         let _ = setsparam("P9K_GCLOUD_PROJECT_ID", &project_id); // p10k:4637-4639
-        // p10k:4639 — deprecated twin, kept for backward compatibility
+                                                                 // p10k:4639 — deprecated twin, kept for backward compatibility
         let _ = setsparam("P9K_GCLOUD_PROJECT", &project_id);
     }
     // p10k:4610-4613 — GCLOUD_PARTIAL cond: shown when the project
@@ -2040,7 +2235,14 @@ fn segment_gcloud() -> Option<Vec<Segment>> {
     // p10k:4610-4614 — blue bg, white fg, GCLOUD_ICON, content
     // '${P9K_GCLOUD_ACCOUNT//\%/%%}:${P9K_GCLOUD_PROJECT_ID//\%/%%}'
     let content = format!("{}:{}", esc(&account), esc(&project_id));
-    one(seg("gcloud", Some("PARTIAL"), "blue", "white", "GCLOUD_ICON", content))
+    one(seg(
+        "gcloud",
+        Some("PARTIAL"),
+        "blue",
+        "white",
+        "GCLOUD_ICON",
+        content,
+    ))
 }
 
 /// p10k:4695-4721 — prompt_google_app_cred. p10k requires jq (init
@@ -2072,14 +2274,17 @@ fn segment_google_app_cred() -> Option<Vec<Segment>> {
                 })
                 .map(|json| {
                     let f = |k: &str| {
-                        json.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+                        json.get(k)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string()
                     };
                     (f("type"), f("project_id"), f("client_email"))
                 });
             match fields {
                 Some((t, p, e)) => {
                     let text = format!("{t}:{p}:{e}"); // p10k:4702 — `${(j.:.)lines[1,-2]}`
-                    // p10k:4703-4709 — classes → state
+                                                       // p10k:4703-4709 — classes → state
                     let state = classes_state("google_app_cred", &text).unwrap_or_default();
                     cache_set(&key, &files, vec!["1".into(), t, p, e, text, state])
                 }
@@ -2098,7 +2303,11 @@ fn segment_google_app_cred() -> Option<Vec<Segment>> {
     // p10k:4720 — blue bg, white fg, GCLOUD_ICON
     one(seg(
         "google_app_cred",
-        if state.is_empty() { None } else { Some(state.as_str()) },
+        if state.is_empty() {
+            None
+        } else {
+            Some(state.as_str())
+        },
         "blue",
         "white",
         "GCLOUD_ICON",
@@ -2131,9 +2340,18 @@ fn segment_nordvpn() -> Option<Vec<Segment>> {
 /// p10k:4859-4861 — prompt_ranger: $RANGER_LEVEL (also the init cond,
 /// p10k:4864).
 fn segment_ranger() -> Option<Vec<Segment>> {
-    let Some(level) = envv("RANGER_LEVEL") else { return hidden() };
+    let Some(level) = envv("RANGER_LEVEL") else {
+        return hidden();
+    };
     // p10k:4860 — color1 bg, yellow fg, RANGER_ICON, level content
-    one(seg("ranger", None, &color1(), "yellow", "RANGER_ICON", esc(&level)))
+    one(seg(
+        "ranger",
+        None,
+        &color1(),
+        "yellow",
+        "RANGER_ICON",
+        esc(&level),
+    ))
 }
 
 /// p10k:4885-4887 — prompt_nnn: $NNNLVL, hidden when 0 (init cond
@@ -2196,7 +2414,9 @@ fn segment_asdf() -> Option<Vec<Segment>> {
     // stripped, the first listed version that is actually installed
     // wins (else the first listed).
     let parse_tool_versions = |file: &Path, versions: &mut HashMap<String, String>| {
-        let Ok(content) = fs::read_to_string(file) else { return };
+        let Ok(content) = fs::read_to_string(file) else {
+            return;
+        };
         for line in content.lines() {
             let line = line.trim_end_matches('\r'); // p10k:5417 — `%$'\r'`
             let line = line.split('#').next().unwrap_or(""); // p10k:5417 — `/\#*`
@@ -2204,15 +2424,19 @@ fn segment_asdf() -> Option<Vec<Segment>> {
             if words.len() < 2 {
                 continue; // p10k:5421 — `(( $#words > 1 )) || continue`
             }
-            let Some(installed) = plugins.get(words[0]) else { continue }; // p10k:5422-5423
-            // p10k:5424 — `${${words:1}[(r)$installed]:-$words[2]}`
+            let Some(installed) = plugins.get(words[0]) else {
+                continue;
+            }; // p10k:5422-5423
+               // p10k:5424 — `${${words:1}[(r)$installed]:-$words[2]}`
             let version = words[1..]
                 .iter()
                 .find(|w| installed.iter().any(|i| i == **w))
                 .copied()
                 .unwrap_or(words[1]);
             // p10k:5430-5432 — `: ${versions[$plugin]=$version}`
-            versions.entry(words[0].to_string()).or_insert_with(|| version.to_string());
+            versions
+                .entry(words[0].to_string())
+                .or_insert_with(|| version.to_string());
         }
     };
 
@@ -2430,7 +2654,10 @@ mod tests {
 
     #[test]
     fn nodenv_transform_passes_system_and_empty() {
-        assert_eq!(nodenv_version_transform("system").as_deref(), Some("system"));
+        assert_eq!(
+            nodenv_version_transform("system").as_deref(),
+            Some("system")
+        );
         assert_eq!(nodenv_version_transform("").as_deref(), Some(""));
         // nonexistent version with no versions/<v> dir → hide
         assert_eq!(nodenv_version_transform("v99.99.99-does-not-exist"), None);

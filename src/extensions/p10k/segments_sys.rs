@@ -53,22 +53,22 @@ use std::time::{Duration, Instant};
 /// by this module; `Some(vec![])` = handled but hidden this prompt.
 pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
     match name {
-        "time" => Some(time_segments()),                                     // p10k:3454
-        "ram" => Some(ram_segments()),                                       // p10k:2689
-        "load" => Some(load_segments()),                                     // p10k:2342
-        "disk_usage" => Some(disk_usage_segments()),                         // p10k:1250
-        "swap" => Some(swap_segments()),                                     // p10k:3360
-        "battery" => Some(battery_segments()),                               // p10k:1340
-        "wifi" => Some(wifi_segments()),                                     // p10k:5186
+        "time" => Some(time_segments()),             // p10k:3454
+        "ram" => Some(ram_segments()),               // p10k:2689
+        "load" => Some(load_segments()),             // p10k:2342
+        "disk_usage" => Some(disk_usage_segments()), // p10k:1250
+        "swap" => Some(swap_segments()),             // p10k:3360
+        "battery" => Some(battery_segments()),       // p10k:1340
+        "wifi" => Some(wifi_segments()),             // p10k:5186
         "command_execution_time" => Some(command_execution_time_segments()), // p10k:1705
-        "vi_mode" => Some(vi_mode_segments()),                               // p10k:4169
-        "proxy" => Some(proxy_segments()),                                   // p10k:4970
-        "todo" => Some(todo_segments()),                                     // p10k:3520
-        "timewarrior" => Some(timewarrior_segments()),                       // p10k:5011
-        "taskwarrior" => Some(taskwarrior_segments()),                       // p10k:5155
-        "nix_shell" => Some(nix_shell_segments()),                           // p10k:4925
-        "vim_shell" => Some(vim_shell_segments()),                           // p10k:4911
-        "midnight_commander" => Some(midnight_commander_segments()),         // p10k:4871
+        "vi_mode" => Some(vi_mode_segments()),       // p10k:4169
+        "proxy" => Some(proxy_segments()),           // p10k:4970
+        "todo" => Some(todo_segments()),             // p10k:3520
+        "timewarrior" => Some(timewarrior_segments()), // p10k:5011
+        "taskwarrior" => Some(taskwarrior_segments()), // p10k:5155
+        "nix_shell" => Some(nix_shell_segments()),   // p10k:4925
+        "vim_shell" => Some(vim_shell_segments()),   // p10k:4911
+        "midnight_commander" => Some(midnight_commander_segments()), // p10k:4871
         _ => None,
     }
 }
@@ -419,7 +419,14 @@ fn time_segments() -> Vec<Segment> {
         tracing::debug!(target: "p10k", "TIME_UPDATE_ON_COMMAND unported — static time per prompt");
     }
     // p10k:3453/3465 — `$0 "$_p9k_color2" "$_p9k_color1" "TIME_ICON" …`
-    vec![make_segment("time", None, color2(), color1(), "TIME_ICON", fmt)]
+    vec![make_segment(
+        "time",
+        None,
+        color2(),
+        color1(),
+        "TIME_ICON",
+        fmt,
+    )]
 }
 
 // ---------------------------------------------------------------------
@@ -715,7 +722,7 @@ fn disk_usage_segments() -> Vec<Segment> {
         return vec![];
     }
     let pct = (used * 100).div_ceil(total) as i64; // df -P rounds up
-    // p10k:1279-1285 + 7263-7265 — WARNING 90, CRITICAL 95, ONLY_WARNING.
+                                                   // p10k:1279-1285 + 7263-7265 — WARNING 90, CRITICAL 95, ONLY_WARNING.
     let (state, bg, fg): (&str, &str, &str) = if pct >= global_int("DISK_USAGE_CRITICAL_LEVEL", 95)
     {
         ("CRITICAL", "red", "white") // p10k:1252
@@ -1552,7 +1559,10 @@ mod tests {
     fn human_readable_duration_dhms() {
         assert_eq!(human_readable_duration(125.0, 0, "d h m s"), "2m 5s");
         assert_eq!(human_readable_duration(4225.0, 0, "d h m s"), "1h 10m 25s");
-        assert_eq!(human_readable_duration(90061.0, 0, "d h m s"), "1d 1h 1m 1s");
+        assert_eq!(
+            human_readable_duration(90061.0, 0, "d h m s"),
+            "1d 1h 1m 1s"
+        );
     }
 
     /// p10k:5233-5244 — /proc/net/wireless parsing against the content

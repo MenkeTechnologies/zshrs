@@ -115,7 +115,10 @@ fn local_path(spec: &str) -> Option<PathBuf> {
     if let Some(rest) = spec.strip_prefix("path:") {
         return Some(PathBuf::from(rest));
     }
-    if spec.starts_with('/') || spec.starts_with("./") || spec.starts_with("../") || spec.starts_with('~')
+    if spec.starts_with('/')
+        || spec.starts_with("./")
+        || spec.starts_with("../")
+        || spec.starts_with('~')
     {
         let expanded = if let Some(rest) = spec.strip_prefix("~/") {
             if let Some(home) = std::env::var_os("HOME") {
@@ -140,7 +143,11 @@ fn git_url(spec: &str) -> PkgResult<(String, String, String)> {
     if let Some(rest) = spec.strip_prefix("github:") {
         let url = format!("https://github.com/{}", rest.trim_end_matches(".git"));
         let name = repo_basename(&url);
-        return Ok((url, format!("github:{}", rest.trim_end_matches(".git")), name));
+        return Ok((
+            url,
+            format!("github:{}", rest.trim_end_matches(".git")),
+            name,
+        ));
     }
     if spec.ends_with(".git") || spec.contains("://") {
         let name = repo_basename(spec);
@@ -247,7 +254,10 @@ mod tests {
         assert_eq!(split_ref("o/r@v1"), ("o/r", Some("v1")));
         assert_eq!(split_ref("o/r"), ("o/r", None));
         // SSH URL @ must not split.
-        assert_eq!(split_ref("git@github.com:o/r.git"), ("git@github.com:o/r.git", None));
+        assert_eq!(
+            split_ref("git@github.com:o/r.git"),
+            ("git@github.com:o/r.git", None)
+        );
     }
 
     #[test]

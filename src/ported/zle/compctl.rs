@@ -2137,20 +2137,20 @@ pub(crate) fn addmatch(s: &str, t: Option<&str>) {
     let mflags_v = crate::ported::zle::compcore::mflags.load(Ordering::Relaxed);
 
     add_match_data(
-        isalt,     // c:2051 alt (fignore alternative)
-        &ms,       // str — the matched string
-        s,         // orig
-        lc,        // line — the Cline built by comp_match
-        &ipre_v,   // ipre
-        &ripre_v,  // ripre
-        &isuf_v,   // isuf
-        &pre_v,    // pre  — curcc->prefix
-        &prpre_v,  // prpre
-        &lppre_v,  // ppre — path prefix (files only)
-        None,      // pline
-        &lpsuf_v,  // psuf — path suffix (files only)
-        None,      // sline
-        &suf_v,    // suf  — curcc->suffix
+        isalt,             // c:2051 alt (fignore alternative)
+        &ms,               // str — the matched string
+        s,                 // orig
+        lc,                // line — the Cline built by comp_match
+        &ipre_v,           // ipre
+        &ripre_v,          // ripre
+        &isuf_v,           // isuf
+        &pre_v,            // pre  — curcc->prefix
+        &prpre_v,          // prpre
+        &lppre_v,          // ppre — path prefix (files only)
+        None,              // pline
+        &lpsuf_v,          // psuf — path suffix (files only)
+        None,              // sline
+        &suf_v,            // suf  — curcc->suffix
         mflags_v | isfile, // c:2057 flags
         isexact,
     );
@@ -2563,7 +2563,11 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     let oisuf = ISUF.lock().unwrap().clone();
     let oqp = QIPRE.lock().unwrap().clone();
     let oqs = QISUF.lock().unwrap().clone();
-    let oaq = AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+    let oaq = AUTOQ
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap()
+        .clone();
     let ooffs = *OFFS.lock().unwrap();
 
     // c:2330-2361 — quote-context setup driven by `compquote`.
@@ -2577,7 +2581,10 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
             // c:2331-2338 — backtick: instring/inbackt cleared, no autoq.
             *INSTRING.lock().unwrap() = QT_NONE;
             *INBACKT.lock().unwrap() = 0;
-            *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = String::new();
+            *AUTOQ
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap() = String::new();
         }
         Some(c) if c == '\'' || c == '"' || c == '$' => {
             // c:2340-2355 — single/double/dollar quoting.
@@ -2588,7 +2595,10 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
             };
             *INBACKT.lock().unwrap() = 0;
             // c:2354 — autoq = (compquote == '$' ? compquote+1 : compquote).
-            *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = if c == '$' {
+            *AUTOQ
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap() = if c == '$' {
                 compquote[1..].to_string()
             } else {
                 compquote.clone()
@@ -2598,7 +2608,10 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
             // c:2357-2360 — no quoting context.
             *INSTRING.lock().unwrap() = QT_NONE;
             *INBACKT.lock().unwrap() = 0;
-            *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = String::new();
+            *AUTOQ
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap() = String::new();
         }
     }
 
@@ -2650,7 +2663,10 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     *QISUF.lock().unwrap() = oqs;
     *INSTRING.lock().unwrap() = ois;
     *INBACKT.lock().unwrap() = oib;
-    *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oaq;
+    *AUTOQ
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = oaq;
     *OFFS.lock().unwrap() = ooffs;
     CMDSTR.with(|r| *r.borrow_mut() = os);
     *CLWORDS.lock().unwrap() = ow;
@@ -2700,8 +2716,7 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
             0
         }
     };
-    let complete_in_word =
-        crate::ported::options::opt_state_get("COMPLETEINWORD").unwrap_or(false);
+    let complete_in_word = crate::ported::options::opt_state_get("COMPLETEINWORD").unwrap_or(false);
 
     let mut m = 0; // c:2652
     let mut d = 0; // c:2652
@@ -2794,8 +2809,7 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                                         sv.truncate(off);
                                     }
                                 }
-                                let sc =
-                                    rembslash(s.get(iu).map(|x| x.as_str()).unwrap_or("")); // c:2696
+                                let sc = rembslash(s.get(iu).map(|x| x.as_str()).unwrap_or("")); // c:2696
                                 let a = sc.len(); // c:2697
                                 if sv.len() >= a && sv.starts_with(&sc) {
                                     // c:2698 — !strncmp(s, sc, a).
@@ -2916,10 +2930,7 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                                     let mut k = j + 1; // c:2764
                                     while k < clwnum {
                                         let sv = untokenize(
-                                            words
-                                                .get(k as usize)
-                                                .map(|x| x.as_str())
-                                                .unwrap_or(""),
+                                            words.get(k as usize).map(|x| x.as_str()).unwrap_or(""),
                                         );
                                         let matched = if is_pat {
                                             patcompile(&sc_b, PAT_HEAPDUP as i32, None)
@@ -3099,7 +3110,11 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
         .lock()
         .unwrap()
         .clone();
-    let oaq = AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+    let oaq = AUTOQ
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap()
+        .clone();
 
     let sl = ss.len() as i32;
     let mut got = false;
@@ -3157,7 +3172,10 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     }
 
     // C: c:2835-2839 — push input, set zlemetaline
-    *LINE_G.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = tmp.clone();
+    *LINE_G
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = tmp.clone();
     *ZLEMETALL.lock().unwrap() = tl - 1;
     *NOALIASES.lock().unwrap() = 1;
 
@@ -3211,7 +3229,10 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     crate::ported::zle::compcore::WB.store(owb, std::sync::atomic::Ordering::Relaxed);
     crate::ported::zle::compcore::WE.store(owe, std::sync::atomic::Ordering::Relaxed);
     CS_G.store(ocs, Ordering::Relaxed);
-    *LINE_G.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = ol;
+    *LINE_G
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = ol;
     *ZLEMETALL.lock().unwrap() = oll;
 
     // C: c:2885 — bail if no cursor word found
@@ -3247,15 +3268,28 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
             }
         }
         // C: c:2925 — autoq from compqstack[1] and multiquote
-        let qstack = COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+        let qstack = COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap()
+            .clone();
         if qstack.len() >= 2 {
-            *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = String::new();
+            *AUTOQ
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap() = String::new();
         } else {
-            *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = ts.clone();
+            *AUTOQ
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap() = ts.clone();
         }
     } else {
         *INSTRING.lock().unwrap() = QT_NONE;
-        *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = String::new();
+        *AUTOQ
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = String::new();
     }
 
     // C: c:2931-2952 — inull walk: drop inull markers from ns,
@@ -3328,7 +3362,11 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let os = CMDSTR.with(|r| r.borrow().clone());
     let oqp = QIPRE.lock().unwrap().clone();
     let oqs = QISUF.lock().unwrap().clone();
-    let oqst = COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+    let oqst = COMPQSTACK
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap()
+        .clone();
     let olws = *CLWSIZE.lock().unwrap();
     let olwn = *CLWNUM.lock().unwrap();
     let olwp = *CLWPOS.lock().unwrap();
@@ -3346,7 +3384,10 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let mut new_compqstack = String::new();
     new_compqstack.push(new_quote_char);
     new_compqstack.push_str(&oqst);
-    *COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = new_compqstack;
+    *COMPQSTACK
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = new_compqstack;
 
     // C: c:2991-2997 — install foo into clwords
     *CLWSIZE.lock().unwrap() = foo.len() as i32;
@@ -3376,9 +3417,15 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     *ERANGE.lock().unwrap() = oer;
     *QIPRE.lock().unwrap() = oqp;
     *QISUF.lock().unwrap() = oqs;
-    *COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqst;
+    *COMPQSTACK
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = oqst;
 
-    *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oaq;
+    *AUTOQ
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = oaq;
     *INSTRING.lock().unwrap() = ois;
     *INBACKT.lock().unwrap() = oib;
 
@@ -3461,11 +3508,11 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     use crate::ported::utils::quotestring;
     use crate::ported::zle::comp_h::{Cexpl, CGF_NOSORT, CGF_UNIQALL, CGF_UNIQCON, CMF_REMOVE};
     use crate::ported::zle::compcore::{begcmgroup, check_param, endcmgroup, rembslash};
+    use crate::ported::zsh_h::{Equals, Stringg, Tick, Tilde};
     use crate::ported::zsh_h::{
         ALIAS_GLOBAL, DISABLED, PM_ARRAY, PM_EXPORTED, PM_INTEGER, PM_READONLY, PM_SCALAR,
         PM_SPECIAL, PM_UNSET,
     };
-    use crate::ported::zsh_h::{Equals, Stringg, Tick, Tilde};
     use std::sync::atomic::Ordering;
 
     // =================================================================
@@ -3502,12 +3549,19 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         if x.is_empty() {
             String::new()
         } else {
-            quotestring(x, if instr == QT_NONE { QT_BACKSLASH } else { instr })
+            quotestring(
+                x,
+                if instr == QT_NONE {
+                    QT_BACKSLASH
+                } else {
+                    instr
+                },
+            )
         }
     };
 
     let mut delit = false; // c:3071 delit = 0
-    // c:3073-3076 — reset compiled patterns and every prefix static.
+                           // c:3073-3076 — reset compiled patterns and every prefix static.
     PATCOMP.with(|r| *r.borrow_mut() = None);
     FILECOMP.with(|r| *r.borrow_mut() = None);
     LPRE.with(|r| r.borrow_mut().clear());
@@ -3542,17 +3596,19 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
 
     // c:3080-3083 — mflags reset + group flags from mask2.
     crate::ported::zle::compcore::mflags.store(0, Ordering::Relaxed);
-    let gflags = (if (cc.mask2 & CC_NOSORT) != 0 { CGF_NOSORT } else { 0 })
-        | (if (cc.mask2 & CC_UNIQALL) != 0 {
-            CGF_UNIQALL
-        } else {
-            0
-        })
-        | (if (cc.mask2 & CC_UNIQCON) != 0 {
-            CGF_UNIQCON
-        } else {
-            0
-        });
+    let gflags = (if (cc.mask2 & CC_NOSORT) != 0 {
+        CGF_NOSORT
+    } else {
+        0
+    }) | (if (cc.mask2 & CC_UNIQALL) != 0 {
+        CGF_UNIQALL
+    } else {
+        0
+    }) | (if (cc.mask2 & CC_UNIQCON) != 0 {
+        CGF_UNIQCON
+    } else {
+        0
+    });
     // c:3084-3091 — start a fresh match group for -J/-V (gname) or -y.
     if cc.gname.is_some() {
         endcmgroup(None);
@@ -3589,8 +3645,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         if let Ok(mut g) = cell.lock() {
             *g = ip;
         }
-        crate::ported::zle::compcore::WB
-            .fetch_add(compadd, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::zle::compcore::WB.fetch_add(compadd, std::sync::atomic::Ordering::Relaxed);
         s = s[ca..].to_string();
         offs -= compadd;
         if offs < 0 {
@@ -3858,10 +3913,12 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             .get()
             .and_then(|m| m.lock().ok().map(|g| g.clone()))
             .unwrap_or_default();
-        let wb = crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed) as usize;
-        let we = crate::ported::zle::compcore::WE.load(std::sync::atomic::Ordering::Relaxed) as usize;
-        let cs = crate::ported::zle::compcore::ZLEMETACS
-            .load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let wb =
+            crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let we =
+            crate::ported::zle::compcore::WE.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let cs = crate::ported::zle::compcore::ZLEMETACS.load(std::sync::atomic::Ordering::Relaxed)
+            as usize;
         let sf1 = !ppre_s.is_empty();
         let lppre_s = if cs != wb && wb <= cs && cs <= meta.len() {
             let word = &meta[wb..cs];
@@ -3920,8 +3977,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     // file/dir/command/glob completion. Without this guard the tilde/equals
     // arms fired for cc_first (mask=0, run before cc_default) where fpre is
     // empty, so every username matched and `~roo` collapsed to `~`.
-    let has_file_mask =
-        (cc.mask & (CC_FILES | CC_DIRS | CC_COMMPATH)) != 0 || cc.glob.is_some();
+    let has_file_mask = (cc.mask & (CC_FILES | CC_DIRS | CC_COMMPATH)) != 0 || cc.glob.is_some();
     if ic == Tilde && has_file_mask {
         // c:3401-3406 — usernames + named directories. `ipre = "~"` so each
         // bare name matches the file prefix and gets the `~` back on insert.
@@ -3972,47 +4028,47 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             *g = oi; // c:3417 — restore
         }
     } else {
-    // c:3650 — CC_FILES regular files.
-    if (cc.mask & CC_FILES) != 0 {
-        ADDWHAT.with(|c| c.set(-5));
-        gen_matches_files(false, false, false);
-    }
-    // CC_DIRS — c:3680
-    if (cc.mask & CC_DIRS) != 0 {
-        ADDWHAT.with(|c| c.set(-5));
-        gen_matches_files(true, false, false);
-    }
-    // CC_COMMPATH — c:3500-3519. File-side of command completion. With a
-    // typed path prefix (`/usr/bin/tr<Tab>`, sf1) add that directory's
-    // directories+executables; with no prefix, add the cwd's executables
-    // only when the cwd is itself reachable through $path (an empty or
-    // "." element). The bulk of the command names (everything reachable
-    // via $path) comes from the cmdnamtab dump below, NOT from a $path
-    // walk here — those matches are added with addwhat=-3 so they carry
-    // no file-type marker, matching `zsh -f`.
-    if (cc.mask & CC_COMMPATH) != 0 {
-        ADDWHAT.with(|c| c.set(-5));
-        let sf1 = !ppre.is_empty(); // path prefix present (slash in word)
-        if sf1 {
-            // c:3505 — directories + executables under the typed prefix.
-            let save = PRPRE.with(|r| r.borrow().clone());
-            PRPRE.with(|r| *r.borrow_mut() = Some(ppre.clone()));
-            gen_matches_files(true, true, false);
-            PRPRE.with(|r| *r.borrow_mut() = save);
-        } else {
-            // c:3509-3518 — cwd only if "." (or "") is in $path.
-            let path = crate::ported::params::getaparam("path").unwrap_or_default();
-            let cwd_in_path = path.iter().any(|p| p.is_empty() || p == ".");
-            if cwd_in_path {
+        // c:3650 — CC_FILES regular files.
+        if (cc.mask & CC_FILES) != 0 {
+            ADDWHAT.with(|c| c.set(-5));
+            gen_matches_files(false, false, false);
+        }
+        // CC_DIRS — c:3680
+        if (cc.mask & CC_DIRS) != 0 {
+            ADDWHAT.with(|c| c.set(-5));
+            gen_matches_files(true, false, false);
+        }
+        // CC_COMMPATH — c:3500-3519. File-side of command completion. With a
+        // typed path prefix (`/usr/bin/tr<Tab>`, sf1) add that directory's
+        // directories+executables; with no prefix, add the cwd's executables
+        // only when the cwd is itself reachable through $path (an empty or
+        // "." element). The bulk of the command names (everything reachable
+        // via $path) comes from the cmdnamtab dump below, NOT from a $path
+        // walk here — those matches are added with addwhat=-3 so they carry
+        // no file-type marker, matching `zsh -f`.
+        if (cc.mask & CC_COMMPATH) != 0 {
+            ADDWHAT.with(|c| c.set(-5));
+            let sf1 = !ppre.is_empty(); // path prefix present (slash in word)
+            if sf1 {
+                // c:3505 — directories + executables under the typed prefix.
                 let save = PRPRE.with(|r| r.borrow().clone());
-                PRPRE.with(|r| *r.borrow_mut() = Some("./".to_string()));
-                gen_matches_files(true, true, false); // c:3516
+                PRPRE.with(|r| *r.borrow_mut() = Some(ppre.clone()));
+                gen_matches_files(true, true, false);
                 PRPRE.with(|r| *r.borrow_mut() = save);
+            } else {
+                // c:3509-3518 — cwd only if "." (or "") is in $path.
+                let path = crate::ported::params::getaparam("path").unwrap_or_default();
+                let cwd_in_path = path.iter().any(|p| p.is_empty() || p == ".");
+                if cwd_in_path {
+                    let save = PRPRE.with(|r| r.borrow().clone());
+                    PRPRE.with(|r| *r.borrow_mut() = Some("./".to_string()));
+                    gen_matches_files(true, true, false); // c:3516
+                    PRPRE.with(|r| *r.borrow_mut() = save);
+                }
             }
         }
-    }
     } // end `else` (plain-file arms; the `~`/`=` cases handled above)
-    // c:3540 — restore prpre after the file-generating arms.
+      // c:3540 — restore prpre after the file-generating arms.
     PRPRE.with(|r| *r.borrow_mut() = saved_prpre);
     // CC_NAMED — c:3664 `dumphashtable(nameddirtab, addwhat)`. maketildelist
     // now emits bare names (the `~` comes from ipre), so set ipre = "~" here
@@ -4435,7 +4491,6 @@ pub(crate) fn setup_() -> i32 {
     *LASTCCUSED.lock().unwrap() = Vec::new(); // c:4034
     0
 }
-
 
 // =================================================================
 // zle_tricky.c state required by sep_comp_string and the
@@ -5500,8 +5555,14 @@ mod tests {
         *INBACKT.lock().unwrap() = 1;
         *NOALIASES.lock().unwrap() = 1;
         *NOERRS.lock().unwrap() = 0;
-        *LINE_G.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "hello".to_string();
-        *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "Q".to_string();
+        *LINE_G
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = "hello".to_string();
+        *AUTOQ
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = "Q".to_string();
 
         let _ = sep_comp_string("", "x", 0);
 
@@ -5513,8 +5574,20 @@ mod tests {
         assert_eq!(*INBACKT.lock().unwrap(), 1);
         assert_eq!(*NOALIASES.lock().unwrap(), 1);
         assert_eq!(*NOERRS.lock().unwrap(), 0);
-        assert_eq!(*LINE_G.get_or_init(|| Mutex::new(String::new())).lock().unwrap(), "hello");
-        assert_eq!(*AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap(), "Q");
+        assert_eq!(
+            *LINE_G
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap(),
+            "hello"
+        );
+        assert_eq!(
+            *AUTOQ
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap(),
+            "Q"
+        );
     }
 
     #[test]

@@ -891,9 +891,7 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "execute-last-named-cmd" => Some(|_| 0),
         // Remaining iwidgets.list entries — each maps to its already-
         // ported fn (same order as the C-generated widgets[] table).
-        "accept-and-infer-next-history" => {
-            Some(|_| super::zle_hist::acceptandinfernexthistory())
-        }
+        "accept-and-infer-next-history" => Some(|_| super::zle_hist::acceptandinfernexthistory()),
         "accept-and-menu-complete" => Some(super::zle_tricky::acceptandmenucomplete),
         "argument-base" => Some(super::zle_misc::argumentbase),
         // c:zle_utils.c:1422-1425 — the bound handlesuffix widget body
@@ -1036,27 +1034,27 @@ pub static IWIDGET_FLAGS: &[(&str, i32)] = {
         ("up-line-or-search", ZLE_LINEMOVE),
         // Kill widgets (non-VI-operator forms) — flags per iwidgets.list.
         ("kill-buffer", ZLE_KILL | ZLE_KEEPSUFFIX), // c:78
-        ("kill-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:79
+        ("kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),   // c:79
         ("kill-region", ZLE_KILL | ZLE_KEEPSUFFIX), // c:80
         ("kill-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:81
-        ("kill-word", ZLE_KILL | ZLE_KEEPSUFFIX), // c:82
+        ("kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),   // c:82
         ("vi-backward-delete-char", ZLE_KEEPSUFFIX), // c:132
-        ("vi-backward-kill-word", ZLE_KEEPSUFFIX), // c:133
-        ("vi-change-eol", 0), // c:140
-        ("vi-change-whole-line", 0), // c:141
-        ("vi-delete-char", ZLE_KEEPSUFFIX), // c:144
-        ("vi-kill-eol", ZLE_KEEPSUFFIX), // c:169
-        ("vi-kill-line", ZLE_KEEPSUFFIX), // c:170
-        ("vi-yank-eol", 0), // c:195
-        ("vi-yank-whole-line", 0), // c:196
+        ("vi-backward-kill-word", ZLE_KEEPSUFFIX),  // c:133
+        ("vi-change-eol", 0),                       // c:140
+        ("vi-change-whole-line", 0),                // c:141
+        ("vi-delete-char", ZLE_KEEPSUFFIX),         // c:144
+        ("vi-kill-eol", ZLE_KEEPSUFFIX),            // c:169
+        ("vi-kill-line", ZLE_KEEPSUFFIX),           // c:170
+        ("vi-yank-eol", 0),                         // c:195
+        ("vi-yank-whole-line", 0),                  // c:196
         // VI operator-pending widgets (read further keys).
         ("vi-change", ZLE_LASTCOL | ZLE_VIOPER), // c:139
         ("vi-delete", ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_VIOPER), // c:143
-        ("vi-yank", ZLE_LASTCOL | ZLE_VIOPER), // c:194
+        ("vi-yank", ZLE_LASTCOL | ZLE_VIOPER),   // c:194
         ("vi-oper-swap-case", ZLE_LASTCOL | ZLE_VIOPER), // c:174
-        ("vi-swap-case", ZLE_LASTCOL), // c:189
-        ("vi-undo-change", ZLE_KEEPSUFFIX), // c:190
-        ("vi-repeat-change", 0), // c:179
+        ("vi-swap-case", ZLE_LASTCOL),           // c:189
+        ("vi-undo-change", ZLE_KEEPSUFFIX),      // c:190
+        ("vi-repeat-change", 0),                 // c:179
         // Yank/put widgets — ZLE_YANK* drives yankpop's before/after.
         ("yank", ZLE_YANKBEFORE | ZLE_KEEPSUFFIX), // c:202
         ("yank-pop", ZLE_KEEPSUFFIX | ZLE_NOTCOMMAND), // c:203
@@ -1067,9 +1065,9 @@ pub static IWIDGET_FLAGS: &[(&str, i32)] = {
             "bracketed-paste",
             ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_YANKBEFORE,
         ), // c:31
-        ("copy-region-as-kill", ZLE_KEEPSUFFIX), // c:37
-        ("delete-char", ZLE_KEEPSUFFIX), // c:39
-        ("delete-word", ZLE_KEEPSUFFIX), // c:41
+        ("copy-region-as-kill", ZLE_KEEPSUFFIX),   // c:37
+        ("delete-char", ZLE_KEEPSUFFIX),           // c:39
+        ("delete-word", ZLE_KEEPSUFFIX),           // c:41
         // Non-command widgets (don't update lastcmd).
         ("argument-base", ZLE_NOTCOMMAND),
         ("digit-argument", ZLE_NOTCOMMAND),

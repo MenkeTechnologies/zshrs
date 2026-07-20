@@ -367,10 +367,7 @@ impl ShellExecutor {
         // `zshrs record` re-runs. Same oracle as the `--doctor` flag +
         // startup log: newest rc mtime vs newest `*-recorder.rkyv` mtime.
         if !crate::daemon_presence::recording_present() {
-            println!(
-                "  recording:   {}",
-                dim("none (rc files sourced normally)")
-            );
+            println!("  recording:   {}", dim("none (rc files sourced normally)"));
         } else {
             match crate::daemon_presence::recording_staleness() {
                 Some(rc) => println!(
@@ -2178,8 +2175,7 @@ impl ShellExecutor {
                         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
                         crate::ported::parse::parse_init(body);
                         let program = crate::ported::parse::parse();
-                        let parse_failed =
-                            (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+                        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
                         errflag.store(saved_errflag, Ordering::Relaxed);
                         if parse_failed || program.lists.is_empty() {
                             parse_fail += 1;
@@ -9086,9 +9082,9 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     // died with a bogus "both map to" collision.
     let mut wildcard = false; // opt_w || opt_W  (zmv:190)
     let mut wildcard_repl = false; // opt_W       (zmv:204)
-    // zmv:148 `[[ -z $opt_Q ]] && setopt nobareglobqual` — bare glob qualifiers
-    // are OFF for the whole function unless -Q asks for them back. `-Q` was
-    // parsed as an unknown flag and dropped.
+                                   // zmv:148 `[[ -z $opt_Q ]] && setopt nobareglobqual` — bare glob qualifiers
+                                   // are OFF for the whole function unless -Q asks for them back. `-Q` was
+                                   // parsed as an unknown flag and dropped.
     let mut bare_glob_qual = false; // opt_Q
     let mut symlink = false;
     let mut positional: Vec<String> = Vec::new();
@@ -9468,7 +9464,7 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
             exec.set_pparams(match_args.clone()); // zmv:255 `set -- "$match[@]"`
         });
         let _ = crate::ported::params::setaparam("match", match_args.clone()); // zmv:260 `$match`
-        // `(#m)` binds $MATCH to the whole match (regex group 0).
+                                                                               // `(#m)` binds $MATCH to the whole match (regex group 0).
         if want_match_var {
             let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
             crate::fusevm_bridge::with_executor(|exec| exec.set_scalar("MATCH".to_string(), whole));

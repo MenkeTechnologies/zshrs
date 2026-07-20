@@ -143,8 +143,20 @@ pub fn _call_program(args: &[String]) -> i32 {
     // `cmdsubst_outer_stdout()` stack, which is empty during the completion-
     // context cmdsub (that capture path doesn't push it).
     if std::env::var_os("ZSHRS_CSDBG").is_some() {
-        let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/cs.log")
-            .map(|mut f| { use std::io::Write as _; let _ = writeln!(f, "CALLPROG cmdline={:?} out_len={} isatty1={}", cmdline.join(" "), output.stdout.len(), unsafe { libc::isatty(1) }); });
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/cs.log")
+            .map(|mut f| {
+                use std::io::Write as _;
+                let _ = writeln!(
+                    f,
+                    "CALLPROG cmdline={:?} out_len={} isatty1={}",
+                    cmdline.join(" "),
+                    output.stdout.len(),
+                    unsafe { libc::isatty(1) }
+                );
+            });
     }
     if !output.stdout.is_empty() && unsafe { libc::isatty(1) } == 0 {
         use std::io::Write as _;

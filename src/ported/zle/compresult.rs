@@ -31,7 +31,13 @@
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
 
+use crate::ported::exec::noerrs;
 use crate::ported::init::SHTTY;
+use crate::ported::lex::parsestr;
+use crate::ported::module::{gethookdef, runhookdef};
+use crate::ported::params::paramtab;
+use crate::ported::subst::singsub;
+use crate::ported::utils::errflag;
 use crate::ported::utils::{adjustcolumns, adjustlines, write_loop, zputs};
 use crate::ported::zle::comp_h::{
     Aminfo, Chdata, Cldata, Cline, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES,
@@ -46,8 +52,11 @@ use crate::ported::zle::compcore::{
     ZLEMETALINE, ZLEMETALL, ZMULT,
 };
 use crate::ported::zle::complete::COMPLISTMAX;
+use crate::ported::zle::compmatch::{cline_setlens, cline_sublen, cp_cline};
 use crate::ported::zle::computil::CM_SPACE;
 use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
+use crate::ported::zle::zle_h::{CUT_RAW, SUFTYP_POSSTR};
+use crate::ported::zle::zle_misc::suffixlen;
 use crate::ported::zle::zle_refresh::tcout;
 use crate::ported::zle::zle_tricky::printfmt;
 #[allow(unused_imports)]
@@ -55,21 +64,12 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zsh_h::ERRFLAG_ERROR;
 use crate::ported::zsh_h::{
     isset, AUTOPARAMKEYS, AUTOPARAMSLASH, AUTOREMOVESLASH, LISTPACKED, LISTROWSFIRST, LISTTYPES,
     USEZLE,
 };
-use crate::ported::zle::compmatch::{cline_setlens, cline_sublen, cp_cline};
-use crate::ported::zle::zle_h::{CUT_RAW, SUFTYP_POSSTR};
-use crate::ported::zle::zle_misc::suffixlen;
-use crate::ported::module::{gethookdef, runhookdef};
-use crate::ported::exec::noerrs;
-use crate::ported::utils::errflag;
-use crate::ported::zsh_h::ERRFLAG_ERROR;
-use crate::ported::params::paramtab;
 use crate::ported::zsh_h::{PM_SCALAR, PM_TYPE};
-use crate::ported::lex::parsestr;
-use crate::ported::subst::singsub;
 /// Port of `mod_export int invcount` from `Src/Zle/compresult.c:37`.
 /// Invalidation counter — bumped every time the cached completion
 /// list goes stale. `complistmatches` reads it to detect "we have a
@@ -139,7 +139,8 @@ pub fn cut_cline(l: Option<Box<Cline>>) -> Option<Box<Cline>> {
                 qn.orig.is_none()
                     && qn.olen == 0
                     && (qn.flags & CLF_MISS) != 0
-                    && ((qn.flags & CLF_MATCHED) == 0 || (qn.prefix.is_none() && qn.suffix.is_none()))
+                    && ((qn.flags & CLF_MATCHED) == 0
+                        || (qn.prefix.is_none() && qn.suffix.is_none()))
                     && (if qn.word.is_some() { qn.wlen } else { qn.llen }) < 3
             };
             if cond {
@@ -489,14 +490,14 @@ pub fn cline_str(
             }
         }
         pcs = cs(); // c:280
-        // c:281-285 — insert the anchor.
+                    // c:281-285 — insert the anchor.
         if (node.flags & CLF_LINE) != 0 {
             inststrlen(node.line.as_deref().unwrap_or(""), true, node.llen);
         } else {
             inststrlen(node.word.as_deref().unwrap_or(""), true, node.wlen);
         }
         scs = cs(); // c:286
-        // c:287-302 — brace-begins after the anchor.
+                    // c:287-302 — brace-begins after the anchor.
         if ins != 0 {
             li += node.llen; // c:290
             while brp_idx < brbeg_v.len() && li >= brbeg_v[brp_idx].2 {
@@ -1154,10 +1155,10 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
             if we >= wb && wb >= 0 {
                 let span = we - wb;
                 crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:785
-                // c:786 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on
-                // a metafied line; without it foredel takes the non-raw path
-                // and deletes nothing, so inststr below prepends the prefix
-                // to the still-present word (ambiguous `ec` → `ecec`).
+                                                                            // c:786 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on
+                                                                            // a metafied line; without it foredel takes the non-raw path
+                                                                            // and deletes nothing, so inststr below prepends the prefix
+                                                                            // to the still-present word (ambiguous `ec` → `ecec`).
                 foredel(span, CUT_RAW); // c:786
                 let _ = inststr(&prefix); // c:790
             }
@@ -1274,18 +1275,15 @@ pub fn do_allmatches(_end: i32) {
 
     // c:900 — p = brbeg ? ztrdup(lastbrbeg->str) : NULL. Snapshot the
     // tail node's string (lastbrbeg = last node of the brbeg chain).
-    let saved_brbeg: Option<String> = BRBEG
-        .get()
-        .and_then(|mx| mx.lock().ok())
-        .and_then(|g| {
-            g.as_deref().map(|head| {
-                let mut node = head;
-                while let Some(n) = node.next.as_deref() {
-                    node = n;
-                }
-                node.str.clone().unwrap_or_default()
-            })
-        });
+    let saved_brbeg: Option<String> = BRBEG.get().and_then(|mx| mx.lock().ok()).and_then(|g| {
+        g.as_deref().map(|head| {
+            let mut node = head;
+            while let Some(n) = node.next.as_deref() {
+                node = n;
+            }
+            node.str.clone().unwrap_or_default()
+        })
+    });
 
     // c:902 — save minfo.
     let mi_saved = MINFO
@@ -1416,7 +1414,7 @@ pub fn do_single(m: &Cmatch) {
 
     let mut sr: i32 = 0; // c:963 (0 == ztat success)
     let mut havesuff = false; // c:964
-    // c:965 — partest.
+                              // c:965 — partest.
     let parpre_nonempty = parpre
         .get()
         .and_then(|p| p.lock().ok())
@@ -1584,7 +1582,9 @@ pub fn do_single(m: &Cmatch) {
                 .and_then(|mx| mx.lock().ok())
                 .map(|g| g.as_bytes().get((cur - 1) as usize).copied() != Some(b'/'))
                 .unwrap_or(true);
-        if ((m.flags & CMF_FILE) != 0 || (partest && isset(AUTOPARAMSLASH))) && cur > 0 && prev_not_slash
+        if ((m.flags & CMF_FILE) != 0 || (partest && isset(AUTOPARAMSLASH)))
+            && cur > 0
+            && prev_not_slash
         {
             let mut t = false; // is a directory
             if m.ipre.as_deref() == Some("~") {
@@ -1778,7 +1778,8 @@ pub fn do_single(m: &Cmatch) {
             .unwrap_or_default();
         let mut outlen: i32 = 0;
         let _subline = stringaszleline(&tmpstr, 0, Some(&mut outlen), None, None); // c:1165
-        makeparamsuffix(if (m.flags & CMF_PARBR) != 0 { 1 } else { 0 }, outlen); // c:1166
+        makeparamsuffix(if (m.flags & CMF_PARBR) != 0 { 1 } else { 0 }, outlen);
+        // c:1166
     }
     // c:1170-1178 — final cursor placement.
     let movetoend_v = movetoend.load(Relaxed);
@@ -1827,7 +1828,7 @@ pub fn do_single(m: &Cmatch) {
             runhookdef(h, &mut dat as *mut Chdata as *mut std::ffi::c_void);
         }
         redrawhook(); // c:1195
-        // c:1196 — minfo.cur = om.
+                      // c:1196 — minfo.cur = om.
         if let Ok(mut g) = MINFO
             .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
@@ -1885,8 +1886,7 @@ pub fn valid_match(mut mi: i32, next: i32) -> Option<Cmatch> {
             None => true,
             Some(m) => {
                 next != 0
-                    || (menuacc_v != 0
-                        && !hasbrpsfx(m, prebr.as_deref(), postbr.as_deref()))
+                    || (menuacc_v != 0 && !hasbrpsfx(m, prebr.as_deref(), postbr.as_deref()))
                     || (m.flags & CMF_DUMMY) != 0
                     || ((m.flags & (CMF_NOLIST | CMF_MULT)) != 0
                         && m.str.as_deref().map_or(true, |s| s.is_empty()))
@@ -2013,8 +2013,16 @@ pub fn accept_last() -> i32 {
             .map(|g| g.clone())
             .unwrap_or_default();
         // c:1296-1299 — empty string == C's NULL.
-        let prebr_opt = if lpb.is_empty() { None } else { Some(lpb.clone()) };
-        let postbr_opt = if lsb.is_empty() { None } else { Some(lsb.clone()) };
+        let prebr_opt = if lpb.is_empty() {
+            None
+        } else {
+            Some(lpb.clone())
+        };
+        let postbr_opt = if lsb.is_empty() {
+            None
+        } else {
+            Some(lsb.clone())
+        };
         if let Ok(mut m) = MINFO
             .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
@@ -2064,7 +2072,7 @@ pub fn accept_last() -> i32 {
             })
             .unwrap_or_default();
         let newstr = format!("{},", slice); // c:1331
-        // lastbrbeg->str = newstr (tail node of the brbeg chain).
+                                            // lastbrbeg->str = newstr (tail node of the brbeg chain).
         if let Some(mx) = BRBEG.get() {
             if let Ok(mut guard) = mx.lock() {
                 if let Some(head) = guard.as_mut() {
@@ -2393,7 +2401,8 @@ pub fn calclist(showall: i32) -> i32 {
 
     // c:1506-1511 — early-exit when nothing has changed.
     {
-        let ld = crate::ported::zle::compcore::listdat.get_or_init(|| std::sync::Mutex::new(Cldata::default()));
+        let ld = crate::ported::zle::compcore::listdat
+            .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
         let g = ld.lock().unwrap();
         if LASTINVCOUNT.with(|c| c.get()) == invcount
             && g.valid != 0
@@ -2483,8 +2492,7 @@ pub fn calclist(showall: i32) -> i32 {
                 if (m.flags & CMF_FILE) != 0 {
                     hasf = true;
                 }
-                if menuacc_v != 0
-                    && !hasbrpsfx(m, minfo_prebr.as_deref(), minfo_postbr.as_deref())
+                if menuacc_v != 0 && !hasbrpsfx(m, minfo_prebr.as_deref(), minfo_postbr.as_deref())
                 {
                     m.flags |= CMF_HIDE;
                     continue;
@@ -2859,7 +2867,8 @@ pub fn calclist(showall: i32) -> i32 {
     }
 
     // c:1910-1918 — commit listdat.
-    let ld = crate::ported::zle::compcore::listdat.get_or_init(|| std::sync::Mutex::new(Cldata::default()));
+    let ld = crate::ported::zle::compcore::listdat
+        .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
     let mut g = ld.lock().unwrap();
     g.valid = 1;
     g.hidden = hidden;
@@ -3193,7 +3202,8 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                             g.widths.get(col as usize).copied().unwrap_or(g.width)
                         };
                         if idx >= 0 && (idx as usize) < n {
-                            let _ = iprintm(Some(g), Some(visible[idx as usize]), col, ml, lastc, wid);
+                            let _ =
+                                iprintm(Some(g), Some(visible[idx as usize]), col, ml, lastc, wid);
                         }
                     }
                     ml += 1;
@@ -3440,7 +3450,10 @@ pub fn iprintm(
 /// mirror the C `(Hookdef, Chdata)` signature so this registers directly
 /// as a `Hookfn`; both are unused (the body reads the `amatches`/`listdat`
 /// globals as the C source does).
-pub fn ilistmatches(_dummy: *mut crate::ported::zsh_h::hookdef, _dat: *mut std::ffi::c_void) -> i32 {
+pub fn ilistmatches(
+    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dat: *mut std::ffi::c_void,
+) -> i32 {
     // c:2284
     let _ = calclist(0); // c:2286
                          // c:2288 — bail when listdat.nlines == 0 (no matches to display).
@@ -3490,7 +3503,11 @@ pub fn list_matches() -> i32 {
         // like C does.
         if let Ok(path) = std::env::var("ZSHRS_COMPLIST_LOG") {
             use std::io::Write as _;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
                 let _ = writeln!(f, "list_matches: BOGUS LIST (VALIDLIST==0) — bailing");
             }
         }
@@ -3525,15 +3542,15 @@ pub fn list_matches() -> i32 {
     dat.matches = groups.into_iter().next().map(Box::new); // c:2317 first group head
     dat.num = nmatches_g.load(Relaxed); // c:2319
                                         // c:2325 — `ret = runhookdef(COMPLISTMATCHESHOOK, &dat)`.
-    // COMPLISTMATCHESHOOK == the `comp_list_matches` hookdef (comp.h:451),
-    // registered at zle boot (zle_main.rs boot_) with `def = ilistmatches`
-    // and flags 0. When zsh/complist is loaded it adds `complistmatches`
-    // as a func → colored/columned/menu listing; otherwise runhookdef
-    // falls back to the `def` (ilistmatches, plain). NO manual fallback
-    // here — the earlier port looked up the wrong name ("complist-matches"
-    // vs C "comp_list_matches"), always missed the hookdef, and hard-called
-    // the plain `ilistmatches`, so `list-colors`/`group-colors` and every
-    // other complist-painted style were silently dropped.
+                                        // COMPLISTMATCHESHOOK == the `comp_list_matches` hookdef (comp.h:451),
+                                        // registered at zle boot (zle_main.rs boot_) with `def = ilistmatches`
+                                        // and flags 0. When zsh/complist is loaded it adds `complistmatches`
+                                        // as a func → colored/columned/menu listing; otherwise runhookdef
+                                        // falls back to the `def` (ilistmatches, plain). NO manual fallback
+                                        // here — the earlier port looked up the wrong name ("complist-matches"
+                                        // vs C "comp_list_matches"), always missed the hookdef, and hard-called
+                                        // the plain `ilistmatches`, so `list-colors`/`group-colors` and every
+                                        // other complist-painted style were silently dropped.
     let h = crate::ported::module::gethookdef("comp_list_matches");
     if !h.is_null() {
         let dat_ptr = (&mut dat) as *mut Chdata as *mut std::ffi::c_void;
@@ -3633,7 +3650,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = String::new();
         }
         ZLEMETACS.store(0, Relaxed);
@@ -3649,7 +3669,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = String::new();
         }
         ZLEMETACS.store(0, Relaxed);
@@ -3659,12 +3682,12 @@ mod tests {
         let mut n = Cline::default();
         n.word = Some("hello".to_string());
         n.wlen = 5;
-        assert_eq!(cline_str(Some(Box::new(n)), 0, None, None), Some("hello".to_string()));
-        // Line restored (ins=0 copies out then foredel's).
         assert_eq!(
-            ZLEMETALINE.get().unwrap().lock().unwrap().clone(),
-            ""
+            cline_str(Some(Box::new(n)), 0, None, None),
+            Some("hello".to_string())
         );
+        // Line restored (ins=0 copies out then foredel's).
+        assert_eq!(ZLEMETALINE.get().unwrap().lock().unwrap().clone(), "");
     }
 
     /// c:282-283 — a CLF_LINE node renders its `line`, not `word`.
@@ -3673,7 +3696,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = String::new();
         }
         ZLEMETACS.store(0, Relaxed);
@@ -3686,7 +3712,10 @@ mod tests {
         n.llen = 4;
         n.word = Some("word-should-not-emit".to_string());
         n.wlen = 20;
-        assert_eq!(cline_str(Some(Box::new(n)), 0, None, None), Some("LINE".to_string()));
+        assert_eq!(
+            cline_str(Some(Box::new(n)), 0, None, None),
+            Some("LINE".to_string())
+        );
     }
 
     /// c:214-216 + c:281-285 — `olen && !CLF_SUF && !prefix` renders
@@ -3696,7 +3725,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = String::new();
         }
         ZLEMETACS.store(0, Relaxed);
@@ -3720,7 +3752,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = String::new();
         }
         ZLEMETACS.store(0, Relaxed);
@@ -3750,7 +3785,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = String::new();
         }
         ZLEMETACS.store(0, Relaxed);
@@ -3764,7 +3802,10 @@ mod tests {
         n1.word = Some("A".to_string());
         n1.wlen = 1;
         n1.next = Some(Box::new(n2));
-        assert_eq!(cline_str(Some(Box::new(n1)), 0, None, None), Some("AB".to_string()));
+        assert_eq!(
+            cline_str(Some(Box::new(n1)), 0, None, None),
+            Some("AB".to_string())
+        );
     }
 
     /// c:578 — `instmatch` inserts the match string at the cursor into
@@ -3781,7 +3822,10 @@ mod tests {
         if let Some(mx) = BREND.get() {
             *mx.lock().unwrap() = None;
         }
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = "git ".to_string();
         }
         ZLEMETACS.store(4, Relaxed);
@@ -3811,10 +3855,16 @@ mod tests {
         if let Some(mx) = BREND.get() {
             *mx.lock().unwrap() = None;
         }
-        if let Ok(mut g) = MINFO.get_or_init(|| std::sync::Mutex::new(Menuinfo::default())).lock() {
+        if let Ok(mut g) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
             *g = Menuinfo::default();
         }
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = "git co".to_string();
         }
         ZLEMETACS.store(6, Relaxed);
@@ -3870,10 +3920,16 @@ mod tests {
         let mut g = Cmgroup::default();
         g.matches = vec![dummy, real];
         g.mcount = 2;
-        if let Ok(mut a) = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock() {
+        if let Ok(mut a) = amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
             *a = vec![g];
         }
-        if let Ok(mut mi) = MINFO.get_or_init(|| std::sync::Mutex::new(Menuinfo::default())).lock() {
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
             *mi = Menuinfo::default();
             mi.group_idx = 0;
         }
@@ -4118,13 +4174,22 @@ mod tests {
         let mut g = Cmgroup::default();
         g.matches = vec![a, b];
         g.mcount = 2;
-        *amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap() = vec![g];
+        *amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![g];
         {
-            let mut mi = MINFO.get_or_init(|| std::sync::Mutex::new(Menuinfo::default())).lock().unwrap();
+            let mut mi = MINFO
+                .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+                .lock()
+                .unwrap();
             *mi = Menuinfo::default();
         }
         // index 0 is valid with next=0 → returned as-is.
-        assert_eq!(valid_match(0, 0).and_then(|m| m.str), Some("alpha".to_string()));
+        assert_eq!(
+            valid_match(0, 0).and_then(|m| m.str),
+            Some("alpha".to_string())
+        );
     }
 
     /// c:1211-1212 — an empty CMF_NOLIST match is skipped.
@@ -4142,12 +4207,21 @@ mod tests {
         let mut g = Cmgroup::default();
         g.matches = vec![skip, real];
         g.mcount = 2;
-        *amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap() = vec![g];
+        *amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![g];
         {
-            let mut mi = MINFO.get_or_init(|| std::sync::Mutex::new(Menuinfo::default())).lock().unwrap();
+            let mut mi = MINFO
+                .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+                .lock()
+                .unwrap();
             *mi = Menuinfo::default();
         }
-        assert_eq!(valid_match(0, 0).and_then(|m| m.str), Some("real".to_string()));
+        assert_eq!(
+            valid_match(0, 0).and_then(|m| m.str),
+            Some("real".to_string())
+        );
     }
 
     /// `comp_mod(v, m)` converts 1-indexed v to 0-indexed before
@@ -4218,7 +4292,10 @@ mod tests {
         n1.next = Some(Box::new(n2));
         let out = cut_cline(Some(Box::new(n1))).expect("kept");
         assert_eq!(out.word.as_deref(), Some("hel"));
-        assert_eq!(out.next.as_ref().and_then(|n| n.word.as_deref()), Some("lo"));
+        assert_eq!(
+            out.next.as_ref().and_then(|n| n.word.as_deref()),
+            Some("lo")
+        );
     }
 
     /// c:489 — colon-joined positions.
@@ -4241,7 +4318,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = String::new();
         }
         ZLEMETACS.store(0, Relaxed);
@@ -4264,12 +4344,21 @@ mod tests {
         let mut g = Cmgroup::default();
         g.matches = vec![only];
         g.mcount = 1;
-        *amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap() = vec![g];
+        *amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![g];
         {
-            let mut mi = MINFO.get_or_init(|| std::sync::Mutex::new(Menuinfo::default())).lock().unwrap();
+            let mut mi = MINFO
+                .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+                .lock()
+                .unwrap();
             *mi = Menuinfo::default();
         }
-        assert_eq!(valid_match(0, 0).and_then(|m| m.str), Some("foo".to_string()));
+        assert_eq!(
+            valid_match(0, 0).and_then(|m| m.str),
+            Some("foo".to_string())
+        );
     }
 
     /// c:1208 — `next == 1` forces at least one advance, so a two-match
@@ -4287,13 +4376,22 @@ mod tests {
         let mut g = Cmgroup::default();
         g.matches = vec![a, b];
         g.mcount = 2;
-        *amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap() = vec![g];
+        *amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![g];
         {
-            let mut mi = MINFO.get_or_init(|| std::sync::Mutex::new(Menuinfo::default())).lock().unwrap();
+            let mut mi = MINFO
+                .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+                .lock()
+                .unwrap();
             *mi = Menuinfo::default();
         }
         // start at 0, next=1 → advance to index 1.
-        assert_eq!(valid_match(0, 1).and_then(|m| m.str), Some("second".to_string()));
+        assert_eq!(
+            valid_match(0, 1).and_then(|m| m.str),
+            Some("second".to_string())
+        );
     }
 
     /// c:1227-1235 — backward direction (`zmult < 0`) with `next == 1`
@@ -4311,13 +4409,22 @@ mod tests {
         let mut g = Cmgroup::default();
         g.matches = vec![a, b];
         g.mcount = 2;
-        *amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap() = vec![g];
+        *amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![g];
         {
-            let mut mi = MINFO.get_or_init(|| std::sync::Mutex::new(Menuinfo::default())).lock().unwrap();
+            let mut mi = MINFO
+                .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+                .lock()
+                .unwrap();
             *mi = Menuinfo::default();
         }
         // start at 0, next=1, backward → wrap to last (index 1).
-        assert_eq!(valid_match(0, 1).and_then(|m| m.str), Some("last".to_string()));
+        assert_eq!(
+            valid_match(0, 1).and_then(|m| m.str),
+            Some("last".to_string())
+        );
     }
 
     /// c:1364 — `comp_mod` for positive v ≥ m wraps correctly via
@@ -4440,7 +4547,10 @@ mod tests {
         if let Some(mx) = BREND.get() {
             *mx.lock().unwrap() = None;
         }
-        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
             *g = "foo".to_string();
         }
         ZLEMETACS.store(3, Relaxed);
@@ -4494,7 +4604,10 @@ mod tests {
     fn valid_match_returns_bool_type() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        *amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap() = Vec::new();
+        *amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = Vec::new();
         let r: Option<Cmatch> = valid_match(0, 0);
         assert!(r.is_none(), "no groups → no valid match");
     }

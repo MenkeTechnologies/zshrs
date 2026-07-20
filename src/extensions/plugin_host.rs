@@ -138,7 +138,9 @@ extern "C" fn host_register_builtin(
     if name.is_null() {
         return 1;
     }
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     staging().lock().unwrap().push((name, handler));
     0
 }
@@ -147,7 +149,9 @@ extern "C" fn host_print(_host: *const HostApi, text: *const c_char) {
     if text.is_null() {
         return;
     }
-    let s = unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+    let s = unsafe { CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned();
     use std::io::Write as _;
     let mut out = std::io::stdout();
     let _ = out.write_all(s.as_bytes());
@@ -158,7 +162,9 @@ extern "C" fn host_eval(_host: *const HostApi, code: *const c_char) -> c_int {
     if code.is_null() {
         return 1;
     }
-    let code = unsafe { CStr::from_ptr(code) }.to_string_lossy().into_owned();
+    let code = unsafe { CStr::from_ptr(code) }
+        .to_string_lossy()
+        .into_owned();
     // A plugin builtin runs inside VM context (dispatch happens in
     // execute_external_bg), so an executor is in scope. Re-entrant
     // with_executor is safe: the borrow is released before `f` runs.
@@ -171,7 +177,9 @@ extern "C" fn host_getvar(_host: *const HostApi, name: *const c_char) -> *mut c_
     if name.is_null() {
         return std::ptr::null_mut();
     }
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     match crate::ported::params::getsparam(&name) {
         Some(v) => match CString::new(v) {
             Ok(c) => c.into_raw(),
@@ -189,8 +197,12 @@ extern "C" fn host_setvar(
     if name.is_null() || value.is_null() {
         return 1;
     }
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
-    let value = unsafe { CStr::from_ptr(value) }.to_string_lossy().into_owned();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
+    let value = unsafe { CStr::from_ptr(value) }
+        .to_string_lossy()
+        .into_owned();
     crate::ported::params::setsparam(&name, &value);
     0
 }
@@ -210,7 +222,9 @@ extern "C" fn host_register_completion(
     if cmd.is_null() || generator.is_null() {
         return 1;
     }
-    let cmd = unsafe { CStr::from_ptr(cmd) }.to_string_lossy().into_owned();
+    let cmd = unsafe { CStr::from_ptr(cmd) }
+        .to_string_lossy()
+        .into_owned();
     let generator = unsafe { CStr::from_ptr(generator) }
         .to_string_lossy()
         .into_owned();
@@ -226,7 +240,9 @@ extern "C" fn host_getfunction(_host: *const HostApi, name: *const c_char) -> *m
     if name.is_null() {
         return std::ptr::null_mut();
     }
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     // Route through the exact `${functions[name]}` read: getpmfunction
     // deparses the body into `u_str` and flags PM_UNSET when undefined.
     match crate::ported::modules::parameter::getpmfunction(std::ptr::null_mut(), &name) {
@@ -248,8 +264,12 @@ extern "C" fn host_addfunction(
     if name.is_null() || body.is_null() {
         return 1;
     }
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
-    let body = unsafe { CStr::from_ptr(body) }.to_string_lossy().into_owned();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
+    let body = unsafe { CStr::from_ptr(body) }
+        .to_string_lossy()
+        .into_owned();
     if name.is_empty() {
         return 1;
     }
@@ -268,7 +288,9 @@ extern "C" fn host_register_compfn(
     if name.is_null() {
         return 1;
     }
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     if name.is_empty() {
         return 1;
     }
@@ -285,7 +307,9 @@ extern "C" fn host_comp_dispatch(
     if name.is_null() {
         return 1;
     }
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     // Decode argv[0..argc] into owned Strings (argv[0] is the _fn name;
     // dispatch_function_call takes the arguments after it).
     let mut args: Vec<String> = Vec::with_capacity(argc);
@@ -355,9 +379,13 @@ pub fn load(path: &str) -> Result<String, String> {
 
     // Resolve the mandatory init symbol.
     let init: libloading::Symbol<InitFn> = unsafe {
-        lib.get(INIT_SYMBOL)
-            .map_err(|_| format!("`{}`: not a zshrs plugin (no {})", path,
-                String::from_utf8_lossy(&INIT_SYMBOL[..INIT_SYMBOL.len() - 1])))?
+        lib.get(INIT_SYMBOL).map_err(|_| {
+            format!(
+                "`{}`: not a zshrs plugin (no {})",
+                path,
+                String::from_utf8_lossy(&INIT_SYMBOL[..INIT_SYMBOL.len() - 1])
+            )
+        })?
     };
 
     // Clear staging, call init, collect what it registered. Snapshot the
@@ -371,7 +399,10 @@ pub fn load(path: &str) -> Result<String, String> {
         staging().lock().unwrap().clear();
         compfn_staging().lock().unwrap().clear();
         pending_completions().lock().unwrap().truncate(pc_start);
-        return Err(format!("`{}`: plugin init failed (ABI mismatch or error)", path));
+        return Err(format!(
+            "`{}`: plugin init failed (ABI mismatch or error)",
+            path
+        ));
     }
     let info = unsafe { &*info_ptr };
     if info.abi_version != ABI_VERSION {
@@ -407,8 +438,7 @@ pub fn load(path: &str) -> Result<String, String> {
     }
 
     // Commit staged compfn overrides, tagged with owner. (ABI v4.)
-    let staged_cf: Vec<(String, CompFn)> =
-        std::mem::take(&mut *compfn_staging().lock().unwrap());
+    let staged_cf: Vec<(String, CompFn)> = std::mem::take(&mut *compfn_staging().lock().unwrap());
     {
         let mut cr = compfn_registry().lock().unwrap();
         for (fname, func) in staged_cf {
@@ -473,10 +503,7 @@ pub fn flush_pending_completions() {
         // falls back to SESSION_EXECUTOR, so the glue lands on the same
         // executor that then runs the completion.
         let _ = crate::ported::exec::execute_script(&glue);
-        installed_completions()
-            .lock()
-            .unwrap()
-            .insert(cmd, owner);
+        installed_completions().lock().unwrap().insert(cmd, owner);
     }
 }
 
@@ -579,9 +606,10 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
     let mut owned: Vec<CString> = Vec::with_capacity(args.len() + 1);
     owned.push(CString::new(cmd).ok()?);
     for a in args {
-        owned.push(CString::new(a.as_str()).unwrap_or_else(|_| {
-            CString::new(a.replace('\0', "")).unwrap_or_default()
-        }));
+        owned.push(
+            CString::new(a.as_str())
+                .unwrap_or_else(|_| CString::new(a.replace('\0', "")).unwrap_or_default()),
+        );
     }
     let ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
 
@@ -616,11 +644,7 @@ pub fn is_plugin_command(name: &str) -> bool {
 ///   `zmodload -R  <path>...`  load each cdylib
 ///   `zmodload -R`             list loaded plugins (`name  version  path`)
 ///   `zmodload -uR <name>...`  unload each plugin by name
-pub fn zmodload_rust_cmd(
-    nam: &str,
-    args: &[String],
-    ops: &crate::ported::zsh_h::options,
-) -> i32 {
+pub fn zmodload_rust_cmd(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 {
     use crate::ported::utils::zwarnnam;
     use crate::ported::zsh_h::OPT_ISSET;
 

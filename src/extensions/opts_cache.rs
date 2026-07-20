@@ -37,8 +37,7 @@ use crate::ported::zsh_h::{opt_name, OPT_SIZE};
 
 /// Slot values: `-1` = unknown (repopulate lazily), `0` = unset, `1` = set.
 /// Indexed by option number, mirroring C's `char opts[OPT_SIZE]`.
-static OPTS_CACHE: [AtomicI8; OPT_SIZE as usize] =
-    [const { AtomicI8::new(-1) }; OPT_SIZE as usize];
+static OPTS_CACHE: [AtomicI8; OPT_SIZE as usize] = [const { AtomicI8::new(-1) }; OPT_SIZE as usize];
 
 /// Drop the entire cache. Used when a wholesale option-store change makes
 /// per-slot tracking impossible (e.g. an unfiltered snapshot restore).

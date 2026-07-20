@@ -938,8 +938,8 @@ pub fn vibackwardkillword(_args: &[String]) -> i32 {
 pub fn backwardkillword(args: &[String]) -> i32 {
     // c:499
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:499
-    // Scoped read — holding the ZMOD guard across the backkill call
-    // below deadlocks (backkill → cut → cuttext locks ZMOD again).
+                                                                 // Scoped read — holding the ZMOD guard across the backkill call
+                                                                 // below deadlocks (backkill → cut → cuttext locks ZMOD again).
     let n = {
         let __g_zmod = ZMOD.lock().unwrap();
         if __g_zmod.flags & MOD_MULT != 0 {

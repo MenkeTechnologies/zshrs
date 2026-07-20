@@ -336,7 +336,9 @@ const PE_FLAGS: &[&str] = &[
 ];
 
 /// History-style word modifiers applied via `${var:MOD}` / `$var:MOD`.
-const MODIFIERS: &[&str] = &["h", "t", "r", "e", "l", "u", "q", "Q", "gs/o/0", "s/l/L", "a"];
+const MODIFIERS: &[&str] = &[
+    "h", "t", "r", "e", "l", "u", "q", "Q", "gs/o/0", "s/l/L", "a",
+];
 
 fn pick<'a, T>(rng: &mut StdRng, xs: &'a [T]) -> &'a T {
     &xs[rng.gen_range(0..xs.len())]
@@ -367,7 +369,9 @@ fn gen_scalar_pe(rng: &mut StdRng) -> String {
             // here (`(-2)`) also guard.
             let off = pick(
                 rng,
-                &["0", "1", "3", "(1)", "(-2)", "$((1+1))", " 1 ", "(1)x", "(1)(2)", "zz", "1+"],
+                &[
+                    "0", "1", "3", "(1)", "(-2)", "$((1+1))", " 1 ", "(1)x", "(1)(2)", "zz", "1+",
+                ],
             );
             let len = pick(rng, &["1", "2", "-1", "(2)", "0", "(2)x", "$((3-1))"]);
             // c:Src/subst.c:3752-3792 — a trailing `:MODIFIER` chain after
@@ -379,7 +383,9 @@ fn gen_scalar_pe(rng: &mut StdRng) -> String {
             // letter → "unrecognized modifier `c'") are generated.
             let modtail = pick(
                 rng,
-                &["", "", "", ":h", ":t", ":r", ":u", ":l", ":h:t", ":3", ":Z", ":x"],
+                &[
+                    "", "", "", ":h", ":t", ":r", ":u", ":l", ":h:t", ":3", ":Z", ":x",
+                ],
             );
             if !modtail.is_empty() && rng.gen_bool(0.5) {
                 // OFFSET-only + modifier: `${v:OFF:h}` (no length).
@@ -530,9 +536,9 @@ fn gen_arith(rng: &mut StdRng, depth: u32) -> String {
             0 => rng.gen_range(-20..40).to_string(),
             1 => pick(rng, INTVARS).to_string(),
             2 => pick(rng, INTVARS).to_string(),
-            3 => format!("16#{:x}", rng.gen_range(1..255)),      // hex base
-            4 => format!("2#{:b}", rng.gen_range(1..16)),        // binary base
-            5 => format!("0x{:x}", rng.gen_range(1..255)),       // C-style hex
+            3 => format!("16#{:x}", rng.gen_range(1..255)), // hex base
+            4 => format!("2#{:b}", rng.gen_range(1..16)),   // binary base
+            5 => format!("0x{:x}", rng.gen_range(1..255)),  // C-style hex
             _ => rng.gen_range(1..12).to_string(),
         };
     }
@@ -543,7 +549,9 @@ fn gen_arith(rng: &mut StdRng, depth: u32) -> String {
         // `<<`/`>>` omitted: a negative or >=64 shift amount is undefined
         // behavior in C (zsh's math backend), so those cases diverge on UB, not
         // on a real parity bug — keep the corpus focused on defined semantics.
-        &["+", "-", "*", "/", "%", "**", "&", "|", "^", "<", ">", "==", "!=", "&&", "||"],
+        &[
+            "+", "-", "*", "/", "%", "**", "&", "|", "^", "<", ">", "==", "!=", "&&", "||",
+        ],
     );
     // Guard divide/mod against a zero right operand: force it nonzero via `| 1`.
     if *op == "/" || *op == "%" {
@@ -579,14 +587,14 @@ fn gen_arith(rng: &mut StdRng, depth: u32) -> String {
 /// `a` and `b` (which share `two`/`four`) so the results are non-trivial.
 fn gen_setops(rng: &mut StdRng) -> String {
     match rng.gen_range(0..16) {
-        0 => "${a:|b}".to_string(),              // elements of a not in b
-        1 => "${a:*b}".to_string(),              // intersection of a and b
+        0 => "${a:|b}".to_string(), // elements of a not in b
+        1 => "${a:*b}".to_string(), // intersection of a and b
         2 => "\"${(@)a:|b}\"".to_string(),
-        3 => "${a:#t*}".to_string(),             // drop elements matching t*
-        4 => "${(M)a:#*e}".to_string(),          // keep elements matching *e
-        5 => "${nums:#[13]}".to_string(),        // drop bare 1 / 3
+        3 => "${a:#t*}".to_string(),      // drop elements matching t*
+        4 => "${(M)a:#*e}".to_string(),   // keep elements matching *e
+        5 => "${nums:#[13]}".to_string(), // drop bare 1 / 3
         6 => "\"${(j:,:)${a:|b}}\"".to_string(), // join the difference
-        7 => "${#${a:#*e*}}".to_string(),        // count after filter
+        7 => "${#${a:#*e*}}".to_string(), // count after filter
         // `:^` / `:^^` array ZIP (c:Src/subst.c:3456 SUB_ZIP) — interleave.
         8 => "${a:^b}".to_string(),
         9 => "${a:^^b}".to_string(),
@@ -609,18 +617,18 @@ fn gen_setops(rng: &mut StdRng) -> String {
 fn gen_quoteflags(rng: &mut StdRng) -> String {
     match rng.gen_range(0..14) {
         0 => "\"${(f)lines}\"".to_string(),
-        1 => "${#${(f)lines}}".to_string(),          // element count after split
+        1 => "${#${(f)lines}}".to_string(), // element count after split
         2 => "\"${(j:|:)${(f)lines}}\"".to_string(), // split then re-join
-        3 => "\"${(qq)spaces}\"".to_string(),        // single-quote style
-        4 => "\"${(q-)spaces}\"".to_string(),        // minimal quoting
-        5 => "\"${(qqqq)s}\"".to_string(),           // $'...' style
-        6 => "\"${(Ff)lines}\"".to_string(),         // join-with-newline of split
+        3 => "\"${(qq)spaces}\"".to_string(), // single-quote style
+        4 => "\"${(q-)spaces}\"".to_string(), // minimal quoting
+        5 => "\"${(qqqq)s}\"".to_string(),  // $'...' style
+        6 => "\"${(Ff)lines}\"".to_string(), // join-with-newline of split
         // (Q) unquote — strips ONE quoting level honoring context: `\t`
         // stays literal inside `"…"`, drops bare. Round-trip (q then Q) too.
         7 => "\"${(Q)qd}\"".to_string(),
         8 => "\"${(Q)qs}\"".to_string(),
         9 => "\"${(Q)qmix}\"".to_string(),
-        10 => "${#${(Q)qd}}".to_string(),            // length after unquote
+        10 => "${#${(Q)qd}}".to_string(), // length after unquote
         11 => "\"${(Q)${(qq)spaces}}\"".to_string(), // q then Q round-trip
         12 => "\"${(j:/:)${(Q)${(z)qmix}}}\"".to_string(), // z-split, unquote, re-join
         _ => "\"${(@f)lines}\"".to_string(),
@@ -634,16 +642,16 @@ fn gen_brace(rng: &mut StdRng) -> String {
         0 => "{a,b,c}".to_string(),
         1 => "pre{x,y,z}post".to_string(),
         2 => "{1..5}".to_string(),
-        3 => "{5..1}".to_string(),        // descending
-        4 => "{01..05}".to_string(),      // zero-padded width
-        5 => "{a..e}".to_string(),        // alpha range
-        6 => "{e..a}".to_string(),        // descending alpha
-        7 => "{1..10..3}".to_string(),    // step
-        8 => "{10..1..2}".to_string(),    // descending step
-        9 => "{a,b}{1,2}".to_string(),    // cross-product
-        10 => "{a,,c}".to_string(),       // empty middle element
+        3 => "{5..1}".to_string(),          // descending
+        4 => "{01..05}".to_string(),        // zero-padded width
+        5 => "{a..e}".to_string(),          // alpha range
+        6 => "{e..a}".to_string(),          // descending alpha
+        7 => "{1..10..3}".to_string(),      // step
+        8 => "{10..1..2}".to_string(),      // descending step
+        9 => "{a,b}{1,2}".to_string(),      // cross-product
+        10 => "{a,,c}".to_string(),         // empty middle element
         11 => "x{a,b{1,2},c}y".to_string(), // nested
-        12 => "{-3..3}".to_string(),      // negative range
+        12 => "{-3..3}".to_string(),        // negative range
         _ => {
             let lo = rng.gen_range(0..5);
             let hi = rng.gen_range(lo..lo + 6);
@@ -655,20 +663,20 @@ fn gen_brace(rng: &mut StdRng) -> String {
 /// Subscript search/reverse/flag combos — `(i)/(I)/(r)/(R)/(e)/(n)/(w)/(b)`.
 fn gen_subflags(rng: &mut StdRng) -> String {
     match rng.gen_range(0..14) {
-        0 => "${a[(i)three]}".to_string(),   // index of first match (name)
-        1 => "${a[(I)t*]}".to_string(),      // index of last match
-        2 => "${a[(r)f*]}".to_string(),      // first matching value
-        3 => "${a[(R)f*]}".to_string(),      // last matching value
-        4 => "${a[(e)two]}".to_string(),     // exact-string subscript
-        5 => "${a[(ie)two]}".to_string(),    // index + exact
+        0 => "${a[(i)three]}".to_string(), // index of first match (name)
+        1 => "${a[(I)t*]}".to_string(),    // index of last match
+        2 => "${a[(r)f*]}".to_string(),    // first matching value
+        3 => "${a[(R)f*]}".to_string(),    // last matching value
+        4 => "${a[(e)two]}".to_string(),   // exact-string subscript
+        5 => "${a[(ie)two]}".to_string(),  // index + exact
         6 => "${nums[(r)5]}".to_string(),
         7 => "${nums[(i)4]}".to_string(),
-        8 => "${a[(rb:2:)o*]}".to_string(),  // reverse search from offset 2
+        8 => "${a[(rb:2:)o*]}".to_string(), // reverse search from offset 2
         9 => "${a[(Rb:2:)o*]}".to_string(),
-        10 => "${a[(w)1]}".to_string(),      // word subscript
+        10 => "${a[(w)1]}".to_string(), // word subscript
         11 => "${(k)a[(r)two]}".to_string(),
         12 => "\"${a[(R)*e]}\"".to_string(),
-        _ => "${a[(rb:3:)*]}".to_string(),    // forward search from offset 3
+        _ => "${a[(rb:3:)*]}".to_string(), // forward search from offset 3
     }
 }
 
@@ -752,8 +760,16 @@ fn gen_mutation(rng: &mut StdRng) -> String {
         // covered separately by the function arm's `$1*2`.
         1 => format!("typeset -i iv=\"{}\"", gen_arith(rng, 2)),
         2 => format!("typeset -F 3 fv=$(( {} ))", gen_arith(rng, 2)),
-        3 => format!("typeset -Z {} zv={}", rng.gen_range(3..7), rng.gen_range(1..999)),
-        4 => format!("typeset -{} uv={}", pick(rng, &["u", "l"]), pick(rng, WORDS)),
+        3 => format!(
+            "typeset -Z {} zv={}",
+            rng.gen_range(3..7),
+            rng.gen_range(1..999)
+        ),
+        4 => format!(
+            "typeset -{} uv={}",
+            pick(rng, &["u", "l"]),
+            pick(rng, WORDS)
+        ),
         5 => {
             let (a, b, c) = (pick(rng, WORDS), pick(rng, WORDS), pick(rng, WORDS));
             format!("typeset -aU arr; arr=({a} {a} {b} {b} {c})")
@@ -766,7 +782,11 @@ fn gen_mutation(rng: &mut StdRng) -> String {
         }
         8 => format!("arr+=({})", pick(rng, WORDS)),
         9 => format!("arr[{}]={}", rng.gen_range(1..5), pick(rng, WORDS)),
-        10 => format!("as[{}]={}", pick(rng, &["k1", "k2", "k3", "kx"]), pick(rng, WORDS)),
+        10 => format!(
+            "as[{}]={}",
+            pick(rng, &["k1", "k2", "k3", "kx"]),
+            pick(rng, WORDS)
+        ),
         11 => format!("unset {}", pick(rng, &["v", "iv", "arr", "uv", "zv"])),
         12 => format!("typeset -r rv={}", rng.gen_range(1..99)),
         13 => format!("v+={}", pick(rng, WORDS)),
@@ -1013,14 +1033,52 @@ fn minimize(stmts: Vec<String>, bin: &Path, timeout: Duration) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 const GLOB_BASE: &[&str] = &[
-    "*", "*.txt", "*.log", "*.md", "[a-d]*", "?", "??*", "<->", "**/*", "*.??",
-    "[[:alpha:]]*", "d*", "*.*", "[^.]*",
+    "*",
+    "*.txt",
+    "*.log",
+    "*.md",
+    "[a-d]*",
+    "?",
+    "??*",
+    "<->",
+    "**/*",
+    "*.??",
+    "[[:alpha:]]*",
+    "d*",
+    "*.*",
+    "[^.]*",
 ];
 
 const GLOB_QUAL: &[&str] = &[
-    "", "(.)", "(/)", "(@)", "(*)", "(.N)", "(on)", "(On)", "(oL)", "(OL)", "(om)", "(Om)",
-    "(.on)", "(/on)", "(N)", "(D)", "(.D)", "(^/)", "(r)", "(x)", "(w)", "([1])", "([1,2])",
-    "(om[1])", "(.oL[1,2])", "(*N)", "(@N)", "(.^@)", "(-.)",
+    "",
+    "(.)",
+    "(/)",
+    "(@)",
+    "(*)",
+    "(.N)",
+    "(on)",
+    "(On)",
+    "(oL)",
+    "(OL)",
+    "(om)",
+    "(Om)",
+    "(.on)",
+    "(/on)",
+    "(N)",
+    "(D)",
+    "(.D)",
+    "(^/)",
+    "(r)",
+    "(x)",
+    "(w)",
+    "([1])",
+    "([1,2])",
+    "(om[1])",
+    "(.oL[1,2])",
+    "(*N)",
+    "(@N)",
+    "(.^@)",
+    "(-.)",
     // Malformed sort specs. c:Src/glob.c:1666-1702 rejects three ways, and the
     // vocabulary reached none of them — it only ever built WELL-FORMED
     // qualifiers, so the parser's error paths were never compared:
@@ -1035,8 +1093,18 @@ const GLOB_QUAL: &[&str] = &[
     //     while `on`/`oL` do not.
     //   - c:1658-1662 `if (gf_nsorts == MAX_SORTS) zerr("too many glob sort
     //     specifiers")` — MAX_SORTS is 12 (c:164).
-    "(No)", "(NO)", "(.o)", "(.O)", "(.onon)", "(.onOn)", "(.oLOL)", "(.oLoL)", "(.ozN)",
-    "(.oQN)", "(.onoL)", "(.oLon)",
+    "(No)",
+    "(NO)",
+    "(.o)",
+    "(.O)",
+    "(.onon)",
+    "(.onOn)",
+    "(.oLOL)",
+    "(.oLoL)",
+    "(.ozN)",
+    "(.oQN)",
+    "(.onoL)",
+    "(.oLon)",
     // The `Y` match limit. c:Src/glob.c:1579-1594 and 1855-1857 make this three
     // rules at once, and the vocabulary generated none of them:
     //   - Overflow is FATAL. `data` is a zlong and `shortcircuit` an int, so
@@ -1051,15 +1119,46 @@ const GLOB_QUAL: &[&str] = &[
     //     than the match count) therefore still returns readdir order, and
     //     `Y2on` is the two files the scan reached re-ordered by name, not the
     //     two alphabetically-first.
-    "(NY0)", "(NY1)", "(NY2)", "(NY3)", "(NY99)", "(.NY2)", "(.NY0)", "(.NY99)", "(.NY2on)",
-    "(.NY99on)", "(.onNY2)", "(.NY2OL)", "(NY2147483647)", "(NY2147483648)", "(NY9999999999)",
+    "(NY0)",
+    "(NY1)",
+    "(NY2)",
+    "(NY3)",
+    "(NY99)",
+    "(.NY2)",
+    "(.NY0)",
+    "(.NY99)",
+    "(.NY2on)",
+    "(.NY99on)",
+    "(.onNY2)",
+    "(.NY2OL)",
+    "(NY2147483647)",
+    "(NY2147483648)",
+    "(NY9999999999)",
     "(.NY99999999999999999999)",
     // Type/mode/ownership predicates the vocabulary never generated, even
     // though each has its own C qualifier (qualisfifo `p`, qualissock `=`,
     // qualisdev `%`, qualnonemptydir `F`, qualmodeflags `f`, qualuid `u`,
     // qualgid `g`, qualnlink `l`).
-    "(pN)", "(=N)", "(%N)", "(%bN)", "(%cN)", "(F)", "(/F)", "(U)", "(u0N)", "(g0N)",
-    "(f0644N)", "(f-100N)", "(l1N)", "(sN)", "(SN)", "(tN)", "(-@N)", "(-/)", "(.:t)", "(.:r)",
+    "(pN)",
+    "(=N)",
+    "(%N)",
+    "(%bN)",
+    "(%cN)",
+    "(F)",
+    "(/F)",
+    "(U)",
+    "(u0N)",
+    "(g0N)",
+    "(f0644N)",
+    "(f-100N)",
+    "(l1N)",
+    "(sN)",
+    "(SN)",
+    "(tN)",
+    "(-@N)",
+    "(-/)",
+    "(.:t)",
+    "(.:r)",
     // Malformed `e`/`f` qualifiers — the C error paths the vocabulary never
     // reached. Both abort the glob with a fixed message, so the output is
     // fileset-independent:
@@ -1072,7 +1171,12 @@ const GLOB_QUAL: &[&str] = &[
     // NOTE: the letter-without-`who` forms (`f-w`, `f=r`, `f-x`) are a SEPARATE
     // still-open mode-MATCHING gap (see docs/BUGS.md #1033) and are deliberately
     // excluded here so this mode stays green.
-    "(e)", "(f)", "(e:foo)", "(f:u+x)", "(f:qq:)", "(e:'[[ -n \"$REPLY\" ]]':)",
+    "(e)",
+    "(f)",
+    "(e:foo)",
+    "(f:u+x)",
+    "(f:qq:)",
+    "(e:'[[ -n \"$REPLY\" ]]':)",
     // `d<NUM>` — match by st_dev. c:Src/glob.c:1445-1449 `case 'd': func =
     // qualdev; data = qgetnum(&s);` with qualdev (c:3688) = `buf->st_dev == dv`.
     // Both the `qualifier::Device` variant and the `qualdev` matcher were
@@ -1085,7 +1189,11 @@ const GLOB_QUAL: &[&str] = &[
     // and a device number nothing can be on (so the result is reliably empty).
     // A matching st_dev differs per filesystem and would make the mode's answer
     // depend on where it is run.
-    "(d)", "(.dN)", "(.d999999999N)", "(d999999999N)", "(.Nd999999999)",
+    "(d)",
+    "(.dN)",
+    "(.d999999999N)",
+    "(d999999999N)",
+    "(.Nd999999999)",
 ];
 
 /// One or two glob-pattern print statements, prefixed with `setopt extendedglob`
@@ -1117,8 +1225,8 @@ const PF_CONV: &[&str] = &[
 ];
 const PF_FLAGS: &[&str] = &["", "-", "+", " ", "#", "0", "-0", "+ ", "0#", "-#"];
 const PF_STR_ARGS: &[&str] = &[
-    "abc", "hello", "", "12", "3.14", "-5", "a b", "x\\\\ty", "it_s", "star", "%d", "cafe",
-    "0x1f", "007", "1e3",
+    "abc", "hello", "", "12", "3.14", "-5", "a b", "x\\\\ty", "it_s", "star", "%d", "cafe", "0x1f",
+    "007", "1e3",
 ];
 
 /// One printf statement: a format string of 1-3 specifiers (with optional
@@ -1286,9 +1394,9 @@ fn gen_heredoc(seed: u64) -> Vec<String> {
         ("<<", "")
     };
     let delim = match rng.gen_range(0..3) {
-        0 => "EOF".to_string(),      // unquoted → body is expanded
-        1 => "'EOF'".to_string(),    // single-quoted → body is literal
-        _ => "\"EOF\"".to_string(),  // double-quoted → body is literal
+        0 => "EOF".to_string(),     // unquoted → body is expanded
+        1 => "'EOF'".to_string(),   // single-quoted → body is literal
+        _ => "\"EOF\"".to_string(), // double-quoted → body is literal
     };
     let nlines = rng.gen_range(1..=3);
     let mut lines = String::new();
@@ -1604,10 +1712,7 @@ fn gen_subscript(seed: u64) -> Vec<String> {
                             r#"(typeset -A mm=(k v); print -r -- "[${mm[]}]" 2>&1)"#,
                             "SUBSHELL",
                         ),
-                        (
-                            r#"(a=(1 2 3); print -r -- "[${a[]:-D}]" 2>&1)"#,
-                            "SUBSHELL",
-                        ),
+                        (r#"(a=(1 2 3); print -r -- "[${a[]:-D}]" 2>&1)"#, "SUBSHELL"),
                         // SEARCH-subscript index under KSHARRAYS.
                         // c:Src/params.c:2091 `if (start > 0 && isset(KSHARRAYS))
                         // start--` — `(i)`/`(I)` compute a 1-based position and
@@ -1798,7 +1903,10 @@ fn gen_subscript(seed: u64) -> Vec<String> {
                 let which = rng.gen_range(0..4);
                 match which {
                     0 => format!("${{m[{}]}}", pick(&mut rng, &["k1", "k2", "k3", "nokey"])),
-                    1 => format!("${{(k)m[(R){}]}}", pick(&mut rng, &["v1", "v2", "v9", "v*"])),
+                    1 => format!(
+                        "${{(k)m[(R){}]}}",
+                        pick(&mut rng, &["v1", "v2", "v9", "v*"])
+                    ),
                     2 => format!("${{(v)m[(I){}]}}", pick(&mut rng, &["k1", "k*", "z*"])),
                     _ => "${(kv)m[(I)k*]}".to_string(),
                 }
@@ -1820,8 +1928,14 @@ fn gen_subscript(seed: u64) -> Vec<String> {
             9 => {
                 let op = pick(&mut rng, DEF_OPS);
                 match rng.gen_range(0..4) {
-                    0 => format!("${{m[{}]{op}}}", pick(&mut rng, &["k1", "k2", "nokey", "zz"])),
-                    1 => format!("${{m[(r){}]{op}}}", pick(&mut rng, &["v1", "v9", "v*", "z*"])),
+                    0 => format!(
+                        "${{m[{}]{op}}}",
+                        pick(&mut rng, &["k1", "k2", "nokey", "zz"])
+                    ),
+                    1 => format!(
+                        "${{m[(r){}]{op}}}",
+                        pick(&mut rng, &["v1", "v9", "v*", "z*"])
+                    ),
                     2 => format!("${{m[(i){}]{op}}}", pick(&mut rng, &["k1", "k*", "z*"])),
                     _ => format!("${{(k)m[(R){}]{op}}}", pick(&mut rng, &["v1", "v9", "z*"])),
                 }
@@ -1880,14 +1994,12 @@ fn gen_subscript(seed: u64) -> Vec<String> {
                     _ => format!("${{a[(re){}]}}", pick(&mut rng, &["one", "o*", "five"])),
                 }
             }
-            11 => {
-                match rng.gen_range(0..4) {
-                    0 => format!("${{m[nokey]:=NEWVAL}}"),
-                    1 => format!("${{m[k1]:=NEWVAL}}"),
-                    2 => format!("${{{arr}[3]:=Z}}"),
-                    _ => format!("${{m[nokey]:?}}"),
-                }
-            }
+            11 => match rng.gen_range(0..4) {
+                0 => format!("${{m[nokey]:=NEWVAL}}"),
+                1 => format!("${{m[k1]:=NEWVAL}}"),
+                2 => format!("${{{arr}[3]:=Z}}"),
+                _ => format!("${{m[nokey]:?}}"),
+            },
             // Omitted range bound. c:Src/math.c:1521-1531 — a range bound is
             // evaluated by `mathevalarg` → `mathevall(…, MPREC_ARG, …)`, whose
             // entry point rejects an empty expression with `bad math
@@ -2005,8 +2117,18 @@ fn gen_subscript(seed: u64) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 const PAT_SUBJECTS: &[&str] = &[
-    "abc123", "FooBar", "aaa", "", "a.b.c", "2024-01-31", "foo.tar.gz", "x_y-z", "999", "a",
-    "abcabc", "Hello_World",
+    "abc123",
+    "FooBar",
+    "aaa",
+    "",
+    "a.b.c",
+    "2024-01-31",
+    "foo.tar.gz",
+    "x_y-z",
+    "999",
+    "a",
+    "abcabc",
+    "Hello_World",
 ];
 
 /// Pattern fragments that compose into a whole pattern.
@@ -2389,7 +2511,9 @@ fn gen_typeset(seed: u64) -> Vec<String> {
                     &["SECONDS", "RANDOM", "LINENO", "HISTSIZE", "COLUMNS", "PATH"],
                 );
                 let fl = pick(&mut rng, &["-F", "-E", "-i", "-a", "-F 3", "-i 16"]);
-                stmts.push(format!("typeset {fl} {sp} 2>&1; print -r -- \"rc=$? t=${{(t){sp}}}\""));
+                stmts.push(format!(
+                    "typeset {fl} {sp} 2>&1; print -r -- \"rc=$? t=${{(t){sp}}}\""
+                ));
             }
             // Case forcing, and whether it survives reassignment.
             _ => {
@@ -2494,12 +2618,8 @@ fn gen_zutil(seed: u64) -> Vec<String> {
                     1 => stmts.push(format!(
                         "zstyle -a '{ctx}' sty arr; print -r -- \"a=[${{arr[*]}}] rc=$?\""
                     )),
-                    2 => stmts.push(format!(
-                        "zstyle -t '{ctx}' sty; print -r -- \"t=$?\""
-                    )),
-                    3 => stmts.push(format!(
-                        "zstyle -m '{ctx}' sty 'v*'; print -r -- \"m=$?\""
-                    )),
+                    2 => stmts.push(format!("zstyle -t '{ctx}' sty; print -r -- \"t=$?\"")),
+                    3 => stmts.push(format!("zstyle -m '{ctx}' sty 'v*'; print -r -- \"m=$?\"")),
                     // c:Src/Modules/zutil.c:588-597 — zstyle's option table is
                     // `d s b a t T m q g`, plus `L` (list as re-runnable
                     // syntax) and `e` (value is evaluated). Only `-a -d -m -s
@@ -2520,9 +2640,7 @@ fn gen_zutil(seed: u64) -> Vec<String> {
                     4 => stmts.push(format!(
                         "zstyle -b '{ctx}' sty bv; print -r -- \"b=[$bv] rc=$?\""
                     )),
-                    5 => stmts.push(format!(
-                        "zstyle -T '{ctx}' sty; print -r -- \"T=$?\""
-                    )),
+                    5 => stmts.push(format!("zstyle -T '{ctx}' sty; print -r -- \"T=$?\"")),
                     6 => stmts.push(format!(
                         "zstyle -g gv '{ctx}'; print -r -- \"g=[${{gv[*]}}] rc=$?\""
                     )),
@@ -2631,11 +2749,15 @@ fn gen_zutil(seed: u64) -> Vec<String> {
             // instead of per-option arrays, so they read back differently.
             match rng.gen_range(0..4) {
                 0 => {
-                    stmts.push(format!("zparseopts {flags}-a all {spec}; print -r -- \"rc=$?\""));
+                    stmts.push(format!(
+                        "zparseopts {flags}-a all {spec}; print -r -- \"rc=$?\""
+                    ));
                     stmts.push(r#"print -r -- "all=(${all[*]})""#.to_string());
                 }
                 1 => {
-                    stmts.push(format!("zparseopts {flags}-A asc {spec}; print -r -- \"rc=$?\""));
+                    stmts.push(format!(
+                        "zparseopts {flags}-A asc {spec}; print -r -- \"rc=$?\""
+                    ));
                     stmts.push(r#"print -r -- "asc=(${(kv)asc})""#.to_string());
                 }
                 _ => {
@@ -2724,15 +2846,27 @@ fn gen_func(seed: u64) -> Vec<String> {
                 1 => ("local IFS=,", r#"s="x,y"; print -r -- "n=${#${=s}}""#),
                 2 => ("local IFS=", r#"s="a b"; print -r -- "n=${#${=s}}""#),
                 3 => ("local -a fignore=(o)", r#"print -r -- "n=${#fignore}""#),
-                4 => ("local SECONDS=7", r#"print -r -- "v=$SECONDS t=${(t)SECONDS}""#),
+                4 => (
+                    "local SECONDS=7",
+                    r#"print -r -- "v=$SECONDS t=${(t)SECONDS}""#,
+                ),
                 5 => ("local LINES=7", r#"print -r -- "v=$LINES t=${(t)LINES}""#),
-                6 => ("local COLUMNS=7", r#"print -r -- "v=$COLUMNS t=${(t)COLUMNS}""#),
+                6 => (
+                    "local COLUMNS=7",
+                    r#"print -r -- "v=$COLUMNS t=${(t)COLUMNS}""#,
+                ),
                 // HISTSIZE / SAVEHIST are the env-backed integer specials: they
                 // needed BOTH the newspecial inheritance (#1039 D) and the
                 // delenv-on-shadow (#1040) before they matched, so they cover
                 // the two fixes jointly. HOME/TERM are the scalar counterpart.
-                7 => ("local HISTSIZE=7", r#"print -r -- "v=$HISTSIZE t=${(t)HISTSIZE}""#),
-                8 => ("local SAVEHIST=7", r#"print -r -- "v=$SAVEHIST t=${(t)SAVEHIST}""#),
+                7 => (
+                    "local HISTSIZE=7",
+                    r#"print -r -- "v=$HISTSIZE t=${(t)HISTSIZE}""#,
+                ),
+                8 => (
+                    "local SAVEHIST=7",
+                    r#"print -r -- "v=$SAVEHIST t=${(t)SAVEHIST}""#,
+                ),
                 9 => ("local HOME=/zz", r#"print -r -- "v=$HOME t=${(t)HOME}""#),
                 _ => ("local TERM=xx", r#"print -r -- "v=$TERM t=${(t)TERM}""#),
             };
@@ -3133,7 +3267,9 @@ fn gen_shinstdin(seed: u64) -> Vec<String> {
         0 => {
             let opt = pick(&mut rng, &["setopt", "unsetopt"]);
             let cmd = pick(&mut rng, &["false", "true", "(exit 0)", "command false"]);
-            stmts.push(format!("{opt} printexitvalue; {cmd} 2>&1; print -r -- done"));
+            stmts.push(format!(
+                "{opt} printexitvalue; {cmd} 2>&1; print -r -- done"
+            ));
         }
         // The `!subsh` clause: a subshell exit is NOT reported.
         1 => {
@@ -3141,7 +3277,9 @@ fn gen_shinstdin(seed: u64) -> Vec<String> {
                 &mut rng,
                 &["(exit 3)", "(exit 0)", "(false)", "( ( exit 4 ) )"],
             );
-            stmts.push(format!("setopt printexitvalue; {cmd} 2>&1; print -r -- done"));
+            stmts.push(format!(
+                "setopt printexitvalue; {cmd} 2>&1; print -r -- done"
+            ));
         }
         // c:5442 — a shell function's non-zero return reports.
         2 => {
@@ -3279,10 +3417,7 @@ fn gen_redir(seed: u64) -> Vec<String> {
         }
         // Here-string / here-doc into a command, and stderr merging.
         4 => {
-            let src = pick(
-                &mut rng,
-                &["<<< 'here string'", "<<< $'a\\nb'", "<<< \"\""],
-            );
+            let src = pick(&mut rng, &["<<< 'here string'", "<<< $'a\\nb'", "<<< \"\""]);
             stmts.push(format!("cat {src} > f"));
             stmts.push("print -r -- \"lines=$(wc -l < f) body=[$(<f)]\"".to_string());
         }
@@ -3593,22 +3728,43 @@ fn gen_arith_mode(seed: u64) -> Vec<String> {
                 let e = pick(
                     &mut rng,
                     &[
-                        "1.2.3", "1..2", ".1.2", "0.5.5", "1e3.", "1 : 2", "(-2) ** 0.5",
-                        "[#zz] 3", "3 +", "37#a", "1 ? 2", "1.2", ".5", "1e3", "1.5e-2",
-                        "(-8) ** (1/3)", "1 ? 2 : 3",
+                        "1.2.3",
+                        "1..2",
+                        ".1.2",
+                        "0.5.5",
+                        "1e3.",
+                        "1 : 2",
+                        "(-2) ** 0.5",
+                        "[#zz] 3",
+                        "3 +",
+                        "37#a",
+                        "1 ? 2",
+                        "1.2",
+                        ".5",
+                        "1e3",
+                        "1.5e-2",
+                        "(-8) ** (1/3)",
+                        "1 ? 2 : 3",
                         // Output-base OUT OF RANGE (math.c:820 checkbase): a
                         // numeric base outside 2..36 is a DISTINCT diagnostic
                         // ("invalid base (must be 2 to 36 inclusive): N") from
                         // the non-numeric `[#zz]` above ("bad output format
                         // specification", math.c:819). Both fold to stderr here.
-                        "[#37] 5", "[#1] 5", "[#40] 99", "[##0] 5",
+                        "[#37] 5",
+                        "[#1] 5",
+                        "[#40] 99",
+                        "[##0] 5",
                         // Assignment to a NON-lvalue (`1 = 2`, `(1+1) = 3`):
                         // c:math.c:997 `zerr("bad math expression: lvalue
                         // required")`. The assignment-operator arm dropped the
                         // "bad math expression: " prefix (unlike the getvar/
                         // setvar sites), so `(( 1 = 2 ))` printed a shorter
                         // message than zsh. Bug #1025.
-                        "1 = 2", "5 = 3 + 2", "1 = x", "(1+1) = 3", "0 = 1",
+                        "1 = 2",
+                        "5 = 3 + 2",
+                        "1 = x",
+                        "(1+1) = 3",
+                        "0 = 1",
                     ],
                 );
                 // stderr MUST be folded in. These all fail identically at the
@@ -3660,16 +3816,16 @@ fn gen_arith_mode(seed: u64) -> Vec<String> {
                     let e = pick(
                         &mut rng,
                         &[
-                            "f / 0.0",              // ±Inf from a nonzero float
-                            "g / 0.0",              // (f=2.5, g=0.5 in AR_STATE)
-                            "-1.0 / 0.0",           // -Inf
-                            "0.0 / 0.0",            // NaN
-                            "5.0 % 0.0",            // NaN (float modulo)
-                            "(1.0/0.0) - (1.0/0.0)", // Inf - Inf -> NaN
-                            "(1.0/0.0) + (1.0/0.0)", // Inf + Inf -> Inf
-                            "(1.0/0.0) * 0.0",      // Inf * 0 -> NaN
+                            "f / 0.0",                // ±Inf from a nonzero float
+                            "g / 0.0",                // (f=2.5, g=0.5 in AR_STATE)
+                            "-1.0 / 0.0",             // -Inf
+                            "0.0 / 0.0",              // NaN
+                            "5.0 % 0.0",              // NaN (float modulo)
+                            "(1.0/0.0) - (1.0/0.0)",  // Inf - Inf -> NaN
+                            "(1.0/0.0) + (1.0/0.0)",  // Inf + Inf -> Inf
+                            "(1.0/0.0) * 0.0",        // Inf * 0 -> NaN
                             "(0.0/0.0) == (0.0/0.0)", // NaN != NaN -> 0
-                            "1.0/0.0 > 1e308",      // Inf compares greater -> 1
+                            "1.0/0.0 > 1e308",        // Inf compares greater -> 1
                         ],
                     );
                     stmts.push(format!("print -r -- \"$(( {e} ))\""));
@@ -3745,8 +3901,14 @@ fn gen_arith_mode(seed: u64) -> Vec<String> {
             // `${arr[(x), 4]}` is `b c d`, not the whole array — the paren form
             // must agree with the bare `${arr[x, 4]}`.
             _ => {
-                let lo = pick(&mut rng, &["1", "2", "x", "(x)", "(x+1)", "(1+1)", "-3", "(i)"]);
-                let hi = pick(&mut rng, &["3", "4", "(y)", "(y-1)", "(2+2)", "-1", "5", "(j)"]);
+                let lo = pick(
+                    &mut rng,
+                    &["1", "2", "x", "(x)", "(x+1)", "(1+1)", "-3", "(i)"],
+                );
+                let hi = pick(
+                    &mut rng,
+                    &["3", "4", "(y)", "(y-1)", "(2+2)", "-1", "5", "(j)"],
+                );
                 stmts.push(format!(
                     "arr=(a b c d e); x=2; y=4; i=1; j=3; print -rl -- ${{arr[{lo}, {hi}]}}; print -r -- \"n=${{#${{arr[{lo}, {hi}]}}}}\""
                 ));
@@ -3861,7 +4023,15 @@ fn gen_match(seed: u64) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 const RX_SUBJ: &[&str] = &[
-    "abc123", "2024-01-31", "foo.tar.gz", "Hello_World", "", "aaa", "a1b2", "x-y-z", "999",
+    "abc123",
+    "2024-01-31",
+    "foo.tar.gz",
+    "Hello_World",
+    "",
+    "aaa",
+    "a1b2",
+    "x-y-z",
+    "999",
 ];
 
 const RX_PAT: &[&str] = &[
@@ -3896,9 +4066,8 @@ fn gen_regex(seed: u64) -> Vec<String> {
             "if [[ \"{subj}\" =~ {pat} ]]; then print -r -- \"rc=0\"; else print -r -- \"rc=$?\"; fi"
         ));
         if bash_rematch {
-            stmts.push(
-                r#"print -r -- "BR=(${(j:,:)BASH_REMATCH}) n=${#BASH_REMATCH}""#.to_string(),
-            );
+            stmts
+                .push(r#"print -r -- "BR=(${(j:,:)BASH_REMATCH}) n=${#BASH_REMATCH}""#.to_string());
         } else {
             stmts.push(
                 r#"print -r -- "M=[$MATCH] m=(${(j:,:)match}) b=(${(j:,:)mbegin}) e=(${(j:,:)mend})""#
@@ -3922,7 +4091,9 @@ fn gen_regex(seed: u64) -> Vec<String> {
 // environment dependence (no %~, %M, %n, %T).
 // ---------------------------------------------------------------------------
 
-const BI_WORDS: &[&str] = &["delta", "alpha", "Charlie", "bravo", "echo2", "a b", "", "42"];
+const BI_WORDS: &[&str] = &[
+    "delta", "alpha", "Charlie", "bravo", "echo2", "a b", "", "42",
+];
 
 fn gen_builtin(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -4013,7 +4184,13 @@ fn gen_builtin(seed: u64) -> Vec<String> {
         3 => {
             let input = pick(
                 &mut rng,
-                &["one two three", "  lead and trail  ", "a:b:c", r"esc\ttab", "single"],
+                &[
+                    "one two three",
+                    "  lead and trail  ",
+                    "a:b:c",
+                    r"esc\ttab",
+                    "single",
+                ],
             );
             match rng.gen_range(0..5) {
                 // Plain read: splits on IFS, last var gets the remainder.
@@ -4034,7 +4211,9 @@ fn gen_builtin(seed: u64) -> Vec<String> {
                 // -d: a custom delimiter ends the read.
                 3 => {
                     let d = pick(&mut rng, &[":", " ", "t"]);
-                    stmts.push(format!("read -d '{d}' x <<< '{input}'; print -r -- \"[$x] rc=$?\""));
+                    stmts.push(format!(
+                        "read -d '{d}' x <<< '{input}'; print -r -- \"[$x] rc=$?\""
+                    ));
                 }
                 // -k: read exactly N characters.
                 _ => {
@@ -4050,14 +4229,21 @@ fn gen_builtin(seed: u64) -> Vec<String> {
         // missing required argument (both have defined, distinct behaviour).
         4 => {
             let args: Vec<&str> = (0..rng.gen_range(1..=4))
-                .map(|_| *pick(&mut rng, &["-a", "-b", "val", "-c", "-ab", "-bval", "--", "x", "-z"]))
+                .map(|_| {
+                    *pick(
+                        &mut rng,
+                        &["-a", "-b", "val", "-c", "-ab", "-bval", "--", "x", "-z"],
+                    )
+                })
                 .collect();
             stmts.push(format!("set -- {}", args.join(" ")));
             stmts.push(
                 "while getopts ab:c opt; do print -r -- \"opt=$opt arg=[$OPTARG]\"; done"
                     .to_string(),
             );
-            stmts.push(r#"print -r -- "rc=$? ind=$OPTIND rest=(${(j:,:)@[OPTIND,-1]})""#.to_string());
+            stmts.push(
+                r#"print -r -- "rc=$? ind=$OPTIND rest=(${(j:,:)@[OPTIND,-1]})""#.to_string(),
+            );
         }
         // ---- let / eval: arithmetic-as-command and re-parsed text.
         5 => {
@@ -4081,7 +4267,14 @@ fn gen_builtin(seed: u64) -> Vec<String> {
         _ => {
             let opt = pick(
                 &mut rng,
-                &["extendedglob", "ksharrays", "shwordsplit", "nounset", "multios", "aliases"],
+                &[
+                    "extendedglob",
+                    "ksharrays",
+                    "shwordsplit",
+                    "nounset",
+                    "multios",
+                    "aliases",
+                ],
             );
             let set = rng.gen_bool(0.5);
             stmts.push(format!("{}setopt {opt}", if set { "" } else { "un" }));
@@ -4492,7 +4685,9 @@ fn gen_split_mode(seed: u64) -> Vec<String> {
             // word count 1 but different content) is not missed. The `(@z)`
             // words are captured QUOTED so they are not re-split on IFS (which
             // would conflate this with the separate SH_WORD_SPLIT re-split path).
-            6 => r#"print -r -- "n=${#${(f)v}} z=${#${(z)v}}"; zz=("${(@z)v}"); print -r -- "z=[${(j:|:)zz}]""#,
+            6 => {
+                r#"print -r -- "n=${#${(f)v}} z=${#${(z)v}}"; zz=("${(@z)v}"); print -r -- "z=[${(j:|:)zz}]""#
+            }
             // $* / "$*" join with IFS[1]; "$@" never joins.
             7 => "set -- a b c; print -rl -- \"$*\"; print -rl -- \"$@\"; print -r -- END",
             8 => "set -- a b c; print -rl -- $*; print -r -- END",
@@ -4734,7 +4929,10 @@ fn gen_pipeline(seed: u64) -> Vec<String> {
 
     if rng.gen_bool(0.4) {
         let neg = if rng.gen_bool(0.3) { "un" } else { "" };
-        stmts.push(format!("{neg}setopt {}", pick(&mut rng, &["pipe_fail", "err_exit", "err_return"])));
+        stmts.push(format!(
+            "{neg}setopt {}",
+            pick(&mut rng, &["pipe_fail", "err_exit", "err_return"])
+        ));
     }
 
     for _ in 0..rng.gen_range(1..=3) {
@@ -4890,7 +5088,11 @@ fn gen_prompt(seed: u64) -> Vec<String> {
     for _ in 0..rng.gen_range(1..=3) {
         // A prior command fixes $? so the %(?..) ternaries are deterministic.
         if rng.gen_bool(0.4) {
-            stmts.push(if rng.gen_bool(0.5) { "true".into() } else { "false".into() });
+            stmts.push(if rng.gen_bool(0.5) {
+                "true".into()
+            } else {
+                "false".into()
+            });
         }
         let n = rng.gen_range(1..=3);
         let body: Vec<&str> = (0..n).map(|_| *pick(&mut rng, PROMPT_ATOMS)).collect();
@@ -4958,12 +5160,33 @@ const MOD_PATHS: &[&str] = &[
 ];
 
 const MODS: &[&str] = &[
-    ":h", ":t", ":r", ":e", ":l", ":u", ":q", ":Q", ":h:t", ":t:r", ":r:e", ":h:h", ":a", ":s/a/Z/",
-    ":gs/a/Z/", ":s|/|_|", ":gs|/|_|", ":s/x/Y/:&", ":fs/a//", ":t:u", ":r:l",
+    ":h",
+    ":t",
+    ":r",
+    ":e",
+    ":l",
+    ":u",
+    ":q",
+    ":Q",
+    ":h:t",
+    ":t:r",
+    ":r:e",
+    ":h:h",
+    ":a",
+    ":s/a/Z/",
+    ":gs/a/Z/",
+    ":s|/|_|",
+    ":gs|/|_|",
+    ":s/x/Y/:&",
+    ":fs/a//",
+    ":t:u",
+    ":r:l",
     // `:c` — PATH search (c:Src/hist.c:863). It was absent from this list, and
     // that is exactly why the fuzzer never noticed it was unimplemented in the
     // UNBRACED form: every probe below used `${f:mod}`, which worked.
-    ":c", ":c:t", ":c:h",
+    ":c",
+    ":c:t",
+    ":c:h",
     // `:A` and `:P` — both absent for the same reason, and the pair is the
     // point: they look interchangeable and are not.
     //   :A  c:Src/subst.c:4737 → chrealpath(&copy, 'A', 1) → mode 'A' runs
@@ -4978,7 +5201,11 @@ const MODS: &[&str] = &[
     // the two agree, which is exactly how a shared `'A' | 'P'` arm passed.
     //     /a/b/../c   :A → /a/c   :P → /a/b/../c   (unchanged)
     //     /tmp/./x    both → /private/tmp/x        (/tmp/. resolves)
-    ":A", ":P", ":A:t", ":P:h", ":a:t",
+    ":A",
+    ":P",
+    ":A:t",
+    ":P:h",
+    ":a:t",
 ];
 
 /// Values for the `:c` PATH-search modifier: a name that resolves, and one that
@@ -5007,7 +5234,10 @@ fn gen_modifier(seed: u64) -> Vec<String> {
             // backgrounds the command → output-ordering race; `|` pipes), so the
             // UNQUOTED probe uses only metachar-free modifiers. The quoted arm
             // above still exercises `&`/`|` forms.
-            let safe: Vec<&&str> = MODS.iter().filter(|m| !m.contains('&') && !m.contains('|')).collect();
+            let safe: Vec<&&str> = MODS
+                .iter()
+                .filter(|m| !m.contains('&') && !m.contains('|'))
+                .collect();
             for _ in 0..rng.gen_range(1..=3) {
                 let p = pick(&mut rng, MOD_PATHS);
                 let m = **pick(&mut rng, &safe);
@@ -5027,9 +5257,7 @@ fn gen_modifier(seed: u64) -> Vec<String> {
         // Array: a modifier applies to EVERY element.
         2 => {
             let m = pick(&mut rng, MODS);
-            stmts.push(
-                "a=(/x/one.txt two/three.tar.gz /four/ five)".to_string(),
-            );
+            stmts.push("a=(/x/one.txt two/three.tar.gz /four/ five)".to_string());
             stmts.push(format!("print -rl -- \"${{a{m}}}\"; print -r -- END"));
             stmts.push(format!("print -rl -- ${{^a{m}}}; print -r -- END"));
         }
@@ -5054,7 +5282,9 @@ fn gen_modifier(seed: u64) -> Vec<String> {
             stmts.push("f='/usr/local/lib/libz.so.1'".to_string());
             stmts.push(format!("print -r -- \"[${{(U)f{m}}}]\""));
             stmts.push(format!("print -r -- \"[${{${{f{m}}}:-EMPTY}}]\""));
-            stmts.push(format!("a=(/p/q.c /r/s.h); print -r -- \"[${{(j:,:)a{m}}}]\""));
+            stmts.push(format!(
+                "a=(/p/q.c /r/s.h); print -r -- \"[${{(j:,:)a{m}}}]\""
+            ));
         }
     }
     stmts
@@ -5105,9 +5335,26 @@ const MF_1ARG: &[&str] = &[
     "y1(1)",
     "fmod(7,3)",
     "hypot(3,4)",
-    "sqrt(4)", "sqrt(2)", "abs(-3)", "fabs(-2.5)", "ceil(1.2)", "floor(1.8)", "rint(2.5)",
-    "int(3.9)", "float(3)", "log(1)", "exp(0)", "log10(100)", "sin(0)", "cos(0)", "asin(1)",
-    "atan(1)", "sinh(0)", "tanh(0)", "erf(0)", "j0(0)",
+    "sqrt(4)",
+    "sqrt(2)",
+    "abs(-3)",
+    "fabs(-2.5)",
+    "ceil(1.2)",
+    "floor(1.8)",
+    "rint(2.5)",
+    "int(3.9)",
+    "float(3)",
+    "log(1)",
+    "exp(0)",
+    "log10(100)",
+    "sin(0)",
+    "cos(0)",
+    "asin(1)",
+    "atan(1)",
+    "sinh(0)",
+    "tanh(0)",
+    "erf(0)",
+    "j0(0)",
 ];
 
 fn gen_mathfunc(seed: u64) -> Vec<String> {
@@ -5169,13 +5416,21 @@ fn gen_mathfunc(seed: u64) -> Vec<String> {
         }
         // functions -M with a variable argument count and a string-arg variant.
         4 => {
-            stmts.push("_sum() { local s=0 x; for x in \"$@\"; do (( s += x )); done; (( REPLY = s )) }".to_string());
+            stmts.push(
+                "_sum() { local s=0 x; for x in \"$@\"; do (( s += x )); done; (( REPLY = s )) }"
+                    .to_string(),
+            );
             stmts.push("functions -M msum 1 4 _sum".to_string());
-            stmts.push("print -r -- \"$(( msum(1) )) $(( msum(1,2) )) $(( msum(1,2,3,4) ))\"".to_string());
+            stmts.push(
+                "print -r -- \"$(( msum(1) )) $(( msum(1,2) )) $(( msum(1,2,3,4) ))\"".to_string(),
+            );
             stmts.push("_len() { (( REPLY = ${#1} )) }; functions -M slen 1 1 _len".to_string());
             stmts.push("print -r -- \"$(( slen(12345) ))\"".to_string());
             // `functions -M` with no body listed, and removal with +M.
-            stmts.push("functions +M msum; print -r -- \"$(( msum(1,2) ))\"; print -r -- \"rc=$?\"".to_string());
+            stmts.push(
+                "functions +M msum; print -r -- \"$(( msum(1,2) ))\"; print -r -- \"rc=$?\""
+                    .to_string(),
+            );
         }
         // An undefined math function, and a mathfunc call before zmodload —
         // both are errors with a defined status, not a crash.
@@ -5210,7 +5465,16 @@ fn gen_emulate(seed: u64) -> Vec<String> {
         // flip. This catches a wrong entry in the emulation table directly.
         0 => {
             stmts.push(format!("emulate {emu}"));
-            for o in ["shwordsplit", "ksharrays", "globsubst", "bareglobqual", "rcexpandparam", "functionargzero", "nomatch", "banghist"] {
+            for o in [
+                "shwordsplit",
+                "ksharrays",
+                "globsubst",
+                "bareglobqual",
+                "rcexpandparam",
+                "functionargzero",
+                "nomatch",
+                "banghist",
+            ] {
                 stmts.push(format!("[[ -o {o} ]]; print -r -- \"{o}=$?\""));
             }
         }
@@ -5394,7 +5658,17 @@ fn gen_dirstack(seed: u64) -> Vec<String> {
         let neg = if rng.gen_bool(0.3) { "un" } else { "" };
         stmts.push(format!(
             "{neg}setopt {}",
-            pick(&mut rng, &["auto_pushd", "pushd_minus", "pushd_ignore_dups", "pushd_silent", "cdable_vars", "chase_links"])
+            pick(
+                &mut rng,
+                &[
+                    "auto_pushd",
+                    "pushd_minus",
+                    "pushd_ignore_dups",
+                    "pushd_silent",
+                    "cdable_vars",
+                    "chase_links"
+                ]
+            )
         ));
     }
 
@@ -5500,13 +5774,13 @@ fn gen_dirstack(seed: u64) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 const UNI_STATE: &str = concat!(
-    "u=héllo_wörld; ",           // Latin-1 supplement: 2 bytes/char
-    "j=日本語テキスト; ",         // CJK: 3 bytes/char, display width 2
-    "gr=αβγδε; ",                // Greek: 2 bytes/char
-    "cy=Привет; ",               // Cyrillic: 2 bytes/char
-    "acc=$'e\\u0301'; ",         // e + COMBINING ACUTE — 2 chars, 3 bytes, 1 glyph
-    "mix='aé漢z'; ",             // 1+2+3+1 bytes across four chars
-    "wide='一二三'; ",            // all-wide, for (m) width padding
+    "u=héllo_wörld; ",    // Latin-1 supplement: 2 bytes/char
+    "j=日本語テキスト; ", // CJK: 3 bytes/char, display width 2
+    "gr=αβγδε; ",         // Greek: 2 bytes/char
+    "cy=Привет; ",        // Cyrillic: 2 bytes/char
+    "acc=$'e\\u0301'; ",  // e + COMBINING ACUTE — 2 chars, 3 bytes, 1 glyph
+    "mix='aé漢z'; ",      // 1+2+3+1 bytes across four chars
+    "wide='一二三'; ",    // all-wide, for (m) width padding
     "uarr=(é ö 漢 z a); ",
 );
 
@@ -5529,7 +5803,10 @@ fn gen_unicode(seed: u64) -> Vec<String> {
             1 => format!("print -r -- \"[${{{v}[2]}}][${{{v}[2,3]}}][${{{v}[-1]}}]\""),
             2 => format!("print -r -- \"[${{{v}[1,-2]}}]\""),
             // Case conversion over non-ASCII (Greek/Cyrillic have real case).
-            3 => format!("print -r -- \"${{({0}){v}}}\"", pick(&mut rng, &["U", "L", "C"])),
+            3 => format!(
+                "print -r -- \"${{({0}){v}}}\"",
+                pick(&mut rng, &["U", "L", "C"])
+            ),
             // Padding: (l)/(r) count CHARACTERS; with (m) they count WIDTH.
             4 => format!("print -r -- \"[${{(l:8::.:){v}}}]\""),
             5 => format!("print -r -- \"[${{(r:8::.:){v}}}]\""),
@@ -5575,18 +5852,7 @@ fn gen_unicode(seed: u64) -> Vec<String> {
 /// quote characters, glob metachars, `!`, `$`, backslash, tab/newline, and a
 /// leading `-` / `~` (which only (q-)/(q+) treat specially).
 const QUOTE_SUBJECTS: &[&str] = &[
-    "plain",
-    "a b",
-    "a'b",
-    r#"a"b"#,
-    "a\\$b",
-    "a*b?c[d]",
-    "a!b",
-    "-lead",
-    "~home",
-    "a#b",
-    "",
-    "a=b",
+    "plain", "a b", "a'b", r#"a"b"#, "a\\$b", "a*b?c[d]", "a!b", "-lead", "~home", "a#b", "", "a=b",
 ];
 
 /// `$'…'` escape bodies. Every one has a single, defined byte expansion.
@@ -5689,34 +5955,34 @@ fn gen_quote(seed: u64) -> Vec<String> {
 /// an ISO-week boundary (Jan 1 falling in the previous ISO year), the epoch
 /// itself, and a pre-epoch (negative) instant.
 const EPOCHS: &[&str] = &[
-    "0",            // 1970-01-01T00:00:00Z
-    "1600000000",   // 2020-09-13 (Sunday — %u/%w edge)
-    "1583020800",   // 2020-03-01, just past a leap day
-    "1582934400",   // 2020-02-29 — leap day
-    "1577836800",   // 2020-01-01 — ISO week 1 of 2020
-    "1609459199",   // 2020-12-31T23:59:59Z
-    "946684800",    // 2000-01-01
-    "2147483647",   // Y2038 boundary
-    "-86400",       // 1969-12-31 — pre-epoch
+    "0",          // 1970-01-01T00:00:00Z
+    "1600000000", // 2020-09-13 (Sunday — %u/%w edge)
+    "1583020800", // 2020-03-01, just past a leap day
+    "1582934400", // 2020-02-29 — leap day
+    "1577836800", // 2020-01-01 — ISO week 1 of 2020
+    "1609459199", // 2020-12-31T23:59:59Z
+    "946684800",  // 2000-01-01
+    "2147483647", // Y2038 boundary
+    "-86400",     // 1969-12-31 — pre-epoch
 ];
 
 const STRF_FMTS: &[&str] = &[
     "%Y-%m-%d",
     "%H:%M:%S",
     "%Y-%m-%dT%H:%M:%S",
-    "%j",           // day of year
-    "%U|%W|%V",     // week numbers: Sunday-based, Monday-based, ISO
-    "%G-W%V-%u",    // ISO year/week/day — disagrees with %Y at year boundaries
-    "%a %A %b %B",  // names
-    "%C|%y",        // century, 2-digit year
-    "%e|%k|%l",     // space-padded variants
-    "%I %p",        // 12-hour
-    "%D|%F|%R|%T",  // compound specifiers
-    "%s",           // seconds back out — must round-trip the input
-    "%n|%t|%%",     // literal newline/tab/percent
-    "%Z|%z",        // TZ-pinned
-    "%c|%x|%X",     // locale-dependent (same libc both sides)
-    "%w|%u",        // weekday numbering: 0-6 (Sun=0) vs 1-7 (Mon=1)
+    "%j",          // day of year
+    "%U|%W|%V",    // week numbers: Sunday-based, Monday-based, ISO
+    "%G-W%V-%u",   // ISO year/week/day — disagrees with %Y at year boundaries
+    "%a %A %b %B", // names
+    "%C|%y",       // century, 2-digit year
+    "%e|%k|%l",    // space-padded variants
+    "%I %p",       // 12-hour
+    "%D|%F|%R|%T", // compound specifiers
+    "%s",          // seconds back out — must round-trip the input
+    "%n|%t|%%",    // literal newline/tab/percent
+    "%Z|%z",       // TZ-pinned
+    "%c|%x|%X",    // locale-dependent (same libc both sides)
+    "%w|%u",       // weekday numbering: 0-6 (Sun=0) vs 1-7 (Mon=1)
     // Specifiers STRF_FMTS previously missed (all verified equal vs
     // /opt/homebrew/bin/zsh): %g 2-digit ISO year, %h == %b, %P lowercase
     // am/pm, %r 12-hour clock time.
@@ -5725,13 +5991,13 @@ const STRF_FMTS: &[&str] = &[
     // zero-pad) / CASE (`^` upper, `#` swap) / ALT (`E` era, `O` alt-numeric)
     // prefixes between `%` and the conversion. strftime formatting is a
     // classic cross-libc divergence source and none of these were gated.
-    "%-e|%-m|%-H|%-j",      // no-pad numeric
-    "%_e|%_d|%_m",          // space-pad numeric
-    "%0e|%0k|%0l",          // zero-pad the normally space-padded ones
-    "%^a|%^A|%^b|%^B|%^p",  // force upper-case names
-    "%#a|%#A|%#p",          // swap-case names
-    "%Oe|%Od|%OH|%OI|%Om",  // O modifier (alternate numeric symbols)
-    "%Ec|%EY",              // E modifier (alternate era representation)
+    "%-e|%-m|%-H|%-j",     // no-pad numeric
+    "%_e|%_d|%_m",         // space-pad numeric
+    "%0e|%0k|%0l",         // zero-pad the normally space-padded ones
+    "%^a|%^A|%^b|%^B|%^p", // force upper-case names
+    "%#a|%#A|%#p",         // swap-case names
+    "%Oe|%Od|%OH|%OI|%Om", // O modifier (alternate numeric symbols)
+    "%Ec|%EY",             // E modifier (alternate era representation)
 ];
 
 fn gen_datetime(seed: u64) -> Vec<String> {
@@ -5810,8 +6076,18 @@ fn gen_mbident(seed: u64) -> Vec<String> {
     let name = pick(
         &mut rng,
         &[
-            "日", "café", "π", "日本語", "Ω", "ναι", "αβγ", "変数", "café2", "v日",
-            "ключ", "naïve",
+            "日",
+            "café",
+            "π",
+            "日本語",
+            "Ω",
+            "ναι",
+            "αβγ",
+            "変数",
+            "café2",
+            "v日",
+            "ключ",
+            "naïve",
         ],
     );
     let val = pick(
@@ -5877,7 +6153,11 @@ fn gen_jobs(seed: u64) -> Vec<String> {
     // markers, which ride on the curjob/prevjob globals rather than the table.
     let setup = pick(
         &mut rng,
-        &["sleep 2 &", "sleep 2 & sleep 3 &", "sleep 2 & sleep 3 & sleep 4 &"],
+        &[
+            "sleep 2 &",
+            "sleep 2 & sleep 3 &",
+            "sleep 2 & sleep 3 & sleep 4 &",
+        ],
     );
     let probe = pick(
         &mut rng,
@@ -6104,7 +6384,8 @@ fn gen_alias(seed: u64) -> Vec<String> {
             // Alias chaining.
             3 => "alias a=b; alias b='print -r -- CHAIN'; a".to_string(),
             // Self-reference: expanded once, then the command word wins.
-            4 => "alias print='print -r -- pre'; print x; unalias print; print -r -- post".to_string(),
+            4 => "alias print='print -r -- pre'; print x; unalias print; print -r -- post"
+                .to_string(),
             // Parse-time binding: f captures the alias as it was at PARSE time.
             5 => "alias x='print -r -- A'; f() { x }; alias x='print -r -- B'; f; x".to_string(),
             // Global alias: expands in ANY word position, not just command.
@@ -6118,7 +6399,8 @@ fn gen_alias(seed: u64) -> Vec<String> {
             11 => "alias l1='print 1'; alias -L".to_string(),
             12 => "alias m1='print 1'; alias m2='print 2'; alias -m 'm*'".to_string(),
             // `command`/`\` bypass alias expansion; unalias -m removes by pattern.
-            _ => "alias p='print -r -- ALIASED'; \\p -r -- raw; unalias -m 'p*'; p -r -- gone".to_string(),
+            _ => "alias p='print -r -- ALIASED'; \\p -r -- raw; unalias -m 'p*'; p -r -- gone"
+                .to_string(),
         };
         stmts.push(stmt);
     }
@@ -6213,15 +6495,16 @@ fn gen_autoload(seed: u64) -> Vec<String> {
 // C: Src/Modules/stat.c bin_stat().
 // ---------------------------------------------------------------------------
 
-const STAT_FILES: &[&str] = &["a.txt", "bb.log", "ccc.txt", "d.md", "empty", "dir1", "link"];
-const STAT_FIELDS: &[&str] = &["+size", "+mode", "+nlink", "+mtime", "+uid", "+gid", "+link"];
+const STAT_FILES: &[&str] = &[
+    "a.txt", "bb.log", "ccc.txt", "d.md", "empty", "dir1", "link",
+];
+const STAT_FIELDS: &[&str] = &[
+    "+size", "+mode", "+nlink", "+mtime", "+uid", "+gid", "+link",
+];
 
 fn gen_stat(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut stmts = vec![
-        "zmodload zsh/stat".to_string(),
-        "export TZ=UTC".to_string(),
-    ];
+    let mut stmts = vec!["zmodload zsh/stat".to_string(), "export TZ=UTC".to_string()];
     for _ in 0..rng.gen_range(1..=3) {
         let f = pick(&mut rng, STAT_FILES);
         let fld = pick(&mut rng, STAT_FIELDS);
@@ -6417,14 +6700,19 @@ fn gen_numfmt(seed: u64) -> Vec<String> {
             }
             5 => "typeset -F f=0.1; print -r -- $f; typeset -E e=0.1; print -r -- $e".to_string(),
             // Very large / very small magnitudes pick the exponent form.
-            6 => "typeset -F f=1e20; print -r -- $f; typeset -E g=1e-20; print -r -- $g".to_string(),
+            6 => {
+                "typeset -F f=1e20; print -r -- $f; typeset -E g=1e-20; print -r -- $g".to_string()
+            }
             // Bare arithmetic float printing (no typeset) — the default format.
             7 => "print -r -- $(( 1.0 / 3 )); print -r -- $(( 2.0 ** 0.5 ))".to_string(),
             8 => "print -r -- $(( 1 / 3 )); print -r -- $(( 1.0 / 3.0 * 3 ))".to_string(),
             // Zero / left / right padding.
             9 => {
                 let w = rng.gen_range(2..8);
-                format!("typeset -Z {w} z={}; print -r -- \"[$z]\"", rng.gen_range(1..9999))
+                format!(
+                    "typeset -Z {w} z={}; print -r -- \"[$z]\"",
+                    rng.gen_range(1..9999)
+                )
             }
             10 => {
                 let w = rng.gen_range(2..8);
@@ -6510,7 +6798,16 @@ const PCRE_PATS: &[&str] = &[
 ];
 
 const PCRE_SUBJ: &[&str] = &[
-    "abc123", "user@site.com", "hello", "ac", "abbbc", "2024-06", "xz", "xyz", "", "ababab",
+    "abc123",
+    "user@site.com",
+    "hello",
+    "ac",
+    "abbbc",
+    "2024-06",
+    "xz",
+    "xyz",
+    "",
+    "ababab",
 ];
 
 fn gen_pcre(seed: u64) -> Vec<String> {
@@ -6803,7 +7100,8 @@ fn gen_readb(seed: u64) -> Vec<String> {
             0 => "read a b <<< 'one two three'; print -r -- \"[$a][$b]\"".to_string(),
             1 => "read a b c d <<< 'one two'; print -r -- \"[$a][$b][$c][$d]\"".to_string(),
             // -A: the whole line as an array.
-            2 => "read -A arr <<< 'one two three'; print -r -- \"n=${#arr} [${(j:,:)arr}]\"".to_string(),
+            2 => "read -A arr <<< 'one two three'; print -r -- \"n=${#arr} [${(j:,:)arr}]\""
+                .to_string(),
             // -r keeps backslashes; without it they escape.
             3 => "read x <<< 'a\\tb'; print -r -- \"[$x]\"".to_string(),
             4 => "read -r x <<< 'a\\tb'; print -r -- \"[$x]\"".to_string(),
@@ -6830,7 +7128,8 @@ fn gen_readb(seed: u64) -> Vec<String> {
             15 => "a=A b=B; read -e a b <<< 'echo only'; print -r -- \"a=[$a] b=[$b]\"".to_string(),
             16 => "read -EA arr <<< 'p q r'; print -r -- \"n=${#arr}\"".to_string(),
             // Reading several lines in sequence from one heredoc.
-            _ => "{ read a; read b } <<'EOF'\nline1\nline2\nEOF\nprint -r -- \"[$a][$b]\"".to_string(),
+            _ => "{ read a; read b } <<'EOF'\nline1\nline2\nEOF\nprint -r -- \"[$a][$b]\""
+                .to_string(),
         };
         stmts.push(stmt);
     }
@@ -7222,9 +7521,9 @@ fn gen_default(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     // Three starting states for the tested parameter.
     let state = match rng.gen_range(0..3) {
-        0 => "unset x",             // unset
-        1 => "x=''",                // empty
-        _ => "x=set",               // non-empty
+        0 => "unset x", // unset
+        1 => "x=''",    // empty
+        _ => "x=set",   // non-empty
     };
     let mut stmts = vec![state.to_string()];
     for _ in 0..rng.gen_range(2..=4) {
@@ -7239,8 +7538,11 @@ fn gen_default(seed: u64) -> Vec<String> {
             4 => "print -r -- \"[${x=ASG}]\"; print -r -- \"x=[$x]\"".to_string(),
             5 => "print -r -- \"[${x:=ASG}]\"; print -r -- \"x=[$x]\"".to_string(),
             // `?` / `:?` error path (status + message on stderr).
-            6 => "( print -r -- \"[${x?missing}]\" ) 2>/dev/null; print -r -- \"rc=$?\"".to_string(),
-            7 => "( print -r -- \"[${x:?empty or unset}]\" ) 2>/dev/null; print -r -- \"rc=$?\"".to_string(),
+            6 => {
+                "( print -r -- \"[${x?missing}]\" ) 2>/dev/null; print -r -- \"rc=$?\"".to_string()
+            }
+            7 => "( print -r -- \"[${x:?empty or unset}]\" ) 2>/dev/null; print -r -- \"rc=$?\""
+                .to_string(),
             // The replacement word is itself an expansion.
             8 => "y=fallback; print -r -- \"[${x:-$y}]\"".to_string(),
             9 => "print -r -- \"[${x:-$(print -n sub)}]\"".to_string(),
@@ -7275,8 +7577,7 @@ fn gen_default(seed: u64) -> Vec<String> {
                     &mut rng,
                     &[
                         // Metas that already worked — pinned against regression.
-                        "a*", "[ab]?", "zz*", "a?",
-                        // The regressed shapes.
+                        "a*", "[ab]?", "zz*", "a?", // The regressed shapes.
                         "(paren)", "a|b", "aa|zz", "zz|yy", "(aa|ab)",
                         // No metacharacter at all: must stay literal.
                         "plain",
@@ -7318,7 +7619,8 @@ fn gen_anonfn(seed: u64) -> Vec<String> {
             // $0 is (anon).
             3 => "() { print -r -- \"[$0]\" }".to_string(),
             // A local is scoped to the call.
-            4 => "v=outer; () { local v=inner; print -r -- \"[$v]\" }; print -r -- \"[$v]\"".to_string(),
+            4 => "v=outer; () { local v=inner; print -r -- \"[$v]\" }; print -r -- \"[$v]\""
+                .to_string(),
             // No args.
             5 => "() { print -r -- \"n=$#\" }".to_string(),
             // A return value / status.
@@ -7354,7 +7656,9 @@ fn gen_anonfn(seed: u64) -> Vec<String> {
             // accepting this. Bug #60.
             18 => "function {print -r -- x}".to_string(),
             // Arguments from an expansion.
-            _ => "arr=(1 2 3); () { print -r -- \"n=$# sum=$(( $1 + $2 + $3 ))\" } $arr".to_string(),
+            _ => {
+                "arr=(1 2 3); () { print -r -- \"n=$# sum=$(( $1 + $2 + $3 ))\" } $arr".to_string()
+            }
         };
         stmts.push(stmt);
     }
@@ -7482,11 +7786,34 @@ fn gen_printv(seed: u64) -> Vec<String> {
                 let o = pick(
                     &mut rng,
                     &[
-                        "-s -S", "-s -v v", "-s -z z", "-S -v v", "-v v -z z", "-S -z z",
-                        "-s -S -v v", "-c -s", "-C 2 -s", "-c -z z", "-C 2 -z z", "-c -S",
-                        "-p -s", "-u1 -s", "-u1 -v v", "-p -z z", "-u1 -S", "-C 0 -s",
-                        "-f %s -c", "-f %s -C 2", "-f %s -S",
-                        "-c", "-C 2", "-l", "-v v", "-rl --", "-aC 2", "-lc",
+                        "-s -S",
+                        "-s -v v",
+                        "-s -z z",
+                        "-S -v v",
+                        "-v v -z z",
+                        "-S -z z",
+                        "-s -S -v v",
+                        "-c -s",
+                        "-C 2 -s",
+                        "-c -z z",
+                        "-C 2 -z z",
+                        "-c -S",
+                        "-p -s",
+                        "-u1 -s",
+                        "-u1 -v v",
+                        "-p -z z",
+                        "-u1 -S",
+                        "-C 0 -s",
+                        "-f %s -c",
+                        "-f %s -C 2",
+                        "-f %s -S",
+                        "-c",
+                        "-C 2",
+                        "-l",
+                        "-v v",
+                        "-rl --",
+                        "-aC 2",
+                        "-lc",
                     ],
                 );
                 format!("print {o} a b 2>&1; print -r -- \"rc=$?\"")
@@ -7566,7 +7893,17 @@ fn gen_whence(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec![WHENCE_SETUP.to_string()];
     // Names whose resolution is fully shell-determined (no filesystem).
-    let names = ["f", "al", "GL", "sfx", "print", "if", "typeset", "nosuchname", "[["];
+    let names = [
+        "f",
+        "al",
+        "GL",
+        "sfx",
+        "print",
+        "if",
+        "typeset",
+        "nosuchname",
+        "[[",
+    ];
     for _ in 0..rng.gen_range(2..=4) {
         let n = pick(&mut rng, &names);
         let stmt = match rng.gen_range(0..15) {
@@ -7743,15 +8080,15 @@ fn gen_atflag(seed: u64) -> Vec<String> {
 
     // Value declarations: (setup, name, kind) where kind picks legal subscripts.
     let decls: &[(&str, &str, u8)] = &[
-        ("s=hi", "s", 0),                              // scalar, multi-char
-        ("s=", "s", 0),                                // scalar, empty
-        ("s=abcde", "s", 0),                           // scalar, longer
-        ("s=x", "s", 0),                               // scalar, 1-char
-        ("a=(only)", "a", 1),                          // array, 1 element
-        ("a=(one two three)", "a", 1),                 // array, 3 elements
-        ("a=()", "a", 1),                              // array, empty
-        ("a=(a b c d e)", "a", 1),                     // array, 5 elements
-        ("typeset -A h; h=(k v)", "h", 2),             // assoc, 1 pair
+        ("s=hi", "s", 0),                                // scalar, multi-char
+        ("s=", "s", 0),                                  // scalar, empty
+        ("s=abcde", "s", 0),                             // scalar, longer
+        ("s=x", "s", 0),                                 // scalar, 1-char
+        ("a=(only)", "a", 1),                            // array, 1 element
+        ("a=(one two three)", "a", 1),                   // array, 3 elements
+        ("a=()", "a", 1),                                // array, empty
+        ("a=(a b c d e)", "a", 1),                       // array, 5 elements
+        ("typeset -A h; h=(k v)", "h", 2),               // assoc, 1 pair
         ("typeset -A h; h=(k1 v1 k2 v2 k3 v3)", "h", 2), // assoc, 3 pairs
     ];
     let (setup, name, kind) = *pick(&mut rng, decls);
@@ -7773,7 +8110,9 @@ fn gen_atflag(seed: u64) -> Vec<String> {
         0 => pick(&mut rng, &["", "", "[1]", "[2]", "[-1]", "[1,2]"]), // scalar → char subscripts
         1 => pick(
             &mut rng,
-            &["", "[1]", "[2]", "[-1]", "[1,2]", "[2,-1]", "[@]", "[*]", "[(r)a]", "[(R)*]"],
+            &[
+                "", "[1]", "[2]", "[-1]", "[1,2]", "[2,-1]", "[@]", "[*]", "[(r)a]", "[(R)*]",
+            ],
         ),
         _ => pick(&mut rng, &["", "[@]", "[k1]", "[(R)v1]", "[(I)k*]"]),
     };
@@ -7781,14 +8120,14 @@ fn gen_atflag(seed: u64) -> Vec<String> {
     // Outer operator wrapping the `${flags name sub}` expansion.
     let inner = format!("${{{flags}{name}{sub}}}");
     let expr = match rng.gen_range(0..8) {
-        0 => format!("${{#{inner}}}"),                 // length (elements vs chars)
-        1 => format!("${{#{}}}", nested_at(&inner)),   // nested ${#${(@)…}}
-        2 => inner.clone(),                            // bare splat
-        3 => format!("${{(j:,:){inner}}}"),            // join
-        4 => nested_at(&inner),                        // ${(@)${(@)…}}
-        5 => format!("x{inner}y"),                     // surrounded by text
-        6 => format!("${{(o){inner}}}"),               // sort
-        _ => format!("${{#{inner}}}"),                 // length again
+        0 => format!("${{#{inner}}}"), // length (elements vs chars)
+        1 => format!("${{#{}}}", nested_at(&inner)), // nested ${#${(@)…}}
+        2 => inner.clone(),            // bare splat
+        3 => format!("${{(j:,:){inner}}}"), // join
+        4 => nested_at(&inner),        // ${(@)${(@)…}}
+        5 => format!("x{inner}y"),     // surrounded by text
+        6 => format!("${{(o){inner}}}"), // sort
+        _ => format!("${{#{inner}}}"), // length again
     };
 
     // Emit both an unquoted (word-split) and a double-quoted read so the
@@ -7902,11 +8241,11 @@ fn gen_subexp(seed: u64) -> Vec<String> {
     // classes — excluded so this mode pins the VALUE of `${${…}[…]}`.
     let body = format!("{inner2}{sub}");
     let expr = match rng.gen_range(0..6) {
-        0 => format!("${{{body}}}"),                 // plain
-        1 => format!("${{#{body}}}"),                // length
-        2 => format!("${{(@){body}}}"),              // array splat
-        3 => format!("${{(j:,:){body}}}"),           // join
-        _ => format!("${{{body}}}"),                 // plain
+        0 => format!("${{{body}}}"),       // plain
+        1 => format!("${{#{body}}}"),      // length
+        2 => format!("${{(@){body}}}"),    // array splat
+        3 => format!("${{(j:,:){body}}}"), // join
+        _ => format!("${{{body}}}"),       // plain
     };
 
     // UNQUOTED only. A DOUBLE-QUOTED nested expansion runs its inner in a
@@ -7934,17 +8273,48 @@ fn gen_replace(seed: u64) -> Vec<String> {
     let subj = pick(
         &mut rng,
         &[
-            "abc", "aaa", "aXbXc", "hello", "", "a1b2c3", "foobar",
-            "xx", "abcabc", "aabbcc", "path/to/file", "CamelCase",
+            "abc",
+            "aaa",
+            "aXbXc",
+            "hello",
+            "",
+            "a1b2c3",
+            "foobar",
+            "xx",
+            "abcabc",
+            "aabbcc",
+            "path/to/file",
+            "CamelCase",
         ],
     );
     // Pattern body (no anchor). Some use extendedglob operators.
     let pat = pick(
         &mut rng,
         &[
-            "a", "X", "?", "*", "l", "[0-9]", "[a-z]", "a#", "a##", "b#",
-            "(a|b)", "(a|ab)", "o", "x", "?", ".", "[A-Z]", "c",
-            "(#s)", "(#e)", "(#m)a", "(#b)(a)", "(#b)([a-z])", "a*c",
+            "a",
+            "X",
+            "?",
+            "*",
+            "l",
+            "[0-9]",
+            "[a-z]",
+            "a#",
+            "a##",
+            "b#",
+            "(a|b)",
+            "(a|ab)",
+            "o",
+            "x",
+            "?",
+            ".",
+            "[A-Z]",
+            "c",
+            "(#s)",
+            "(#e)",
+            "(#m)a",
+            "(#b)(a)",
+            "(#b)([a-z])",
+            "a*c",
         ],
     );
     // Optional anchor. A `#`/`%` char-anchor and a `(#s)`/`(#e)` op-anchor are
@@ -7959,9 +8329,20 @@ fn gen_replace(seed: u64) -> Vec<String> {
     };
     // Replacement text. Backreference forms only make sense with (#b)/(#m).
     let repl = if pat.contains("(#b)") {
-        pick(&mut rng, &["[${match[1]}]", "<${match[1]}>", "${match[1]}${match[1]}", "-"])
+        pick(
+            &mut rng,
+            &[
+                "[${match[1]}]",
+                "<${match[1]}>",
+                "${match[1]}${match[1]}",
+                "-",
+            ],
+        )
     } else if pat.contains("(#m)") {
-        pick(&mut rng, &["<$MATCH>", "${#MATCH}", "$MBEGIN-$MEND", "[$MATCH]"])
+        pick(
+            &mut rng,
+            &["<$MATCH>", "${#MATCH}", "$MBEGIN-$MEND", "[$MATCH]"],
+        )
     } else {
         pick(&mut rng, &["-", "X", "", "&", "_", "[&]", "YY"])
     };
@@ -8018,8 +8399,17 @@ fn gen_assign(seed: u64) -> Vec<String> {
     let rhs = pick(
         &mut rng,
         &[
-            "1 2 3", "a b c d", "x", "", "k1 v1 k2 v2", "a:b:c", "one  two",
-            "p q r s t", "single", "a b", "1 2 3 4 5 6",
+            "1 2 3",
+            "a b c d",
+            "x",
+            "",
+            "k1 v1 k2 v2",
+            "a:b:c",
+            "one  two",
+            "p q r s t",
+            "single",
+            "a b",
+            "1 2 3 4 5 6",
         ],
     );
     // Deliver the RHS via a variable (so the `=` flag word-splits $v) or
@@ -8035,8 +8425,7 @@ fn gen_assign(seed: u64) -> Vec<String> {
     let flag = pick(
         &mut rng,
         &[
-            "", "(A)", "(A)=", "(AA)", "(AA)=", "(A)", "(As.:.)", "(AAs.:.)",
-            "=", "(A)=", "",
+            "", "(A)", "(A)=", "(AA)", "(AA)=", "(A)", "(As.:.)", "(AAs.:.)", "=", "(A)=", "",
         ],
     );
     // Assign operator (all "assign if unset/empty" or unconditional).
@@ -8054,9 +8443,8 @@ fn gen_assign(seed: u64) -> Vec<String> {
     };
 
     // `unset out` first so `:=`/`::=` fire deterministically.
-    let prog = format!(
-        "unset {target} 2>/dev/null; {pre}: ${{{flag}{target}{op}{word}}}; {readback}"
-    );
+    let prog =
+        format!("unset {target} 2>/dev/null; {pre}: ${{{flag}{target}{op}{word}}}; {readback}");
     vec![prog]
 }
 
@@ -8090,31 +8478,102 @@ const GFLAG_OPTS: &[&str] = &[
 /// INSIDE a double-quoted zsh string, so `\` reaches the value literally.
 const GFLAG_ESCAPES: &[&str] = &[
     // Simple letter escapes (c:7000-7018) — flag-independent.
-    "a", "\\a", "\\b", "\\e", "\\E", "\\f", "\\n", "\\r", "\\t", "\\v",
+    "a",
+    "\\a",
+    "\\b",
+    "\\e",
+    "\\E",
+    "\\f",
+    "\\n",
+    "\\r",
+    "\\t",
+    "\\v",
     // Octal, leading NON-zero: the OCTAL_ESC-gated branch (c:7157-7161).
     // Without `o` these must come back as a literal backslash + digits.
-    "\\1", "\\7", "\\10", "\\77", "\\101", "\\102x", "\\377", "\\400", "\\600", "\\777",
+    "\\1",
+    "\\7",
+    "\\10",
+    "\\77",
+    "\\101",
+    "\\102x",
+    "\\377",
+    "\\400",
+    "\\600",
+    "\\777",
     // Octal, leading zero: taken as the introducer when OCTAL_ESC is unset
     // (c:7158 `if (*s == '0') s++`), so `\0101` is 'A' even with no `o`.
-    "\\0", "\\00", "\\0101", "\\0377", "\\0400", "\\0777", "\\08", "\\09z",
+    "\\0",
+    "\\00",
+    "\\0101",
+    "\\0377",
+    "\\0400",
+    "\\0777",
+    "\\08",
+    "\\09z",
     // Digits >= 8 are NOT octal (c:7156 `*s < '8'`) — default arm.
-    "\\8", "\\9", "\\8a",
+    "\\8",
+    "\\9",
+    "\\8a",
     // Hex (c:7169) — entered regardless of OCTAL_ESC, max 2 digits.
-    "\\x", "\\x0", "\\x41", "\\x4", "\\xff", "\\xg", "\\x41B", "\\xfff",
+    "\\x",
+    "\\x0",
+    "\\x41",
+    "\\x4",
+    "\\xff",
+    "\\xg",
+    "\\x41B",
+    "\\xfff",
     // Unicode (c:7072-7138) — ungated, writes UTF-8 not a raw byte.
-    "\\u0041", "\\u00e9", "\\u20ac", "\\U0001F600", "\\u", "\\uzz",
+    "\\u0041",
+    "\\u00e9",
+    "\\u20ac",
+    "\\U0001F600",
+    "\\u",
+    "\\uzz",
     // Emacs key escapes (c:7029-7052), gated on GETKEY_EMACS.
-    "\\M-a", "\\C-a", "\\C-A", "\\M-\\C-a", "\\C-?", "\\C-@", "\\C-[", "\\M-", "\\C-",
-    "\\M-\\M-b", "\\C-\\C-c",
+    "\\M-a",
+    "\\C-a",
+    "\\C-A",
+    "\\M-\\C-a",
+    "\\C-?",
+    "\\C-@",
+    "\\C-[",
+    "\\M-",
+    "\\C-",
+    "\\M-\\M-b",
+    "\\C-\\C-c",
     // `^X` control form (c:7194), gated on GETKEY_CTRL.
-    "^A", "^a", "^?", "^@", "^", "a^Bb", "^[",
+    "^A",
+    "^a",
+    "^?",
+    "^@",
+    "^",
+    "a^Bb",
+    "^[",
     // Unknown escapes — default arm (c:7180-7184): the backslash survives
     // only when EMACS is unset.
-    "\\q", "\\z", "\\-", "\\.", "\\'", "\\\"", "\\\\", "\\%", "\\c", "\\ ",
+    "\\q",
+    "\\z",
+    "\\-",
+    "\\.",
+    "\\'",
+    "\\\"",
+    "\\\\",
+    "\\%",
+    "\\c",
+    "\\ ",
     // Mixed / adjacent shapes: an escape butted against ordinary text, and
     // multi-escape strings where one arm's `s` fixup feeds the next.
-    "x\\101y", "\\101\\102", "\\1\\0101", "\\x41\\101", "ab\\", "\\\\1", "\\\\x41",
-    "pre\\M-a post", "\\0101\\x41\\u0041", "^A\\C-a\\1",
+    "x\\101y",
+    "\\101\\102",
+    "\\1\\0101",
+    "\\x41\\101",
+    "ab\\",
+    "\\\\1",
+    "\\\\x41",
+    "pre\\M-a post",
+    "\\0101\\x41\\u0041",
+    "^A\\C-a\\1",
 ];
 
 fn gen_gflag(seed: u64) -> Vec<String> {
@@ -8204,8 +8663,23 @@ const SELECT_LISTS: &[&str] = &[
 /// negative, non-numeric, EMPTY (the c:290 reprint path), and multi-select
 /// runs that expose a per-iteration redraw.
 const SELECT_INPUTS: &[&str] = &[
-    "1", "2", "3", "0", "9", "-1", "abc", "", "1\\n2", "\\n1", "\\n\\n2", "1\\n1",
-    "2\\n\\n1", "1\\n2\\n3", "x\\n1", "10", "1 2",
+    "1",
+    "2",
+    "3",
+    "0",
+    "9",
+    "-1",
+    "abc",
+    "",
+    "1\\n2",
+    "\\n1",
+    "\\n\\n2",
+    "1\\n1",
+    "2\\n\\n1",
+    "1\\n2\\n3",
+    "x\\n1",
+    "10",
+    "1 2",
 ];
 
 fn gen_select(seed: u64) -> Vec<String> {
@@ -8275,24 +8749,65 @@ fn gen_select(seed: u64) -> Vec<String> {
 /// the shell inside SINGLE quotes, so backslashes arrive literally.
 const BINDKEY_SPECS: &[&str] = &[
     // Caret control form (c:7194, GETKEY_CTRL).
-    "^X", "^A", "^?", "^[", "^@", "^A^B", "^X^X",
+    "^X",
+    "^A",
+    "^?",
+    "^[",
+    "^@",
+    "^A^B",
+    "^X^X",
     // Backslash control form (c:7041-7052).
-    "\\C-x", "\\C-?", "\\C-@", "\\C-a",
+    "\\C-x",
+    "\\C-?",
+    "\\C-@",
+    "\\C-a",
     // Meta (c:7029-7040) — sets the HIGH BIT, not an ESC prefix.
-    "\\M-a", "\\M-x", "\\M--", "\\M-1",
+    "\\M-a",
+    "\\M-x",
+    "\\M--",
+    "\\M-1",
     // Chained modifiers — the `meta = 1 + control` ordering surface.
-    "\\M-^?", "\\M-^A", "\\M-^H", "\\M-\\C-a", "\\C-\\M-a", "^\\M-a", "\\M-\\M-a",
-    "\\M-\\C-?", "\\C-\\M-?", "\\M-\\C-x",
+    "\\M-^?",
+    "\\M-^A",
+    "\\M-^H",
+    "\\M-\\C-a",
+    "\\C-\\M-a",
+    "^\\M-a",
+    "\\M-\\M-a",
+    "\\M-\\C-?",
+    "\\C-\\M-?",
+    "\\M-\\C-x",
     // Simple letter escapes.
-    "\\e", "\\E", "\\e[A", "\\e[1;5C", "\\n", "\\t", "\\r", "\\a", "\\b", "\\f", "\\v",
-    "\\M-\\n", "\\M-\\t",
+    "\\e",
+    "\\E",
+    "\\e[A",
+    "\\e[1;5C",
+    "\\n",
+    "\\t",
+    "\\r",
+    "\\a",
+    "\\b",
+    "\\f",
+    "\\v",
+    "\\M-\\n",
+    "\\M-\\t",
     // Numeric escapes — OCTAL_ESC is SET here, so `\101` is `A` (unlike the
     // bare `(g::)` form where it stays a literal backslash).
-    "\\101", "\\0101", "\\x41", "\\x7f", "\\377", "\\777", "\\400", "\\0",
+    "\\101",
+    "\\0101",
+    "\\x41",
+    "\\x7f",
+    "\\377",
+    "\\777",
+    "\\400",
+    "\\0",
     // Unicode.
-    "\\u0041", "\\U00000041",
+    "\\u0041",
+    "\\U00000041",
     // Plain / multi-char sequences.
-    "A", "abc", "x",
+    "A",
+    "abc",
+    "x",
 ];
 
 /// Pairs of DIFFERENT spellings that must decode to the SAME bytes, so a bind
@@ -8546,19 +9061,57 @@ fn gen_zmv(seed: u64) -> Vec<String> {
 /// function of the text alone (rand48, time) is deliberately absent.
 const ZCALC_EXPRS: &[&str] = &[
     // Integer arithmetic → printf "%d" (zcalc:110).
-    "1+2", "10/4", "3 % 2", "1<<4", "2**10", "(1+2)*3", "-5+3", "2^10", "7&3", "7|8", "~5",
-    "10 > 3", "1 ? 2 : 3",
+    "1+2",
+    "10/4",
+    "3 % 2",
+    "1<<4",
+    "2**10",
+    "(1+2)*3",
+    "-5+3",
+    "2^10",
+    "7&3",
+    "7|8",
+    "~5",
+    "10 > 3",
+    "1 ? 2 : 3",
     // Bases.
-    "0x10", "0b101", "010",
+    "0x10",
+    "0b101",
+    "010",
     // Floats → %g via _forms[1] (zcalc:107).
-    "10.0/4", "1.0/3", "22.0/7", "1e10", "1.5e-8", "2.0**0.5", "1.0/7", "100.0/3", "0.1+0.2",
+    "10.0/4",
+    "1.0/3",
+    "22.0/7",
+    "1e10",
+    "1.5e-8",
+    "2.0**0.5",
+    "1.0/7",
+    "100.0/3",
+    "0.1+0.2",
     // zsh/mathfunc, loaded by zcalc:133. `sqrt(16)` is the bare-trailing-dot
     // case (`4.`), the rest exercise the %g path.
-    "sqrt(16)", "sqrt(2)", "atan(1)*4", "sin(0)", "cos(0)", "log(1)", "exp(1)", "exp(0)",
-    "ceil(1.2)", "floor(1.8)", "int(3.7)", "abs(-5)", "fabs(-5.5)", "log10(100)", "sqrt(2)*sqrt(2)",
-    "atan2(1,1)", "pow(2,10)", "fmod(10,3)",
+    "sqrt(16)",
+    "sqrt(2)",
+    "atan(1)*4",
+    "sin(0)",
+    "cos(0)",
+    "log(1)",
+    "exp(1)",
+    "exp(0)",
+    "ceil(1.2)",
+    "floor(1.8)",
+    "int(3.7)",
+    "abs(-5)",
+    "fabs(-5.5)",
+    "log10(100)",
+    "sqrt(2)*sqrt(2)",
+    "atan2(1,1)",
+    "pow(2,10)",
+    "fmod(10,3)",
     // Error paths: the diagnostic is printed and NO value (zcalc:105).
-    "1/0", "zzundefined_zz+1", "1%0",
+    "1/0",
+    "zzundefined_zz+1",
+    "1%0",
 ];
 
 /// Operands for `test` / `[`. Deliberately a mix of BARE STRINGS and
@@ -8567,8 +9120,17 @@ const ZCALC_EXPRS: &[&str] = &[
 /// for testlex, and a bare word becomes an implicit `-n word`), and the port
 /// only ever got the flag-pair forms right.
 const COND_UNARY: &[&str] = &[
-    "-n a", "-z ''", "-n ''", "-z a", "-f /dev/null", "-d /tmp", "-e /dev/null",
-    "-f /nonexistent-zzz", "-d /nonexistent-zzz", "-s /nonexistent-zzz", "-r /dev/null",
+    "-n a",
+    "-z ''",
+    "-n ''",
+    "-z a",
+    "-f /dev/null",
+    "-d /tmp",
+    "-e /dev/null",
+    "-f /nonexistent-zzz",
+    "-d /nonexistent-zzz",
+    "-s /nonexistent-zzz",
+    "-r /dev/null",
 ];
 /// Bare words — each is an implicit `-n WORD` (c:2486-2492).
 const COND_BARE: &[&str] = &["a", "''", "x", "-n", "-a", "0"];
@@ -8736,8 +9298,22 @@ const RCEXPAND_ARRAYS: &[&str] = &[
 /// this port reaches them through different code, which is precisely how `$^a`
 /// came to compile to literal text while `${^a}` worked.
 const RCEXPAND_WORDS: &[&str] = &[
-    "$^a", "${^a}", "pre$^a", "pre${^a}", "$^a.x", "${^a}.x", "pre$^a.x", "pre${^a}suf",
-    "$^^a", "${^^a}", "$^^a.x", "${^^a}.x", "x$^a$^a", "$^a-$^a", "$a.x", "${a}.x",
+    "$^a",
+    "${^a}",
+    "pre$^a",
+    "pre${^a}",
+    "$^a.x",
+    "${^a}.x",
+    "pre$^a.x",
+    "pre${^a}suf",
+    "$^^a",
+    "${^^a}",
+    "$^^a.x",
+    "${^^a}.x",
+    "x$^a$^a",
+    "$^a-$^a",
+    "$a.x",
+    "${a}.x",
 ];
 
 /// The sibling unbraced flag `=` (SH_WORD_SPLIT / spbreak, c:2558-2569), paired
@@ -8745,8 +9321,8 @@ const RCEXPAND_WORDS: &[&str] = &[
 /// not express an affix, so `pre$=s` / `$=s.x` / `$==s.x` were literal text
 /// while the bare `$=s` worked.
 const RCEXPAND_SPLIT_WORDS: &[&str] = &[
-    "$=s", "${=s}", "pre$=s", "pre${=s}", "$=s.x", "${=s}.x", "x$=s.y", "x${=s}.y",
-    "$==s", "${==s}", "$==s.x", "${==s}.x", "$=s-$=s",
+    "$=s", "${=s}", "pre$=s", "pre${=s}", "$=s.x", "${=s}.x", "x$=s.y", "x${=s}.y", "$==s",
+    "${==s}", "$==s.x", "${==s}.x", "$=s-$=s",
 ];
 
 /// Scalar values for the `=` split surface: IFS-whitespace runs, leading and
@@ -8761,7 +9337,10 @@ fn gen_rcexpand(seed: u64) -> Vec<String> {
     let word = pick(&mut rng, RCEXPAND_WORDS);
     // The option is half the surface: plan9 starts from isset(RCEXPANDPARAM)
     // (c:1663), and `^`/`^^` override it either way.
-    let opt = pick(&mut rng, &["", "", "setopt rcexpandparam; ", "unsetopt rcexpandparam; "]);
+    let opt = pick(
+        &mut rng,
+        &["", "", "setopt rcexpandparam; ", "unsetopt rcexpandparam; "],
+    );
 
     match rng.gen_range(0..6) {
         // Unquoted — the distributing case. `print -rl` makes the word COUNT
@@ -8780,7 +9359,10 @@ fn gen_rcexpand(seed: u64) -> Vec<String> {
         4 => {
             let w = pick(&mut rng, RCEXPAND_SPLIT_WORDS);
             let v = pick(&mut rng, RCEXPAND_SCALARS);
-            let so = pick(&mut rng, &["", "", "setopt shwordsplit; ", "unsetopt shwordsplit; "]);
+            let so = pick(
+                &mut rng,
+                &["", "", "setopt shwordsplit; ", "unsetopt shwordsplit; "],
+            );
             vec![format!("{so}s={v}; print -rl -- {w}")]
         }
         // `=` in a scalar-assignment RHS: c:3901-3920 `force_split = !ssub &&
@@ -9145,12 +9727,18 @@ fn parse_args() -> Args {
             }
             "--seed" | "-s" => {
                 i += 1;
-                base_seed = argv.get(i).and_then(|s| s.parse().ok()).unwrap_or(base_seed);
+                base_seed = argv
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(base_seed);
             }
             "--once" => once = true,
             "--timeout-ms" => {
                 i += 1;
-                timeout_ms = argv.get(i).and_then(|s| s.parse().ok()).unwrap_or(timeout_ms);
+                timeout_ms = argv
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(timeout_ms);
             }
             "--out" | "-o" => {
                 i += 1;
@@ -9160,7 +9748,10 @@ fn parse_args() -> Args {
             }
             "--max-report" => {
                 i += 1;
-                max_report = argv.get(i).and_then(|s| s.parse().ok()).unwrap_or(max_report);
+                max_report = argv
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(max_report);
             }
             "--jobs" | "-j" => {
                 i += 1;
@@ -9175,7 +9766,10 @@ fn parse_args() -> Args {
                 match argv.get(i).and_then(|s| mode_from_name(s)) {
                     Some(m) => mode = m,
                     None => {
-                        eprintln!("unknown --mode '{}'", argv.get(i).map(|s| s.as_str()).unwrap_or(""));
+                        eprintln!(
+                            "unknown --mode '{}'",
+                            argv.get(i).map(|s| s.as_str()).unwrap_or("")
+                        );
                         std::process::exit(2);
                     }
                 }
@@ -9290,8 +9884,29 @@ fn signature(program: &str) -> String {
         s = regex_lite_replace(&s, pat, rep);
     }
     for w in [
-        "Hello_World", "alpha", "beta", "gamma", "delta", "foo", "bar", "x1", "x2", "y3", "aa",
-        "bb", "one", "two", "three", "four", "five", "k1", "k2", "k3", "v1", "v2", "v3",
+        "Hello_World",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "foo",
+        "bar",
+        "x1",
+        "x2",
+        "y3",
+        "aa",
+        "bb",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "k1",
+        "k2",
+        "k3",
+        "v1",
+        "v2",
+        "v3",
     ] {
         s = s.replace(w, "W");
     }
@@ -9313,7 +9928,10 @@ fn main() {
     let timeout = Duration::from_millis(args.timeout_ms);
 
     if !bin.exists() {
-        eprintln!("zshrs binary not found at {}; run `cargo build` first", bin.display());
+        eprintln!(
+            "zshrs binary not found at {}; run `cargo build` first",
+            bin.display()
+        );
         std::process::exit(2);
     }
 
@@ -9448,7 +10066,10 @@ fn main() {
                         // unreadable (identical stdout, invisible difference).
                         let err_of = |o: &RunOut| -> String {
                             if CMP_STDERR.load(Ordering::Relaxed) {
-                                format!("\n  stderr: {}", render(&norm_stderr(&o.stderr)).replace('\n', "\n  "))
+                                format!(
+                                    "\n  stderr: {}",
+                                    render(&norm_stderr(&o.stderr)).replace('\n', "\n  ")
+                                )
                             } else {
                                 String::new()
                             }
@@ -9556,18 +10177,28 @@ fn main() {
             for d in &divergences {
                 let _ = writeln!(f, "{d}");
             }
-            println!("wrote {} divergences to {}", divergences.len(), args.out_path.display());
+            println!(
+                "wrote {} divergences to {}",
+                divergences.len(),
+                args.out_path.display()
+            );
         }
     }
 
     // With a baseline, only NEW (non-allowlisted) divergences fail the run.
     // Without a baseline, any divergence fails (interactive/triage use).
     if !new_records.is_empty() {
-        println!("\n--- {} NEW gap signature(s) (add to baseline once triaged) ---", new_sigs.len());
+        println!(
+            "\n--- {} NEW gap signature(s) (add to baseline once triaged) ---",
+            new_sigs.len()
+        );
         for s in &new_sigs {
             println!("{s}");
         }
-        println!("\n--- first {} new divergence record(s) ---", new_records.len().min(5));
+        println!(
+            "\n--- first {} new divergence record(s) ---",
+            new_records.len().min(5)
+        );
         for d in new_records.iter().take(5) {
             println!("{d}");
         }

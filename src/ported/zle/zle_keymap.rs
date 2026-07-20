@@ -938,7 +938,7 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {
     // so `bindkey -v` + Esc switched keymaps silently and the right-prompt
     // mode indicator never appeared. Bug #654.
     let oldname = std::mem::replace(&mut *curkeymapname(), resolved.clone()); // c:513
-    // c:518 — `curkeymap = km`.
+                                                                              // c:518 — `curkeymap = km`.
     *curkeymap.lock().unwrap() = km;
     // Keep the `$KEYMAP` zle parameter in sync so the zle-keymap-select
     // hook (and any widget) reads the CURRENT keymap. zsh backs `$KEYMAP`
@@ -955,12 +955,8 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {
     {
         if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-keymap-select") {
             // c:519 — `execzlefunc(t, args, 1, 0)` with args[0] = old keymap name.
-            let _ = crate::ported::zle::zle_main::execzlefunc(
-                "zle-keymap-select",
-                &[oldname],
-                1,
-                0,
-            );
+            let _ =
+                crate::ported::zle::zle_main::execzlefunc("zle-keymap-select", &[oldname], 1, 0);
         }
         // Native p10k engine (extensions/p10k): the script theme flips the
         // prompt_char arrow (❯/❮/Ⅴ) from its zle-keymap-select widget
@@ -2153,7 +2149,9 @@ pub fn default_bindings() {
     // failed on this single line).
     if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
         && crate::config::current().zle.vi_backspace_unrestricted
-        && std::env::var("ZSHRS_NATIVE_ZLE_FX").map(|v| v != "0").unwrap_or(true)
+        && std::env::var("ZSHRS_NATIVE_ZLE_FX")
+            .map(|v| v != "0")
+            .unwrap_or(true)
     {
         for key in [0x08u8, 0x7F] {
             bindkey(
@@ -2711,9 +2709,10 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
     let mut last_match: Option<super::zle_thingy::Thingy> = None; // c:1584
     let mut last_match_str: Option<String> = None;
     let mut last_match_len = 0usize; // c:1585
-    // c:1585 — `lastc = lastchar` — see get_key_cmd (zle_main.rs) for
-    // the probe-byte restore rationale.
-    let mut lastc = crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst); // c:1585
+                                     // c:1585 — `lastc = lastchar` — see get_key_cmd (zle_main.rs) for
+                                     // the probe-byte restore rationale.
+    let mut lastc =
+        crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst); // c:1585
 
     // c:1588-1589 — `keybuflen = 0; keybuf[0] = 0;` — reset the GLOBAL
     // keybuf. The local `buf` drives the (raw-byte-keyed) Rust keymap
@@ -2735,7 +2734,10 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
         };
         buf.push(b);
         addkeybuf(b as i32); // c:1604 getkeybuf → addkeybuf (global, metafied)
-        keybuflen.store(keybuf.lock().unwrap().len() as i32, std::sync::atomic::Ordering::SeqCst);
+        keybuflen.store(
+            keybuf.lock().unwrap().len() as i32,
+            std::sync::atomic::Ordering::SeqCst,
+        );
 
         // c:1602-1604 — `f = keybind(km, keybuf, &s);` lookup.
         let (current_match, current_str, is_prefix) = if buf.len() == 1 {
@@ -2755,7 +2757,8 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
             last_match = Some(t);
             last_match_str = current_str;
             last_match_len = buf.len();
-            lastc = crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst);
+            lastc =
+                crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst);
             // c:1622
         }
 
@@ -2769,7 +2772,8 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
     // else lastchar = lastc;` — restore lastchar to its match-time
     // value when probe bytes were read past the dispatched match.
     if !(last_match_len == 0 && !buf.is_empty()) {
-        crate::ported::zle::compcore::LASTCHAR.store(lastc, std::sync::atomic::Ordering::SeqCst); // c:1695
+        crate::ported::zle::compcore::LASTCHAR.store(lastc, std::sync::atomic::Ordering::SeqCst);
+        // c:1695
     }
 
     // c:1696-1708 — unget extra bytes past the matched prefix and
@@ -2784,7 +2788,10 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
         for &kb in &buf {
             addkeybuf(kb as i32);
         }
-        keybuflen.store(keybuf.lock().unwrap().len() as i32, std::sync::atomic::Ordering::SeqCst); // c:1708
+        keybuflen.store(
+            keybuf.lock().unwrap().len() as i32,
+            std::sync::atomic::Ordering::SeqCst,
+        ); // c:1708
     }
 
     last_match.map(|t| (t, buf, last_match_str))

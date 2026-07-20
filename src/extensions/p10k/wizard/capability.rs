@@ -54,7 +54,11 @@ pub fn detect() -> Caps {
         }
     });
 
-    Caps { has_truecolor, colors, unicode }
+    Caps {
+        has_truecolor,
+        colors,
+        unicode,
+    }
 }
 
 /// terminfo `colors` capability for the current $TERM. Reads `tccolours`

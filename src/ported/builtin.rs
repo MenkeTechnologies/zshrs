@@ -76,31 +76,28 @@ use crate::ported::utils::{
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
 use crate::ported::zle::compctl::compctlread;
 use crate::ported::zsh_h::{
-    alias, asgment, builtin, cmdnam, eprog, hashnode, isset, mathfunc, nameddir, options, param,
-    shfunc, HandlerFunc, Meta, ALIAS_GLOBAL, ALIAS_SUFFIX, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE,
-    ASG_VALUEP, AUTOPUSHD, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH,
-    BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_KEEPNUM, BINF_MAGICEQUALS, BINF_NOGLOB,
-    BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID,
-    BSDECHO, CDABLEVARS, CHASELINKS, CHECKRUNNINGJOBS, DISABLED, EMULATE_CSH, EMULATE_KSH,
-    EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, FUNCTIONARGZERO, GLOBALEXPORT,
-    GLOBALRCS,
-    interact, islogin, HASHED, HFILE_APPEND, HFILE_NO_REWRITE, HFILE_SKIPOLD, HFILE_USE_OPTIONS,
-    HIST_FOREIGN, INTERACTIVE, KSHARRAYS,
-    LOGINSHELL, MAX_OPS, MFF_STR, MFF_USERFUNC, MONITOR, NULLBINCMD, OPT_ARG, OPT_HASARG,
-    OPT_ISSET, OPT_MINUS, OPT_PLUS, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_ABSPATH_USED, PM_ARRAY,
-    PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_DEFAULTED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT,
-    PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL,
-    PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR,
-    PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNDEFINED,
-    PM_UNIQUE, PM_UNSET, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, POSIXBUILTINS, POSIXCD, POSIXTRAPS,
-    PRINT_INCLUDEVALUE, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT,
-    PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF,
-    PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE,
-    PUSHDIGNOREDUPS, PUSHDMINUS, PUSHDSILENT, PUSHDTOHOME, RCQUOTES, RCS, SHINSTDIN,
-    SORTIT_BACKWARDS,
-    SORTIT_IGNORING_CASE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
-    TRAP_STATE_PRIMED, TYPESETSILENT, TYPESET_OPTSTR, VERBOSE, XTRACE, ZEXIT_DEFERRED,
-    ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC,
+    alias, asgment, builtin, cmdnam, eprog, hashnode, interact, islogin, isset, mathfunc, nameddir,
+    options, param, shfunc, HandlerFunc, Meta, ALIAS_GLOBAL, ALIAS_SUFFIX, ASG_ARRAY, ASG_ARRAYP,
+    ASG_KEY_VALUE, ASG_VALUEP, AUTOPUSHD, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND,
+    BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_KEEPNUM, BINF_MAGICEQUALS,
+    BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH,
+    BINF_SKIPINVALID, BSDECHO, CDABLEVARS, CHASELINKS, CHECKRUNNINGJOBS, DISABLED, EMULATE_CSH,
+    EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, FUNCTIONARGZERO,
+    GLOBALEXPORT, GLOBALRCS, HASHED, HFILE_APPEND, HFILE_NO_REWRITE, HFILE_SKIPOLD,
+    HFILE_USE_OPTIONS, HIST_FOREIGN, INTERACTIVE, KSHARRAYS, LOGINSHELL, MAX_OPS, MFF_STR,
+    MFF_USERFUNC, MONITOR, NULLBINCMD, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS,
+    PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_ABSPATH_USED, PM_ARRAY, PM_AUTOLOAD, PM_CUR_FPATH,
+    PM_DECLARED, PM_DEFAULTED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL,
+    PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_READONLY,
+    PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL,
+    PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNDEFINED, PM_UNIQUE, PM_UNSET, PM_UPPER, PM_WARNNESTED,
+    PM_ZSHSTORED, POSIXBUILTINS, POSIXCD, POSIXTRAPS, PRINT_INCLUDEVALUE, PRINT_LINE, PRINT_LIST,
+    PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET,
+    PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
+    PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, PUSHDIGNOREDUPS, PUSHDMINUS, PUSHDSILENT, PUSHDTOHOME,
+    RCQUOTES, RCS, SHINSTDIN, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, STAT_LOCKED, STAT_NOPRINT,
+    STAT_STOPPED, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, TYPESETSILENT, TYPESET_OPTSTR,
+    VERBOSE, XTRACE, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC,
 };
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
@@ -4420,11 +4417,15 @@ pub fn bin_typeset(
         let (apm_flags, apm_ename) = paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get(aname).map(|p| (Some(p.node.flags as u32), p.ename.clone())))
+            .and_then(|t| {
+                t.get(aname)
+                    .map(|p| (Some(p.node.flags as u32), p.ename.clone()))
+            })
             .unwrap_or((None, None));
         let mut already_tied = false;
 
-        if let Some(sf) = pm_flags.filter(|f| (f & (PM_SPECIAL | PM_TIED)) == (PM_SPECIAL | PM_TIED))
+        if let Some(sf) =
+            pm_flags.filter(|f| (f & (PM_SPECIAL | PM_TIED)) == (PM_SPECIAL | PM_TIED))
         {
             let _ = sf;
             // c:2903-2918 — a SPECIAL tied scalar (PATH/path). Only a re-tie of
@@ -4473,7 +4474,8 @@ pub fn bin_typeset(
             // c:2930-2932 — only consider an existing scalar that is actually
             // live in this scope.
             if ((sf & PM_UNSET) == 0 || (sf & PM_DECLARED) != 0)
-                && (locallevel_param.load(Relaxed) as i32 == pm_level || (on as u32 & PM_LOCAL) == 0)
+                && (locallevel_param.load(Relaxed) as i32 == pm_level
+                    || (on as u32 & PM_LOCAL) == 0)
             {
                 if (sf & PM_TIED) != 0 {
                     if PM_TYPE(sf) != PM_SCALAR {
@@ -4620,17 +4622,17 @@ pub fn bin_typeset(
             .unwrap_or(0)
             & PM_EXPORTED
             & !(off as u32); // c:2953 `& ~roff` — an explicit +x still wins
-        // c:2989 / c:3003 — C hands BOTH halves the full `on`:
-        //     apm = typeset_single(..., (on | PM_ARRAY) & ~PM_EXPORTED, ...)
-        //     pm  = typeset_single(..., on, ...)
-        // so every attribute the user asked for lands on the tie, not just the
-        // export/readonly pair. Masking down to PM_EXPORTED|PM_READONLY silently
-        // dropped the rest — most visibly PM_UNIQUE, so `typeset -UT B b` tied
-        // the two halves but never deduped either (`${(t)b}` read `array-tied`
-        // where zsh reads `array-tied-unique`), while the equivalent spelled as
-        // two commands (`typeset -T B b; typeset -U b`) worked. Carrying `on`
-        // whole is safe here: c:2742-2744 has already stripped the type bits
-        // from it (`if (on & PM_TIED) off |= PM_INTEGER|…|PM_HASHED; on &= ~off`).
+                             // c:2989 / c:3003 — C hands BOTH halves the full `on`:
+                             //     apm = typeset_single(..., (on | PM_ARRAY) & ~PM_EXPORTED, ...)
+                             //     pm  = typeset_single(..., on, ...)
+                             // so every attribute the user asked for lands on the tie, not just the
+                             // export/readonly pair. Masking down to PM_EXPORTED|PM_READONLY silently
+                             // dropped the rest — most visibly PM_UNIQUE, so `typeset -UT B b` tied
+                             // the two halves but never deduped either (`${(t)b}` read `array-tied`
+                             // where zsh reads `array-tied-unique`), while the equivalent spelled as
+                             // two commands (`typeset -T B b; typeset -U b`) worked. Carrying `on`
+                             // whole is safe here: c:2742-2744 has already stripped the type bits
+                             // from it (`if (on & PM_TIED) off |= PM_INTEGER|…|PM_HASHED; on &= ~off`).
         let tie_attr: u32 = on as u32 | inherited_export;
         let mut apm = param::default();
         apm.node.nam = aname.to_string();
@@ -4963,18 +4965,18 @@ pub fn bin_typeset(
                         | PM_TIED
                         | PM_AUTOLOAD); // c:2118-2120
                 let tc = chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT); // c:2122
-                // c:2078-2091 — a `local` at a DEEPER scope than the existing
-                // param does not CHANGE that param's type; it SHADOWS it with a
-                // fresh local (createparam installs the pm.old chain, restored by
-                // endparamscope). Only a SAME-scope re-typeset of a special is the
-                // forbidden type change. The port applied the special type-change
-                // error against the higher-scope param unconditionally, so
-                // `local -a commands` (HASHED command-hash special → local ARRAY)
-                // inside a function wrongly errored "can't change type of a
-                // special parameter" and aborted — e.g. `_openssl_subcommands`'s
-                // `local -a commands=(…)`, leaving `openssl <TAB>` empty. zsh
-                // allows the shadow in a function (errors only at same scope /
-                // top level). Mirror the reuse-decision guard used at c:2078-2091.
+                                                                             // c:2078-2091 — a `local` at a DEEPER scope than the existing
+                                                                             // param does not CHANGE that param's type; it SHADOWS it with a
+                                                                             // fresh local (createparam installs the pm.old chain, restored by
+                                                                             // endparamscope). Only a SAME-scope re-typeset of a special is the
+                                                                             // forbidden type change. The port applied the special type-change
+                                                                             // error against the higher-scope param unconditionally, so
+                                                                             // `local -a commands` (HASHED command-hash special → local ARRAY)
+                                                                             // inside a function wrongly errored "can't change type of a
+                                                                             // special parameter" and aborted — e.g. `_openssl_subcommands`'s
+                                                                             // `local -a commands=(…)`, leaving `openssl <TAB>` empty. zsh
+                                                                             // allows the shadow in a function (errors only at same scope /
+                                                                             // top level). Mirror the reuse-decision guard used at c:2078-2091.
                 let creating_local_shadow =
                     (on as u32 & PM_LOCAL) != 0 && pm_level != locallevel_param.load(Relaxed);
                 if tc && (pmf & PM_SPECIAL) != 0 && !creating_local_shadow {
@@ -4985,18 +4987,15 @@ pub fn bin_typeset(
                             .write()
                             .ok()
                             .and_then(|mut t| {
-                                t.get_mut(arg_name)
-                                    .map(|p| {
-                                        crate::ported::params::setsecondstype(
-                                            p, on as i32, off as i32,
-                                        )
-                                    })
+                                t.get_mut(arg_name).map(|p| {
+                                    crate::ported::params::setsecondstype(p, on as i32, off as i32)
+                                })
                             })
                             .unwrap_or(1);
                         if ok == 0 {
                             err = false; // c:2176
-                            // c:2172-2175 — `if (asg->value.scalar && !(pm =
-                            // assignsparam(pname, ..., 0))) return NULL;`
+                                         // c:2172-2175 — `if (asg->value.scalar && !(pm =
+                                         // assignsparam(pname, ..., 0))) return NULL;`
                             if let Some(i) = arg.find('=') {
                                 crate::ported::params::assignsparam(arg_name, &arg[i + 1..], 0);
                             }
@@ -6038,9 +6037,7 @@ pub fn bin_typeset(
                     crate::ported::exec::set_assoc(n, map.clone());
                 } else if crate::dash_mode::bash_mode()
                     && !elems.is_empty()
-                    && elems
-                        .iter()
-                        .all(|e| e.starts_with('[') && e.contains("]="))
+                    && elems.iter().all(|e| e.starts_with('[') && e.contains("]="))
                     && elems.iter().all(|e| {
                         e.find("]=")
                             .map(|c| e[1..c].trim().parse::<usize>().is_ok())
@@ -6337,18 +6334,18 @@ pub fn bin_typeset(
                 // made zshrs warn where zsh is silent (f-sy-h's
                 // `typeset -g _ZSH_HIGHLIGHT_PRIOR_BUFFER=...`).
                 crate::ported::params::assignsparam(n, &folded, 0); // c:2322
-                                       // c:2326-2328 + c:2336-2337 (typeset_single) —
-                                       // `if (asg->value.scalar && !(pm = assignsparam(
-                                       //     pname, ztrdup(asg->value.scalar), 0)))
-                                       //      return NULL;
-                                       //  ... if (errflag) return NULL;`
-                                       // A readonly rejection inside assignstrvalue
-                                       // (c:Src/params.c:2697) sets errflag and the value is
-                                       // refused; typeset_single returns NULL and bin_typeset
-                                       // records `returnval = 1` (c:3153-3156). Skip the
-                                       // attribute stamps — C never reaches them on this path.
-                                       // Gated on usepm: the c:2336 check lives ONLY in the
-                                       // reuse-existing-pm branch.
+                                                                    // c:2326-2328 + c:2336-2337 (typeset_single) —
+                                                                    // `if (asg->value.scalar && !(pm = assignsparam(
+                                                                    //     pname, ztrdup(asg->value.scalar), 0)))
+                                                                    //      return NULL;
+                                                                    //  ... if (errflag) return NULL;`
+                                                                    // A readonly rejection inside assignstrvalue
+                                                                    // (c:Src/params.c:2697) sets errflag and the value is
+                                                                    // refused; typeset_single returns NULL and bin_typeset
+                                                                    // records `returnval = 1` (c:3153-3156). Skip the
+                                                                    // attribute stamps — C never reaches them on this path.
+                                                                    // Gated on usepm: the c:2336 check lives ONLY in the
+                                                                    // reuse-existing-pm branch.
                 if usepm_existing && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
                     returnval = 1; // c:3156
                     continue; // c:2337 return NULL
@@ -6654,14 +6651,14 @@ pub fn bin_typeset(
                 // WARN_CREATE_GLOBAL (typeset_single assigns with
                 // `assignsparam(pname, ..., 0)`, c:2322).
                 crate::ported::params::assignsparam(arg, "", 0); // c:3074
-                                    // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
-                                    //     pm->node.flags |= PM_DEFAULTED;`. Under
-                                    // `setopt typeset_to_unset`, bare `typeset NAME` (no
-                                    // `=`) creates a "declared but not assigned" entry:
-                                    // PM_DECLARED + PM_UNSET (= PM_DEFAULTED). `${+NAME}`
-                                    // and `[[ -v NAME ]]` then return false until an
-                                    // explicit assignment clears PM_UNSET. Bug #280 in
-                                    // docs/BUGS.md.
+                                                                 // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
+                                                                 //     pm->node.flags |= PM_DEFAULTED;`. Under
+                                                                 // `setopt typeset_to_unset`, bare `typeset NAME` (no
+                                                                 // `=`) creates a "declared but not assigned" entry:
+                                                                 // PM_DECLARED + PM_UNSET (= PM_DEFAULTED). `${+NAME}`
+                                                                 // and `[[ -v NAME ]]` then return false until an
+                                                                 // explicit assignment clears PM_UNSET. Bug #280 in
+                                                                 // docs/BUGS.md.
                 if isset(crate::ported::zsh_h::TYPESETTOUNSET) {
                     if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(arg) {
@@ -6681,16 +6678,12 @@ pub fn bin_typeset(
             // ACTUALLY array/hashed (a no-op `+a` on a scalar leaves it be).
             // Bug #1029.
             if (off as u32 & (PM_ARRAY | PM_HASHED)) != 0 {
-                let is_arraylike = paramtab()
-                    .read()
-                    .ok()
-                    .and_then(|t| {
-                        t.get(arg).map(|pm| {
-                            let typ = PM_TYPE(pm.node.flags as u32);
-                            typ == PM_ARRAY || typ == PM_HASHED
-                        })
+                let is_arraylike = paramtab().read().ok().and_then(|t| {
+                    t.get(arg).map(|pm| {
+                        let typ = PM_TYPE(pm.node.flags as u32);
+                        typ == PM_ARRAY || typ == PM_HASHED
                     })
-                    == Some(true);
+                }) == Some(true);
                 if is_arraylike {
                     // Drop the assoc backing map too — unsetparam alone can
                     // leave the paramtab_hashed_storage entry, so a later
@@ -7292,13 +7285,13 @@ pub fn add_autoload_function(
         shf_ref.filename = new_slot;
         // c:3298-3299 — `shf->node.flags |= PM_LOADDIR | PM_ABSPATH_USED;`
         shf_ref.node.flags |= (PM_LOADDIR | PM_ABSPATH_USED) as i32; // c:3298
-        // c:3300 — `shfunctab->addnode(shfunctab, ztrdup(nam), shf);` — the
-        // node is keyed on the BASENAME (`nam`), not the full path. zshrs's
-        // addnode keys on `shf.node.nam`, so rename the node before adding;
-        // otherwise `autoload -Uz /dir/.hist.format` registered a function
-        // literally named `/dir/.hist.format` (plugins that autoload by full
-        // path — zsh-hist's `autoload -Uz $fdir/.hist.*` — diverged from
-        // zsh, which names it `.hist.format`).
+                                                                     // c:3300 — `shfunctab->addnode(shfunctab, ztrdup(nam), shf);` — the
+                                                                     // node is keyed on the BASENAME (`nam`), not the full path. zshrs's
+                                                                     // addnode keys on `shf.node.nam`, so rename the node before adding;
+                                                                     // otherwise `autoload -Uz /dir/.hist.format` registered a function
+                                                                     // literally named `/dir/.hist.format` (plugins that autoload by full
+                                                                     // path — zsh-hist's `autoload -Uz $fdir/.hist.*` — diverged from
+                                                                     // zsh, which names it `.hist.format`).
         shf_ref.node.nam = nam;
         if let Ok(mut t) = shfunctab_lock().write() {
             t.addnode(shf); // c:3300
@@ -8038,8 +8031,7 @@ pub fn bin_functions(
         // missing, so the whole `-w` feature was unreachable.
         if OPT_ISSET(ops, b'w') {
             // c:3713
-            returnval =
-                crate::ported::parse::dump_autoload(name, fname, on as i32, ops, _func); // c:3714
+            returnval = crate::ported::parse::dump_autoload(name, fname, on as i32, ops, _func); // c:3714
             continue;
         }
         // c:3715 — `shf = shfunctab->getnode(shfunctab, *argv);`
@@ -8685,9 +8677,7 @@ pub fn bin_whence(
             if getshfunc(name).is_some() {
                 return Some("function");
             }
-            let disabled = BUILTINS_DISABLED
-                .lock()
-                .map_or(false, |s| s.contains(name));
+            let disabled = BUILTINS_DISABLED.lock().map_or(false, |s| s.contains(name));
             if !disabled && createbuiltintable().get(name).is_some() {
                 return Some("builtin");
             }
@@ -10681,8 +10671,7 @@ pub fn bin_print(
     // by default, matching `/bin/dash`. (Note: dash's echo also does not
     // consume -e/-E as flags; that flag-parsing nuance is not handled here
     // — only the default escape behavior is aligned.)
-    let bsd_echo_active =
-        echo_mode && isset(BSDECHO) && !crate::dash_mode::dash_strict();
+    let bsd_echo_active = echo_mode && isset(BSDECHO) && !crate::dash_mode::dash_strict();
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
         || (echo_mode && OPT_ISSET(ops, b'E'))
@@ -10914,8 +10903,7 @@ pub fn bin_print(
         // `a\nb\nc\n` (with the trailing newline) where `print -v x a b c`
         // stores `a b c` (none). The port previously suppressed it for every
         // `-v`, dropping the `-l` trailing newline.
-        let suppress_term =
-            nonewline || backslash_c_truncated || !OPT_ISSET(ops, b'l');
+        let suppress_term = nonewline || backslash_c_truncated || !OPT_ISSET(ops, b'l');
         let mut val = body.clone();
         if !suppress_term {
             val.push(if nul_sep { '\0' } else { '\n' }); // c:546
@@ -11758,10 +11746,10 @@ pub fn zexit(val: i32, from_where: i32) {
         }
         saveandpophiststack(1, writeflags); // c:6018
         savehistfile(None, writeflags); // c:6019
-        // c:6021-6027 — `if (islogin && !subsh) { sourcehome(".zlogout");
-        // ... source(GLOBAL_ZLOGOUT); }`. The C `subsh` check is covered
-        // by the RUST-ONLY SUBSHELL_DEPTH gate above (in-process
-        // subshells returned before reaching here).
+                                        // c:6021-6027 — `if (islogin && !subsh) { sourcehome(".zlogout");
+                                        // ... source(GLOBAL_ZLOGOUT); }`. The C `subsh` check is covered
+                                        // by the RUST-ONLY SUBSHELL_DEPTH gate above (in-process
+                                        // subshells returned before reaching here).
         if islogin() {
             // c:6021
             crate::ported::init::sourcehome(".zlogout"); // c:6022
@@ -12462,8 +12450,8 @@ pub fn bin_emulate(
             None
         };
         crate::ported::options::emulate(shname.as_str(), opt_r); // c:6285
-        // Re-sync cmdopts from OPTS_LIVE so it reflects the emulation's
-        // defaults rather than the pre-emulate state captured above.
+                                                                 // Re-sync cmdopts from OPTS_LIVE so it reflects the emulation's
+                                                                 // defaults rather than the pre-emulate state captured above.
         for n in ZSH_OPTIONS_SET.iter() {
             cmdopts.insert(
                 n.to_string(),
@@ -13051,7 +13039,11 @@ pub fn bin_read(
             let _diag_errno = io::Error::last_os_error().raw_os_error();
             if n <= 0 && std::path::Path::new("/tmp/ZSHRS_READ_DIAG").exists() {
                 use std::io::Write as _;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/zshrs_readbyte.log") {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/zshrs_readbyte.log")
+                {
                     let _ = writeln!(f, "read_byte fd={} n={} errno={:?}", fd, n, _diag_errno);
                 }
             }
@@ -14062,8 +14054,30 @@ pub fn bin_test(
             && rest[0].starts_with('-')
             && matches!(
                 rest[0].chars().nth(1).unwrap_or(' '),
-                'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L' | 'n' | 'o' | 'p'
-                    | 'r' | 's' | 'S' | 't' | 'u' | 'v' | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+                'a' | 'b'
+                    | 'c'
+                    | 'd'
+                    | 'e'
+                    | 'f'
+                    | 'g'
+                    | 'h'
+                    | 'k'
+                    | 'L'
+                    | 'n'
+                    | 'o'
+                    | 'p'
+                    | 'r'
+                    | 's'
+                    | 'S'
+                    | 't'
+                    | 'u'
+                    | 'v'
+                    | 'w'
+                    | 'x'
+                    | 'z'
+                    | 'G'
+                    | 'N'
+                    | 'O'
             );
         if !has_connective && !has_paren && !has_known_binop_mid && !rest_is_unary {
             crate::ported::utils::zwarn(&format!("condition expected: {}", argv[0]));
@@ -14511,25 +14525,25 @@ pub fn bin_trap(
 
     // c:7404-7411 — first arg is the trap body.
     let arg = argv.remove(0); // c:7404
-    // c:7405-7409 — `if (!*arg) prog = &dummy_eprog; else if (!(prog =
-    // parse_string(arg, 1))) { zwarnnam(name, "couldn't parse trap
-    // command"); return 1; }`. The body is parsed when the trap is
-    // installed, so an unparseable body is rejected here rather than
-    // deferred to signal delivery. An empty body (`trap '' SIG`) takes
-    // C's dummy_eprog branch and is never parsed. This gate precedes
-    // the signal checks below, so `trap 'for' BOGUS` reports the parse
-    // failure, not "undefined signal".
-    //
-    // C reaches its parser through parse_string (ported at
-    // exec.rs:parse_string over the ported lexer). The trap body is
-    // stored as text and later run through parse_isolated by
-    // execute_script_zsh_pipeline (vm_helper.rs:2249), so validation
-    // goes through the same parser that will execute it — otherwise a
-    // body could pass here and still fail at delivery. Save/restore
-    // errflag around the probe exactly as vm_helper.rs:2240-2251 does,
-    // so a rejected body doesn't leave the error flag set and abort the
-    // enclosing shell. The parser emits its own `parse error` via zerr
-    // first; this adds C's second diagnostic.
+                              // c:7405-7409 — `if (!*arg) prog = &dummy_eprog; else if (!(prog =
+                              // parse_string(arg, 1))) { zwarnnam(name, "couldn't parse trap
+                              // command"); return 1; }`. The body is parsed when the trap is
+                              // installed, so an unparseable body is rejected here rather than
+                              // deferred to signal delivery. An empty body (`trap '' SIG`) takes
+                              // C's dummy_eprog branch and is never parsed. This gate precedes
+                              // the signal checks below, so `trap 'for' BOGUS` reports the parse
+                              // failure, not "undefined signal".
+                              //
+                              // C reaches its parser through parse_string (ported at
+                              // exec.rs:parse_string over the ported lexer). The trap body is
+                              // stored as text and later run through parse_isolated by
+                              // execute_script_zsh_pipeline (vm_helper.rs:2249), so validation
+                              // goes through the same parser that will execute it — otherwise a
+                              // body could pass here and still fail at delivery. Save/restore
+                              // errflag around the probe exactly as vm_helper.rs:2240-2251 does,
+                              // so a rejected body doesn't leave the error flag set and abort the
+                              // enclosing shell. The parser emits its own `parse error` via zerr
+                              // first; this adds C's second diagnostic.
     if !arg.is_empty() {
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
@@ -16963,11 +16977,11 @@ fn printf_format(
     // to match C exactly. `_with` takes a u32 `how` mask; the
     // canonical i32 const lives in `zsh_h` (Src/zsh.h:3180-3181).
     let (fmt, _) = getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32, None); // c:builtin.c:4711
-                                                                                            // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
-                                                                                            // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
-                                                                                            // (b) stops the format-reuse loop entirely (no reapplication over the
-                                                                                            // remaining args). getkeystring_with already cut `fmt` at the `\c`;
-                                                                                            // take the TLS flag it set so the reuse loop knows to stop.
+                                                                                                  // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
+                                                                                                  // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
+                                                                                                  // (b) stops the format-reuse loop entirely (no reapplication over the
+                                                                                                  // remaining args). getkeystring_with already cut `fmt` at the `\c`;
+                                                                                                  // take the TLS flag it set so the reuse loop knows to stop.
     let mut fmttrunc = crate::ported::utils::getkey_truncated_take();
     let mut out = String::new();
     let mut arg_i: usize = 0;
@@ -17085,15 +17099,15 @@ fn printf_format(
             // spec walk before reaching the conversion char.
             if iter.peek() == Some(&'*') {
                 iter.next(); // c:4796 — consume the `*` marker
-                // c:Src/builtin.c:5240-5247 — the `*` width arg is
-                // MATH-EVALUATED (`width = (int)mathevali(metafy(*argp,
-                // …))`), not a plain integer parse: `0x1f`→31, ` 4`→4,
-                // `'A`→65, `2+3`→5. parse_int_arg is the shared
-                // getnum→mathevali path (same one the %d/%i arm uses),
-                // and on a math error it zeroes the value and flags
-                // ret=1 (c:5243 `errflag → ret = 1`). Previously the
-                // plain `str::parse` silently yielded 0 for any non-
-                // decimal width arg.
+                             // c:Src/builtin.c:5240-5247 — the `*` width arg is
+                             // MATH-EVALUATED (`width = (int)mathevali(metafy(*argp,
+                             // …))`), not a plain integer parse: `0x1f`→31, ` 4`→4,
+                             // `'A`→65, `2+3`→5. parse_int_arg is the shared
+                             // getnum→mathevali path (same one the %d/%i arm uses),
+                             // and on a math error it zeroes the value and flags
+                             // ret=1 (c:5243 `errflag → ret = 1`). Previously the
+                             // plain `str::parse` silently yielded 0 for any non-
+                             // decimal width arg.
                 let w: i64 = args.get(arg_i).map(|s| parse_int_arg(s)).unwrap_or(0);
                 arg_i += 1;
                 spec.push_str(&w.to_string());
@@ -17109,7 +17123,7 @@ fn printf_format(
             }
             if iter.peek() == Some(&'.') {
                 iter.next(); // consume the `.`
-                // `.` precision: also accepts `*` per c:4796 same as width.
+                             // `.` precision: also accepts `*` per c:4796 same as width.
                 if iter.peek() == Some(&'*') {
                     iter.next();
                     saw_prec_star = true;
@@ -17179,7 +17193,11 @@ fn printf_format(
                 // plain `%%` arrives with `spec == "%"`; anything else means
                 // modifiers were consumed.
                 Some('%') if spec != "%" || saw_prec_star => {
-                    let disp = if saw_prec_star && spec == "%" { "%.*" } else { spec.as_str() };
+                    let disp = if saw_prec_star && spec == "%" {
+                        "%.*"
+                    } else {
+                        spec.as_str()
+                    };
                     return Err((out, format!("{disp}%: invalid directive")));
                 }
                 Some('%') => out.push('%'),
@@ -17193,7 +17211,8 @@ fn printf_format(
                     // `count - rcount` is bytes since the cycle start
                     // (c:5168), i.e. out.len() - cycle_start here.
                     if let Some(name) = args.get(arg_i) {
-                        n_targets.push((name.clone(), out.len() - cycle_start)); // c:5428
+                        n_targets.push((name.clone(), out.len() - cycle_start));
+                        // c:5428
                     }
                     arg_i += 1;
                 }
@@ -17269,7 +17288,9 @@ fn printf_format(
                     out.push_str(&format_spec_str(&spec, &formatted, false));
                 }
                 Some('d') | Some('i') => {
-                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(
+                        args.get(arg_i),
+                    ) {
                         PRINTF_MATH_ERR.with(|c| c.set(true));
                     }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
@@ -17279,7 +17300,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('u') => {
-                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(
+                        args.get(arg_i),
+                    ) {
                         PRINTF_MATH_ERR.with(|c| c.set(true));
                     }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
@@ -17297,7 +17320,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('x') => {
-                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(
+                        args.get(arg_i),
+                    ) {
                         PRINTF_MATH_ERR.with(|c| c.set(true));
                     }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
@@ -17315,7 +17340,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('X') => {
-                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(
+                        args.get(arg_i),
+                    ) {
                         PRINTF_MATH_ERR.with(|c| c.set(true));
                     }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
@@ -17333,7 +17360,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('o') => {
-                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(
+                        args.get(arg_i),
+                    ) {
                         PRINTF_MATH_ERR.with(|c| c.set(true));
                     }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
@@ -17467,8 +17496,11 @@ fn printf_format(
                 // so `\141` was octal-eval'd to `a` — diverged.
                 Some('b') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let (s, _) =
-                        getkeystring_with(&a, crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32, None);
+                    let (s, _) = getkeystring_with(
+                        &a,
+                        crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
+                        None,
+                    );
                     // c:5380-5383 — a `\c` inside the `%b` arg truncates:
                     // emit the expansion up to `\c`, then stop the whole
                     // printf (no rest-of-format, no reuse). getkeystring_with
@@ -17564,7 +17596,11 @@ fn format_spec_str(spec: &str, s: &str, honor_zero: bool) -> String {
     if left_align {
         format!("{}{}", truncated, " ".repeat(pad))
     } else {
-        let padch = if honor_zero && zero_pad_flag { '0' } else { ' ' };
+        let padch = if honor_zero && zero_pad_flag {
+            '0'
+        } else {
+            ' '
+        };
         format!("{}{}", padch.to_string().repeat(pad), truncated)
     }
 }
@@ -17619,15 +17655,14 @@ fn parse_int_arg(s: &str) -> i64 {
             Some(r) => (true, r),
             None => (false, t.strip_prefix('+').unwrap_or(t)),
         };
-        let (radix, digits) = if let Some(h) =
-            body.strip_prefix("0x").or_else(|| body.strip_prefix("0X"))
-        {
-            (16u32, h)
-        } else if body.starts_with('0') {
-            (8u32, body) // leading 0 → octal ("0" itself is a clean 0)
-        } else {
-            (10u32, body)
-        };
+        let (radix, digits) =
+            if let Some(h) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+                (16u32, h)
+            } else if body.starts_with('0') {
+                (8u32, body) // leading 0 → octal ("0" itself is a clean 0)
+            } else {
+                (10u32, body)
+            };
         let ndig = digits.chars().take_while(|c| c.is_digit(radix)).count();
         // Digit chars are ASCII, so char count == byte length of the run.
         let mut val = i64::from_str_radix(&digits[..ndig], radix).unwrap_or(0);
@@ -18128,8 +18163,6 @@ fn getsigidx(name: &str) -> i32 {
     crate::ported::jobs::getsigidx(name).unwrap_or(-1)
 }
 
-
-
 /// Port of `int pat_enables(const char *cmd, char **patp, int enable)`
 /// from `Src/pattern.c:4171`. Local builtin.rs shim that delegates to
 /// the canonical pattern.rs port. Static-link path: the actual
@@ -18275,7 +18308,15 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        for body in ["for", "((", "fi", "done", "case", "if true", "print ok; for"] {
+        for body in [
+            "for",
+            "((",
+            "fi",
+            "done",
+            "case",
+            "if true",
+            "print ok; for",
+        ] {
             let r = bin_trap("trap", &[body.into(), "USR1".into()], &empty, 0);
             assert_eq!(
                 r, 1,

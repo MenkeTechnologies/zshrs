@@ -214,8 +214,7 @@ fn colorize_body_line(line: &str) -> String {
     let mut s = String::with_capacity(line.len() + 16);
     s.push_str(&line[..indent_len]);
 
-    let bold_leading =
-        !trimmed.starts_with("//") && (trimmed.starts_with('-') || indent_len >= 4);
+    let bold_leading = !trimmed.starts_with("//") && (trimmed.starts_with('-') || indent_len >= 4);
     let rest = match trimmed.find(' ') {
         Some(tok_end) if bold_leading => {
             let (tok, tail) = trimmed.split_at(tok_end);
@@ -255,7 +254,10 @@ pub trait Transport {
 /// and version never require a running daemon.
 pub fn handle_no_transport(args: &[String]) -> Option<i32> {
     if args.is_empty() {
-        eprint!("{}", render_usage(color_enabled(std::io::stderr().is_terminal())));
+        eprint!(
+            "{}",
+            render_usage(color_enabled(std::io::stderr().is_terminal()))
+        );
         return Some(2);
     }
     let mut i = 0;
@@ -268,7 +270,10 @@ pub fn handle_no_transport(args: &[String]) -> Option<i32> {
                 i += 2;
             }
             "-h" | "--help" => {
-                print!("{}", render_usage(color_enabled(std::io::stdout().is_terminal())));
+                print!(
+                    "{}",
+                    render_usage(color_enabled(std::io::stdout().is_terminal()))
+                );
                 return Some(0);
             }
             "--version" => {
@@ -355,7 +360,10 @@ pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
 fn usage_err(msg: &str) -> i32 {
     eprintln!("zd: {msg}");
     eprintln!();
-    eprint!("{}", render_usage(color_enabled(std::io::stderr().is_terminal())));
+    eprint!(
+        "{}",
+        render_usage(color_enabled(std::io::stderr().is_terminal()))
+    );
     2
 }
 

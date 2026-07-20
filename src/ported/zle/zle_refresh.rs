@@ -2235,11 +2235,11 @@ pub fn zrefresh() {
         OBUF.lock().unwrap().clear(); // c:1142 resetvideo — drop the stale frame
         OLNCT.store(0, Ordering::SeqCst);
         OPUT_RPMPT.store(0, Ordering::SeqCst); // c:1144 no right-prompt on screen
-        // c:789 (resetvideo) — clear trashedzle so the NEXT trashzle (e.g.
-        // asklist's "drop the cursor below the prompt" before a completion
-        // list) passes its `!trashedzle` gate and actually parks below the
-        // line. trashzle sets trashedzle=1 + resetneeded=1; consuming
-        // resetneeded here is where trashedzle gets cleared again, matching C.
+                                               // c:789 (resetvideo) — clear trashedzle so the NEXT trashzle (e.g.
+                                               // asklist's "drop the cursor below the prompt" before a completion
+                                               // list) passes its `!trashedzle` gate and actually parks below the
+                                               // line. trashzle sets trashedzle=1 + resetneeded=1; consuming
+                                               // resetneeded here is where trashedzle gets cleared again, matching C.
         TRASHEDZLE.store(0, Ordering::Relaxed);
         // Home the real cursor to column 0 before re-emitting the prompt.
         // On the first paint of a line this is a fresh row (a no-op CR); on
@@ -2269,7 +2269,10 @@ pub fn zrefresh() {
             // expand_prompt leaves them as the RL_PROMPT_*_IGNORE bytes
             // (0x01/0x02); strip them here so the raw write doesn't corrupt
             // the render.
-            let emit: String = prompt.chars().filter(|&c| c != '\u{1}' && c != '\u{2}').collect();
+            let emit: String = prompt
+                .chars()
+                .filter(|&c| c != '\u{1}' && c != '\u{2}')
+                .collect();
             let _ = write_loop(out_fd, emit.as_bytes());
             // c:1163 — the prompt's literal escapes leave the terminal in
             // pmpt_attr; publish it so refreshline's first content attr-diff
@@ -2378,7 +2381,9 @@ pub fn zrefresh() {
                 // multiline theme (RPROMPT never painted).
                 let nlen = {
                     let nbuf = NBUF.lock().unwrap();
-                    nbuf.get(prompt_last_row).map(|r| ZR_strlen(r) as i32).unwrap_or(0)
+                    nbuf.get(prompt_last_row)
+                        .map(|r| ZR_strlen(r) as i32)
+                        .unwrap_or(0)
                 };
                 put = (nlen + rpromptw < winw - rprompt_off) as i32;
             }
@@ -3681,9 +3686,9 @@ pub fn tc_rightcurs(count: usize) {
                 zwcputc(&zr_cr); // c:2298 — zputc(&zr_cr)
             }
             tc_upcurs(LPROMPTH.load(Ordering::SeqCst) - 1); // c:2299
-            // c:2300 — `zputs(lpromptbuf, shout)` skips itok marker bytes
-            // (Src/utils.c:5272-5274); strip RL_PROMPT_*_IGNORE (0x01/0x02)
-            // before the raw write.
+                                                            // c:2300 — `zputs(lpromptbuf, shout)` skips itok marker bytes
+                                                            // (Src/utils.c:5272-5274); strip RL_PROMPT_*_IGNORE (0x01/0x02)
+                                                            // before the raw write.
             let emit: String = lpromptbuf
                 .chars()
                 .filter(|&c| c != '\u{1}' && c != '\u{2}')
@@ -3912,10 +3917,10 @@ pub fn clearscreen() -> i32 {
                                           // (Now wired — reexpandprompt is ported in zle_main; it was previously
                                           // deferred as "prompt subsystem".)
     crate::ported::zle::zle_main::reexpandprompt(); // c:2429
-    // c:2430 — return 0. C does NOT redraw here: it leaves `resetneeded` set
-    // and the zlecore loop's next zrefresh honours it (homing the video
-    // cursor and clearing OBUF for a full repaint). Calling zrefresh here
-    // would consume `resetneeded` before that redraw and diverge from C.
+                                                    // c:2430 — return 0. C does NOT redraw here: it leaves `resetneeded` set
+                                                    // and the zlecore loop's next zrefresh honours it (homing the video
+                                                    // cursor and clearing OBUF for a full repaint). Calling zrefresh here
+                                                    // would consume `resetneeded` before that redraw and diverge from C.
     0
 }
 
@@ -3943,8 +3948,8 @@ pub fn redisplay() -> i32 {
     tc_upcurs(lprompth - 1); // c:2439
     RESETNEEDED.store(1, Ordering::SeqCst); // c:2440 resetneeded = 1
     CLEARFLAG.store(0, Ordering::SeqCst); // c:2441 clearflag = 0
-    // c:2442 — return 0. C does NOT redraw here; the zlecore loop's next
-    // zrefresh honours `resetneeded` for the full repaint.
+                                          // c:2442 — return 0. C does NOT redraw here; the zlecore loop's next
+                                          // zrefresh honours `resetneeded` for the full repaint.
     0
 }
 

@@ -876,8 +876,11 @@ fn parse_first_line(line: &str) -> CompFileDef {
             // remaining word is a PATTERN key inserted into `_patcomps` (NOT
             // `_comps`). Collect all patterns after the flag.
             "-p" if parts.len() >= 2 => {
-                let pats: Vec<String> =
-                    parts[1..].iter().filter(|p| **p != "-p").map(|s| s.to_string()).collect();
+                let pats: Vec<String> = parts[1..]
+                    .iter()
+                    .filter(|p| **p != "-p")
+                    .map(|s| s.to_string())
+                    .collect();
                 if pats.is_empty() {
                     CompFileDef::None
                 } else {
@@ -889,8 +892,11 @@ fn parse_first_line(line: &str) -> CompFileDef {
             // post-pattern is tried AFTER normal completion). It does NOT go into
             // `_comps`. (Previously mis-routed to `_comps` via CompDef::Commands.)
             "-P" if parts.len() >= 2 => {
-                let pats: Vec<String> =
-                    parts[1..].iter().filter(|p| **p != "-P").map(|s| s.to_string()).collect();
+                let pats: Vec<String> = parts[1..]
+                    .iter()
+                    .filter(|p| **p != "-P")
+                    .map(|s| s.to_string())
+                    .collect();
                 if pats.is_empty() {
                     CompFileDef::None
                 } else {
@@ -1066,21 +1072,66 @@ fn install_comp_keybinding(widget: &str, style: &str, key: &str, func: &str) {
 /// are additionally collected by the scan into CompInitResult.keybindings.
 const STANDARD_COMP_KEYBINDINGS: &[(&str, &str, &str, &str)] = &[
     // (widget, style, key, func)
-    ("_complete_debug", "complete-word", "\u{18}?", "_complete_debug"), // Base/Widget/_complete_debug:1 \C-x?
-    ("_complete_help", "complete-word", "\u{18}h", "_complete_help"),   // Base/Widget/_complete_help:1 \C-xh
-    ("_complete_tag", "complete-word", "\u{18}t", "_complete_tag"),     // Base/Widget/_complete_tag:1 \C-xt
-    ("_correct_filename", "complete-word", "\u{18}C", "_correct_filename"), // _correct_filename:1 \C-xC
-    ("_correct_word", "complete-word", "\u{18}c", "_correct_word"),     // _correct_word:1 \C-xc
-    ("_read_comp", "complete-word", "\u{18}\u{12}", "_read_comp"),      // _read_comp:1 \C-x\C-r
-    ("_most_recent_file", "complete-word", "\u{18}m", "_most_recent_file"), // _most_recent_file:1 \C-xm
-    ("_next_tags", "list-choices", "\u{18}n", "_next_tags"),            // _next_tags:1 \C-xn
-    ("_expand_word", "complete-word", "\u{18}e", "_expand_word"),       // _expand_word:1 -K (1st pair)
-    ("_list_expansions", "list-choices", "\u{18}d", "_expand_word"),    // _expand_word:1 -K (2nd pair)
-    ("_bash_complete-word", "complete-word", "\u{1b}~", "_bash_completions"), // _bash_completions:1 -K
-    ("_bash_list-choices", "list-choices", "\u{18}~", "_bash_completions"),   // _bash_completions:1 -K
-    ("_history-complete-older", "complete-word", "\u{1b}/", "_history_complete_word"), // _history_complete_word:1 -K
-    ("_history-complete-newer", "complete-word", "\u{1b},", "_history_complete_word"), // _history_complete_word:1 -K
-    ("_expand_alias", "complete-word", "\u{18}a", "_expand_alias"),     // Base/Completer/_expand_alias:1 -K
+    (
+        "_complete_debug",
+        "complete-word",
+        "\u{18}?",
+        "_complete_debug",
+    ), // Base/Widget/_complete_debug:1 \C-x?
+    (
+        "_complete_help",
+        "complete-word",
+        "\u{18}h",
+        "_complete_help",
+    ), // Base/Widget/_complete_help:1 \C-xh
+    ("_complete_tag", "complete-word", "\u{18}t", "_complete_tag"), // Base/Widget/_complete_tag:1 \C-xt
+    (
+        "_correct_filename",
+        "complete-word",
+        "\u{18}C",
+        "_correct_filename",
+    ), // _correct_filename:1 \C-xC
+    ("_correct_word", "complete-word", "\u{18}c", "_correct_word"), // _correct_word:1 \C-xc
+    ("_read_comp", "complete-word", "\u{18}\u{12}", "_read_comp"),  // _read_comp:1 \C-x\C-r
+    (
+        "_most_recent_file",
+        "complete-word",
+        "\u{18}m",
+        "_most_recent_file",
+    ), // _most_recent_file:1 \C-xm
+    ("_next_tags", "list-choices", "\u{18}n", "_next_tags"),        // _next_tags:1 \C-xn
+    ("_expand_word", "complete-word", "\u{18}e", "_expand_word"),   // _expand_word:1 -K (1st pair)
+    (
+        "_list_expansions",
+        "list-choices",
+        "\u{18}d",
+        "_expand_word",
+    ), // _expand_word:1 -K (2nd pair)
+    (
+        "_bash_complete-word",
+        "complete-word",
+        "\u{1b}~",
+        "_bash_completions",
+    ), // _bash_completions:1 -K
+    (
+        "_bash_list-choices",
+        "list-choices",
+        "\u{18}~",
+        "_bash_completions",
+    ), // _bash_completions:1 -K
+    (
+        "_history-complete-older",
+        "complete-word",
+        "\u{1b}/",
+        "_history_complete_word",
+    ), // _history_complete_word:1 -K
+    (
+        "_history-complete-newer",
+        "complete-word",
+        "\u{1b},",
+        "_history_complete_word",
+    ), // _history_complete_word:1 -K
+    ("_expand_alias", "complete-word", "\u{18}a", "_expand_alias"), // Base/Completer/_expand_alias:1 -K
 ];
 
 /// Install the stock `#compdef -k`/`-K` bindings (see
@@ -1189,17 +1240,11 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
                         // takes the FILE's name (e.g. _complete_debug). Collected
                         // here; zle -C + bindkey happen in apply_keybindings
                         // (this scan may run on a background thread).
-                        result.keybindings.push((
-                            file.name.clone(),
-                            style.clone(),
-                            keys.clone(),
-                        ));
+                        result
+                            .keybindings
+                            .push((file.name.clone(), style.clone(), keys.clone()));
                     }
-                    CompDef::WidgetKey {
-                        widget,
-                        style,
-                        key,
-                    } => {
+                    CompDef::WidgetKey { widget, style, key } => {
                         // sh:336-354 — `#compdef -K <widget> <style> <key>`:
                         // the completion FUNCTION is the file's name, the
                         // widget name is explicit.
@@ -1695,8 +1740,7 @@ pub fn compdef(args: &[String]) -> i32 {
             //   lags and made `compdef func=cmd` wrongly report
             //   "unknown command or service" even though `$_comps[cmd]`
             //   was set. Read the parameters first, fall back to s.comps.
-            let comps_param =
-                crate::ported::subst::assoc_get("_comps").unwrap_or_default();
+            let comps_param = crate::ported::subst::assoc_get("_comps").unwrap_or_default();
             // sh:307 — `${_services[(r)$svc]:-$svc}`. `(r)` returns the
             //   matching VALUE (== $svc for a literal), else the `:-$svc`
             //   default, so the effective service key is `$svc` itself.
@@ -1706,16 +1750,14 @@ pub fn compdef(args: &[String]) -> i32 {
                 .filter(|f| !f.is_empty())
                 .cloned()
                 .or_else(|| {
-                    with_state(|s| s.comps.get(&resolved_svc).cloned())
-                        .filter(|f| !f.is_empty())
+                    with_state(|s| s.comps.get(&resolved_svc).cloned()).filter(|f| !f.is_empty())
                 })
                 .or_else(|| {
                     // sh:311 fallback to first matching pat/postpat key,
                     //   again preferring the parameters over s.* state.
-                    let pat = crate::ported::subst::assoc_get("_patcomps")
-                        .unwrap_or_default();
-                    let postpat = crate::ported::subst::assoc_get("_postpatcomps")
-                        .unwrap_or_default();
+                    let pat = crate::ported::subst::assoc_get("_patcomps").unwrap_or_default();
+                    let postpat =
+                        crate::ported::subst::assoc_get("_postpatcomps").unwrap_or_default();
                     pat.iter()
                         .find(|(k, _)| pattern_matches(k, &svc_in))
                         .map(|(_, v)| v.clone())
@@ -1747,8 +1789,7 @@ pub fn compdef(args: &[String]) -> i32 {
                 continue;
             }
             // sh:308-309 — `[[ -n ${_services[$svc]} ]] && svc=${_services[$svc]}`.
-            let services_param =
-                crate::ported::subst::assoc_get("_services").unwrap_or_default();
+            let services_param = crate::ported::subst::assoc_get("_services").unwrap_or_default();
             let svc_for_state = services_param
                 .get(&svc_in)
                 .filter(|v| !v.is_empty())

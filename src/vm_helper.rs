@@ -262,8 +262,7 @@ pub struct SubshellSnapshot {
     /// `inner` because paramsubst reads through paramtab).
     pub paramtab: crate::fast_hash::FastMap<String, crate::ported::zsh_h::Param>,
     /// `paramtab_hashed_storage` field.
-    pub paramtab_hashed_storage:
-        crate::cow_map::CowHashMap<String, IndexMap<String, String>>,
+    pub paramtab_hashed_storage: crate::cow_map::CowHashMap<String, IndexMap<String, String>>,
     /// `positional_params` field.
     pub positional_params: Vec<String>,
     /// `env_vars` field.
@@ -730,7 +729,6 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     program
 }
 
-
 /// Build the `scriptname[:lineno]` prefix zsh puts on an execution error.
 ///
 /// c:Src/utils.c:301 — `zerrmsg` prints the line number ONLY when it is
@@ -745,9 +743,7 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
 fn zerr_prefix(sn: &str) -> String {
     let lineno = crate::ported::lex::lineno();
     let ll = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
-    if (crate::ported::zsh_h::unset(crate::ported::zsh_h::SHINSTDIN) || ll != 0)
-        && lineno != 0
-    {
+    if (crate::ported::zsh_h::unset(crate::ported::zsh_h::SHINSTDIN) || ll != 0) && lineno != 0 {
         format!("{}:{}", sn, lineno)
     } else {
         sn.to_string()
@@ -939,8 +935,7 @@ impl ShellExecutor {
             .ok()
             .and_then(|t| {
                 t.get(resolved.as_str()).map(|p| {
-                    (p.node.flags as u32 & crate::ported::zsh_h::PM_ARRAY) != 0
-                        && p.u_arr.is_some()
+                    (p.node.flags as u32 & crate::ported::zsh_h::PM_ARRAY) != 0 && p.u_arr.is_some()
                 })
             })
             .unwrap_or(false)
@@ -1128,7 +1123,7 @@ impl ShellExecutor {
             current_command_glob_failed: std::cell::Cell::new(false),
             jobs: JobTable::new(),
             fpath,
-            history: None,        // worker: no interactive history engine
+            history: None, // worker: no interactive history engine
             completions: HashMap::new(),
             process_sub_counter: 0,
             zstyles: Vec::new(),
@@ -1137,15 +1132,15 @@ impl ShellExecutor {
             in_dq_context: 0,
             in_scalar_assign: 0,
             profiling_enabled: false,
-            compsys_cache: None,  // worker: no per-thread SQLite mirror
+            compsys_cache: None, // worker: no per-thread SQLite mirror
             compinit_pending: None,
-            plugin_cache: None,   // worker: no per-thread plugin cache
+            plugin_cache: None, // worker: no per-thread plugin cache
             deferred_compdefs: Vec::new(),
             returning: None,
             zsh_compat: false,
             bash_compat: false,
             posix_mode: false,
-            worker_pool: pool,    // SHARED — never spawn a nested pool
+            worker_pool: pool, // SHARED — never spawn a nested pool
             intercepts: Vec::new(),
             async_jobs: HashMap::new(),
             next_async_id: 1,
@@ -1956,12 +1951,9 @@ impl ShellExecutor {
                         // abort the shell (upstream 546203a770, "33276: safer
                         // import of numerical variables from environment").
                         if (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0 {
-                            let (ival, _) = crate::ported::utils::zstrtol_underscore(
-                                &env_value,
-                                0,
-                                true,
-                            ); // c:2773
-                            // c:3660 — any assignstrvalue write clears PM_UNSET.
+                            let (ival, _) =
+                                crate::ported::utils::zstrtol_underscore(&env_value, 0, true); // c:2773
+                                                                                               // c:3660 — any assignstrvalue write clears PM_UNSET.
                             pm.node.flags &= !(PM_UNSET as i32);
                             // c:2774 — `v->pm->gsu.i->setfn(v->pm, ival)`.
                             // intsetfn is this port's stand-in for the gsu_i
@@ -2658,9 +2650,7 @@ impl ShellExecutor {
         // `fn` ptr can't carry the dynamic name). Consult that registry here
         // so `compdef mycmd` → `_comps[cmd]=mycmd` → this call routes to the
         // compiled regex state machine.
-        if let Some(rc) =
-            crate::compsys::ported::_regex_arguments::dispatch_if_registered(name)
-        {
+        if let Some(rc) = crate::compsys::ported::_regex_arguments::dispatch_if_registered(name) {
             return Some(rc);
         }
         // Autoload prelude (same as dispatch_function_call's).
@@ -2694,8 +2684,7 @@ impl ShellExecutor {
                 // expansion disabled. zshrs recorded the bit but never consulted
                 // it, so a body calling `helper` picked up a caller-defined
                 // `alias helper=...` — exactly what -U exists to prevent.
-                let unaliased =
-                    (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0;
+                let unaliased = (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0;
                 let noalias_save = crate::ported::lex::noaliases(); // c:5684
                 crate::ported::lex::set_noaliases(unaliased); // c:5697
                 let _restore_noaliases = NoAliasesRestore(noalias_save); // c:5704
@@ -2719,7 +2708,8 @@ impl ShellExecutor {
                     if let Some(dir) = loaded_dir.as_deref() {
                         if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
                             if let Some(shf) = tab.get_mut(name) {
-                                crate::ported::exec::loadautofnsetfile(shf, Some(dir)); // c:5735
+                                crate::ported::exec::loadautofnsetfile(shf, Some(dir));
+                                // c:5735
                             }
                         }
                     }
@@ -2732,17 +2722,17 @@ impl ShellExecutor {
         let chunk = self.functions_compiled.get(name).cloned()?;
         let seed_status = self.last_status();
         let _ = args; // fusevm body reads $1..$N from PPARAMS
-        // Reuse a VM from the per-thread pool instead of building one from
-        // scratch every call. `register_builtins` installs ~hundreds of
-        // fn-pointer handlers into the VM's builtin_table; the table is
-        // identical for every VM, so re-running it per function call was
-        // pure waste (~130 profile samples in a tight call loop, the #2 hot
-        // spot after option lookups). `VM::reset(chunk)` clears execution
-        // state but PRESERVES builtin_table / host / JIT wiring, so a
-        // recycled VM is call-ready without re-registration. Fresh VMs pay
-        // the registration once. Nested calls simply check out additional
-        // VMs; the pool grows to the max call depth. Re-entrant and
-        // panic-safe: the VM is returned on the normal path below.
+                      // Reuse a VM from the per-thread pool instead of building one from
+                      // scratch every call. `register_builtins` installs ~hundreds of
+                      // fn-pointer handlers into the VM's builtin_table; the table is
+                      // identical for every VM, so re-running it per function call was
+                      // pure waste (~130 profile samples in a tight call loop, the #2 hot
+                      // spot after option lookups). `VM::reset(chunk)` clears execution
+                      // state but PRESERVES builtin_table / host / JIT wiring, so a
+                      // recycled VM is call-ready without re-registration. Fresh VMs pay
+                      // the registration once. Nested calls simply check out additional
+                      // VMs; the pool grows to the max call depth. Re-entrant and
+                      // panic-safe: the VM is returned on the normal path below.
         let mut vm = crate::vm_pool::acquire(chunk);
         vm.last_status = seed_status;
         let _ = vm.run();
@@ -2785,9 +2775,7 @@ impl ShellExecutor {
         // registry here too, before autoload. Returned directly (like
         // run_function_body_only) — the regex body drives compsys globals, not
         // function locals, so it needs no doshfunc scope wrap.
-        if let Some(rc) =
-            crate::compsys::ported::_regex_arguments::dispatch_if_registered(name)
-        {
+        if let Some(rc) = crate::compsys::ported::_regex_arguments::dispatch_if_registered(name) {
             return Some(rc);
         }
         // zshrs-original: `[compsys] backend = "rust"` short-circuit.
@@ -2809,8 +2797,7 @@ impl ShellExecutor {
         // A plugin-registered override (ABI v4, `zmodload -R`) also
         // intercepts natively: it supplies the body, so no shell autoload
         // or compiled chunk is needed — same as a built-in Rust port.
-        let has_plugin_override =
-            crate::extensions::plugin_host::compfn_override(name).is_some();
+        let has_plugin_override = crate::extensions::plugin_host::compfn_override(name).is_some();
         // Autoload prelude skipped when a Rust port OR plugin override wins
         // — no upstream shell function to load.
         if direct_rust_fn.is_none()
@@ -2851,8 +2838,7 @@ impl ShellExecutor {
                 //     noaliases = (shf->node.flags & PM_UNALIASED);
                 //     prog = getfpfunc(...);        /* parses the file */
                 //     noaliases = noalias;
-                let unaliased =
-                    (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0;
+                let unaliased = (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0;
                 let noalias_save = crate::ported::lex::noaliases(); // c:5684
                 crate::ported::lex::set_noaliases(unaliased); // c:5697
                                                               // c:5704 — restored on EVERY exit from this block, including the
@@ -2923,9 +2909,11 @@ impl ShellExecutor {
                             SHELL_EXITING.store(saved_shell_exiting, Relaxed);
                         }
                         if let Some(dir) = loaded_dir.as_deref() {
-                            if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+                            if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write()
+                            {
                                 if let Some(shf) = tab.get_mut(name) {
-                                    crate::ported::exec::loadautofnsetfile(shf, Some(dir)); // c:5735
+                                    crate::ported::exec::loadautofnsetfile(shf, Some(dir));
+                                    // c:5735
                                 }
                             }
                         }
@@ -3417,8 +3405,7 @@ impl ShellExecutor {
         if cmd.contains('/') || !fusevm::ffi::is_registered(cmd) {
             return None;
         }
-        let vals: Vec<fusevm::Value> =
-            args.iter().map(|a| fusevm::Value::str(a.clone())).collect();
+        let vals: Vec<fusevm::Value> = args.iter().map(|a| fusevm::Value::str(a.clone())).collect();
         match fusevm::ffi::try_call(cmd, &vals) {
             Some(Ok(v)) => {
                 use std::io::Write as _;
@@ -3779,8 +3766,7 @@ impl ShellExecutor {
                     .get()
                     .and_then(|t| t.lock().ok().map(|g| *g));
                 {
-                    let monitor =
-                        crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
+                    let monitor = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
                     crate::ported::jobs::clearjobtab(&mut self.jobs, monitor);
                 }
                 let mut vm = fusevm::VM::new(chunk);
@@ -4155,9 +4141,8 @@ mod tests {
             pool.submit(move || {
                 // Lightweight per-worker executor; shares the global tables.
                 let mut wex = ShellExecutor::new_worker(pool_for_worker);
-                let _ = wex.execute_script_zsh_pipeline(&format!(
-                    "typeset -g PHASE1_WK_{i}=val_{i}"
-                ));
+                let _ =
+                    wex.execute_script_zsh_pipeline(&format!("typeset -g PHASE1_WK_{i}=val_{i}"));
                 let _ = tx.send(i);
             });
         }

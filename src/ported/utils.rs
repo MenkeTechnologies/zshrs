@@ -1239,7 +1239,11 @@ pub fn substnamedir(s: &str) -> String {
     let home = getsparam("HOME").unwrap_or_default(); // c:1133
     let mut finddir_best: i32 = 0; // c:1163
     let mut best: Option<(String, String)> = None; // finddir_last
-    let home_diff = if home.len() == 1 { 0 } else { home.len() as i32 }; // c:1140-1141
+    let home_diff = if home.len() == 1 {
+        0
+    } else {
+        home.len() as i32
+    }; // c:1140-1141
     if home_diff > 0 {
         if let Some(rest) = s.strip_prefix(&home) {
             if rest.is_empty() || rest.starts_with('/') {
@@ -1358,16 +1362,20 @@ pub fn finddir(path: &str) -> Option<String> {
     // early init / unit-test environments).
     let _default_pm = crate::ported::zsh_h::param::default();
     let home = crate::ported::params::homegetfn(&_default_pm); // c:1138 home
-    // c:1139-1141 + 1164-1165 — the home node (nam="", diff =
-    // strlen(home), root's 1 → 0) runs through the SAME best-diff scan
-    // as the table (`finddir_scan(&homenode.node, 0);
-    // scanhashtable(nameddirtab, …)`): it COMPETES with `hash -d`
-    // entries instead of preempting them, so a named dir with a larger
-    // diff wins (e.g. ~ZPWR over ~/.zpwr). The previous early return
-    // on the $HOME prefix hid every named dir under $HOME.
+                                                               // c:1139-1141 + 1164-1165 — the home node (nam="", diff =
+                                                               // strlen(home), root's 1 → 0) runs through the SAME best-diff scan
+                                                               // as the table (`finddir_scan(&homenode.node, 0);
+                                                               // scanhashtable(nameddirtab, …)`): it COMPETES with `hash -d`
+                                                               // entries instead of preempting them, so a named dir with a larger
+                                                               // diff wins (e.g. ~ZPWR over ~/.zpwr). The previous early return
+                                                               // on the $HOME prefix hid every named dir under $HOME.
     let mut finddir_best: i32 = 0; // c:1163
     let mut best: Option<(String, String)> = None; // finddir_last
-    let home_diff = if home.len() == 1 { 0 } else { home.len() as i32 }; // c:1140-1141
+    let home_diff = if home.len() == 1 {
+        0
+    } else {
+        home.len() as i32
+    }; // c:1140-1141
     if home_diff > 0 {
         if let Some(rest) = path.strip_prefix(&home) {
             if rest.is_empty() || rest.starts_with('/') {
@@ -1719,7 +1727,7 @@ pub fn preprompt() {
     // commands can't clobber what the status / command_execution_time
     // segments show. Mirrors p10k's `_p9k_save_status` precmd ordering.
     crate::p10k::note_command_finished(
-        crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) as i64,
+        crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) as i64
     );
     // c:1532 `static time_t lastperiodic;` — periodic-hook last-fire timestamp.
     static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
@@ -2315,22 +2323,22 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
         0 | 1 => {
             // c:1922-1923
             ADJUSTWINSIZE_GETWINSZ.store(0, Ordering::SeqCst); // c:1924
-            // c:1931-1934 — C: `if (adjustlines(from) && zgetenv("LINES"))
-            // setiparam("LINES", zterm_lines);` (same for COLUMNS). The
-            // zgetenv gate only guards re-publishing to an ENV-exported
-            // LINES — in C the param itself is ALWAYS live because its
-            // valptr aliases the `zterm_lines` global that adjustlines
-            // just wrote (createparamtable IPDEF5 → zlevarsetfn/intvargetfn
-            // on &zterm_lines). zshrs params store their own u_val copy
-            // (no valptr aliasing), so the probe result must be written
-            // through setiparam unconditionally — gating on the env left
-            // `$LINES`/`$COLUMNS` at 0 for every interactive shell
-            // (LINES is not in the environment; zsh doesn't export it).
-            // Effect: `$(( LINES / 3 ))` = 0 → division-by-zero in
-            // history-search-multi-word pagination (_hsmw_main:81), and
-            // every LINES/COLUMNS-derived layout was wrong. Recursion is
-            // safe: setiparam → zlevarsetfn → adjustwinsize(2|3) never
-            // re-enters this arm.
+                                                               // c:1931-1934 — C: `if (adjustlines(from) && zgetenv("LINES"))
+                                                               // setiparam("LINES", zterm_lines);` (same for COLUMNS). The
+                                                               // zgetenv gate only guards re-publishing to an ENV-exported
+                                                               // LINES — in C the param itself is ALWAYS live because its
+                                                               // valptr aliases the `zterm_lines` global that adjustlines
+                                                               // just wrote (createparamtable IPDEF5 → zlevarsetfn/intvargetfn
+                                                               // on &zterm_lines). zshrs params store their own u_val copy
+                                                               // (no valptr aliasing), so the probe result must be written
+                                                               // through setiparam unconditionally — gating on the env left
+                                                               // `$LINES`/`$COLUMNS` at 0 for every interactive shell
+                                                               // (LINES is not in the environment; zsh doesn't export it).
+                                                               // Effect: `$(( LINES / 3 ))` = 0 → division-by-zero in
+                                                               // history-search-multi-word pagination (_hsmw_main:81), and
+                                                               // every LINES/COLUMNS-derived layout was wrong. Recursion is
+                                                               // safe: setiparam → zlevarsetfn → adjustwinsize(2|3) never
+                                                               // re-enters this arm.
             let lines = if ttyrows > 0 {
                 ttyrows as i64 // c:1837 — zterm_lines = shttyinfo.winsize.ws_row
             } else {
@@ -2623,7 +2631,10 @@ pub fn zclose(fd: i32) -> i32 {
             // observed from the compinit bg scan). An in-range fd the
             // fdtable does NOT own is by definition not ours to close.
             if fdtable_get(fd) == FDT_UNUSED {
-                tracing::debug!(fd, "zclose: skipping unowned in-range fd (thread-safety guard)");
+                tracing::debug!(
+                    fd,
+                    "zclose: skipping unowned in-range fd (thread-safety guard)"
+                );
                 return 0;
             }
             if fdtable_get(fd) == FDT_FLOCK {
@@ -3250,7 +3261,7 @@ pub fn read_poll(fd: i32, readchar: &mut i32, polltty: bool, timeout_us: i64) ->
     {
         let mut ret: i32 = -1; // c:2647
         let mut mode: libc::c_long = -1; // c:2648
-        // C reassigns the `polltty` param; hold it as the VMIN-derived int.
+                                         // C reassigns the `polltty` param; hold it as the VMIN-derived int.
         let mut polltty: i32 = polltty as i32; // c:2645
         let mut ti: Option<libc::termios> = None; // c:2659 `struct ttyinfo ti;`
 
@@ -3267,7 +3278,7 @@ pub fn read_poll(fd: i32, readchar: &mut i32, polltty: bool, timeout_us: i64) ->
                 polltty = t.c_cc[libc::VMIN] as i32;
                 if polltty != 0 {
                     t.c_cc[libc::VMIN] = 0; // c:2688
-                    // c:2690 — termios timeout is 10ths of a second.
+                                            // c:2690 — termios timeout is 10ths of a second.
                     t.c_cc[libc::VTIME] = (timeout_us / 100_000) as libc::cc_t; // c:2690
                     settyinfo(&t); // c:2691
                 }
@@ -3316,9 +3327,7 @@ pub fn read_poll(fd: i32, readchar: &mut i32, polltty: bool, timeout_us: i64) ->
             };
             if can_read {
                 let mut c: u8 = 0;
-                let n = unsafe {
-                    libc::read(fd, &mut c as *mut u8 as *mut libc::c_void, 1)
-                };
+                let n = unsafe { libc::read(fd, &mut c as *mut u8 as *mut libc::c_void, 1) };
                 if n > 0 {
                     *readchar = c as i32; // c:2724
                     ret = 1; // c:2725
@@ -4955,8 +4964,7 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
         // unquoted-split path `set -- $v` uses); the quoted `"${=v}"` /
         // `${(s::)}` allownull path keeps zsh semantics. `zshrs --sh/--ksh/
         // --dash` sets posix_faithful(); `--... --zsh` leaves it false.
-        if consumed_sep && si >= bytes.len() && !allownull && crate::dash_mode::posix_faithful()
-        {
+        if consumed_sep && si >= bytes.len() && !allownull && crate::dash_mode::posix_faithful() {
             break;
         }
         t = si; // c:3746 — `t = s;`
@@ -5556,7 +5564,7 @@ pub fn inittyptab() {
     // typtab[] in place unlocked; the atomic store-per-slot flush keeps
     // readers lock-free (see TYPTAB doc in ztype_h.rs).
     let mut t = [0u32; 256]; // c:4168 memset(typtab, 0, sizeof(typtab))
-    // c:4169-4170 — control chars 0..32 and 128..160.
+                             // c:4169-4170 — control chars 0..32 and 128..160.
     for c in 0..32u32 {
         t[c as usize] = ICNTRL as u32;
         t[(c + 128) as usize] = ICNTRL as u32;
@@ -8033,7 +8041,9 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             let mc = mcs[i];
             if let (true, MetaChar::Ch(c)) = (mc_printable(mc), mc) {
                 // c:6214-6224
-                if c == '\\' || c == '\'' || (isset(BANGHIST) && bang != 0 && c as u32 == bang as u32)
+                if c == '\\'
+                    || c == '\''
+                    || (isset(BANGHIST) && bang != 0 && c as u32 == bang as u32)
                 {
                     result.push('\\');
                 }
@@ -8787,10 +8797,13 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     }
                 }
             }
-            Some(c) if isset(BANGHIST)
-                && crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst) != 0
-                && c as u32
-                    == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst) as u32 =>
+            Some(c)
+                if isset(BANGHIST)
+                    && crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst)
+                        != 0
+                    && c as u32
+                        == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst)
+                            as u32 =>
             {
                 // The reverse of quotestring's BANGHIST escape (c:Src/utils.c:6230
                 // — `\!` is emitted for the history char): unquoting `$'a\!b'`
@@ -10081,11 +10094,7 @@ pub fn getppid() -> i32 {
 /// limitation documented on `set_comp_sep` (compcore.rs), not new here.
 ///
 /// Callers with no offset to track pass `misc = None`.
-pub fn getkeystring_with(
-    s: &str,
-    how: u32,
-    mut misc: Option<&mut i32>,
-) -> (String, usize) {
+pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (String, usize) {
     // c:utils.c:6915
     let update_off = (how & crate::ported::zsh_h::GETKEY_UPDATE_OFFSET as u32) != 0;
     let mut result = String::new();
@@ -10419,7 +10428,11 @@ pub fn getkeystring_with(
                 // Advance past what C consumed. `vis[0]` is the already-taken
                 // match char unless the `\0` introducer moved `s` forward.
                 let vis_used = skip_p + used_chars;
-                let advance = if zero_intro { vis_used } else { vis_used.saturating_sub(1) };
+                let advance = if zero_intro {
+                    vis_used
+                } else {
+                    vis_used.saturating_sub(1)
+                };
                 for _ in 0..advance {
                     chars.next();
                     consumed += 1;

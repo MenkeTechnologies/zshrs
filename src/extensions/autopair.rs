@@ -282,8 +282,7 @@ fn balanced_p(open: char, close: char, lbuf: &str, rbuf: &str) -> bool {
                 i -= 1;
             }
             let run: String = lchars[i..].iter().collect();
-            let preceded_ok = !run.is_empty()
-                && (i == 0 || !matches!(lchars[i - 1], '\'' | '"'));
+            let preceded_ok = !run.is_empty() && (i == 0 || !matches!(lchars[i - 1], '\'' | '"'));
             return preceded_ok && !run.is_empty() && rbuf.starts_with(&run);
         } else if llen == rlen || (llen + rlen) % 2 == 0 {
             return true; // ap:83-84

@@ -574,9 +574,15 @@ pub fn start_match() {
     // while MATCHPARTS head stayed None, so `pli = matchparts` came back empty —
     // partial-match Cline lost (e.g. `ls /dir/a<TAB>` dropped the typed `a`).
     *MATCHPARTS.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
-    *MATCHLASTPART.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
+    *MATCHLASTPART
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap() = None;
     *MATCHSUBS.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
-    *MATCHLASTSUB.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
+    *MATCHLASTSUB
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap() = None;
 }
 
 /// Port of `abort_match()` from `Src/Zle/compmatch.c:312`.
@@ -1798,12 +1804,12 @@ pub fn comp_match(
         // (below) reconstructs the full word, not just the matcher's own
         // contribution.
         add_match_str(None, "", after_pfx, (wl - rpl).max(0), 0); // c:1235
-        // c:1237-1238 — `add_match_part(NULL, NULL, NULL, 0, NULL, 0,
-        //                w + rpl, wl - rpl, mpl - rpl, 0); pli = matchparts;`
-        // This APPENDS to the matchparts chain already populated by
-        // match_str (matcher subs + exact runs live in matchsubs and are
-        // folded in here) — a bare bld_parts() would discard those and
-        // drop exactly-matched interior chars from the reconstruction.
+                                                                  // c:1237-1238 — `add_match_part(NULL, NULL, NULL, 0, NULL, 0,
+                                                                  //                w + rpl, wl - rpl, mpl - rpl, 0); pli = matchparts;`
+                                                                  // This APPENDS to the matchparts chain already populated by
+                                                                  // match_str (matcher subs + exact runs live in matchsubs and are
+                                                                  // folded in here) — a bare bld_parts() would discard those and
+                                                                  // drop exactly-matched interior chars from the reconstruction.
         add_match_part(
             None,
             None,
@@ -4700,11 +4706,26 @@ mod tests {
         }
         let mut clp: Option<Box<Cline>> = None;
         let mut exact = 99i32;
-        let r = comp_match("-", "", "-a", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        let r = comp_match(
+            "-",
+            "",
+            "-a",
+            None,
+            Some(&mut clp),
+            1,
+            None,
+            0,
+            None,
+            0,
+            &mut exact,
+        );
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
-        assert!(r.is_some(), "'-' + option matcher must match '-a', got None");
+        assert!(
+            r.is_some(),
+            "'-' + option matcher must match '-a', got None"
+        );
     }
 
     /// Case-insensitive matcher `m:{a}={A}`, typed `a`, candidate `Apple`.
@@ -4725,11 +4746,27 @@ mod tests {
         }
         let mut clp: Option<Box<Cline>> = None;
         let mut exact = 99i32;
-        let r = comp_match("a", "", "Apple", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        let r = comp_match(
+            "a",
+            "",
+            "Apple",
+            None,
+            Some(&mut clp),
+            1,
+            None,
+            0,
+            None,
+            0,
+            &mut exact,
+        );
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
-        assert_eq!(r.as_deref(), Some("Apple"), "'a' + m:{{a}}={{A}} must reconstruct 'Apple'");
+        assert_eq!(
+            r.as_deref(),
+            Some("Apple"),
+            "'a' + m:{{a}}={{A}} must reconstruct 'Apple'"
+        );
     }
 
     /// Case-insensitive matcher `m:{a-z}={A-Z}`, typed `app`, candidate
@@ -4752,11 +4789,27 @@ mod tests {
         }
         let mut clp: Option<Box<Cline>> = None;
         let mut exact = 99i32;
-        let r = comp_match("app", "", "Apple", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        let r = comp_match(
+            "app",
+            "",
+            "Apple",
+            None,
+            Some(&mut clp),
+            1,
+            None,
+            0,
+            None,
+            0,
+            &mut exact,
+        );
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
-        assert_eq!(r.as_deref(), Some("Apple"), "'app' + m:{{a-z}}={{A-Z}} must reconstruct 'Apple', not drop the exact 'pp'");
+        assert_eq!(
+            r.as_deref(),
+            Some("Apple"),
+            "'app' + m:{{a-z}}={{A-Z}} must reconstruct 'Apple', not drop the exact 'pp'"
+        );
     }
 
     /// The option-completion shape: typed word `-`, candidate `-a` —
@@ -4770,7 +4823,19 @@ mod tests {
         }
         let mut clp: Option<Box<Cline>> = None;
         let mut exact = 99i32;
-        let r = comp_match("-", "", "-a", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        let r = comp_match(
+            "-",
+            "",
+            "-a",
+            None,
+            Some(&mut clp),
+            1,
+            None,
+            0,
+            None,
+            0,
+            &mut exact,
+        );
         assert!(r.is_some(), "'-' must prefix-match '-a', got None");
         assert_eq!(r.as_deref(), Some("-a"));
     }

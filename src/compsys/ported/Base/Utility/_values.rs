@@ -40,9 +40,7 @@ use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::{dispatch_function_call, execute_script};
-use crate::ported::params::{
-    getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam,
-};
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_compvalues;
@@ -241,7 +239,7 @@ fn values_impl(args: &[String]) -> i32 {
                 let suffix = getsparam("SUFFIX").unwrap_or_default(); // sh:38
                 let _ = setsparam("PREFIX", &name); // sh:39
                 let _ = setsparam("SUFFIX", ""); // sh:40
-                // sh:41 — args=( args opts ).
+                                                 // sh:41 — args=( args opts ).
                 let mut combined = getaparam("args").unwrap_or_default();
                 combined.extend(getaparam("opts").unwrap_or_default());
                 let _ = setaparam("args", combined.clone());
@@ -338,7 +336,8 @@ fn values_impl(args: &[String]) -> i32 {
         // sh:69-72 — completing the ARGUMENT of an already-recognized value.
         compvalues(&["-C", "subc"]); // sh:70
         let subc = getsparam("subc").unwrap_or_default();
-        let _ = setsparam("curcontext", &replace_last_field(&oldcontext, &subc)); // sh:71
+        let _ = setsparam("curcontext", &replace_last_field(&oldcontext, &subc));
+        // sh:71
     }
 
     // sh:74 — arguments dispatch (reached with descr/action set for a value).
@@ -349,11 +348,7 @@ fn values_impl(args: &[String]) -> i32 {
 
     let descr = getsparam("descr").unwrap_or_default();
     // sh:79
-    let _ = _description(&[
-        "arguments".to_string(),
-        "expl".to_string(),
-        descr.clone(),
-    ]);
+    let _ = _description(&["arguments".to_string(), "expl".to_string(), descr.clone()]);
 
     // sh:84-86 — append the list separator as an autoremovable suffix
     // unless exactly one value remains. `snames`/`names`/`onames` are not
@@ -377,7 +372,7 @@ fn values_impl(args: &[String]) -> i32 {
     // sh:88 — `->state` form.
     if action.starts_with("->") {
         compvalues(&["-v", "val_args"]); // sh:89
-        // sh:90 — state = action minus `->`, whitespace-trimmed.
+                                         // sh:90 — state = action minus `->`, whitespace-trimmed.
         let state = action[2..].trim().to_string();
         let _ = setsparam("state", &state);
         let _ = setsparam("state_descr", &descr); // sh:91
@@ -398,11 +393,7 @@ fn values_impl(args: &[String]) -> i32 {
 
     if action.trim().is_empty() {
         // sh:104-109 — empty action: just show the description.
-        let _ = _message(&[
-            "-e".to_string(),
-            "arguments".to_string(),
-            descr.clone(),
-        ]);
+        let _ = _message(&["-e".to_string(), "arguments".to_string(), descr.clone()]);
         return 1;
     } else if action.starts_with("((") && action.ends_with("))") {
         // sh:111-118 — ((val:descr …)) literal set with descriptions.
@@ -437,12 +428,7 @@ fn values_impl(args: &[String]) -> i32 {
         // sh:127-133 — {body} evaluated per label.
         let body = &action[1..action.len() - 1];
         loop {
-            if _next_label(&[
-                "arguments".to_string(),
-                "expl".to_string(),
-                descr.clone(),
-            ]) != 0
-            {
+            if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {
                 break;
             }
             let _ = execute_script(body);
@@ -451,12 +437,7 @@ fn values_impl(args: &[String]) -> i32 {
         // sh:138 — `eval "action=( $action )"; "$action[@]"` (quote-respecting).
         let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
         loop {
-            if _next_label(&[
-                "arguments".to_string(),
-                "expl".to_string(),
-                descr.clone(),
-            ]) != 0
-            {
+            if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {
                 break;
             }
             if let Some((cmd, rest)) = parts.split_first() {
@@ -472,12 +453,7 @@ fn values_impl(args: &[String]) -> i32 {
         let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
         if let Some((cmd, rest)) = parts.split_first() {
             loop {
-                if _next_label(&[
-                    "arguments".to_string(),
-                    "expl".to_string(),
-                    descr.clone(),
-                ]) != 0
-                {
+                if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {
                     break;
                 }
                 let expl_now = getaparam("expl").unwrap_or_default();

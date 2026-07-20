@@ -195,7 +195,10 @@ fn basename(s: &str) -> String {
 
 /// First non-empty string in `xs`, else empty (models `${a:-${b:-…}}`).
 fn first_nonempty(xs: &[String]) -> String {
-    xs.iter().find(|s| !s.is_empty()).cloned().unwrap_or_default()
+    xs.iter()
+        .find(|s| !s.is_empty())
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// `${(q)…}`/`${(qq)…}` single-quote quoting: wrap in `'…'`, escaping

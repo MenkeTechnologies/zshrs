@@ -40,8 +40,7 @@ use crate::ported::zle::comp_h::{
     Cmatcher, Cpattern, CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT,
     CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON, CLF_LINE, CLF_SUF, CMF_DISPLINE, CMF_FILE, CMF_HIDE,
     CMF_INTER, CMF_ISPAR, CMF_LEFT, CMF_LINE, CMF_NOLIST, CMF_REMOVE, CMF_RIGHT, CPAT_ANY,
-    CPAT_CCLASS,
-    CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
+    CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
 use crate::ported::zle::{
     compcore, compresult, deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*,
@@ -1047,9 +1046,9 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                 }
             };
             match c {
-                'a' => dat.aflags |= CAF_ARRAYS, // c:658
+                'a' => dat.aflags |= CAF_ARRAYS,            // c:658
                 'k' => dat.aflags |= CAF_ARRAYS | CAF_KEYS, // c:661
-                'l' => dat.flags |= CMF_DISPLINE as i32, // c:766-767
+                'l' => dat.flags |= CMF_DISPLINE as i32,    // c:766-767
                 'o' => {
                     // c:701-706 + c:812-828 — `-o` takes an OPTIONAL ordering
                     // spec (nosort/match/numeric/reverse, comma-joined) parsed
@@ -1082,19 +1081,19 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                         }
                     }
                 }
-                'Q' => dat.aflags |= CAF_QUOTE, // c:648
-                '1' => dat.aflags |= CAF_UNIQALL, // c:693
-                '2' => dat.aflags |= CAF_UNIQCON, // c:697
-                'C' => dat.aflags |= CAF_ALL, // c:651
-                'F' => dat.ign = take(&mut p, &mut idx), // c:664 -F string
-                'f' => dat.flags |= CMF_FILE as i32, // c:654
-                'P' => dat.pre = take(&mut p, &mut idx), // c:709
-                'S' => dat.suf = take(&mut p, &mut idx), // c:713
-                'p' => dat.ppre = take(&mut p, &mut idx), // c:717
-                's' => dat.psuf = take(&mut p, &mut idx), // c:721
+                'Q' => dat.aflags |= CAF_QUOTE,            // c:648
+                '1' => dat.aflags |= CAF_UNIQALL,          // c:693
+                '2' => dat.aflags |= CAF_UNIQCON,          // c:697
+                'C' => dat.aflags |= CAF_ALL,              // c:651
+                'F' => dat.ign = take(&mut p, &mut idx),   // c:664 -F string
+                'f' => dat.flags |= CMF_FILE as i32,       // c:654
+                'P' => dat.pre = take(&mut p, &mut idx),   // c:709
+                'S' => dat.suf = take(&mut p, &mut idx),   // c:713
+                'p' => dat.ppre = take(&mut p, &mut idx),  // c:717
+                's' => dat.psuf = take(&mut p, &mut idx),  // c:721
                 'W' => dat.prpre = take(&mut p, &mut idx), // c:725
-                'i' => dat.ipre = take(&mut p, &mut idx), // c:729
-                'I' => dat.isuf = take(&mut p, &mut idx), // c:733
+                'i' => dat.ipre = take(&mut p, &mut idx),  // c:729
+                'I' => dat.isuf = take(&mut p, &mut idx),  // c:733
                 // c:800/808 — `if (!*sp) *sp = ...`: take FIRST option only.
                 // The argument is always consumed, but dat.group is assigned
                 // only when still empty. Last-wins here made `_files`/_path_files'

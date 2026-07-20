@@ -30,9 +30,7 @@
 //! serialise on the compiler.
 
 use crate::ported::pattern::Patprog;
-use crate::ported::zsh_h::{
-    isset, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB, MULTIBYTE, SHGLOB,
-};
+use crate::ported::zsh_h::{isset, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB, MULTIBYTE, SHGLOB};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
@@ -50,8 +48,7 @@ thread_local! {
     static L1: RefCell<HashMap<Key, Patprog>> = RefCell::new(HashMap::new());
 }
 
-static L2: LazyLock<RwLock<HashMap<Key, Patprog>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+static L2: LazyLock<RwLock<HashMap<Key, Patprog>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Bound the cache so a pathological workload (unique patterns forever)
 /// can't grow it without limit. On overflow we clear wholesale rather than
@@ -120,8 +117,7 @@ mod tests {
     #[test]
     fn get_after_put_roundtrips_and_key_is_option_sensitive() {
         // Compile a trivial pattern and cache it.
-        let prog = crate::ported::pattern::patcompile("abc", 0, None)
-            .expect("compile abc");
+        let prog = crate::ported::pattern::patcompile("abc", 0, None).expect("compile abc");
         put("zzz_test_pat_abc", 0, &prog);
         assert!(
             get("zzz_test_pat_abc", 0).is_some(),

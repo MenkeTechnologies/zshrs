@@ -159,11 +159,8 @@ pub struct HostApi {
     /// form and the shell can call it (as a command, ZLE widget, hook,
     /// …). Returns 0 on success, non-zero if `body` fails to parse.
     /// (ABI v3.)
-    pub addfunction: extern "C" fn(
-        host: *const HostApi,
-        name: *const c_char,
-        body: *const c_char,
-    ) -> c_int,
+    pub addfunction:
+        extern "C" fn(host: *const HostApi, name: *const c_char, body: *const c_char) -> c_int,
     /// Register a native override for the compsys function `name` (a
     /// `_NAME`, e.g. `_command_names`). Once registered, the host's
     /// completion router dispatches `handler` in place of the built-in
@@ -272,7 +269,9 @@ impl Host {
             return None;
         }
         // Safe: host contract says this is a valid C string owned by us.
-        let s = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+        let s = unsafe { CStr::from_ptr(raw) }
+            .to_string_lossy()
+            .into_owned();
         (self.t().free_cstring)(self.api, raw);
         Some(s)
     }
@@ -327,7 +326,9 @@ impl Host {
         if raw.is_null() {
             return None;
         }
-        let s = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+        let s = unsafe { CStr::from_ptr(raw) }
+            .to_string_lossy()
+            .into_owned();
         (self.t().free_cstring)(self.api, raw);
         Some(s)
     }

@@ -78,7 +78,12 @@ impl HistorySearch {
     }
 
     /// Test constructor over a fixed item list (newest first).
-    pub fn from_items(term: String, search_type: SearchType, ignore_case: bool, items: Vec<String>) -> Self {
+    pub fn from_items(
+        term: String,
+        search_type: SearchType,
+        ignore_case: bool,
+        items: Vec<String>,
+    ) -> Self {
         let items = items
             .into_iter()
             .filter(|c| entry_matches(c, &term, search_type, ignore_case))
@@ -138,7 +143,11 @@ impl HistorySearch {
     pub fn go_to_next_match(&mut self, dir: SearchDirection) -> bool {
         match dir {
             SearchDirection::Backward => {
-                let next = if self.idx == usize::MAX { 0 } else { self.idx + 1 };
+                let next = if self.idx == usize::MAX {
+                    0
+                } else {
+                    self.idx + 1
+                };
                 if next < self.items.len() {
                     self.idx = next;
                     self.current = self.items[next].clone();
@@ -331,8 +340,7 @@ impl ReaderHistorySearch {
     /// (char offsets).
     pub fn search_result_range(&self) -> Range<usize> {
         assert!(self.active());
-        self.token_offset
-            ..self.token_offset + self.matches[self.match_index].text.chars().count()
+        self.token_offset..self.token_offset + self.matches[self.match_index].text.chars().count()
     }
 
     /// fish:133-142 — Return the range of the original search string in the new
@@ -615,7 +623,10 @@ mod tests {
         assert_eq!(s.current_result(), "git status");
         assert!(s.move_in_direction(SearchDirection::Backward));
         assert_eq!(s.current_result(), "git push");
-        assert!(!s.move_in_direction(SearchDirection::Backward), "dup must be skipped");
+        assert!(
+            !s.move_in_direction(SearchDirection::Backward),
+            "dup must be skipped"
+        );
     }
 
     /// fish:231-251 — Token mode surfaces individual words, reverse order per item.

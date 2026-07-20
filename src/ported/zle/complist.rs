@@ -369,7 +369,7 @@ pub fn getcoldef(s: &str) -> Option<String> {
             Some(eq) => {
                 let ext = rest[..eq].to_string(); // c:367 *s++='\0'
                 let (col, p) = getcolval(&rest[eq + 1..], 0); // c:368
-                // c:369-384 — append the extcol at the tail of mcolors.exts.
+                                                              // c:369-384 — append the extcol at the tail of mcolors.exts.
                 let ec = Box::new(extcol {
                     prog: gprog,
                     ext,
@@ -385,7 +385,11 @@ pub fn getcoldef(s: &str) -> Option<String> {
                     *cur = Some(ec);
                 }
                 // c:388-389 — `if (*p) *p++='\0'; return p;`
-                Some(if !p.is_empty() { p[1..].to_string() } else { String::new() })
+                Some(if !p.is_empty() {
+                    p[1..].to_string()
+                } else {
+                    String::new()
+                })
             }
         }
     } else if let Some(pstart) = s.strip_prefix('=') {
@@ -471,7 +475,7 @@ pub fn getcoldef(s: &str) -> Option<String> {
                     Some(after[6..].to_string())
                 } else {
                     let (col, p) = getcolval(after, 0); // c:466
-                    // c:467-480 — append the filecol (EC/LC/RC ignore gprog).
+                                                        // c:467-480 — append the filecol (EC/LC/RC ignore gprog).
                     if let Some(i) = idx {
                         let fc = Box::new(filecol {
                             prog: if i == COL_EC || i == COL_LC || i == COL_RC {
@@ -1615,7 +1619,11 @@ pub fn compprintfmt(
             if let Some(nc) = m_field {
                 if dopr != 0 {
                     let maxl = (zterm_columns - 2 - cc).max(0) as usize;
-                    let out = if nc.len() > maxl { &nc[..maxl] } else { &nc[..] };
+                    let out = if nc.len() > maxl {
+                        &nc[..maxl]
+                    } else {
+                        &nc[..]
+                    };
                     if dopr == 1 {
                         let _ = write_loop(out_fd, out.as_bytes());
                     }
@@ -1627,8 +1635,8 @@ pub fn compprintfmt(
             // counts width 1 toward cc, which is what truncates the whole
             // prompt at the terminal edge).
             cc += 1; // c:1270
-            // c:1272 — once we reach the right margin (or a newline) in stat
-            // mode, downgrade to measure-only so the tail is counted, not printed.
+                     // c:1272 — once we reach the right margin (or a newline) in stat
+                     // mode, downgrade to measure-only so the tail is counted, not printed.
             if (cc >= zterm_columns - 2 || c == '\n') && stat {
                 dopr = 2; // c:1273
             }
@@ -1788,199 +1796,81 @@ pub fn compprintlist(showall: i32) -> i32 {
     // Wrapped in a labeled block: `break 'outer` (C's `goto end`) now exits the
     // block BEFORE `asked = 0`, so only a fully-rendered list clears `asked`.
     'outer: {
-    for g in &groups {
-        // c:1404
-        if errflag.load(Ordering::SeqCst) != 0 {
-            // c:1404 !errflag
-            break;
-        }
+        for g in &groups {
+            // c:1404
+            if errflag.load(Ordering::SeqCst) != 0 {
+                // c:1404 !errflag
+                break;
+            }
 
-        // c:1405 — `char **pp = g->ylist;`
-        let pp = &g.ylist;
-        let onlyexpl: i32 = listdat
-            .get()
-            .and_then(|m| m.lock().ok().map(|g| g.onlyexpl))
-            .unwrap_or(0);
+            // c:1405 — `char **pp = g->ylist;`
+            let pp = &g.ylist;
+            let onlyexpl: i32 = listdat
+                .get()
+                .and_then(|m| m.lock().ok().map(|g| g.onlyexpl))
+                .unwrap_or(0);
 
-        // c:1412-1470 — emit explanation strings.
-        if !g.expls.is_empty() {
-            // c:1412
-            for e in &g.expls {
-                // c:1418
-                if errflag.load(Ordering::SeqCst) != 0 {
-                    break 'outer;
-                }
-                let valid = (e.count != 0 || e.always != 0)                  // c:1419
+            // c:1412-1470 — emit explanation strings.
+            if !g.expls.is_empty() {
+                // c:1412
+                for e in &g.expls {
+                    // c:1418
+                    if errflag.load(Ordering::SeqCst) != 0 {
+                        break 'outer;
+                    }
+                    let valid = (e.count != 0 || e.always != 0)                  // c:1419
                     && (onlyexpl == 0
                         || (onlyexpl & if e.always > 0 { 2 } else { 1 }) != 0);
-                if valid {
-                    if pnl != 0 {
-                        // c:1422
-                        if dolistnl(ml) && compprintnl(ml) != 0 {
-                            // c:1423
-                            break 'outer;
-                        }
-                        pnl = 0; // c:1425
-                        ml += 1; // c:1426
-                        if dolistcl(ml) && cl >= 0 {
-                            // c:1427
-                            cl -= 1;
-                            if cl <= 1 {
-                                cl = -1; // c:1428
-                                if tcd_avail {
-                                    // c:1429
-                                    tcout(TCCLEAREOD);
-                                }
-                            }
-                        }
-                    }
-                    if mlbeg < 0 && MFIRSTL.load(Ordering::SeqCst) < 0 {
-                        // c:1433
-                        MFIRSTL.store(ml, Ordering::SeqCst); // c:1434
-                    }
-                    let n = if e.always != 0 { -1 } else { e.count };
-                    let estr = e.str.clone().unwrap_or_default();
-                    let _ = compprintfmt(
-                        // c:1435
-                        &estr,
-                        n,
-                        if dolist(ml) { 1 } else { 0 },
-                        1,
-                        ml,
-                        &mut stop,
-                    );
-                    if stop != 0 {
-                        break 'outer;
-                    } // c:1447
-                    if last_type == 0 && ml >= mlbeg {
-                        // c:1449
-                        last_type = 1; // c:1450
-                        LAST_TYPE.store(1, Ordering::SeqCst);
-                        LAST_BEG.store(mlbeg, Ordering::SeqCst);
-                        LAST_ML.store(ml, Ordering::SeqCst);
-                        lastused = 1;
-                    }
-                    ml += MLPRINTED.load(Ordering::SeqCst); // c:1458
-                    if dolistcl(ml) && cl >= 0 {
-                        // c:1459
-                        cl -= MLPRINTED.load(Ordering::SeqCst);
-                        if cl <= 1 {
-                            cl = -1;
-                            if tcd_avail {
-                                tcout(TCCLEAREOD);
-                            }
-                        }
-                    }
-                    pnl = 1; // c:1464
-                }
-                if mnew == 0 && ml > mlend {
-                    break 'outer;
-                } // c:1467
-            }
-        }
-
-        // c:1471-1529 — ylist short-form rendering.
-        if onlyexpl == 0 && mlbeg < 0 && !pp.is_empty() {
-            // c:1471
-            if pnl != 0 {
-                // c:1472
-                if dolistnl(ml) && compprintnl(ml) != 0 {
-                    break 'outer;
-                } // c:1473
-                pnl = 0;
-                ml += 1;
-                if cl >= 0 {
-                    cl -= 1;
-                    if cl <= 1 {
-                        cl = -1;
-                        if tcd_avail {
-                            tcout(TCCLEAREOD);
-                        }
-                    }
-                }
-            }
-            if mlbeg < 0 && MFIRSTL.load(Ordering::SeqCst) < 0 {
-                MFIRSTL.store(ml, Ordering::SeqCst);
-            }
-            if (g.flags & CGF_LINES) != 0 {
-                // c:1485
-                for s in pp {
-                    // c:1486
-                    if compzputs(s, ml) != 0 {
-                        break 'outer;
-                    } // c:1487
-                    if compprintnl(ml) != 0 {
-                        break 'outer;
-                    } // c:1489
-                }
-            } else {
-                // c:1492-1528 — packed ylist columns.
-                // Single-pass emit; column-perfect alignment defers to
-                // the column-width helper port.
-                for s in pp {
-                    if compzputs(s, MSCROLL.load(Ordering::SeqCst)) != 0 {
-                        // c:1505
-                        break 'outer;
-                    }
-                    if compprintnl(ml) != 0 {
-                        break 'outer;
-                    } // c:1518
-                    ml += 1;
-                }
-            }
-        } else if onlyexpl == 0 && (g.lcount != 0 || (showall != 0 && g.mcount != 0)) {
-            // c:1530
-            // c:1532-1675 — cmatch grid render.
-            let n_total = g.dcount;
-            let nc = g.lins;
-
-            // c:1537-1590 — CGF_HASDL whole-line displays.
-            if (g.flags & CGF_HASDL) != 0 {
-                // c:1537
-                for m in &g.matches {
-                    // c:1549
-                    let displine = m.disp.is_some() && (m.flags & CMF_DISPLINE) != 0;
-                    let visible = showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
-                    if displine && visible {
-                        // c:1551
+                    if valid {
                         if pnl != 0 {
-                            // c:1552
+                            // c:1422
                             if dolistnl(ml) && compprintnl(ml) != 0 {
+                                // c:1423
                                 break 'outer;
                             }
-                            pnl = 0;
-                            ml += 1;
+                            pnl = 0; // c:1425
+                            ml += 1; // c:1426
                             if dolistcl(ml) && cl >= 0 {
+                                // c:1427
                                 cl -= 1;
                                 if cl <= 1 {
-                                    cl = -1;
+                                    cl = -1; // c:1428
                                     if tcd_avail {
+                                        // c:1429
                                         tcout(TCCLEAREOD);
                                     }
                                 }
                             }
                         }
+                        if mlbeg < 0 && MFIRSTL.load(Ordering::SeqCst) < 0 {
+                            // c:1433
+                            MFIRSTL.store(ml, Ordering::SeqCst); // c:1434
+                        }
+                        let n = if e.always != 0 { -1 } else { e.count };
+                        let estr = e.str.clone().unwrap_or_default();
+                        let _ = compprintfmt(
+                            // c:1435
+                            &estr,
+                            n,
+                            if dolist(ml) { 1 } else { 0 },
+                            1,
+                            ml,
+                            &mut stop,
+                        );
+                        if stop != 0 {
+                            break 'outer;
+                        } // c:1447
                         if last_type == 0 && ml >= mlbeg {
-                            // c:1563
-                            last_type = 2;
-                            LAST_TYPE.store(2, Ordering::SeqCst);
+                            // c:1449
+                            last_type = 1; // c:1450
+                            LAST_TYPE.store(1, Ordering::SeqCst);
                             LAST_BEG.store(mlbeg, Ordering::SeqCst);
                             LAST_ML.store(ml, Ordering::SeqCst);
                             lastused = 1;
                         }
-                        if MFIRSTL.load(Ordering::SeqCst) < 0 {
-                            // c:1573
-                            MFIRSTL.store(ml, Ordering::SeqCst);
-                        }
-                        if dolist(ml) {
-                            printed += 1;
-                        } // c:1575
-                        if clprintm(Some(g), Some(m), 0, ml, 1, 0) != 0 {
-                            // c:1577
-                            break 'outer;
-                        }
-                        ml += MLPRINTED.load(Ordering::SeqCst); // c:1579
-                        if dolistcl(ml) {
+                        ml += MLPRINTED.load(Ordering::SeqCst); // c:1458
+                        if dolistcl(ml) && cl >= 0 {
+                            // c:1459
                             cl -= MLPRINTED.load(Ordering::SeqCst);
                             if cl <= 1 {
                                 cl = -1;
@@ -1989,159 +1879,25 @@ pub fn compprintlist(showall: i32) -> i32 {
                                 }
                             }
                         }
-                        pnl = 1; // c:1585
+                        pnl = 1; // c:1464
                     }
                     if mnew == 0 && ml > mlend {
                         break 'outer;
-                    } // c:1587
-                }
-            }
-            // c:1591 — `if (n && pnl)`. This is the newline that SEPARATES the
-            // CGF_HASDL displine rows from the column grid printed below them.
-            // It must fire ONLY when there ARE grid matches to print
-            // (`n = g->dcount`). When every match is a displine (dcount == 0,
-            // e.g. options rendered one-per-line with descriptions: `mkdir -`,
-            // `cp -`, `mv -`, `ps -`, …), the `n &&` guard suppresses it — the
-            // port dropped the guard (`if pnl != 0`), so it emitted a spurious
-            // trailing newline after the LAST displine. The list then printed
-            // one row too tall, so the always-last-prompt cursor-up
-            // (`nlines+nlnct-1`) landed one row too low and reprinted the
-            // command line over the first option. This is the complist (`zmodload
-            // zsh/complist`) twin of the compresult.rs `dcount` fix.
-            if n_total != 0 && pnl != 0 {
-                if dolistnl(ml) && compprintnl(ml) != 0 {
-                    break 'outer;
-                }
-                pnl = 0;
-                ml += 1;
-                if dolistcl(ml) && cl >= 0 {
-                    cl -= 1;
-                    if cl <= 1 {
-                        cl = -1;
-                        if tcd_avail {
-                            tcout(TCCLEAREOD);
-                        }
-                    }
+                    } // c:1467
                 }
             }
 
-            // c:1611-1674 — grid row/column loop.
-            let mut nl_cnt = nc;
-            // c:1609 — `p = skipnolist(g->matches, showall)`. Must use the
-            // full skipnolist predicate (compresult.rs): besides CMF_HIDE /
-            // CMF_NOLIST / CMF_MULT it ALSO skips `disp && CMF_DISPLINE`
-            // matches — those are printed by the CGF_HASDL block above, so
-            // the grid must not re-print them (else described matches double-
-            // print and concatenate into the packed group).
-            let mut p_idx: usize =
-                crate::ported::zle::compresult::skipnolist(&g.matches, showall);
-            let mut n = g.dcount;
-            while n > 0 && nl_cnt > 0 && errflag.load(Ordering::SeqCst) == 0 {
-                if last_type == 0 && ml >= mlbeg {
-                    // c:1612
-                    last_type = 3;
-                    LAST_TYPE.store(3, Ordering::SeqCst);
-                    LAST_BEG.store(mlbeg, Ordering::SeqCst);
-                    LAST_ML.store(ml, Ordering::SeqCst);
-                    lastused = 1;
-                }
-                let mut i = g.cols; // c:1622
-                mc = 0;
-                let mut q_idx = p_idx;
-                while n > 0 && i > 0 && errflag.load(Ordering::SeqCst) == 0 {
-                    i -= 1;
-                    let wid = if !g.widths.is_empty() {
-                        // c:1626
-                        g.widths.get(mc as usize).copied().unwrap_or(g.width)
-                    } else {
-                        g.width
-                    };
-                    let m_at_q = g.matches.get(q_idx); // c:1627
-                    match m_at_q {
-                        None => {
-                            // c:1627 !m
-                            if clprintm(
-                                Some(g),
-                                None,
-                                mc,
-                                ml, // c:1628
-                                if i == 0 { 1 } else { 0 },
-                                wid,
-                            ) != 0
-                            {
-                                break 'outer;
-                            }
-                            break;
-                        }
-                        Some(m) => {
-                            // c:1632
-                            if clprintm(Some(g), Some(m), mc, ml, if i == 0 { 1 } else { 0 }, wid)
-                                != 0
-                            {
-                                break 'outer;
-                            }
-                            if dolist(ml) {
-                                printed += 1;
-                            } // c:1635
-                            ml += MLPRINTED.load(Ordering::SeqCst); // c:1637
-                            if dolistcl(ml) {
-                                cl -= MLPRINTED.load(Ordering::SeqCst);
-                                if cl < 1 {
-                                    cl = -1;
-                                    if tcd_avail {
-                                        tcout(TCCLEAREOD);
-                                    }
-                                }
-                            }
-                            if MFIRSTL.load(Ordering::SeqCst) < 0 {
-                                // c:1643
-                                MFIRSTL.store(ml, Ordering::SeqCst);
-                            }
-                            n -= 1; // c:1646
-                            if n > 0 {
-                                // c:1646
-                                let step = if (g.flags & CGF_ROWS) != 0 {
-                                    1
-                                } else {
-                                    nc as usize
-                                };
-                                for _j in 0..step {
-                                    // c:1647
-                                    if q_idx < g.matches.len() {
-                                        q_idx += 1;
-                                    }
-                                    // c:1649 — `q = skipnolist(q+1, showall)`
-                                    q_idx += crate::ported::zle::compresult::skipnolist(
-                                        &g.matches[q_idx..],
-                                        showall,
-                                    );
-                                }
-                            }
-                            mc += 1; // c:1650
-                        }
-                    }
-                }
-                // c:1652-1657 — fill trailing columns with empty cells.
-                while i > 0 {
-                    i -= 1;
-                    let wid = if !g.widths.is_empty() {
-                        g.widths.get(mc as usize).copied().unwrap_or(g.width)
-                    } else {
-                        g.width
-                    };
-                    if clprintm(Some(g), None, mc, ml, if i == 0 { 1 } else { 0 }, wid) != 0 {
-                        break 'outer;
-                    }
-                    mc += 1;
-                }
-                if n > 0 {
-                    // c:1658
+            // c:1471-1529 — ylist short-form rendering.
+            if onlyexpl == 0 && mlbeg < 0 && !pp.is_empty() {
+                // c:1471
+                if pnl != 0 {
+                    // c:1472
                     if dolistnl(ml) && compprintnl(ml) != 0 {
                         break 'outer;
-                    }
-                    ml += 1; // c:1661
-                    if dolistcl(ml) && cl >= 0 {
-                        // c:1662
+                    } // c:1473
+                    pnl = 0;
+                    ml += 1;
+                    if cl >= 0 {
                         cl -= 1;
                         if cl <= 1 {
                             cl = -1;
@@ -2150,39 +1906,297 @@ pub fn compprintlist(showall: i32) -> i32 {
                             }
                         }
                     }
-                    if nl_cnt > 0 {
-                        // c:1667
-                        let step = if (g.flags & CGF_ROWS) != 0 {
-                            g.cols as usize
-                        } else {
-                            1
-                        };
-                        for _j in 0..step {
-                            if p_idx < g.matches.len() {
-                                p_idx += 1;
+                }
+                if mlbeg < 0 && MFIRSTL.load(Ordering::SeqCst) < 0 {
+                    MFIRSTL.store(ml, Ordering::SeqCst);
+                }
+                if (g.flags & CGF_LINES) != 0 {
+                    // c:1485
+                    for s in pp {
+                        // c:1486
+                        if compzputs(s, ml) != 0 {
+                            break 'outer;
+                        } // c:1487
+                        if compprintnl(ml) != 0 {
+                            break 'outer;
+                        } // c:1489
+                    }
+                } else {
+                    // c:1492-1528 — packed ylist columns.
+                    // Single-pass emit; column-perfect alignment defers to
+                    // the column-width helper port.
+                    for s in pp {
+                        if compzputs(s, MSCROLL.load(Ordering::SeqCst)) != 0 {
+                            // c:1505
+                            break 'outer;
+                        }
+                        if compprintnl(ml) != 0 {
+                            break 'outer;
+                        } // c:1518
+                        ml += 1;
+                    }
+                }
+            } else if onlyexpl == 0 && (g.lcount != 0 || (showall != 0 && g.mcount != 0)) {
+                // c:1530
+                // c:1532-1675 — cmatch grid render.
+                let n_total = g.dcount;
+                let nc = g.lins;
+
+                // c:1537-1590 — CGF_HASDL whole-line displays.
+                if (g.flags & CGF_HASDL) != 0 {
+                    // c:1537
+                    for m in &g.matches {
+                        // c:1549
+                        let displine = m.disp.is_some() && (m.flags & CMF_DISPLINE) != 0;
+                        let visible = showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
+                        if displine && visible {
+                            // c:1551
+                            if pnl != 0 {
+                                // c:1552
+                                if dolistnl(ml) && compprintnl(ml) != 0 {
+                                    break 'outer;
+                                }
+                                pnl = 0;
+                                ml += 1;
+                                if dolistcl(ml) && cl >= 0 {
+                                    cl -= 1;
+                                    if cl <= 1 {
+                                        cl = -1;
+                                        if tcd_avail {
+                                            tcout(TCCLEAREOD);
+                                        }
+                                    }
+                                }
                             }
-                            // c:1670 — `p = skipnolist(p+1, showall)`
-                            p_idx += crate::ported::zle::compresult::skipnolist(
-                                &g.matches[p_idx..],
-                                showall,
-                            );
+                            if last_type == 0 && ml >= mlbeg {
+                                // c:1563
+                                last_type = 2;
+                                LAST_TYPE.store(2, Ordering::SeqCst);
+                                LAST_BEG.store(mlbeg, Ordering::SeqCst);
+                                LAST_ML.store(ml, Ordering::SeqCst);
+                                lastused = 1;
+                            }
+                            if MFIRSTL.load(Ordering::SeqCst) < 0 {
+                                // c:1573
+                                MFIRSTL.store(ml, Ordering::SeqCst);
+                            }
+                            if dolist(ml) {
+                                printed += 1;
+                            } // c:1575
+                            if clprintm(Some(g), Some(m), 0, ml, 1, 0) != 0 {
+                                // c:1577
+                                break 'outer;
+                            }
+                            ml += MLPRINTED.load(Ordering::SeqCst); // c:1579
+                            if dolistcl(ml) {
+                                cl -= MLPRINTED.load(Ordering::SeqCst);
+                                if cl <= 1 {
+                                    cl = -1;
+                                    if tcd_avail {
+                                        tcout(TCCLEAREOD);
+                                    }
+                                }
+                            }
+                            pnl = 1; // c:1585
+                        }
+                        if mnew == 0 && ml > mlend {
+                            break 'outer;
+                        } // c:1587
+                    }
+                }
+                // c:1591 — `if (n && pnl)`. This is the newline that SEPARATES the
+                // CGF_HASDL displine rows from the column grid printed below them.
+                // It must fire ONLY when there ARE grid matches to print
+                // (`n = g->dcount`). When every match is a displine (dcount == 0,
+                // e.g. options rendered one-per-line with descriptions: `mkdir -`,
+                // `cp -`, `mv -`, `ps -`, …), the `n &&` guard suppresses it — the
+                // port dropped the guard (`if pnl != 0`), so it emitted a spurious
+                // trailing newline after the LAST displine. The list then printed
+                // one row too tall, so the always-last-prompt cursor-up
+                // (`nlines+nlnct-1`) landed one row too low and reprinted the
+                // command line over the first option. This is the complist (`zmodload
+                // zsh/complist`) twin of the compresult.rs `dcount` fix.
+                if n_total != 0 && pnl != 0 {
+                    if dolistnl(ml) && compprintnl(ml) != 0 {
+                        break 'outer;
+                    }
+                    pnl = 0;
+                    ml += 1;
+                    if dolistcl(ml) && cl >= 0 {
+                        cl -= 1;
+                        if cl <= 1 {
+                            cl = -1;
+                            if tcd_avail {
+                                tcout(TCCLEAREOD);
+                            }
                         }
                     }
                 }
-                if mnew == 0 && ml > mlend {
-                    break 'outer;
-                } // c:1672
-                nl_cnt -= 1;
+
+                // c:1611-1674 — grid row/column loop.
+                let mut nl_cnt = nc;
+                // c:1609 — `p = skipnolist(g->matches, showall)`. Must use the
+                // full skipnolist predicate (compresult.rs): besides CMF_HIDE /
+                // CMF_NOLIST / CMF_MULT it ALSO skips `disp && CMF_DISPLINE`
+                // matches — those are printed by the CGF_HASDL block above, so
+                // the grid must not re-print them (else described matches double-
+                // print and concatenate into the packed group).
+                let mut p_idx: usize =
+                    crate::ported::zle::compresult::skipnolist(&g.matches, showall);
+                let mut n = g.dcount;
+                while n > 0 && nl_cnt > 0 && errflag.load(Ordering::SeqCst) == 0 {
+                    if last_type == 0 && ml >= mlbeg {
+                        // c:1612
+                        last_type = 3;
+                        LAST_TYPE.store(3, Ordering::SeqCst);
+                        LAST_BEG.store(mlbeg, Ordering::SeqCst);
+                        LAST_ML.store(ml, Ordering::SeqCst);
+                        lastused = 1;
+                    }
+                    let mut i = g.cols; // c:1622
+                    mc = 0;
+                    let mut q_idx = p_idx;
+                    while n > 0 && i > 0 && errflag.load(Ordering::SeqCst) == 0 {
+                        i -= 1;
+                        let wid = if !g.widths.is_empty() {
+                            // c:1626
+                            g.widths.get(mc as usize).copied().unwrap_or(g.width)
+                        } else {
+                            g.width
+                        };
+                        let m_at_q = g.matches.get(q_idx); // c:1627
+                        match m_at_q {
+                            None => {
+                                // c:1627 !m
+                                if clprintm(
+                                    Some(g),
+                                    None,
+                                    mc,
+                                    ml, // c:1628
+                                    if i == 0 { 1 } else { 0 },
+                                    wid,
+                                ) != 0
+                                {
+                                    break 'outer;
+                                }
+                                break;
+                            }
+                            Some(m) => {
+                                // c:1632
+                                if clprintm(
+                                    Some(g),
+                                    Some(m),
+                                    mc,
+                                    ml,
+                                    if i == 0 { 1 } else { 0 },
+                                    wid,
+                                ) != 0
+                                {
+                                    break 'outer;
+                                }
+                                if dolist(ml) {
+                                    printed += 1;
+                                } // c:1635
+                                ml += MLPRINTED.load(Ordering::SeqCst); // c:1637
+                                if dolistcl(ml) {
+                                    cl -= MLPRINTED.load(Ordering::SeqCst);
+                                    if cl < 1 {
+                                        cl = -1;
+                                        if tcd_avail {
+                                            tcout(TCCLEAREOD);
+                                        }
+                                    }
+                                }
+                                if MFIRSTL.load(Ordering::SeqCst) < 0 {
+                                    // c:1643
+                                    MFIRSTL.store(ml, Ordering::SeqCst);
+                                }
+                                n -= 1; // c:1646
+                                if n > 0 {
+                                    // c:1646
+                                    let step = if (g.flags & CGF_ROWS) != 0 {
+                                        1
+                                    } else {
+                                        nc as usize
+                                    };
+                                    for _j in 0..step {
+                                        // c:1647
+                                        if q_idx < g.matches.len() {
+                                            q_idx += 1;
+                                        }
+                                        // c:1649 — `q = skipnolist(q+1, showall)`
+                                        q_idx += crate::ported::zle::compresult::skipnolist(
+                                            &g.matches[q_idx..],
+                                            showall,
+                                        );
+                                    }
+                                }
+                                mc += 1; // c:1650
+                            }
+                        }
+                    }
+                    // c:1652-1657 — fill trailing columns with empty cells.
+                    while i > 0 {
+                        i -= 1;
+                        let wid = if !g.widths.is_empty() {
+                            g.widths.get(mc as usize).copied().unwrap_or(g.width)
+                        } else {
+                            g.width
+                        };
+                        if clprintm(Some(g), None, mc, ml, if i == 0 { 1 } else { 0 }, wid) != 0 {
+                            break 'outer;
+                        }
+                        mc += 1;
+                    }
+                    if n > 0 {
+                        // c:1658
+                        if dolistnl(ml) && compprintnl(ml) != 0 {
+                            break 'outer;
+                        }
+                        ml += 1; // c:1661
+                        if dolistcl(ml) && cl >= 0 {
+                            // c:1662
+                            cl -= 1;
+                            if cl <= 1 {
+                                cl = -1;
+                                if tcd_avail {
+                                    tcout(TCCLEAREOD);
+                                }
+                            }
+                        }
+                        if nl_cnt > 0 {
+                            // c:1667
+                            let step = if (g.flags & CGF_ROWS) != 0 {
+                                g.cols as usize
+                            } else {
+                                1
+                            };
+                            for _j in 0..step {
+                                if p_idx < g.matches.len() {
+                                    p_idx += 1;
+                                }
+                                // c:1670 — `p = skipnolist(p+1, showall)`
+                                p_idx += crate::ported::zle::compresult::skipnolist(
+                                    &g.matches[p_idx..],
+                                    showall,
+                                );
+                            }
+                        }
+                    }
+                    if mnew == 0 && ml > mlend {
+                        break 'outer;
+                    } // c:1672
+                    nl_cnt -= 1;
+                }
+            }
+            if g.lcount != 0 || (showall != 0 && g.mcount != 0) {
+                // c:1676
+                pnl = 1; // c:1677
             }
         }
-        if g.lcount != 0 || (showall != 0 && g.mcount != 0) {
-            // c:1676
-            pnl = 1; // c:1677
-        }
-    }
-    asked = 0; // c:1680 — full render completed; early `break 'outer` skips this
+        asked = 0; // c:1680 — full render completed; early `break 'outer` skips this
     } // close 'outer block; `break 'outer` lands here with asked still 1
-    // c:1681 end:
+      // c:1681 end:
     MSTATPRINTED.store(0, Ordering::SeqCst); // c:1682
     LASTLISTLEN.store(0, Ordering::SeqCst); // c:1683
     if nlnct <= 1 {
@@ -2227,7 +2241,11 @@ pub fn compprintlist(showall: i32) -> i32 {
             } else {
                 nl -= 1; // c:1700
             }
-            tcmultout(crate::ported::zsh_h::TCUP, crate::ported::zsh_h::TCMULTUP, nl); // c:1701
+            tcmultout(
+                crate::ported::zsh_h::TCUP,
+                crate::ported::zsh_h::TCMULTUP,
+                nl,
+            ); // c:1701
             SHOWINGLIST.store(-1, Ordering::SeqCst); // c:1702
             LASTLISTLEN.store(listdat_nlines_end, Ordering::SeqCst); // c:1704
         } else {
@@ -2235,7 +2253,11 @@ pub fn compprintlist(showall: i32) -> i32 {
             if nl < zterm_lines {
                 // c:1705
                 cleareol(); // c:1706
-                tcmultout(crate::ported::zsh_h::TCUP, crate::ported::zsh_h::TCMULTUP, nl); // c:1707
+                tcmultout(
+                    crate::ported::zsh_h::TCUP,
+                    crate::ported::zsh_h::TCMULTUP,
+                    nl,
+                ); // c:1707
                 SHOWINGLIST.store(-1, Ordering::SeqCst); // c:1708
                 LASTLISTLEN.store(listdat_nlines_end, Ordering::SeqCst); // c:1710
             } else {
@@ -2260,7 +2282,11 @@ pub fn compprintlist(showall: i32) -> i32 {
     }
     // c:1721 — `listshown = (clearflag ? 1 : -1);`
     LISTSHOWN.store(
-        if CLEARFLAG.load(Ordering::SeqCst) != 0 { 1 } else { -1 },
+        if CLEARFLAG.load(Ordering::SeqCst) != 0 {
+            1
+        } else {
+            -1
+        },
         Ordering::SeqCst,
     );
     MNEW.store(0, Ordering::SeqCst); // c:1722
@@ -3022,10 +3048,10 @@ pub fn complistmatches(
             // c:2061 — clearflag = (USEZLE && !termflags && dolastprompt)
             CLEARFLAG.store(if usezle { 1 } else { 0 }, Ordering::SeqCst);
             MSCROLL.store(1, Ordering::SeqCst); // c:2062
-            // c:2049-2052 — `mlistp = dupstring(listprompt); if (!*mlistp)
-            //   mlistp = default;`. MLISTP feeds compprintfmt (the scroll
-            //   status line); the port set MSCROLL but never populated MLISTP,
-            //   so the "At %p: Hit TAB…" line rendered as empty (absent).
+                                                // c:2049-2052 — `mlistp = dupstring(listprompt); if (!*mlistp)
+                                                //   mlistp = default;`. MLISTP feeds compprintfmt (the scroll
+                                                //   status line); the port set MSCROLL but never populated MLISTP,
+                                                //   so the "At %p: Hit TAB…" line rendered as empty (absent).
             *MLISTP.lock().unwrap() = if lp.is_empty() {
                 "%SAt %p: Hit TAB for more, or the character to insert%s".to_string()
             } else {
@@ -3138,7 +3164,11 @@ pub fn complistmatches(
     // multi-draw duplication. No-op unless the env var is set.
     if let Ok(path) = std::env::var("ZSHRS_COMPLIST_LOG") {
         use std::io::Write as _;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let _ = writeln!(f, "complistmatches: branch={} mnew={} inselect={} onlnct={} nlnct={} mlbeg={} molbeg={} mselect={} clearflag={} mscroll={} showinglist_in={} nlines={} noselect={}",
                 if took_singledraw { "SINGLEDRAW" } else { "COMPPRINTLIST" },
                 mnew, inselect, cur_onlnct, nlnct, mlbeg_cur, molbeg, mselect, clearflag,
@@ -3152,9 +3182,7 @@ pub fn complistmatches(
             // c:2108
             singledraw(); // c:2109
         }
-    } else if compprintlist(if mselect >= 0 { 1 } else { 0 }) == 0
-        || clearflag == 0
-    {
+    } else if compprintlist(if mselect >= 0 { 1 } else { 0 }) == 0 || clearflag == 0 {
         NOSELECT.store(1, Ordering::SeqCst); // c:2111
     }
 

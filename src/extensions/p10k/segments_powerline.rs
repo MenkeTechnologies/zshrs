@@ -367,7 +367,8 @@ fn run_tool_budget(
 /// powerline:lib/humanize_bytes.py:7 —
 /// `unit_list = tuple(zip(['', 'k', 'M', 'G', 'T', 'P'], [0, 0, 1, 2, 2, 2]))`.
 fn humanize_bytes(num: f64, suffix: &str, si_prefix: bool) -> String {
-    const UNIT_LIST: [(&str, usize); 6] = [("", 0), ("k", 0), ("M", 1), ("G", 2), ("T", 2), ("P", 2)];
+    const UNIT_LIST: [(&str, usize); 6] =
+        [("", 0), ("k", 0), ("M", 1), ("G", 2), ("T", 2), ("P", 2)];
     // humanize_bytes.py:15-16 — if num == 0: return '0 ' + suffix
     if num == 0.0 {
         return format!("0 {suffix}");
@@ -596,7 +597,14 @@ fn uptime_segments() -> Vec<Segment> {
     if text.is_empty() {
         return vec![]; // sub-second uptime — nothing to show
     }
-    vec![make_segment("uptime", None, color1(), "cyan", "UPTIME_ICON", text)]
+    vec![make_segment(
+        "uptime",
+        None,
+        color1(),
+        "cyan",
+        "UPTIME_ICON",
+        text,
+    )]
 }
 
 // ---------------------------------------------------------------------
@@ -809,7 +817,10 @@ fn auto_interface(counters: &[(String, u64, u64)]) -> String {
     let mut best = ("eth0".to_string(), None::<u64>);
     for (name, rx, tx) in counters {
         // net.py:222 — replace_num_pat = [a-zA-Z]+ prefix; no match → skip.
-        let base: String = name.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+        let base: String = name
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
         if base.is_empty() || matches!(base.as_str(), "lo" | "vmnet" | "sit") {
             continue;
         }
@@ -862,7 +873,7 @@ fn network_load_segments() -> Vec<Segment> {
         let entry = guard.entry(iface.clone()).or_insert(((now, rx, tx), None));
         // net.py:232-243 — shift last→prev, store the fresh sample;
         // gated at 1/s so per-keystroke renders don't produce 0-dt pairs.
-        if now.duration_since(entry.0.0) >= Duration::from_secs(1) {
+        if now.duration_since(entry.0 .0) >= Duration::from_secs(1) {
             entry.1 = Some(entry.0);
             entry.0 = (now, rx, tx);
         }
@@ -954,7 +965,13 @@ fn hg_segments() -> Vec<Segment> {
         // means uncommitted changes (hg identify docs). CLI equivalent
         // of powerline reading .hg/branch (lib/vcs/mercurial.py:81-87)
         // + hglib status (lib/vcs/mercurial.py:41-79).
-        let out = run_tool_budget(&bin, &["id", "-b", "-i"], Some(&root), Duration::from_secs(5), true)?;
+        let out = run_tool_budget(
+            &bin,
+            &["id", "-b", "-i"],
+            Some(&root),
+            Duration::from_secs(5),
+            true,
+        )?;
         let line = out.lines().next()?;
         let mut it = line.split_whitespace();
         let node = it.next()?;
@@ -990,9 +1007,17 @@ fn svn_segments() -> Vec<Segment> {
         }
         // `svn status -q` — quiet: tracked modifications only; any
         // output means dirty.
-        let status =
-            run_tool_budget(&bin, &["status", "-q"], Some(&root), Duration::from_secs(5), true)?;
-        Some((format!("r{rev}"), status.lines().any(|l| !l.trim().is_empty())))
+        let status = run_tool_budget(
+            &bin,
+            &["status", "-q"],
+            Some(&root),
+            Duration::from_secs(5),
+            true,
+        )?;
+        Some((
+            format!("r{rev}"),
+            status.lines().any(|l| !l.trim().is_empty()),
+        ))
     }) else {
         return vec![];
     };
@@ -1017,8 +1042,13 @@ fn bzr_segments() -> Vec<Segment> {
             return None;
         }
         // `bzr status -S` — short status; any output means dirty.
-        let status =
-            run_tool_budget(&bin, &["status", "-S"], Some(&root), Duration::from_secs(5), true)?;
+        let status = run_tool_budget(
+            &bin,
+            &["status", "-S"],
+            Some(&root),
+            Duration::from_secs(5),
+            true,
+        )?;
         Some((nick, !status.trim().is_empty()))
     }) else {
         return vec![];
@@ -1050,8 +1080,13 @@ fn fossil_segments() -> Vec<Segment> {
             return None;
         }
         // `fossil changes` — modified managed files; any output means dirty.
-        let status =
-            run_tool_budget(&bin, &["changes"], Some(&root), Duration::from_secs(5), true)?;
+        let status = run_tool_budget(
+            &bin,
+            &["changes"],
+            Some(&root),
+            Duration::from_secs(5),
+            true,
+        )?;
         Some((branch, !status.trim().is_empty()))
     }) else {
         return vec![];
@@ -1084,9 +1119,9 @@ mod tests {
             "5.00 GiB/s" // exp 3, dec 2
         );
         assert_eq!(humanize_bytes(2000.0, "B/s", true), "2 kB/s"); // si: div 1000, no 'i'
-        // Sub-1 rate clamps to exp 0 with 0 decimals — Python renders
-        // `'{:.0f}'.format(0.5)` as `0` (verified: python3 prints
-        // "0 B/s" for this input), so powerline shows `0 B/s` too.
+                                                                   // Sub-1 rate clamps to exp 0 with 0 decimals — Python renders
+                                                                   // `'{:.0f}'.format(0.5)` as `0` (verified: python3 prints
+                                                                   // "0 B/s" for this input), so powerline shows `0 B/s` too.
         assert_eq!(humanize_bytes(0.5, "B/s", false), "0 B/s"); // py:15-25
     }
 

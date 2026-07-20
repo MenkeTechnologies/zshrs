@@ -400,7 +400,6 @@ fn zle_zstyle_bindkey_math_trap_state() {
     );
 }
 
-
 // ═══════════════════ real-config corpus ═══════════════════
 //
 // The synthetic fragments above prove the mechanism; these feed it the
@@ -545,7 +544,10 @@ fn assert_real_config_parity(rel_path: &str, known_open: &[&str]) {
              the config triggers an unbounded loop / block that zsh handles"
         ),
     };
-    let divs = divergences_between(&normalize_volatile_numbers(&z), &normalize_volatile_numbers(&r));
+    let divs = divergences_between(
+        &normalize_volatile_numbers(&z),
+        &normalize_volatile_numbers(&r),
+    );
     let actual: BTreeSet<String> = divs
         .iter()
         .map(|l| normalize_for_baseline(l, &home))
@@ -663,7 +665,6 @@ fn real_zpwr_re_env() {
     assert_real_config_parity(".zpwr/env/.zpwr_re_env.sh", &[]);
 }
 
-
 // ═══════════════════ staged / cumulative real-config chain ═══════════════════
 //
 // The single-file tests above each source ONE config in isolation with a
@@ -762,8 +763,10 @@ fn assert_chain_parity(stages: &[Stage], known_open: &[(&str, &[&str])]) {
         let zd = zst.get(i).map(|(_, d)| d.as_str()).unwrap_or("");
         let rd = rst.get(i).map(|(_, d)| d.as_str()).unwrap_or("");
         let divs = divergences_between(zd, rd);
-        let actual: BTreeSet<String> =
-            divs.iter().map(|l| normalize_for_baseline(l, &home)).collect();
+        let actual: BTreeSet<String> = divs
+            .iter()
+            .map(|l| normalize_for_baseline(l, &home))
+            .collect();
         let expected: BTreeSet<String> = known
             .get(st.label)
             .map(|v| v.iter().map(|s| s.to_string()).collect())
@@ -850,7 +853,6 @@ fn real_plugin_chain_on_zinit() {
         },
     );
 }
-
 
 // ═══════════════ ALL installed plugins — final accumulated state ═══════════════
 //

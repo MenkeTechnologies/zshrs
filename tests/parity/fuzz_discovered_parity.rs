@@ -48,7 +48,10 @@ struct R {
     exit: i32,
 }
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
     R {
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         exit: o.status.code().unwrap_or(-1),
@@ -502,7 +505,9 @@ mod special_var_scalar_tie {
     /// Same tie now works for fpath/cdpath.
     #[test]
     fn fpath_cdpath_scalar_assign_syncs_env() {
-        assert_parity("FPATH=/o; fpath=/aa; print -r -- $FPATH; CDPATH=/o; cdpath=/bb; print -r -- $CDPATH");
+        assert_parity(
+            "FPATH=/o; fpath=/aa; print -r -- $FPATH; CDPATH=/o; cdpath=/bb; print -r -- $CDPATH",
+        );
     }
 }
 
@@ -1083,7 +1088,9 @@ mod read_delim_eof_and_backslash {
     /// The NUL-delimiter idiom (`find -print0 | while read -d ''`) still works.
     #[test]
     fn nul_delimiter_loop_unchanged() {
-        assert_parity("printf 'p1\\0p2\\0' | { while read -d '' p; do print -r -- \"p=$p\"; done; }");
+        assert_parity(
+            "printf 'p1\\0p2\\0' | { while read -d '' p; do print -r -- \"p=$p\"; done; }",
+        );
     }
 }
 
@@ -1434,25 +1441,33 @@ mod regex_ere_vs_pcre {
     /// `\d` is a literal `d` in ERE — this must NOT match.
     #[test]
     fn backslash_d_is_a_literal_d() {
-        assert_parity(r#"[[ '2024-06' =~ '(\d{2,4})-(\d{2})' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+        assert_parity(
+            r#"[[ '2024-06' =~ '(\d{2,4})-(\d{2})' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#,
+        );
     }
 
     /// …and it DOES match an actual run of `d`s.
     #[test]
     fn backslash_d_matches_the_letter_d() {
-        assert_parity(r#"[[ 'ddd-06' =~ '(\d+)' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+        assert_parity(
+            r#"[[ 'ddd-06' =~ '(\d+)' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#,
+        );
     }
 
     /// `\w` likewise.
     #[test]
     fn backslash_w_is_a_literal_w() {
-        assert_parity(r#"[[ 'user@site.com' =~ '^(\w+)@(\w+)\.com$' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+        assert_parity(
+            r#"[[ 'user@site.com' =~ '^(\w+)@(\w+)\.com$' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#,
+        );
     }
 
     /// `(?…)` is a compile error in ERE, not a group modifier.
     #[test]
     fn paren_question_is_a_compile_error() {
-        assert_parity(r#"[[ 'abc' =~ '(?<w>[a-z]+)' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+        assert_parity(
+            r#"[[ 'abc' =~ '(?<w>[a-z]+)' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#,
+        );
     }
 
     /// A real ERE escape keeps its meaning.
@@ -1470,32 +1485,42 @@ mod regex_ere_vs_pcre {
     /// REMATCH_PCRE re-points `=~` at PCRE, where `\d` IS a digit class.
     #[test]
     fn rematchpcre_switches_engines() {
-        assert_parity(r#"setopt rematchpcre; [[ '2024-06' =~ '(\d{2,4})-(\d{2})' ]] && print -r -- "M=$MATCH m=(${(j:,:)match})" || print -r -- NOMATCH"#);
+        assert_parity(
+            r#"setopt rematchpcre; [[ '2024-06' =~ '(\d{2,4})-(\d{2})' ]] && print -r -- "M=$MATCH m=(${(j:,:)match})" || print -r -- NOMATCH"#,
+        );
     }
 
     /// …and named groups compile under PCRE.
     #[test]
     fn rematchpcre_allows_named_groups() {
-        assert_parity(r#"setopt rematchpcre; [[ 'abc123' =~ '(?<word>[a-z]+)' ]] && print -r -- "M=[$MATCH]" || print -r -- NOMATCH"#);
+        assert_parity(
+            r#"setopt rematchpcre; [[ 'abc123' =~ '(?<word>[a-z]+)' ]] && print -r -- "M=[$MATCH]" || print -r -- NOMATCH"#,
+        );
     }
 
     /// The `[[ ]]` path must honour BASH_REMATCH (it did not, before the
     /// duplicate inline implementation was replaced by a module dispatch).
     #[test]
     fn bash_rematch_array_is_populated() {
-        assert_parity(r#"setopt bashrematch; [[ 'ab' =~ '(a)(b)' ]]; print -r -- "[${BASH_REMATCH[1]}][${BASH_REMATCH[2]}]""#);
+        assert_parity(
+            r#"setopt bashrematch; [[ 'ab' =~ '(a)(b)' ]]; print -r -- "[${BASH_REMATCH[1]}][${BASH_REMATCH[2]}]""#,
+        );
     }
 
     /// CASE_MATCH off maps to REG_ICASE.
     #[test]
     fn casematch_off_is_case_insensitive() {
-        assert_parity(r#"unsetopt casematch; [[ 'AbC' =~ 'abc' ]] && print -r -- ICASE || print -r -- NO"#);
+        assert_parity(
+            r#"unsetopt casematch; [[ 'AbC' =~ 'abc' ]] && print -r -- ICASE || print -r -- NO"#,
+        );
     }
 
     /// Captures, $match and $mbegin still come out right.
     #[test]
     fn captures_and_offsets_intact() {
-        assert_parity(r#"[[ 'abc123' =~ '([a-z]+)([0-9]+)' ]] && print -r -- "M=$MATCH m=(${(j:,:)match}) b=(${(j:,:)mbegin}) e=(${(j:,:)mend})""#);
+        assert_parity(
+            r#"[[ 'abc123' =~ '([a-z]+)([0-9]+)' ]] && print -r -- "M=$MATCH m=(${(j:,:)match}) b=(${(j:,:)mbegin}) e=(${(j:,:)mend})""#,
+        );
     }
 }
 
@@ -1517,37 +1542,49 @@ mod pcre_offset_and_captures {
     /// `^` still anchors to the string start, so matching from offset 1 fails.
     #[test]
     fn start_offset_does_not_reanchor_caret() {
-        assert_parity(r#"zmodload zsh/pcre; pcre_compile '^(\w+)@(\w+)\.com$'; pcre_match -n 1 'user@site.com'; print -r -- "rc=$?""#);
+        assert_parity(
+            r#"zmodload zsh/pcre; pcre_compile '^(\w+)@(\w+)\.com$'; pcre_match -n 1 'user@site.com'; print -r -- "rc=$?""#,
+        );
     }
 
     /// A non-anchored pattern still matches from the offset.
     #[test]
     fn start_offset_still_searches() {
-        assert_parity(r#"zmodload zsh/pcre; pcre_compile 'b'; pcre_match -n 2 'abab'; print -r -- "rc=$?""#);
+        assert_parity(
+            r#"zmodload zsh/pcre; pcre_compile 'b'; pcre_match -n 2 'abab'; print -r -- "rc=$?""#,
+        );
     }
 
     /// -b offsets are absolute (relative to the whole subject), under -n too.
     #[test]
     fn offsets_are_absolute_under_start_offset() {
-        assert_parity(r#"zmodload zsh/pcre; pcre_compile 'b'; pcre_match -b -n 2 'abab'; print -r -- "rc=$? op=[$ZPCRE_OP]""#);
+        assert_parity(
+            r#"zmodload zsh/pcre; pcre_compile 'b'; pcre_match -b -n 2 'abab'; print -r -- "rc=$? op=[$ZPCRE_OP]""#,
+        );
     }
 
     /// A trailing group that did not participate is not reported.
     #[test]
     fn trailing_unset_group_is_truncated() {
-        assert_parity(r#"zmodload zsh/pcre; pcre_compile 'x(y)?z'; pcre_match -a arr 'xz'; print -r -- "n=${#arr}""#);
+        assert_parity(
+            r#"zmodload zsh/pcre; pcre_compile 'x(y)?z'; pcre_match -a arr 'xz'; print -r -- "n=${#arr}""#,
+        );
     }
 
     /// An unset group BEFORE a participating one IS reported, as empty.
     #[test]
     fn leading_unset_group_is_kept_empty() {
-        assert_parity(r#"zmodload zsh/pcre; pcre_compile '(a)?(b)'; pcre_match -a arr 'b'; print -r -- "n=${#arr} [${(j:,:)arr}]""#);
+        assert_parity(
+            r#"zmodload zsh/pcre; pcre_compile '(a)?(b)'; pcre_match -a arr 'b'; print -r -- "n=${#arr} [${(j:,:)arr}]""#,
+        );
     }
 
     /// The ordinary all-groups-participate case is unchanged.
     #[test]
     fn participating_groups_all_reported() {
-        assert_parity(r#"zmodload zsh/pcre; pcre_compile '([a-z]+)([0-9]+)'; pcre_match 'abc123'; print -r -- "M=$MATCH m=(${(j:,:)match})""#);
+        assert_parity(
+            r#"zmodload zsh/pcre; pcre_compile '([a-z]+)([0-9]+)'; pcre_match 'abc123'; print -r -- "M=$MATCH m=(${(j:,:)match})""#,
+        );
     }
 }
 
@@ -1749,7 +1786,9 @@ mod case_glob_subst {
     /// GLOB_SUBST makes plain `$p` glob.
     #[test]
     fn globsubst_option_makes_plain_glob() {
-        assert_parity(r#"setopt globsubst; p='a*'; case abc in $p) print -r -- Y;; *) print -r -- N;; esac"#);
+        assert_parity(
+            r#"setopt globsubst; p='a*'; case abc in $p) print -r -- Y;; *) print -r -- N;; esac"#,
+        );
     }
 
     /// A SOURCE-level meta adjacent to a substitution still globs.
@@ -1761,7 +1800,9 @@ mod case_glob_subst {
     /// The `[[ = ]]` path stays correct (shared helper regression).
     #[test]
     fn cond_path_still_correct() {
-        assert_parity(r#"p='a*'; [[ abc = $p ]] && print -r -- Y || print -r -- N; [[ abc = $~p ]] && print -r -- Y || print -r -- N"#);
+        assert_parity(
+            r#"p='a*'; [[ abc = $p ]] && print -r -- Y || print -r -- N; [[ abc = $~p ]] && print -r -- Y || print -r -- N"#,
+        );
     }
 }
 
@@ -1982,7 +2023,9 @@ mod deferred_fixes {
     // --- (Q) bang unescape roundtrip ---
     #[test]
     fn quote_q_bang_roundtrips() {
-        assert_parity(r#"v=a!b; r=${(Q)${(qqqq)v}}; [[ $r == $v ]] && print -r -- ok || print -r -- "BAD[$r]""#);
+        assert_parity(
+            r#"v=a!b; r=${(Q)${(qqqq)v}}; [[ $r == $v ]] && print -r -- ok || print -r -- "BAD[$r]""#,
+        );
     }
     #[test]
     fn quote_q_unknown_escape_kept() {
@@ -2000,15 +2043,21 @@ mod deferred_fixes {
     }
     #[test]
     fn errexit_in_function_skips_always() {
-        assert_parity(r#"setopt errexit; f(){ { false } always { print -r -- A } }; f; print -r -- after"#);
+        assert_parity(
+            r#"setopt errexit; f(){ { false } always { print -r -- A } }; f; print -r -- after"#,
+        );
     }
     #[test]
     fn errexit_exit_trap_still_fires() {
-        assert_parity(r#"setopt errexit; trap "print -r -- EXITTRAP" EXIT; { false } always { print -r -- A }"#);
+        assert_parity(
+            r#"setopt errexit; trap "print -r -- EXITTRAP" EXIT; { false } always { print -r -- A }"#,
+        );
     }
     #[test]
     fn errexit_or_guard_runs_always() {
-        assert_parity(r#"setopt errexit; { false } always { print -r -- A } || print -r -- OR; print -r -- after"#);
+        assert_parity(
+            r#"setopt errexit; { false } always { print -r -- A } || print -r -- OR; print -r -- after"#,
+        );
     }
 
     // --- =() real temp file ---
@@ -2384,7 +2433,9 @@ mod deferred_fixes {
     }
     #[test]
     fn replace_alternation_backref_still_captures() {
-        assert_parity(r#"setopt extendedglob; s=camelCase; print -r -- ${s/(#b)([A-Z])/_${match[1]}}"#);
+        assert_parity(
+            r#"setopt extendedglob; s=camelCase; print -r -- ${s/(#b)([A-Z])/_${match[1]}}"#,
+        );
     }
     #[test]
     fn replace_greedy_star_unaffected() {
@@ -2565,25 +2616,19 @@ mod rcexpandparam_split_empty {
     /// zsh: 4 (interior empty kept). Was 3 before the plan9 gate.
     #[test]
     fn quoted_forced_split_keeps_interior_empty() {
-        assert_parity(
-            r#"v="a:b::c"; setopt rcexpandparam; a=("${(s.:.)v}"); print $#a"#,
-        );
+        assert_parity(r#"v="a:b::c"; setopt rcexpandparam; a=("${(s.:.)v}"); print $#a"#);
     }
 
     /// (@) forced split under rcexpandparam — also 4.
     #[test]
     fn quoted_at_forced_split_keeps_interior_empty() {
-        assert_parity(
-            r#"v="a:b::c"; setopt rcexpandparam; a=("${(@s.:.)v}"); print $#a"#,
-        );
+        assert_parity(r#"v="a:b::c"; setopt rcexpandparam; a=("${(@s.:.)v}"); print $#a"#);
     }
 
     /// Unquoted forced split under rcexpandparam still drops empties (3).
     #[test]
     fn unquoted_forced_split_drops_interior_empty() {
-        assert_parity(
-            r#"v="a:b::c"; setopt rcexpandparam; a=(${(s.:.)v}); print $#a"#,
-        );
+        assert_parity(r#"v="a:b::c"; setopt rcexpandparam; a=(${(s.:.)v}); print $#a"#);
     }
 
     /// Non-plan9 quoted forced split still collapses interior empties
@@ -2632,9 +2677,7 @@ mod ksharrays_nested_split_count {
     /// (f) line split nested count under ksharrays → 3.
     #[test]
     fn ksharrays_nested_f_split_counts_elements() {
-        assert_parity(
-            "v=$'x\\ny\\nz'; setopt ksharrays; print -r -- ${#${(f)v}}",
-        );
+        assert_parity("v=$'x\\ny\\nz'; setopt ksharrays; print -r -- ${#${(f)v}}");
     }
 
     /// A REAL bare array `${#a}` under ksharrays still yields element-0's
@@ -2729,17 +2772,13 @@ mod zerr_trap_on_errflag {
     /// zsh fires TRAPZERR on the readonly reassignment. Was silent before.
     #[test]
     fn trapzerr_fires_on_readonly_reassign() {
-        assert_parity(
-            r#"TRAPZERR() { print -r -- zerr }; typeset -r ro=1; ro=2; echo end"#,
-        );
+        assert_parity(r#"TRAPZERR() { print -r -- zerr }; typeset -r ro=1; ro=2; echo end"#);
     }
 
     /// `trap … ERR` string form also fires.
     #[test]
     fn err_trap_fires_on_readonly_reassign() {
-        assert_parity(
-            r#"trap 'print -r -- ERRFIRED' ERR; typeset -r ro=1; ro=2; echo end"#,
-        );
+        assert_parity(r#"trap 'print -r -- ERRFIRED' ERR; typeset -r ro=1; ro=2; echo end"#);
     }
 
     /// Inside a { } always { } block the trap fires for the failed body
@@ -2802,9 +2841,7 @@ mod string_trap_replaces_function {
     /// Real signal INT — string form replaces TRAPINT function.
     #[test]
     fn string_int_replaces_trapint_function() {
-        assert_parity(
-            r#"TRAPINT() { print -r -- fi }; trap 'print -r -- si' INT; trap"#,
-        );
+        assert_parity(r#"TRAPINT() { print -r -- fi }; trap 'print -r -- si' INT; trap"#);
     }
 
     /// Function-only trap still fires (no over-removal).
@@ -2876,9 +2913,7 @@ mod flag_expansion_no_array_state_leak {
     /// zsh: `[2]`. Was `[1]` after `${(U)arr}` leaked LF_ARRAY.
     #[test]
     fn uppercase_array_then_nested_length() {
-        assert_parity(
-            r#"s=Hello_World; a=(x y); : ${(U)a}; print -r -- "[${#${#s}}]""#,
-        );
+        assert_parity(r#"s=Hello_World; a=(x y); : ${(U)a}; print -r -- "[${#${#s}}]""#);
     }
 
     /// Same via an associative array and the (U) listing form.
@@ -3031,9 +3066,7 @@ mod procsub_in_cond_errors {
     /// zsh: empty stdout, exit 1 (error). Was `regular` (exit 0) before.
     #[test]
     fn eq_procsub_in_dbracket_f() {
-        assert_parity(
-            r#"[[ -f =(print x) ]] && print -r -- regular || print -r -- notregular"#,
-        );
+        assert_parity(r#"[[ -f =(print x) ]] && print -r -- regular || print -r -- notregular"#);
     }
 
     /// `<(…)` in `[[ -f ]]` also errors.
@@ -3147,9 +3180,7 @@ mod z_flag_literal_dollar {
     /// The (q)-then-(z) round trip from the fuzz.
     #[test]
     fn z_of_q_quoted_backslash_dollar() {
-        assert_parity(
-            r#"v="${(q)$(print -rn -- 'a\$b')}"; print -rl -- ${(z)v}; print -r -- END"#,
-        );
+        assert_parity(r#"v="${(q)$(print -rn -- 'a\$b')}"; print -rl -- ${(z)v}; print -r -- END"#);
     }
 
     /// Backtick stays literal too.
@@ -3335,9 +3366,7 @@ mod ztst_mined {
     #[test]
     #[ignore = "zshrs gap: TYPESET_TO_UNSET + scalar+=(array) drops the empty element-0"]
     fn typeset_to_unset_append_array_keeps_empty_elem() {
-        assert_parity(
-            r#"setopt typeset_to_unset; typeset a; a+=(1 2 3); print "${(q@)a}""#,
-        );
+        assert_parity(r#"setopt typeset_to_unset; typeset a; a+=(1 2 3); print "${(q@)a}""#);
     }
 
     /// D06subscript — a `(r)PAT,(R)PAT2` range subscript where PAT
@@ -3358,9 +3387,7 @@ mod ztst_mined {
     #[test]
     #[ignore = "zshrs gap: (r)/(R) search subscript with literal bracket pattern returns whole string"]
     fn range_subscript_bracket_pattern() {
-        assert_parity(
-            r#"s='Twinkle, [how] I [wonder]'; print $s[(r)\],(R)\[]"#,
-        );
+        assert_parity(r#"s='Twinkle, [how] I [wonder]'; print $s[(r)\],(R)\[]"#);
     }
 
     /// D09brace — a brace range `{X..Y}` over non-ASCII single bytes

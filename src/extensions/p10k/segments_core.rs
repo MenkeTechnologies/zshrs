@@ -699,7 +699,14 @@ fn ip_segments() -> Vec<Segment> {
     // of collapsing to just the NETWORK_ICON box.
     publish_ip_status(&iface, &ip);
     // p10k:2295 — `_p9k_prompt_segment "$0" "cyan" "$_p9k_color1" 'NETWORK_ICON' …`
-    vec![make_segment("ip", None, "cyan", color1(), "NETWORK_ICON", ip)]
+    vec![make_segment(
+        "ip",
+        None,
+        "cyan",
+        color1(),
+        "NETWORK_ICON",
+        ip,
+    )]
 }
 
 /// Per-interface byte-counter sample from the previous prompt, for the
@@ -784,7 +791,11 @@ fn human_readable_bytes(n: f64) -> (String, char) {
     };
     // p10k:341 — `${${ret%%0#}%.}`: strip trailing zeros, then a trailing dot.
     let trimmed = raw.trim_end_matches('0').trim_end_matches('.').to_string();
-    let trimmed = if trimmed.is_empty() { "0".to_string() } else { trimmed };
+    let trimmed = if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed
+    };
     (trimmed, suf)
 }
 
@@ -969,7 +980,9 @@ fn shorten_branch(branch: &str) -> String {
     let strategy = p9k_global("VCS_SHORTEN_STRATEGY", "");
     if let (Some(sl), Some(minl)) = (sl, minl) {
         let n = branch.chars().count();
-        if n > minl && n > sl && (strategy == "truncate_middle" || strategy == "truncate_from_right")
+        if n > minl
+            && n > sl
+            && (strategy == "truncate_middle" || strategy == "truncate_from_right")
         {
             // p10k:7246-7248 — delimiter default '…'.
             let delim = decode_g(&p9k_global("VCS_SHORTEN_DELIMITER", "\u{2026}"));
@@ -1107,7 +1120,12 @@ fn vcs_segments() -> Vec<Segment> {
         // Empty content → P9K_CONTENT="" reaches the formatter, which
         // then formats from VCS_STATUS_*. Icon (VCS_GIT_ICON) and
         // bg/fg still apply; the formatter embeds its own branch glyph.
-        let bg = p9k_param("vcs", Some(state), "BACKGROUND", vcs_state_default_bg(state));
+        let bg = p9k_param(
+            "vcs",
+            Some(state),
+            "BACKGROUND",
+            vcs_state_default_bg(state),
+        );
         let fg = p9k_param("vcs", Some(state), "FOREGROUND", color1());
         let icon = apply_visual_identifier(
             "vcs",
@@ -1222,7 +1240,12 @@ fn vcs_segments() -> Vec<Segment> {
 
     // p10k:4007 — colors: bg from __p9k_vcs_states, fg color1, both
     // overridable through the param chain.
-    let bg = p9k_param("vcs", Some(state), "BACKGROUND", vcs_state_default_bg(state));
+    let bg = p9k_param(
+        "vcs",
+        Some(state),
+        "BACKGROUND",
+        vcs_state_default_bg(state),
+    );
     let fg = p9k_param("vcs", Some(state), "FOREGROUND", color1());
 
     // _p9k_vcs_style (p10k:557-583): inject per-part %F colors only
@@ -1721,7 +1744,12 @@ fn dir_segments() -> Vec<Segment> {
             let c = p9k_param("dir", state_ref, "PATH_SEPARATOR_FOREGROUND", "");
             sep.push_str(&fgesc(&c)); // p10k:2129-2132
         }
-        sep.push_str(&decode_g(&p9k_param("dir", state_ref, "PATH_SEPARATOR", "/"))); // p10k:2134-2137
+        sep.push_str(&decode_g(&p9k_param(
+            "dir",
+            state_ref,
+            "PATH_SEPARATOR",
+            "/",
+        ))); // p10k:2134-2137
         if sep.contains('%') {
             sep.push_str(&style); // p10k:2138
         }
@@ -1805,8 +1833,14 @@ mod tests {
             ..git::GitStatus::default()
         };
         publish_vcs_status(&gs);
-        assert_eq!(getsparam("VCS_STATUS_LOCAL_BRANCH").as_deref(), Some("main"));
-        assert_eq!(getsparam("VCS_STATUS_REMOTE_BRANCH").as_deref(), Some("origin/main"));
+        assert_eq!(
+            getsparam("VCS_STATUS_LOCAL_BRANCH").as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            getsparam("VCS_STATUS_REMOTE_BRANCH").as_deref(),
+            Some("origin/main")
+        );
         assert_eq!(getsparam("VCS_STATUS_COMMITS_AHEAD").as_deref(), Some("3"));
         assert_eq!(getsparam("VCS_STATUS_COMMITS_BEHIND").as_deref(), Some("1"));
         assert_eq!(getsparam("VCS_STATUS_NUM_STAGED").as_deref(), Some("2"));
@@ -1883,12 +1917,8 @@ mod tests {
     #[test]
     fn shorten_middle_and_right_squeeze_components() {
         // p10k:1866-1877 — pref=2, delim '…' (len 1), interior only.
-        let mut parts: Vec<String> = vec![
-            "".into(),
-            "projects".into(),
-            "deeply".into(),
-            "last".into(),
-        ];
+        let mut parts: Vec<String> =
+            vec!["".into(), "projects".into(), "deeply".into(), "last".into()];
         shorten_middle_or_right(&mut parts, 2, "\u{2026}", false);
         assert_eq!(parts[1], format!("pr{MARK_ELIDE}"));
         assert_eq!(parts[2], format!("de{MARK_ELIDE}"));

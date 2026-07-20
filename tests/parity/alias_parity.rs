@@ -134,7 +134,9 @@ mod via_eval {
     /// the frame remainder must survive the inner expansion.
     #[test]
     fn two_level_alias_chain_via_eval() {
-        assert_parity(r#"alias hub='echo HUB'; alias git=hub; alias tommy='git status'; eval tommy"#);
+        assert_parity(
+            r#"alias hub='echo HUB'; alias git=hub; alias tommy='git status'; eval tommy"#,
+        );
     }
 
     /// Pin: trailing-space alias body marks the NEXT word

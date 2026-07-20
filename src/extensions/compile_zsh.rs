@@ -2241,16 +2241,10 @@ impl ZshCompiler {
             // \u{98} (zsh_h.rs:161/183) — and leaves literals elsewhere
             // (e.g. '~' after ':' in a path-list value). Accept every
             // '='/':' × '~' spelling combination.
-            let word_has_assign_tilde = [
-                "=~",
-                ":~",
-                "=\u{98}",
-                ":\u{98}",
-                "\u{8d}~",
-                "\u{8d}\u{98}",
-            ]
-            .iter()
-            .any(|p| word.contains(p));
+            let word_has_assign_tilde =
+                ["=~", ":~", "=\u{98}", ":\u{98}", "\u{8d}~", "\u{8d}\u{98}"]
+                    .iter()
+                    .any(|p| word.contains(p));
             if (head_is_magic_equals || (head_is_typeset_magic && word_has_assign_tilde))
                 && !word.contains('\u{9d}')
                 && !word.contains('\u{9e}')
@@ -3364,25 +3358,25 @@ impl ZshCompiler {
                         || s.contains('?') || s.contains('\u{97}') // Quest
                         || s.contains('[') || s.contains('\u{91}') // Inbrack
                         || s.contains('{') || s.contains('\u{8f}')); // Inbrace
-                // GLOB_ASSIGN eligibility: the RHS carries an UNQUOTED glob
-                // TOKEN (Star \u{87} / Quest \u{97} / Inbrack \u{91}). Quoted
-                // metas arrive as literal `*`/`?`/`[` (0x2a/0x3f/0x5b), so a
-                // token byte unambiguously means "unquoted glob pattern". This
-                // matches zsh: only literal unquoted patterns are globbed on
-                // assignment (Src/exec.c:2554); `x="/tmp/*"`, `x=$p`, `x=$(c)`
-                // are not. The DQ-wrap below untokenizes the value, so the
-                // runtime can't recover this — carry it via BUILTIN_MARK_GLOB_
-                // ELIGIBLE emitted just before SET_VAR.
-                // A glob token counts only at TOP LEVEL. A Star/Quest/Inbrack
-                // INSIDE a `${…}` / `$(…)` expansion, a `$name[…]` subscript, or
-                // a `` `…` `` is not a value glob: `${A[1]}` / `$A[1]` carry an
-                // Inbrack for their SUBSCRIPT, `${x#*/}` a Star for its PATTERN,
-                // `$*` a Star for the PARAM — none glob the assigned value. zsh
-                // globs the value POST-expansion (Src/subst.c globlist → zglob's
-                // haswilds on the RESULT), so an expansion-interior token never
-                // counts. Skipping those interiors before testing matches zsh:
-                // `x=/tmp/*`, `x=[abc]`, `x=$p*` glob; `x=$p`, `x=${A[1]}`,
-                // `x=$A[1]`, `x=$*` do not.
+                                                                     // GLOB_ASSIGN eligibility: the RHS carries an UNQUOTED glob
+                                                                     // TOKEN (Star \u{87} / Quest \u{97} / Inbrack \u{91}). Quoted
+                                                                     // metas arrive as literal `*`/`?`/`[` (0x2a/0x3f/0x5b), so a
+                                                                     // token byte unambiguously means "unquoted glob pattern". This
+                                                                     // matches zsh: only literal unquoted patterns are globbed on
+                                                                     // assignment (Src/exec.c:2554); `x="/tmp/*"`, `x=$p`, `x=$(c)`
+                                                                     // are not. The DQ-wrap below untokenizes the value, so the
+                                                                     // runtime can't recover this — carry it via BUILTIN_MARK_GLOB_
+                                                                     // ELIGIBLE emitted just before SET_VAR.
+                                                                     // A glob token counts only at TOP LEVEL. A Star/Quest/Inbrack
+                                                                     // INSIDE a `${…}` / `$(…)` expansion, a `$name[…]` subscript, or
+                                                                     // a `` `…` `` is not a value glob: `${A[1]}` / `$A[1]` carry an
+                                                                     // Inbrack for their SUBSCRIPT, `${x#*/}` a Star for its PATTERN,
+                                                                     // `$*` a Star for the PARAM — none glob the assigned value. zsh
+                                                                     // globs the value POST-expansion (Src/subst.c globlist → zglob's
+                                                                     // haswilds on the RESULT), so an expansion-interior token never
+                                                                     // counts. Skipping those interiors before testing matches zsh:
+                                                                     // `x=/tmp/*`, `x=[abc]`, `x=$p*` glob; `x=$p`, `x=${A[1]}`,
+                                                                     // `x=$A[1]`, `x=$*` do not.
                 let glob_eligible = {
                     use crate::ported::zsh_h::{
                         Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Qstring, Qtick, Quest,
@@ -3620,93 +3614,93 @@ impl ZshCompiler {
                 }
                 let mut stack_values = 0usize;
                 if !batched {
-                for elem in elements.iter() {
-                    // c:Src/subst.c:49-79 keyvalpairelement, invoked
-                    // from prefork's PREFORK_ASSIGN walk (c:111-117).
-                    // An unquoted `[key]=value` / `[key]+=value`
-                    // element is rewritten into THREE list nodes:
-                    // Marker (or Marker `+`), key, value — with the
-                    // key and value each run through singsub (c:65,75:
-                    // substitution only, no glob / no word-split / no
-                    // brace expansion). The Marker triple flows into
-                    // assignaparam(ASSPM_KEY_VALUE) downstream. The
-                    // fusevm compile path performs the same split here
-                    // at compile time, where the raw token form still
-                    // distinguishes quoted (`"[k]=v"` — plain element,
-                    // c:54 start[0]==Inbrack is the TOKEN form only)
-                    // from unquoted.
-                    if let Some((key_raw, val_raw, is_append)) = split_kv_element(elem) {
-                        // c:Src/subst.c:59-60 marker / marker_plus.
-                        let marker = if is_append {
-                            format!("{}+", crate::ported::zsh_h::Marker)
-                        } else {
-                            crate::ported::zsh_h::Marker.to_string()
-                        };
-                        let mc = self.builder.add_constant(Value::str(marker.as_str()));
-                        self.builder.emit(Op::LoadConst(mc), 0);
-                        for part in [&key_raw, &val_raw] {
-                            // c:Src/subst.c:65/75 `singsub(&dat)` —
-                            // PREFORK_SINGLE semantics: parameter /
-                            // command substitution runs, but no glob,
-                            // no IFS split, no brace expansion.
-                            // dq_context_depth>0 routes every emit
-                            // site to the no-glob / no-split variants
-                            // (EXPAND_TEXT mode 1, GLOB_EXPAND gated).
-                            self.assign_context_depth += 1;
-                            self.dq_context_depth += 1;
-                            self.compile_word_str(part);
-                            self.dq_context_depth -= 1;
-                            self.assign_context_depth -= 1;
+                    for elem in elements.iter() {
+                        // c:Src/subst.c:49-79 keyvalpairelement, invoked
+                        // from prefork's PREFORK_ASSIGN walk (c:111-117).
+                        // An unquoted `[key]=value` / `[key]+=value`
+                        // element is rewritten into THREE list nodes:
+                        // Marker (or Marker `+`), key, value — with the
+                        // key and value each run through singsub (c:65,75:
+                        // substitution only, no glob / no word-split / no
+                        // brace expansion). The Marker triple flows into
+                        // assignaparam(ASSPM_KEY_VALUE) downstream. The
+                        // fusevm compile path performs the same split here
+                        // at compile time, where the raw token form still
+                        // distinguishes quoted (`"[k]=v"` — plain element,
+                        // c:54 start[0]==Inbrack is the TOKEN form only)
+                        // from unquoted.
+                        if let Some((key_raw, val_raw, is_append)) = split_kv_element(elem) {
+                            // c:Src/subst.c:59-60 marker / marker_plus.
+                            let marker = if is_append {
+                                format!("{}+", crate::ported::zsh_h::Marker)
+                            } else {
+                                crate::ported::zsh_h::Marker.to_string()
+                            };
+                            let mc = self.builder.add_constant(Value::str(marker.as_str()));
+                            self.builder.emit(Op::LoadConst(mc), 0);
+                            for part in [&key_raw, &val_raw] {
+                                // c:Src/subst.c:65/75 `singsub(&dat)` —
+                                // PREFORK_SINGLE semantics: parameter /
+                                // command substitution runs, but no glob,
+                                // no IFS split, no brace expansion.
+                                // dq_context_depth>0 routes every emit
+                                // site to the no-glob / no-split variants
+                                // (EXPAND_TEXT mode 1, GLOB_EXPAND gated).
+                                self.assign_context_depth += 1;
+                                self.dq_context_depth += 1;
+                                self.compile_word_str(part);
+                                self.dq_context_depth -= 1;
+                                self.assign_context_depth -= 1;
+                            }
+                            stack_values += 3;
+                            continue;
                         }
-                        stack_values += 3;
-                        continue;
+                        self.assign_context_depth += 1;
+                        self.compile_word_str(elem);
+                        self.assign_context_depth -= 1;
+                        // Same IFS-split rule as for-list words: unquoted
+                        // `$(...)` / backtick inside an array literal
+                        // (`a=($(...))`) should produce per-word elements.
+                        if has_unquoted_expansion(elem) {
+                            self.builder
+                                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
+                        }
+                        stack_values += 1;
                     }
-                    self.assign_context_depth += 1;
-                    self.compile_word_str(elem);
-                    self.assign_context_depth -= 1;
-                    // Same IFS-split rule as for-list words: unquoted
-                    // `$(...)` / backtick inside an array literal
-                    // (`a=($(...))`) should produce per-word elements.
-                    if has_unquoted_expansion(elem) {
-                        self.builder
-                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
+                    // Collapse the N element values into ONE Value::Array. CallBuiltin's
+                    // argc is u8 in the fusevm opcode (op.rs `CallBuiltin(u16, u8)`), so
+                    // passing N+1 separate stack args wrapped the count mod 256 for a
+                    // literal `arr=(...)` with >254 elements. MakeArray takes a u16 count;
+                    // SET_ARRAY/APPEND_ARRAY flatten a single Value::Array arg and still
+                    // run the `[key]=value` marker detection on the flattened list, so both
+                    // plain and assoc-pair literals round-trip (the same shape
+                    // `arr=($other_array)` already takes). MakeArray's count is a
+                    // u16 operand; a literal with > 65535 elements that is NOT all-literal
+                    // (so it missed the single-Array-constant fast path above) would wrap
+                    // it mod 65536 and silently truncate — route those through
+                    // BUILTIN_MAKE_ARRAY_COUNTED, whose count is a runtime i64.
+                    if stack_values <= u16::MAX as usize {
+                        self.builder.emit(Op::MakeArray(stack_values as u16), 0);
+                    } else {
+                        self.builder.emit(Op::LoadInt(stack_values as i64), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_MAKE_ARRAY_COUNTED, 1),
+                            0,
+                        );
                     }
-                    stack_values += 1;
-                }
-                // Collapse the N element values into ONE Value::Array. CallBuiltin's
-                // argc is u8 in the fusevm opcode (op.rs `CallBuiltin(u16, u8)`), so
-                // passing N+1 separate stack args wrapped the count mod 256 for a
-                // literal `arr=(...)` with >254 elements. MakeArray takes a u16 count;
-                // SET_ARRAY/APPEND_ARRAY flatten a single Value::Array arg and still
-                // run the `[key]=value` marker detection on the flattened list, so both
-                // plain and assoc-pair literals round-trip (the same shape
-                // `arr=($other_array)` already takes). MakeArray's count is a
-                // u16 operand; a literal with > 65535 elements that is NOT all-literal
-                // (so it missed the single-Array-constant fast path above) would wrap
-                // it mod 65536 and silently truncate — route those through
-                // BUILTIN_MAKE_ARRAY_COUNTED, whose count is a runtime i64.
-                if stack_values <= u16::MAX as usize {
-                    self.builder.emit(Op::MakeArray(stack_values as u16), 0);
-                } else {
-                    self.builder.emit(Op::LoadInt(stack_values as i64), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_MAKE_ARRAY_COUNTED, 1),
-                        0,
-                    );
-                }
                 } // end `if !batched` — the array Value is now on the stack either
                   // way (one Array constant, or assembled from element ops).
-                // c:Src/exec.c::addvars:2624-2632 — the xtrace line. C's emission:
-                //   fprintf(xtrerr, "%s=( ", name);        // "name=( "
-                //   for *ptr in arr: quotedzputs(*ptr); fputc(' ');
-                //   fprintf(xtrerr, ") ");                 // ") "
-                // all inside `if (xtr) { … }` (guarded on the live xtrace state).
-                // Drive it off the WHOLE assembled array via BUILTIN_XTRACE_ARRAY_LINE
-                // (Dup keeps the array on the stack for SET_ARRAY): the builtin reads
-                // the single Value::Array — the same one SET_ARRAY consumes — quotes
-                // each element with quotedzputs, wraps in the `prefix … ) ` frame, and
-                // prints only when xtrace is on. Zero per-element VM slots (the prior
-                // one-slot-per-element trace overflowed next_slot on large literals).
+                  // c:Src/exec.c::addvars:2624-2632 — the xtrace line. C's emission:
+                  //   fprintf(xtrerr, "%s=( ", name);        // "name=( "
+                  //   for *ptr in arr: quotedzputs(*ptr); fputc(' ');
+                  //   fprintf(xtrerr, ") ");                 // ") "
+                  // all inside `if (xtr) { … }` (guarded on the live xtrace state).
+                  // Drive it off the WHOLE assembled array via BUILTIN_XTRACE_ARRAY_LINE
+                  // (Dup keeps the array on the stack for SET_ARRAY): the builtin reads
+                  // the single Value::Array — the same one SET_ARRAY consumes — quotes
+                  // each element with quotedzputs, wraps in the `prefix … ) ` frame, and
+                  // prints only when xtrace is on. Zero per-element VM slots (the prior
+                  // one-slot-per-element trace overflowed next_slot on large literals).
                 let prefix_str = if assign.append {
                     format!("{}+=( ", assign.name)
                 } else {
@@ -4511,8 +4505,7 @@ impl ZshCompiler {
         // braces are literal inside `"…"` (`print -r -- "{a,b}"` → `{a,b}`), and
         // the `=~` arm wraps its RHS in those markers precisely to reach
         // singsub semantics. Same spelling as `has_quote_markers` (line 4118).
-        let in_prefork_single = self.dq_context_depth > 0
-            || word_is_single_dq_span(s);
+        let in_prefork_single = self.dq_context_depth > 0 || word_is_single_dq_span(s);
         let trigger_brace = !in_prefork_single && looks_like_brace_expansion(&untoked);
 
         // Process substitution `<(cmd)` / `>(cmd)`. The lexer marks the
@@ -4652,8 +4645,7 @@ impl ZshCompiler {
             // word). Only `*` gets the join — `@` continues to return
             // Array. Without the `*` fix, `v="$*"` captured only the
             // first positional because pop_args flattens Array.
-            let in_dq =
-                self.dq_context_depth > 0 || word_is_single_dq_span(s);
+            let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
             self.builder.emit(Op::LoadConst(idx), 0);
             // c:Src/exec.c:2554 addvars — a SCALAR assignment RHS is expanded
             // with PREFORK_SINGLE, so it is NOT word-split even under
@@ -4663,7 +4655,8 @@ impl ZshCompiler {
             // route it through the DQ (no-split) variant when it is a scalar
             // assignment value: `setopt shwordsplit; v=' a:b '; w=$v` kept the
             // surrounding spaces in zsh but zshrs trimmed them.
-            let no_split = in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
+            let no_split =
+                in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
             let getvar = if no_split {
                 crate::vm_helper::BUILTIN_GET_VAR_DQ
             } else {
@@ -4824,8 +4817,7 @@ impl ZshCompiler {
                 // the empties). c:Src/subst.c:184-187 + c:1759 sepjoin:
                 // `a=(1 "" 3); "$a"` → `1  3`. Detect quoting via dq-depth
                 // OR raw token DQ-wrapping (same dual check as `$@`/`$*`).
-                let in_dq =
-                    self.dq_context_depth > 0 || word_is_single_dq_span(s);
+                let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
                 // c:Src/exec.c:2554 — a SCALAR assignment RHS is expanded with
                 // PREFORK_SINGLE, so it is NOT word-split under SH_WORD_SPLIT.
                 // GET_VAR applies the split (which also trims leading/trailing
@@ -4834,7 +4826,8 @@ impl ZshCompiler {
                 // the spaces in zsh but zshrs trimmed them.
                 let opcode = if matches!(name, "argv" | "@" | "*") {
                     crate::vm_helper::BUILTIN_ARRAY_ALL
-                } else if in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0 {
+                } else if in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0
+                {
                     crate::vm_helper::BUILTIN_GET_VAR_DQ
                 } else {
                     crate::vm_helper::BUILTIN_GET_VAR
@@ -5155,8 +5148,7 @@ impl ZshCompiler {
                 // `$@`/`$*` arm does: the recursive dq-depth OR the raw
                 // token wrapped in DQ markers (`\u{9e}…\u{9e}`) — the
                 // brace form arrives 9e-wrapped with dq_depth==0.
-                let in_dq =
-                    self.dq_context_depth > 0 || word_is_single_dq_span(s);
+                let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
                 let bid = if in_dq {
                     crate::vm_helper::BUILTIN_GET_VAR_DQ
                 } else {
@@ -5370,8 +5362,7 @@ impl ZshCompiler {
                     // or a literal/expansion segment next door. Both are known
                     // here, so pass them through as argc — see
                     // BUILTIN_FORCE_SPLIT's argc contract.
-                    let in_dq = self.dq_context_depth > 0
-                        || word_is_single_dq_span(s);
+                    let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
                     let keep_empties = in_dq || self.word_seg_depth > 0;
                     let argc = if keep_empties { 1 } else { 0 };
                     self.builder.emit(
@@ -5423,8 +5414,7 @@ impl ZshCompiler {
         // slow EXPAND_TEXT → multsub → paramsubst chain keeps the
         // single-string semantics intact. Bug #428.
         if !has_bnull {
-            let raw_dq_for_splice =
-                word_is_single_dq_span(s);
+            let raw_dq_for_splice = word_is_single_dq_span(s);
             let dq_for_splice = raw_dq_for_splice || self.dq_context_depth > 0;
             let is_star = array_splice_is_star(&untoked);
             // Force-join via the fast path only when (a) it's
@@ -5562,8 +5552,7 @@ impl ZshCompiler {
                 // DQ context: either the raw word is itself DQ-wrapped,
                 // OR we're recursing into an Expansion segment from a
                 // DQ-wrapped parent (tracked via dq_context_depth).
-                let dq_wrapped = (word_is_single_dq_span(s))
-                    || self.dq_context_depth > 0;
+                let dq_wrapped = (word_is_single_dq_span(s)) || self.dq_context_depth > 0;
                 if dq_wrapped {
                     // Fall through to the default text-expansion path.
                     let _ = (flags, name);
@@ -6058,9 +6047,7 @@ impl ZshCompiler {
                         // Without this, the filter ran per-element in DQ
                         // (zshrs printed "ha he hi" for
                         // `"${(M)a:#h?}"` where zsh prints "").
-                        let in_dq_ba =
-                            (word_is_single_dq_span(s))
-                                || self.dq_context_depth > 0;
+                        let in_dq_ba = (word_is_single_dq_span(s)) || self.dq_context_depth > 0;
                         let body_text = if in_dq_ba {
                             format!("\u{8c}{}", inner_safe)
                         } else {
@@ -6253,10 +6240,9 @@ impl ZshCompiler {
                             // form keeps running the operator per-element:
                             // `"${${(u)a}%e}"` gave `on two thre four` instead of
                             // zsh's `one two three four`.
-                            let in_dq = (s.len() >= 2
-                                && s.starts_with('\u{9e}')
-                                && s.ends_with('\u{9e}'))
-                                || self.dq_context_depth > 0;
+                            let in_dq =
+                                (s.len() >= 2 && s.starts_with('\u{9e}') && s.ends_with('\u{9e}'))
+                                    || self.dq_context_depth > 0;
                             let body_text = if in_dq {
                                 format!("\u{8c}{}", inner)
                             } else {
@@ -6589,9 +6575,7 @@ impl ZshCompiler {
                 // → 2), sibling spans have 4+ (`"x"${a}"y"` → 4), and
                 // Dnulls NESTED inside `${…}` — `"a${x:-"n"}b"` — sit at
                 // depth>0 and are ignored so the outer wrap still counts.
-                let dq_marker_wrap = {
-                    word_is_single_dq_span(s)
-                };
+                let dq_marker_wrap = { word_is_single_dq_span(s) };
                 let parent_is_dq = dq_marker_wrap || self.dq_context_depth > 0;
                 let concat_builtin = if has_splice_seg {
                     Some(crate::vm_helper::BUILTIN_CONCAT_SPLICE)
@@ -6759,9 +6743,9 @@ impl ZshCompiler {
                 // tracking. Uniform words (all-plan9, all-splice) keep the fast
                 // fold — only the genuinely-mixed shape takes this path.
                 let mixed_plan9 = has_plan9_seg
-                    && segs.iter().any(|seg| {
-                        matches!(seg, WordSegment::Expansion(e) if !is_plan9_expansion(e))
-                    });
+                    && segs.iter().any(
+                        |seg| matches!(seg, WordSegment::Expansion(e) if !is_plan9_expansion(e)),
+                    );
                 if mixed_plan9 {
                     // Descriptor: one char per segment, `'1'` = plan9 (`^`),
                     // `'0'` = splice/scalar/literal. Pushed FIRST so it sits at
@@ -6842,10 +6826,7 @@ impl ZshCompiler {
                     // Pop the descriptor + all N segment values (argc = N + 1).
                     let argc = (segs.len() + 1) as u8;
                     self.builder.emit(
-                        Op::CallBuiltin(
-                            crate::fusevm_bridge::BUILTIN_WORD_ASSEMBLE_PLAN9,
-                            argc,
-                        ),
+                        Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_WORD_ASSEMBLE_PLAN9, argc),
                         0,
                     );
                 }
@@ -6868,10 +6849,7 @@ impl ZshCompiler {
                 // keep empties (nulstring), and a scalar-assignment RHS is
                 // joined below rather than split into words.
                 if !parent_is_dq
-                    && (has_splice_seg
-                        || has_distribute_seg
-                        || has_plan9_seg
-                        || has_plan9_off_seg)
+                    && (has_splice_seg || has_distribute_seg || has_plan9_seg || has_plan9_off_seg)
                     && self.scalar_assign_depth == 0
                     && self.assign_builtin_arg_depth == 0
                 {
@@ -7849,8 +7827,12 @@ impl ZshCompiler {
             );
             let tilde_bare = dollar
                 && matches!(cs.get(1).map(|c| *c as u32), Some(0x7e) | Some(0x98))
-                && cs.get(2).map_or(false, |c| c.is_ascii_alphanumeric() || *c == '_')
-                && cs[2..].iter().all(|c| c.is_ascii_alphanumeric() || *c == '_');
+                && cs
+                    .get(2)
+                    .map_or(false, |c| c.is_ascii_alphanumeric() || *c == '_')
+                && cs[2..]
+                    .iter()
+                    .all(|c| c.is_ascii_alphanumeric() || *c == '_');
             if tilde_bare {
                 let mut s = String::new();
                 s.push(cs[0]);
@@ -7892,8 +7874,10 @@ impl ZshCompiler {
             self.compile_word_str(word);
             self.dq_context_depth -= 1;
             if !Self::seg_forces_glob_subst(word) {
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
+                    0,
+                );
             }
             return;
         }
@@ -13940,8 +13924,8 @@ mod tests {
         assert_eq!(plan9_flag_state("(@)^^a"), Some(false)); // ${(@)^^a}
         assert_eq!(plan9_flag_state("(@)a"), None); // ${(@)a} — splice, no `^`
         assert_eq!(plan9_flag_state("a"), None); // ${a}
-        // A `^` used as a `(s:^:)` split delimiter is INSIDE the group,
-        // not a plan9 flag — the paren skip must swallow it.
+                                                 // A `^` used as a `(s:^:)` split delimiter is INSIDE the group,
+                                                 // not a plan9 flag — the paren skip must swallow it.
         assert_eq!(plan9_flag_state("(s:^:)a"), None);
     }
 

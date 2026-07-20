@@ -1970,33 +1970,133 @@ pub const BUTTON_ALT: u64 = 0o4 << 25;
 /// from `Src/Modules/curses.c:169`. Maps each ncurses button bit to a
 /// `(button-number, event-kind)` pair for the decode loop at c:1240.
 static ZCURSES_MOUSE_MAP: &[zcurses_mouse_event] = &[
-    zcurses_mouse_event { button: 1, what: ZCME_PRESSED, event: BUTTON1_PRESSED }, // c:170
-    zcurses_mouse_event { button: 1, what: ZCME_RELEASED, event: BUTTON1_RELEASED }, // c:171
-    zcurses_mouse_event { button: 1, what: ZCME_CLICKED, event: BUTTON1_CLICKED }, // c:172
-    zcurses_mouse_event { button: 1, what: ZCME_DOUBLE_CLICKED, event: BUTTON1_DOUBLE_CLICKED }, // c:173
-    zcurses_mouse_event { button: 1, what: ZCME_TRIPLE_CLICKED, event: BUTTON1_TRIPLE_CLICKED }, // c:174
-    zcurses_mouse_event { button: 2, what: ZCME_PRESSED, event: BUTTON2_PRESSED }, // c:176
-    zcurses_mouse_event { button: 2, what: ZCME_RELEASED, event: BUTTON2_RELEASED }, // c:177
-    zcurses_mouse_event { button: 2, what: ZCME_CLICKED, event: BUTTON2_CLICKED }, // c:178
-    zcurses_mouse_event { button: 2, what: ZCME_DOUBLE_CLICKED, event: BUTTON2_DOUBLE_CLICKED }, // c:179
-    zcurses_mouse_event { button: 2, what: ZCME_TRIPLE_CLICKED, event: BUTTON2_TRIPLE_CLICKED }, // c:180
-    zcurses_mouse_event { button: 3, what: ZCME_PRESSED, event: BUTTON3_PRESSED }, // c:182
-    zcurses_mouse_event { button: 3, what: ZCME_RELEASED, event: BUTTON3_RELEASED }, // c:183
-    zcurses_mouse_event { button: 3, what: ZCME_CLICKED, event: BUTTON3_CLICKED }, // c:184
-    zcurses_mouse_event { button: 3, what: ZCME_DOUBLE_CLICKED, event: BUTTON3_DOUBLE_CLICKED }, // c:185
-    zcurses_mouse_event { button: 3, what: ZCME_TRIPLE_CLICKED, event: BUTTON3_TRIPLE_CLICKED }, // c:186
-    zcurses_mouse_event { button: 4, what: ZCME_PRESSED, event: BUTTON4_PRESSED }, // c:188
-    zcurses_mouse_event { button: 4, what: ZCME_RELEASED, event: BUTTON4_RELEASED }, // c:189
-    zcurses_mouse_event { button: 4, what: ZCME_CLICKED, event: BUTTON4_CLICKED }, // c:190
-    zcurses_mouse_event { button: 4, what: ZCME_DOUBLE_CLICKED, event: BUTTON4_DOUBLE_CLICKED }, // c:191
-    zcurses_mouse_event { button: 4, what: ZCME_TRIPLE_CLICKED, event: BUTTON4_TRIPLE_CLICKED }, // c:192
+    zcurses_mouse_event {
+        button: 1,
+        what: ZCME_PRESSED,
+        event: BUTTON1_PRESSED,
+    }, // c:170
+    zcurses_mouse_event {
+        button: 1,
+        what: ZCME_RELEASED,
+        event: BUTTON1_RELEASED,
+    }, // c:171
+    zcurses_mouse_event {
+        button: 1,
+        what: ZCME_CLICKED,
+        event: BUTTON1_CLICKED,
+    }, // c:172
+    zcurses_mouse_event {
+        button: 1,
+        what: ZCME_DOUBLE_CLICKED,
+        event: BUTTON1_DOUBLE_CLICKED,
+    }, // c:173
+    zcurses_mouse_event {
+        button: 1,
+        what: ZCME_TRIPLE_CLICKED,
+        event: BUTTON1_TRIPLE_CLICKED,
+    }, // c:174
+    zcurses_mouse_event {
+        button: 2,
+        what: ZCME_PRESSED,
+        event: BUTTON2_PRESSED,
+    }, // c:176
+    zcurses_mouse_event {
+        button: 2,
+        what: ZCME_RELEASED,
+        event: BUTTON2_RELEASED,
+    }, // c:177
+    zcurses_mouse_event {
+        button: 2,
+        what: ZCME_CLICKED,
+        event: BUTTON2_CLICKED,
+    }, // c:178
+    zcurses_mouse_event {
+        button: 2,
+        what: ZCME_DOUBLE_CLICKED,
+        event: BUTTON2_DOUBLE_CLICKED,
+    }, // c:179
+    zcurses_mouse_event {
+        button: 2,
+        what: ZCME_TRIPLE_CLICKED,
+        event: BUTTON2_TRIPLE_CLICKED,
+    }, // c:180
+    zcurses_mouse_event {
+        button: 3,
+        what: ZCME_PRESSED,
+        event: BUTTON3_PRESSED,
+    }, // c:182
+    zcurses_mouse_event {
+        button: 3,
+        what: ZCME_RELEASED,
+        event: BUTTON3_RELEASED,
+    }, // c:183
+    zcurses_mouse_event {
+        button: 3,
+        what: ZCME_CLICKED,
+        event: BUTTON3_CLICKED,
+    }, // c:184
+    zcurses_mouse_event {
+        button: 3,
+        what: ZCME_DOUBLE_CLICKED,
+        event: BUTTON3_DOUBLE_CLICKED,
+    }, // c:185
+    zcurses_mouse_event {
+        button: 3,
+        what: ZCME_TRIPLE_CLICKED,
+        event: BUTTON3_TRIPLE_CLICKED,
+    }, // c:186
+    zcurses_mouse_event {
+        button: 4,
+        what: ZCME_PRESSED,
+        event: BUTTON4_PRESSED,
+    }, // c:188
+    zcurses_mouse_event {
+        button: 4,
+        what: ZCME_RELEASED,
+        event: BUTTON4_RELEASED,
+    }, // c:189
+    zcurses_mouse_event {
+        button: 4,
+        what: ZCME_CLICKED,
+        event: BUTTON4_CLICKED,
+    }, // c:190
+    zcurses_mouse_event {
+        button: 4,
+        what: ZCME_DOUBLE_CLICKED,
+        event: BUTTON4_DOUBLE_CLICKED,
+    }, // c:191
+    zcurses_mouse_event {
+        button: 4,
+        what: ZCME_TRIPLE_CLICKED,
+        event: BUTTON4_TRIPLE_CLICKED,
+    }, // c:192
     // c:194-201 — button 5 (guarded by `#ifdef BUTTON5_PRESSED` in C;
     // present here since the version-2 layout always defines it).
-    zcurses_mouse_event { button: 5, what: ZCME_PRESSED, event: BUTTON5_PRESSED }, // c:196
-    zcurses_mouse_event { button: 5, what: ZCME_RELEASED, event: BUTTON5_RELEASED }, // c:197
-    zcurses_mouse_event { button: 5, what: ZCME_CLICKED, event: BUTTON5_CLICKED }, // c:198
-    zcurses_mouse_event { button: 5, what: ZCME_DOUBLE_CLICKED, event: BUTTON5_DOUBLE_CLICKED }, // c:199
-    zcurses_mouse_event { button: 5, what: ZCME_TRIPLE_CLICKED, event: BUTTON5_TRIPLE_CLICKED }, // c:200
+    zcurses_mouse_event {
+        button: 5,
+        what: ZCME_PRESSED,
+        event: BUTTON5_PRESSED,
+    }, // c:196
+    zcurses_mouse_event {
+        button: 5,
+        what: ZCME_RELEASED,
+        event: BUTTON5_RELEASED,
+    }, // c:197
+    zcurses_mouse_event {
+        button: 5,
+        what: ZCME_CLICKED,
+        event: BUTTON5_CLICKED,
+    }, // c:198
+    zcurses_mouse_event {
+        button: 5,
+        what: ZCME_DOUBLE_CLICKED,
+        event: BUTTON5_DOUBLE_CLICKED,
+    }, // c:199
+    zcurses_mouse_event {
+        button: 5,
+        what: ZCME_TRIPLE_CLICKED,
+        event: BUTTON5_TRIPLE_CLICKED,
+    }, // c:200
 ];
 
 /// Port of `static const struct zcurses_namenumberpair

@@ -541,10 +541,7 @@ impl GitConfig {
                     val.truncate(i);
                     val = val.trim_end().to_string();
                 }
-            } else if let Some(stripped) = val
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-            {
+            } else if let Some(stripped) = val.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
                 val = stripped.replace("\\\\", "\\").replace("\\\"", "\"");
             }
             map.insert(format!("{sect}\0{sub}\0{key}"), val);
@@ -560,10 +557,7 @@ impl GitConfig {
 
     fn get_bool(&self, section: &str, key: &str, default: bool) -> bool {
         match self.get(section, "", key) {
-            Some(v) => matches!(
-                v.to_ascii_lowercase().as_str(),
-                "true" | "yes" | "on" | "1"
-            ),
+            Some(v) => matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"),
             None => default,
         }
     }
@@ -730,7 +724,10 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
     // Header (12 bytes): "DIRC", version u32be, entry count u32be; the file
     // ends with a hash-len checksum trailer.
     if data.len() < 12 + caps.hash_len || &data[0..4] != b"DIRC" {
-        tracing::debug!("p10k git: index missing/short/bad magic in {:?}", repo.git_dir);
+        tracing::debug!(
+            "p10k git: index missing/short/bad magic in {:?}",
+            repo.git_dir
+        );
         return None;
     }
     let version = be32(&data, 4)?;
@@ -740,7 +737,9 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
     }
     let nentries = be32(&data, 8)? as usize;
     if nentries > NATIVE_SCAN_MAX {
-        tracing::debug!("p10k git: index has {nentries} entries > {NATIVE_SCAN_MAX}, deferring to subprocess");
+        tracing::debug!(
+            "p10k git: index has {nentries} entries > {NATIVE_SCAN_MAX}, deferring to subprocess"
+        );
         return None;
     }
 
@@ -838,7 +837,10 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
         if e.mode & S_IFMT == S_IFDIR {
             // Sparse-index tree entry (extensions.sparseIndex): expanding it
             // needs the object store — defer everything to the subprocess.
-            tracing::debug!("p10k git: sparse index in {:?}, deferring to subprocess", repo.git_dir);
+            tracing::debug!(
+                "p10k git: sparse index in {:?}, deferring to subprocess",
+                repo.git_dir
+            );
             return None;
         }
         let full = repo.work_dir.join(OsStr::from_bytes(&prev_path));
@@ -1184,7 +1186,15 @@ u UU N... 100644 100644 100644 100644 aaaa bbbb cccc conflict.rs
 
     /// Build one v2 on-disk entry: 40-byte stat area + 20-byte oid + flags +
     /// NUL-padded path (entry size = (62 + len + 8) & !7).
-    fn v2_entry(path: &[u8], mode: u32, ino: u32, size: u32, mt_s: u32, mt_ns: u32, stage: u16) -> Vec<u8> {
+    fn v2_entry(
+        path: &[u8],
+        mode: u32,
+        ino: u32,
+        size: u32,
+        mt_s: u32,
+        mt_ns: u32,
+        stage: u16,
+    ) -> Vec<u8> {
         let mut e = Vec::new();
         for v in [0u32, 0, mt_s, mt_ns, 0, ino, mode, 0, 0, size] {
             e.extend_from_slice(&v.to_be_bytes());

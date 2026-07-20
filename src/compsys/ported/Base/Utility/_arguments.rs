@@ -110,7 +110,13 @@ fn strip_last_field(ctx: &str) -> String {
 /// sh:45 — `${name//[^a-zA-Z0-9_]/_}`: every non-`[a-zA-Z0-9_]` → `_`.
 fn sanitize_cache_name(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -415,12 +421,7 @@ fn scrape_help_lopts(help_text: &str) -> Vec<String> {
 }
 
 /// sh:48-320 — the actual cache construction (only runs on a cache miss).
-fn build_help_cache(
-    full: &[String],
-    long: usize,
-    cmd: &str,
-    tmpargv: &[String],
-) -> Vec<String> {
+fn build_help_cache(full: &[String], long: usize, cmd: &str, tmpargv: &[String]) -> Vec<String> {
     // sh:56 — set -- "${(@)argv[long+1,-1]}" (args after `--`).
     let post: Vec<String> = full[long + 1..].to_vec();
     let mut p = 0usize;
@@ -432,7 +433,9 @@ fn build_help_cache(
     while p < post.len() {
         let a = &post[p];
         // while [[ "$1" = -[lis]* ]]
-        if !(a.len() >= 2 && a.as_bytes()[0] == b'-' && matches!(a.as_bytes()[1], b'l' | b'i' | b's'))
+        if !(a.len() >= 2
+            && a.as_bytes()[0] == b'-'
+            && matches!(a.as_bytes()[1], b'l' | b'i' | b's'))
         {
             break;
         }
@@ -495,15 +498,15 @@ fn build_help_cache(
             // sh:173 — covered if any user spec matches this pattern.
             // sh:173 — `(|\*)` and `\[*\]` are LITERAL `*`/`[`/`]`; the
             // interior `*` inside `\[*\]` is the glob wildcard.
-            let pat = format!(
-                "(|\\([^)]#\\))(|\\*){}(|[-+]|=(|-))(|\\[*\\])(|:*)",
-                optn
-            );
+            let pat = format!("(|\\([^)]#\\))(|\\*){}(|[-+]|=(|-))(|\\[*\\])(|:*)", optn);
             let covered = tmpargv.iter().any(|s| matchpat(&pat, s, true, true));
             if !covered {
                 // sh:174 — keep the original lopt element matching `optn`.
                 let keep_pat = format!("{}(|[\\[:=]*)", optn);
-                if let Some(found) = lopts.iter().find(|e| matchpat(&keep_pat, e.as_str(), true, true)) {
+                if let Some(found) = lopts
+                    .iter()
+                    .find(|e| matchpat(&keep_pat, e.as_str(), true, true))
+                {
                     if !kept.contains(found) {
                         kept.push(found.clone());
                     }
@@ -528,10 +531,7 @@ fn build_help_cache(
             let repl = &sopts[i + 1];
             // ${lopts/pat/repl}: first-match substitution per element,
             // appended back (uniqueness absorbs the unchanged copies).
-            let subs: Vec<String> = lopts
-                .iter()
-                .map(|e| subst_first(e, pat, repl))
-                .collect();
+            let subs: Vec<String> = lopts.iter().map(|e| subst_first(e, pat, repl)).collect();
             for s in subs {
                 if !lopts.contains(&s) {
                     lopts.push(s);
@@ -727,7 +727,7 @@ pub fn _arguments(args: &[String]) -> i32 {
     let mut setnormarg = false; // sh:21 setnormarg=yes
     let mut optarg = false; // sh:22 optarg=yes
     let mut alwopt = String::new(); // sh:23 alwopt=arg
-    // sh:10 — integer opt_args_use_NUL_separators=0
+                                    // sh:10 — integer opt_args_use_NUL_separators=0
     let mut opt_args_use_nul_separators: i32 = 0;
 
     // sh:14-28 — while [[ "$1" = -([AMO]*|[0CRSWnsw]) ]]; do … done
@@ -739,7 +739,8 @@ pub fn _arguments(args: &[String]) -> i32 {
         let matches_flag = b.len() >= 2
             && b[0] == b'-'
             && (matches!(b[1], b'A' | b'M' | b'O')
-                || (b.len() == 2 && matches!(b[1], b'0' | b'C' | b'R' | b'S' | b'W' | b'n' | b's' | b'w')));
+                || (b.len() == 2
+                    && matches!(b[1], b'0' | b'C' | b'R' | b'S' | b'W' | b'n' | b's' | b'w')));
         if !matches_flag {
             break;
         }
@@ -836,7 +837,11 @@ pub fn _arguments(args: &[String]) -> i32 {
     // proper fix is to elide unquoted-array empties in the completion-context
     // argv build. Flag VALUES (`-M ''`, `-A ''`) are already consumed by the
     // flag loop above, so only genuine spec-position empties reach here.
-    let full: Vec<String> = args[i..].iter().filter(|s| !s.is_empty()).cloned().collect();
+    let full: Vec<String> = args[i..]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect();
     let specs: Vec<String> = match full.iter().rposition(|s| s == "--") {
         // sh:36 (( long )) — `(I)` returns the last match (rposition).
         Some(long) => long_option_cache(&full, long, &cmd),
@@ -1016,12 +1021,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                         // sh:392 — if (( ! $state[(I)$action] ))
                         if !state.iter().any(|s| s == &st) {
                             // sh:393 comparguments -W line opt_args <nul>
-                            let _ = comparguments(&[
-                                "-W",
-                                "line",
-                                "opt_args",
-                                nul_sep.as_str(),
-                            ]);
+                            let _ = comparguments(&["-W", "line", "opt_args", nul_sep.as_str()]);
                             state.push(st.clone());
                             state_descr.push(descr.clone());
                             setaparam("state", state.clone());
@@ -1050,12 +1050,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                     }
 
                     // sh:411 — comparguments -W line opt_args <nul>
-                    let _ = comparguments(&[
-                        "-W",
-                        "line",
-                        "opt_args",
-                        nul_sep.as_str(),
-                    ]);
+                    let _ = comparguments(&["-W", "line", "opt_args", nul_sep.as_str()]);
 
                     if action.chars().all(|c| c == ' ') {
                         // sh:413 — [[ "$action" = \ # ]] empty action.
@@ -1092,7 +1087,12 @@ pub fn _arguments(args: &[String]) -> i32 {
                         let ws: Vec<String> =
                             body.split_whitespace().map(|s| s.to_string()).collect();
                         setaparam("ws", ws);
-                        let mut av = vec![subc.clone(), "expl".to_string(), descr.clone(), "compadd".to_string()];
+                        let mut av = vec![
+                            subc.clone(),
+                            "expl".to_string(),
+                            descr.clone(),
+                            "compadd".to_string(),
+                        ];
                         av.extend(subopts.iter().cloned());
                         av.push("-a".to_string());
                         av.push("-".to_string());
@@ -1105,7 +1105,8 @@ pub fn _arguments(args: &[String]) -> i32 {
                         // sh:440 — {body} → eval body per label.
                         let body = &action[1..action.len() - 1];
                         loop {
-                            if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()]) != 0 {
+                            if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()]) != 0
+                            {
                                 break;
                             }
                             if execute_script(body).map(|rc| rc == 0).unwrap_or(false) {
@@ -1278,8 +1279,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                                         && bytes[1] == last
                                     {
                                         // exclude "[-+]<last>" and "[-+]<last>:*"
-                                        !(bytes.len() == 2
-                                            || s[2..].starts_with(':'))
+                                        !(bytes.len() == 2 || s[2..].starts_with(':'))
                                     } else {
                                         true
                                     }
@@ -1297,9 +1297,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                             .iter()
                             .filter(|s| {
                                 let c: Vec<char> = s.chars().collect();
-                                c.len() >= 3
-                                    && (c[0] == '-' || c[0] == '+')
-                                    && c[2] != ':'
+                                c.len() >= 3 && (c[0] == '-' || c[0] == '+') && c[2] != ':'
                             })
                             .cloned()
                             .collect();
@@ -1419,12 +1417,7 @@ pub fn _arguments(args: &[String]) -> i32 {
 
         // sh:538-565 — `=`-descend: complete option, then recurse into
         // its argument via `comparguments -L`.
-        if opts
-            && !aret
-            && !matched
-            && (!tried || !alwopt.is_empty())
-            && nm == nmatches()
-        {
+        if opts && !aret && !matched && (!tried || !alwopt.is_empty()) && nm == nmatches() {
             // sh:543
             let _ = setsparam("PREFIX", &origpre);
             let _ = setsparam("IPREFIX", &origipre);
@@ -1624,7 +1617,10 @@ mod tests {
     fn strip_leading_argword_drops_space_arg_space_space() {
         assert_eq!(strip_leading_argword(" fooarg  Do stuff"), "Do stuff");
         // No double-space terminator → unchanged.
-        assert_eq!(strip_leading_argword(" fooarg Do stuff"), " fooarg Do stuff");
+        assert_eq!(
+            strip_leading_argword(" fooarg Do stuff"),
+            " fooarg Do stuff"
+        );
     }
 
     #[test]
@@ -1645,7 +1641,10 @@ mod tests {
     #[test]
     fn subst_first_replaces_leftmost_glob_match() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(subst_first("--enable-foo", "enable", "disable"), "--disable-foo");
+        assert_eq!(
+            subst_first("--enable-foo", "enable", "disable"),
+            "--disable-foo"
+        );
         // No match → unchanged.
         assert_eq!(subst_first("--other", "enable", "disable"), "--other");
     }
@@ -1663,8 +1662,16 @@ Usage: foo [OPTION]...
 ";
         let lopts = scrape_help_lopts(help);
         assert!(lopts.contains(&"-v:be verbose".to_string()), "{:?}", lopts);
-        assert!(lopts.contains(&"--verbose:be verbose".to_string()), "{:?}", lopts);
-        assert!(lopts.contains(&"--output=FILE:write to FILE".to_string()), "{:?}", lopts);
+        assert!(
+            lopts.contains(&"--verbose:be verbose".to_string()),
+            "{:?}",
+            lopts
+        );
+        assert!(
+            lopts.contains(&"--output=FILE:write to FILE".to_string()),
+            "{:?}",
+            lopts
+        );
         assert!(
             lopts.contains(&"--color[=WHEN]:colorize output".to_string()),
             "{:?}",
@@ -1691,8 +1698,16 @@ Usage: foo [OPTION]...
         // fetchmail-style `--[fetch]all` → both `--fetchall` and `--all`.
         let help = "  --[fetch]all   fetch everything\n";
         let lopts = scrape_help_lopts(help);
-        assert!(lopts.contains(&"--fetchall:fetch everything".to_string()), "{:?}", lopts);
-        assert!(lopts.contains(&"--all:fetch everything".to_string()), "{:?}", lopts);
+        assert!(
+            lopts.contains(&"--fetchall:fetch everything".to_string()),
+            "{:?}",
+            lopts
+        );
+        assert!(
+            lopts.contains(&"--all:fetch everything".to_string()),
+            "{:?}",
+            lopts
+        );
     }
 
     #[test]
@@ -1710,7 +1725,11 @@ Usage: foo [OPTION]...
         // stripped `]`) to the pattern compiler.
         let help = "  -c, --color[=WHEN]   colorize output\n";
         let lopts = scrape_help_lopts(help);
-        assert!(lopts.contains(&"-c:colorize output".to_string()), "{:?}", lopts);
+        assert!(
+            lopts.contains(&"-c:colorize output".to_string()),
+            "{:?}",
+            lopts
+        );
         assert!(
             lopts.contains(&"--color[=WHEN]:colorize output".to_string()),
             "{:?}",

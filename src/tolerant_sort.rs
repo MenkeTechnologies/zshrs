@@ -97,12 +97,10 @@ mod tests {
         // that would make std sort_by panic. We only require: no panic, and a
         // valid permutation of the input.
         let mut v: Vec<i32> = (0..30).collect();
-        qsort_tolerant(&mut v, |a, b| {
-            match (a.rem_euclid(3), b.rem_euclid(3)) {
-                (0, 1) | (1, 2) | (2, 0) => Ordering::Less,
-                (1, 0) | (2, 1) | (0, 2) => Ordering::Greater,
-                _ => a.cmp(b),
-            }
+        qsort_tolerant(&mut v, |a, b| match (a.rem_euclid(3), b.rem_euclid(3)) {
+            (0, 1) | (1, 2) | (2, 0) => Ordering::Less,
+            (1, 0) | (2, 1) | (0, 2) => Ordering::Greater,
+            _ => a.cmp(b),
         });
         let mut check = v.clone();
         check.sort();

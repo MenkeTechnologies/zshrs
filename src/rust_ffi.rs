@@ -78,8 +78,7 @@ pub fn bin_rust_compile(
 mod tests {
     #[test]
     fn desugars_rust_block_at_boundary() {
-        let src =
-            "rust { pub extern \"C\" fn add(a: i64, b: i64) -> i64 { a + b } }\nadd 21 21\n";
+        let src = "rust { pub extern \"C\" fn add(a: i64, b: i64) -> i64 { a + b } }\nadd 21 21\n";
         let out = super::desugar(src);
         assert!(out.contains("__rust_compile '"), "no builtin call: {out}");
         assert!(!out.contains("pub extern"), "Rust body leaked: {out}");

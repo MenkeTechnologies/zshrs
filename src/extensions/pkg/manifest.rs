@@ -207,10 +207,9 @@ mod tests {
 
     #[test]
     fn parses_native_manifest() {
-        let m = PluginManifest::from_str(
-            "[plugin]\nname='x'\nversion='0.1.0'\n[native]\nlib='foo'\n",
-        )
-        .unwrap();
+        let m =
+            PluginManifest::from_str("[plugin]\nname='x'\nversion='0.1.0'\n[native]\nlib='foo'\n")
+                .unwrap();
         assert_eq!(m.plugin.name, "x");
         assert_eq!(m.native.unwrap().lib, "foo");
     }

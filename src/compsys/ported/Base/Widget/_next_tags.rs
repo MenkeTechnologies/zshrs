@@ -61,8 +61,8 @@
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
+use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 fn make_ops() -> options {
@@ -129,7 +129,10 @@ pub fn _next_tags() -> i32 {
 
     // sh:95  _next_tags_not+=" $_lastcomp[tags]"
     let not = getsparam("_next_tags_not").unwrap_or_default();
-    let _ = setsparam("_next_tags_not", &format!("{} {}", not, lastcomp_val("tags")));
+    let _ = setsparam(
+        "_next_tags_not",
+        &format!("{} {}", not, lastcomp_val("tags")),
+    );
     // sh:96-97  _next_tags_pfx="$PREFIX" ; _next_tags_sfx="$SUFFIX"
     let _ = setsparam("_next_tags_pfx", &prefix);
     let _ = setsparam("_next_tags_sfx", &suffix);
@@ -158,12 +161,7 @@ pub fn _next_tags() -> i32 {
         //   the current values, as the shell `"$SUFFIX"`/`"$PREFIX"` do.
         let cur_suffix = getsparam("SUFFIX").unwrap_or_default();
         let cur_prefix = getsparam("PREFIX").unwrap_or_default();
-        let argv = vec![
-            "-Uns".to_string(),
-            cur_suffix,
-            "-".to_string(),
-            cur_prefix,
-        ];
+        let argv = vec!["-Uns".to_string(), cur_suffix, "-".to_string(), cur_prefix];
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
     }
 

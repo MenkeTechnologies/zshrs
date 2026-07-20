@@ -1575,11 +1575,7 @@ pub fn doisearch(dir: i32) -> i32 {
                             skip_line = true; // c:1376
                         } else {
                             // c:1378 — `backwardmetafiedchar` — prev boundary.
-                            pos = zt[..pos]
-                                .char_indices()
-                                .last()
-                                .map(|(i, _)| i)
-                                .unwrap_or(0);
+                            pos = zt[..pos].char_indices().last().map(|(i, _)| i).unwrap_or(0);
                         }
                     } else if !anchored {
                         // c:1381
@@ -1728,8 +1724,8 @@ pub fn doisearch(dir: i32) -> i32 {
                 None | Some("send-break") => {
                     aborted = true;
                     {
-                        let m =
-                            PREVIOUS_ABORTED_SEARCH.get_or_init(|| std::sync::Mutex::new(String::new()));
+                        let m = PREVIOUS_ABORTED_SEARCH
+                            .get_or_init(|| std::sync::Mutex::new(String::new()));
                         *m.lock().unwrap() = sbuf[..sbuf.len().min(sbptr)].to_string();
                     }
                     if let Some(s) = get_isrch_spot(0) {
@@ -1768,8 +1764,8 @@ pub fn doisearch(dir: i32) -> i32 {
                     | "backward-kill-word"
                     | "backward-delete-word",
                 ) => {
-                    let only_one =
-                        name == Some("vi-backward-delete-char") || name == Some("backward-delete-char");
+                    let only_one = name == Some("vi-backward-delete-char")
+                        || name == Some("backward-delete-char");
                     let old_sbptr = sbptr;
                     if top_spot > 0 {
                         loop {
@@ -2032,7 +2028,9 @@ pub fn doisearch(dir: i32) -> i32 {
                 Some("self-insert") => {
                     // c:1665-1674 — validate a wide char, feep on bad byte.
                     if LASTCHAR_WIDE_VALID.load(Ordering::SeqCst) == 0
-                        && getrestchar(crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst)) == -1
+                        && getrestchar(
+                            crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst),
+                        ) == -1
                     {
                         handlefeep();
                         continue 'refl;
@@ -2187,8 +2185,7 @@ pub fn vifetchhistory() -> i32 {
         return 1;
     }
     let mod_mult = ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_MULT != 0;
-    let no_hist =
-        ZLEREADFLAGS.load(Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY == 0;
+    let no_hist = ZLEREADFLAGS.load(Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY == 0;
     // c:1792-1800 — on the current history line (or mid-range), a bare
     // `G` moves to the beginning of the LAST buffer line.
     if histline.load(Ordering::SeqCst) as i64 == crate::ported::hist::curhist.load(Ordering::SeqCst)
@@ -2198,10 +2195,7 @@ pub fn vifetchhistory() -> i32 {
         if !mod_mult {
             // c:1793-1796 — `zlecs = zlell; zlecs = findbol(); return 0;`
             ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst); // c:1794
-            ZLECS.store(
-                crate::ported::zle::zle_utils::findbol(),
-                Ordering::SeqCst,
-            ); // c:1795
+            ZLECS.store(crate::ported::zle::zle_utils::findbol(), Ordering::SeqCst); // c:1795
             return 0; // c:1796
         }
         if VIRANGEFLAG.load(Ordering::SeqCst) != 0 || no_hist {
@@ -2354,7 +2348,8 @@ pub fn getvisrchstr() -> i32 {
                 if name == Some("self-insert-unmeta") {
                     fixunmeta();
                 } else if LASTCHAR_WIDE_VALID.load(Ordering::SeqCst) == 0
-                    && getrestchar(crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst)) == -1
+                    && getrestchar(crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst))
+                        == -1
                 {
                     handlefeep();
                     continue 'outer;
