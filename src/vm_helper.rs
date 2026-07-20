@@ -680,6 +680,17 @@ pub struct ShellExecutor {
 pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     use crate::ported::lex::{tok, LEXERR, LEX_INPUT, LEX_LINENO, LEX_POS, LEX_UNGET_BUF};
 
+    // Inline Rust FFI: rewrite every `rust { ... }` block into a
+    // `__rust_compile '<base64>' <line>` command before it reaches the lexer.
+    // This is the shared source-string chokepoint for `-c`, script files, and
+    // nested (command/process-substitution) parses. The `.contains("rust")`
+    // gate keeps the common case (no FFI block) allocation-free — the vast
+    // majority of nested parses never mention `rust`.
+    let ffi_desugared = input
+        .contains("rust")
+        .then(|| crate::rust_ffi::desugar(input));
+    let input: &str = ffi_desugared.as_deref().unwrap_or(input);
+
     crate::ported::context::zcontext_save(); // c:288
                                              // Save the zshrs-specific lexer window + line counter that lex_init
                                              // overwrites but zcontext doesn't cover.
@@ -3228,6 +3239,11 @@ impl ShellExecutor {
                 // report the right line). Emitted directly (not via
                 // zerr) to avoid setting errflag — command-not-found is
                 // non-fatal and the script must continue.
+                // Inline Rust FFI export: needs no PATH, so run it here rather
+                // than reporting not-found when PATH is unset/empty.
+                if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
+                    return Ok(rc);
+                }
                 eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
                 return Ok(127);
             }
@@ -3294,6 +3310,12 @@ impl ShellExecutor {
                     let sn = crate::ported::utils::scriptname_get()
                         .unwrap_or_else(|| "zshrs".to_string());
                     if e.kind() == io::ErrorKind::NotFound {
+                        // Inline Rust FFI export run in the background: an
+                        // in-process FFI call has nothing to background, so run
+                        // it synchronously (mirrors the plugin-builtin path).
+                        if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
+                            return Ok(rc);
+                        }
                         // zsh: absolute paths emit "no such file or
                         // directory" (the OS error, since the path was
                         // tried directly), not "command not found"
@@ -3350,6 +3372,12 @@ impl ShellExecutor {
                                 return Ok(rc);
                             }
                         }
+                        // Inline Rust FFI export: consulted after builtins,
+                        // functions, PATH search, and command_not_found_handler
+                        // have all missed — real commands keep priority.
+                        if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
+                            return Ok(rc);
+                        }
                         // zsh: absolute paths emit "no such file or
                         // directory" (the OS error, since the path was
                         // tried directly), not "command not found"
@@ -3373,6 +3401,42 @@ impl ShellExecutor {
             }
         }
     }
+    /// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    /// Inline Rust FFI fallback: when `cmd` names a function exported by a
+    /// `rust { ... }` block (registered by the `__rust_compile` builtin) run it
+    /// as a command. Consulted only when `cmd` resolved to nothing else — not a
+    /// builtin, function, plugin, external on `$PATH`, or
+    /// `command_not_found_handler` — so real commands keep priority. Positional
+    /// args are marshalled as strings; fusevm coerces each to the export's
+    /// signature (`i64` / `f64` / `*const c_char`). The return value is printed
+    /// to stdout (the redirect-aware process fd 1) and the command exits 0.
+    /// Bare names only — a `/`-qualified token is a filesystem path, never an
+    /// FFI export. Returns `None` when `cmd` is not a registered export, so the
+    /// caller emits its normal "command not found".
+    fn try_registered_ffi_command(&self, cmd: &str, args: &[String]) -> Option<i32> {
+        if cmd.contains('/') || !fusevm::ffi::is_registered(cmd) {
+            return None;
+        }
+        let vals: Vec<fusevm::Value> =
+            args.iter().map(|a| fusevm::Value::str(a.clone())).collect();
+        match fusevm::ffi::try_call(cmd, &vals) {
+            Some(Ok(v)) => {
+                use std::io::Write as _;
+                let mut out = io::stdout().lock();
+                let _ = writeln!(out, "{}", v.to_str());
+                let _ = out.flush();
+                Some(0)
+            }
+            Some(Err(e)) => {
+                eprintln!("zshrs: {e}");
+                Some(1)
+            }
+            // Registered a moment ago but the entry vanished (registry race) —
+            // treat as unresolved and let the caller report command-not-found.
+            None => None,
+        }
+    }
+
     /// Parse `cmd_str` via parse_init+parse and pull out the first Simple
     /// command's words, untokenized + variable-expanded, ready to spawn
     /// as argv. Used by process-substitution where we need raw argv to

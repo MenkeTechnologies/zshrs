@@ -270,6 +270,8 @@ pub mod compinit_bg;
 pub mod fusevm_bridge;
 /// `fusevm_disasm` submodule.
 pub mod fusevm_disasm;
+/// `rust_ffi` submodule — inline `rust { ... }` FFI desugaring.
+pub mod rust_ffi;
 /// `intercepts` submodule.
 #[path = "extensions/intercepts.rs"]
 pub mod intercepts;
