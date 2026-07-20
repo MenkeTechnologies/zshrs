@@ -1708,7 +1708,13 @@ pub fn compprintlist(showall: i32) -> i32 {
     let mut mc: i32;
     let mut printed = 0i32;
     let mut stop = 0i32;
-    let _asked = 1i32;
+    // c:1378 — `asked = 1`. Stays 1 until the group loop fully renders; any
+    // early stop (`break 'outer`, C's `goto end`) leaves it 1 so the epilogue's
+    // "move past the list" compprintnl (c:1713/1718) is skipped. Without this
+    // (previously hardcoded 0) a paged list — LISTPROMPT `asklistscroll` shown,
+    // list exceeds the screen — emitted one extra `\n` on the dismissing
+    // keystroke, scrolling the full-screen list up one line vs zsh.
+    let mut asked = 1i32;
     let mut lastused = 0i32; // c:1379
 
     let mlbeg = MLBEG.load(Ordering::SeqCst);
@@ -1779,7 +1785,10 @@ pub fn compprintlist(showall: i32) -> i32 {
     let dolistcl = |x: i32| -> bool { x >= mlbeg && x < mlend + 1 }; // c:1049
     let dolistnl = |x: i32| -> bool { x >= mlbeg && x < mlend - 1 }; // c:1050
 
-    'outer: for g in &groups {
+    // Wrapped in a labeled block: `break 'outer` (C's `goto end`) now exits the
+    // block BEFORE `asked = 0`, so only a fully-rendered list clears `asked`.
+    'outer: {
+    for g in &groups {
         // c:1404
         if errflag.load(Ordering::SeqCst) != 0 {
             // c:1404 !errflag
@@ -2171,6 +2180,8 @@ pub fn compprintlist(showall: i32) -> i32 {
             pnl = 1; // c:1677
         }
     }
+    asked = 0; // c:1680 — full render completed; early `break 'outer` skips this
+    } // close 'outer block; `break 'outer` lands here with asked still 1
     // c:1681 end:
     MSTATPRINTED.store(0, Ordering::SeqCst); // c:1682
     LASTLISTLEN.store(0, Ordering::SeqCst); // c:1683
@@ -2191,9 +2202,10 @@ pub fn compprintlist(showall: i32) -> i32 {
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
-    // c:1679 — `asked = 0` before end:; the "show all N?" prompt path (which
-    // sets asked=1) isn't wired, so it is always 0 here.
-    let asked = 0i32;
+    // `asked` (declared above, c:1378) is 0 here only when the list rendered
+    // fully; an early `break 'outer` (pager shown / cut off) leaves it 1 so the
+    // epilogue's move-past-list compprintnl (c:1713/1718) is skipped — C's
+    // `if (!asked)`.
     if clearflag != 0 {
         // c:1687
         if mlbeg >= 0 {
