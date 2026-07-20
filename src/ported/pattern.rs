@@ -620,10 +620,40 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         let ztokens: Vec<char> = crate::ported::glob::ZTOKENS.chars().collect();
         let chars: Vec<char> = exp.chars().collect();
         let mut out = String::with_capacity(exp.len());
+        // Track open Inpar/Outpar groups so an UNBALANCED Outpar token
+        // (a `)` with no group to close) transposes to a literal instead
+        // of the raw `)` metachar. C's tokenizer never emits an Outpar
+        // for an unbalanced `)`, and patcompile then treats it as an
+        // ordinary string char (Src/pattern.c:1294-1298: "allow ')' as an
+        // ordinary string character if there are no parentheses to
+        // close"). Without this, `${arr:#*)--*}` (e.g. _rm's option
+        // filter) broke at the stray `)` and collapsed to `*`. Note the
+        // asymmetry: an unbalanced `(` is a "bad pattern" in zsh, not a
+        // literal, so only Outpar is demoted here.
+        let mut open_paren: i32 = 0;
         let mut i = 0;
         while i < chars.len() {
             let c = chars[i];
             let cu = c as u32;
+            if cu == 0x88 {
+                // Inpar — opens a group.
+                open_paren += 1;
+                out.push('(');
+                i += 1;
+                continue;
+            }
+            if cu == 0x8a {
+                // Outpar — closes an open group, else literal `)`.
+                if open_paren > 0 {
+                    open_paren -= 1;
+                    out.push(')');
+                } else {
+                    out.push('\\');
+                    out.push(')');
+                }
+                i += 1;
+                continue;
+            }
             if cu == 0x83 {
                 // Meta + payload — a metafied RAW byte
                 // (vm_helper::meta_encode_byte, c:Src/utils.c:7289-
