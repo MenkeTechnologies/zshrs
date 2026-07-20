@@ -15055,6 +15055,20 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
+        // !!! RUST-ONLY — NO C COUNTERPART !!! Inline Rust FFI: the
+        // `rust { ... }` desugar (src/rust_ffi.rs) emits `__rust_compile
+        // '<base64>' <line>`. min=1/max=2: the base64 body plus the optional
+        // source line.
+        BUILTIN(
+            "__rust_compile",
+            0,
+            Some(crate::rust_ffi::bin_rust_compile as HandlerFunc),
+            1,
+            2,
+            0,
+            None,
+            None,
+        ),
         BUILTIN(
             "alias",
             BINF_MAGICEQUALS | BINF_PLUSOPTS,
@@ -18404,7 +18418,9 @@ mod tests {
         // time the eagerly-loaded-module list above grows (new builtin
         // ported, new module wired). Bump it alongside the change so
         // accidental additions/removals still trip a review.
-        assert_eq!(BUILTINS.len(), 159,
+        // 159 ported zsh builtins + 1 zshrs-native (`__rust_compile`, the
+        // inline Rust FFI desugar target — no C counterpart) = 160.
+        assert_eq!(BUILTINS.len(), 160,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 

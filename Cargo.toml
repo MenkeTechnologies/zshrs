@@ -100,7 +100,7 @@ zshrs-daemon = { workspace = true, optional = true }
 # See src/extensions/plugin_host.rs and docs/PLUGINS.md.
 libloading = "0.8"
 znative = { workspace = true }
-fusevm = { version = "0.14.10", features = ["jit-disk-cache", "aot"] }
+fusevm = { version = "0.14.11", features = ["jit-disk-cache", "aot", "ffi"] }
 regex = "1.11"
 glob = "0.3"
 libc = "0.2"
