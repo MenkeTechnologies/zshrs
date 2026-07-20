@@ -50,6 +50,29 @@ The first Unix shell to compile to bytecodes and execute on a purpose-built virt
 
 zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, and **persists compiled chunks only in rkyv shards** under `~/.zshrs/images/` (single-directory rule — every zshrs file lives under `$ZSHRS_HOME` / `~/.zshrs/`; see [`docs/DAEMON.md`](docs/DAEMON.md)). Beside that tree, **`catalog.db` and related SQL views are read-only mirrors** for inspection (`dbview`, ad-hoc SQL): daemon-hydrated, **never authoritative for cache hit/miss or execution**. They are not a second shell cache. **`history.db`** holds history only — it is unrelated to bytecode caching. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
 
+```text
+                 [ THE MENKE-TECH REVOLUTIONARY FLYWHEEL ]
+
+                 ┌──────────────────────────────────────┐
+                 │       UNIFIED METAMORPHIC FRONT      │
+                 │   zshrs  •  8 Bourne Family Dialects  │
+                 └──────────────────────────────────────┘
+                                    │
+                                    ▼
+                 ┌──────────────────────────────────────┐
+                 │         FUSEVM EXECUTION CORE        │
+                 │  Tiered Cranelift JIT / AOT Compiler │
+                 └──────────────────────────────────────┘
+                                    │
+                                    ▼
+                 ┌──────────────────────────────────────┐
+                 │        SECURE HARDWARE PORTAL        │
+                 │ Pure Rust Safety  •  Zero Memory CVEs │
+                 └──────────────────────────────────────┘
+```
+
+The **8 Bourne-family dialects** are the emulation drop-ins `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash` (the C-shell `--csh` mode is separate). All eight compile through the same fusevm core.
+
 ---
 
 ## [0x01] INSTALL
@@ -474,7 +497,7 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 - ZWC precompiled function support
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
-- Per-shell emulation drop-ins: `--zsh`, `--bash`, `--ksh`, `--mksh`, `--sh`/`--posix`, `--dash`, and `--ash`. `--mksh` (MirBSD ksh) shares the `--ksh` base; `--ash` (Almquist shell) is an alias of `--dash`. `--dash` is a strict Debian Almquist Shell mode — it applies the `sh` option presets and additionally rejects the zsh-only syntax dash has never had (`$'...'` ANSI-C quoting, `<<<` here-strings, `+=` compound assignment, `name=(...)` arrays, the `[[ ]]` reserved word, arith `**`/`,`, and `printf %q`) while using XSI `echo` — verified byte-for-byte against `/bin/dash`
+- Per-shell emulation drop-ins: `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash`. `--mksh` (MirBSD ksh) and `--pdksh` (Public Domain ksh) share the `--ksh` base; `--ash` (Almquist shell) is an alias of `--dash`. `--dash` is a strict Debian Almquist Shell mode — it applies the `sh` option presets and additionally rejects the zsh-only syntax dash has never had (`$'...'` ANSI-C quoting, `<<<` here-strings, `+=` compound assignment, `name=(...)` arrays, the `[[ ]]` reserved word, arith `**`/`,`, and `printf %q`) while using XSI `echo` — verified byte-for-byte against `/bin/dash`
 
 ### Test corpus parity
 
