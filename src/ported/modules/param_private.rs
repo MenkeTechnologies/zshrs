@@ -32,6 +32,7 @@
 //! lookup is no-op until `pm->gsu.s` is a real vtable pointer.
 
 use crate::ported::builtin::bin_typeset;
+use crate::ported::hashtable::reswdtab_lock;
 use crate::ported::mem::{queue_signals, unqueue_signals};
 use crate::ported::options::optlookup;
 use crate::ported::params::{
@@ -39,7 +40,6 @@ use crate::ported::params::{
     startparamscope,
 };
 use crate::ported::utils::{zerr, zwarn, zwarnnam};
-use crate::ported::hashtable::reswdtab_lock;
 use crate::ported::zsh_h::{
     eprog, features, funcwrap, hashnode, hashtable, isset, module, options, param, reswd,
     HashTable, MAX_OPS, OPT_ISSET, PM_AUTOLOAD, PM_DECLARED, PM_HIDE, PM_NAMEREF, PM_NORESTORE,

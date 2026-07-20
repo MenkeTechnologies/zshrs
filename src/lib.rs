@@ -105,28 +105,28 @@ pub mod cow_map;
 /// `daemon_presence` submodule.
 #[path = "extensions/daemon_presence.rs"]
 pub mod daemon_presence;
-/// `overlay_snapshot` submodule.
-#[path = "extensions/overlay_snapshot.rs"]
-pub mod overlay_snapshot;
 /// `fast_hash` submodule — dependency-free FxHash for internal name tables.
 #[path = "extensions/fast_hash.rs"]
 pub mod fast_hash;
 /// `opts_cache` submodule — fast-path `isset()` option-state cache.
 #[path = "extensions/opts_cache.rs"]
 pub mod opts_cache;
+/// `overlay_snapshot` submodule.
+#[path = "extensions/overlay_snapshot.rs"]
+pub mod overlay_snapshot;
 /// `pat_cache` submodule — global compiled-pattern cache (Rust-only opt).
 #[path = "extensions/pat_cache.rs"]
 pub mod pat_cache;
-/// `vm_pool` submodule — per-thread pool of recyclable fusevm VMs.
-#[path = "extensions/vm_pool.rs"]
-pub mod vm_pool;
+/// `script_cache` submodule.
+#[path = "extensions/script_cache.rs"]
+pub mod script_cache;
 /// `subexp_cleanup` submodule — RAII eviction of `__subexp_arr_*`
 /// paramtab scratch temps created during array sub-expression expansion.
 #[path = "extensions/subexp_cleanup.rs"]
 pub mod subexp_cleanup;
-/// `script_cache` submodule.
-#[path = "extensions/script_cache.rs"]
-pub mod script_cache;
+/// `vm_pool` submodule — per-thread pool of recyclable fusevm VMs.
+#[path = "extensions/vm_pool.rs"]
+pub mod vm_pool;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in vm_helper) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.
@@ -162,15 +162,15 @@ pub mod daemon {
 /// `ast_sexp` submodule.
 #[path = "extensions/ast_sexp.rs"]
 pub mod ast_sexp;
+/// `bash_arrays` submodule — bash sparse-array holes tracker (Rust-only).
+#[path = "extensions/bash_arrays.rs"]
+pub mod bash_arrays;
 /// `dap` submodule.
 #[path = "extensions/dap.rs"]
 pub mod dap;
 /// `dash_mode` submodule — strict-dash emulation flag (Rust-only).
 #[path = "extensions/dash_mode.rs"]
 pub mod dash_mode;
-/// `bash_arrays` submodule — bash sparse-array holes tracker (Rust-only).
-#[path = "extensions/bash_arrays.rs"]
-pub mod bash_arrays;
 /// `dumpers` submodule.
 #[path = "extensions/dumpers.rs"]
 pub mod dumpers;
@@ -270,32 +270,48 @@ pub mod compinit_bg;
 pub mod fusevm_bridge;
 /// `fusevm_disasm` submodule.
 pub mod fusevm_disasm;
-/// `rust_ffi` submodule — inline `rust { ... }` FFI desugaring.
-pub mod rust_ffi;
 /// `intercepts` submodule.
 #[path = "extensions/intercepts.rs"]
 pub mod intercepts;
 /// `p10k` submodule — native powerlevel10k prompt engine.
 #[path = "extensions/p10k/mod.rs"]
 pub mod p10k;
+/// `pkg` — the `zpm` plugin package manager (global store).
+#[path = "extensions/pkg/mod.rs"]
+pub mod pkg;
 /// `plugin_cache` submodule.
 #[path = "extensions/plugin_cache.rs"]
 pub mod plugin_cache;
 /// `plugin_host` submodule — native (Rust) plugin loader (`zmodload -R`).
 #[path = "extensions/plugin_host.rs"]
 pub mod plugin_host;
-/// `pkg` — the `zpm` plugin package manager (global store).
-#[path = "extensions/pkg/mod.rs"]
-pub mod pkg;
 /// `recorder_ext` submodule.
 #[path = "extensions/recorder.rs"]
 pub mod recorder_ext;
+/// `rust_ffi` submodule — inline `rust { ... }` FFI desugaring.
+pub mod rust_ffi;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default
 // `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.
+/// `async_precmd` submodule — run precmd-style hooks on the worker pool so they
+/// don't block prompt rendering (writes into the shared param table).
+#[path = "extensions/async_precmd.rs"]
+pub mod async_precmd;
+/// `autopair` submodule — native bracket/quote auto-pairing
+/// (port of hlissner/zsh-autopair).
+#[path = "extensions/autopair.rs"]
+pub mod autopair;
+/// `autosuggest` submodule — native fish-style autosuggestions
+/// (port of the reader.rs autosuggestion state machine).
+#[path = "extensions/autosuggest.rs"]
+pub mod autosuggest;
 /// `gen_docs` submodule.
 #[path = "extensions/gen_docs.rs"]
 pub mod gen_docs;
+/// `history_search` submodule — native up-arrow prefix/substring/token history
+/// search (port of fish reader/history_search.rs).
+#[path = "extensions/history_search.rs"]
+pub mod history_search;
 /// `recorder` submodule.
 #[cfg(feature = "recorder")]
 pub mod recorder;
@@ -305,13 +321,25 @@ pub mod regex_mod;
 /// `stringsort` submodule.
 #[path = "extensions/stringsort.rs"]
 pub mod stringsort;
+/// `syntax_highlight` submodule — native command-line syntax highlighting
+/// (port of fish highlight/highlight.rs, driven by the zshrs lexer).
+#[path = "extensions/syntax_highlight.rs"]
+pub mod syntax_highlight;
 /// `worker` submodule.
 #[path = "extensions/worker.rs"]
 pub mod worker;
-/// `async_precmd` submodule — run precmd-style hooks on the worker pool so they
-/// don't block prompt rendering (writes into the shared param table).
-#[path = "extensions/async_precmd.rs"]
-pub mod async_precmd;
+/// `zle_file_tester` submodule — file-existence/permission tests for native ZLE
+/// syntax highlighting (port of fish highlight/file_tester.rs).
+#[path = "extensions/zle_file_tester.rs"]
+pub mod zle_file_tester;
+/// `zle_fx` submodule — wiring for the native ZLE effects (autosuggest,
+/// syntax highlight, history search, autopair) into zlecore + the renderer.
+#[path = "extensions/zle_fx.rs"]
+pub mod zle_fx;
+/// `zle_param_sync` submodule — ZLE special-param write-back sync
+/// (Rust-only adapter for C's live GSU setters).
+#[path = "extensions/zle_param_sync.rs"]
+pub mod zle_param_sync;
 /// `zsh_builtin_docs` submodule.
 #[path = "extensions/zsh_builtin_docs.rs"]
 pub mod zsh_builtin_docs;
@@ -331,34 +359,6 @@ pub mod zsh_special_var_docs;
 /// (port of `../strykelang` test framework).
 #[path = "extensions/ztest.rs"]
 pub mod ztest;
-/// `zle_param_sync` submodule — ZLE special-param write-back sync
-/// (Rust-only adapter for C's live GSU setters).
-#[path = "extensions/zle_param_sync.rs"]
-pub mod zle_param_sync;
-/// `zle_file_tester` submodule — file-existence/permission tests for native ZLE
-/// syntax highlighting (port of fish highlight/file_tester.rs).
-#[path = "extensions/zle_file_tester.rs"]
-pub mod zle_file_tester;
-/// `syntax_highlight` submodule — native command-line syntax highlighting
-/// (port of fish highlight/highlight.rs, driven by the zshrs lexer).
-#[path = "extensions/syntax_highlight.rs"]
-pub mod syntax_highlight;
-/// `autosuggest` submodule — native fish-style autosuggestions
-/// (port of the reader.rs autosuggestion state machine).
-#[path = "extensions/autosuggest.rs"]
-pub mod autosuggest;
-/// `history_search` submodule — native up-arrow prefix/substring/token history
-/// search (port of fish reader/history_search.rs).
-#[path = "extensions/history_search.rs"]
-pub mod history_search;
-/// `zle_fx` submodule — wiring for the native ZLE effects (autosuggest,
-/// syntax highlight, history search, autopair) into zlecore + the renderer.
-#[path = "extensions/zle_fx.rs"]
-pub mod zle_fx;
-/// `autopair` submodule — native bracket/quote auto-pairing
-/// (port of hlissner/zsh-autopair).
-#[path = "extensions/autopair.rs"]
-pub mod autopair;
 /// `zwc` submodule.
 #[path = "extensions/zwc.rs"]
 pub mod zwc;

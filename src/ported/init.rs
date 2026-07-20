@@ -1548,11 +1548,8 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
     // it an interactive shell starts with empty history (up-arrow /
     // fc -l see nothing from previous sessions).
     if crate::ported::zsh_h::interact() && isset(RCS) {
-        crate::ported::hist::readhistfile(
-            None,
-            0,
-            crate::ported::zsh_h::HFILE_USE_OPTIONS as i32,
-        ); // c:1574
+        crate::ported::hist::readhistfile(None, 0, crate::ported::zsh_h::HFILE_USE_OPTIONS as i32);
+        // c:1574
     }
 }
 
@@ -2023,14 +2020,14 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 // c:129 interact && toplevel
                 let hstop = stophist.load(Ordering::SeqCst); // c:130
                 stophist.store(3, Ordering::SeqCst); // c:131
-                // c:146-148 — drain any signals queued during the previous read
-                // WITHOUT changing the queueing nesting level: snapshot the level,
-                // dont_queue_signals() (whose run_queued_signals() reaps bg-job
-                // SIGCHLDs that were queued while queueing_enabled stayed at its
-                // baseline 1 across the ZLE read), then restore the level. This
-                // port previously jumped straight to preprompt(), so every queued
-                // SIGCHLD went undrained → children never reaped (zombies) and the
-                // shell hung at the prompt. Port of Src/init.c:146-148.
+                                                     // c:146-148 — drain any signals queued during the previous read
+                                                     // WITHOUT changing the queueing nesting level: snapshot the level,
+                                                     // dont_queue_signals() (whose run_queued_signals() reaps bg-job
+                                                     // SIGCHLDs that were queued while queueing_enabled stayed at its
+                                                     // baseline 1 across the ZLE read), then restore the level. This
+                                                     // port previously jumped straight to preprompt(), so every queued
+                                                     // SIGCHLD went undrained → children never reaped (zombies) and the
+                                                     // shell hung at the prompt. Port of Src/init.c:146-148.
                 let q = crate::ported::signals_h::queue_signal_level();
                 dont_queue_signals();
                 crate::ported::signals_h::restore_queue_signals(q);
@@ -2055,10 +2052,10 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         if prog.is_none() {
             // c:156
             hend(None); // c:158
-            // A parse failure closes any deferred same-line history unit —
-            // the next iteration must run its own hbegin again.
+                        // A parse failure closes any deferred same-line history unit —
+                        // the next iteration must run its own hbegin again.
             hist_open_across_events = false;
-                        // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
+            // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
             let tok_v = tok(); // c:159 tok
             let errflag_v = errflag.load(Ordering::SeqCst);
             let lexerr_break = tok_v == LEXERR && (!isset(SHINSTDIN) || toplevel == 0);

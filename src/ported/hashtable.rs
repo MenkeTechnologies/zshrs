@@ -35,10 +35,9 @@ use crate::utils::{nicezputs, quotedzputs, xsymlink, zputs, ztrcmp, zwarn};
 use crate::zsh_h::{
     cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN,
     HASHED, HIST_DUP, HIST_FOREIGN, HIST_MAKEUNIQUE, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED,
-    PM_LOADDIR, PM_TAGGED,
-    PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED, PRINT_LIST, PRINT_NAMEONLY,
-    PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
-    PRINT_WHENCE_WORD, ZSIG_FUNC,
+    PM_LOADDIR, PM_TAGGED, PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED, PRINT_LIST,
+    PRINT_NAMEONLY, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE,
+    PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, ZSIG_FUNC,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -1358,7 +1357,6 @@ pub fn freeshfuncnode(hn: &str) {
 /// default body emits the full re-parseable `name () { body }` form
 /// including autoload-stub, traced markers, and trailing redirections.
 pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
-
     // c:916 — `Shfunc f = (Shfunc) hn;` — Rust types give us shfunc.
     // c:917 — `char *t = 0;` — declared but only used by the funcdef/redir
     // branches; Rust scope-locals the `t` binding inside each branch.

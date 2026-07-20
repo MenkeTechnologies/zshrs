@@ -39,9 +39,9 @@ use crate::ported::zle::{
 pub fn vichange() -> i32 {
     // c:438
     startvichange(1); // c:443
-    // c:444 — `getvirange(1)` — wf=1 sets WORDFLAG so word motions
-    // stop at end-of-word (`cw` behaves like `ce`, keeping the
-    // trailing whitespace).
+                      // c:444 — `getvirange(1)` — wf=1 sets WORDFLAG so word motions
+                      // stop at end-of-word (`cw` behaves like `ce`, keeping the
+                      // trailing whitespace).
     let c2 = getvirange(1); // c:444
     if c2 != -1 {
         let cs = ZLECS.load(SeqCst) as i32;
@@ -308,7 +308,7 @@ pub fn getvirange(wf: i32) -> i32 {
         WORDFLAG.store(wf, SeqCst); // c:187 `wordflag = wf;`
         store_mark(-1); // c:188 `mark = -1;`
         crate::ported::zle::termquery::cursor_form(); // c:189
-        // c:190-192 — use the operator-pending keymap if one exists.
+                                                      // c:190-192 — use the operator-pending keymap if one exists.
         if let Some(km) = crate::ported::zle::zle_keymap::openkeymap("viopp") {
             // c:191
             crate::ported::zle::zle_keymap::selectlocalmap(Some(km)); // c:192
@@ -323,8 +323,8 @@ pub fn getvirange(wf: i32) -> i32 {
             // c:206 do
             VILINERANGE.store(0, SeqCst); // c:207 `vilinerange = 0;`
             PREFIXFLAG.store(0, SeqCst); // c:208 `prefixflag = 0;`
-            // c:209-210 — `if (!(k2 = getkeycmd()) || (k2->flags &
-            // DISABLED) || k2 == Th(z_sendbreak))`.
+                                         // c:209-210 — `if (!(k2 = getkeycmd()) || (k2->flags &
+                                         // DISABLED) || k2 == Th(z_sendbreak))`.
             let k2 = match crate::ported::zle::zle_keymap::getkeycmd() {
                 None => {
                     // c:211-214 — abort.
@@ -346,12 +346,8 @@ pub fn getvirange(wf: i32) -> i32 {
             // c:220 — `(k2 == bindk) ? dovilinerange() : execzlefunc(...)`.
             // The bindk comparison must happen BEFORE execzlefunc runs
             // (execzlefunc with setbindk=1 overwrites bindk).
-            let is_bindk = BINDK
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|t| t.nam.clone())
-                == Some(k2.nam.clone());
+            let is_bindk =
+                BINDK.lock().unwrap().as_ref().map(|t| t.nam.clone()) == Some(k2.nam.clone());
             // c:215-219 — With k2 == bindk, the command key is repeated:
             // a number of lines is used.  If the function used
             // returns 1, we fail.
@@ -387,17 +383,15 @@ pub fn getvirange(wf: i32) -> i32 {
         // c:235-244 — reject the case where the command modified the
         // line or selected a different history line (non-movement cmd).
         let ll = ZLELL.load(SeqCst);
-        let modified = histline.load(SeqCst) != hist1
-            || ll != LASTLL.load(SeqCst)
-            || {
-                let z = ZLELINE.lock().unwrap();
-                let last = LASTLINE.lock().unwrap();
-                z.get(..ll) != last.get(..ll)
-            };
+        let modified = histline.load(SeqCst) != hist1 || ll != LASTLL.load(SeqCst) || {
+            let z = ZLELINE.lock().unwrap();
+            let last = LASTLINE.lock().unwrap();
+            z.get(..ll) != last.get(..ll)
+        };
         if modified {
             // c:236
             histline.store(hist1, SeqCst); // c:237 `histline = hist1;`
-            // c:238 — `ZS_memcpy(zleline, lastline, zlell = lastll);`
+                                           // c:238 — `ZS_memcpy(zleline, lastline, zlell = lastll);`
             let lastll = LASTLL.load(SeqCst);
             {
                 let last = LASTLINE.lock().unwrap();
@@ -486,9 +480,9 @@ pub fn dovilinerange() -> i32 {
     // c:305 — `int pos = zlecs, n = zmult;`
     let pos = ZLECS.load(SeqCst) as i64;
     let mut n = ZMOD.lock().unwrap().mult as i64; // zle.h:267 `#define zmult (zmod.mult)`
-    // C tracks the walk in `zlecs` itself, which transiently holds
-    // zlell+1 (downward) or -1 (upward). Mirror it in an i64 and sync
-    // the global before each findeol/findbol call (both read zlecs).
+                                                  // C tracks the walk in `zlecs` itself, which transiently holds
+                                                  // zlell+1 (downward) or -1 (upward). Mirror it in an i64 and sync
+                                                  // the global before each findeol/findbol call (both read zlecs).
     let mut cs: i64 = pos;
 
     // c:307-310 — A number of lines is taken as the range.  The current line

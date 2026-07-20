@@ -85,14 +85,14 @@ pub fn makezleparams(_ro: i32) {
                                                                         // mode) sees a value; selectkeymap keeps it in sync on every
                                                                         // change. Without it $KEYMAP was empty in zle-keymap-select. Bug #654.
     let _ = setsparam("KEYMAP", &super::zle_params::get_keymap()); // c:zleparams KEYMAP
-                                                                        // $BUFFERLINES — count of newlines in BUFFER + 1.
+                                                                   // $BUFFERLINES — count of newlines in BUFFER + 1.
     let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;
     let _ = setiparam("BUFFERLINES", lines); // c:zleparams[10]
-    // c:zleparams[] KEYS / WIDGET / LASTWIDGET / WIDGETFUNC /
-    // WIDGETSTYLE / HISTNO / CONTEXT / PENDING — snapshot through the
-    // canonical getter ports. zsh-expand's space widget dispatches on
-    // `[[ $KEYS == " " ]]`; with $KEYS missing it never took the
-    // supernatural-space path, so `ra<space>` didn't expand.
+                                             // c:zleparams[] KEYS / WIDGET / LASTWIDGET / WIDGETFUNC /
+                                             // WIDGETSTYLE / HISTNO / CONTEXT / PENDING — snapshot through the
+                                             // canonical getter ports. zsh-expand's space widget dispatches on
+                                             // `[[ $KEYS == " " ]]`; with $KEYS missing it never took the
+                                             // supernatural-space path, so `ra<space>` didn't expand.
     let keys_bytes = get_keys(); // c:463 get_keys → keybuf
     let mut keys_unmeta = keys_bytes.clone();
     crate::ported::utils::unmetafy(&mut keys_unmeta);
@@ -113,8 +113,8 @@ pub fn makezleparams(_ro: i32) {
     // a suggestion.
     let predisp = get_predisplay(); // c:zleparams PREDISPLAY getfn
     let postdisp = get_postdisplay(); // c:zleparams POSTDISPLAY getfn
-    // c:430 get_region_highlight — the GSU getter ignores its Param
-    // arg; pass a default handle to read the entries' string forms.
+                                      // c:430 get_region_highlight — the GSU getter ignores its Param
+                                      // arg; pass a default handle to read the entries' string forms.
     let rh = crate::ported::zle::zle_refresh::get_region_highlight(
         &crate::ported::zsh_h::param::default(),
     );

@@ -229,11 +229,7 @@ fn make_segment(
 // lang_version_segments — the p10k session may restructure.)
 static TTL_CACHE: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
 
-fn cached_ttl(
-    key: &str,
-    ttl: Duration,
-    run: impl FnOnce() -> Option<String>,
-) -> Option<String> {
+fn cached_ttl(key: &str, ttl: Duration, run: impl FnOnce() -> Option<String>) -> Option<String> {
     let m = TTL_CACHE.get_or_init(Default::default);
     if let Ok(guard) = m.lock() {
         if let Some((at, val)) = guard.get(key) {
@@ -719,11 +715,11 @@ fn lang_version_segments(segname: &str) -> Vec<Segment> {
     // Distinct default fg per runtime; same terminal glyph default,
     // overridable per segment (POWERLEVEL9K_<TOOL>_VERSION_ICON).
     let (default_fg, default_glyph) = match tool {
-        "zshrs" => ("cyan", "\u{F120}"),   // terminal
-        "stryke" => ("yellow", "\u{26A1}"), // ⚡
-        "vimlrs" => ("green", "\u{E62B}"),  // vim
+        "zshrs" => ("cyan", "\u{F120}"),      // terminal
+        "stryke" => ("yellow", "\u{26A1}"),   // ⚡
+        "vimlrs" => ("green", "\u{E62B}"),    // vim
         "elisprs" => ("magenta", "\u{E632}"), // emacs
-        _ => ("red", "\u{F120}"),           // awkrs
+        _ => ("red", "\u{F120}"),             // awkrs
     };
     // cached_ttl keys are &'static str (its map outlives callers).
     let ttl_key: &'static str = match tool {
@@ -899,7 +895,10 @@ mod tests {
             Some("0.9.3".into())
         );
         assert_eq!(parse_version_token("awkrs v1.2.0"), Some("1.2.0".into()));
-        assert_eq!(parse_version_token("zshrs 0.12.15\nextra"), Some("0.12.15".into()));
+        assert_eq!(
+            parse_version_token("zshrs 0.12.15\nextra"),
+            Some("0.12.15".into())
+        );
         assert_eq!(parse_version_token("no digits here"), None);
         assert_eq!(parse_version_token(""), None);
     }

@@ -1610,7 +1610,8 @@ pub fn createparamtable() {
 
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
-    let add_special = |ip: &special_paramdef, tab: &mut crate::fast_hash::FastMap<String, Param>| {
+    let add_special = |ip: &special_paramdef,
+                       tab: &mut crate::fast_hash::FastMap<String, Param>| {
         // c:840 — `paramdef->gsu` selects which gsu_scalar vtable the
         // new param gets. C uses the per-IPDEF macro's BR(...) field;
         // since the Rust special_paramdef doesn't carry a gsu slot
@@ -2399,9 +2400,7 @@ pub fn createparam(
             // shadow decays to the plainly-requested type. Re-stamping it
             // special made `local -a commands` in the brew completer fail with
             // "can't change type of a special parameter".
-            if (old.node.flags as u32 & PM_SPECIAL) != 0
-                && (old.node.flags as u32 & PM_HIDE) == 0
-            {
+            if (old.node.flags as u32 & PM_SPECIAL) != 0 && (old.node.flags as u32 & PM_HIDE) == 0 {
                 Some((
                     old.gsu_s.clone(),
                     old.gsu_i.clone(),
@@ -2901,11 +2900,11 @@ pub(crate) fn getarg<'a>(
         let exact = flags.contains('e');
         let key_match = flags.contains('k') || flags.contains('K');
         let return_index = seq_ind; // c:1412/1416 ind, sequential
-        // c:Src/params.c — on a HASH, i/I/k/K all match against KEYS while
-        // r/R match against VALUES (zsh 5.9: `${h[(i)KEY]}`→KEY,
-        // `${h[(r)VAL]}`→VAL, `${h[(i)VAL]}`→empty). k/K are exact key
-        // compares (pprog=NULL, c:1707-1708); i/I glob the key; r/R glob the
-        // value; (e) forces exact. Return: i/I→KEY, k/K→VALUE, r/R→VALUE.
+                                    // c:Src/params.c — on a HASH, i/I/k/K all match against KEYS while
+                                    // r/R match against VALUES (zsh 5.9: `${h[(i)KEY]}`→KEY,
+                                    // `${h[(r)VAL]}`→VAL, `${h[(i)VAL]}`→empty). k/K are exact key
+                                    // compares (pprog=NULL, c:1707-1708); i/I glob the key; r/R glob the
+                                    // value; (e) forces exact. Return: i/I→KEY, k/K→VALUE, r/R→VALUE.
         let match_against_key = key_match || return_index;
         let key_glob = return_index; // i/I glob the key; k/K are exact-only
                                      // c:Src/params.c:1689,1708-1729 — the value/key SCAN only runs when
@@ -3062,19 +3061,19 @@ pub(crate) fn getarg<'a>(
         let word = flags.contains('w') || flags.contains('f');
         let _ = word;
         let return_index = seq_ind; // c:1412/1416 ind, sequential
-        // c:Src/params.c:2091 — `if (start > 0 && (isset(KSHARRAYS) ||
-        // (v->pm->node.flags & PM_HASHED))) start--;`. The search loop below
-        // yields a 1-BASED index, but under KSHARRAYS the shell's indices are
-        // 0-based, so every index that leaves here has to be shifted down. This
-        // was missed entirely, which showed up two ways:
-        //   `setopt ksharrays; a=(x y z); ${a[(i)y]}` → 2, zsh says 1, and the
-        //     no-match answer came out len+1 (4) instead of len (3);
-        //   a RANGE bound built from a search (`${a[(r)b,(r)d]}`) fed the
-        //     unshifted index straight into the 0-based slice machinery, so the
-        //     window slid one element right — `c d e` for zsh's `b c d`.
-        // The `> 0` guard is what keeps the `(I)` no-match answer at 0.
-        // (PM_HASHED is not folded in here: an assoc `(i)` returns the KEY, not
-        // an index, so there is nothing to shift — verified against zsh.)
+                                    // c:Src/params.c:2091 — `if (start > 0 && (isset(KSHARRAYS) ||
+                                    // (v->pm->node.flags & PM_HASHED))) start--;`. The search loop below
+                                    // yields a 1-BASED index, but under KSHARRAYS the shell's indices are
+                                    // 0-based, so every index that leaves here has to be shifted down. This
+                                    // was missed entirely, which showed up two ways:
+                                    //   `setopt ksharrays; a=(x y z); ${a[(i)y]}` → 2, zsh says 1, and the
+                                    //     no-match answer came out len+1 (4) instead of len (3);
+                                    //   a RANGE bound built from a search (`${a[(r)b,(r)d]}`) fed the
+                                    //     unshifted index straight into the 0-based slice machinery, so the
+                                    //     window slid one element right — `c d e` for zsh's `b c d`.
+                                    // The `> 0` guard is what keeps the `(I)` no-match answer at 0.
+                                    // (PM_HASHED is not folded in here: an assoc `(i)` returns the KEY, not
+                                    // an index, so there is nothing to shift — verified against zsh.)
         let ksh_idx = |i: i64| -> String {
             if i > 0 && isset(KSHARRAYS) {
                 (i - 1).to_string()
@@ -3314,7 +3313,9 @@ pub(crate) fn getarg<'a>(
                     let hit = if flags.contains('e') {
                         cand == pat
                     } else {
-                        compiled_span_pat.as_ref().map_or(false, |p| pattry(p, &cand))
+                        compiled_span_pat
+                            .as_ref()
+                            .map_or(false, |p| pattry(p, &cand))
                     };
                     if hit {
                         remaining -= 1;
@@ -3954,7 +3955,11 @@ pub fn getarrvalue(arr: &[String], start: i64, end: i64) -> Vec<String> {
     let nular_pad = || -> Vec<String> {
         let v_start0 = start - 1; // C v->start is 0-based (subscript - 1)
         let v_end = if end < 0 { end + len + 1 } else { end }; // c:2565
-        let v_start = if v_start0 < 0 { v_start0 + len } else { v_start0 }; // c:2563
+        let v_start = if v_start0 < 0 {
+            v_start0 + len
+        } else {
+            v_start0
+        }; // c:2563
         if v_end <= v_start {
             Vec::new() // c:2578 (empty/inverted range)
         } else if v_start < 0 {
@@ -6588,9 +6593,9 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                            // explicit colon-array name map (mirror of the scalar→array
                            // cascade at params.rs:~6396); rejoin the array with `:` and
                            // write the scalar side so `echo $PATH` sees the edit.
-        // c:Src/params.c:2922 — a tied colon-array element assignment
-        // re-derives the scalar side (path→PATH etc.); see
-        // TIED_COLON_ARRAYS. The direct-u_arr element path above skipped it.
+                           // c:Src/params.c:2922 — a tied colon-array element assignment
+                           // re-derives the scalar side (path→PATH etc.); see
+                           // TIED_COLON_ARRAYS. The direct-u_arr element path above skipped it.
         let base = name.split('[').next().unwrap_or(name);
         if let Some((_, scalar)) = TIED_COLON_ARRAYS.iter().find(|(a, _)| *a == base) {
             let joined = cloned.u_arr.as_deref().unwrap_or(&[]).join(":");
@@ -7035,7 +7040,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // not yet wired; until it is, the typed map is the operative
 // storage.
 static PARAMTAB_INNER: OnceLock<RwLock<crate::fast_hash::FastMap<String, Param>>> = OnceLock::new();
-static REALPARAMTAB_INNER: OnceLock<RwLock<crate::fast_hash::FastMap<String, Param>>> = OnceLock::new();
+static REALPARAMTAB_INNER: OnceLock<RwLock<crate::fast_hash::FastMap<String, Param>>> =
+    OnceLock::new();
 
 /// Array parameter assignment (no subscript).
 ///
@@ -7525,9 +7531,7 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         if !is_special && !is_positional && !is_colon_tie {
             let mut tab = paramtab().write().unwrap();
             if let Some(pm) = tab.get_mut(name) {
-                if pm.ename.is_none()
-                    && (pm.node.flags as u32 & (PM_SPECIAL | PM_UNIQUE)) == 0
-                {
+                if pm.ename.is_none() && (pm.node.flags as u32 & (PM_SPECIAL | PM_UNIQUE)) == 0 {
                     pm.u_arr.get_or_insert_with(Vec::new).extend(val);
                     pm.u_str = None;
                     pm.u_hash = None;
@@ -14777,7 +14781,10 @@ mod tests {
             .or_default();
         // User completer write: `compstate[insert]=menu`.
         let ok = assignsparam("compstate[insert]", "menu", 0);
-        assert!(ok.is_some(), "compstate[insert]=menu must succeed, got error");
+        assert!(
+            ok.is_some(),
+            "compstate[insert]=menu must succeed, got error"
+        );
         assert_eq!(
             paramtab_hashed_storage()
                 .lock()
@@ -14790,9 +14797,15 @@ mod tests {
         // Negative: a name with NO hash-storage backing and a non-numeric key
         // still errors (returns None) — the undeclared-subscript guard holds.
         let bad = assignsparam("zshrs_no_such_assoc[k1]", "bb", 0);
-        assert!(bad.is_none(), "undeclared non-numeric subscript must still error");
+        assert!(
+            bad.is_none(),
+            "undeclared non-numeric subscript must still error"
+        );
         // Cleanup.
-        let _ = paramtab_hashed_storage().lock().unwrap().remove("compstate");
+        let _ = paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .remove("compstate");
         let _ = paramtab().write().unwrap().remove("compstate");
         let _ = paramtab().write().unwrap().remove("zshrs_no_such_assoc");
         opt_state_set("exec", saved_exec);

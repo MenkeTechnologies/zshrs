@@ -1537,13 +1537,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                   // BUILTIN_EVAL fast-path leaked the outer "zsh" prefix
                                   // through, breaking the `(eval):N:` convention zsh uses
                                   // for in-eval errors. Bug #420.
-        // c:Src/builtin.c:6209 — `execode(prog, 1, 0, "eval");`. execode
-        // (c:Src/exec.c:1245-1266) APPENDS its context argument to
-        // `zsh_eval_context` for the duration of the body, so code inside
-        // `eval` sees `cmdarg:eval` (and `cmdarg:shfunc:eval` when the eval is
-        // in a function). zshrs pushed "shfunc" and, since #1065, "cmdsubst",
-        // but never "eval". Popped on every return path by the guard, matching
-        // execode's stack discipline. Bug #1065 (eval leg).
+                                  // c:Src/builtin.c:6209 — `execode(prog, 1, 0, "eval");`. execode
+                                  // (c:Src/exec.c:1245-1266) APPENDS its context argument to
+                                  // `zsh_eval_context` for the duration of the body, so code inside
+                                  // `eval` sees `cmdarg:eval` (and `cmdarg:shfunc:eval` when the eval is
+                                  // in a function). zshrs pushed "shfunc" and, since #1065, "cmdsubst",
+                                  // but never "eval". Popped on every return path by the guard, matching
+                                  // execode's stack discipline. Bug #1065 (eval leg).
         let sync_eval_ctx = |stack: &[String]| {
             let joined = stack.join(":");
             if let Ok(mut tab) = crate::ported::params::paramtab().write() {
@@ -1592,13 +1592,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .or_else(|| crate::ported::utils::argzero()) // c:6167 argzero
             };
             let frame = crate::ported::zsh_h::funcstack {
-                prev: None, // c:6166 (Vec-stack: index encodes link)
+                prev: None,                 // c:6166 (Vec-stack: index encodes link)
                 name: "(eval)".to_string(), // c:6166 fstack.name = scriptname
                 filename: None,
                 caller,
                 flineno: 0,
-                lineno: 0,                             // c:6169
-                tp: crate::ported::zsh_h::FS_EVAL,     // c:6170
+                lineno: 0,                         // c:6169
+                tp: crate::ported::zsh_h::FS_EVAL, // c:6170
             };
             crate::ported::modules::parameter::FUNCSTACK
                 .lock()
@@ -1686,11 +1686,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // precommand must reach them (`builtin zd ping` errored
         // "no such builtin: zd" while bare `zd ping` worked).
         if crate::daemon::builtins::is_zshrs_builtin(name) {
-            let argv: Vec<String> =
-                std::iter::once(name.to_string()).chain(rest.iter().cloned()).collect();
-            return Value::Status(
-                crate::daemon::builtins::try_dispatch(name, &argv).unwrap_or(1),
-            );
+            let argv: Vec<String> = std::iter::once(name.to_string())
+                .chain(rest.iter().cloned())
+                .collect();
+            return Value::Status(crate::daemon::builtins::try_dispatch(name, &argv).unwrap_or(1));
         }
         // c:Src/exec.c:3435-3436 — `builtin NAME` with NAME not in
         // builtintab emits `zwarn("no such builtin: %s", cmdarg)`
@@ -3039,8 +3038,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             jobs::pipecleanfilelist(&mut tab[idx], false); // c:1753
                             jobs::deletejob(&mut tab[idx], true); // c:1754
                         }
-                        if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock()
-                        {
+                        if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
                             *tj = -1; // c:1755
                         }
                     } else {
@@ -6224,11 +6222,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }; // c:766
         crate::ported::r#loop::try_errflag.store(try_err, Ordering::Relaxed); // c:765
         crate::ported::r#loop::try_interrupt.store(try_int, Ordering::Relaxed); // c:766
-        // c:Src/loop.c:755 — `endval = lastval ? lastval : errflag;`.
-        // The status of the WHOLE `{…} always {…}` construct, captured
-        // BEFORE the always-list runs (exectry returns it at c:801) and
-        // deliberately including the errflag fallback: a try-list that
-        // failed with `lastval == 0` but raised errflag still reports 1.
+                                                                                // c:Src/loop.c:755 — `endval = lastval ? lastval : errflag;`.
+                                                                                // The status of the WHOLE `{…} always {…}` construct, captured
+                                                                                // BEFORE the always-list runs (exectry returns it at c:801) and
+                                                                                // deliberately including the errflag fallback: a try-list that
+                                                                                // failed with `lastval == 0` but raised errflag still reports 1.
         let endval = if vm_status != 0 {
             vm_status
         } else {
@@ -6347,38 +6345,42 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // below aborts the shell with the always-list's 0 instead of
         // the try-list's failure status.
         crate::ported::builtin::LASTVAL.store(saved, Ordering::Relaxed); // c:1375
-        // c:Src/loop.c:774-777 — the error RE-RAISE. This is the
-        // whole point of TRY_BLOCK_ERROR being writable:
-        //
-        //     if (try_errflag)  errflag |= ERRFLAG_ERROR;
-        //     else              errflag &= ~ERRFLAG_ERROR;
-        //     if (try_interrupt) errflag |= ERRFLAG_INT;
-        //     else               errflag &= ~ERRFLAG_INT;
-        //
-        // SET_TRY_BLOCK_ERROR cleared errflag (c:768) so the always-arm
-        // could run; the try-block's error is PARKED in `try_errflag`
-        // and re-raised HERE unless the always-arm zeroed it
-        // (`TRY_BLOCK_ERROR=0`, the documented swallow idiom — routed
-        // to the atomic by intsetfn's IPDEF6 arm, params.rs).
-        //
-        // zshrs used to just drop the parked error, so
-        // `f() { { typeset -r ro=1; ro=2 } always { … }; print reached }`
-        // kept running and exited 0, where zsh aborts f with status 1.
+                                                                         // c:Src/loop.c:774-777 — the error RE-RAISE. This is the
+                                                                         // whole point of TRY_BLOCK_ERROR being writable:
+                                                                         //
+                                                                         //     if (try_errflag)  errflag |= ERRFLAG_ERROR;
+                                                                         //     else              errflag &= ~ERRFLAG_ERROR;
+                                                                         //     if (try_interrupt) errflag |= ERRFLAG_INT;
+                                                                         //     else               errflag &= ~ERRFLAG_INT;
+                                                                         //
+                                                                         // SET_TRY_BLOCK_ERROR cleared errflag (c:768) so the always-arm
+                                                                         // could run; the try-block's error is PARKED in `try_errflag`
+                                                                         // and re-raised HERE unless the always-arm zeroed it
+                                                                         // (`TRY_BLOCK_ERROR=0`, the documented swallow idiom — routed
+                                                                         // to the atomic by intsetfn's IPDEF6 arm, params.rs).
+                                                                         //
+                                                                         // zshrs used to just drop the parked error, so
+                                                                         // `f() { { typeset -r ro=1; ro=2 } always { … }; print reached }`
+                                                                         // kept running and exited 0, where zsh aborts f with status 1.
         let te = crate::ported::r#loop::try_errflag.load(Ordering::Relaxed); // c:774
         let ti = crate::ported::r#loop::try_interrupt.load(Ordering::Relaxed); // c:776
         if te != 0 {
             crate::ported::utils::errflag
-                .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed); // c:775
+                .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+        // c:775
         } else {
             crate::ported::utils::errflag
-                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed); // c:777
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            // c:777
         }
         if ti != 0 {
             crate::ported::utils::errflag
-                .fetch_or(crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed); // c:779
+                .fetch_or(crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed);
+        // c:779
         } else {
             crate::ported::utils::errflag
-                .fetch_and(!crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed); // c:781
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed);
+            // c:781
         }
         // Re-apply the escape flags captured by SET_TRY_BLOCK_ERROR.
         // If the always-arm itself fired return/break/continue/exit,
@@ -6424,9 +6426,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Stack (pushed by the ModCond compile arm): arg0 … argN-1, then the
     // operator word last. argc = N+1.
     vm.register_builtin(BUILTIN_COND_MOD, |vm, argc| {
-        use crate::ported::zle::complete::{
-            cond_psfix, cond_range, CVT_PREPAT, CVT_SUFPAT,
-        };
+        use crate::ported::zle::complete::{cond_psfix, cond_range, CVT_PREPAT, CVT_SUFPAT};
         let op = vm.pop().to_str(); // operator word (pushed last → popped first)
         let n = (argc as usize).saturating_sub(1);
         let mut args: Vec<String> = Vec::with_capacity(n);
@@ -6434,9 +6434,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             args.push(vm.pop().to_str());
         }
         args.reverse(); // restore arg0 … argN-1 order
-        // Dispatch the module/completion condition (C evalcond COND_MOD path:
-        // condtab lookup + arity check, cond.c:149-185, over the four cotab[]
-        // entries at complete.c:1697-1702). Handlers return 1=match/true.
+                        // Dispatch the module/completion condition (C evalcond COND_MOD path:
+                        // condtab lookup + arity check, cond.c:149-185, over the four cotab[]
+                        // entries at complete.c:1697-1702). Handlers return 1=match/true.
         let name: String = op
             .trim_start_matches(|c: char| c == '-' || c == '\u{9b}')
             .to_string();
@@ -6486,10 +6486,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // by the compiler in place of ProcessSubIn/Out when in_cond_operand.
     vm.register_builtin(BUILTIN_PROCSUB_COND_ERROR, |_vm, _argc| {
         let cmd = _vm.pop().to_str();
-        crate::ported::utils::zerr(&format!(
-            "process substitution {} cannot be used here",
-            cmd
-        ));
+        crate::ported::utils::zerr(&format!("process substitution {} cannot be used here", cmd));
         // c:getoutputfile returns NULL with errflag set → the enclosing
         // statement aborts (empty stdout, exit 1), rather than the cond
         // merely evaluating false.
@@ -6596,9 +6593,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_OPTION_CHECK_TRISTATE, |vm, _argc| {
         let name = vm.pop().to_str();
         let r = crate::ported::cond::optison(None, &name); // c:cond.c:502 (fromtest=NULL for [[ -o ]])
-                                                             // optison itself prints the diagnostic via zwarnnam when r=3
-                                                             // and POSIXBUILTINS is unset (the canonical path). Don't
-                                                             // double-emit here. r is already 0/1/3.
+                                                           // optison itself prints the diagnostic via zwarnnam when r=3
+                                                           // and POSIXBUILTINS is unset (the canonical path). Don't
+                                                           // double-emit here. r is already 0/1/3.
         Value::Int(r as i64)
     });
 
@@ -6649,17 +6646,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // real elements), so `${#a[@]}`/`${!a[@]}` skip them like bash. Only
         // in bash mode, only for a plain non-append single index (0-based
         // under ksharrays). Captured before the assign; applied after.
-        let sparse_track: Option<(String, usize, usize)> = if crate::dash_mode::bash_mode()
-            && !append
-            && !key.contains(',')
-        {
-            key.trim().parse::<usize>().ok().map(|i| {
-                let old_len = with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));
-                (name.clone(), old_len, i)
-            })
-        } else {
-            None
-        };
+        let sparse_track: Option<(String, usize, usize)> =
+            if crate::dash_mode::bash_mode() && !append && !key.contains(',') {
+                key.trim().parse::<usize>().ok().map(|i| {
+                    let old_len =
+                        with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));
+                    (name.clone(), old_len, i)
+                })
+            } else {
+                None
+            };
         // c:Src/params.c:3383-3389 — a subscripted ARRAY assignment to an
         // associative array is an error, whatever the subscript looks like:
         //     if (v && PM_TYPE(v->pm->node.flags) == PM_HASHED) {
@@ -6685,8 +6681,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .read()
                 .ok()
                 .and_then(|t| {
-                    t.get(&name)
-                        .map(|pm| crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == crate::ported::zsh_h::PM_HASHED)
+                    t.get(&name).map(|pm| {
+                        crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
+                            == crate::ported::zsh_h::PM_HASHED
+                    })
                 })
                 .unwrap_or(false);
             if is_hashed {
@@ -8857,7 +8855,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed); // c:1602
                 crate::ported::builtin::BREAKS.store(obreaks, Ordering::Relaxed); // c:1220
                 crate::ported::builtin::RETFLAG.store(oretflag, Ordering::Relaxed); // c:1222
-                crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed); // c:1213
+                crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed);
+                // c:1213
             }
         }
         if retflag != 0 || exit_pending != 0 {
@@ -8938,12 +8937,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let obreaks = crate::ported::builtin::BREAKS.load(Ordering::Relaxed); // c:1085
                 let oretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed); // c:1086
                 let olastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:1087
-                // c:Src/signals.c:1101 — dotrapargs returns early if errflag
-                // is set, and c:1174/1205-1218 brackets the dispatch with
-                // `traperr = errflag` … restore. The failing assignment left
-                // errflag SET, so the trap body (`print zerr`) would itself
-                // bail on the first op. Clear errflag across the dispatch so
-                // the body runs, then restore it so the script still aborts.
+                                                                                        // c:Src/signals.c:1101 — dotrapargs returns early if errflag
+                                                                                        // is set, and c:1174/1205-1218 brackets the dispatch with
+                                                                                        // `traperr = errflag` … restore. The failing assignment left
+                                                                                        // errflag SET, so the trap body (`print zerr`) would itself
+                                                                                        // bail on the first op. Clear errflag across the dispatch so
+                                                                                        // the body runs, then restore it so the script still aborts.
                 let oerrflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:1174
                 crate::ported::utils::errflag.store(0, Ordering::Relaxed);
                 let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR); // c:1601
@@ -8951,7 +8950,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed); // c:1602
                 crate::ported::builtin::BREAKS.store(obreaks, Ordering::Relaxed); // c:1220
                 crate::ported::builtin::RETFLAG.store(oretflag, Ordering::Relaxed); // c:1222
-                crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed); // c:1213
+                crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed);
+                // c:1213
             }
             return Value::Int(1);
         }
@@ -9021,7 +9021,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // always_entry (compile_zsh.rs re-points it there) and
         // SET_TRY_BLOCK_ERROR then cleared the pending exit so the body ran.
         if crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::Relaxed) == 0 {
-            crate::ported::builtin::zexit(last, crate::ported::zsh_h::ZEXIT_NORMAL); // c:1618 realexit
+            crate::ported::builtin::zexit(last, crate::ported::zsh_h::ZEXIT_NORMAL);
+            // c:1618 realexit
         }
         // Subshell: zshrs runs subshells in-process, so it cannot process-exit
         // the whole shell here — defer to the subshell-end unwind.
@@ -10374,8 +10375,7 @@ fn word_assemble_plan9(segments: &[Value], plan9_flags: &[bool]) -> Value {
             continue;
         }
         if plan9 {
-            let mut new_active =
-                Vec::with_capacity(words[active_lo..].len() * elems.len());
+            let mut new_active = Vec::with_capacity(words[active_lo..].len() * elems.len());
             for a in &words[active_lo..] {
                 for r in &elems {
                     new_active.push(format!("{a}{r}"));
@@ -12083,9 +12083,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // the (stale) global while PM_UNSET is set (params.rs:12552).
             let special_globals_snap: Vec<(String, String)> = SUBSHELL_SPECIAL_GLOBALS
                 .iter()
-                .filter_map(|n| {
-                    crate::ported::params::getsparam(n).map(|v| ((*n).to_string(), v))
-                })
+                .filter_map(|n| crate::ported::params::getsparam(n).map(|v| ((*n).to_string(), v)))
                 .collect();
             // libc::umask returns the previous mask AND sets the new
             // one; call with current value to read without changing.
@@ -13863,11 +13861,7 @@ impl ShellExecutor {
             unsafe {
                 let flags = libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD);
                 if flags >= 0 {
-                    libc::fcntl(
-                        libc::STDIN_FILENO,
-                        libc::F_SETFD,
-                        flags & !libc::FD_CLOEXEC,
-                    );
+                    libc::fcntl(libc::STDIN_FILENO, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
                 }
             }
             std::mem::forget(file);

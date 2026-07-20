@@ -361,9 +361,10 @@ fn p10k_display(rest: &[String]) -> i32 {
     let mut i = 0;
     while i < rest.len() {
         match rest[i].as_str() {
-            "-a" => dump = true,        // p10k:9053
-            "-r" => reset = true,       // p10k:9046
-            "-h" => {                   // p10k:9054
+            "-a" => dump = true,  // p10k:9053
+            "-r" => reset = true, // p10k:9046
+            "-h" => {
+                // p10k:9054
                 api::print_usage(api::DISPLAY_USAGE, false);
                 return 0;
             }
@@ -379,7 +380,11 @@ fn p10k_display(rest: &[String]) -> i32 {
 
     if dump {
         // p10k:9058-9070 — populate `reply` with (name state) pairs.
-        let pats = if operands.is_empty() { vec!["*"] } else { operands };
+        let pats = if operands.is_empty() {
+            vec!["*"]
+        } else {
+            operands
+        };
         let pairs = api::display_dump(&pats);
         crate::ported::exec::set_array("reply", pairs);
         if reset {
@@ -421,11 +426,12 @@ fn run_user_segment_fn(base: &str) -> Option<Vec<render::Segment>> {
     let fname = format!("prompt_{base}");
     crate::ported::utils::getshfunc(&fname)?;
     USER_SEGMENT_SINK.with(|s| *s.borrow_mut() = Some(Vec::new()));
-    let status = crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.execute_script(&fname).unwrap_or(-1)
-    })
-    .unwrap_or(-1);
-    let segs = USER_SEGMENT_SINK.with(|s| s.borrow_mut().take()).unwrap_or_default();
+    let status =
+        crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script(&fname).unwrap_or(-1))
+            .unwrap_or(-1);
+    let segs = USER_SEGMENT_SINK
+        .with(|s| s.borrow_mut().take())
+        .unwrap_or_default();
     if status != 0 && segs.is_empty() {
         tracing::debug!(target: "p10k", %fname, status, "user segment fn failed");
     }

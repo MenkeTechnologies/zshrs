@@ -70,7 +70,9 @@ pub fn check_integration(zshrc_content: &str, cfg_path: &str) -> (bool, bool) {
             continue; // wizard:1940 `[^#]#` — skip comment lines.
         }
         // The `source <target>` form (accept a leading `[[ -f … ]] || `).
-        let Some(src_at) = find_source_word(line) else { continue };
+        let Some(src_at) = find_source_word(line) else {
+            continue;
+        };
         let after = line[src_at + "source".len()..].trim_start();
         let target = after.split_whitespace().next().unwrap_or("");
         let target = target.trim_end_matches(&[';'][..]);
@@ -98,10 +100,7 @@ fn find_source_word(line: &str) -> Option<usize> {
                 .next_back()
                 .is_some_and(|c| c.is_alphanumeric() || c == '_');
         let after = &line[at + "source".len()..];
-        let after_ok = after
-            .chars()
-            .next()
-            .is_none_or(|c| c.is_whitespace());
+        let after_ok = after.chars().next().is_none_or(|c| c.is_whitespace());
         if before_ok && after_ok {
             return Some(at);
         }

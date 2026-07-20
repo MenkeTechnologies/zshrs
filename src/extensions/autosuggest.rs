@@ -403,7 +403,11 @@ pub fn can_autosuggest(state: &AutosuggestState, line: &str) -> bool {
 /// fish:reader.rs:5534-5573 — `autosuggest_completed` (sync path: staleness can't
 /// happen, but the prefix re-check is kept — the widget may have edited the line
 /// between compute and store in future async use).
-pub fn autosuggest_completed(state: &mut AutosuggestState, line: &str, result: AutosuggestionResult) {
+pub fn autosuggest_completed(
+    state: &mut AutosuggestState,
+    line: &str,
+    result: AutosuggestionResult,
+) {
     if result.command_line != line {
         // fish:5539-5542 — This autosuggestion is stale.
         return;
@@ -629,9 +633,7 @@ mod tests {
         move |prefix: &str, limit: usize| {
             owned
                 .iter()
-                .filter(|c| {
-                    c.to_lowercase().starts_with(&prefix.to_lowercase())
-                })
+                .filter(|c| c.to_lowercase().starts_with(&prefix.to_lowercase()))
                 .take(limit)
                 .cloned()
                 .collect()
@@ -668,7 +670,11 @@ mod tests {
         // suggested.
         let source = src(&["nonexistent_zshrs_cmd_xyz --flag"]);
         let r = compute_autosuggestion("nonex", 5, &source, &ctx);
-        assert!(r.is_empty(), "invalid command must not be suggested: {:?}", r.text);
+        assert!(
+            r.is_empty(),
+            "invalid command must not be suggested: {:?}",
+            r.text
+        );
     }
 
     #[test]
@@ -700,13 +706,17 @@ mod tests {
             accept_autosuggestion(&mut st, AutosuggestionPortion::Count(usize::MAX)).unwrap();
         assert_eq!(range, 0..5);
         assert_eq!(repl, "git status --short");
-        assert!(st.autosuggestion.is_empty(), "full accept clears suggestion");
+        assert!(
+            st.autosuggestion.is_empty(),
+            "full accept clears suggestion"
+        );
     }
 
     #[test]
     fn accept_count_appends_chars() {
         let mut st = state_with_suggestion("git s", "git status --short");
-        let (range, repl) = accept_autosuggestion(&mut st, AutosuggestionPortion::Count(3)).unwrap();
+        let (range, repl) =
+            accept_autosuggestion(&mut st, AutosuggestionPortion::Count(3)).unwrap();
         assert_eq!(range, 5..5);
         assert_eq!(repl, "tat");
     }
@@ -718,7 +728,10 @@ mod tests {
         assert_eq!(range, 5..5);
         // consumes "tatus" then stops before the space→"--short" run begins…
         assert!(repl.starts_with("tatus"), "got {repl:?}");
-        assert!(!repl.contains("short"), "must stop at word boundary: {repl:?}");
+        assert!(
+            !repl.contains("short"),
+            "must stop at word boundary: {repl:?}"
+        );
     }
 
     #[test]

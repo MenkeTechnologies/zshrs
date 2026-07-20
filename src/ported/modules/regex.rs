@@ -202,9 +202,8 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         None => return 0, // c:93-94 REG_NOMATCH
     };
     // Group N's byte range, or None when it did not participate.
-    let group = |n: usize| -> Option<(usize, usize)> {
-        captures.get(n).map(|m| (m.start(), m.end()))
-    };
+    let group =
+        |n: usize| -> Option<(usize, usize)> { captures.get(n).map(|m| (m.start(), m.end())) };
     let nsub = re.captures_len() - 1; // c:90 re.re_nsub — declared paren groups
 
     return_value = 1; // c:96

@@ -87,8 +87,7 @@ pub static TYPTAB: [std::sync::atomic::AtomicU32; 256] =
 /// Port of `static int typtab_flags = 0;` from `Src/utils.c:4149`.
 /// State flags managed by `inittyptab()`. Atomic for the same reason
 /// as TYPTAB (C reads it unlocked).
-pub static TYPTAB_FLAGS: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(0); // utils.c:4149
+pub static TYPTAB_FLAGS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0); // utils.c:4149
 
 // ZTF_* state flags (c:69-72) preserved across `inittyptab()` calls.
 /// `ZTF_INIT` constant.
@@ -354,7 +353,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = TYPTAB[b'X' as usize].load(std::sync::atomic::Ordering::Relaxed);
-        TYPTAB[b'X' as usize].store((IDIGIT | IALNUM) as u32, std::sync::atomic::Ordering::Relaxed);
+        TYPTAB[b'X' as usize].store(
+            (IDIGIT | IALNUM) as u32,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         assert!(zistype(b'X', IDIGIT as u32));
         assert!(zistype(b'X', IALNUM as u32));
         assert!(!zistype(b'X', ICNTRL as u32));

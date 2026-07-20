@@ -1012,13 +1012,12 @@ pub fn zlecore() {
         // mode mid-selection.
         {
             let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
-            let vis = if crate::ported::zle::zle_h::invicmdmode(&kn)
-                && REGION_ACTIVE.load(SeqCst) != 0
-            {
-                crate::ported::zle::zle_keymap::openkeymap("visual")
-            } else {
-                None
-            };
+            let vis =
+                if crate::ported::zle::zle_h::invicmdmode(&kn) && REGION_ACTIVE.load(SeqCst) != 0 {
+                    crate::ported::zle::zle_keymap::openkeymap("visual")
+                } else {
+                    None
+                };
             crate::ported::zle::zle_keymap::selectlocalmap(vis);
         }
 
@@ -1173,12 +1172,10 @@ pub fn zleread(
     MARK.store(0, SeqCst);
     DONE.store(0, SeqCst);
     EOFSENT.store(0, SeqCst); // c:1294 eofsent = 0 (cleared before zlecore)
-    // c:1285 — `histline = curhist;` — vi `G` (vifetchhistory) and the
-    // getvirange modified-line check compare against this.
-    crate::ported::zle::zle_hist::histline.store(
-        crate::ported::hist::curhist.load(SeqCst) as i32,
-        SeqCst,
-    );
+                              // c:1285 — `histline = curhist;` — vi `G` (vifetchhistory) and the
+                              // getvirange modified-line check compare against this.
+    crate::ported::zle::zle_hist::histline
+        .store(crate::ported::hist::curhist.load(SeqCst) as i32, SeqCst);
     // c:1289-1291 — `virangeflag = lastcmd = … = 0; vichgflag = 0;
     // viinrepeat = 0;` — stale vi-change state from an interrupted
     // edit must not leak into the next line (a leftover vichgflag
@@ -1244,9 +1241,7 @@ pub fn zleread(
             h.entries.reserve(ring.len());
             let mut items: Vec<(i64, String)> = ring
                 .iter()
-                .filter(|he| {
-                    he.histnum >= first && he.histnum <= cur && !he.node.nam.is_empty()
-                })
+                .filter(|he| he.histnum >= first && he.histnum <= cur && !he.node.nam.is_empty())
                 .map(|he| (he.histnum, he.node.nam.clone()))
                 .collect();
             drop(ring);
@@ -1578,40 +1573,39 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
                 scantab: None,
             });
         crate::ported::params::startparamscope(&mut local_scope); // c:1533
-        // c:1534 — `makezleparams(0);` — expose $BUFFER / $LBUFFER /
-        // $RBUFFER / $CURSOR / … to the widget body. Without this,
-        // every user widget saw an EMPTY $BUFFER: zpwr's MagicEnter
-        // (`[[ -z $BUFFER ]]`) took its empty-line branch on every
-        // Enter press and never accepted the line — the Enter key
-        // appeared dead with the zpwr ZLE overrides loaded.
+                                                                  // c:1534 — `makezleparams(0);` — expose $BUFFER / $LBUFFER /
+                                                                  // $RBUFFER / $CURSOR / … to the widget body. Without this,
+                                                                  // every user widget saw an EMPTY $BUFFER: zpwr's MagicEnter
+                                                                  // (`[[ -z $BUFFER ]]`) took its empty-line branch on every
+                                                                  // Enter press and never accepted the line — the Enter key
+                                                                  // appeared dead with the zpwr ZLE overrides loaded.
         makezleparams(0); // c:1534 — also arms the RUST-ONLY
                           // ZLE_PARAM_SNAPSHOT (see zle_params.rs) that
                           // zleparams_sync_from_paramtab diffs against.
-        // c:1535 — `sfcontext = SFC_WIDGET;`.
-        crate::ported::exec::sfcontext
-            .store(crate::ported::zsh_h::SFC_WIDGET, Ordering::Relaxed); // c:1535
-        // c:1536 — `opts[XTRACE] = 0;`.
+                          // c:1535 — `sfcontext = SFC_WIDGET;`.
+        crate::ported::exec::sfcontext.store(crate::ported::zsh_h::SFC_WIDGET, Ordering::Relaxed); // c:1535
+                                                                                                   // c:1536 — `opts[XTRACE] = 0;`.
         crate::ported::options::opt_state_set(
             &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::XTRACE),
             false,
         ); // c:1536
         let rc = crate::ported::exec::doshfunc(&mut shf, largs, true, body_runner); // c:1537
-        // c:1538 — `opts[XTRACE] = oxt;`.
+                                                                                    // c:1538 — `opts[XTRACE] = oxt;`.
         crate::ported::options::opt_state_set(
             &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::XTRACE),
             oxt,
         ); // c:1538
-        // c:1539 — `sfcontext = osc;`.
+           // c:1539 — `sfcontext = osc;`.
         crate::ported::exec::sfcontext.store(osc, Ordering::Relaxed); // c:1539
-        // RUST-ONLY WRITE-BACK (C: live GSU setters — see
-        // crate::zle_param_sync): apply any widget mutations of
-        // $BUFFER/$LBUFFER/$RBUFFER/$CURSOR still pending in the
-        // paramtab, then drop the widget scope.
+                                                                      // RUST-ONLY WRITE-BACK (C: live GSU setters — see
+                                                                      // crate::zle_param_sync): apply any widget mutations of
+                                                                      // $BUFFER/$LBUFFER/$RBUFFER/$CURSOR still pending in the
+                                                                      // paramtab, then drop the widget scope.
         crate::zle_param_sync::sync_from_paramtab();
         crate::zle_param_sync::clear_snapshot();
         // c:1540 — `endparamscope();`.
         crate::ported::params::endparamscope(); // c:1540
-        // c:1530 — capture LASTVAL after the call.
+                                                // c:1530 — capture LASTVAL after the call.
         LASTVAL.store(rc, Ordering::Relaxed);
         // c:1597 — restore BINDK.
         if set_bindk != 0 {
@@ -2488,12 +2482,12 @@ pub fn boot_(_m: *const module) -> i32 {
     // domenuselect / interactive menu-select) never started. Register them
     // with def=None so `complete::boot_` can attach the real funcs.
     let zlehooks = [
-        "list_matches",     // c:2221 LISTMATCHESHOOK
-        "complete",         // c:2223 COMPLETEHOOK
-        "before_complete",  // c:2225 BEFORECOMPLETEHOOK
-        "after_complete",   // c:2227 AFTERCOMPLETEHOOK
+        "list_matches",      // c:2221 LISTMATCHESHOOK
+        "complete",          // c:2223 COMPLETEHOOK
+        "before_complete",   // c:2225 BEFORECOMPLETEHOOK
+        "after_complete",    // c:2227 AFTERCOMPLETEHOOK
         "accept_completion", // c:2229 ACCEPTCOMPHOOK
-        "invalidate_list",  // c:2231 INVALIDATELISTHOOK
+        "invalidate_list",   // c:2231 INVALIDATELISTHOOK
     ];
     let all: Vec<(&str, Option<crate::ported::zsh_h::Hookfn>, i32)> = comphooks
         .into_iter()
@@ -3076,7 +3070,10 @@ pub fn get_key_cmd() -> Option<Thingy> {
     // reports the sequence that invoked the widget. Without it $KEYS
     // was empty and zsh-expand's `[[ $KEYS == " " ]]` space dispatch
     // never fired.
-    crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear(); // c:1588
+    crate::ported::zle::zle_keymap::keybuf
+        .lock()
+        .unwrap()
+        .clear(); // c:1588
     crate::ported::zle::zle_keymap::keybuflen.store(0, SeqCst); // c:1588
 
     loop {
@@ -3189,7 +3186,10 @@ pub fn get_key_cmd() -> Option<Thingy> {
         ungetbytes(&extra);
         buf.truncate(last_match_len);
         // Rebuild the global metafied mirror from the kept raw bytes.
-        crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
+        crate::ported::zle::zle_keymap::keybuf
+            .lock()
+            .unwrap()
+            .clear();
         for &kb in &buf {
             crate::ported::zle::zle_keymap::addkeybuf(kb as i32);
         }

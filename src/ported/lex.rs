@@ -40,8 +40,7 @@ use crate::ported::zsh_h::{
     CS_BRACE, CS_BRACEPAR, CS_CMDSUBST, CS_CURSH, CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH,
     CS_MATHSUBST, CS_QUOTE, ERRFLAG_INT, HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES,
     INP_ALIAS, INP_CONT, INTERACTIVECOMMENTS, KSHGLOB, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN,
-    SHORTLOOPS,
-    SHORTREPEAT, ZCONTEXT_LEX, ZCONTEXT_PARSE,
+    SHORTLOOPS, SHORTREPEAT, ZCONTEXT_LEX, ZCONTEXT_PARSE,
 };
 use crate::ported::ztype_h::itok;
 use crate::DPUTS;
@@ -1988,38 +1987,38 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     // c:1417 `add(c)` with `c` still the raw `(`.
                     add(c);
                 } else {
-                // c:1086-1135 — when `(` appears inside a Stringg and
-                // is immediately followed by `)`, the string
-                // terminates at the `(`. The `()` is then re-lexed as
-                // a separate INOUTPAR token. This handles function
-                // definitions: `name()` lexes as Stringg `name` +
-                // INOUTPAR `()`, not Stringg `name()`.
-                //
-                // c:1112-1131 — under SHGLOB, a `(` followed by
-                // whitespace at the start of a command-position word
-                // (no nested brackets/braces) is a ksh function
-                // definition signal — same break-out behaviour.
-                if in_brace_param == 0 && !sub {
-                    let e = hgetc();
-                    if let Some(ch) = e {
-                        hungetc(ch);
+                    // c:1086-1135 — when `(` appears inside a Stringg and
+                    // is immediately followed by `)`, the string
+                    // terminates at the `(`. The `()` is then re-lexed as
+                    // a separate INOUTPAR token. This handles function
+                    // definitions: `name()` lexes as Stringg `name` +
+                    // INOUTPAR `()`, not Stringg `name()`.
+                    //
+                    // c:1112-1131 — under SHGLOB, a `(` followed by
+                    // whitespace at the start of a command-position word
+                    // (no nested brackets/braces) is a ksh function
+                    // definition signal — same break-out behaviour.
+                    if in_brace_param == 0 && !sub {
+                        let e = hgetc();
+                        if let Some(ch) = e {
+                            hungetc(ch);
+                        }
+                        LEX_LEXSTOP.set(false);
+                        let is_inblank = matches!(e, Some(' ' | '\t'));
+                        if e == Some(')')
+                            || (isset(SHGLOB)
+                                && is_inblank
+                                && bct == 0
+                                && brct == 0
+                                && intpos > 0
+                                && LEX_INCMDPOS.get())
+                        {
+                            // `name()` (or KSH-style `name( ... )`)
+                            // — terminate Stringg at `(` so the
+                            // following `()` re-lexes as INOUTPAR.
+                            break;
+                        }
                     }
-                    LEX_LEXSTOP.set(false);
-                    let is_inblank = matches!(e, Some(' ' | '\t'));
-                    if e == Some(')')
-                        || (isset(SHGLOB)
-                            && is_inblank
-                            && bct == 0
-                            && brct == 0
-                            && intpos > 0
-                            && LEX_INCMDPOS.get())
-                    {
-                        // `name()` (or KSH-style `name( ... )`)
-                        // — terminate Stringg at `(` so the
-                        // following `()` re-lexes as INOUTPAR.
-                        break;
-                    }
-                }
                     if in_brace_param == 0 {
                         pct += 1;
                     }
@@ -2164,68 +2163,68 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if isset(SHGLOB) && sub {
                     add(c);
                 } else {
-                // c:1190-1198 — `e = hgetc(); if (!(in_brace_param ||
-                // sub) && e == '(') { add(Inang); skipcomm(); c =
-                // Outpar; break; }`. `<(...)` process-sub only when
-                // outside brace_param/sub — inside, `<` stays literal.
-                let e = hgetc(); // c:1190
-                if !(in_brace_param > 0 || sub) && e == Some('(') {
-                    // c:1191
-                    add(Inang); // c:1192
-                    if skipcomm().is_err() {
-                        // c:1193
-                        peek = LEXERR;
-                        break;
-                    }
-                    add(Outpar); // c:1197 c=Outpar
-                } else {
-                    // c:1200 — `hungetc(e);`.
-                    if let Some(e) = e {
-                        hungetc(e);
-                    }
-                    // c:1201-1207 — isnumglob → emit Inang/.../Outang.
-                    if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
-                        // [[ ]] / case pattern context: `<` literal.
-                        // Original zshrs note: real zsh's wordcode has
-                        // Inang/Outang markers even inside ${var//pat/repl}
-                        // so isnumglob still fires below — but cond /
-                        // case patterns stay raw.
-                        add(c);
-                    } else if isnumglob() {
-                        // c:1201
-                        // c:1202-1206 — emit Inang…Outang markers.
-                        add(Inang); // c:1202
-                        while let Some(ch) = hgetc() {
-                            // c:1203
-                            if ch == '>' {
-                                break;
-                            }
-                            add(ch); // c:1204
-                        }
-                        add(Outang); // c:1205
-                    } else {
-                        // c:1208 — `lexstop = 0;`.
-                        LEX_LEXSTOP.set(false); // c:1208
-                                                // c:1209-1210 — `if (in_brace_param || sub) break;`
-                                                // exits the C switch and falls to the
-                                                // post-switch `add(c)`. In Rust the LX2_INANG
-                                                // arm doesn't fall to a shared add — add `<`
-                                                // explicitly here so it lands in the token
-                                                // buffer. Inside `${...}` and `$(...)` /
-                                                // backticks, bare `<` is literal — required
-                                                // for patterns like `${arr[@]:#<no-data>}`
-                                                // (zinit.zsh:2507) which excludes elements
-                                                // matching the literal `<no-data>`.
-                        if in_brace_param > 0 || sub {
-                            // c:1209
-                            add(c);
-                        } else {
-                            // c:1211 — `goto brk;` outside brace_param/sub
-                            // ends the token (bare `<` is a redirect).
+                    // c:1190-1198 — `e = hgetc(); if (!(in_brace_param ||
+                    // sub) && e == '(') { add(Inang); skipcomm(); c =
+                    // Outpar; break; }`. `<(...)` process-sub only when
+                    // outside brace_param/sub — inside, `<` stays literal.
+                    let e = hgetc(); // c:1190
+                    if !(in_brace_param > 0 || sub) && e == Some('(') {
+                        // c:1191
+                        add(Inang); // c:1192
+                        if skipcomm().is_err() {
+                            // c:1193
+                            peek = LEXERR;
                             break;
                         }
+                        add(Outpar); // c:1197 c=Outpar
+                    } else {
+                        // c:1200 — `hungetc(e);`.
+                        if let Some(e) = e {
+                            hungetc(e);
+                        }
+                        // c:1201-1207 — isnumglob → emit Inang/.../Outang.
+                        if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
+                            // [[ ]] / case pattern context: `<` literal.
+                            // Original zshrs note: real zsh's wordcode has
+                            // Inang/Outang markers even inside ${var//pat/repl}
+                            // so isnumglob still fires below — but cond /
+                            // case patterns stay raw.
+                            add(c);
+                        } else if isnumglob() {
+                            // c:1201
+                            // c:1202-1206 — emit Inang…Outang markers.
+                            add(Inang); // c:1202
+                            while let Some(ch) = hgetc() {
+                                // c:1203
+                                if ch == '>' {
+                                    break;
+                                }
+                                add(ch); // c:1204
+                            }
+                            add(Outang); // c:1205
+                        } else {
+                            // c:1208 — `lexstop = 0;`.
+                            LEX_LEXSTOP.set(false); // c:1208
+                                                    // c:1209-1210 — `if (in_brace_param || sub) break;`
+                                                    // exits the C switch and falls to the
+                                                    // post-switch `add(c)`. In Rust the LX2_INANG
+                                                    // arm doesn't fall to a shared add — add `<`
+                                                    // explicitly here so it lands in the token
+                                                    // buffer. Inside `${...}` and `$(...)` /
+                                                    // backticks, bare `<` is literal — required
+                                                    // for patterns like `${arr[@]:#<no-data>}`
+                                                    // (zinit.zsh:2507) which excludes elements
+                                                    // matching the literal `<no-data>`.
+                            if in_brace_param > 0 || sub {
+                                // c:1209
+                                add(c);
+                            } else {
+                                // c:1211 — `goto brk;` outside brace_param/sub
+                                // ends the token (bare `<` is a redirect).
+                                break;
+                            }
+                        }
                     }
-                }
                 }
             }
 
@@ -2472,8 +2471,9 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             LEX_LEXSTOP.set(true);
                             unmatched = '`';
                             // c:1383 — LEXERR only when not ZLE/bufferwords.
-                            if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE != 0 { /* tolerate */ } else {
-                            peek = LEXERR;
+                            if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE != 0 { /* tolerate */
+                            } else {
+                                peek = LEXERR;
                             }
                             break;
                         }
@@ -3270,9 +3270,7 @@ fn checkalias(lextext: &str) -> bool {
         // — `inalmore` extends eligibility to the word following a
         // trailing-space alias body (`alias sudo='sudo '` chaining).
         if alias.inuse == 0
-            && (is_global
-                || (LEX_INCMDPOS.get() && tok() == STRING_LEX)
-                || LEX_INALMORE.get() != 0)
+            && (is_global || (LEX_INCMDPOS.get() && tok() == STRING_LEX) || LEX_INALMORE.get() != 0)
         {
             // c:1918-1927 — `if (!lexstop) { int c = hgetc();
             // hungetc(c); if (!iblank(c)) inpush(" ", INP_ALIAS, 0); }`
@@ -3297,22 +3295,22 @@ fn checkalias(lextext: &str) -> bool {
                 if let Some(c) = hgetc() {
                     // c:1923
                     hungetc(c); // c:1924
-                    // !!! ORDERING DIVERGENCE ADAPTER — C's inungetc
-                    // returns the char to the CURRENT input frame
-                    // (inbufptr--), which the alias inpush below then
-                    // covers, so the terminator is read AFTER the alias
-                    // body. zshrs's hungetc pushes into LEX_UNGET_BUF,
-                    // which hgetc drains BEFORE any inbuf frame — so the
-                    // terminator (blank / `;` / `\n`) would be consumed
-                    // ahead of the alias text: `alias git=hub; git
-                    // status` fused to `hubstatus`, and the line's `\n`
-                    // ran early (PS2 prompt mid-command). Re-route the
-                    // pending ungets into an INP_CONT frame pushed UNDER
-                    // the separator/alias frames so read order matches C:
-                    // alias body → separator → terminator → line rest.
-                    // Only plain chars are re-routed — ingetc skips itok
-                    // bytes (input.rs c:328), which must stay in
-                    // LEX_UNGET_BUF to survive.
+                                // !!! ORDERING DIVERGENCE ADAPTER — C's inungetc
+                                // returns the char to the CURRENT input frame
+                                // (inbufptr--), which the alias inpush below then
+                                // covers, so the terminator is read AFTER the alias
+                                // body. zshrs's hungetc pushes into LEX_UNGET_BUF,
+                                // which hgetc drains BEFORE any inbuf frame — so the
+                                // terminator (blank / `;` / `\n`) would be consumed
+                                // ahead of the alias text: `alias git=hub; git
+                                // status` fused to `hubstatus`, and the line's `\n`
+                                // ran early (PS2 prompt mid-command). Re-route the
+                                // pending ungets into an INP_CONT frame pushed UNDER
+                                // the separator/alias frames so read order matches C:
+                                // alias body → separator → terminator → line rest.
+                                // Only plain chars are re-routed — ingetc skips itok
+                                // bytes (input.rs c:328), which must stay in
+                                // LEX_UNGET_BUF to survive.
                     let all_plain = LEX_UNGET_BUF.with_borrow(|b| {
                         b.iter()
                             .all(|&ch| !((ch as u32) < 256 && crate::ztype_h::itok(ch as u8)))
@@ -6518,7 +6516,7 @@ mod tests {
         assert!(is_valid_assignment_target("変数"));
         assert!(is_valid_assignment_target("v日")); // ASCII-prefixed multibyte
         assert!(is_valid_assignment_target("日+")); // augment `+=` form (c:1241)
-        // ASCII targets still valid.
+                                                    // ASCII targets still valid.
         assert!(is_valid_assignment_target("foo"));
         assert!(is_valid_assignment_target("foo_bar"));
         // With POSIXIDENTIFIERS a multibyte name is NOT a valid target

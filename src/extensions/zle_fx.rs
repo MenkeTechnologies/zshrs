@@ -61,7 +61,9 @@ fn with_fx<R>(f: impl FnOnce(&mut FxState) -> R) -> R {
 pub fn enabled() -> bool {
     match getsparam("ZSHRS_NATIVE_ZLE_FX") {
         Some(v) => v != "0",
-        None => std::env::var("ZSHRS_NATIVE_ZLE_FX").map(|v| v != "0").unwrap_or(true),
+        None => std::env::var("ZSHRS_NATIVE_ZLE_FX")
+            .map(|v| v != "0")
+            .unwrap_or(true),
     }
 }
 
@@ -576,11 +578,7 @@ fn budget_ms(name: &str, default: u64) -> u64 {
 /// Renderer callback — merge the native overlay into the combined
 /// pre+line+post attr array. Called by `compute_render_attrs` between the
 /// HighlightManager regions and user `$region_highlight` layers.
-pub fn native_render_attrs(
-    attrs: &mut [Option<TextAttr>],
-    pre_len: usize,
-    line_len: usize,
-) {
+pub fn native_render_attrs(attrs: &mut [Option<TextAttr>], pre_len: usize, line_len: usize) {
     if !enabled() {
         return;
     }
@@ -602,10 +600,7 @@ pub fn native_render_attrs(
     });
 }
 
-fn spec_to_attr(
-    resolver: &mut HighlightColorResolver,
-    spec: &HighlightSpec,
-) -> Option<TextAttr> {
+fn spec_to_attr(resolver: &mut HighlightColorResolver, spec: &HighlightSpec) -> Option<TextAttr> {
     if *spec == HighlightSpec::default() {
         return None;
     }
@@ -654,9 +649,7 @@ mod tests {
 
     #[test]
     fn zattr_round_trip() {
-        use crate::ported::zsh_h::{
-            TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT,
-        };
+        use crate::ported::zsh_h::{TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT};
         let a = TXTBOLDFACE | TXTUNDERLINE | TXTFGCOLOUR | ((2u64) << TXT_ATTR_FG_COL_SHIFT);
         let t = zattr_to_text_attr(a);
         assert!(t.bold && t.underline && !t.standout);

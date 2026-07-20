@@ -4621,7 +4621,8 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                     // fails. Note the test is on the SHIFTED key, so `oL` and
                     // `OL` collide (same key, different direction) while `oL`
                     // and `oLm` do not (the follow variant shifts).
-                    if (shifted & GS_EXEC) == 0 && qs.sorts.iter().any(|s| (s & !GS_DESC) == shifted)
+                    if (shifted & GS_EXEC) == 0
+                        && qs.sorts.iter().any(|s| (s & !GS_DESC) == shifted)
                     {
                         crate::ported::utils::zerr("doubled sort specifier"); // c:1697
                         crate::ported::utils::errflag.fetch_or(
@@ -5481,7 +5482,10 @@ fn sort_matches(state: &mut globdata) {
     // zsh's qsort-defined order (which can't be reproduced portably). Skip
     // when the last key is already GS_NAME (the no-qualifier default, or an
     // explicit trailing `on`) so we don't double-compare.
-    if specs.last().map_or(true, |&last| (last & !GS_DESC) != GS_NAME) {
+    if specs
+        .last()
+        .map_or(true, |&last| (last & !GS_DESC) != GS_NAME)
+    {
         specs.push(GS_NAME); // deterministic name-ascending tie-break
     }
 

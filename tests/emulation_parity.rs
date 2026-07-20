@@ -58,17 +58,85 @@ const ZSH: &[&str] = &["zsh", "/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/zsh
 
 const PARITY_CASES: &[ParityCase] = &[
     // ── zshrs --X vs the real shell X (real-shell-faithful) ──────────────
-    ParityCase { name: "zsh",  zshrs_flags: &["--zsh"],  candidates: ZSH, ref_emulate: None, extended: true,  optional: false },
-    ParityCase { name: "bash", zshrs_flags: &["--bash"], candidates: &["bash", "/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash"], ref_emulate: None, extended: true, optional: false },
-    ParityCase { name: "ksh",  zshrs_flags: &["--ksh"],  candidates: &["ksh", "/bin/ksh", "/usr/bin/ksh"], ref_emulate: None, extended: true,  optional: false },
-    ParityCase { name: "sh",   zshrs_flags: &["--sh"],   candidates: &["/bin/sh"], ref_emulate: None, extended: false, optional: false },
-    ParityCase { name: "dash", zshrs_flags: &["--dash"], candidates: &["/bin/dash", "/usr/bin/dash"], ref_emulate: None, extended: false, optional: false },
+    ParityCase {
+        name: "zsh",
+        zshrs_flags: &["--zsh"],
+        candidates: ZSH,
+        ref_emulate: None,
+        extended: true,
+        optional: false,
+    },
+    ParityCase {
+        name: "bash",
+        zshrs_flags: &["--bash"],
+        candidates: &[
+            "bash",
+            "/bin/bash",
+            "/usr/bin/bash",
+            "/opt/homebrew/bin/bash",
+        ],
+        ref_emulate: None,
+        extended: true,
+        optional: false,
+    },
+    ParityCase {
+        name: "ksh",
+        zshrs_flags: &["--ksh"],
+        candidates: &["ksh", "/bin/ksh", "/usr/bin/ksh"],
+        ref_emulate: None,
+        extended: true,
+        optional: false,
+    },
+    ParityCase {
+        name: "sh",
+        zshrs_flags: &["--sh"],
+        candidates: &["/bin/sh"],
+        ref_emulate: None,
+        extended: false,
+        optional: false,
+    },
+    ParityCase {
+        name: "dash",
+        zshrs_flags: &["--dash"],
+        candidates: &["/bin/dash", "/usr/bin/dash"],
+        ref_emulate: None,
+        extended: false,
+        optional: false,
+    },
     // ── zshrs --X --zsh (zsh-STYLE) vs real zsh doing `emulate X` ────────
-    ParityCase { name: "sh/zsh-style",  zshrs_flags: &["--sh", "--zsh"],  candidates: ZSH, ref_emulate: Some("sh"),  extended: false, optional: false },
-    ParityCase { name: "ksh/zsh-style", zshrs_flags: &["--ksh", "--zsh"], candidates: ZSH, ref_emulate: Some("ksh"), extended: true,  optional: false },
+    ParityCase {
+        name: "sh/zsh-style",
+        zshrs_flags: &["--sh", "--zsh"],
+        candidates: ZSH,
+        ref_emulate: Some("sh"),
+        extended: false,
+        optional: false,
+    },
+    ParityCase {
+        name: "ksh/zsh-style",
+        zshrs_flags: &["--ksh", "--zsh"],
+        candidates: ZSH,
+        ref_emulate: Some("ksh"),
+        extended: true,
+        optional: false,
+    },
     // ── best-effort variants: ash ≈ dash, mksh ≈ ksh (POSIX base only) ───
-    ParityCase { name: "mksh", zshrs_flags: &["--mksh"], candidates: &["mksh", "/bin/mksh", "/usr/bin/mksh"], ref_emulate: None, extended: false, optional: true },
-    ParityCase { name: "ash",  zshrs_flags: &["--ash"],  candidates: &["ash", "/bin/ash", "/usr/bin/ash"], ref_emulate: None, extended: false, optional: true },
+    ParityCase {
+        name: "mksh",
+        zshrs_flags: &["--mksh"],
+        candidates: &["mksh", "/bin/mksh", "/usr/bin/mksh"],
+        ref_emulate: None,
+        extended: false,
+        optional: true,
+    },
+    ParityCase {
+        name: "ash",
+        zshrs_flags: &["--ash"],
+        candidates: &["ash", "/bin/ash", "/usr/bin/ash"],
+        ref_emulate: None,
+        extended: false,
+        optional: true,
+    },
 ];
 
 /// Portable scripts that every one of {zsh, ksh, sh, dash} executes
@@ -575,7 +643,10 @@ fn find_shell(candidates: &[&str]) -> Option<String> {
             if Path::new(c).exists() {
                 return Some((*c).to_string());
             }
-        } else if let Ok(out) = Command::new("sh").args(["-c", &format!("command -v {c}")]).output() {
+        } else if let Ok(out) = Command::new("sh")
+            .args(["-c", &format!("command -v {c}")])
+            .output()
+        {
             if out.status.success() {
                 let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !p.is_empty() {
@@ -593,8 +664,14 @@ fn run(bin: &str, args: &[&str], script: &str) -> (String, bool) {
     let mut full: Vec<&str> = args.to_vec();
     full.push("-c");
     full.push(script);
-    let out = Command::new(bin).args(&full).output().unwrap_or_else(|e| panic!("spawn {bin}: {e}"));
-    (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    let out = Command::new(bin)
+        .args(&full)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {bin}: {e}"));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.success(),
+    )
 }
 
 /// Run one corpus script through a parity case: zshrs with the case flags,
@@ -648,24 +725,35 @@ fn shell_aliases_map_to_base_modes() {
             .args([flag, "-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     // ash ≡ dash: strict-POSIX rejections + posix-faithful splitting.
     for script in [
-        "echo $((2**10))",                          // dash arith: `**` rejected
-        "[[ 1 = 1 ]] && echo y",                    // `[[` not reserved
+        "echo $((2**10))",                            // dash arith: `**` rejected
+        "[[ 1 = 1 ]] && echo y",                      // `[[` not reserved
         "IFS=:; v=a:b:; set -- $v; printf %s \"$#\"", // trailing-empty drop → 2
-        "printf '%d' A",                            // strtoimax printf → exit 1
+        "printf '%d' A",                              // strtoimax printf → exit 1
     ] {
-        assert_eq!(probe("--ash", script), probe("--dash", script), "--ash vs --dash: {script}");
+        assert_eq!(
+            probe("--ash", script),
+            probe("--dash", script),
+            "--ash vs --dash: {script}"
+        );
     }
     // mksh ≡ ksh: same emulation base (ksharrays etc.).
     for script in [
-        "a=(x y z); printf '%s' \"${a[0]}\"",       // 0-indexed arrays
+        "a=(x y z); printf '%s' \"${a[0]}\"", // 0-indexed arrays
         "print -r -- ${options[ksharrays]}",
         "print -r -- ${options[shwordsplit]}",
     ] {
-        assert_eq!(probe("--mksh", script), probe("--ksh", script), "--mksh vs --ksh: {script}");
+        assert_eq!(
+            probe("--mksh", script),
+            probe("--ksh", script),
+            "--mksh vs --ksh: {script}"
+        );
     }
 }
 
@@ -682,19 +770,35 @@ fn dash_strict_rejects_substring_expansion() {
             .args([flag, "-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     for strict in ["--dash", "--ash"] {
-        for sub in ["v=abcdef; echo \"${v:2}\"", "v=abcdef; echo \"${v:2:3}\"", "v=abcdef; echo \"${v: -2}\""] {
+        for sub in [
+            "v=abcdef; echo \"${v:2}\"",
+            "v=abcdef; echo \"${v:2:3}\"",
+            "v=abcdef; echo \"${v: -2}\"",
+        ] {
             let (out, ok) = probe(strict, sub);
-            assert!(!ok, "{strict}: substring `{sub}` must be a bad substitution");
-            assert!(out.trim().is_empty(), "{strict}: substring `{sub}` prints nothing");
+            assert!(
+                !ok,
+                "{strict}: substring `{sub}` must be a bad substitution"
+            );
+            assert!(
+                out.trim().is_empty(),
+                "{strict}: substring `{sub}` prints nothing"
+            );
         }
         // `${(flags)name}` parameter-flag blocks are also a bad substitution in
         // dash (POSIX `${` never starts with `(`).
         for flag in ["x=hi; echo \"${(U)x}\"", "x=a; echo \"${(w)x}\""] {
             let (_o, ok) = probe(strict, flag);
-            assert!(!ok, "{strict}: param-flag `{flag}` must be a bad substitution");
+            assert!(
+                !ok,
+                "{strict}: param-flag `{flag}` must be a bad substitution"
+            );
         }
         // POSIX operators + length must still work under strict mode.
         for (script, want) in [
@@ -730,15 +834,24 @@ fn dash_strict_rejects_arith_command() {
             .args([flag, "-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     for strict in ["--dash", "--ash"] {
         // `(( 1 + 1 ))` → runs command `1` in a subshell → non-zero exit.
         let (_o, ok) = probe(strict, "(( 1 + 1 ))");
-        assert!(!ok, "{strict}: `(( 1 + 1 ))` must run as a subshell command (non-zero)");
+        assert!(
+            !ok,
+            "{strict}: `(( 1 + 1 ))` must run as a subshell command (non-zero)"
+        );
         // A genuine nested subshell still works: `(( echo hi ))` → prints hi.
         let (out, ok2) = probe(strict, "(( echo hi ))");
-        assert!(ok2 && out.trim() == "hi", "{strict}: nested subshell `(( echo hi ))` → hi");
+        assert!(
+            ok2 && out.trim() == "hi",
+            "{strict}: nested subshell `(( echo hi ))` → hi"
+        );
         // `$(( ))` arithmetic expansion is unaffected (POSIX).
         let (out, ok3) = probe(strict, "echo $((2+3))");
         assert!(ok3 && out.trim() == "5", "{strict}: $((2+3)) still works");
@@ -771,19 +884,36 @@ fn dash_strict_rejects_braced_array_subscript() {
             .args([flag, "-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     for strict in ["--dash", "--ash"] {
-        for sub in ["a=hi; echo \"${a[0]}\"", "echo \"${a[1]}\"", "a=hi; echo \"${a[*]}\"", "echo \"${x[key]}\""] {
+        for sub in [
+            "a=hi; echo \"${a[0]}\"",
+            "echo \"${a[1]}\"",
+            "a=hi; echo \"${a[*]}\"",
+            "echo \"${x[key]}\"",
+        ] {
             let (_o, ok) = probe(strict, sub);
-            assert!(!ok, "{strict}: braced subscript `{sub}` must be a bad substitution");
+            assert!(
+                !ok,
+                "{strict}: braced subscript `{sub}` must be a bad substitution"
+            );
         }
         // The UNBRACED form stays literal (matches dash): `$a[0]` → value + `[0]`.
         let (out, ok) = probe(strict, "a=hi; echo \"$a[0]\"");
-        assert!(ok && out.trim() == "hi[0]", "{strict}: unbraced $a[0] stays literal → hi[0]");
+        assert!(
+            ok && out.trim() == "hi[0]",
+            "{strict}: unbraced $a[0] stays literal → hi[0]"
+        );
         // Normal ${x} forms still work.
         let (out2, ok2) = probe(strict, "x=hi; echo \"${x}:${#x}\"");
-        assert!(ok2 && out2.trim() == "hi:2", "{strict}: plain ${{x}}/${{#x}} still work");
+        assert!(
+            ok2 && out2.trim() == "hi:2",
+            "{strict}: plain ${{x}}/${{#x}} still work"
+        );
     }
     // --zsh/--bash keep array subscripts.
     for m in ["--zsh", "--bash"] {
@@ -805,23 +935,35 @@ fn dash_strict_rejects_nonposix_reserved_words() {
             .args([flag, "-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     for strict in ["--dash", "--ash"] {
         for script in ["function f { echo hi; }; f", "coproc cat", "[[ a == a ]]"] {
             let (_o, ok) = probe(strict, script);
-            assert!(!ok, "{strict}: `{script}` must not run (non-POSIX reserved word)");
+            assert!(
+                !ok,
+                "{strict}: `{script}` must not run (non-POSIX reserved word)"
+            );
         }
         // POSIX function form + reserved words still work.
         let (out, ok) = probe(strict, "f() { echo hi; }; f");
-        assert!(ok && out.trim() == "hi", "{strict}: POSIX `name()` function must work");
+        assert!(
+            ok && out.trim() == "hi",
+            "{strict}: POSIX `name()` function must work"
+        );
         let (out2, ok2) = probe(strict, "if true; then echo y; fi");
         assert!(ok2 && out2.trim() == "y", "{strict}: POSIX `if` must work");
     }
     // zsh/bash/ksh keep `function` and `coproc`.
     for m in ["--zsh", "--bash", "--ksh"] {
         let (out, ok) = probe(m, "function g { echo fn; }; g");
-        assert!(ok && out.trim() == "fn", "{m}: `function` keyword must work");
+        assert!(
+            ok && out.trim() == "fn",
+            "{m}: `function` keyword must work"
+        );
     }
 }
 
@@ -837,21 +979,37 @@ fn dash_strict_rejects_process_substitution() {
             .args([flag, "-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     for strict in ["--dash", "--ash"] {
-        for ps in ["cat <(echo hi)", "diff <(echo a) <(echo a)", "echo x > >(cat)"] {
+        for ps in [
+            "cat <(echo hi)",
+            "diff <(echo a) <(echo a)",
+            "echo x > >(cat)",
+        ] {
             let (_o, ok) = probe(strict, ps);
-            assert!(!ok, "{strict}: process substitution `{ps}` must be a syntax error");
+            assert!(
+                !ok,
+                "{strict}: process substitution `{ps}` must be a syntax error"
+            );
         }
         // Plain redirections must still work under strict mode.
         let (out, ok) = probe(strict, "printf 'y\\n' | cat");
-        assert!(ok && out.trim() == "y", "{strict}: plain pipe/redirect still works");
+        assert!(
+            ok && out.trim() == "y",
+            "{strict}: plain pipe/redirect still works"
+        );
     }
     // bash/zsh support process substitution.
     for m in ["--bash", "--zsh"] {
         let (out, ok) = probe(m, "cat <(echo works)");
-        assert!(ok && out.trim() == "works", "{m}: process substitution → works");
+        assert!(
+            ok && out.trim() == "works",
+            "{m}: process substitution → works"
+        );
     }
 }
 
@@ -863,16 +1021,20 @@ fn bash_mode_self_contained() {
     // strtoimax printf %d) since bash drops trailing empties and errors on
     // non-numeric %d like dash.
     let cases: &[(&str, &str)] = &[
-        ("printf '%s ' {a,b,c}", "a b c "),                   // brace expansion on
-        ("printf '%s ' {1..4}", "1 2 3 4 "),                  // brace range
-        ("IFS=:; v=a:b:; set -- $v; printf %s \"$#\"", "2"),  // trailing-empty drop
+        ("printf '%s ' {a,b,c}", "a b c "),  // brace expansion on
+        ("printf '%s ' {1..4}", "1 2 3 4 "), // brace range
+        ("IFS=:; v=a:b:; set -- $v; printf %s \"$#\"", "2"), // trailing-empty drop
     ];
     for (script, want) in cases {
         let out = Command::new(zshrs_bin())
             .args(["--bash", "-f", "-c", script])
             .output()
             .expect("spawn");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), *want, "--bash: {script}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            *want,
+            "--bash: {script}"
+        );
     }
     // printf %d numeric contract (bash errors on non-numeric, like dash).
     let out = Command::new(zshrs_bin())
@@ -880,7 +1042,10 @@ fn bash_mode_self_contained() {
         .output()
         .expect("spawn");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "0");
-    assert!(!out.status.success(), "--bash printf %d A should exit non-zero");
+    assert!(
+        !out.status.success(),
+        "--bash printf %d A should exit non-zero"
+    );
 
     // bash (unlike zsh/ksh/dash/sh) also errors on an explicitly-supplied EMPTY
     // numeric operand — prints 0 but exits 1 — for every numeric conversion. A
@@ -892,15 +1057,24 @@ fn bash_mode_self_contained() {
             .args(["-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     for conv in ["%d", "%i", "%o", "%u", "%x", "%X"] {
         let (out, ok) = run(&["--bash"], &format!("printf '{conv}' ''"));
         assert_eq!(out, "0", "--bash printf {conv} '' prints 0");
-        assert!(!ok, "--bash printf {conv} '' (empty arg) must exit non-zero");
+        assert!(
+            !ok,
+            "--bash printf {conv} '' (empty arg) must exit non-zero"
+        );
         // Missing operand is not an error.
         let (_o, ok_missing) = run(&["--bash"], &format!("printf '{conv}\\n'"));
-        assert!(ok_missing, "--bash printf {conv} (missing arg) must exit zero");
+        assert!(
+            ok_missing,
+            "--bash printf {conv} (missing arg) must exit zero"
+        );
         // zsh/ksh/dash/sh accept an empty operand as a clean 0 (exit zero).
         for m in ["--zsh", "--ksh", "--dash", "--sh"] {
             let (_o2, ok2) = run(&[m], &format!("printf '{conv}' ''"));
@@ -910,14 +1084,21 @@ fn bash_mode_self_contained() {
     // Recycling: empty then valid — bash prints both, still exits 1.
     let (out, ok) = run(&["--bash"], "printf '%d\\n' '' 5");
     assert_eq!(out, "0\n5\n", "--bash recycling prints 0 then 5");
-    assert!(!ok, "--bash recycling with an empty operand still exits non-zero");
+    assert!(
+        !ok,
+        "--bash recycling with an empty operand still exits non-zero"
+    );
 
     // POSIX sh must NOT brace-expand (regression guard for the gate).
     let out = Command::new(zshrs_bin())
         .args(["--sh", "-f", "-c", "printf '%s ' {a,b,c}"])
         .output()
         .expect("spawn");
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "{a,b,c} ", "--sh must not brace-expand");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "{a,b,c} ",
+        "--sh must not brace-expand"
+    );
 }
 
 #[test]
@@ -931,7 +1112,10 @@ fn bash_param_expansion_indirect_and_casemod() {
             .args(["--bash", "-f", "-c", script])
             .output()
             .expect("spawn");
-        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
     };
     let cases: &[(&str, &str)] = &[
         // indirect (B)
@@ -943,7 +1127,10 @@ fn bash_param_expansion_indirect_and_casemod() {
         ("v=Hello; printf '%s' \"${v,,}\"", "hello"),
         ("v=hello; printf '%s' \"${v^}\"", "Hello"),
         ("v=HELLO; printf '%s' \"${v,}\"", "hELLO"),
-        ("v=abcDEF; printf '%s-%s' \"${v^^}\" \"${v,,}\"", "ABCDEF-abcdef"),
+        (
+            "v=abcDEF; printf '%s-%s' \"${v^^}\" \"${v,,}\"",
+            "ABCDEF-abcdef",
+        ),
     ];
     for (script, want) in cases {
         assert_eq!(bash(script).0, *want, "--bash: {script}");
@@ -955,7 +1142,10 @@ fn bash_param_expansion_indirect_and_casemod() {
             .args([mode, "-f", "-c", "x=5; y=x; printf '%s' \"${!y}\""])
             .output()
             .expect("spawn");
-        assert!(!out.status.success(), "{mode}: ${{!y}} must not do indirect");
+        assert!(
+            !out.status.success(),
+            "{mode}: ${{!y}} must not do indirect"
+        );
     }
 }
 
@@ -984,8 +1174,14 @@ fn bash_regex_rematch_read_a_indices() {
         "2024/01/15"
     );
     // read -a array read.
-    assert_eq!(bash("read -a arr <<< 'x y z'; printf '%s' \"${arr[1]}\""), "y");
-    assert_eq!(bash("read -a arr <<< 'one two three'; printf '%s' \"${#arr[@]}\""), "3");
+    assert_eq!(
+        bash("read -a arr <<< 'x y z'; printf '%s' \"${arr[1]}\""),
+        "y"
+    );
+    assert_eq!(
+        bash("read -a arr <<< 'one two three'; printf '%s' \"${#arr[@]}\""),
+        "3"
+    );
     // ${!arr[@]} indices (3 separate args → joined with a space here).
     assert_eq!(bash("a=(x y z); printf '%s ' \"${!a[@]}\""), "0 1 2 ");
     assert_eq!(
@@ -995,7 +1191,12 @@ fn bash_regex_rematch_read_a_indices() {
 
     // BASH_REMATCH must stay unset under --zsh (uses $match instead).
     let out = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", "[[ ab =~ (a) ]]; printf '[%s]' \"${BASH_REMATCH:-unset}\""])
+        .args([
+            "--zsh",
+            "-f",
+            "-c",
+            "[[ ab =~ (a) ]]; printf '[%s]' \"${BASH_REMATCH:-unset}\"",
+        ])
         .output()
         .expect("spawn");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "[unset]");
@@ -1013,25 +1214,49 @@ fn bash_mapfile_readarray() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     // -t strips the trailing newline; count is 3.
-    assert_eq!(bash("mapfile -t L <<< $'a\\nb\\nc'; printf '%s' \"${#L[@]}\""), "3");
-    assert_eq!(bash("mapfile -t L <<< $'a\\nb\\nc'; printf '%s' \"${L[1]}\""), "b");
+    assert_eq!(
+        bash("mapfile -t L <<< $'a\\nb\\nc'; printf '%s' \"${#L[@]}\""),
+        "3"
+    );
+    assert_eq!(
+        bash("mapfile -t L <<< $'a\\nb\\nc'; printf '%s' \"${L[1]}\""),
+        "b"
+    );
     // readarray is an alias.
-    assert_eq!(bash("readarray -t L <<< $'x\\ny'; printf '%s' \"${#L[@]}\""), "2");
+    assert_eq!(
+        bash("readarray -t L <<< $'x\\ny'; printf '%s' \"${#L[@]}\""),
+        "2"
+    );
     // Without -t the trailing delimiter is kept in each element.
-    assert_eq!(bash("mapfile L <<< $'x\\ny'; printf '[%s]' \"${L[@]}\""), "[x\n][y\n]");
+    assert_eq!(
+        bash("mapfile L <<< $'x\\ny'; printf '[%s]' \"${L[@]}\""),
+        "[x\n][y\n]"
+    );
     // -s skip + -n count.
-    assert_eq!(bash("mapfile -t -s 1 -n 2 L <<< $'a\\nb\\nc\\nd'; printf '%s' \"${L[*]}\""), "b c");
+    assert_eq!(
+        bash("mapfile -t -s 1 -n 2 L <<< $'a\\nb\\nc\\nd'; printf '%s' \"${L[*]}\""),
+        "b c"
+    );
     // -d custom delimiter.
-    assert_eq!(bash("mapfile -d : -t L <<< 'a:b:c'; printf '%s' \"${L[1]}\""), "b");
+    assert_eq!(
+        bash("mapfile -d : -t L <<< 'a:b:c'; printf '%s' \"${L[1]}\""),
+        "b"
+    );
     // Default array name is MAPFILE.
-    assert_eq!(bash("mapfile -t <<< $'p\\nq'; printf '%s' \"${MAPFILE[0]}\""), "p");
+    assert_eq!(
+        bash("mapfile -t <<< $'p\\nq'; printf '%s' \"${MAPFILE[0]}\""),
+        "p"
+    );
 
     // Gated to non-zsh: `mapfile` is "command not found" under --zsh.
     let out = Command::new(zshrs_bin())
         .args(["--zsh", "-f", "-c", "mapfile x"])
         .output()
         .expect("spawn");
-    assert!(!out.status.success(), "--zsh: mapfile must be command-not-found");
+    assert!(
+        !out.status.success(),
+        "--zsh: mapfile must be command-not-found"
+    );
 }
 
 #[test]
@@ -1054,13 +1279,28 @@ fn bash_sparse_arrays() {
     // the live elements concatenate; `[*]` is one joined arg and keeps IFS.)
     assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${#a[@]}""#), "4");
     assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${a[@]}""#), "xyzq");
-    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${a[*]}""#), "x y z q");
-    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${!a[*]}""#), "0 1 2 5");
+    assert_eq!(
+        bash(r#"a=(x y z); a[5]=q; printf '%s' "${a[*]}""#),
+        "x y z q"
+    );
+    assert_eq!(
+        bash(r#"a=(x y z); a[5]=q; printf '%s' "${!a[*]}""#),
+        "0 1 2 5"
+    );
     // Custom IFS applies to the star-join over live elements only.
-    assert_eq!(bash(r#"a=(x y z); a[5]=q; IFS=,; printf '%s' "${a[*]}""#), "x,y,z,q");
+    assert_eq!(
+        bash(r#"a=(x y z); a[5]=q; IFS=,; printf '%s' "${a[*]}""#),
+        "x,y,z,q"
+    );
     // `unset a[i]` is 0-based and leaves a hole.
-    assert_eq!(bash(r#"a=(x y z); unset a[1]; printf '%s' "${a[@]}""#), "xz");
-    assert_eq!(bash(r#"a=(x y z); unset a[1]; printf '%s' "${!a[@]}|${#a[@]}""#), "02|2");
+    assert_eq!(
+        bash(r#"a=(x y z); unset a[1]; printf '%s' "${a[@]}""#),
+        "xz"
+    );
+    assert_eq!(
+        bash(r#"a=(x y z); unset a[1]; printf '%s' "${!a[@]}|${#a[@]}""#),
+        "02|2"
+    );
     // Fully sparse from an empty array.
     assert_eq!(
         bash(r#"a=(); a[3]=d; a[7]=h; printf '%s' "${a[@]}|${!a[@]}|${#a[@]}""#),
@@ -1099,8 +1339,14 @@ fn bash_sparse_arrays() {
     // Explicit-index array literal is sparse: `a=([2]=x [5]=y)` → {2,5}.
     // ("${a[*]}" is one joined arg, so IFS separates cleanly; likewise the
     // quoted "${!a[@]}" is a single space-joined index string.)
-    assert_eq!(bash(r#"a=([2]=two [5]=five); printf '%s' "${a[*]}""#), "two five");
-    assert_eq!(bash(r#"a=([2]=two [5]=five); printf '%s' "${!a[*]}""#), "2 5");
+    assert_eq!(
+        bash(r#"a=([2]=two [5]=five); printf '%s' "${a[*]}""#),
+        "two five"
+    );
+    assert_eq!(
+        bash(r#"a=([2]=two [5]=five); printf '%s' "${!a[*]}""#),
+        "2 5"
+    );
     assert_eq!(bash(r#"a=([2]=two [5]=five); printf '%s' "${#a[@]}""#), "2");
     // Mixing a literal with a later subscript-assign keeps both live.
     assert_eq!(bash(r#"a=([3]=x); a[1]=y; printf '%s' "${!a[*]}""#), "1 3");
@@ -1139,7 +1385,10 @@ fn bash_case_and_at_transforms() {
     assert_eq!(bash(r#"v="it's"; printf '%s' "${v@Q}""#), r#"'it'\''s'"#);
     assert_eq!(bash(r#"v=; printf '%s' "${v@Q}""#), "''");
     // Case-mod with a single-char PATTERN: only matching chars transform.
-    assert_eq!(bash(r#"v=hello_world; printf '%s' "${v^^[hw]}""#), "Hello_World");
+    assert_eq!(
+        bash(r#"v=hello_world; printf '%s' "${v^^[hw]}""#),
+        "Hello_World"
+    );
     assert_eq!(bash(r#"v=HELLO; printf '%s' "${v,,[HE]}""#), "heLLO");
     assert_eq!(bash(r#"v=abcABC; printf '%s' "${v^^[a-c]}""#), "ABCABC");
     // `${v^PAT}` upper-cases the first char only if it matches the pattern.
@@ -1161,7 +1410,10 @@ fn bash_case_and_at_transforms() {
         .args(["--zsh", "-f", "-c", r#"v=Hi; echo "${v@U}""#])
         .output()
         .expect("spawn");
-    assert!(!out.status.success(), "--zsh: ${{v@U}} must be bad substitution");
+    assert!(
+        !out.status.success(),
+        "--zsh: ${{v@U}} must be bad substitution"
+    );
     assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
 }
 
@@ -1180,20 +1432,46 @@ fn bash_substring_negative_offset_underflow() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     // --bash: underflow → empty.
-    assert_eq!(mode("--bash", r#"v=hello; printf '[%s]' "${v: -10}""#), "[]");
+    assert_eq!(
+        mode("--bash", r#"v=hello; printf '[%s]' "${v: -10}""#),
+        "[]"
+    );
     assert_eq!(mode("--bash", r#"v=x; printf '[%s]' "${v: -3}""#), "[]");
     assert_eq!(mode("--bash", r#"v=abc; printf '[%s]' "${v: -5:2}""#), "[]");
-    assert_eq!(mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -5}""#), "[]");
-    assert_eq!(mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -5:2}""#), "[]");
+    assert_eq!(
+        mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -5}""#),
+        "[]"
+    );
+    assert_eq!(
+        mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -5:2}""#),
+        "[]"
+    );
     // --bash: in-range negative offset still works normally.
-    assert_eq!(mode("--bash", r#"v=hello; printf '[%s]' "${v: -5}""#), "[hello]");
-    assert_eq!(mode("--bash", r#"v=hello; printf '[%s]' "${v: -3}""#), "[llo]");
+    assert_eq!(
+        mode("--bash", r#"v=hello; printf '[%s]' "${v: -5}""#),
+        "[hello]"
+    );
+    assert_eq!(
+        mode("--bash", r#"v=hello; printf '[%s]' "${v: -3}""#),
+        "[llo]"
+    );
     // printf recycles its format per word, so a 2-word slice → [2][3].
-    assert_eq!(mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -2}""#), "[2][3]");
+    assert_eq!(
+        mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -2}""#),
+        "[2][3]"
+    );
     // --zsh AND --ksh: clamp to 0 (whole value / array), no underflow-emptying.
     for m in ["--zsh", "--ksh"] {
-        assert_eq!(mode(m, r#"v=hello; printf '[%s]' "${v: -10}""#), "[hello]", "{m}");
-        assert_eq!(mode(m, r#"a=(1 2 3); printf '[%s]' "${a[@]: -5}""#), "[1][2][3]", "{m}");
+        assert_eq!(
+            mode(m, r#"v=hello; printf '[%s]' "${v: -10}""#),
+            "[hello]",
+            "{m}"
+        );
+        assert_eq!(
+            mode(m, r#"a=(1 2 3); printf '[%s]' "${a[@]: -5}""#),
+            "[1][2][3]",
+            "{m}"
+        );
     }
 }
 
@@ -1214,19 +1492,45 @@ fn pattern_operand_not_word_split_under_shwordsplit() {
     };
     for m in ["--zsh", "--bash", "--ksh"] {
         // strip with spaced pattern from $var
-        assert_eq!(mode(m, r#"v='a b c'; w='a b'; printf '[%s]' "${v#$w}""#), "[ c]", "{m}");
-        assert_eq!(mode(m, r#"v='x y z'; w='y z'; printf '[%s]' "${v%$w}""#), "[x ]", "{m}");
-        assert_eq!(mode(m, r#"v='hi there'; w='hi there'; printf '[%s]' "${v#$w}""#), "[]", "{m}");
+        assert_eq!(
+            mode(m, r#"v='a b c'; w='a b'; printf '[%s]' "${v#$w}""#),
+            "[ c]",
+            "{m}"
+        );
+        assert_eq!(
+            mode(m, r#"v='x y z'; w='y z'; printf '[%s]' "${v%$w}""#),
+            "[x ]",
+            "{m}"
+        );
+        assert_eq!(
+            mode(m, r#"v='hi there'; w='hi there'; printf '[%s]' "${v#$w}""#),
+            "[]",
+            "{m}"
+        );
         // replace with spaced pattern from $var
-        assert_eq!(mode(m, r#"v='a b c'; w='a b'; printf '[%s]' "${v/$w/X}""#), "[X c]", "{m}");
-        assert_eq!(mode(m, r#"v='a b c'; w='b c'; printf '[%s]' "${v//$w/Y}""#), "[a Y]", "{m}");
+        assert_eq!(
+            mode(m, r#"v='a b c'; w='a b'; printf '[%s]' "${v/$w/X}""#),
+            "[X c]",
+            "{m}"
+        );
+        assert_eq!(
+            mode(m, r#"v='a b c'; w='b c'; printf '[%s]' "${v//$w/Y}""#),
+            "[a Y]",
+            "{m}"
+        );
     }
     // The fix must NOT disable ordinary word-splitting of a bare unquoted $var
     // in bash/ksh (SH_WORD_SPLIT on): `$w` in command/arg position still splits.
-    assert_eq!(mode("--bash", r#"w='a b c'; printf '<%s>' $w"#), "<a><b><c>");
+    assert_eq!(
+        mode("--bash", r#"w='a b c'; printf '<%s>' $w"#),
+        "<a><b><c>"
+    );
     assert_eq!(mode("--ksh", r#"w='a b c'; printf '<%s>' $w"#), "<a><b><c>");
     // ...and a scalar-assignment RHS (also singsub) must keep the value intact.
-    assert_eq!(mode("--bash", r#"w='a b c'; v=$w; printf '[%s]' "$v""#), "[a b c]");
+    assert_eq!(
+        mode("--bash", r#"w='a b c'; v=$w; printf '[%s]' "$v""#),
+        "[a b c]"
+    );
 }
 
 #[test]
@@ -1242,8 +1546,14 @@ fn bash_nocasematch_and_read_n() {
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
     // nocasematch
-    assert_eq!(bash("shopt -s nocasematch; [[ HELLO == hello ]] && echo ci"), "ci");
-    assert_eq!(bash("shopt -s nocasematch; [[ Hello == h* ]] && echo m"), "m");
+    assert_eq!(
+        bash("shopt -s nocasematch; [[ HELLO == hello ]] && echo ci"),
+        "ci"
+    );
+    assert_eq!(
+        bash("shopt -s nocasematch; [[ Hello == h* ]] && echo m"),
+        "m"
+    );
     assert_eq!(
         bash("shopt -s nocasematch; [[ ABC != abc ]] && echo ne || echo eq"),
         "eq"
@@ -1269,7 +1579,10 @@ fn bash_nocasematch_and_read_n() {
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
     assert_eq!(zsh("[[ HELLO == hello ]] && echo ci || echo cs"), "cs");
-    assert_eq!(zsh(r#"read -n foo <<< "hi there"; echo "[$foo]""#), "[hi there]");
+    assert_eq!(
+        zsh(r#"read -n foo <<< "hi there"; echo "[$foo]""#),
+        "[hi there]"
+    );
 }
 
 #[test]
@@ -1328,12 +1641,16 @@ fn bash_arith_subscript_and_assoc_keys() {
     // `${!m[@]}` = assoc keys; order is hash-dependent, so exercise it
     // functionally (sum every value via its key) — order-independent.
     assert_eq!(
-        bash(r#"declare -A m=([a]=1 [b]=2 [c]=3); s=0; for k in "${!m[@]}"; do s=$((s+m[$k])); done; echo $s"#),
+        bash(
+            r#"declare -A m=([a]=1 [b]=2 [c]=3); s=0; for k in "${!m[@]}"; do s=$((s+m[$k])); done; echo $s"#
+        ),
         "6"
     );
     // The key SET is correct (sorted for determinism).
     assert_eq!(
-        bash(r#"declare -A m=([x]=1 [y]=2 [z]=3); for k in "${!m[@]}"; do echo "$k"; done | sort | tr -d '\n'"#),
+        bash(
+            r#"declare -A m=([x]=1 [y]=2 [z]=3); for k in "${!m[@]}"; do echo "$k"; done | sort | tr -d '\n'"#
+        ),
         "xyz"
     );
 
@@ -1407,7 +1724,10 @@ fn bash_declare_p_format() {
     };
     assert_eq!(bash("x=5; declare -p x"), r#"declare -- x="5""#);
     assert_eq!(bash("declare -i n=7; declare -p n"), r#"declare -i n="7""#);
-    assert_eq!(bash("declare -rx e=hi; declare -p e"), r#"declare -rx e="hi""#);
+    assert_eq!(
+        bash("declare -rx e=hi; declare -p e"),
+        r#"declare -rx e="hi""#
+    );
     assert_eq!(
         bash("a=(one two three); declare -p a"),
         r#"declare -a a=([0]="one" [1]="two" [2]="three")"#
@@ -1422,7 +1742,10 @@ fn bash_declare_p_format() {
         r#"declare -a a=([0]="x" [1]="y" [2]="z" [5]="q")"#
     );
     // Special chars inside "…" are backslash-escaped.
-    assert_eq!(bash(r#"v="a\"b\$c"; declare -p v"#), r#"declare -- v="a\"b\$c""#);
+    assert_eq!(
+        bash(r#"v="a\"b\$c"; declare -p v"#),
+        r#"declare -- v="a\"b\$c""#
+    );
 
     // --zsh keeps the zsh `typeset` form.
     let out = Command::new(zshrs_bin())
@@ -1471,9 +1794,15 @@ fn bash_extglob() {
             .expect("spawn");
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
-    assert_eq!(bash("shopt -s extglob; [[ abc == @(abc|xyz) ]] && echo m"), "m");
+    assert_eq!(
+        bash("shopt -s extglob; [[ abc == @(abc|xyz) ]] && echo m"),
+        "m"
+    );
     assert_eq!(bash("shopt -s extglob; [[ aaa == +(a) ]] && echo p"), "p");
-    assert_eq!(bash("shopt -s extglob; [[ color == colo?(u)r ]] && echo o"), "o");
+    assert_eq!(
+        bash("shopt -s extglob; [[ color == colo?(u)r ]] && echo o"),
+        "o"
+    );
     assert_eq!(bash("shopt -s extglob; [[ foo == !(bar) ]] && echo n"), "n");
     assert_eq!(
         bash(r#"shopt -s extglob; v="  trim  "; echo "[${v##+([[:space:]])}]""#),
@@ -1564,7 +1893,7 @@ fn bash_replacement_backslash_strip() {
     assert_eq!(bash(r#"v=abc; echo "${v//b/\x}""#), "axc");
     assert_eq!(bash(r#"v=abc; echo "${v/b/\&}""#), "a&c");
     assert_eq!(bash(r#"v=abc; echo "${v/b/x\\y}""#), r#"ax\yc"#); // \\ → one \
-    // Not stripped from a spliced value; \$ defangs expansion.
+                                                                  // Not stripped from a spliced value; \$ defangs expansion.
     assert_eq!(bash(r#"v=abc; x="\~"; echo "${v/b/$x}""#), r#"a\~c"#);
     assert_eq!(bash(r#"v=abc; echo "${v/b/\$x}""#), "a$xc");
     // Ordinary replacements are unaffected.
@@ -1592,17 +1921,38 @@ fn bash_special_variables() {
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
     // PIPESTATUS — per-stage exit codes, 0-indexed, all subscript forms.
-    assert_eq!(bash(r#"true | false | true; echo "${PIPESTATUS[@]}""#), "0 1 0");
-    assert_eq!(bash(r#"true | false | true; echo "${PIPESTATUS[*]}""#), "0 1 0");
-    assert_eq!(bash(r#"true | false; echo "${PIPESTATUS[0]}${PIPESTATUS[1]}""#), "01");
-    assert_eq!(bash(r#"true | false | true; echo "${#PIPESTATUS[@]}""#), "3");
+    assert_eq!(
+        bash(r#"true | false | true; echo "${PIPESTATUS[@]}""#),
+        "0 1 0"
+    );
+    assert_eq!(
+        bash(r#"true | false | true; echo "${PIPESTATUS[*]}""#),
+        "0 1 0"
+    );
+    assert_eq!(
+        bash(r#"true | false; echo "${PIPESTATUS[0]}${PIPESTATUS[1]}""#),
+        "01"
+    );
+    assert_eq!(
+        bash(r#"true | false | true; echo "${#PIPESTATUS[@]}""#),
+        "3"
+    );
     // FUNCNAME — call stack, innermost (current) first; nested frames.
     assert_eq!(bash(r#"f() { echo "${FUNCNAME[0]}"; }; f"#), "f");
-    assert_eq!(bash(r#"g(){ f(){ echo "${FUNCNAME[@]}"; }; f; }; g"#), "f g");
+    assert_eq!(
+        bash(r#"g(){ f(){ echo "${FUNCNAME[@]}"; }; f; }; g"#),
+        "f g"
+    );
     // BASH_VERSINFO — 6-element array, first element numeric & >= 4.
     assert_eq!(bash(r#"echo "${#BASH_VERSINFO[@]}""#), "6");
-    assert_eq!(bash(r#"[[ ${BASH_VERSINFO[0]} =~ ^[0-9]+$ ]] && echo num"#), "num");
-    assert_eq!(bash(r#"[[ ${BASH_VERSINFO[0]} -ge 4 ]] && echo modern"#), "modern");
+    assert_eq!(
+        bash(r#"[[ ${BASH_VERSINFO[0]} =~ ^[0-9]+$ ]] && echo num"#),
+        "num"
+    );
+    assert_eq!(
+        bash(r#"[[ ${BASH_VERSINFO[0]} -ge 4 ]] && echo modern"#),
+        "modern"
+    );
     // BASH_VERSION — non-empty `X.Y.Z(...)-release` shape.
     assert!(bash(r#"echo "$BASH_VERSION""#).contains("-release"));
     // `declare -p` of the synthesized specials produces the bash array form.
@@ -1624,7 +1974,10 @@ fn bash_special_variables() {
             .expect("spawn");
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
-    assert_eq!(zsh(r#"true|false; echo "[${PIPESTATUS[0]}][$BASH_VERSION]""#), "[][]");
+    assert_eq!(
+        zsh(r#"true|false; echo "[${PIPESTATUS[0]}][$BASH_VERSION]""#),
+        "[][]"
+    );
     assert_eq!(zsh(r#"true|false|true; echo "${pipestatus[@]}""#), "0 1 0");
 }
 
@@ -1678,14 +2031,14 @@ fn test_bracket_posix_three_arg_binary_rule() {
     };
     // (script, expected-success) — true == exit 0.
     let cases: &[(&str, bool)] = &[
-        ("[ \"!\" = \"=\" ]", false),   // "!" != "="  → false
-        ("[ \"!\" != \"=\" ]", true),   // "!" != "="  → true
-        ("[ \"!\" = \"!\" ]", true),    // "!" == "!"  → true
-        ("[ \"!\" != \"a\" ]", true),   // "!" != "a"  → true
+        ("[ \"!\" = \"=\" ]", false), // "!" != "="  → false
+        ("[ \"!\" != \"=\" ]", true), // "!" != "="  → true
+        ("[ \"!\" = \"!\" ]", true),  // "!" == "!"  → true
+        ("[ \"!\" != \"a\" ]", true), // "!" != "a"  → true
         // negation forms still work (4-arg ! strips; 3-arg unary-middle negates)
-        ("[ ! -z foo ]", true),         // ! (-z foo) → ! false → true
-        ("[ ! a = b ]", true),          // ! (a = b)  → ! false → true
-        ("[ ! a ]", false),             // ! (-n a)   → ! true  → false
+        ("[ ! -z foo ]", true), // ! (-z foo) → ! false → true
+        ("[ ! a = b ]", true),  // ! (a = b)  → ! false → true
+        ("[ ! a ]", false),     // ! (-n a)   → ! true  → false
         // ordinary binary + unary unaffected
         ("[ a = b ]", false),
         ("[ 5 -eq 5 ]", true),
@@ -1693,7 +2046,11 @@ fn test_bracket_posix_three_arg_binary_rule() {
     ];
     for m in ["--zsh", "--bash", "--ksh", "--dash", "--sh"] {
         for (script, want) in cases {
-            assert_eq!(sig(m, script), *want, "{m}: {script} expected success={want}");
+            assert_eq!(
+                sig(m, script),
+                *want,
+                "{m}: {script} expected success={want}"
+            );
         }
     }
 }
@@ -1720,17 +2077,25 @@ fn emulation_parity_matrix() {
             continue;
         };
         tested += 1;
-        let emu = case.ref_emulate.map(|e| format!(" [emulate {e}]")).unwrap_or_default();
+        let emu = case
+            .ref_emulate
+            .map(|e| format!(" [emulate {e}]"))
+            .unwrap_or_default();
         eprintln!(
             "testing {} : zshrs {} vs {}{} (extended={})",
-            case.name, case.zshrs_flags.join(" "), refbin, emu, case.extended
+            case.name,
+            case.zshrs_flags.join(" "),
+            refbin,
+            emu,
+            case.extended
         );
 
         // The portable corpus runs for every case; the extended corpus only
         // for cases whose reference has arrays / [[ / (( )) / brace expansion.
-        let corpus = PORTABLE_CORPUS
-            .iter()
-            .chain(if case.extended { EXTENDED_CORPUS } else { &[] });
+        let corpus =
+            PORTABLE_CORPUS
+                .iter()
+                .chain(if case.extended { EXTENDED_CORPUS } else { &[] });
         for script in corpus {
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {
@@ -1742,7 +2107,10 @@ fn emulation_parity_matrix() {
         }
     }
 
-    eprintln!("emulation parity: tested {tested} way(s), {} missing", missing.len());
+    eprintln!(
+        "emulation parity: tested {tested} way(s), {} missing",
+        missing.len()
+    );
 
     assert!(
         mismatches.is_empty(),
@@ -1757,5 +2125,8 @@ fn emulation_parity_matrix() {
              Install them so the parity contract is enforced, not skipped."
         );
     }
-    assert!(tested > 0, "no reference shells available at all — cannot verify parity");
+    assert!(
+        tested > 0,
+        "no reference shells available at all — cannot verify parity"
+    );
 }

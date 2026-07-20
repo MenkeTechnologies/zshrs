@@ -877,10 +877,9 @@ pub fn backkill(ct: i32, flags: i32) {
 pub fn forekill(ct: i32, flags: i32) {
     // c:1071
     let i = ZLECS.load(Ordering::SeqCst); // c:1073 `int i = zlecs;`
-    // c:1076-1082 — the non-RAW arm's INCCS walk collapses to the same
-    // clamped count for Vec<char> storage; zlecs stays at `i`.
-    let take_n =
-        (ct.max(0) as usize).min(ZLELL.load(Ordering::SeqCst).saturating_sub(i));
+                                          // c:1076-1082 — the non-RAW arm's INCCS walk collapses to the same
+                                          // clamped count for Vec<char> storage; zlecs stays at `i`.
+    let take_n = (ct.max(0) as usize).min(ZLELL.load(Ordering::SeqCst).saturating_sub(i));
     // c:1084-1085 — `cut(i, ct, flags); shiftchars(i, ct);` — the kill
     // routes through cuttext (CUTBUF + vi registers + kill-ring
     // rotation), NOT straight onto the kill ring: pushing here

@@ -185,14 +185,12 @@ pub fn _zcalc_line() -> i32 {
             let _ = dispatch_function_call("_message", &["precision".to_string()]);
         }
         // sh:69  ;& — fall through to (:*).
-        return dispatch_function_call("_message", &["no more arguments".to_string()])
-            .unwrap_or(1);
+        return dispatch_function_call("_message", &["no more arguments".to_string()]).unwrap_or(1);
     }
 
     if word1.starts_with(':') {
         // sh:71  (:*)  _message "no more arguments"
-        return dispatch_function_call("_message", &["no more arguments".to_string()])
-            .unwrap_or(1);
+        return dispatch_function_call("_message", &["no more arguments".to_string()]).unwrap_or(1);
     }
 
     // sh:75  ([^:]*)  _math
@@ -222,10 +220,7 @@ mod tests {
         let cmds = getaparam("cmds").unwrap_or_default();
         assert_eq!(cmds.len(), 9);
         assert_eq!(cmds[0], "\\:!:shell escape");
-        assert_eq!(
-            cmds[5],
-            "\\:eng:engineering (power of 1000) output format"
-        );
+        assert_eq!(cmds[5], "\\:eng:engineering (power of 1000) output format");
         assert_eq!(
             cmds[8],
             "\\:function:define math function (also \\:func or \\:f)"

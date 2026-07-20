@@ -137,8 +137,7 @@ pub fn _ps1234() -> i32 {
             changed = 1;
         }
         // sh:18-20  %D/%F/%K without a following { ... }
-        if prefix_matches(r"%(-|)<->#[DFK](\\[^{]|[^{\\])*") && compset_p(r"%[0-9\\-]#[DFK]")
-        {
+        if prefix_matches(r"%(-|)<->#[DFK](\\[^{]|[^{\\])*") && compset_p(r"%[0-9\\-]#[DFK]") {
             changed = 1;
         }
     }
@@ -211,7 +210,15 @@ pub fn _ps1234() -> i32 {
             // sh:46  _wanted ansi-colors expl 'closing brace' compadd -S '' \}
             if dfc(
                 "_wanted",
-                &["ansi-colors", "expl", "closing brace", "compadd", "-S", "", "}"],
+                &[
+                    "ansi-colors",
+                    "expl",
+                    "closing brace",
+                    "compadd",
+                    "-S",
+                    "",
+                    "}",
+                ],
             ) == 0
             {
                 ret = 0;

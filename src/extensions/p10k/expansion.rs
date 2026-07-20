@@ -214,7 +214,10 @@ fn cache_put(template: &str, value: &str, result: &str) {
         guard.retain(|((t, v), _)| !(t == template && v == value));
         guard.insert(
             0,
-            ((template.to_string(), value.to_string()), result.to_string()),
+            (
+                (template.to_string(), value.to_string()),
+                result.to_string(),
+            ),
         );
         guard.truncate(EXP_CACHE_CAP);
     }
@@ -418,7 +421,10 @@ mod tests {
             assert_eq!(apply_content_expansion("dir", None, "~/src"), "~/src");
             unsetparam("POWERLEVEL9K_DIR_VISUAL_IDENTIFIER_EXPANSION");
             unsetparam("POWERLEVEL9K_VISUAL_IDENTIFIER_EXPANSION");
-            assert_eq!(apply_visual_identifier_expansion("dir", None, "\u{e0b0}"), "\u{e0b0}");
+            assert_eq!(
+                apply_visual_identifier_expansion("dir", None, "\u{e0b0}"),
+                "\u{e0b0}"
+            );
         });
     }
 

@@ -78,7 +78,10 @@ pub fn add(spec: &str) -> PkgResult<()> {
     } else {
         format!(" — {}", description)
     };
-    println!("znative: added {}@{} ({}){}", name, version, entry.kind, desc);
+    println!(
+        "znative: added {}@{} ({}){}",
+        name, version, entry.kind, desc
+    );
     Ok(())
 }
 
@@ -111,7 +114,10 @@ pub fn list() -> PkgResult<()> {
         return Ok(());
     }
     for p in &index.packages {
-        println!("{:<24} {:<10} {:<7} {}", p.name, p.version, p.kind, p.source);
+        println!(
+            "{:<24} {:<10} {:<7} {}",
+            p.name, p.version, p.kind, p.source
+        );
     }
     Ok(())
 }
@@ -157,7 +163,11 @@ pub fn gc(dry_run: bool) -> PkgResult<()> {
             if entry.path().is_dir() && !pinned.contains(&name) {
                 let bytes = dir_size(&entry.path());
                 if dry_run {
-                    println!("znative gc: would remove {} ({} KB)", name, (bytes + 512) / 1024);
+                    println!(
+                        "znative gc: would remove {} ({} KB)",
+                        name,
+                        (bytes + 512) / 1024
+                    );
                 } else {
                     std::fs::remove_dir_all(entry.path())
                         .map_err(|e| PkgError::Io(format!("remove {}: {}", name, e)))?;
@@ -175,10 +185,16 @@ pub fn gc(dry_run: bool) -> PkgResult<()> {
     let git_bytes = dir_size(&git);
     if git_bytes > 0 {
         if dry_run {
-            println!("znative gc: would clear git cache ({} KB)", (git_bytes + 512) / 1024);
+            println!(
+                "znative gc: would clear git cache ({} KB)",
+                (git_bytes + 512) / 1024
+            );
         } else {
             let _ = std::fs::remove_dir_all(&git);
-            println!("znative gc: cleared git cache ({} KB)", (git_bytes + 512) / 1024);
+            println!(
+                "znative gc: cleared git cache ({} KB)",
+                (git_bytes + 512) / 1024
+            );
         }
         freed += git_bytes;
         count += 1;
@@ -206,7 +222,10 @@ pub fn clean() -> PkgResult<()> {
                 .map_err(|e| PkgError::Io(format!("remove {}: {}", d.display(), e)))?;
         }
     }
-    println!("znative clean: cleared {} KB of scratch", (freed + 512) / 1024);
+    println!(
+        "znative clean: cleared {} KB of scratch",
+        (freed + 512) / 1024
+    );
     Ok(())
 }
 
@@ -221,7 +240,10 @@ pub fn info(name: &str) -> PkgResult<()> {
     println!("version    {}", p.version);
     println!("kind       {}", p.kind);
     println!("source     {}", p.source);
-    println!("store      {}", store.package_dir(&p.name, &p.version).display());
+    println!(
+        "store      {}",
+        store.package_dir(&p.name, &p.version).display()
+    );
     if !p.integrity.is_empty() {
         println!("integrity  {}", p.integrity);
     }

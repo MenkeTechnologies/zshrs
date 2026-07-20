@@ -507,7 +507,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // sh:244-245 — select=long-list OR (yes|true|on|1)=long-list.
         let long_list = has(&|e| {
             e == "select=long-list"
-                || matches!(e, "yes=long-list" | "true=long-list" | "on=long-list" | "1=long-list")
+                || matches!(
+                    e,
+                    "yes=long-list" | "true=long-list" | "on=long-list" | "1=long-list"
+                )
         });
         let list_has = get_compstate_str("list")
             .map(|l| l == "list" || l.contains(" list") || l.starts_with("list "))
@@ -526,7 +529,12 @@ pub fn _main_complete(args: &[String]) -> i32 {
             for i in sel {
                 let num = if let Some(eq) = i.find('=') {
                     let rest = &i[eq + 1..];
-                    if rest.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    if rest
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false)
+                    {
                         rest.parse::<i64>().unwrap_or(0).max(0)
                     } else {
                         9999999
@@ -544,10 +552,16 @@ pub fn _main_complete(args: &[String]) -> i32 {
             Some(m)
         };
         let yes_like = |e: &str| {
-            e.starts_with("yes") || e.starts_with("true") || e.starts_with("1") || e.starts_with("on")
+            e.starts_with("yes")
+                || e.starts_with("true")
+                || e.starts_with("1")
+                || e.starts_with("on")
         };
         let no_like = |e: &str| {
-            e.starts_with("no") || e.starts_with("false") || e.starts_with("0") || e.starts_with("off")
+            e.starts_with("no")
+                || e.starts_with("false")
+                || e.starts_with("0")
+                || e.starts_with("off")
         };
         let auto = has(&|e| e.starts_with("auto"));
 
@@ -555,9 +569,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
             set_compstate_str("insert", "menu"); // sh:246
         } else if cur_insert == saved_insert {
             // sh:247
-            let long = has(&|e| {
-                matches!(e, "yes=long" | "true=long" | "1=long" | "on=long")
-            });
+            let long = has(&|e| matches!(e, "yes=long" | "true=long" | "1=long" | "on=long"));
             if !cur_insert.is_empty() && long && tmp > lines {
                 set_compstate_str("insert", "menu"); // sh:250
             } else {
@@ -576,7 +588,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
         }
 
         // sh:301-349 — MENUSELECT/MENUMODE setup for `*menu*` inserts.
-        if get_compstate_str("insert").unwrap_or_default().contains("menu") {
+        if get_compstate_str("insert")
+            .unwrap_or_default()
+            .contains("menu")
+        {
             if getsparam("MENUSELECT").as_deref() == Some("00") {
                 let _ = setsparam("MENUSELECT", "0"); // sh:302
             }

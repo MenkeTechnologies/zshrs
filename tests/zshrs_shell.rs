@@ -454,8 +454,14 @@ fn test_nested_subscript_on_array_slice_indexes_subarray() {
     // Out-of-range second index → empty.
     assert_eq!(out("a=(one two three four); echo ${a[1,3][5]}"), "");
     // Slice-of-slice → sub-array.
-    assert_eq!(out("a=(one two three four); echo ${a[1,3][2,3]}"), "two three");
-    assert_eq!(out("a=(one two three four); echo ${a[1,3][2,10]}"), "two three");
+    assert_eq!(
+        out("a=(one two three four); echo ${a[1,3][2,3]}"),
+        "two three"
+    );
+    assert_eq!(
+        out("a=(one two three four); echo ${a[1,3][2,10]}"),
+        "two three"
+    );
     // Quoted single index (char-index bug regression: must NOT char-index).
     assert_eq!(out(r#"a=(one two three four); echo "${a[1,2][2]}""#), "two");
     // Array context: the single-index result is one element.
@@ -2158,8 +2164,14 @@ fn test_force_split_preserves_empty_fields_for_nonwhitespace_ifs() {
     let f = |code: &str| run_zshrs(code).1.trim().to_string();
 
     // Non-whitespace IFS → empties preserved.
-    assert_eq!(f(r#"IFS=:; a=":a:b:"; set -- ${=a}; echo "$#|$1|$2|$3|$4""#), "4||a|b|");
-    assert_eq!(f(r#"IFS=:; a="a::b"; set -- ${=a}; echo "$#|$1|$2|$3""#), "3|a||b");
+    assert_eq!(
+        f(r#"IFS=:; a=":a:b:"; set -- ${=a}; echo "$#|$1|$2|$3|$4""#),
+        "4||a|b|"
+    );
+    assert_eq!(
+        f(r#"IFS=:; a="a::b"; set -- ${=a}; echo "$#|$1|$2|$3""#),
+        "3|a||b"
+    );
     assert_eq!(f(r#"IFS=:; a=":::"; set -- ${=a}; echo $#"#), "4");
     assert_eq!(f(r#"IFS=,; a="a,,b"; b=(${=a}); echo $#b"#), "3");
     // Mixed IFS: non-ws `:` preserves, whitespace collapses.
@@ -4114,7 +4126,9 @@ fn test_read_dash_a_mixed_ifs_absorbs_whitespace_around_separator() {
     // → 2 fields; two non-ws separators keep the middle empty (`a :: b` → 3).
     // read -A previously treated the space and colon as two delimiters (4).
     let n = |input: &str| {
-        let (_, out, _) = run_zshrs(&format!(r#"IFS=" :" read -A arr <<< "{input}"; echo ${{#arr}}"#));
+        let (_, out, _) = run_zshrs(&format!(
+            r#"IFS=" :" read -A arr <<< "{input}"; echo ${{#arr}}"#
+        ));
         out.trim().to_string()
     };
     assert_eq!(n("a : b"), "2");
@@ -4123,7 +4137,9 @@ fn test_read_dash_a_mixed_ifs_absorbs_whitespace_around_separator() {
     assert_eq!(n("a :: b"), "3");
     // Pure non-ws separators still preserve empties (unchanged).
     let m = |input: &str| {
-        let (_, out, _) = run_zshrs(&format!(r#"IFS=: read -A arr <<< "{input}"; echo ${{#arr}}"#));
+        let (_, out, _) = run_zshrs(&format!(
+            r#"IFS=: read -A arr <<< "{input}"; echo ${{#arr}}"#
+        ));
         out.trim().to_string()
     };
     assert_eq!(m(":a:b:"), "4");
@@ -4601,7 +4617,10 @@ fn test_disabled_builtin_falls_through_in_whence() {
         "disabled builtin must not appear in -a"
     );
     // Re-enabling restores the builtin.
-    assert_eq!(out("disable echo; enable echo; whence -w echo"), "echo: builtin");
+    assert_eq!(
+        out("disable echo; enable echo; whence -w echo"),
+        "echo: builtin"
+    );
 }
 
 #[test]
@@ -9758,12 +9777,18 @@ fn test_bindkey_no_such_keymap_errors() {
     // -D on a missing keymap now reports it (was silent).
     let (st, _, e) = run_zshrs("bindkey -D nonexistent");
     assert_ne!(st, 0);
-    assert!(e.trim().ends_with("no such keymap `nonexistent'"), "got: {e:?}");
+    assert!(
+        e.trim().ends_with("no such keymap `nonexistent'"),
+        "got: {e:?}"
+    );
 
     // -A with a missing SOURCE keymap reports it.
     let (st, _, e) = run_zshrs("bindkey -A nonexistsrc newdst");
     assert_ne!(st, 0);
-    assert!(e.trim().ends_with("no such keymap `nonexistsrc'"), "got: {e:?}");
+    assert!(
+        e.trim().ends_with("no such keymap `nonexistsrc'"),
+        "got: {e:?}"
+    );
 
     // Valid -A / -D still succeed silently.
     let (st, _, _) = run_zshrs("bindkey -N km1; bindkey -A emacs km2; bindkey -D km1");
@@ -9779,21 +9804,36 @@ fn test_bindkey_send_string_single_char() {
     // Thingy for single bytes, silently dropping the string.
     let out = |code: &str| run_zshrs(code).1.trim().to_string();
 
-    assert_eq!(out(r#"bindkey -s "^X" "echo hi"; bindkey "^X""#), r#""^X" "echo hi""#);
+    assert_eq!(
+        out(r#"bindkey -s "^X" "echo hi"; bindkey "^X""#),
+        r#""^X" "echo hi""#
+    );
     // -L round-trips the send-string form.
-    assert_eq!(out(r#"bindkey -s "^X" "cmd"; bindkey -L "^X""#), r#"bindkey -s "^X" "cmd""#);
+    assert_eq!(
+        out(r#"bindkey -s "^X" "cmd"; bindkey -L "^X""#),
+        r#"bindkey -s "^X" "cmd""#
+    );
     // Re-binding a send-string overwrites; empty string is valid.
-    assert_eq!(out(r#"bindkey -s "^X" "one"; bindkey -s "^X" "two"; bindkey "^X""#), r#""^X" "two""#);
+    assert_eq!(
+        out(r#"bindkey -s "^X" "one"; bindkey -s "^X" "two"; bindkey "^X""#),
+        r#""^X" "two""#
+    );
     assert_eq!(out(r#"bindkey -s "^X" ""; bindkey "^X""#), r#""^X" """#);
     // Multi-char send-string still works (unchanged path).
-    assert_eq!(out(r#"bindkey -s "^X^Y" "seq"; bindkey "^X^Y""#), r#""^X^Y" "seq""#);
+    assert_eq!(
+        out(r#"bindkey -s "^X^Y" "seq"; bindkey "^X^Y""#),
+        r#""^X^Y" "seq""#
+    );
     // A later widget binding on the same char REPLACES the send-string.
     assert_eq!(
         out(r#"bindkey -s "^A" "x"; bindkey "^A" beginning-of-line; bindkey "^A""#),
         r#""^A" beginning-of-line"#
     );
     // `-r` after `-s` fully unbinds (no stale send-string leaks).
-    assert_eq!(out(r#"bindkey -s "^A" "x"; bindkey -r "^A"; bindkey "^A""#), r#""^A" undefined-key"#);
+    assert_eq!(
+        out(r#"bindkey -s "^A" "x"; bindkey -r "^A"; bindkey "^A""#),
+        r#""^A" undefined-key"#
+    );
 }
 
 #[test]
@@ -13203,8 +13243,7 @@ fn test_scalar_substring_negative_length_past_start_errors() {
     // strlen+length, given_offset). Sibling of the array arm's #120 fix,
     // which the scalar branch previously lacked (silent .max(0) clamp).
     // "Hello, World" is 12 chars; ${s:2:-20} → end = 12 + (-20) = -8 < 2.
-    let (status, stdout, stderr) =
-        run_zshrs(r#"s="Hello, World"; print -r -- "[${s:2:-20}]""#);
+    let (status, stdout, stderr) = run_zshrs(r#"s="Hello, World"; print -r -- "[${s:2:-20}]""#);
     assert!(
         stderr.contains("substring expression: -8 < 2"),
         "expected substring-expression abort, got stdout={stdout:?} stderr={stderr:?}"
@@ -13235,21 +13274,30 @@ fn test_dq_join_flag_then_setop_filter_applies_to_scalar() {
 
     // Intersection of the WHOLE joined scalar with c: "1 2 3 4 5" is not
     // an element of c=(2 4 6) → empty.
-    let (_s, out, _e) =
-        run_zshrs(r#"b=(1 2 3 4 5); c=(2 4 6); print -r -- "[${(j: :)b:*c}]""#);
-    assert_eq!(out.trim(), "[]", "j-flag + :* intersect must test joined scalar");
+    let (_s, out, _e) = run_zshrs(r#"b=(1 2 3 4 5); c=(2 4 6); print -r -- "[${(j: :)b:*c}]""#);
+    assert_eq!(
+        out.trim(),
+        "[]",
+        "j-flag + :* intersect must test joined scalar"
+    );
 
     // Filter :# on the joined scalar: "apple,banana,avocado" matches a* →
     // dropped → empty.
-    let (_s2, out2, _e2) =
-        run_zshrs(r#"a=(apple banana avocado); print -r -- "[${(j:,:)a:#a*}]""#);
-    assert_eq!(out2.trim(), "[]", "j-flag + :# filter must test joined scalar");
+    let (_s2, out2, _e2) = run_zshrs(r#"a=(apple banana avocado); print -r -- "[${(j:,:)a:#a*}]""#);
+    assert_eq!(
+        out2.trim(),
+        "[]",
+        "j-flag + :# filter must test joined scalar"
+    );
 
     // Kept case must preserve the (j) SEPARATOR, not fall back to a space
     // join: b=(1 2 3) not in c=(9) → :| keeps the dash-joined scalar.
-    let (_s3, out3, _e3) =
-        run_zshrs(r#"b=(1 2 3); c=(9); print -r -- "[${(j:-:)b:|c}]""#);
-    assert_eq!(out3.trim(), "[1-2-3]", "kept :| result must keep the (j:-:) sep");
+    let (_s3, out3, _e3) = run_zshrs(r#"b=(1 2 3); c=(9); print -r -- "[${(j:-:)b:|c}]""#);
+    assert_eq!(
+        out3.trim(),
+        "[1-2-3]",
+        "kept :| result must keep the (j:-:) sep"
+    );
 
     // Regression: [@] subscript keeps array shape → per-element set-op,
     // then joined with the (j) sep.
@@ -13268,7 +13316,9 @@ fn test_backslash_x_no_hex_digit_emits_nul_byte() {
     let (_s, out, _e) = run_zshrs(r#"print -rn -- $(print 'a\xgb' | od -An -tx1)"#);
     // od hexdump of print's output must show the 00 (NUL) between 61 and 67.
     assert!(
-        out.split_whitespace().collect::<Vec<_>>().windows(3)
+        out.split_whitespace()
+            .collect::<Vec<_>>()
+            .windows(3)
             .any(|w| w == ["61", "00", "67"]),
         "print '\\xg' must emit a NUL byte (61 00 67 ...), got: {out:?}"
     );
@@ -13318,15 +13368,24 @@ fn test_leading_end_anchor_is_positional_not_hoisted() {
     // as if the anchor were absent.
     let m = |code: &str| run_zshrs(&format!("setopt extendedglob; {code}")).1;
     // (#e) before a char: impossible -> no match, no replacement.
-    assert_eq!(m(r#"s="foo bar"; print -r -- ${s//(#e)r/END}"#).trim(), "foo bar");
+    assert_eq!(
+        m(r#"s="foo bar"; print -r -- ${s//(#e)r/END}"#).trim(),
+        "foo bar"
+    );
     assert_eq!(m(r#"s="rrr"; print -r -- ${s//(#e)r/END}"#).trim(), "rrr");
     // [[ ]] whole-match: (#e)o against "o" must NOT match.
     assert_eq!(m(r#"[[ o == (#e)o ]] && echo m || echo no"#).trim(), "no");
     // Trailing (#e) still works (o at end).
     assert_eq!(m(r#"[[ o == o(#e) ]] && echo m || echo no"#).trim(), "m");
     // Regression: leading (#s) still enforced (o only at start).
-    assert_eq!(m(r#"s="foo bar"; print -r -- ${s//(#s)o/X}"#).trim(), "foo bar");
-    assert_eq!(m(r#"s="foo bar"; print -r -- ${s//(#s)f/X}"#).trim(), "Xoo bar");
+    assert_eq!(
+        m(r#"s="foo bar"; print -r -- ${s//(#s)o/X}"#).trim(),
+        "foo bar"
+    );
+    assert_eq!(
+        m(r#"s="foo bar"; print -r -- ${s//(#s)f/X}"#).trim(),
+        "Xoo bar"
+    );
     // Regression: (#i)/(#m) flags still hoist and apply.
     assert_eq!(m(r#"s="aXbXc"; print -r -- ${s//(#i)x/Y}"#).trim(), "aYbYc");
 }
@@ -13340,7 +13399,10 @@ fn test_unclosed_bracket_glob_is_bad_pattern_not_no_match() {
     // dropped the compile failure silently and reported "no matches found".
     let (st, _o, err) = run_zshrs("echo abc[def");
     assert!(err.contains("bad pattern: abc[def"), "got: {err:?}");
-    assert!(!err.contains("no matches found"), "must not be no-match: {err:?}");
+    assert!(
+        !err.contains("no matches found"),
+        "must not be no-match: {err:?}"
+    );
     assert_ne!(st, 0);
 
     // bad pattern overrides NO_NOMATCH (still an error, not literal).
@@ -13354,7 +13416,10 @@ fn test_unclosed_bracket_glob_is_bad_pattern_not_no_match() {
 
     // A CLOSED bracket that matches nothing is still "no matches found".
     let (_st4, _o4, err4) = run_zshrs("echo a[b]c");
-    assert!(err4.contains("no matches found"), "closed bracket: {err4:?}");
+    assert!(
+        err4.contains("no matches found"),
+        "closed bracket: {err4:?}"
+    );
 }
 
 #[test]
@@ -13517,9 +13582,15 @@ fn test_tilde_globsubst_expands_tilde_in_value() {
     // ${~x} flag — scalar and array.
     assert_eq!(run(r#"x="~/foo"; echo ${~x}"#), "/home/testu/foo");
     assert_eq!(run(r#"x="~"; echo ${~x}"#), "/home/testu");
-    assert_eq!(run(r#"a=(~/x ~/y); echo ${~a}"#), "/home/testu/x /home/testu/y");
+    assert_eq!(
+        run(r#"a=(~/x ~/y); echo ${~a}"#),
+        "/home/testu/x /home/testu/y"
+    );
     // setopt globsubst option path.
-    assert_eq!(run(r#"setopt globsubst; x="~/foo"; echo $x"#), "/home/testu/foo");
+    assert_eq!(
+        run(r#"setopt globsubst; x="~/foo"; echo $x"#),
+        "/home/testu/foo"
+    );
     // Quoted tilde stays literal even under globsubst.
     assert_eq!(run(r#"setopt globsubst; echo "~/foo""#), "~/foo");
     // A mid-string tilde and non-tilde values are untouched.
@@ -13539,17 +13610,35 @@ fn test_zstyle_g_uses_exact_pattern_not_context_match() {
     // trailing `print` would otherwise mask it in the process exit code).
     let run = |code: &str| run_zshrs(code).1.trim().to_string();
     // Exact pattern present → value + exit 0.
-    assert_eq!(run(r#"zstyle ':s:*' k v; zstyle -g o ':s:*' k; print -r -- "rc=$? [$o]""#), "rc=0 [v]");
+    assert_eq!(
+        run(r#"zstyle ':s:*' k v; zstyle -g o ':s:*' k; print -r -- "rc=$? [$o]""#),
+        "rc=0 [v]"
+    );
     // Matching-but-not-exact context → empty + exit 1.
-    assert_eq!(run(r#"zstyle ':s:*' k v; zstyle -g o ':s:sub' k; print -r -- "rc=$? [$o]""#), "rc=1 []");
+    assert_eq!(
+        run(r#"zstyle ':s:*' k v; zstyle -g o ':s:sub' k; print -r -- "rc=$? [$o]""#),
+        "rc=1 []"
+    );
     // Exact literal context works.
-    assert_eq!(run(r#"zstyle ':s:x' k w; zstyle -g o ':s:x' k; print -r -- "rc=$? [$o]""#), "rc=0 [w]");
+    assert_eq!(
+        run(r#"zstyle ':s:x' k w; zstyle -g o ':s:x' k; print -r -- "rc=$? [$o]""#),
+        "rc=0 [w]"
+    );
     // Undefined → exit 1.
-    assert_eq!(run(r#"zstyle -g o ':none' k; print -r -- "rc=$? [$o]""#), "rc=1 []");
+    assert_eq!(
+        run(r#"zstyle -g o ':none' k; print -r -- "rc=$? [$o]""#),
+        "rc=1 []"
+    );
     // Regression: -s still context-matches.
-    assert_eq!(run(r#"zstyle ':s:*' k v; zstyle -s ':s:sub' k o; print -r -- "[$o]""#), "[v]");
+    assert_eq!(
+        run(r#"zstyle ':s:*' k v; zstyle -s ':s:sub' k o; print -r -- "[$o]""#),
+        "[v]"
+    );
     // Regression: exact keys are distinguished.
-    assert_eq!(run(r#"zstyle ':a:b' s x; zstyle ':a:*' s y; zstyle -g o ':a:b' s; print -r -- "[$o]""#), "[x]");
+    assert_eq!(
+        run(r#"zstyle ':a:b' s x; zstyle ':a:*' s y; zstyle -g o ':a:b' s; print -r -- "[$o]""#),
+        "[x]"
+    );
 }
 
 #[test]
@@ -13561,12 +13650,19 @@ fn test_cond_o_bad_option_diagnostic_has_no_command_name() {
     // negated/compound forms via a redundant eprintln.
     let (st, _o, err) = run_zshrs("[[ -o keyword ]]");
     assert!(err.contains("no such option: keyword"), "err: {err:?}");
-    assert!(!err.contains(":test:"), "must not attribute to test: {err:?}");
+    assert!(
+        !err.contains(":test:"),
+        "must not attribute to test: {err:?}"
+    );
     assert_eq!(st, 3);
 
     // No double-emit on negated / compound forms.
     let (_s2, _o2, err2) = run_zshrs("[[ ! -o badopt ]]");
-    assert_eq!(err2.matches("no such option").count(), 1, "double-emit: {err2:?}");
+    assert_eq!(
+        err2.matches("no such option").count(),
+        1,
+        "double-emit: {err2:?}"
+    );
     let (_s3, _o3, err3) = run_zshrs("[[ -o a1 || -o a2 ]]");
     assert_eq!(err3.matches("no such option").count(), 2, "got: {err3:?}");
 
@@ -13583,15 +13679,30 @@ fn test_tied_colon_array_element_assignment_syncs_scalar() {
     // its scalar side. zshrs wrote the array element directly and skipped
     // the setfn, leaving $PATH stale after `path[2]=/NEW`.
     let run = |code: &str| run_zshrs(code).1.trim().to_string();
-    assert_eq!(run("path=(/a /b /c); path[2]=/NEW; echo $PATH"), "/a:/NEW:/c");
+    assert_eq!(
+        run("path=(/a /b /c); path[2]=/NEW; echo $PATH"),
+        "/a:/NEW:/c"
+    );
     assert_eq!(run("path=(/a /b /c); path[1]=/X; echo $PATH"), "/X:/b:/c");
-    assert_eq!(run("path=(/a /b /c); path[4]=/D; echo $PATH"), "/a:/b:/c:/D");
+    assert_eq!(
+        run("path=(/a /b /c); path[4]=/D; echo $PATH"),
+        "/a:/b:/c:/D"
+    );
     assert_eq!(run("path=(/a /b); path[-1]=/LAST; echo $PATH"), "/a:/LAST");
-    assert_eq!(run("fpath=(/f1 /f2); fpath[1]=/NEW; echo $FPATH"), "/NEW:/f2");
+    assert_eq!(
+        run("fpath=(/f1 /f2); fpath[1]=/NEW; echo $FPATH"),
+        "/NEW:/f2"
+    );
     assert_eq!(run("cdpath=(/x /y); cdpath[2]=/Z; echo $CDPATH"), "/x:/Z");
     // The array element itself is still updated, and the reverse tie holds.
-    assert_eq!(run(r#"path=(/a /b /c); path[2]=/NEW; echo "${path[2]}""#), "/NEW");
-    assert_eq!(run(r#"PATH=/x:/y; path[1]=/Z; echo "$PATH ${path[1]}""#), "/Z:/y /Z");
+    assert_eq!(
+        run(r#"path=(/a /b /c); path[2]=/NEW; echo "${path[2]}""#),
+        "/NEW"
+    );
+    assert_eq!(
+        run(r#"PATH=/x:/y; path[1]=/Z; echo "$PATH ${path[1]}""#),
+        "/Z:/y /Z"
+    );
     // A plain (untied) array element assignment is unaffected.
     assert_eq!(run(r#"a=(1 2 3); a[2]=X; echo "${a[@]}""#), "1 X 3");
 }
@@ -13604,23 +13715,41 @@ fn test_tied_colon_array_slice_and_unset_sync_scalar() {
     // `unset name[...]`. zshrs synced only path[N]=scalar before.
     let run = |code: &str| run_zshrs(code).1.trim().to_string();
     // Range replace.
-    assert_eq!(run("path=(/a /b /c /d); path[2,3]=(/X /Y); echo $PATH"), "/a:/X:/Y:/d");
+    assert_eq!(
+        run("path=(/a /b /c /d); path[2,3]=(/X /Y); echo $PATH"),
+        "/a:/X:/Y:/d"
+    );
     // Range shrink.
     assert_eq!(run("path=(/a /b /c); path[2,3]=(/X); echo $PATH"), "/a:/X");
     // Range to end (negative).
     assert_eq!(run("path=(/a /b /c); path[2,-1]=(/Z); echo $PATH"), "/a:/Z");
     // Element replaced with multiple.
-    assert_eq!(run("path=(/a /b /c); path[2]=(/X /Y); echo $PATH"), "/a:/X:/Y:/c");
+    assert_eq!(
+        run("path=(/a /b /c); path[2]=(/X /Y); echo $PATH"),
+        "/a:/X:/Y:/c"
+    );
     // Range delete.
     assert_eq!(run("path=(/a /b); path[2,3]=(); echo $PATH"), "/a");
     // fpath slice.
-    assert_eq!(run("fpath=(/a /b /c); fpath[1,2]=(/N); echo $FPATH"), "/N:/c");
+    assert_eq!(
+        run("fpath=(/a /b /c); fpath[1,2]=(/N); echo $FPATH"),
+        "/N:/c"
+    );
     // unset element (element becomes empty, kept).
-    assert_eq!(run(r#"path=(/a /b /c /d); unset "path[2]"; echo "$PATH ${#path}""#), "/a::/c:/d 4");
+    assert_eq!(
+        run(r#"path=(/a /b /c /d); unset "path[2]"; echo "$PATH ${#path}""#),
+        "/a::/c:/d 4"
+    );
     // unset range.
-    assert_eq!(run(r#"path=(/a /b /c /d); unset "path[2,3]"; echo $PATH"#), "/a::/d");
+    assert_eq!(
+        run(r#"path=(/a /b /c /d); unset "path[2,3]"; echo $PATH"#),
+        "/a::/d"
+    );
     // Plain untied array unaffected.
-    assert_eq!(run(r#"a=(1 2 3 4); a[2,3]=(X Y Z); echo "${a[@]}""#), "1 X Y Z 4");
+    assert_eq!(
+        run(r#"a=(1 2 3 4); a[2,3]=(X Y Z); echo "${a[@]}""#),
+        "1 X Y Z 4"
+    );
 }
 
 #[test]
@@ -13632,7 +13761,8 @@ fn test_math_userfunc_missing_shfunc_is_no_such_function() {
     let err = |code: &str| run_zshrs(code).2;
     // Registered but shell fn missing -> "no such function".
     assert!(
-        err(r#"functions -M nonexist; echo $(( nonexist(1) ))"#).contains("no such function: nonexist"),
+        err(r#"functions -M nonexist; echo $(( nonexist(1) ))"#)
+            .contains("no such function: nonexist"),
         "registered+missing must be 'no such function'"
     );
     // The 4th arg names a DIFFERENT impl; the diagnostic uses it.
@@ -13643,11 +13773,14 @@ fn test_math_userfunc_missing_shfunc_is_no_such_function() {
     );
     // Not registered at all -> "unknown function".
     assert!(
-        err(r#"echo $(( totally_unregistered(1) ))"#).contains("unknown function: totally_unregistered"),
+        err(r#"echo $(( totally_unregistered(1) ))"#)
+            .contains("unknown function: totally_unregistered"),
         "unregistered must be 'unknown function'"
     );
     // A working math function is unaffected.
-    let (_s, out, _e) = run_zshrs(r#"cube() { (( REPLY = $1 ** 3 )) }; functions -M cube 1 1; echo $(( cube(4) ))"#);
+    let (_s, out, _e) = run_zshrs(
+        r#"cube() { (( REPLY = $1 ** 3 )) }; functions -M cube 1 1; echo $(( cube(4) ))"#,
+    );
     assert_eq!(out.trim(), "64");
 }
 
@@ -13794,7 +13927,10 @@ fn test_bad_counted_closure_is_status_2_with_full_pattern() {
     ] {
         let (status, _out, err) =
             run_zshrs_parity(&format!("setopt extendedglob; [[ aaa = {pat} ]]"));
-        assert_eq!(status, 2, "bad pattern must exit 2, not a plain no-match: {pat}");
+        assert_eq!(
+            status, 2,
+            "bad pattern must exit 2, not a plain no-match: {pat}"
+        );
         // The diagnostic carries the WHOLE pattern, not just the `(#c…)`
         // fragment — C reports it from the caller (cond.c:314 / glob.c:2522),
         // which is why the compiler itself must stay silent.
@@ -14039,11 +14175,14 @@ fn test_dq_nested_inner_flags_are_dropped() {
     // The discriminating case: a CHARACTER, not an element.
     let (_s, out, _e) =
         run_zshrs_parity(r#"nums=(33 11 44); print -r -- "${${${(q)nums}[1]}#*_}""#);
-    assert_eq!(out.trim(), "3", "the collapsed inner is a scalar; [1] takes a CHARACTER");
+    assert_eq!(
+        out.trim(),
+        "3",
+        "the collapsed inner is a scalar; [1] takes a CHARACTER"
+    );
 
     // Arrays MANUFACTURED by the inner survive the scalar context.
-    let (_s, out, _e) =
-        run_zshrs_parity(r#"print -r -- "${(j:,:)${(f)$(printf "a\nb\nc")}}""#);
+    let (_s, out, _e) = run_zshrs_parity(r#"print -r -- "${(j:,:)${(f)$(printf "a\nb\nc")}}""#);
     assert_eq!(out.trim(), "a,b,c", "split-derived array must survive");
     let (_s, out, _e) = run_zshrs_parity(r#"s="x y z"; print -r -- "${(U)${(s. .)s}[2]}""#);
     assert_eq!(out.trim(), "Y", "split-derived array must stay indexable");
@@ -14081,12 +14220,21 @@ fn test_dq_nested_inner_flags_are_dropped() {
 #[test]
 fn err_trap_does_not_fire_from_inside_a_trap_body() {
     // The EXIT body fails; zsh runs no ERR trap for it.
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- err' ERR; trap 'true; false' EXIT; print -r -- main");
-    assert_eq!(out, "main\n", "c:1114-1116 — ZERR is suppressed while intrap");
+    let (_s, out, _e) =
+        run_zshrs_parity("trap 'print -r -- err' ERR; trap 'true; false' EXIT; print -r -- main");
+    assert_eq!(
+        out, "main\n",
+        "c:1114-1116 — ZERR is suppressed while intrap"
+    );
 
     // Same through the TRAPZERR function spelling.
-    let (_s, out, _e) = run_zshrs_parity("TRAPZERR() { print -r -- zerr }; trap 'true; false' EXIT; print -r -- main");
-    assert_eq!(out, "main\n", "c:1114-1116 — the function form is suppressed too");
+    let (_s, out, _e) = run_zshrs_parity(
+        "TRAPZERR() { print -r -- zerr }; trap 'true; false' EXIT; print -r -- main",
+    );
+    assert_eq!(
+        out, "main\n",
+        "c:1114-1116 — the function form is suppressed too"
+    );
 }
 
 /// The counterpart to the above, and the reason the guard must be C's
@@ -14110,7 +14258,10 @@ fn non_suppressed_signals_still_dispatch_from_inside_a_trap_body() {
     let (_s, out, _e) = run_zshrs_parity(
         "trap 'print -r -- u' USR1; trap 'kill -USR1 $$; print -r -- in-exit' EXIT; print -r -- main",
     );
-    assert_eq!(out, "main\nu\nin-exit\n", "USR1 must dispatch from inside the EXIT body: {out:?}");
+    assert_eq!(
+        out, "main\nu\nin-exit\n",
+        "USR1 must dispatch from inside the EXIT body: {out:?}"
+    );
 }
 
 /// c:Src/signals.c — ZERR being one of the three suppressed signals is also
@@ -14127,7 +14278,8 @@ fn self_failing_err_trap_does_not_recurse() {
     assert_eq!(out, "survived\n");
 
     // The body runs once, and its own failure does not re-enter.
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- e; false' ERR; false; print -r -- survived");
+    let (_s, out, _e) =
+        run_zshrs_parity("trap 'print -r -- e; false' ERR; false; print -r -- survived");
     assert_eq!(out, "e\nsurvived\n");
 }
 
@@ -14150,27 +14302,43 @@ fn self_failing_err_trap_does_not_recurse() {
 #[test]
 fn subshell_resets_string_traps_but_keeps_func_pseudo_and_posix_ignored() {
     // String-form traps are cleared in the child, and restored after.
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' USR1; (trap); print -r -- out; trap");
-    assert_eq!(out, "out\ntrap -- 'print -r -- p' USR1\n", "c:1089 — cleared in the child, intact in the parent");
+    let (_s, out, _e) =
+        run_zshrs_parity("trap 'print -r -- p' USR1; (trap); print -r -- out; trap");
+    assert_eq!(
+        out, "out\ntrap -- 'print -r -- p' USR1\n",
+        "c:1089 — cleared in the child, intact in the parent"
+    );
 
     // ZSIG_FUNC survives (c:1090).
     let (_s, out, _e) = run_zshrs_parity("TRAPUSR1() { print -r -- fn }; (trap)");
-    assert!(out.contains("TRAPUSR1"), "c:1090 — function-form traps survive a subshell: {out:?}");
+    assert!(
+        out.contains("TRAPUSR1"),
+        "c:1090 — function-form traps survive a subshell: {out:?}"
+    );
 
     // Ignored: cleared without POSIX_TRAPS…
     let (_s, out, _e) = run_zshrs_parity("trap '' USR1; (trap); print -r -- done");
     assert_eq!(out, "done\n");
     // …and kept with it (c:1091).
     let (_s, out, _e) = run_zshrs_parity("setopt posix_traps; trap '' USR1; (trap)");
-    assert_eq!(out, "trap -- '' USR1\n", "c:1091 — POSIX_TRAPS keeps an ignored trap");
+    assert_eq!(
+        out, "trap -- '' USR1\n",
+        "c:1091 — POSIX_TRAPS keeps an ignored trap"
+    );
 
     // Pseudo-signals are above SIGCOUNT, so c:1088's loop never reaches them.
     let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- e' ERR; (trap)");
-    assert_eq!(out, "trap -- 'print -r -- e' ERR\n", "c:signals.h:34 — SIGZERR > SIGCOUNT, survives");
+    assert_eq!(
+        out, "trap -- 'print -r -- e' ERR\n",
+        "c:signals.h:34 — SIGZERR > SIGCOUNT, survives"
+    );
 
     // EXIT is sig 0 — inside the loop, so cleared in the child.
     let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- x' EXIT; (trap); print -r -- done");
-    assert_eq!(out, "done\nx\n", "c:1088 — EXIT is sig 0 and IS cleared in the child");
+    assert_eq!(
+        out, "done\nx\n",
+        "c:1088 — EXIT is sig 0 and IS cleared in the child"
+    );
 }
 
 /// c:Src/signals.c:854-870 — starttrapscope, called from doshfunc (c:5898),
@@ -14199,15 +14367,24 @@ fn subshell_resets_string_traps_but_keeps_func_pseudo_and_posix_ignored() {
 #[test]
 fn exit_trap_is_scoped_out_of_a_function_and_restored_after() {
     // Hidden inside f…
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; f() { trap }; f; print -r -- done");
-    assert_eq!(out, "done\np\n", "c:866 — EXIT unset for the function's scope, and still fires after");
+    let (_s, out, _e) =
+        run_zshrs_parity("trap 'print -r -- p' EXIT; f() { trap }; f; print -r -- done");
+    assert_eq!(
+        out, "done\np\n",
+        "c:866 — EXIT unset for the function's scope, and still fires after"
+    );
 
     // …and demonstrably restored, not dropped.
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; f() { trap }; f; trap; print -r -- done");
-    assert_eq!(out, "trap -- 'print -r -- p' EXIT\ndone\np\n", "the outer EXIT must be back after f returns");
+    let (_s, out, _e) =
+        run_zshrs_parity("trap 'print -r -- p' EXIT; f() { trap }; f; trap; print -r -- done");
+    assert_eq!(
+        out, "trap -- 'print -r -- p' EXIT\ndone\np\n",
+        "the outer EXIT must be back after f returns"
+    );
 
     // A function that never touches traps must not lose the outer one either.
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; f() { : }; f; print -r -- done");
+    let (_s, out, _e) =
+        run_zshrs_parity("trap 'print -r -- p' EXIT; f() { : }; f; print -r -- done");
     assert_eq!(out, "done\np\n");
 }
 
@@ -14216,24 +14393,41 @@ fn exit_trap_is_scoped_out_of_a_function_and_restored_after() {
 #[test]
 fn exit_trap_scoping_exemptions() {
     // c:863 — POSIX_TRAPS (`!exit_trap_posix`) keeps the outer EXIT visible.
-    let (_s, out, _e) = run_zshrs_parity("setopt posix_traps; trap 'print -r -- p' EXIT; f() { trap }; f; print -r -- done");
+    let (_s, out, _e) = run_zshrs_parity(
+        "setopt posix_traps; trap 'print -r -- p' EXIT; f() { trap }; f; print -r -- done",
+    );
     assert_eq!(out, "trap -- 'print -r -- p' EXIT\ndone\np\n");
 
     // c:855-857 — "No special SIGEXIT behaviour inside another trap."
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; TRAPUSR1() { trap }; kill -USR1 $$; print -r -- done");
-    assert!(out.contains("trap -- 'print -r -- p' EXIT"), "inside a trap body the EXIT trap stays visible: {out:?}");
+    let (_s, out, _e) = run_zshrs_parity(
+        "trap 'print -r -- p' EXIT; TRAPUSR1() { trap }; kill -USR1 $$; print -r -- done",
+    );
+    assert!(
+        out.contains("trap -- 'print -r -- p' EXIT"),
+        "inside a trap body the EXIT trap stays visible: {out:?}"
+    );
 
     // Only EXIT is scoped this way.
     let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- u' USR1; f() { trap }; f");
-    assert_eq!(out, "trap -- 'print -r -- u' USR1\n", "USR1 is not scoped out of a function");
+    assert_eq!(
+        out, "trap -- 'print -r -- u' USR1\n",
+        "USR1 is not scoped out of a function"
+    );
 
     // An EXIT trap set INSIDE a function fires at RETURN, not shell exit.
-    let (_s, out, _e) = run_zshrs_parity("f() { trap 'print -r -- inner' EXIT; print -r -- body }; f; print -r -- after");
+    let (_s, out, _e) = run_zshrs_parity(
+        "f() { trap 'print -r -- inner' EXIT; print -r -- body }; f; print -r -- after",
+    );
     assert_eq!(out, "body\ninner\nafter\n");
 
     // The LOCAL_TRAPS restore path (same SAVETRAPS machinery) still works.
-    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- o' USR1; f() { setopt local_traps; trap 'print -r -- i' USR1 }; f; trap");
-    assert_eq!(out, "trap -- 'print -r -- o' USR1\n", "the outer USR1 body must be restored, not the inner one");
+    let (_s, out, _e) = run_zshrs_parity(
+        "trap 'print -r -- o' USR1; f() { setopt local_traps; trap 'print -r -- i' USR1 }; f; trap",
+    );
+    assert_eq!(
+        out, "trap -- 'print -r -- o' USR1\n",
+        "the outer USR1 body must be restored, not the inner one"
+    );
 }
 
 /// `:A` and `:P` are not interchangeable, and they were sharing one arm.
@@ -14259,9 +14453,17 @@ fn modifier_a_collapses_lexically_and_p_only_through_realpath() {
         ("/a/./b", "/a/b", "/a/./b"),
     ] {
         let (_s, out, _e) = run_zshrs_parity(&format!("f={path}; print -r -- ${{f:A}}"));
-        assert_eq!(out, format!("{want_a}\n"), ":A must collapse {path:?} lexically");
+        assert_eq!(
+            out,
+            format!("{want_a}\n"),
+            ":A must collapse {path:?} lexically"
+        );
         let (_s, out, _e) = run_zshrs_parity(&format!("f={path}; print -r -- ${{f:P}}"));
-        assert_eq!(out, format!("{want_p}\n"), ":P must NOT collapse {path:?} — realpath cannot cross a missing component");
+        assert_eq!(
+            out,
+            format!("{want_p}\n"),
+            ":P must NOT collapse {path:?} — realpath cannot cross a missing component"
+        );
     }
 
     // Existing: realpath resolves, so both agree.
@@ -14406,25 +14608,35 @@ fn glob_flag_off_switches_turn_their_on_switch_back_off() {
         ("(#M)a*", ""),
         ("a*", ""),
     ] {
-        let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = {pat} ]]; print -r -- \"[$MATCH]\""));
+        let (_s, out, _e) =
+            run_zshrs_parity(&format!("{e}[[ abc = {pat} ]]; print -r -- \"[$MATCH]\""));
         assert_eq!(out, format!("[{want}]\n"), "$MATCH after [[ abc = {pat} ]]");
     }
 
     // MBEGIN/MEND follow MATCH, and are unset together with it.
-    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#m)a* ]]; print -r -- \"[$MATCH][$MBEGIN][$MEND]\""));
+    let (_s, out, _e) = run_zshrs_parity(&format!(
+        "{e}[[ abc = (#m)a* ]]; print -r -- \"[$MATCH][$MBEGIN][$MEND]\""
+    ));
     assert_eq!(out, "[abc][1][3]\n");
-    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#m)(#M)a* ]]; print -r -- \"[$MATCH][$MBEGIN][$MEND]\""));
+    let (_s, out, _e) = run_zshrs_parity(&format!(
+        "{e}[[ abc = (#m)(#M)a* ]]; print -r -- \"[$MATCH][$MBEGIN][$MEND]\""
+    ));
     assert_eq!(out, "[][][]\n");
 
     // (#b)/(#B) always worked — that check reads compiled state (patnpar), not
     // pattern text. Pinned so the two stay consistent.
-    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#b)(a)* ]]; print -r -- \"[$match[1]]\""));
+    let (_s, out, _e) = run_zshrs_parity(&format!(
+        "{e}[[ abc = (#b)(a)* ]]; print -r -- \"[$match[1]]\""
+    ));
     assert_eq!(out, "[a]\n");
-    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#b)(#B)(a)* ]]; print -r -- \"n=${{#match}}\""));
+    let (_s, out, _e) = run_zshrs_parity(&format!(
+        "{e}[[ abc = (#b)(#B)(a)* ]]; print -r -- \"n=${{#match}}\""
+    ));
     assert_eq!(out, "n=0\n");
 
     // The substitution paths share the matcher.
-    let (_s, out, _e) = run_zshrs_parity(&format!("{e}v=foobar; print -r -- ${{v//(#m)o/[$MATCH]}}"));
+    let (_s, out, _e) =
+        run_zshrs_parity(&format!("{e}v=foobar; print -r -- ${{v//(#m)o/[$MATCH]}}"));
     assert_eq!(out, "f[o][o]bar\n");
 }
 
@@ -14457,19 +14669,35 @@ fn emulate_l_lists_the_target_emulations_options_without_applying_them() {
     // - 7 specials = 177.
     for e in ["sh", "ksh", "csh", "zsh"] {
         let (_s, out, _e) = run_zshrs_parity(&format!("emulate -l {e} | wc -l"));
-        assert_eq!(out.trim(), "81", "emulate -l {e} must list the OPT_EMULATE options");
+        assert_eq!(
+            out.trim(),
+            "81",
+            "emulate -l {e} must list the OPT_EMULATE options"
+        );
         let (_s, out, _e) = run_zshrs_parity(&format!("emulate -lR {e} | wc -l"));
-        assert_eq!(out.trim(), "177", "emulate -lR {e} must list all non-alias non-special options");
+        assert_eq!(
+            out.trim(),
+            "177",
+            "emulate -lR {e} must list all non-alias non-special options"
+        );
     }
 
     // The VALUES must be the target emulation's, not the current shell's.
     // `sh` sets these; plain zsh does not.
     let (_s, out, _e) = run_zshrs_parity("emulate -l sh | grep -cx 'shwordsplit'");
-    assert_eq!(out.trim(), "1", "emulate -l sh must report sh's shwordsplit, not zsh's");
+    assert_eq!(
+        out.trim(),
+        "1",
+        "emulate -l sh must report sh's shwordsplit, not zsh's"
+    );
     let (_s, out, _e) = run_zshrs_parity("emulate -l sh | grep -cx 'ksharrays'");
     assert_eq!(out.trim(), "1", "emulate -l sh must report sh's ksharrays");
     let (_s, out, _e) = run_zshrs_parity("emulate -l zsh | grep -cx 'noksharrays'");
-    assert_eq!(out.trim(), "1", "emulate -l zsh must report zsh's noksharrays");
+    assert_eq!(
+        out.trim(),
+        "1",
+        "emulate -l zsh must report zsh's noksharrays"
+    );
 
     // Aliases are never listed (c:988), even though they ARE in the option table.
     for a in ["braceexpand", "dotglob", "hashall", "histexpand"] {
@@ -14478,14 +14706,23 @@ fn emulate_l_lists_the_target_emulations_options_without_applying_them() {
     }
 
     // -l must NOT change the shell: C lists a copy.
-    let (_s, out, _e) = run_zshrs_parity("emulate -l sh >/dev/null; a=(1 2 3); print -r -- ${a[1]}");
-    assert_eq!(out, "1\n", "emulate -l must not apply ksharrays to the live shell");
-    let (_s, out, _e) = run_zshrs_parity("setopt extended_glob; emulate -l sh >/dev/null; print -r -- $options[extendedglob]");
+    let (_s, out, _e) =
+        run_zshrs_parity("emulate -l sh >/dev/null; a=(1 2 3); print -r -- ${a[1]}");
+    assert_eq!(
+        out, "1\n",
+        "emulate -l must not apply ksharrays to the live shell"
+    );
+    let (_s, out, _e) = run_zshrs_parity(
+        "setopt extended_glob; emulate -l sh >/dev/null; print -r -- $options[extendedglob]",
+    );
     assert_eq!(out, "on\n", "emulate -l must leave live options untouched");
 
     // …while plain `emulate` and `emulate -L` still DO apply (Bug #26).
     let (_s, out, _e) = run_zshrs_parity("f() { emulate -L sh; a=(1 2 3); print -r -- \"[${a[0]}]\" }; f; a=(1 2 3); print -r -- \"[${a[0]}]\"");
-    assert_eq!(out, "[1]\n[]\n", "emulate -L must apply ksharrays inside the function only");
+    assert_eq!(
+        out, "[1]\n[]\n",
+        "emulate -L must apply ksharrays inside the function only"
+    );
 }
 
 /// c:Src/Modules/mathfunc.c:144/168 — `jn` and `yn` take the Bessel ORDER as
@@ -14533,7 +14770,11 @@ fn mathfunc_jn_yn_take_an_integer_order() {
     assert_ne!(status, 0, "jn/1 must be an arity error: {err:?}");
 
     // The zero-order family, which always worked, must keep working.
-    for (expr, want) in [("j0(0)", "1."), ("j1(0)", "0."), ("y1(1)", "-0.78121282130028868")] {
+    for (expr, want) in [
+        ("j0(0)", "1."),
+        ("j1(0)", "0."),
+        ("y1(1)", "-0.78121282130028868"),
+    ] {
         let (_s, out, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( {expr} ))"));
         assert_eq!(out, format!("{want}\n"), "$(( {expr} ))");
     }
@@ -14582,7 +14823,10 @@ fn printf_percent_n_stores_byte_count() {
     // identifier` (which aborts the -c, so `after` never prints — same in both
     // shells).
     let (_s, _o, err) = run_zshrs_parity("printf '%n' 1bad; print -r -- after");
-    assert!(err.contains("not an identifier"), "malformed %n target must error: {err:?}");
+    assert!(
+        err.contains("not an identifier"),
+        "malformed %n target must error: {err:?}"
+    );
 }
 
 /// c:Src/pattern.c:3451 + 3463 — approximate matching `(#a<n>)` spends its
@@ -14664,7 +14908,8 @@ fn glob_flag_capital_i_clears_a_preceding_fold_flag() {
     }
 
     // The fix must not disturb single-flag Unicode case-insensitivity.
-    let (_s, out, _e) = run_zshrs_parity("setopt extended_glob; [[ über = (#i)Über ]] && print Y || print N");
+    let (_s, out, _e) =
+        run_zshrs_parity("setopt extended_glob; [[ über = (#i)Über ]] && print Y || print N");
     assert_eq!(out, "Y\n");
 }
 
@@ -14676,7 +14921,8 @@ fn glob_flag_capital_i_clears_a_preceding_fold_flag() {
 #[test]
 fn read_capital_e_echoes_each_field() {
     // Multi-var -E: one field per line, and the values are assigned.
-    let (_s, out, _e) = run_zshrs_parity("read -rE a b <<< 'one two three'; print -r -- \"a=[$a] b=[$b]\"");
+    let (_s, out, _e) =
+        run_zshrs_parity("read -rE a b <<< 'one two three'; print -r -- \"a=[$a] b=[$b]\"");
     assert_eq!(out, "one\ntwo three\na=[one] b=[two three]\n");
 
     // Single var -E: the whole line is echoed and assigned.
@@ -14684,7 +14930,8 @@ fn read_capital_e_echoes_each_field() {
     assert_eq!(out, "kept whole\nx=[kept whole]\n");
 
     // -e echoes but does NOT assign.
-    let (_s, out, _e) = run_zshrs_parity("a=A b=B; read -e a b <<< 'echo only'; print -r -- \"a=[$a] b=[$b]\"");
+    let (_s, out, _e) =
+        run_zshrs_parity("a=A b=B; read -e a b <<< 'echo only'; print -r -- \"a=[$a] b=[$b]\"");
     assert_eq!(out, "echo\nonly\na=[A] b=[B]\n");
 
     // -A -E echoes each word (this path already worked; pinned for consistency).
@@ -14692,6 +14939,7 @@ fn read_capital_e_echoes_each_field() {
     assert_eq!(out, "p\nq\nr\nn=3\n");
 
     // Plain multi-var (no -E) echoes nothing.
-    let (_s, out, _e) = run_zshrs_parity("read a b <<< 'one two three'; print -r -- \"a=[$a] b=[$b]\"");
+    let (_s, out, _e) =
+        run_zshrs_parity("read a b <<< 'one two three'; print -r -- \"a=[$a] b=[$b]\"");
     assert_eq!(out, "a=[one] b=[two three]\n");
 }

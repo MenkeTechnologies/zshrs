@@ -98,11 +98,19 @@ pub fn substitute(t: &str, s: &WizardSettings) -> String {
     let cursor = "%S %s"; // a reverse-video block stands in for the cursor cell
     let ei = |n: usize| -> String {
         let g = s.extra_icons.get(n).cloned().unwrap_or_default();
-        if g.is_empty() { String::new() } else { format!("{g} ") }
+        if g.is_empty() {
+            String::new()
+        } else {
+            format!("{g} ")
+        }
     };
     let pfx = |n: usize| -> String {
         let p = s.prefixes.get(n).cloned().unwrap_or_default();
-        if p.is_empty() { String::new() } else { p }
+        if p.is_empty() {
+            String::new()
+        } else {
+            p
+        }
     };
     // wizard:57 `${time:+ $prefixes[3]%66F$extra_icons[5]$time%f}`.
     let time_blk = |fg: &str| -> String {
@@ -111,7 +119,11 @@ pub fn substitute(t: &str, s: &WizardSettings) -> String {
             None => String::new(),
         }
     };
-    let pure_rp_l = if s.pure_use_rprompt { String::new() } else { format!("%F{{{}}}5s%f ", s.pure_color("yellow")) };
+    let pure_rp_l = if s.pure_use_rprompt {
+        String::new()
+    } else {
+        format!("%F{{{}}}5s%f ", s.pure_color("yellow"))
+    };
     let pure_rp_r = if s.pure_use_rprompt {
         let mut r = format!("%F{{{}}}5s%f", s.pure_color("yellow"));
         if let Some(t) = &s.time {

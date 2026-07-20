@@ -632,7 +632,13 @@ pub fn loadautofn(
             None
         }
     };
-    let path = match getfpfunc(&name, &mut dir_path, loaddir_spec.as_deref(), 0, &mut dump_hit) {
+    let path = match getfpfunc(
+        &name,
+        &mut dir_path,
+        loaddir_spec.as_deref(),
+        0,
+        &mut dump_hit,
+    ) {
         Some(p) => p,
         None => {
             // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
@@ -6447,8 +6453,8 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 pats,
                 prog: prog_words,
                 strs: strs_tail,
-                shf: None,  // c:5377
-                dump: None, // c:5356
+                shf: None,            // c:5377
+                dump: None,           // c:5356
                 strs_metafied: false, // native pool — clean UTF-8
             });
         } else if dump_present {
@@ -6471,8 +6477,8 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 pats,
                 prog: prog_words,
                 strs: strs_tail,
-                shf: None,                     // c:5377
-                dump: state.prog.dump.clone(), // c:5361
+                shf: None,                               // c:5377
+                dump: state.prog.dump.clone(),           // c:5361
                 strs_metafied: state.prog.strs_metafied, // pool copied verbatim — carry provenance
             });
         } else {
@@ -6496,8 +6502,8 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 pats,
                 prog: prog_words,
                 strs: strs_copy,
-                shf: None,  // c:5377
-                dump: None, // c:5371
+                shf: None,            // c:5377
+                dump: None,           // c:5371
                 strs_metafied: false, // native pool — clean UTF-8
             });
         }
@@ -8242,15 +8248,14 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
             // c:1832-1882
             if pline_level.load(Ordering::Relaxed) == 0 {
                 // c:1833-1875
-                *CURJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() =
-                    newjob as i32; // c:1836
-                // c:1838 — DPUTS(!list_pipe_pid, "invalid list_pipe_pid").
-                // c:1840-1841 — record the re-forked leader in the super-job.
+                *CURJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap() = newjob as i32; // c:1836
+                                               // c:1838 — DPUTS(!list_pipe_pid, "invalid list_pipe_pid").
+                                               // c:1840-1841 — record the re-forked leader in the super-job.
                 {
-                    let txt = LIST_PIPE_TEXT
-                        .lock()
-                        .map(|s| s.clone())
-                        .unwrap_or_default();
+                    let txt = LIST_PIPE_TEXT.lock().map(|s| s.clone()).unwrap_or_default();
                     let bgt = *LIST_PIPE_START.lock().unwrap();
                     let mut g = jt.lock().unwrap();
                     addproc(
@@ -8269,14 +8274,15 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                     if g[jn_idx].procs.len() <= 1 || LPFORKED.load(Ordering::Relaxed) == 2 {
                         g[jn_idx].gleader = list_pipe_pid.load(Ordering::Relaxed); // c:1845
                         g[jn_idx].stat |= jst::SUBLEADER; // c:1847
-                        // c:1852-1861 — adopt any orphaned subjob; we
-                        // become its super-job.
+                                                          // c:1852-1861 — adopt any orphaned subjob; we
+                                                          // become its super-job.
                         for jobsub in 1..g.len() {
                             if (g[jobsub].stat & STAT_SUBJOB_ORPHANED) != 0 {
                                 g[jn_idx].other = jobsub as i32; // c:1855
                                 g[jn_idx].stat |= jst::SUPERJOB; // c:1856
                                 g[jobsub].stat &= !STAT_SUBJOB_ORPHANED; // c:1857
-                                g[jobsub].other = list_pipe_pid.load(Ordering::Relaxed); // c:1858
+                                g[jobsub].other = list_pipe_pid.load(Ordering::Relaxed);
+                                // c:1858
                             }
                         }
                     }
@@ -8284,7 +8290,11 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                     // subjob onto our last proc.
                     let other = g[jn_idx].other as usize;
                     let stopped = if other < g.len() {
-                        g[other].procs.iter().find(|p| p.is_stopped()).map(|p| p.status)
+                        g[other]
+                            .procs
+                            .iter()
+                            .find(|p| p.is_stopped())
+                            .map(|p| p.status)
                     } else {
                         None
                     };
@@ -8295,14 +8305,19 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                     }
                     // c:1870-1872
                     g[jn_idx].stat &= !(jst::DONE | jst::NOPRINT);
-                    g[jn_idx].stat |=
-                        jst::STOPPED | jst::CHANGED | jst::LOCKED | jst::INUSE;
+                    g[jn_idx].stat |= jst::STOPPED | jst::CHANGED | jst::LOCKED | jst::INUSE;
                 }
                 // c:1875 — printjob(jn, !!isset(LONGLISTJOBS), 1).
                 {
                     let g = jt.lock().unwrap();
-                    let cur = *CURJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap();
-                    let prev = *PREVJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap();
+                    let cur = *CURJOB
+                        .get_or_init(|| std::sync::Mutex::new(-1))
+                        .lock()
+                        .unwrap();
+                    let prev = *PREVJOB
+                        .get_or_init(|| std::sync::Mutex::new(-1))
+                        .lock()
+                        .unwrap();
                     let s = printjob(
                         &g[jn_idx],
                         jn_idx,
@@ -8323,7 +8338,7 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
         }
 
         ERRBRK_SAVED.store(0, Ordering::Relaxed); // c:1883
-        // c:1884-2015 — `for (; !nowait;)` wait / continue-fork loop.
+                                                  // c:1884-2015 — `for (; !nowait;)` wait / continue-fork loop.
         loop {
             if nowait.load(Ordering::Relaxed) != 0 {
                 break;
@@ -8354,14 +8369,12 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
             // c:1895-1902 — nudge the signal queue when the LHS job is
             // still running but we saw no update.
             let lpj = list_pipe_job.load(Ordering::Relaxed);
-            let nudge = !updated
-                && lpj != 0
-                && {
-                    let g = jt.lock().unwrap();
-                    (lpj as usize) < g.len()
-                        && hasprocs(&g, lpj as usize)
-                        && (g[lpj as usize].stat & jst::STOPPED) == 0
-                };
+            let nudge = !updated && lpj != 0 && {
+                let g = jt.lock().unwrap();
+                (lpj as usize) < g.len()
+                    && hasprocs(&g, lpj as usize)
+                    && (g[lpj as usize].stat & jst::STOPPED) == 0
+            };
             if nudge {
                 let q = queue_signal_level();
                 child_unblock();
@@ -8439,7 +8452,11 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                         g.get(lpj as usize).map(|j| j.gleader).unwrap_or(0)
                     };
                     LPFORKED.store(
-                        if unsafe { libc::killpg(gl, 0) } == -1 { 2 } else { 1 },
+                        if unsafe { libc::killpg(gl, 0) } == -1 {
+                            2
+                        } else {
+                            1
+                        },
                         Ordering::Relaxed,
                     ); // c:1951-1952
                     list_pipe_pid.store(pid, Ordering::Relaxed); // c:1953
@@ -8451,7 +8468,7 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                     let mut dummy = [0u8; 1];
                     let _ = read_loop(synch[0], &mut dummy); // c:1959
                     unsafe { libc::close(synch[0]) }; // c:1960
-                    // c:1962-1970 — link super/sub jobs if we're still live.
+                                                      // c:1962-1970 — link super/sub jobs if we're still live.
                     let jn_done2 = {
                         let g = jt.lock().unwrap();
                         (g[jn_idx].stat & jst::DONE) != 0
@@ -8526,10 +8543,8 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
         // c:2020-2026 — a signal-killed list_pipe: drop this job and
         // forward the signal to the enclosing job's group.
         let lastval_now = LASTVAL.load(Ordering::Relaxed);
-        let drop_and_signal = list_pipe.load(Ordering::Relaxed) != 0
-            && (lastval_now & 0o200) != 0
-            && pj >= 0
-            && {
+        let drop_and_signal =
+            list_pipe.load(Ordering::Relaxed) != 0 && (lastval_now & 0o200) != 0 && pj >= 0 && {
                 let g = jt.lock().unwrap();
                 (g[jn_idx].stat & jst::INUSE) == 0 || (g[jn_idx].stat & jst::DONE) != 0
             };

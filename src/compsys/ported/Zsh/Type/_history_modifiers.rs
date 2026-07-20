@@ -92,11 +92,8 @@ pub fn _history_modifiers(args: &[String]) -> i32 {
                     // sh:26  if [[ -z $PREFIX ]]; then
                     if prefix.is_empty() {
                         // sh:27-28  _delimiters modifier-s; return
-                        return dispatch_function_call(
-                            "_delimiters",
-                            &["modifier-s".to_string()],
-                        )
-                        .unwrap_or(1);
+                        return dispatch_function_call("_delimiters", &["modifier-s".to_string()])
+                            .unwrap_or(1);
                     }
                     // sh:30  delim=$PREFIX[1]
                     delim = prefix.chars().next().unwrap().to_string();
@@ -109,18 +106,12 @@ pub fn _history_modifiers(args: &[String]) -> i32 {
                         let half = format!("[^{d}]#{d}", d = delim);
                         return if compset(&["-P", half.as_str()]) {
                             // sh:34  _message "replacement string"
-                            dispatch_function_call(
-                                "_message",
-                                &["replacement string".to_string()],
-                            )
-                            .unwrap_or(1)
+                            dispatch_function_call("_message", &["replacement string".to_string()])
+                                .unwrap_or(1)
                         } else {
                             // sh:36  _message "original string"
-                            dispatch_function_call(
-                                "_message",
-                                &["original string".to_string()],
-                            )
-                            .unwrap_or(1)
+                            dispatch_function_call("_message", &["original string".to_string()])
+                                .unwrap_or(1)
                         };
                     }
                 }

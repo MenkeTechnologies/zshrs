@@ -179,7 +179,10 @@ pub fn _describe(args: &[String]) -> i32 {
         let prefix = getsparam("PREFIX").unwrap_or_default();
         let is_dashplus = prefix.starts_with('-') || prefix.starts_with('+');
         if !is_dashplus
-            && zstyle_t_default_true(&format!(":completion:{}:options", curcontext), "prefix-needed")
+            && zstyle_t_default_true(
+                &format!(":completion:{}:options", curcontext),
+                "prefix-needed",
+            )
         {
             return 1;
         }
@@ -221,7 +224,10 @@ pub fn _describe(args: &[String]) -> i32 {
     // sh:61-63 — options + prefix-hidden (default-false) ⇒ strip the
     // leading `--`/`-`/`+` of PREFIX into _hide (= ${(M)PREFIX##(--|[-+])}).
     if _type == "options"
-        && zstyle_t_default_false(&format!(":completion:{}:options", curcontext), "prefix-hidden")
+        && zstyle_t_default_false(
+            &format!(":completion:{}:options", curcontext),
+            "prefix-hidden",
+        )
     {
         let prefix = getsparam("PREFIX").unwrap_or_default();
         _hide = if prefix.starts_with("--") {
@@ -283,19 +289,21 @@ pub fn _describe(args: &[String]) -> i32 {
 
                     // sh:86-97 — optional match array (only if next arg
                     // is non-empty and not an option).
-                    let (mats_name, mats_vals): (Option<String>, Vec<String>) =
-                        if p >= _oargv.len() || _oargv[p].is_empty() || _oargv[p].starts_with('-') {
-                            (None, Vec::new())
-                        } else {
-                            let mn = format!("_a_{}{}", _try, _i);
-                            let mv = resolve_array_arg(&_oargv[p]);
-                            setaparam(&mn, mv.clone());
-                            a_names.push(mn.clone());
-                            _argv.push(mn.clone());
-                            p += 1;
-                            _i += 1;
-                            (Some(mn), mv)
-                        };
+                    let (mats_name, mats_vals): (Option<String>, Vec<String>) = if p >= _oargv.len()
+                        || _oargv[p].is_empty()
+                        || _oargv[p].starts_with('-')
+                    {
+                        (None, Vec::new())
+                    } else {
+                        let mn = format!("_a_{}{}", _try, _i);
+                        let mv = resolve_array_arg(&_oargv[p]);
+                        setaparam(&mn, mv.clone());
+                        a_names.push(mn.clone());
+                        _argv.push(mn.clone());
+                        p += 1;
+                        _i += 1;
+                        (Some(mn), mv)
+                    };
 
                     // sh:99-104 — gather per-set opts up to `--`.
                     let mut _opts: Vec<String> = Vec::new();
@@ -355,8 +363,7 @@ pub fn _describe(args: &[String]) -> i32 {
                 bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
             } else {
                 // compdescribe -i "$_hide" "$_mlen" "$@"
-                let mut cd: Vec<String> =
-                    vec!["-i".to_string(), _hide.clone(), _mlen.clone()];
+                let mut cd: Vec<String> = vec!["-i".to_string(), _hide.clone(), _mlen.clone()];
                 cd.extend(cd_argv.clone());
                 let rc_i = bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
                 tracing::debug!(target: "compsys_args", rc_i, ?cd_argv, "compdescribe -i");

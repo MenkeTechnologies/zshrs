@@ -216,7 +216,11 @@ fn get_icon(seg: Option<&Segment>, key: &str, default: &str) -> String {
         // p10k:520 — _p9k_param "$1" "$2" …: segment-scoped chain.
         Some(s) => {
             let v = p9k_param(&s.name, s.state.as_deref(), key, UNSET);
-            if v == UNSET { None } else { Some(v) }
+            if v == UNSET {
+                None
+            } else {
+                Some(v)
+            }
         }
         // p10k:499-505 — non-`prompt_*` arm: bare POWERLEVEL9K_<KEY>.
         None => getsparam(&format!("POWERLEVEL9K_{key}")),
@@ -280,8 +284,8 @@ fn visibly_nonempty(s: &str) -> bool {
                 }
                 i = j + 1;
             }
-            Some('f') | Some('k') | Some('b') | Some('B') | Some('u') | Some('U')
-            | Some('s') | Some('S') | Some('E') => i += 2,
+            Some('f') | Some('k') | Some('b') | Some('B') | Some('u') | Some('U') | Some('s')
+            | Some('S') | Some('E') => i += 2,
             Some('{') => {
                 // %{...%} zero-width group
                 let mut j = i + 2;
@@ -325,11 +329,8 @@ fn resolved_content(seg: &Segment) -> String {
         &seg.icon.clone().unwrap_or_default(),
     );
     let (base, _) = is_joined_name(&seg.name);
-    let expanded = crate::p10k::expansion::apply_content_expansion(
-        base,
-        seg.state.as_deref(),
-        &seg.content,
-    );
+    let expanded =
+        crate::p10k::expansion::apply_content_expansion(base, seg.state.as_deref(), &seg.content);
     // p10k:749 — ${_p9k__c//$'\r'}: strip carriage returns AFTER the
     // template expands (the template may reintroduce them).
     expanded.replace('\r', "")
@@ -373,7 +374,10 @@ fn render_left_segment(seg: &Segment, joined: bool, st: &mut LeftState, out: &mu
     let stripped;
     let seg = match is_joined_name(&seg.name) {
         (base, true) => {
-            stripped = Segment { name: base.to_string(), ..seg.clone() };
+            stripped = Segment {
+                name: base.to_string(),
+                ..seg.clone()
+            };
             &stripped
         }
         _ => seg,
@@ -565,9 +569,15 @@ fn render_left_line(segs: &[Segment]) -> String {
     // renders no segments: `%f` + the empty_line-scoped end symbol
     // (which itself defaults to LEFT_SEGMENT_SEPARATOR).
     let default_sep = get_icon(None, "LEFT_SEGMENT_SEPARATOR", "");
-    let empty_line = Segment { name: "empty_line".to_string(), ..Default::default() };
-    let default_end =
-        get_icon(Some(&empty_line), "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", &default_sep);
+    let empty_line = Segment {
+        name: "empty_line".to_string(),
+        ..Default::default()
+    };
+    let default_end = get_icon(
+        Some(&empty_line),
+        "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL",
+        &default_sep,
+    );
     let mut st = LeftState {
         bg: None,
         sep: String::new(),
@@ -591,7 +601,7 @@ fn render_left_line(segs: &[Segment]) -> String {
         }
     }
     let body = fix_backspace_hack(&body); // p10k:5915
-    // p10k:7959 — '%b%k$_p9k__sss%b%k%f'
+                                          // p10k:7959 — '%b%k$_p9k__sss%b%k%f'
     format!("{body}%b%k{}%b%k%f", st.sss)
 }
 
@@ -626,7 +636,10 @@ fn render_right_segment(
     let stripped;
     let seg = match is_joined_name(&seg.name) {
         (base, true) => {
-            stripped = Segment { name: base.to_string(), ..seg.clone() };
+            stripped = Segment {
+                name: base.to_string(),
+                ..seg.clone()
+            };
             &stripped
         }
         _ => seg,
@@ -805,7 +818,11 @@ fn render_right_segment(
 /// Render one full RIGHT prompt line; "" when nothing rendered
 /// (p10k:5871 — `right=` stays empty unless the side produced output).
 fn render_right_line(segs: &[Segment]) -> String {
-    let mut st = RightState { bg: None, w: String::new(), sss: String::new() };
+    let mut st = RightState {
+        bg: None,
+        w: String::new(),
+        sss: String::new(),
+    };
     let mut body = String::new();
     // p10k:8424-8433 — `_p9k_right_join`: same anchor fold as the left.
     let mut group_start = 0usize;
@@ -826,7 +843,7 @@ fn render_right_line(segs: &[Segment]) -> String {
         return String::new();
     }
     let body = fix_backspace_hack(&body); // p10k:5869
-    // p10k:7964 — '$_p9k__sss%b%k%f'
+                                          // p10k:7964 — '$_p9k__sss%b%k%f'
     format!("{body}{}%b%k%f", st.sss)
 }
 
@@ -1064,14 +1081,22 @@ pub fn render_prompt(
         let left = if num_lines > left_lines.len() {
             // p10k:7935 — left padded with LEADING newline lines.
             let pad = num_lines - left_lines.len();
-            if i < pad { &EMPTY } else { &left_lines[i - pad] }
+            if i < pad {
+                &EMPTY
+            } else {
+                &left_lines[i - pad]
+            }
         } else {
             left_lines.get(i).unwrap_or(&EMPTY)
         };
         let right = if num_lines > right_lines.len() && rprompt_on_newline {
             // p10k:7939 — right padded with LEADING newline lines.
             let pad = num_lines - right_lines.len();
-            if i < pad { &EMPTY } else { &right_lines[i - pad] }
+            if i < pad {
+                &EMPTY
+            } else {
+                &right_lines[i - pad]
+            }
         } else {
             // p10k:7941 — right padded with TRAILING newline lines.
             right_lines.get(i).unwrap_or(&EMPTY)
@@ -1126,7 +1151,11 @@ pub fn render_prompt(
     let mut rprompt = String::new();
     for i in 0..num_lines {
         let (lsegs, rsegs) = line_pair(i);
-        let right = if disable_rprompt { String::new() } else { render_right_line(rsegs) };
+        let right = if disable_rprompt {
+            String::new()
+        } else {
+            render_right_line(rsegs)
+        };
         let frame_suffix = right_frame_suffix(i, num_lines);
 
         // p10k:7998/8008/8035 — frame prefix goes BEFORE the line body.
@@ -1154,7 +1183,13 @@ pub fn render_prompt(
             // frame connector rides with the right content, as in
             // p10k's `_p9k_line_suffix_right` (p10k:8015/8044).
             let right_full = format!("{right}{frame_suffix}");
-            prompt.push_str(&align_line(&line, &right_full, i, columns, &prompt_visible_width));
+            prompt.push_str(&align_line(
+                &line,
+                &right_full,
+                i,
+                columns,
+                &prompt_visible_width,
+            ));
         }
     }
 
@@ -1314,7 +1349,10 @@ mod tests {
             let (prompt, rprompt) = render_prompt(&left, &right);
             assert!(prompt.starts_with("%b%k%f"), "prompt: {prompt}");
             assert!(prompt.contains("AAA"), "prompt: {prompt}");
-            assert!(!prompt.contains("BBB"), "right leaked into PROMPT: {prompt}");
+            assert!(
+                !prompt.contains("BBB"),
+                "right leaked into PROMPT: {prompt}"
+            );
             assert!(rprompt.contains("BBB"), "rprompt: {rprompt}");
             assert!(rprompt.ends_with("%b%k%f"), "rprompt: {rprompt}");
         });
@@ -1381,8 +1419,14 @@ mod tests {
     fn segment_scoped_empty_end_symbol_suppresses_closer() {
         locked(|| {
             use crate::ported::params::{setsparam, unsetparam};
-            setsparam("POWERLEVEL9K_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", "\u{E0BC}");
-            setsparam("POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", "");
+            setsparam(
+                "POWERLEVEL9K_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL",
+                "\u{E0BC}",
+            );
+            setsparam(
+                "POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL",
+                "",
+            );
             assert_eq!(
                 crate::ported::params::getsparam(
                     "POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL"
@@ -1391,7 +1435,12 @@ mod tests {
                 "set-empty scalar must read back as Some(\"\")"
             );
             assert_eq!(
-                p9k_param("prompt_char", None, "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", "MISS"),
+                p9k_param(
+                    "prompt_char",
+                    None,
+                    "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL",
+                    "MISS"
+                ),
                 "",
                 "scoped-empty must win the probe chain"
             );
@@ -1511,7 +1560,10 @@ mod tests {
             );
             // Param/icon lookups used the BASE name: closer still the
             // stock separator glyph for bg 002.
-            assert!(line.ends_with("%b%k%F{002}\u{E0B0}%b%k%f"), "closer: {line}");
+            assert!(
+                line.ends_with("%b%k%F{002}\u{E0B0}%b%k%f"),
+                "closer: {line}"
+            );
         });
     }
 
@@ -1574,7 +1626,10 @@ mod tests {
             // m == -1 → right dropped.
             assert_eq!(align_line("LLLL", "RRRRR", 0, 10, &measure), "LLLL\n");
             // Hard overflow → right dropped.
-            assert_eq!(align_line("LLLLLLLL", "RRRRR", 0, 10, &measure), "LLLLLLLL\n");
+            assert_eq!(
+                align_line("LLLLLLLL", "RRRRR", 0, 10, &measure),
+                "LLLLLLLL\n"
+            );
             // Empty right → left + newline, no gap machinery
             // (p10k:5960).
             assert_eq!(align_line("LL", "", 0, 10, &measure), "LL\n");

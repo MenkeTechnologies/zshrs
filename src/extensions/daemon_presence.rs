@@ -531,7 +531,7 @@ pub fn recording_staleness() -> Option<String> {
         }
     }
     let shard_mtime = newest_shard?; // no recording yet → not "stale", just absent
-    // Any rc file newer than the recording?
+                                     // Any rc file newer than the recording?
     let zdotdir = std::env::var("ZDOTDIR")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_default();

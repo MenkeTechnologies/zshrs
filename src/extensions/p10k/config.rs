@@ -297,10 +297,7 @@ mod tests {
     #[test]
     fn param_arr_reads_arrays_and_wraps_scalars() {
         with_exec(|| {
-            setaparam(
-                "POWERLEVEL9K_DIR_TESTARR1",
-                vec!["a".into(), "b c".into()],
-            );
+            setaparam("POWERLEVEL9K_DIR_TESTARR1", vec!["a".into(), "b c".into()]);
             assert_eq!(
                 p9k_param_arr("dir", None, "TESTARR1"),
                 vec!["a".to_string(), "b c".to_string()]
@@ -351,10 +348,7 @@ mod tests {
     #[test]
     fn global_arr_forms() {
         with_exec(|| {
-            setaparam(
-                "POWERLEVEL9K_TESTGLOB2",
-                vec!["dir".into(), "vcs".into()],
-            );
+            setaparam("POWERLEVEL9K_TESTGLOB2", vec!["dir".into(), "vcs".into()]);
             assert_eq!(
                 p9k_global_arr("TESTGLOB2"),
                 vec!["dir".to_string(), "vcs".to_string()]

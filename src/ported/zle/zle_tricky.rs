@@ -713,8 +713,7 @@ pub fn docomplete(lst: i32) -> i32 {
     // c:606 — `if (active && !comprecursive)`. `comprecursive` (set by the
     // menu recursive-completion arms) temporarily permits re-entry.
     if ACTIVE.with(|c| c.get())
-        && crate::ported::zle::complist::COMPRECURSIVE
-            .load(std::sync::atomic::Ordering::Relaxed)
+        && crate::ported::zle::complist::COMPRECURSIVE.load(std::sync::atomic::Ordering::Relaxed)
             == 0
     {
         zwarn("completion cannot be used recursively (yet)");
@@ -1205,9 +1204,9 @@ pub fn get_comp_string() -> Option<String> {
     use crate::ported::string::{dupstring, ztrdup};
     use crate::ported::zle::compcore::{BRBEG, BREND, INWHAT, OFFS};
     use crate::ported::zsh_h::{
-        isset, lextok, AMPER, AMPERBANG, BARAMP, BAR_TOK, CASE, COMPLETEALIASES, DAMPER, DBAR,
-        DINPAR, DOLOOP, ENDINPUT, ENVARRAY, ENVSTRING, FOR, FOREACH, INPAR_TOK, IN_COND, IN_ENV,
-        IN_MATH, IN_NOTHING, IN_PAR, LEXERR, LEXFLAGS_ZLE, Inbrack, Meta, Outbrack, NULLTOK,
+        isset, lextok, Inbrack, Meta, Outbrack, AMPER, AMPERBANG, BARAMP, BAR_TOK, CASE,
+        COMPLETEALIASES, DAMPER, DBAR, DINPAR, DOLOOP, ENDINPUT, ENVARRAY, ENVSTRING, FOR, FOREACH,
+        INPAR_TOK, IN_COND, IN_ENV, IN_MATH, IN_NOTHING, IN_PAR, LEXERR, LEXFLAGS_ZLE, NULLTOK,
         OUTPAR_TOK, RCQUOTES, REPEAT, SELECT, SEPER, STRING_LEX, TYPESET,
     };
     use crate::ported::ztype_h::INAMESPC;
@@ -1233,10 +1232,7 @@ pub fn get_comp_string() -> Option<String> {
     // completion that found nothing (e.g. `ls -<Tab>` — no files start
     // with `-`) deleted the whole line instead of leaving it intact.
     {
-        if let Ok(mut g) = ORIGLINE
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-        {
+        if let Ok(mut g) = ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock() {
             *g = meta_snap.clone();
         }
         ORIGCS.store(zlemetacs, Ordering::SeqCst);
@@ -1291,15 +1287,21 @@ pub fn get_comp_string() -> Option<String> {
         let cs = (zlemetacs.max(0) as usize).min(bytes.len());
         let ll = bytes.len();
         let ch_at = bytes.get(cs).copied();
-        let prev_at = if cs > 0 { bytes.get(cs - 1).copied() } else { None };
+        let prev_at = if cs > 0 {
+            bytes.get(cs - 1).copied()
+        } else {
+            None
+        };
         let comppref = COMPPREF.load(Ordering::SeqCst) != 0;
         let instr = INSTRING.load(Ordering::SeqCst);
         let is_iblank = matches!(ch_at, Some(b' ' | b'\t'));
         let is_blank_unescaped = is_iblank && (cs == 0 || prev_at != Some(b'\\'));
         let cs_at_end = ch_at.is_none() || cs >= ll;
         let is_newline = ch_at == Some(b'\n');
-        let is_separator =
-            matches!(ch_at, Some(b')' | b'`' | b'}' | b';' | b'|' | b'&' | b'>' | b'<'));
+        let is_separator = matches!(
+            ch_at,
+            Some(b')' | b'`' | b'}' | b';' | b'|' | b'&' | b'>' | b'<')
+        );
         let is_instring_quote = instr != QT_NONE as i32 && matches!(ch_at, Some(b'"' | b'\''));
         let addspace = comppref && ch_at.is_some() && !matches!(ch_at, Some(b' ' | b'\t'));
         if cs_at_end
@@ -1368,12 +1370,12 @@ pub fn get_comp_string() -> Option<String> {
         INSUBSCR.store(0, Ordering::SeqCst); // c:1167
         clwpos = -1; // c:1168
         zcontext_save(); // c:1169
-        // c:1170 — `lexflags = LEXFLAGS_ZLE`. ACTIVE is OR'd in so the lexer
-        // TOLERATES an unterminated quote/backtick/brace at the cursor (the
-        // word being completed): the `!(lexflags & LEXFLAGS_ACTIVE)` guards on
-        // the unmatched → LEXERR / zerr paths (lex.c:1320/1344/1383/1445) then
-        // keep the partial word a usable STRING instead of aborting the
-        // completion with "unmatched \"".
+                         // c:1170 — `lexflags = LEXFLAGS_ZLE`. ACTIVE is OR'd in so the lexer
+                         // TOLERATES an unterminated quote/backtick/brace at the cursor (the
+                         // word being completed): the `!(lexflags & LEXFLAGS_ACTIVE)` guards on
+                         // the unmatched → LEXERR / zerr paths (lex.c:1320/1344/1383/1445) then
+                         // keep the partial word a usable STRING instead of aborting the
+                         // completion with "unmatched \"".
         LEX_LEXFLAGS.set(LEXFLAGS_ZLE | crate::ported::zsh_h::LEXFLAGS_ACTIVE);
         crate::ported::input::inpush(&dupstrspace(&linptr), 0, None); // c:1171
         crate::ported::hist::strinbeg(0); // c:1172
@@ -1708,7 +1710,7 @@ pub fn get_comp_string() -> Option<String> {
             wordpos - 1
         };
         t0 = tt0; // c:1452
-        // c:1453-1459 — array-assignment overrides lincmd/linredir.
+                  // c:1453-1459 — array-assignment overrides lincmd/linredir.
         if ia != 0 {
             LINCMD.store(0, Ordering::SeqCst);
             linredir = 0;
@@ -2236,7 +2238,7 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
     let mut i = 0;
     let mut l = 0i32; // c:2434 — line counter (the RETURN is a LINE count).
     let mut cc = 0i32; // c:2434 — column counter on the current line.
-    // c:2544/2595 — wrapping/return divide by the terminal width.
+                       // c:2544/2595 — wrapping/return divide by the terminal width.
     let zterm_columns = crate::ported::zle::zle_refresh::WINW
         .load(Ordering::Relaxed)
         .max(1);
@@ -2580,7 +2582,7 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
                     if col == ncols {
                         break;
                     } // c:2764-2765
-                    // c:2766 — pad = (pack ? widths[col-1] : longest) - lens[idx] + 2
+                      // c:2766 — pad = (pack ? widths[col-1] : longest) - lens[idx] + 2
                     let pad = (if pack != 0 {
                         widths[(col - 1) as usize]
                     } else {
@@ -2590,8 +2592,8 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
                     for _ in 0..pad.max(0) {
                         buf.push(b' ');
                     } // c:2767-2768
-                    // c:2769 — for (i = nlines; i && *p; i--, p++, lenp++);
-                    // advance idx by up to nlines, stopping at end of data.
+                      // c:2769 — for (i = nlines; i && *p; i--, p++, lenp++);
+                      // advance idx by up to nlines, stopping at end of data.
                     let mut i = nlines;
                     while i != 0 && (idx as usize) < num {
                         idx += 1;

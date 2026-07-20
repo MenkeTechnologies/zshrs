@@ -4065,7 +4065,7 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
     } else {
         // c:2972-3015 — safe write through a sibling `.new` file.
         let tf = format!("{}.new", umpath); // c:2973 bicat(fn, ".new")
-        // c:2974 — unlink(tmpfile); tolerate ENOENT.
+                                            // c:2974 — unlink(tmpfile); tolerate ENOENT.
         let unlink_ok = match std::fs::remove_file(&tf) {
             Ok(()) => true,
             Err(e) => e.kind() == std::io::ErrorKind::NotFound,
@@ -4115,7 +4115,8 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
                             let fd = f.as_raw_fd();
                             unsafe {
                                 let _ = libc::fchown(fd, m.uid(), m.gid()); // c:3010
-                                let _ = libc::fchmod(fd, m.mode() as libc::mode_t); // c:3012
+                                let _ = libc::fchmod(fd, m.mode() as libc::mode_t);
+                                // c:3012
                             }
                         }
                         tmpfile = Some(tf);
@@ -4163,8 +4164,7 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
             let flags = entry.node.flags;
             // c:3033-3036 — skip dup/foreign/tmpstore per the write flags.
             if (writeflags & HFILE_SKIPDUPS as i32 != 0 && flags & HIST_DUP as i32 != 0)
-                || (writeflags & HFILE_SKIPFOREIGN as i32 != 0
-                    && flags & HIST_FOREIGN as i32 != 0)
+                || (writeflags & HFILE_SKIPFOREIGN as i32 != 0 && flags & HIST_FOREIGN as i32 != 0)
                 || flags & HIST_TMPSTORE as i32 != 0
             {
                 cur = down_histent(h);
@@ -4226,13 +4226,13 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
                     buf.push(b'\\'); // c:3062
                 }
                 end_backslashes = c == b'\\' || (end_backslashes && c == b' '); // c:3064
-                // C writes the in-memory METAFIED text verbatim here
-                // (metafication happened at input time, utils.c:4856);
-                // zshrs's ring holds clean UTF-8, so metafy at write
-                // time for byte parity with zsh's HISTFILE: IMETA bytes
-                // ({0x00, 0x83..=0xA2}, typtab utils.c:4195-4201) are
-                // escaped as Meta + (byte ^ 32). readhistfile's
-                // unmetafy is the exact inverse.
+                                                                                // C writes the in-memory METAFIED text verbatim here
+                                                                                // (metafication happened at input time, utils.c:4856);
+                                                                                // zshrs's ring holds clean UTF-8, so metafy at write
+                                                                                // time for byte parity with zsh's HISTFILE: IMETA bytes
+                                                                                // ({0x00, 0x83..=0xA2}, typtab utils.c:4195-4201) are
+                                                                                // escaped as Meta + (byte ^ 32). readhistfile's
+                                                                                // unmetafy is the exact inverse.
                 if crate::ported::utils::imeta_byte(c) {
                     buf.push(0x83); // Meta
                     buf.push(c ^ 32);
@@ -4270,10 +4270,7 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
             if let Some(ref tf) = tmpfile {
                 // c:3089-3103 — rename the temp copy over the real file.
                 if std::fs::rename(tf, &umpath).is_err() {
-                    crate::ported::utils::zerr(&format!(
-                        "can't rename {}.new to $HISTFILE",
-                        path
-                    ));
+                    crate::ported::utils::zerr(&format!("can't rename {}.new to $HISTFILE", path));
                     ret = -1; // c:3092
                     err = false; // c:3093 err = 0;
                 }
@@ -4293,8 +4290,7 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
                     hist_ignore_all_dups.store(1, SeqCst); // c:3115
                 }
                 readhistfile(Some(&path), if err { 1 } else { 0 }, 0); // c:3116
-                hist_ignore_all_dups
-                    .store(if isset(HISTIGNOREALLDUPS) { 1 } else { 0 }, SeqCst); // c:3117
+                hist_ignore_all_dups.store(if isset(HISTIGNOREALLDUPS) { 1 } else { 0 }, SeqCst); // c:3117
                 if errflag.load(SeqCst) & ERRFLAG_INT != 0 {
                     ret = -1; // c:3119
                 } else if histlinect.load(SeqCst) != 0 {

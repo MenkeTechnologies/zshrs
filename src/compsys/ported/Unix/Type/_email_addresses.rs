@@ -39,9 +39,7 @@ use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle, zstyletab};
-use crate::ported::params::{
-    getaparam, gethkparam, gethparam, getsparam, setaparam, unsetparam,
-};
+use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, unsetparam};
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -131,11 +129,7 @@ fn extract_addrspec(s: &str, _pattern: &str) -> String {
 
 /// `zstyle -t ctx style` — true only when the style is set truthy.
 fn zstyle_test(ctx: &str, style: &str) -> bool {
-    zstyletab
-        .lock()
-        .ok()
-        .and_then(|t| t.test_bool(ctx, style))
-        == Some(true)
+    zstyletab.lock().ok().and_then(|t| t.test_bool(ctx, style)) == Some(true)
 }
 
 /// `$+opts[key]` — does the zparseopts assoc contain `key`?
@@ -361,7 +355,13 @@ fn email_local(args: &[String]) -> i32 {
     }
 
     // sh:81  if compset -P '*@'; then
-    if bin_compset("compset", &["-P".to_string(), "*@".to_string()], &make_ops(), 0) == 0 {
+    if bin_compset(
+        "compset",
+        &["-P".to_string(), "*@".to_string()],
+        &make_ops(),
+        0,
+    ) == 0
+    {
         // sh:82  _hosts "$@" "$suf[@]"
         let mut a = rest.clone();
         a.extend(suf);
@@ -369,7 +369,13 @@ fn email_local(args: &[String]) -> i32 {
     } else {
         // sh:84-87
         let mut suf2: Vec<String> = Vec::new();
-        if bin_compset("compset", &["-S".to_string(), "@*".to_string()], &make_ops(), 0) != 0 {
+        if bin_compset(
+            "compset",
+            &["-S".to_string(), "@*".to_string()],
+            &make_ops(),
+            0,
+        ) != 0
+        {
             suf2 = vec!["-qS".to_string(), "@".to_string()];
         }
         let mut a = suf2;
@@ -628,11 +634,8 @@ pub fn _email_addresses(args: &[String]) -> i32 {
                             .cloned()
                             .unwrap_or_else(|| "--".to_string());
                             // sh:165  zformat -a list " $sep " "${reply[@]}"
-                            let mut zf = vec![
-                                "-a".to_string(),
-                                "list".to_string(),
-                                format!(" {} ", sep),
-                            ];
+                            let mut zf =
+                                vec!["-a".to_string(), "list".to_string(), format!(" {} ", sep)];
                             zf.extend(reply.iter().cloned());
                             let _ = bin_zformat("zformat", &zf, &make_ops(), 0);
                             // sh:166-167  _wanted mail-aliases expl 'alias' compadd "$@" -d list - ${reply%%:*}

@@ -803,7 +803,9 @@ mod star_literal_star_fast_path {
 
     #[test]
     fn star_lit_star_basic() {
-        assert_parity(r#"v="abc needle xyz"; [[ $v = *needle* ]] && print y || print n; [[ $v = *missing* ]] && print y || print n"#);
+        assert_parity(
+            r#"v="abc needle xyz"; [[ $v = *needle* ]] && print y || print n; [[ $v = *missing* ]] && print y || print n"#,
+        );
     }
 
     #[test]

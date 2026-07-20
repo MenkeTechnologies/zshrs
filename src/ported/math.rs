@@ -390,7 +390,8 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                     None => true,
                 };
                 if module_ok {
-                    if let Some(v) = (e_.getfn)(std::ptr::null_mut(), idx_str).and_then(|p_| p_.u_str)
+                    if let Some(v) =
+                        (e_.getfn)(std::ptr::null_mut(), idx_str).and_then(|p_| p_.u_str)
                     {
                         if let Ok(n) = v.parse::<i64>() {
                             return mnumber {
@@ -3519,14 +3520,22 @@ pub(crate) fn op(what: i32) {
                     let mut a = a;
                     let mut b = b;
                     let mut cf = is_float; // c.type == MN_FLOAT
-                    // c:1337 — integer base with a negative integer exponent
-                    // "produces a real result, so cast to real." The cast of a
-                    // to float MUST happen before the zero check below: notzero
-                    // never faults on a float zero, so the all-integer
-                    // `0 ** -n` becomes pow(0.0,-n)=Inf rather than an error.
+                                           // c:1337 — integer base with a negative integer exponent
+                                           // "produces a real result, so cast to real." The cast of a
+                                           // to float MUST happen before the zero check below: notzero
+                                           // never faults on a float zero, so the all-integer
+                                           // `0 ** -n` becomes pow(0.0,-n)=Inf rather than an error.
                     if !cf && b.l < 0 {
-                        a = mnumber { l: 0, d: a.l as f64, type_: MN_FLOAT }; // c:1340
-                        b = mnumber { l: 0, d: b.l as f64, type_: MN_FLOAT }; // c:1341
+                        a = mnumber {
+                            l: 0,
+                            d: a.l as f64,
+                            type_: MN_FLOAT,
+                        }; // c:1340
+                        b = mnumber {
+                            l: 0,
+                            d: b.l as f64,
+                            type_: MN_FLOAT,
+                        }; // c:1341
                         cf = true; // c:1339 (a.type = b.type = c.type = MN_FLOAT)
                     }
                     if !cf {

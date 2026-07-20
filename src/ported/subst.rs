@@ -905,15 +905,15 @@ fn stringsubst(
                 if end < chars.len() && depth == 0 {
                     // c:237
                     let cmd: String = chars[cmd_open + 1..end].iter().collect(); // c:237
-                    // c:subst.c:399 — `getoutput(str2 + 1, qt || …)`. The
-                    // `$(<file)` fast path is handled INSIDE getoutput (the
-                    // port of exec.c simple_redir_name / REDIR_READ), which
-                    // correctly distinguishes a lone `<file` read-redirect from
-                    // a here-document or a command body that merely starts with
-                    // `<`. The prior adhoc `strip_prefix('<')` mis-fired on a
-                    // here-doc inside a double-quoted `"$(...)"` (docker's
-                    // `_retrieve_cache` serialized cache), emptying it → the
-                    // docker completer produced 0 matches.
+                                                                                 // c:subst.c:399 — `getoutput(str2 + 1, qt || …)`. The
+                                                                                 // `$(<file)` fast path is handled INSIDE getoutput (the
+                                                                                 // port of exec.c simple_redir_name / REDIR_READ), which
+                                                                                 // correctly distinguishes a lone `<file` read-redirect from
+                                                                                 // a here-document or a command body that merely starts with
+                                                                                 // `<`. The prior adhoc `strip_prefix('<')` mis-fired on a
+                                                                                 // here-doc inside a double-quoted `"$(...)"` (docker's
+                                                                                 // `_retrieve_cache` serialized cache), emptying it → the
+                                                                                 // docker completer produced 0 matches.
                     let output = getoutput(&cmd, 1).join("");
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() {
@@ -1509,9 +1509,7 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     // IFS char is a plain ISEP that hard-delimits and PRESERVES empty fields.
     // `${=:a:b:}` with IFS=: → 4 fields (``, a, b, ``), whereas a whitespace
     // IFS collapses runs and trims leading/trailing.
-    let is_ifs_wsep = |c: char| -> bool {
-        ifs.contains(c) && matches!(c, ' ' | '\t' | '\n')
-    };
+    let is_ifs_wsep = |c: char| -> bool { ifs.contains(c) && matches!(c, ' ' | '\t' | '\n') };
 
     if pf_flags & PREFORK_SPLIT != 0 {
         // c:553-562 — skip only leading IFS-WHITESPACE (a leading
@@ -1551,8 +1549,8 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
         let mut inq = false; // c:570 (bslashquote state)
         let mut inp = 0_i32; // c:570 (paren depth)
         let mut i = 0_usize; // c:572
-        // Tokens (META range \u{80}-\u{9F}) are single-byte markers that can
-        // never be separators. c:577.
+                             // Tokens (META range \u{80}-\u{9F}) are single-byte markers that can
+                             // never be separators. c:577.
         let is_tok = |c: char| matches!(c as u32, 0x80..=0x9F);
         // A non-whitespace ISEP at an UNQUOTED position (loop top is always
         // unquoted — findsep only breaks on unquoted separators).
@@ -2036,11 +2034,11 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             let close = if nx == Inbrack { Outbrack } else { ']' };
             if let Some(rel) = chars[2..].iter().position(|&c| c == close || c == ']') {
                 let end = 2 + rel; // index of the closing bracket
-                // c:760-761 — `untokenize(dupstrpfx(...)); remnulargs(tmp);`
+                                   // c:760-761 — `untokenize(dupstrpfx(...)); remnulargs(tmp);`
                 let inner: String = chars[2..end].iter().collect();
                 let mut tmp = crate::ported::lex::untokenize(&inner); // c:760
                 crate::ported::glob::remnulargs(&mut tmp); // c:761
-                // c:762 — `subst_string_by_hook("zsh_directory_name", "n", tmp)`
+                                                           // c:762 — `subst_string_by_hook("zsh_directory_name", "n", tmp)`
                 let res = crate::ported::utils::subst_string_by_hook(
                     "zsh_directory_name",
                     Some("n"),
@@ -2788,7 +2786,7 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> {
     } else {
         crate::ported::lex::parsestrnoerr(sp)
     } {
-        Ok(parsed) => parsed, // c:1466 parse ok
+        Ok(parsed) => parsed,  // c:1466 parse ok
         Err(_) => return None, // c:1484 parse error → C returns 1
     };
 
@@ -3638,16 +3636,16 @@ pub fn paramsubst(
         // `*ta = getvaluearr(v)` at c:1726-1729 before paramsubst
         // proper resumes.
         let mut split_parts: Option<Vec<String>> = None; // c:3950
-        // c:Src/subst.c:3032 — set when the DQ qt-sepjoin transition
-        // (`val = sepjoin(aval, sep, 1); isarr = 0`) collapses an array
-        // to a scalar in double-quote context. C joins EXACTLY ONCE here,
-        // before the substitution operators (`:#`/`:*`/`:|`) run, so the
-        // operator tests/updates the joined scalar and there is no second
-        // join. zshrs's (j:STR:) arm at ~12569 otherwise re-fetches the
-        // ORIGINAL array and re-joins, clobbering an operator result (a
-        // filtered/intersected empty or scalar) with the raw joined array.
-        // The flag lets that arm know `value` already holds the final
-        // joined-and-operated scalar and must not be re-derived.
+                                                         // c:Src/subst.c:3032 — set when the DQ qt-sepjoin transition
+                                                         // (`val = sepjoin(aval, sep, 1); isarr = 0`) collapses an array
+                                                         // to a scalar in double-quote context. C joins EXACTLY ONCE here,
+                                                         // before the substitution operators (`:#`/`:*`/`:|`) run, so the
+                                                         // operator tests/updates the joined scalar and there is no second
+                                                         // join. zshrs's (j:STR:) arm at ~12569 otherwise re-fetches the
+                                                         // ORIGINAL array and re-joins, clobbering an operator result (a
+                                                         // filtered/intersected empty or scalar) with the raw joined array.
+                                                         // The flag lets that arm know `value` already holds the final
+                                                         // joined-and-operated scalar and must not be re-derived.
         let mut dq_collapsed = false;
 
         // c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
@@ -5274,35 +5272,40 @@ pub fn paramsubst(
                 // enclosing reader. Real-array elements and `@`-flagged
                 // splits leave the flag false, so their empties survive
                 // (`${${(v)h}}`, `${${(o)arr}}`, `${${(@s.:.)v}}` all keep).
-                let inner_nonat_split =
-                    SUBEXP_NONAT_SPLIT.with(|c| { let v = c.get(); c.set(false); v });
-                let (joined, arr_parts, isarr) = if inner_nonat_split
-                    && isarr
-                    && arr_parts.iter().any(|p| p.is_empty())
-                {
-                    let filtered: Vec<String> =
-                        arr_parts.into_iter().filter(|p| !p.is_empty()).collect();
-                    // c:Src/subst.c:3922-3927 — the array-vs-scalar decision is
-                    // made on the UNFILTERED split (aval) at c:3924
-                    // `else if (!aval[1]) val = aval[0];`, i.e. BEFORE prefork
-                    // (c:100 `uremnode`) drops the empty nodes. So a split that
-                    // produced 2+ nodes stays ARRAY-shaped even when only ONE
-                    // node survives the empty drop: `${#${(f)$'one\n'}}` is 1
-                    // (a 1-element array), and `${${(f)$'one\n'}[1]}` is `one`
-                    // (element 1) — NOT the scalar length 3 / char `o`. Reaching
-                    // `filtered.len() == 1` here already implies the original
-                    // split had ≥2 nodes (this arm only runs when at least one
-                    // node was empty AND one survived), so the lone survivor is
-                    // an array, not a scalar. Only a genuinely single-node split
-                    // (which never enters this branch) is a scalar.
-                    match filtered.len() {
-                        0 => (String::new(), Vec::new(), false),
-                        1 => (filtered[0].clone(), filtered, true),
-                        _ => (crate::ported::utils::sepjoin(&filtered, None), filtered, true),
-                    }
-                } else {
-                    (joined, arr_parts, isarr)
-                };
+                let inner_nonat_split = SUBEXP_NONAT_SPLIT.with(|c| {
+                    let v = c.get();
+                    c.set(false);
+                    v
+                });
+                let (joined, arr_parts, isarr) =
+                    if inner_nonat_split && isarr && arr_parts.iter().any(|p| p.is_empty()) {
+                        let filtered: Vec<String> =
+                            arr_parts.into_iter().filter(|p| !p.is_empty()).collect();
+                        // c:Src/subst.c:3922-3927 — the array-vs-scalar decision is
+                        // made on the UNFILTERED split (aval) at c:3924
+                        // `else if (!aval[1]) val = aval[0];`, i.e. BEFORE prefork
+                        // (c:100 `uremnode`) drops the empty nodes. So a split that
+                        // produced 2+ nodes stays ARRAY-shaped even when only ONE
+                        // node survives the empty drop: `${#${(f)$'one\n'}}` is 1
+                        // (a 1-element array), and `${${(f)$'one\n'}[1]}` is `one`
+                        // (element 1) — NOT the scalar length 3 / char `o`. Reaching
+                        // `filtered.len() == 1` here already implies the original
+                        // split had ≥2 nodes (this arm only runs when at least one
+                        // node was empty AND one survived), so the lone survivor is
+                        // an array, not a scalar. Only a genuinely single-node split
+                        // (which never enters this branch) is a scalar.
+                        match filtered.len() {
+                            0 => (String::new(), Vec::new(), false),
+                            1 => (filtered[0].clone(), filtered, true),
+                            _ => (
+                                crate::ported::utils::sepjoin(&filtered, None),
+                                filtered,
+                                true,
+                            ),
+                        }
+                    } else {
+                        (joined, arr_parts, isarr)
+                    };
                 if isarr {
                     // c:Src/subst.c:2681 — an inner expansion that is
                     // ARRAY-shaped (isarr) stays an array through the nesting
@@ -5513,8 +5516,7 @@ pub fn paramsubst(
                             .collect()
                     };
                     static BANG_SEQ: AtomicUsize = AtomicUsize::new(0);
-                    let temp =
-                        format!("__subexp_arr_{}", BANG_SEQ.fetch_add(1, Ordering::Relaxed));
+                    let temp = format!("__subexp_arr_{}", BANG_SEQ.fetch_add(1, Ordering::Relaxed));
                     arrays_insert(temp.clone(), indices);
                     subexp_temp_guard.track(temp.clone());
                     subexp_array_temp = Some(temp);
@@ -5544,12 +5546,11 @@ pub fn paramsubst(
                             )
                             .chain(std::iter::once("argv"))
                             .collect();
-                    let mut names: Vec<String> =
-                        crate::vm_helper::partab_scan_keys("parameters")
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter(|n| n.starts_with(&target) && !magic.contains(n.as_str()))
-                            .collect();
+                    let mut names: Vec<String> = crate::vm_helper::partab_scan_keys("parameters")
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|n| n.starts_with(&target) && !magic.contains(n.as_str()))
+                        .collect();
                     names.sort();
                     names.dedup();
                     static BANG_PFX_SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -5636,8 +5637,8 @@ pub fn paramsubst(
         // the subscript opener as Inbrack TOKEN since the lexer
         // tokenizes `[`/`]` inside `${…}` to Inbrack/Outbrack.
         let mut subscript: Option<String> = None; // c:2867
-        // Apply the deferred `${!prefix@}`/`${!prefix*}` splat subscript (the
-        // `!` block above bound the name array into subexp_array_temp).
+                                                  // Apply the deferred `${!prefix@}`/`${!prefix*}` splat subscript (the
+                                                  // `!` block above bound the name array into subexp_array_temp).
         if let Some(s) = bang_prefix_subscript.take() {
             subscript = Some(s);
         }
@@ -6197,12 +6198,12 @@ pub fn paramsubst(
                     .or_else(|| arrays_get(&var_name).map(|a| a.join(" "))) // c:2741
                     .unwrap_or_default(); // c:2741
                 var_name = target; // c:2741
-                // c:params.c:2216 — fetchvalue reparses the operand as a
-                // parameter EXPRESSION via itype_end: only the leading
-                // identifier is used and trailing non-identifier text is
-                // discarded. So `${(P)t}` with t="a,b,c" derefs param `a`.
-                // A `name[sub]` value keeps its bracket for the subscript
-                // parser below; only bracket-free trailing junk is trimmed.
+                                   // c:params.c:2216 — fetchvalue reparses the operand as a
+                                   // parameter EXPRESSION via itype_end: only the leading
+                                   // identifier is used and trailing non-identifier text is
+                                   // discarded. So `${(P)t}` with t="a,b,c" derefs param `a`.
+                                   // A `name[sub]` value keeps its bracket for the subscript
+                                   // parser below; only bracket-free trailing junk is trimmed.
                 if !var_name.contains('[') {
                     let n = var_name
                         .as_bytes()
@@ -6484,18 +6485,14 @@ pub fn paramsubst(
                 // c:Src/params.c:1492-1494 — `(k)` (WANTKEYS without
                 // WANTVALS) returns the KEY when present, else empty;
                 // otherwise the VALUE (c:1591 + subst.c:2922/2926).
-                let want_key =
-                    (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
+                let want_key = (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
                 // Inline single-key read: lock the hashed store, clone
                 // just the one value — no whole-map clone or hash-bucket
                 // reorder. c:Src/params.c:570-575 nameref deref first.
-                let resolved =
-                    match crate::ported::params::resolve_nameref_name(&var_name, None) {
-                        crate::ported::params::nameref_resolution::Target { name: t_, .. } => {
-                            t_
-                        }
-                        _ => var_name.clone(),
-                    };
+                let resolved = match crate::ported::params::resolve_nameref_name(&var_name, None) {
+                    crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+                    _ => var_name.clone(),
+                };
                 let v = paramtab_hashed_storage()
                     .lock()
                     .ok()
@@ -6547,7 +6544,8 @@ pub fn paramsubst(
                 // 42k-iteration shell loops went O(n²): zpwr
                 // expandstats took 43s vs zsh's ~1s.
                 let sub: &str = crate::vm_helper::exact_assoc_sub_key(sub).unwrap();
-                let (contains, val) = crate::vm_helper::assoc_key_hit(&var_name, sub).unwrap_or((false, None));
+                let (contains, val) =
+                    crate::vm_helper::assoc_key_hit(&var_name, sub).unwrap_or((false, None));
                 if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0 {
                     // `(k)` on a plain-key subscript returns the KEY when
                     // present (c:Src/params.c:1492-1494 — see the arm below).
@@ -7762,15 +7760,15 @@ pub fn paramsubst(
                     // (subst.rs:7657) which already seeds split_parts.
                     isarr = if slice.is_empty() { -1 } else { 1 };
                     split_parts = Some(slice.clone()); // c:2596 (aval)
-                    // c:Src/subst.c:3032 — `val = sepjoin(aval,
-                    // sep, 1)`. Quoted array range `"${a[1,2]}"`
-                    // joins by IFS[0]. The range arm yields
-                    // isarr=0 (scalar shape), so it never reaches
-                    // the qt-sepjoin at subst.rs:7640 (unlike
-                    // `[*]`); call the ported sepjoin here for the
-                    // quoted case (Bug #635 range residual).
-                    // Unquoted keeps the space-join the caller
-                    // re-splits into words.
+                                                       // c:Src/subst.c:3032 — `val = sepjoin(aval,
+                                                       // sep, 1)`. Quoted array range `"${a[1,2]}"`
+                                                       // joins by IFS[0]. The range arm yields
+                                                       // isarr=0 (scalar shape), so it never reaches
+                                                       // the qt-sepjoin at subst.rs:7640 (unlike
+                                                       // `[*]`); call the ported sepjoin here for the
+                                                       // quoted case (Bug #635 range residual).
+                                                       // Unquoted keeps the space-join the caller
+                                                       // re-splits into words.
                     if qt {
                         crate::ported::utils::sepjoin(&slice, None) // c:3032
                     } else {
@@ -8204,7 +8202,10 @@ pub fn paramsubst(
                             if p.contains(',') {
                                 return None;
                             }
-                            if flags.chars().any(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K')) {
+                            if flags
+                                .chars()
+                                .any(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K'))
+                            {
                                 Some((flags, num, beg, p))
                             } else {
                                 None
@@ -8353,10 +8354,8 @@ pub fn paramsubst(
                                     && scalar_is_set
                                     && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) =>
                             {
-                                s_chars
-                                    .first()
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_default() // c:2140
+                                s_chars.first().map(|c| c.to_string()).unwrap_or_default()
+                                // c:2140
                             }
                             (None, false) => String::new(),
                         }
@@ -8950,68 +8949,68 @@ pub fn paramsubst(
                     }
                 }
             } else {
-            // Slice form `M,P` or single index `M`. Negative indices
-            // count from the end (per zsh's 1-based-from-1 / -1-from-
-            // end convention).
-            // c:Src/params.c:1656+ — scalar subscripts index CHARACTERS
-            // via MB_METACHARLEN. Demetafy `$'\xNN'` escapes to the
-            // logical-char form so `${x[N]}` / `${x[lo,hi]}` land on
-            // characters, not metafied bytes. Identity for non-metafied.
-            let dv: String =
-                String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(&raw_value))
-                    .into_owned();
-            let n = dv.chars().count() as i64;
-            let resolve = |k: i64| -> usize {
-                let k = if k < 0 { n + k + 1 } else { k };
-                if k < 1 {
-                    0
-                } else if k > n {
-                    n as usize
-                } else {
-                    (k - 1) as usize
-                }
-            };
-            if let Some((lo, hi)) = s2.split_once(',') {
-                let lo: i64 = lo
-                    .trim()
-                    .parse()
-                    .ok()
-                    .or_else(|| crate::ported::math::mathevali(lo.trim()).ok())
-                    .unwrap_or(1);
-                let hi: i64 = hi
-                    .trim()
-                    .parse()
-                    .ok()
-                    .or_else(|| crate::ported::math::mathevali(hi.trim()).ok())
-                    .unwrap_or(0);
-                let l = resolve(lo);
-                let h = if hi == 0 {
-                    n as usize
-                } else {
-                    let k = if hi < 0 { n + hi + 1 } else { hi };
+                // Slice form `M,P` or single index `M`. Negative indices
+                // count from the end (per zsh's 1-based-from-1 / -1-from-
+                // end convention).
+                // c:Src/params.c:1656+ — scalar subscripts index CHARACTERS
+                // via MB_METACHARLEN. Demetafy `$'\xNN'` escapes to the
+                // logical-char form so `${x[N]}` / `${x[lo,hi]}` land on
+                // characters, not metafied bytes. Identity for non-metafied.
+                let dv: String =
+                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(&raw_value))
+                        .into_owned();
+                let n = dv.chars().count() as i64;
+                let resolve = |k: i64| -> usize {
+                    let k = if k < 0 { n + k + 1 } else { k };
                     if k < 1 {
                         0
                     } else if k > n {
                         n as usize
                     } else {
-                        k as usize
+                        (k - 1) as usize
                     }
                 };
-                if l >= h {
-                    String::new()
+                if let Some((lo, hi)) = s2.split_once(',') {
+                    let lo: i64 = lo
+                        .trim()
+                        .parse()
+                        .ok()
+                        .or_else(|| crate::ported::math::mathevali(lo.trim()).ok())
+                        .unwrap_or(1);
+                    let hi: i64 = hi
+                        .trim()
+                        .parse()
+                        .ok()
+                        .or_else(|| crate::ported::math::mathevali(hi.trim()).ok())
+                        .unwrap_or(0);
+                    let l = resolve(lo);
+                    let h = if hi == 0 {
+                        n as usize
+                    } else {
+                        let k = if hi < 0 { n + hi + 1 } else { hi };
+                        if k < 1 {
+                            0
+                        } else if k > n {
+                            n as usize
+                        } else {
+                            k as usize
+                        }
+                    };
+                    if l >= h {
+                        String::new()
+                    } else {
+                        dv.chars().skip(l).take(h - l).collect()
+                    }
                 } else {
-                    dv.chars().skip(l).take(h - l).collect()
+                    let k: i64 = s2
+                        .trim()
+                        .parse()
+                        .ok()
+                        .or_else(|| crate::ported::math::mathevali(s2.trim()).ok())
+                        .unwrap_or(1);
+                    let i = resolve(k);
+                    dv.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()
                 }
-            } else {
-                let k: i64 = s2
-                    .trim()
-                    .parse()
-                    .ok()
-                    .or_else(|| crate::ported::math::mathevali(s2.trim()).ok())
-                    .unwrap_or(1);
-                let i = resolve(k);
-                dv.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()
-            }
             } // close the array-slice-vs-scalar-element `else`
         } else {
             raw_value
@@ -10087,10 +10086,7 @@ pub fn paramsubst(
             // splat that keeps array shape in DQ, with no special-casing: `(@)`
             // and bare `$@` arrive as -1 (c:2797 / SCANPM_ISVAR_AT) and a `[@]`
             // subscript arrives as 0.
-            if (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0)
-                && isarr > 0
-                && spsep.is_none()
-            {
+            if (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && isarr > 0 && spsep.is_none() {
                 // c:3032 + c:3317 !spsep guard
                 // C: `val = sepjoin(aval, sep, 1);`. `sep` defaults
                 // to first IFS char when no (j) flag overrode it.
@@ -10130,7 +10126,8 @@ pub fn paramsubst(
                         let live = crate::bash_arrays::compact(&var_name, sp.clone());
                         value = crate::ported::utils::sepjoin(&live, sep.as_deref());
                     } else {
-                        value = crate::ported::utils::sepjoin(sp, sep.as_deref()); // c:3032
+                        value = crate::ported::utils::sepjoin(sp, sep.as_deref());
+                        // c:3032
                     }
                 } else if let Some(arr) = arrays_get(&var_name) {
                     // KSHARRAYS bare array → join sees only element 0.
@@ -10153,15 +10150,15 @@ pub fn paramsubst(
                 }
                 isarr = 0; // c:3034
                 dq_collapsed = true; // c:3032 (single-join marker)
-                // NB: `split_parts` (C's `aval`) is deliberately LEFT INTACT.
-                // c:2799-2800 sets `val` and clears `isarr`, but C does NOT free
-                // `aval` — c:3406-3410 depends on it still being there:
-                //     if (aval && !isarr) quoted_array_with_offset = 1;
-                // which is what lets `"${arr:1:2}"` apply the offset as an ARRAY
-                // index before the join (the comment at c:1867 spells this out).
-                // Overwriting it with the joined scalar made that slice empty.
-                // Downstream arms discriminate on `dq_collapsed`, the way C
-                // discriminates on `isarr`.
+                                     // NB: `split_parts` (C's `aval`) is deliberately LEFT INTACT.
+                                     // c:2799-2800 sets `val` and clears `isarr`, but C does NOT free
+                                     // `aval` — c:3406-3410 depends on it still being there:
+                                     //     if (aval && !isarr) quoted_array_with_offset = 1;
+                                     // which is what lets `"${arr:1:2}"` apply the offset as an ARRAY
+                                     // index before the join (the comment at c:1867 spells this out).
+                                     // Overwriting it with the joined scalar made that slice empty.
+                                     // Downstream arms discriminate on `dq_collapsed`, the way C
+                                     // discriminates on `isarr`.
             }
         }
         // `split_parts` (c:3950) moved to function-scope declaration
@@ -10244,15 +10241,15 @@ pub fn paramsubst(
                 }
                 isarr = 0; // c:3034
                 dq_collapsed = true; // c:3032 (single-join marker)
-                // NB: `split_parts` (C's `aval`) is deliberately LEFT INTACT.
-                // c:2799-2800 sets `val` and clears `isarr`, but C does NOT free
-                // `aval` — c:3406-3410 depends on it still being there:
-                //     if (aval && !isarr) quoted_array_with_offset = 1;
-                // which is what lets `"${arr:1:2}"` apply the offset as an ARRAY
-                // index before the join (the comment at c:1867 spells this out).
-                // Overwriting it with the joined scalar made that slice empty.
-                // Downstream arms discriminate on `dq_collapsed`, the way C
-                // discriminates on `isarr`.
+                                     // NB: `split_parts` (C's `aval`) is deliberately LEFT INTACT.
+                                     // c:2799-2800 sets `val` and clears `isarr`, but C does NOT free
+                                     // `aval` — c:3406-3410 depends on it still being there:
+                                     //     if (aval && !isarr) quoted_array_with_offset = 1;
+                                     // which is what lets `"${arr:1:2}"` apply the offset as an ARRAY
+                                     // index before the join (the comment at c:1867 spells this out).
+                                     // Overwriting it with the joined scalar made that slice empty.
+                                     // Downstream arms discriminate on `dq_collapsed`, the way C
+                                     // discriminates on `isarr`.
             }
         }
         // c:Src/subst.c — `${assoc[(R)pat]}` / `${assoc[(I)pat]}` /
@@ -10667,9 +10664,9 @@ pub fn paramsubst(
                     }
                     if !qt {
                         let __dg = pretokenize_src_pat(default); // c:globlist (default-word glob)
-                        // Top-level `|` is alternation for FILENAME
-                        // GENERATION though literal for the shared pattern
-                        // callers — see the `:-` site above. Bug #1053.
+                                                                 // Top-level `|` is alternation for FILENAME
+                                                                 // GENERATION though literal for the shared pattern
+                                                                 // callers — see the `:-` site above. Bug #1053.
                         if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
@@ -10694,8 +10691,7 @@ pub fn paramsubst(
                 // then IFS-split, which both lost quoting and wrongly
                 // split. Only the (s:…:) flag (spsep) re-splits.
                 if arrasg != 0 && spsep.is_none() && !force_split {
-                    let (joined, parts, isarr_rhs, _ms) =
-                        multsub(default, PREFORK_NOSHWORDSPLIT);
+                    let (joined, parts, isarr_rhs, _ms) = multsub(default, PREFORK_NOSHWORDSPLIT);
                     value = joined.clone();
                     // c:Src/subst.c:3282-3293 — a SCALAR (non-isarr) RHS
                     // becomes a ONE-element array `arr[0]=val` (even when the
@@ -10886,8 +10882,7 @@ pub fn paramsubst(
                 if is_set && !raw_value.is_empty() {
                     // c:3300-3313 — the alternate word also goes through
                     // multsub: `${str+${(z)v}}` / `${str+$arr}` yield arrays.
-                    let (ms_joined, ms_parts, ms_isarr, _ms) =
-                        multsub(alt, PREFORK_NOSHWORDSPLIT);
+                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, PREFORK_NOSHWORDSPLIT);
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
@@ -10897,9 +10892,9 @@ pub fn paramsubst(
                     }
                     if !qt {
                         let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
-                        // Top-level `|` is alternation for FILENAME
-                        // GENERATION though literal for the shared pattern
-                        // callers — see the `:-` site above. Bug #1053.
+                                                             // Top-level `|` is alternation for FILENAME
+                                                             // GENERATION though literal for the shared pattern
+                                                             // callers — see the `:-` site above. Bug #1053.
                         if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
@@ -10932,8 +10927,7 @@ pub fn paramsubst(
                 // c:3296
                 if is_set {
                     // c:3300-3313 — multsub, not singsub (see `:+` above).
-                    let (ms_joined, ms_parts, ms_isarr, _ms) =
-                        multsub(alt, PREFORK_NOSHWORDSPLIT);
+                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, PREFORK_NOSHWORDSPLIT);
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
@@ -10943,9 +10937,9 @@ pub fn paramsubst(
                     }
                     if !qt {
                         let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
-                        // Top-level `|` is alternation for FILENAME
-                        // GENERATION though literal for the shared pattern
-                        // callers — see the `:-` site above. Bug #1053.
+                                                             // Top-level `|` is alternation for FILENAME
+                                                             // GENERATION though literal for the shared pattern
+                                                             // callers — see the `:-` site above. Bug #1053.
                         if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
@@ -11625,10 +11619,7 @@ pub fn paramsubst(
                             let mut _pst = crate::ported::pattern::rpat::new();
                             // c:Src/pattern.c — single-"*" (PAT_ANY) fast path
                             // matches the whole remainder without the bytecode.
-                            let matched = if (prog.0.flags
-                                & crate::ported::zsh_h::PAT_ANY)
-                                != 0
-                            {
+                            let matched = if (prog.0.flags & crate::ported::zsh_h::PAT_ANY) != 0 {
                                 Some(val.len())
                             } else {
                                 crate::ported::pattern::patmatch(
@@ -12162,46 +12153,46 @@ pub fn paramsubst(
                     // the longest matching window, which mis-orders a top-level
                     // alternation. Returns the END char index, honoring
                     // (#s)/(#e) via the real slice offset. None → no match.
-                    let match_end_at = |pat_str: &str, start: usize, cvv: &[char]| -> Option<usize> {
-                        let prog = crate::ported::pattern::patcompile(
-                            &{
-                                let mut t = pat_str.to_string();
-                                crate::ported::glob::tokenize(&mut t);
-                                t
-                            },
-                            PAT_HEAPDUP as i32,
-                            None,
-                        )?;
-                        let start_byte: usize =
-                            cvv[..start].iter().map(|c| c.len_utf8()).sum();
-                        let full: String = cvv.iter().collect();
-                        crate::ported::pattern::patflags.store(
-                            prog.0.flags
-                                | crate::ported::zsh_h::PAT_NOANCH
-                                | if start_byte > 0 {
-                                    crate::ported::zsh_h::PAT_NOTSTART
-                                } else {
-                                    0
+                    let match_end_at =
+                        |pat_str: &str, start: usize, cvv: &[char]| -> Option<usize> {
+                            let prog = crate::ported::pattern::patcompile(
+                                &{
+                                    let mut t = pat_str.to_string();
+                                    crate::ported::glob::tokenize(&mut t);
+                                    t
                                 },
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        let mut pst = crate::ported::pattern::rpat::new();
-                        let end_byte = crate::ported::pattern::patmatch(
-                            &prog.1,
-                            0,
-                            &full[start_byte..],
-                            0,
-                            &mut pst,
-                            prog.0.globflags,
-                        )? + start_byte;
-                        let mut ci = 0usize;
-                        let mut b = 0usize;
-                        while ci < cvv.len() && b < end_byte {
-                            b += cvv[ci].len_utf8();
-                            ci += 1;
-                        }
-                        Some(ci)
-                    };
+                                PAT_HEAPDUP as i32,
+                                None,
+                            )?;
+                            let start_byte: usize = cvv[..start].iter().map(|c| c.len_utf8()).sum();
+                            let full: String = cvv.iter().collect();
+                            crate::ported::pattern::patflags.store(
+                                prog.0.flags
+                                    | crate::ported::zsh_h::PAT_NOANCH
+                                    | if start_byte > 0 {
+                                        crate::ported::zsh_h::PAT_NOTSTART
+                                    } else {
+                                        0
+                                    },
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            let mut pst = crate::ported::pattern::rpat::new();
+                            let end_byte = crate::ported::pattern::patmatch(
+                                &prog.1,
+                                0,
+                                &full[start_byte..],
+                                0,
+                                &mut pst,
+                                prog.0.globflags,
+                            )? + start_byte;
+                            let mut ci = 0usize;
+                            let mut b = 0usize;
+                            while ci < cvv.len() && b < end_byte {
+                                b += cvv[ci].len_utf8();
+                                ci += 1;
+                            }
+                            Some(ci)
+                        };
                     if let Some(whole_pat) = both_anchor_pat {
                         if gms(val, whole_pat) {
                             let dyn_repl = resolve_repl(val, 0);
@@ -12222,11 +12213,7 @@ pub fn paramsubst(
                                 let _ = gms(&cand, anchor_pat);
                             }
                             let dyn_repl = resolve_repl(&cand, 0);
-                            return format!(
-                                "{}{}",
-                                dyn_repl,
-                                cv[end..].iter().collect::<String>()
-                            );
+                            return format!("{}{}", dyn_repl, cv[end..].iter().collect::<String>());
                         }
                         val.to_string()
                     } else if let Some(anchor_pat) = pat.strip_prefix('%') {
@@ -13294,21 +13281,22 @@ pub fn paramsubst(
                     .unwrap_or_default();
                 // KSHARRAYS bare array → set-op LHS is element 0 only
                 // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps all.
-                let arr: Vec<String> = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                    && subscript.is_none()
-                    && !was_at_star_splat
-                    && arrays_contains(&var_name)
-                {
-                    arr.into_iter().take(1).collect()
-                } else {
-                    arr
-                };
+                let arr: Vec<String> =
+                    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                        && subscript.is_none()
+                        && !was_at_star_splat
+                        && arrays_contains(&var_name)
+                    {
+                        arr.into_iter().take(1).collect()
+                    } else {
+                        arr
+                    };
                 let other_name = rhs.trim(); // c:3543
-                // c:Src/subst.c:3527 — the RHS must be a bare identifier:
-                // itype_end(s, INAMESPC, 0) has to reach the end of `s`, else
-                // abort with "not an identifier: s". Without this a non-name
-                // operand (`$(…)`, `b[1]`, `"lit"`, `b:t`) was silently treated
-                // as an unset parameter instead of erroring.
+                                             // c:Src/subst.c:3527 — the RHS must be a bare identifier:
+                                             // itype_end(s, INAMESPC, 0) has to reach the end of `s`, else
+                                             // abort with "not an identifier: s". Without this a non-name
+                                             // operand (`$(…)`, `b[1]`, `"lit"`, `b:t`) was silently treated
+                                             // as an unset parameter instead of erroring.
                 if crate::ported::utils::itype_end(
                     other_name,
                     crate::ported::ztype_h::INAMESPC,
@@ -13380,17 +13368,18 @@ pub fn paramsubst(
                     .unwrap_or_default();
                 // KSHARRAYS bare array → set-op LHS is element 0 only
                 // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps all.
-                let arr: Vec<String> = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                    && subscript.is_none()
-                    && !was_at_star_splat
-                    && arrays_contains(&var_name)
-                {
-                    arr.into_iter().take(1).collect()
-                } else {
-                    arr
-                };
+                let arr: Vec<String> =
+                    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                        && subscript.is_none()
+                        && !was_at_star_splat
+                        && arrays_contains(&var_name)
+                    {
+                        arr.into_iter().take(1).collect()
+                    } else {
+                        arr
+                    };
                 let other_name = rhs.trim(); // c:3543
-                // c:Src/subst.c:3527 — RHS must be a bare identifier (see `:|`).
+                                             // c:Src/subst.c:3527 — RHS must be a bare identifier (see `:|`).
                 if crate::ported::utils::itype_end(
                     other_name,
                     crate::ported::ztype_h::INAMESPC,
@@ -13479,8 +13468,7 @@ pub fn paramsubst(
                 // "inner runs in ssub" rule via SUBEXP_SCALAR_CTX, exactly like
                 // the plain array collapse does. Without this the nested zip
                 // walked per-element instead of joining the LHS first.
-                let zip_dq_ctx =
-                    (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
+                let zip_dq_ctx = (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
                 let zipped: Vec<String> =
                     if zip_dq_ctx && !is_at_subscript_zip && !other.is_empty() && !arr.is_empty() {
                         // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1);`.
@@ -13578,8 +13566,7 @@ pub fn paramsubst(
                 // c:Src/subst.c:3032 — DQ collapse of the LHS also fires in a
                 // NESTED scalar context (`"${${a:^b}}"`), tracked via
                 // SUBEXP_SCALAR_CTX just like the `:^^` arm above.
-                let zip_dq_ctx =
-                    (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
+                let zip_dq_ctx = (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
                 let zipped: Vec<String> = if other_unset && !arr_unset {
                     // b unset → return a verbatim.
                     arr.clone()
@@ -13594,7 +13581,7 @@ pub fn paramsubst(
                     // `[x,y,z,y,y]` — the same `sep` feeds both this collapse
                     // and the final c:3903 join.
                     let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
-                                                                            // outlen = min(1, blen). When blen=0 → 0 elements.
+                                                                                      // outlen = min(1, blen). When blen=0 → 0 elements.
                     if other.is_empty() {
                         Vec::new()
                     } else {
@@ -14079,22 +14066,21 @@ pub fn paramsubst(
                             arr.insert(0, s0); // c:715
                         }
                         let n = arr.len() as i64; // c:715
-                        // bash empties the slice when a negative offset underflows
-                        // past element 0 (`${a[@]: -5}` on a 3-elem array → "" in
-                        // bash, whole array in zsh/ksh93). See the scalar arm's
-                        // `bash_off_underflow` note. zsh clamps; bash yields empty.
-                        let bash_off_underflow = crate::extensions::dash_mode::bash_mode()
-                            && off < 0
-                            && (n + off) < 0;
+                                                  // bash empties the slice when a negative offset underflows
+                                                  // past element 0 (`${a[@]: -5}` on a 3-elem array → "" in
+                                                  // bash, whole array in zsh/ksh93). See the scalar arm's
+                                                  // `bash_off_underflow` note. zsh clamps; bash yields empty.
+                        let bash_off_underflow =
+                            crate::extensions::dash_mode::bash_mode() && off < 0 && (n + off) < 0;
                         let lo = if off < 0 {
                             (n + off).max(0)
                         } else {
                             off.min(n)
                         } as usize; // c:715
-                        // c:Src/subst.c:3786 — substring LENGTH is a math
-                        // expression; a parse failure is fatal (see the
-                        // scalar arm below). Surface it instead of the
-                        // prior `.unwrap_or(0)` swallow.
+                                    // c:Src/subst.c:3786 — substring LENGTH is a math
+                                    // expression; a parse failure is fatal (see the
+                                    // scalar arm below). Surface it instead of the
+                                    // prior `.unwrap_or(0)` swallow.
                         let len = match parts.get(1) {
                             // c:715
                             None => None,
@@ -14114,15 +14100,15 @@ pub fn paramsubst(
                                 }
                             },
                         };
-                                                                                                // c:Src/subst.c:3683-3690 — negative length is
-                                                                                                // first adjusted by `length += alen - offset`,
-                                                                                                // then if still negative, `zerr("substring
-                                                                                                // expression: %d < %d", length+offset, offset)`
-                                                                                                // fires and substitution aborts. zshrs's prior
-                                                                                                // port silently clamped to 0 via `.max(0)` so
-                                                                                                // `a=(); a=("${a[@]:0:-1}")` succeeded with an
-                                                                                                // empty slice instead of producing the C
-                                                                                                // diagnostic. Bug #120 in docs/BUGS.md.
+                        // c:Src/subst.c:3683-3690 — negative length is
+                        // first adjusted by `length += alen - offset`,
+                        // then if still negative, `zerr("substring
+                        // expression: %d < %d", length+offset, offset)`
+                        // fires and substitution aborts. zshrs's prior
+                        // port silently clamped to 0 via `.max(0)` so
+                        // `a=(); a=("${a[@]:0:-1}")` succeeded with an
+                        // empty slice instead of producing the C
+                        // diagnostic. Bug #120 in docs/BUGS.md.
                         let kept: Vec<String> = match len {
                             // c:715
                             Some(l) if l >= 0 => {
@@ -14221,8 +14207,7 @@ pub fn paramsubst(
                                 // This is the scalar sibling of the array arm's #120
                                 // fix; the scalar path previously `.max(0)`-clamped
                                 // `take` and silently returned "".
-                                let given_offset =
-                                    if off < 0 { (total + off).max(0) } else { off }; // c:3720
+                                let given_offset = if off < 0 { (total + off).max(0) } else { off }; // c:3720
                                 let end = total + l; // c:3730 strlen + (negative) length
                                 if end < given_offset {
                                     // c:3737-3740
@@ -15203,27 +15188,27 @@ pub fn paramsubst(
                 // values into one word ("V1 V2") instead of two elements.
                 // Same source the `:#` arm already uses (line ~8229).
                 if assoc_contains(&var_name) {
-                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
-                            // flags selected; only fall back to the raw VALUE list
-                            // when no flag picked one. Otherwise `${(k)m#k}` would
-                            // strip the values instead of the keys the (k) chose.
-                            split_parts.clone().or_else(|| {
-                                assoc_get(&var_name)
-                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
-                            })
-                        } else {
-                            None
-                        }
+                    // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                    // flags selected; only fall back to the raw VALUE list
+                    // when no flag picked one. Otherwise `${(k)m#k}` would
+                    // strip the values instead of the keys the (k) chose.
+                    split_parts.clone().or_else(|| {
+                        assoc_get(&var_name).map(|m| m.values().cloned().collect::<Vec<String>>())
+                    })
+                } else {
+                    None
+                }
             }) {
                 // KSHARRAYS bare array → case modifier folds only element 0.
-                let arr: Vec<String> = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                    && subscript.is_none()
-                    && !was_at_star_splat
-                {
-                    arr.into_iter().take(1).collect()
-                } else {
-                    arr
-                };
+                let arr: Vec<String> =
+                    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                        && subscript.is_none()
+                        && !was_at_star_splat
+                    {
+                        arr.into_iter().take(1).collect()
+                    } else {
+                        arr
+                    };
                 let new_arr: Vec<String> = arr.iter().map(|s| transform(s)).collect();
                 value = new_arr.join(" "); // c:3937
                 split_parts = Some(new_arr); // c:3937
@@ -15300,7 +15285,7 @@ pub fn paramsubst(
                 // c:4290
                 value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
             }; // c:4290
-            // KSHARRAYS bare array → sort/unique fold only element 0.
+               // KSHARRAYS bare array → sort/unique fold only element 0.
             let parts: Vec<String> = if split_parts.is_none()
                 && !was_at_star_splat
                 && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
@@ -16109,18 +16094,18 @@ pub fn paramsubst(
                                              // `$`/`` ` `` arms (Src/subst.c:265 `case Bnull: *s='\0'`
                                              // skip) and untokenize to the literal char at the final
                                              // output pass. Mirrors C bufferwords' tokenized result.
-            // Wrap each `$` / `` ` `` in Snull single-quote markers rather
-            // than prefixing with Bnull. Both stop stringsubst re-expanding
-            // the char (subst.rs:654-665 treats a Snull region as a literal
-            // `'…'` span, stripping the markers and keeping the content
-            // verbatim), but Bnull UNTOKENIZES to a literal backslash
-            // (C ztokens maps Bnull → `\`, lex.rs:4936), so `${(z)v}` for
-            // v=`a$b` came out `a\$b` instead of zsh's `a$b`. Snull is
-            // stripped by stringsubst before any untokenize sees it, so the
-            // `$` survives as a bare literal char — matching zsh's `(z)`
-            // which keeps `$foo` unexpanded AND unescaped. Bug #363's
-            // re-expansion guard is preserved (Snull is still a literal
-            // region); only the spurious backslash is gone.
+                                             // Wrap each `$` / `` ` `` in Snull single-quote markers rather
+                                             // than prefixing with Bnull. Both stop stringsubst re-expanding
+                                             // the char (subst.rs:654-665 treats a Snull region as a literal
+                                             // `'…'` span, stripping the markers and keeping the content
+                                             // verbatim), but Bnull UNTOKENIZES to a literal backslash
+                                             // (C ztokens maps Bnull → `\`, lex.rs:4936), so `${(z)v}` for
+                                             // v=`a$b` came out `a\$b` instead of zsh's `a$b`. Snull is
+                                             // stripped by stringsubst before any untokenize sees it, so the
+                                             // `$` survives as a bare literal char — matching zsh's `(z)`
+                                             // which keeps `$foo` unexpanded AND unescaped. Bug #363's
+                                             // re-expansion guard is preserved (Snull is still a literal
+                                             // region); only the spurious backslash is gone.
             let snull = crate::ported::zsh_h::Snull;
             for w in words.iter_mut() {
                 if w.contains('$') || w.contains('`') {
@@ -16456,8 +16441,10 @@ pub fn paramsubst(
         // nounset OFF and is removed.
         if !is_set && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
             let tail = rest.strip_prefix(':').unwrap_or(rest.as_str());
-            let op_handles_unset =
-                matches!(tail.chars().next(), Some('-') | Some('+') | Some('=') | Some('?'));
+            let op_handles_unset = matches!(
+                tail.chars().next(),
+                Some('-') | Some('+') | Some('=') | Some('?')
+            );
             if !op_handles_unset {
                 zerr(&format!("{}: parameter not set", var_name)); // c:1689
                 errflag_set_error();
@@ -16658,8 +16645,8 @@ pub fn paramsubst(
             // `var_name == "@"` arm `"${(q)@}"` gave `a\ b\ c` instead of zsh's
             // `a b\ c`, and zinit's `${(j: :)${(q)@}}` compdef-replay produced
             // one escaped word (a bogus `compdef: unknown command` per call).
-            let want_per_element = !dq_collapsed
-                && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
+            let want_per_element =
+                !dq_collapsed && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
             // c:2237
             if let Some(parts) = split_parts.clone() {
                 if want_per_element {
@@ -16681,17 +16668,17 @@ pub fn paramsubst(
                     // turning `${(q)m}` into `v1\ v2` (one word) instead of
                     // two quoted elements.
                     if assoc_contains(&var_name) {
-                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
-                            // flags selected; only fall back to the raw VALUE list
-                            // when no flag picked one. Otherwise `${(k)m#k}` would
-                            // strip the values instead of the keys the (k) chose.
-                            split_parts.clone().or_else(|| {
-                                assoc_get(&var_name)
-                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
-                            })
-                        } else {
-                            None
-                        }
+                        // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                        // flags selected; only fall back to the raw VALUE list
+                        // when no flag picked one. Otherwise `${(k)m#k}` would
+                        // strip the values instead of the keys the (k) chose.
+                        split_parts.clone().or_else(|| {
+                            assoc_get(&var_name)
+                                .map(|m| m.values().cloned().collect::<Vec<String>>())
+                        })
+                    } else {
+                        None
+                    }
                 })
                 .filter(|_| subscript.is_none() || is_at_subscript_splat)
             {
@@ -16767,8 +16754,8 @@ pub fn paramsubst(
             // must stay identical. `is_at_subscript_splat` is re-derived here
             // because that arm scopes it to its own block.
             let is_at_subscript_splat = matches!(subscript.as_deref(), Some("@") | Some("*"));
-            let want_per_element = !dq_collapsed
-                && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
+            let want_per_element =
+                !dq_collapsed && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
             if !want_per_element {
                 // c:3970 scalar arm on the already-joined value.
                 let joined = match split_parts.clone() {
@@ -16902,28 +16889,28 @@ pub fn paramsubst(
             // c:1885
             String::new() // c:1885
         }; // c:1885
-        // The suffix (text after this `${…}`) rides along with only the OUTER
-        // brace tokenized at entry — a trailing RAW `${…}` / `$name` there is
-        // invisible to a caller that does NOT re-scan. The compiled single-call
-        // caller never re-scans, so when it hands paramsubst a word holding
-        // MULTIPLE adjacent expansions (`${(M)0:#1}${x}`) the second one lands
-        // in this suffix untouched and was emitted literally. Fully expand the
-        // suffix here in that case (guarded on `$`) so nothing leaks out.
-        // This broke zinit's turbo test
-        // `[[ -n ${(M)${+ICE[wait]}:#1}${ICE[load]}… ]]` (the literal
-        // `${ICE[load]}` made it non-empty → every plugin wrongly deferred).
-        //
-        // BUT the RECURSIVE `stringsubst` caller (subst.rs:1065) DOES re-scan:
-        // it resumes scanning the returned word from `new_pos`, so it will
-        // expand the suffix's `${…}` itself. Re-expanding it here as well is
-        // both redundant AND recursive — for a word with N adjacent expansions
-        // (p10k's prompt-param init word has ~200 `${POWERLEVEL9K_*-default}`)
-        // it re-`singsub`s the entire remaining suffix at EVERY expansion,
-        // giving O(N²)+ recursion that hangs the shell. So only expand the
-        // suffix when we are NOT nested inside stringsubst — i.e. the caller
-        // won't re-scan. `IN_PARAMSUBST_NEST` is bumped by stringsubst around
-        // its paramsubst call (subst.rs:1064), so `== 0` means the non-
-        // re-scanning (compiled/direct) path where #641's fix is needed.
+           // The suffix (text after this `${…}`) rides along with only the OUTER
+           // brace tokenized at entry — a trailing RAW `${…}` / `$name` there is
+           // invisible to a caller that does NOT re-scan. The compiled single-call
+           // caller never re-scans, so when it hands paramsubst a word holding
+           // MULTIPLE adjacent expansions (`${(M)0:#1}${x}`) the second one lands
+           // in this suffix untouched and was emitted literally. Fully expand the
+           // suffix here in that case (guarded on `$`) so nothing leaks out.
+           // This broke zinit's turbo test
+           // `[[ -n ${(M)${+ICE[wait]}:#1}${ICE[load]}… ]]` (the literal
+           // `${ICE[load]}` made it non-empty → every plugin wrongly deferred).
+           //
+           // BUT the RECURSIVE `stringsubst` caller (subst.rs:1065) DOES re-scan:
+           // it resumes scanning the returned word from `new_pos`, so it will
+           // expand the suffix's `${…}` itself. Re-expanding it here as well is
+           // both redundant AND recursive — for a word with N adjacent expansions
+           // (p10k's prompt-param init word has ~200 `${POWERLEVEL9K_*-default}`)
+           // it re-`singsub`s the entire remaining suffix at EVERY expansion,
+           // giving O(N²)+ recursion that hangs the shell. So only expand the
+           // suffix when we are NOT nested inside stringsubst — i.e. the caller
+           // won't re-scan. `IN_PARAMSUBST_NEST` is bumped by stringsubst around
+           // its paramsubst call (subst.rs:1064), so `== 0` means the non-
+           // re-scanning (compiled/direct) path where #641's fix is needed.
         let suffix = if suffix.contains('$') && IN_PARAMSUBST_NEST.with(|c| c.get()) == 0 {
             singsub(&suffix)
         } else {
@@ -17029,9 +17016,10 @@ pub fn paramsubst(
                     vec![value.clone()]
                 });
                 isarr = 1;
-            } else if split_parts.as_ref().map_or(value.is_empty(), |p| {
-                p.len() == 1 && p[0].is_empty()
-            }) {
+            } else if split_parts
+                .as_ref()
+                .map_or(value.is_empty(), |p| p.len() == 1 && p[0].is_empty())
+            {
                 // c:Src/subst.c — the `(A)` array-force applies hmkarray to
                 // the SCALARIZED result, so a LONE empty-string element (a
                 // single real "" reached by subscript, or the getarrvalue
@@ -17067,8 +17055,8 @@ pub fn paramsubst(
             && sep.is_none()                                 // c:3906-3907 (j/F flag already sepjoin'd → scalar)
             && (arrays_contains(&var_name)         // c:3950
                 || split_parts.is_some()))); // c:3950 ((s::) made an array)
-        // c:3932 — `else l->list.flags &= ~LF_ARRAY;` (the non-array default;
-        // the array case overrides it below, once `parts` is known).
+                                             // c:3932 — `else l->list.flags &= ~LF_ARRAY;` (the non-array default;
+                                             // the array case overrides it below, once `parts` is known).
         PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
         if (nojoin == 2) || auto_splat {
             // c:3950
@@ -17266,9 +17254,7 @@ pub fn paramsubst(
                         // elements, dropping hole slots (`a[5]=q` padding,
                         // `unset a[i]`). No-op in --zsh (dense).
                         .map(|a| crate::bash_arrays::compact(&var_name, a))
-                        .or_else(|| {
-                            assoc_get(&var_name).map(|m| m.values().cloned().collect())
-                        })
+                        .or_else(|| assoc_get(&var_name).map(|m| m.values().cloned().collect()))
                         .unwrap_or_else(|| vec![value.clone()])
                 } else {
                     // c:Src/params.c:2926 getarrvalue — a SINGLE-index
@@ -17286,17 +17272,17 @@ pub fn paramsubst(
                 // bash sparse arrays: bare-array splat drops hole slots.
                 // No-op in --zsh (dense). c:3960 (real array splat)
                 crate::bash_arrays::compact(&var_name, arr.clone())
-            } else if let Some(keys) = (if (hkeys & SCANPM_WANTKEYS) != 0
-                && (hvals & SCANPM_WANTVALS) == 0
+            } else if let Some(keys) =
+                (if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0 {
+                    // c:3955 (k-flag splat) — keys ONLY. Route through
+                    // assoc_keys so a magic assoc's per-key getfn never runs:
+                    // `${(qk)functions[@]}` (zinit's diff) must not deparse
+                    // every function body.
+                    assoc_keys(&var_name)
+                } else {
+                    None
+                })
             {
-                // c:3955 (k-flag splat) — keys ONLY. Route through
-                // assoc_keys so a magic assoc's per-key getfn never runs:
-                // `${(qk)functions[@]}` (zinit's diff) must not deparse
-                // every function body.
-                assoc_keys(&var_name)
-            } else {
-                None
-            }) {
                 keys
             } else if let Some(map) = assoc_get(&var_name) {
                 if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
@@ -18239,14 +18225,18 @@ pub fn paramsubst(
         let suffix: String = chars[pos..].iter().collect(); // c:1625
         let result = format!("{}{}{}", prefix, value, suffix); // c:1625
         result_nodes.push(result.clone()); // c:1625
-        // Resume position is a CHAR index into the reconstructed word
-        // (the caller, stringsubst, indexes `chars[pos]`). Byte lengths
-        // (`prefix.len() + value.len()`) skipped past the next `$` when
-        // the value held a multibyte char (e.g. `${:-$1$1}` with `$1`
-        // holding a box-drawing `─`), leaving the following expansion
-        // literal — which broke p10k's `_p9k_prompt_length` (`bad math
-        // expression`) and hung the prompt. Bug #647.
-        return (result, prefix.chars().count() + value.chars().count(), result_nodes); // c:1625
+                                           // Resume position is a CHAR index into the reconstructed word
+                                           // (the caller, stringsubst, indexes `chars[pos]`). Byte lengths
+                                           // (`prefix.len() + value.len()`) skipped past the next `$` when
+                                           // the value held a multibyte char (e.g. `${:-$1$1}` with `$1`
+                                           // holding a box-drawing `─`), leaving the following expansion
+                                           // literal — which broke p10k's `_p9k_prompt_length` (`bad math
+                                           // expression`) and hung the prompt. Bug #647.
+        return (
+            result,
+            prefix.chars().count() + value.chars().count(),
+            result_nodes,
+        ); // c:1625
     } // c:1625
 
     // c:Src/subst.c:2596-2602 — `$~` / `$~~` GLOB_SUBST flag prefix
@@ -18327,7 +18317,11 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
+            (
+                result,
+                prefix.chars().count() + value.chars().count(),
+                result_nodes,
+            ) // c:1625
         } // c:1625
         c if c == '$' || c == Stringg => {
             // c:1625
@@ -18341,7 +18335,11 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
+            (
+                result,
+                prefix.chars().count() + value.chars().count(),
+                result_nodes,
+            ) // c:1625
         } // c:1625
         c if c == '#' || c == Pound => {
             // c:1625
@@ -18424,7 +18422,11 @@ pub fn paramsubst(
             let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
+            (
+                result,
+                prefix.chars().count() + value.chars().count(),
+                result_nodes,
+            ) // c:1625
         } // c:1625
         '*' | '@' => {
             // c:1625
@@ -18562,7 +18564,11 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
+            (
+                result,
+                prefix.chars().count() + value.chars().count(),
+                result_nodes,
+            ) // c:1625
         } // c:1625
         '0'..='9' => {
             // c:1625
@@ -18604,7 +18610,11 @@ pub fn paramsubst(
             let suffix: String = chars[nx..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
+            (
+                result,
+                prefix.chars().count() + value.chars().count(),
+                result_nodes,
+            ) // c:1625
         } // c:1625
         // c:Src/subst.c — `$-:MOD`, `$!:MOD`. Routes through
         // exec_getsparam which dispatches to lookup_special_var
@@ -18624,7 +18634,11 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect();
             let result = format!("{}{}{}", prefix, value, suffix);
             result_nodes.push(result.clone());
-            (result, prefix.chars().count() + value.chars().count(), result_nodes)
+            (
+                result,
+                prefix.chars().count() + value.chars().count(),
+                result_nodes,
+            )
         }
         _ => {
             // c:1625
@@ -18919,11 +18933,11 @@ pub fn modify(s: &str, modifiers: &str) -> String {
     while chars.peek() == Some(&':') {
         // c:4531
         chars.next(); // consume ':'                        // c:4531
-        // c:Src/subst.c:3788 — `s[1]`, the first char after this `:`.
-        // When modify() consumes only flag chars (g/w/W/f/F) and finds no
-        // modifier letter, it resets and returns, and the caller reports
-        // THIS char in `unrecognized modifier `%c'` — not the last-consumed
-        // flag and not a bare message.
+                      // c:Src/subst.c:3788 — `s[1]`, the first char after this `:`.
+                      // When modify() consumes only flag chars (g/w/W/f/F) and finds no
+                      // modifier letter, it resets and returns, and the caller reports
+                      // THIS char in `unrecognized modifier `%c'` — not the last-consumed
+                      // flag and not a bare message.
         let first_after_colon = chars.peek().copied();
 
         let mut gbal = false; // c:4531
@@ -22449,13 +22463,14 @@ mod tests {
     #[test]
     fn paramsubst_zip_setop_rhs_must_be_identifier() {
         let _g = crate::test_util::global_state_lock();
-        let _ = crate::ported::params::setaparam(
-            "ZB",
-            vec!["x".into(), "y".into(), "z".into()],
-        );
+        let _ = crate::ported::params::setaparam("ZB", vec!["x".into(), "y".into(), "z".into()]);
         // Valid: zip two arrays by name.
         let (out, multi) = psubst_arr("ZA", &["1", "2", "3"], "${ZA[@]:^ZB}");
-        let got = if multi.is_empty() { out } else { multi.join(" ") };
+        let got = if multi.is_empty() {
+            out
+        } else {
+            multi.join(" ")
+        };
         assert_eq!(got, "1 x 2 y 3 z", "valid :^ zips");
         // Invalid RHS operands each abort with errflag set.
         for expr in [

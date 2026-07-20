@@ -20,8 +20,8 @@
 //! sh:199  return 0
 //! ```
 
-use crate::ported::params::{paramtab, setaparam};
 use crate::ported::modules::parameter::paramtypestr;
+use crate::ported::params::{paramtab, setaparam};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -51,7 +51,9 @@ fn is_position(s: &str) -> bool {
         return true;
     }
     // `<1->` matches the numeric VALUE ≥ 1 (so "0" does not match).
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s.parse::<u64>().map_or(false, |n| n >= 1)
+    !s.is_empty()
+        && s.bytes().all(|b| b.is_ascii_digit())
+        && s.parse::<u64>().map_or(false, |n| n >= 1)
 }
 
 /// `_arg_compile` — compile arg-specs into the caller-named array.
@@ -343,9 +345,7 @@ mod tests {
     fn argument_phrase_builds_pos_means_action() {
         let _g = crate::test_util::global_state_lock();
         // argument 1 means "file" action _files
-        let out = compile(&[
-            "args", "argument", "1", "means", "file", "action", "_files",
-        ]);
+        let out = compile(&["args", "argument", "1", "means", "file", "action", "_files"]);
         assert_eq!(out, vec!["1:file:_files"]);
     }
 
@@ -356,7 +356,13 @@ mod tests {
         // follow close => "-"; dspec entry = through("")+means(":debug level")
         //   +action(":") => ":debug level:"; argspec = "-d" + "-" + ":debug level:"
         let out = compile(&[
-            "args", "option", "-d", "follow", "close", "means", "debug level",
+            "args",
+            "option",
+            "-d",
+            "follow",
+            "close",
+            "means",
+            "debug level",
         ]);
         assert_eq!(out, vec!["-d-:debug level:"]);
     }
@@ -366,9 +372,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // option -a explain foo unless -b
         // -> "(-b)-a[foo]"
-        let out = compile(&[
-            "args", "option", "-a", "explain", "foo", "unless", "-b",
-        ]);
+        let out = compile(&["args", "option", "-a", "explain", "foo", "unless", "-b"]);
         assert_eq!(out, vec!["(-b)-a[foo]"]);
     }
 
@@ -406,10 +410,7 @@ mod tests {
             "action",
             "_dir_list",
         ]);
-        assert_eq!(
-            out,
-            vec![":profile file:_files", "-- *=dirs*::_dir_list"]
-        );
+        assert_eq!(out, vec![":profile file:_files", "-- *=dirs*::_dir_list"]);
     }
 
     #[test]

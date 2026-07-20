@@ -70,7 +70,11 @@ fn run_interactive(prog: &str, args: &[&str], script: &str) -> String {
 }
 
 fn zshrs_i(script: &str) -> String {
-    run_interactive(zshrs_bin().to_str().unwrap(), &["--zsh", "-f", "-i"], script)
+    run_interactive(
+        zshrs_bin().to_str().unwrap(),
+        &["--zsh", "-f", "-i"],
+        script,
+    )
 }
 fn zsh_i(script: &str) -> String {
     run_interactive(zsh_path(), &["-f", "-i"], script)
@@ -151,8 +155,15 @@ fn alias_beats_function_parity() {
     let script = "foo() { echo FN-foo }\nalias foo='echo ALIAS-foo'\nfoo";
     let z = zsh_i(script);
     let r = zshrs_i(script);
-    assert_eq!(z.trim_end(), r.trim_end(), "alias>function: zsh={z:?} zshrs={r:?}");
-    assert!(r.contains("ALIAS-foo"), "alias did not win over function: {r:?}");
+    assert_eq!(
+        z.trim_end(),
+        r.trim_end(),
+        "alias>function: zsh={z:?} zshrs={r:?}"
+    );
+    assert!(
+        r.contains("ALIAS-foo"),
+        "alias did not win over function: {r:?}"
+    );
 }
 
 // Note on the `reserved word > function` tier: reserved words (`if`,
@@ -171,7 +182,10 @@ fn alias_beats_function_parity() {
 fn builtin_prefix_bypasses_function_shadow() {
     let script = "cd() { builtin cd \"$@\"; echo WRAPPED }\ncd /tmp\npwd";
     let out = zshrs_i(script);
-    assert!(out.contains("WRAPPED"), "wrapper did not run (builtin cd failed): {out:?}");
+    assert!(
+        out.contains("WRAPPED"),
+        "wrapper did not run (builtin cd failed): {out:?}"
+    );
     assert_eq!(
         out.matches("WRAPPED").count(),
         1,

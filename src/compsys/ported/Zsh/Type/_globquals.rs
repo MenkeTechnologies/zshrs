@@ -186,8 +186,8 @@ pub fn _globquals() -> i32 {
         match ch {
             // sh:12  no-argument qualifiers — consumed, keep scanning.
             '-' | '/' | 'F' | '.' | '@' | '=' | 'p' | '*' | 'r' | 'w' | 'x' | 'A' | 'I' | 'E'
-            | 'R' | 'W' | 'X' | 's' | 'S' | 't' | 'U' | 'G' | '^' | 'M' | 'T' | 'N' | 'D'
-            | 'n' | ',' => {}
+            | 'R' | 'W' | 'X' | 's' | 'S' | 't' | 'U' | 'G' | '^' | 'M' | 'T' | 'N' | 'D' | 'n'
+            | ',' => {}
 
             // sh:16  (%) optional b, c
             '%' => {
@@ -343,9 +343,7 @@ pub fn _globquals() -> i32 {
                             ["+", "", "-"].iter().map(|s| s.to_string()).collect(),
                         );
                         // sh:139  ("senses:sense${default}:…"), default="".
-                        alts.push(
-                            "senses:sense:compadd -E 0 -d sdisp -S '' -a smatch".to_string(),
-                        );
+                        alts.push("senses:sense:compadd -E 0 -d sdisp -S '' -a smatch".to_string());
                     }
                     // sh:142
                     alts.push(format!(
@@ -379,9 +377,7 @@ pub fn _globquals() -> i32 {
                         && getsparam("PREFIX").unwrap_or_default().is_empty()
                     {
                         // sh:159
-                        alts.push(
-                            "senses:sense:((-\\:less\\ than +\\:more\\ than))".to_string(),
-                        );
+                        alts.push("senses:sense:((-\\:less\\ than +\\:more\\ than))".to_string());
                     }
                     // sh:161
                     alts.push("digits:digit: ".to_string());
@@ -454,15 +450,7 @@ pub fn _globquals() -> i32 {
     setaparam("quals", QUALS.iter().map(|s| s.to_string()).collect());
     call(
         "_describe",
-        &[
-            "-t",
-            "globquals",
-            "glob qualifier",
-            "quals",
-            "-Q",
-            "-S",
-            "",
-        ],
+        &["-t", "globquals", "glob qualifier", "quals", "-Q", "-S", ""],
     )
 }
 

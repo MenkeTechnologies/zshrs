@@ -1584,8 +1584,7 @@ pub fn dotrap(sig: i32) -> i32 {
     // three — so the selective form still stops the recursion while no
     // longer swallowing signals zsh delivers: `TRAPUSR2() { kill -USR1 $$ }`
     // runs the USR1 trap in zsh and was dropped here.
-    if intrap.load(Ordering::Relaxed) != 0
-        && (sig == SIGEXIT || sig == SIGDEBUG || sig == SIGZERR)
+    if intrap.load(Ordering::Relaxed) != 0 && (sig == SIGEXIT || sig == SIGDEBUG || sig == SIGZERR)
     {
         return 0;
     }

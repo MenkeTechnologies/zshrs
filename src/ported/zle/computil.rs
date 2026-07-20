@@ -615,7 +615,8 @@ pub fn cd_prep() -> i32 {
             // c:305
             // c:306 — qsort cd_sort; tolerant sort: cd_sort→strcmp/numeric may
             // not be a strict weak order, which makes Rust's sort_by PANIC.
-            crate::tolerant_sort::qsort_tolerant(&mut prep_lines, |a, b| cd_sort(a, b)); // c:306
+            crate::tolerant_sort::qsort_tolerant(&mut prep_lines, |a, b| cd_sort(a, b));
+            // c:306
         }
 
         // c:308-322 — dedup-adjacent: shuffle same-desc entries together.
@@ -7979,8 +7980,9 @@ pub fn bin_compfiles(
                     ("ISUFFIX", &crate::ported::zle::complete::COMPISUFFIX),
                 ] {
                     if let Some(v) = crate::ported::params::getsparam(param) {
-                        if let Ok(mut g) =
-                            global.get_or_init(|| std::sync::Mutex::new(String::new())).lock()
+                        if let Ok(mut g) = global
+                            .get_or_init(|| std::sync::Mutex::new(String::new()))
+                            .lock()
                         {
                             *g = v;
                         }

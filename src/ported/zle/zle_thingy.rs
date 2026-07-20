@@ -1562,9 +1562,9 @@ pub fn bin_zle_call(_name: &str, args: &[String], _ops: &options, _func: i32) ->
     // Now that execzlefunc takes the 4-arg C sig, thread the flags
     // collected from `-w` (setbindk) and `-f nolast` (setlbindk).
     let ret = execzlefunc(&wname, &argv, setbindk, setlbindk); // c:806
-    // RUST-ONLY SYNC (other direction): refresh the caller widget's
-    // params + snapshot from the live editor so post-call reads of
-    // $BUFFER/$CURSOR see what the inner widget did.
+                                                               // RUST-ONLY SYNC (other direction): refresh the caller widget's
+                                                               // params + snapshot from the live editor so post-call reads of
+                                                               // $BUFFER/$CURSOR see what the inner widget did.
     if in_widget_scope {
         crate::ported::zle::zle_params::makezleparams(0);
     }

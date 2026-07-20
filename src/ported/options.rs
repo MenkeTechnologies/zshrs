@@ -1739,7 +1739,7 @@ fn optns_flags(name: &str) -> u16 {
         "cshnullglob" => OPT_EMULATE | (OPT_CSH as u16), // c:129
         "debugbeforecmd" => OPT_ALL as u16,          // c:127
         "emacs" => 0,                                // c:128
-        "equals" => OPT_EMULATE | (OPT_ZSH as u16), // c:132
+        "equals" => OPT_EMULATE | (OPT_ZSH as u16),  // c:132
         "errexit" => OPT_EMULATE,                    // c:130
         "errreturn" => OPT_EMULATE,                  // c:131
         "exec" => OPT_ALL as u16,                    // c:132
@@ -1862,42 +1862,42 @@ fn optns_flags(name: &str) -> u16 {
         // (no OPT_ZSH). It defaults OFF in zsh emulation and only
         // turns on under non-zsh emulations. The previous Rust port
         // had OPT_EMULATE|OPT_ZSH which left it on in zsh.
-        "shortrepeat" => OPT_EMULATE,                         // c:252
-        "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16),   // c:245
-        "singlecommand" => OPT_SPECIAL as u16,                // c:246
-        "singlelinezle" => OPT_KSH as u16,                    // c:255
-        "sourcetrace" => 0,                                   // c:248
-        "sunkeyboardhack" => 0,                               // c:249
-        "transientrprompt" => 0,                              // c:250
-        "trapsasync" => 0,                                    // c:251
-        "typesetsilent" => OPT_EMULATE | (OPT_BOURNE as u16), // c:252
+        "shortrepeat" => OPT_EMULATE,                          // c:252
+        "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16),    // c:245
+        "singlecommand" => OPT_SPECIAL as u16,                 // c:246
+        "singlelinezle" => OPT_KSH as u16,                     // c:255
+        "sourcetrace" => 0,                                    // c:248
+        "sunkeyboardhack" => 0,                                // c:249
+        "transientrprompt" => 0,                               // c:250
+        "trapsasync" => 0,                                     // c:251
+        "typesetsilent" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:252
         "typesettounset" => OPT_EMULATE | (OPT_BOURNE as u16), // c:261
-        "unset" => OPT_EMULATE | (OPT_BSHELL as u16),         // c:253
-        "verbose" => 0,                                       // c:263
-        "vi" => 0,                                            // c:255
-        "warncreateglobal" => OPT_EMULATE,                    // c:265
-        "warnnestedvar" => OPT_EMULATE,                       // c:266
-        "xtrace" => 0,                                        // c:267
-        "zle" => OPT_SPECIAL as u16,                          // c:259
-        "dvorak" => 0,                                        // c:260
+        "unset" => OPT_EMULATE | (OPT_BSHELL as u16),          // c:253
+        "verbose" => 0,                                        // c:263
+        "vi" => 0,                                             // c:255
+        "warncreateglobal" => OPT_EMULATE,                     // c:265
+        "warnnestedvar" => OPT_EMULATE,                        // c:266
+        "xtrace" => 0,                                         // c:267
+        "zle" => OPT_SPECIAL as u16,                           // c:259
+        "dvorak" => 0,                                         // c:260
         // c:269-280 — the OPT_ALIAS block, plus continueonerror (c:122) and
         // login (c:193). These were absent from this table entirely, so every
         // one of them reported flags=0: the aliases looked like ordinary
         // options to any caller reading OPT_ALIAS.
-        "continueonerror" => 0, // c:122
-        "login" => OPT_SPECIAL, // c:193
+        "continueonerror" => 0,     // c:122
+        "login" => OPT_SPECIAL,     // c:193
         "braceexpand" => OPT_ALIAS, // c:269
-        "dotglob" => OPT_ALIAS, // c:270
-        "hashall" => OPT_ALIAS, // c:271
-        "histappend" => OPT_ALIAS, // c:272
-        "histexpand" => OPT_ALIAS, // c:273
-        "log" => OPT_ALIAS, // c:274
-        "mailwarn" => OPT_ALIAS, // c:275
-        "onecmd" => OPT_ALIAS, // c:276
-        "physical" => OPT_ALIAS, // c:277
-        "promptvars" => OPT_ALIAS, // c:278
-        "stdin" => OPT_ALIAS, // c:279
-        "trackall" => OPT_ALIAS, // c:280
+        "dotglob" => OPT_ALIAS,     // c:270
+        "hashall" => OPT_ALIAS,     // c:271
+        "histappend" => OPT_ALIAS,  // c:272
+        "histexpand" => OPT_ALIAS,  // c:273
+        "log" => OPT_ALIAS,         // c:274
+        "mailwarn" => OPT_ALIAS,    // c:275
+        "onecmd" => OPT_ALIAS,      // c:276
+        "physical" => OPT_ALIAS,    // c:277
+        "promptvars" => OPT_ALIAS,  // c:278
+        "stdin" => OPT_ALIAS,       // c:279
+        "trackall" => OPT_ALIAS,    // c:280
         _ => 0,
     }
 }

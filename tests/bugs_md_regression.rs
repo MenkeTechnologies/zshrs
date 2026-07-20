@@ -710,7 +710,10 @@ fn bug631_assoc_postincr_nonzero_key_is_true() {
     if zshrs_bin().is_none() {
         return;
     }
-    assert_eq!(out, "st=0\nv=6\n", "old value 5 (non-zero) → status 0, one increment");
+    assert_eq!(
+        out, "st=0\nv=6\n",
+        "old value 5 (non-zero) → status 0, one increment"
+    );
 }
 
 #[test]
@@ -722,7 +725,10 @@ fn bug631_array_postincr_and_assign_zero() {
     if zshrs_bin().is_none() {
         return;
     }
-    assert_eq!(out, "p=1\nz=1\nn=0\n", "value 0 → status 1, value 42 → status 0");
+    assert_eq!(
+        out, "p=1\nz=1\nn=0\n",
+        "value 0 → status 1, value 42 → status 0"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -833,7 +839,10 @@ fn bug635_reading_keymaps_preserves_bindings() {
     if zshrs_bin().is_none() {
         return;
     }
-    assert_eq!(out, "1\n", "the ^Xa binding must survive the ${{keymaps}} read");
+    assert_eq!(
+        out, "1\n",
+        "the ^Xa binding must survive the ${{keymaps}} read"
+    );
 }
 
 #[test]
@@ -881,9 +890,7 @@ fn bug636_autopair_pair_lookup_and_binding() {
         Ok(h) => h,
         Err(_) => return,
     };
-    let ap = format!(
-        "{home}/.zinit/plugins/hlissner---zsh-autopair/autopair.plugin.zsh"
-    );
+    let ap = format!("{home}/.zinit/plugins/hlissner---zsh-autopair/autopair.plugin.zsh");
     if !std::path::Path::new(&ap).exists() {
         eprintln!("skip: autopair not installed");
         return;
@@ -892,7 +899,10 @@ fn bug636_autopair_pair_lookup_and_binding() {
     if zshrs_bin().is_none() {
         return;
     }
-    assert_eq!(out, "\"]\" autopair-close\n", "] must bind to autopair-close");
+    assert_eq!(
+        out, "\"]\" autopair-close\n",
+        "] must bind to autopair-close"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -916,8 +926,7 @@ fn bug637_anonymous_function_does_not_persist() {
 #[test]
 fn bug637_anonymous_function_preserves_exit_status() {
     // Removing the anon function must NOT clobber the body's $?.
-    let (_ec, out, _e) =
-        run_zshrs("() { return 3 }; print $?; () { false }; print $?");
+    let (_ec, out, _e) = run_zshrs("() { return 3 }; print $?; () { false }; print $?");
     if zshrs_bin().is_none() {
         return;
     }
@@ -1083,7 +1092,11 @@ fn bug643_deep_finite_recursion_completes() {
     if zshrs_bin().is_none() {
         return;
     }
-    assert_eq!(out.trim(), "DONE300", "deep recursion aborted early: {out:?}");
+    assert_eq!(
+        out.trim(),
+        "DONE300",
+        "deep recursion aborted early: {out:?}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1219,7 +1232,10 @@ fn bug650_compinit_defines_compdef_function() {
                   print \"rc=$?\"";
     let (ec, out, err) = run_zshrs_native(script);
     assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
-    assert!(out.contains("exists=1"), "compdef function must exist: {out:?}");
+    assert!(
+        out.contains("exists=1"),
+        "compdef function must exist: {out:?}"
+    );
     assert!(out.contains("rc=0"), "compdef call must succeed: {out:?}");
     assert!(
         !err.contains("command not found: compdef"),
@@ -1240,7 +1256,11 @@ fn bug650_user_compdef_override_still_wins() {
                   compdef _x y";
     let (ec, out, _err) = run_zshrs_native(script);
     assert_eq!(ec, 0);
-    assert_eq!(out.trim(), "USER:_x y", "user compdef override must win: {out:?}");
+    assert_eq!(
+        out.trim(),
+        "USER:_x y",
+        "user compdef override must win: {out:?}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1270,10 +1290,19 @@ fn bug651_p_flag_empty_keeps_surrounding_literals() {
     );
     assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
     assert!(out.contains("A:xy"), "empty (P) keeps literals: {out:?}");
-    assert!(out.contains("B:xy"), "set-empty (P) keeps literals: {out:?}");
-    assert!(out.contains("C:xone twoy"), "quoted array (P) joins: {out:?}");
+    assert!(
+        out.contains("B:xy"),
+        "set-empty (P) keeps literals: {out:?}"
+    );
+    assert!(
+        out.contains("C:xone twoy"),
+        "quoted array (P) joins: {out:?}"
+    );
     assert!(out.contains("D:2"), "standalone (P) still removed: {out:?}");
-    assert!(out.contains("E:xy"), "empty array concat keeps literals: {out:?}");
+    assert!(
+        out.contains("E:xy"),
+        "empty array concat keeps literals: {out:?}"
+    );
 }
 
 #[test]
@@ -1288,7 +1317,11 @@ fn bug651_p_flag_empty_typeset_does_not_dump_params() {
     assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
     assert!(out.contains("got=1"), "_f assigned empty: {out:?}");
     // A full param dump has hundreds of lines; a clean run has one.
-    assert!(out.lines().count() < 20, "no param dump: {} lines", out.lines().count());
+    assert!(
+        out.lines().count() < 20,
+        "no param dump: {} lines",
+        out.lines().count()
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1321,7 +1354,10 @@ fn bug652_process_substitution_does_not_leak_fds() {
         .unwrap_or(9999);
     // A leak would put this in the hundreds; a healthy shell keeps a
     // small constant handful.
-    assert!(fds < 30, "process-sub fd leak: {fds} fds open after 100 proc-subs ({out:?})");
+    assert!(
+        fds < 30,
+        "process-sub fd leak: {fds} fds open after 100 proc-subs ({out:?})"
+    );
 }
 
 #[test]

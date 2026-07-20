@@ -37,11 +37,11 @@ use crate::ported::params::{gethparam, getsparam};
 use crate::ported::prompt::match_highlight;
 use crate::ported::utils::getshfunc;
 use crate::ported::zsh_h::{
-    isset, lextok, zattr, AMPER, AMPERBANG, AUTOCD, BAR_TOK, CASE, CLOBBER, DAMPER, DBAR,
-    DOUTANG, DOUTANGAMP, DOUTANGAMPBANG, DOUTANGBANG, DINANG, DINANGDASH, ENDINPUT, ENVARRAY,
-    ENVSTRING, INANGAMP, INANG_TOK, INOUTANG, INPAR_TOK, INTERACTIVECOMMENTS, IS_REDIROP,
-    LEXERR, LEXFLAGS_ACTIVE, LEXFLAGS_ZLE, NEWLIN, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG,
-    OUTANG_TOK, OUTPAR_TOK, SEMI, SEPER, STRING_LEX, TYPESET,
+    isset, lextok, zattr, AMPER, AMPERBANG, AUTOCD, BAR_TOK, CASE, CLOBBER, DAMPER, DBAR, DINANG,
+    DINANGDASH, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG, DOUTANGBANG, ENDINPUT, ENVARRAY, ENVSTRING,
+    INANGAMP, INANG_TOK, INOUTANG, INPAR_TOK, INTERACTIVECOMMENTS, IS_REDIROP, LEXERR,
+    LEXFLAGS_ACTIVE, LEXFLAGS_ZLE, NEWLIN, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK,
+    OUTPAR_TOK, SEMI, SEPER, STRING_LEX, TYPESET,
 };
 use crate::zle_file_tester::{
     expand_one_no_cmdsubst, FileTester, IsErr, IsFile, OperationContext, RedirectionMode,
@@ -350,8 +350,8 @@ pub fn colorize(text: &str, colors: &[HighlightSpec]) -> Vec<u8> {
 /// so this SGR string form exists only for `colorize` (batch/CLI output).
 fn zattr_to_sgr(attr: zattr) -> String {
     use crate::ported::zsh_h::{
-        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
-        TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
+        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_COL_SHIFT,
+        TXT_ATTR_FG_COL_SHIFT,
     };
     let mut s = String::from("\x1b[0");
     if attr & TXTBOLDFACE as zattr != 0 {
@@ -397,7 +397,13 @@ pub fn highlight_shell(
 /// fish:114-129 — `highlight_and_colorize`.
 pub fn highlight_and_colorize(text: &str, ctx: &OperationContext) -> Vec<u8> {
     let mut colors = Vec::new();
-    highlight_shell(text, &mut colors, ctx, /*io_ok=*/ false, /*cursor=*/ None);
+    highlight_shell(
+        text,
+        &mut colors,
+        ctx,
+        /*io_ok=*/ false,
+        /*cursor=*/ None,
+    );
     colorize(text, &colors)
 }
 
@@ -458,7 +464,9 @@ pub fn command_is_valid_cached(
     // fish:292-295 — Implicit cd (zsh: AUTO_CD), uncached (cwd-relative).
     if decoration == StatementDecoration::None_ && isset(AUTOCD) {
         let path = crate::zle_file_tester::path_apply_working_directory(cmd, working_directory);
-        return std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
+        return std::fs::metadata(&path)
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
     }
     false
 }
@@ -476,7 +484,10 @@ pub fn command_is_valid(
     // `builtin`/`exec` decorations (fish:252-267 implicit_cd_ok).
     if decoration == StatementDecoration::None_ && isset(AUTOCD) {
         let path = crate::zle_file_tester::path_apply_working_directory(cmd, working_directory);
-        if std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
+        if std::fs::metadata(&path)
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+        {
             return true;
         }
     }
@@ -641,8 +652,11 @@ pub fn autosuggest_validate_from_history(
     }
 
     // fish:392-398 — Not handled specially. Is the command valid?
-    let cmd_ok =
-        command_is_valid_cached(&parsed_command, StatementDecoration::None_, working_directory);
+    let cmd_ok = command_is_valid_cached(
+        &parsed_command,
+        StatementDecoration::None_,
+        working_directory,
+    );
     if !cmd_ok {
         return false;
     }
@@ -1082,12 +1096,12 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
     let saved_addedx = ADDEDX.load(Ordering::SeqCst);
 
     crate::ported::context::zcontext_save(); // c:1169
-    // LEX_UNGET_BUF isolation: hgetc drains this Rust-only side channel
-    // BEFORE every input frame (lex.rs hgetc), and `$(...)` bodies use
-    // it as a deliberate cross-context handoff — so zcontext_save
-    // leaves it alone. This walk must isolate it manually: the
-    // suspended outer parse's ungot chars must not be consumed as line
-    // content, and the walk's own ungets must not leak back out.
+                                             // LEX_UNGET_BUF isolation: hgetc drains this Rust-only side channel
+                                             // BEFORE every input frame (lex.rs hgetc), and `$(...)` bodies use
+                                             // it as a deliberate cross-context handoff — so zcontext_save
+                                             // leaves it alone. This walk must isolate it manually: the
+                                             // suspended outer parse's ungot chars must not be consumed as line
+                                             // content, and the walk's own ungets must not leak back out.
     let saved_unget: std::collections::VecDeque<char> =
         crate::ported::lex::LEX_UNGET_BUF.with_borrow_mut(std::mem::take);
     ZLEMETALL.store(ll, Ordering::SeqCst);
@@ -1164,8 +1178,8 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
     crate::ported::hist::strinend(); // c:1608
     crate::ported::input::inpop(); // c:1609
     crate::ported::context::zcontext_restore(); // c:1745
-    // Put the suspended parse's ungot chars back, discarding anything
-    // this walk left behind (see the isolation note at the top).
+                                                // Put the suspended parse's ungot chars back, discarding anything
+                                                // this walk left behind (see the isolation note at the top).
     crate::ported::lex::LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
 
     ZLEMETACS.store(saved_cs, Ordering::SeqCst);
@@ -1365,8 +1379,13 @@ impl<'s> Highlighter<'s> {
                                 is_cd = is_veritable_cd(&expanded_cmd);
                                 is_typeset = matches!(
                                     expanded_cmd.as_str(),
-                                    "typeset" | "local" | "declare" | "export" | "readonly"
-                                        | "integer" | "float"
+                                    "typeset"
+                                        | "local"
+                                        | "declare"
+                                        | "export"
+                                        | "readonly"
+                                        | "integer"
+                                        | "float"
                                 );
                             }
                         }
@@ -1508,9 +1527,7 @@ impl<'s> Highlighter<'s> {
         }
 
         // fish:939-959 — Underline every valid path.
-        let is_prefix = self
-            .cursor
-            .is_some_and(|c| (t.start..=t.end).contains(&c));
+        let is_prefix = self.cursor.is_some_and(|c| (t.start..=t.end).contains(&c));
         let token = t.text.clone().unwrap_or_default();
         let test_result = if cmd_is_cd {
             self.file_tester.test_cd_path(&token, is_prefix)
@@ -1792,7 +1809,12 @@ mod tests {
     fn lex_line_tokens_leaves_unget_buf_untouched() {
         use crate::ported::lex::LEX_UNGET_BUF;
         let _g = lock();
-        for line in ["{ print ok }", "( print sub )", "function q(){ print fq }", "echo hi"] {
+        for line in [
+            "{ print ok }",
+            "( print sub )",
+            "function q(){ print fq }",
+            "echo hi",
+        ] {
             // Outer-parse residue that must survive the walk verbatim.
             LEX_UNGET_BUF.with_borrow_mut(|b| {
                 b.clear();
@@ -1927,7 +1949,11 @@ mod tests {
         let s2 = "$'\\U110000'";
         let n2 = s2.chars().count();
         let mut colors2 = vec![HighlightSpec::default(); n2];
-        color_string_internal(s2, HighlightSpec::with_fg(HighlightRole::param), &mut colors2);
+        color_string_internal(
+            s2,
+            HighlightSpec::with_fg(HighlightRole::param),
+            &mut colors2,
+        );
         assert_eq!(colors2[2].foreground, HighlightRole::error);
     }
 
@@ -2012,15 +2038,13 @@ mod tests {
         let _g = lock();
         // Without user config, the resolver must produce non-zero attrs for the
         // roles with non-"none" defaults.
-        let attr =
-            HighlightColorResolver::resolve_spec_uncached(&HighlightSpec::with_fg(
-                HighlightRole::command,
-            ));
+        let attr = HighlightColorResolver::resolve_spec_uncached(&HighlightSpec::with_fg(
+            HighlightRole::command,
+        ));
         assert_ne!(attr, 0, "command role must default to a visible style");
-        let err =
-            HighlightColorResolver::resolve_spec_uncached(&HighlightSpec::with_fg(
-                HighlightRole::error,
-            ));
+        let err = HighlightColorResolver::resolve_spec_uncached(&HighlightSpec::with_fg(
+            HighlightRole::error,
+        ));
         assert_ne!(err, 0);
         assert_ne!(attr, err, "command and error styles must differ");
     }

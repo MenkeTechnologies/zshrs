@@ -388,7 +388,11 @@ mod tests {
             tab.remove("compadd");
         }
         assert!(builtin_defined("compadd"), "compadd must be a builtin");
-        let _ = _shadow(&["-s".to_string(), "_approximate".to_string(), "compadd".to_string()]);
+        let _ = _shadow(&[
+            "-s".to_string(),
+            "_approximate".to_string(),
+            "compadd".to_string(),
+        ]);
         let backup = current_backup_name("compadd").unwrap();
         assert_eq!(backup, "compadd@_approximate");
         assert_eq!(body_of(&backup).as_deref(), Some("builtin compadd \"$@\""));
@@ -413,7 +417,10 @@ mod tests {
         assert!(!builtin_defined(name));
         let _ = _shadow(&["-s".to_string(), "sfx".to_string(), name.to_string()]);
         let backup = current_backup_name(name).unwrap();
-        assert_eq!(body_of(&backup).as_deref(), Some(format!("command {} \"$@\"", name).as_str()));
+        assert_eq!(
+            body_of(&backup).as_deref(),
+            Some(format!("command {} \"$@\"", name).as_str())
+        );
         let stack = getaparam(STACK_PARAM).unwrap();
         assert!(stack.iter().any(|e| e == &format!("c@{}", name)));
         let _ = _unshadow();
@@ -533,7 +540,10 @@ mod tests {
             "my-suffix".to_string(),
             "targetfn".to_string(),
         ]);
-        assert_eq!(current_backup_name("targetfn").unwrap(), "targetfn@my-suffix");
+        assert_eq!(
+            current_backup_name("targetfn").unwrap(),
+            "targetfn@my-suffix"
+        );
         let _ = _unshadow();
         let mut tab = shfunctab_lock().write().unwrap();
         tab.remove("targetfn");

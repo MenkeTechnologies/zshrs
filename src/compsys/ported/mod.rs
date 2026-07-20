@@ -319,6 +319,26 @@ pub mod _read_comp;
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_absolute_command_paths.rs"]
 pub mod _absolute_command_paths;
+/// `_arch_archives` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_arch_archives.rs"]
+pub mod _arch_archives;
+/// `_arch_namespace` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_arch_namespace.rs"]
+pub mod _arch_namespace;
+/// `_baudrates` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_baudrates.rs"]
+pub mod _baudrates;
+/// `_bind_addresses` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_bind_addresses.rs"]
+pub mod _bind_addresses;
+/// `_bpf_filters` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_bpf_filters.rs"]
+pub mod _bpf_filters;
 /// `_canonical_paths` submodule.
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_canonical_paths.rs"]
@@ -327,6 +347,26 @@ pub mod _canonical_paths;
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Zsh/Type/_command_names.rs"]
 pub mod _command_names;
+/// `_ctags_tags` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_ctags_tags.rs"]
+pub mod _ctags_tags;
+/// `_date_formats` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_date_formats.rs"]
+pub mod _date_formats;
+/// `_dates` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_dates.rs"]
+pub mod _dates;
+/// `_dict_words` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_dict_words.rs"]
+pub mod _dict_words;
+/// `_diff_options` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_diff_options.rs"]
+pub mod _diff_options;
 /// `_dir_list` submodule.
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_dir_list.rs"]
@@ -335,17 +375,105 @@ pub mod _dir_list;
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_directories.rs"]
 pub mod _directories;
+/// `_dns_types` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_dns_types.rs"]
+pub mod _dns_types;
+/// `_domains` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_domains.rs"]
+pub mod _domains;
 /// `_email_addresses` submodule.
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_email_addresses.rs"]
 pub mod _email_addresses;
+/// `_file_modes` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_file_modes.rs"]
+pub mod _file_modes;
+/// `_file_systems` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_file_systems.rs"]
+pub mod _file_systems;
 /// `_files` submodule.
 #[path = "Unix/Type/_files.rs"]
 pub mod _files;
+/// `_find_net_interfaces` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_find_net_interfaces.rs"]
+pub mod _find_net_interfaces;
+/// `_global_tags` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_global_tags.rs"]
+pub mod _global_tags;
 /// `_gnu_generic` submodule.
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Command/_gnu_generic.rs"]
 pub mod _gnu_generic;
+/// `_groups` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_groups.rs"]
+pub mod _groups;
+/// `_have_glob_qual` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_have_glob_qual.rs"]
+pub mod _have_glob_qual;
+/// `_hosts` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_hosts.rs"]
+pub mod _hosts;
+/// `_java_class` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_java_class.rs"]
+pub mod _java_class;
+/// `_ld_debug` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_ld_debug.rs"]
+pub mod _ld_debug;
+/// `_ldap_attributes` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_ldap_attributes.rs"]
+pub mod _ldap_attributes;
+/// `_ldap_filters` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_ldap_filters.rs"]
+pub mod _ldap_filters;
+/// `_list_files` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_list_files.rs"]
+pub mod _list_files;
+/// `_locales` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_locales.rs"]
+pub mod _locales;
+/// `_mailboxes` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_mailboxes.rs"]
+pub mod _mailboxes;
+/// `_mime_types` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_mime_types.rs"]
+pub mod _mime_types;
+/// `_my_accounts` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_my_accounts.rs"]
+pub mod _my_accounts;
+/// `_net_interfaces` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_net_interfaces.rs"]
+pub mod _net_interfaces;
+/// `_newsgroups` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_newsgroups.rs"]
+pub mod _newsgroups;
+/// `_object_files` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_object_files.rs"]
+pub mod _object_files;
+/// `_other_accounts` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_other_accounts.rs"]
+pub mod _other_accounts;
 /// `_path_commands` submodule.
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_path_commands.rs"]
@@ -354,14 +482,122 @@ pub mod _path_commands;
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_path_files.rs"]
 pub mod _path_files;
+/// `_pdf` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_pdf.rs"]
+pub mod _pdf;
+/// `_perl_basepods` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_perl_basepods.rs"]
+pub mod _perl_basepods;
+/// `_perl_modules` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_perl_modules.rs"]
+pub mod _perl_modules;
+/// `_pgids` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_pgids.rs"]
+pub mod _pgids;
+/// `_pids` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_pids.rs"]
+pub mod _pids;
+/// `_ports` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_ports.rs"]
+pub mod _ports;
+/// `_postscript` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_postscript.rs"]
+pub mod _postscript;
 /// `_precommand` submodule.
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Zsh/Command/_precommand.rs"]
 pub mod _precommand;
+/// `_printers` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_printers.rs"]
+pub mod _printers;
+/// `_process_names` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_process_names.rs"]
+pub mod _process_names;
+/// `_pspdf` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_pspdf.rs"]
+pub mod _pspdf;
+/// `_python_modules` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_python_modules.rs"]
+pub mod _python_modules;
+/// `_remote_files` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_remote_files.rs"]
+pub mod _remote_files;
+/// `_services` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_services.rs"]
+pub mod _services;
+/// `_signals` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_signals.rs"]
+pub mod _signals;
+/// `_ssh_hosts` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_ssh_hosts.rs"]
+pub mod _ssh_hosts;
+/// `_sys_calls` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_sys_calls.rs"]
+pub mod _sys_calls;
+/// `_terminals` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_terminals.rs"]
+pub mod _terminals;
+/// `_texi` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_texi.rs"]
+pub mod _texi;
 /// `_tilde_files` submodule.
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Unix/Type/_tilde_files.rs"]
 pub mod _tilde_files;
+/// `_time_zone` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_time_zone.rs"]
+pub mod _time_zone;
+/// `_ttys` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_ttys.rs"]
+pub mod _ttys;
+/// `_umountable` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_umountable.rs"]
+pub mod _umountable;
+/// `_urls` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_urls.rs"]
+pub mod _urls;
+/// `_user_at_host` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_user_at_host.rs"]
+pub mod _user_at_host;
+/// `_users` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_users.rs"]
+pub mod _users;
+/// `_users_on` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_users_on.rs"]
+pub mod _users_on;
+/// `_zfs_dataset` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_zfs_dataset.rs"]
+pub mod _zfs_dataset;
+/// `_zfs_pool` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Unix/Type/_zfs_pool.rs"]
+pub mod _zfs_pool;
 
 // ── Zsh/Command/ ──────────────────────────────────────────────────────
 /// `_command` submodule.

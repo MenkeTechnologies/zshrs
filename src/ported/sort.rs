@@ -325,7 +325,9 @@ pub fn strmetasort(
     // qsort-tolerant: eltpcmp→zstrcmp numeric/natural sort is not a strict weak
     // order, so Rust's sort_by would PANIC. C uses qsort (unspecified order,
     // never crashes).
-    crate::tolerant_sort::qsort_tolerant(&mut indices, |&i, &j| eltpcmp(&elts[i], &elts[j], sort_flags));
+    crate::tolerant_sort::qsort_tolerant(&mut indices, |&i, &j| {
+        eltpcmp(&elts[i], &elts[j], sort_flags)
+    });
 
     let original: Vec<String> = arr.to_vec();
     let original_lens: Option<Vec<usize>> = unmetalenp.as_deref().map(|l| l.to_vec());

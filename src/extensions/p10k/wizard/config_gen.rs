@@ -97,9 +97,21 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
 
         if s.mode == "compatible" {
             // wizard:1648-1652
-            sub(&mut lines, "STATUS_ERROR_VISUAL_IDENTIFIER_EXPANSION", "'х'");
-            sub(&mut lines, "STATUS_ERROR_SIGNAL_VISUAL_IDENTIFIER_EXPANSION", "'х'");
-            sub(&mut lines, "STATUS_ERROR_PIPE_VISUAL_IDENTIFIER_EXPANSION", "'х'");
+            sub(
+                &mut lines,
+                "STATUS_ERROR_VISUAL_IDENTIFIER_EXPANSION",
+                "'х'",
+            );
+            sub(
+                &mut lines,
+                "STATUS_ERROR_SIGNAL_VISUAL_IDENTIFIER_EXPANSION",
+                "'х'",
+            );
+            sub(
+                &mut lines,
+                "STATUS_ERROR_PIPE_VISUAL_IDENTIFIER_EXPANSION",
+                "'х'",
+            );
         }
 
         if s.mode == "compatible" || s.mode == "powerline" {
@@ -159,27 +171,91 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
                     "RIGHT_SUBSEGMENT_SEPARATOR",
                     &format!("'%{}F{}'", SEP_COLOR[ci], s.right_subsep),
                 );
-                sub(&mut lines, "VCS_LOADING_FOREGROUND", &SEP_COLOR[ci].to_string());
+                sub(
+                    &mut lines,
+                    "VCS_LOADING_FOREGROUND",
+                    &SEP_COLOR[ci].to_string(),
+                );
                 rep(&mut lines, "%248F", &format!("%{}F", PREFIX_COLOR[ci]));
             } else {
-                sub(&mut lines, "LEFT_SUBSEGMENT_SEPARATOR", &format!("'{}'", s.left_subsep));
-                sub(&mut lines, "RIGHT_SUBSEGMENT_SEPARATOR", &format!("'{}'", s.right_subsep));
+                sub(
+                    &mut lines,
+                    "LEFT_SUBSEGMENT_SEPARATOR",
+                    &format!("'{}'", s.left_subsep),
+                );
+                sub(
+                    &mut lines,
+                    "RIGHT_SUBSEGMENT_SEPARATOR",
+                    &format!("'{}'", s.right_subsep),
+                );
             }
             let fc = FRAME_COLOR_FOR(s, ci);
             sub(&mut lines, "RULER_FOREGROUND", &fc.to_string());
-            sub(&mut lines, "MULTILINE_FIRST_PROMPT_GAP_FOREGROUND", &fc.to_string());
-            sub(&mut lines, "MULTILINE_FIRST_PROMPT_PREFIX", &format!("'%{fc}F╭─'"));
-            sub(&mut lines, "MULTILINE_NEWLINE_PROMPT_PREFIX", &format!("'%{fc}F├─'"));
-            sub(&mut lines, "MULTILINE_LAST_PROMPT_PREFIX", &format!("'%{fc}F╰─'"));
-            sub(&mut lines, "MULTILINE_FIRST_PROMPT_SUFFIX", &format!("'%{fc}F─╮'"));
-            sub(&mut lines, "MULTILINE_NEWLINE_PROMPT_SUFFIX", &format!("'%{fc}F─┤'"));
-            sub(&mut lines, "MULTILINE_LAST_PROMPT_SUFFIX", &format!("'%{fc}F─╯'"));
-            sub(&mut lines, "LEFT_SEGMENT_SEPARATOR", &format!("'{}'", s.left_sep));
-            sub(&mut lines, "RIGHT_SEGMENT_SEPARATOR", &format!("'{}'", s.right_sep));
-            sub(&mut lines, "LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL", &format!("'{}'", s.left_tail));
-            sub(&mut lines, "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", &format!("'{}'", s.left_head));
-            sub(&mut lines, "RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL", &format!("'{}'", s.right_head));
-            sub(&mut lines, "RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL", &format!("'{}'", s.right_tail));
+            sub(
+                &mut lines,
+                "MULTILINE_FIRST_PROMPT_GAP_FOREGROUND",
+                &fc.to_string(),
+            );
+            sub(
+                &mut lines,
+                "MULTILINE_FIRST_PROMPT_PREFIX",
+                &format!("'%{fc}F╭─'"),
+            );
+            sub(
+                &mut lines,
+                "MULTILINE_NEWLINE_PROMPT_PREFIX",
+                &format!("'%{fc}F├─'"),
+            );
+            sub(
+                &mut lines,
+                "MULTILINE_LAST_PROMPT_PREFIX",
+                &format!("'%{fc}F╰─'"),
+            );
+            sub(
+                &mut lines,
+                "MULTILINE_FIRST_PROMPT_SUFFIX",
+                &format!("'%{fc}F─╮'"),
+            );
+            sub(
+                &mut lines,
+                "MULTILINE_NEWLINE_PROMPT_SUFFIX",
+                &format!("'%{fc}F─┤'"),
+            );
+            sub(
+                &mut lines,
+                "MULTILINE_LAST_PROMPT_SUFFIX",
+                &format!("'%{fc}F─╯'"),
+            );
+            sub(
+                &mut lines,
+                "LEFT_SEGMENT_SEPARATOR",
+                &format!("'{}'", s.left_sep),
+            );
+            sub(
+                &mut lines,
+                "RIGHT_SEGMENT_SEPARATOR",
+                &format!("'{}'", s.right_sep),
+            );
+            sub(
+                &mut lines,
+                "LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL",
+                &format!("'{}'", s.left_tail),
+            );
+            sub(
+                &mut lines,
+                "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL",
+                &format!("'{}'", s.left_head),
+            );
+            sub(
+                &mut lines,
+                "RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL",
+                &format!("'{}'", s.right_head),
+            );
+            sub(
+                &mut lines,
+                "RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL",
+                &format!("'{}'", s.right_tail),
+            );
         }
 
         if s.extra_icons.iter().any(|i| !i.is_empty()) {
@@ -198,7 +274,11 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
                 uncomment(&mut lines, key);
             }
             sub(&mut lines, "VCS_VISUAL_IDENTIFIER_EXPANSION", "");
-            sub(&mut lines, "COMMAND_EXECUTION_TIME_VISUAL_IDENTIFIER_EXPANSION", "");
+            sub(
+                &mut lines,
+                "COMMAND_EXECUTION_TIME_VISUAL_IDENTIFIER_EXPANSION",
+                "",
+            );
             sub(&mut lines, "TIME_VISUAL_IDENTIFIER_EXPANSION", "");
         }
 
@@ -221,7 +301,11 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
                     "%f".to_string()
                 };
                 sub(&mut lines, "VCS_PREFIX", &format!("'{fg}on '"));
-                sub(&mut lines, "COMMAND_EXECUTION_TIME_PREFIX", &format!("'{fg}took '"));
+                sub(
+                    &mut lines,
+                    "COMMAND_EXECUTION_TIME_PREFIX",
+                    &format!("'{fg}took '"),
+                );
                 sub(&mut lines, "CONTEXT_PREFIX", &format!("'{fg}with '"));
                 sub(&mut lines, "KUBECONTEXT_PREFIX", &format!("'{fg}at '"));
                 sub(&mut lines, "TIME_PREFIX", &format!("'{fg}at '"));
@@ -229,7 +313,11 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
             }
         }
 
-        sub(&mut lines, "MULTILINE_FIRST_PROMPT_GAP_CHAR", &format!("'{}'", s.gap_char)); // wizard:1745
+        sub(
+            &mut lines,
+            "MULTILINE_FIRST_PROMPT_GAP_CHAR",
+            &format!("'{}'", s.gap_char),
+        ); // wizard:1745
 
         if matches!(s.style, PromptStyle::Classic | PromptStyle::Rainbow) && s.num_lines == 2 {
             // wizard:1747-1760
@@ -251,17 +339,45 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
             // wizard:1762-1777
             let fc = FRAME_COLOR_FOR(s, s.color as usize);
             sub(&mut lines, "RULER_FOREGROUND", &fc.to_string());
-            sub(&mut lines, "MULTILINE_FIRST_PROMPT_GAP_FOREGROUND", &fc.to_string());
+            sub(
+                &mut lines,
+                "MULTILINE_FIRST_PROMPT_GAP_FOREGROUND",
+                &fc.to_string(),
+            );
             if s.right_frame {
-                sub(&mut lines, "MULTILINE_FIRST_PROMPT_SUFFIX", &format!("'%{fc}F─╮'"));
-                sub(&mut lines, "MULTILINE_NEWLINE_PROMPT_SUFFIX", &format!("'%{fc}F─┤'"));
-                sub(&mut lines, "MULTILINE_LAST_PROMPT_SUFFIX", &format!("'%{fc}F─╯'"));
+                sub(
+                    &mut lines,
+                    "MULTILINE_FIRST_PROMPT_SUFFIX",
+                    &format!("'%{fc}F─╮'"),
+                );
+                sub(
+                    &mut lines,
+                    "MULTILINE_NEWLINE_PROMPT_SUFFIX",
+                    &format!("'%{fc}F─┤'"),
+                );
+                sub(
+                    &mut lines,
+                    "MULTILINE_LAST_PROMPT_SUFFIX",
+                    &format!("'%{fc}F─╯'"),
+                );
                 sub(&mut lines, "RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL", "' '");
             }
             if s.left_frame {
-                sub(&mut lines, "MULTILINE_FIRST_PROMPT_PREFIX", &format!("'%{fc}F╭─'"));
-                sub(&mut lines, "MULTILINE_NEWLINE_PROMPT_PREFIX", &format!("'%{fc}F├─'"));
-                sub(&mut lines, "MULTILINE_LAST_PROMPT_PREFIX", &format!("'%{fc}F╰─'"));
+                sub(
+                    &mut lines,
+                    "MULTILINE_FIRST_PROMPT_PREFIX",
+                    &format!("'%{fc}F╭─'"),
+                );
+                sub(
+                    &mut lines,
+                    "MULTILINE_NEWLINE_PROMPT_PREFIX",
+                    &format!("'%{fc}F├─'"),
+                );
+                sub(
+                    &mut lines,
+                    "MULTILINE_LAST_PROMPT_PREFIX",
+                    &format!("'%{fc}F╰─'"),
+                );
                 sub(&mut lines, "LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL", "' '");
             }
         }
@@ -278,15 +394,47 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
         if s.mode == "ascii" {
             // wizard:1787-1805 — ascii glyph fallbacks.
             sub(&mut lines, "STATUS_OK_VISUAL_IDENTIFIER_EXPANSION", "'ok'");
-            sub(&mut lines, "STATUS_OK_PIPE_VISUAL_IDENTIFIER_EXPANSION", "'ok'");
-            sub(&mut lines, "STATUS_ERROR_VISUAL_IDENTIFIER_EXPANSION", "'err'");
-            sub(&mut lines, "STATUS_ERROR_SIGNAL_VISUAL_IDENTIFIER_EXPANSION", "");
-            sub(&mut lines, "STATUS_ERROR_PIPE_VISUAL_IDENTIFIER_EXPANSION", "'err'");
+            sub(
+                &mut lines,
+                "STATUS_OK_PIPE_VISUAL_IDENTIFIER_EXPANSION",
+                "'ok'",
+            );
+            sub(
+                &mut lines,
+                "STATUS_ERROR_VISUAL_IDENTIFIER_EXPANSION",
+                "'err'",
+            );
+            sub(
+                &mut lines,
+                "STATUS_ERROR_SIGNAL_VISUAL_IDENTIFIER_EXPANSION",
+                "",
+            );
+            sub(
+                &mut lines,
+                "STATUS_ERROR_PIPE_VISUAL_IDENTIFIER_EXPANSION",
+                "'err'",
+            );
             sub(&mut lines, "BATTERY_STAGES", "('battery')");
-            sub(&mut lines, "PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION", "'>'");
-            sub(&mut lines, "PROMPT_CHAR_{OK,ERROR}_VICMD_CONTENT_EXPANSION", "'<'");
-            sub(&mut lines, "PROMPT_CHAR_{OK,ERROR}_VIVIS_CONTENT_EXPANSION", "'V'");
-            sub(&mut lines, "PROMPT_CHAR_{OK,ERROR}_VIOWR_CONTENT_EXPANSION", "'^'");
+            sub(
+                &mut lines,
+                "PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION",
+                "'>'",
+            );
+            sub(
+                &mut lines,
+                "PROMPT_CHAR_{OK,ERROR}_VICMD_CONTENT_EXPANSION",
+                "'<'",
+            );
+            sub(
+                &mut lines,
+                "PROMPT_CHAR_{OK,ERROR}_VIVIS_CONTENT_EXPANSION",
+                "'V'",
+            );
+            sub(
+                &mut lines,
+                "PROMPT_CHAR_{OK,ERROR}_VIOWR_CONTENT_EXPANSION",
+                "'^'",
+            );
             rep(&mut lines, "-i '⭐'", "-i '*'");
             rep(&mut lines, "…", "..");
             rep(&mut lines, "⇣", "<");
@@ -300,9 +448,17 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
     if s.pure_use_rprompt {
         // wizard:1808-1815 — move a few segments to the right prompt.
         for segment in ["command_execution_time", "virtualenv", "context"] {
-            rep(&mut lines, &format!("    {segment}"), &format!("    tmp_{segment}"));
+            rep(
+                &mut lines,
+                &format!("    {segment}"),
+                &format!("    tmp_{segment}"),
+            );
             uncomment(&mut lines, segment);
-            rep(&mut lines, &format!("    tmp_{segment}  "), &format!("    # {segment}"));
+            rep(
+                &mut lines,
+                &format!("    tmp_{segment}  "),
+                &format!("    # {segment}"),
+            );
         }
     }
 
@@ -316,13 +472,15 @@ pub fn generate_config(base: &str, s: &WizardSettings, now: &str) -> String {
 
     if s.num_lines == 1 {
         // wizard:1824-1830 — drop the newline segment + line-2 marker.
-        lines.retain(|l| {
-            !(l.starts_with("    newline") || l.contains("===[ Line #"))
-        });
+        lines.retain(|l| !(l.starts_with("    newline") || l.contains("===[ Line #")));
     }
 
     // wizard:1833
-    sub(&mut lines, "PROMPT_ADD_NEWLINE", if s.empty_line { "true" } else { "false" });
+    sub(
+        &mut lines,
+        "PROMPT_ADD_NEWLINE",
+        if s.empty_line { "true" } else { "false" },
+    );
     // wizard:1835
     sub(&mut lines, "INSTANT_PROMPT", &s.instant_prompt);
     // wizard:1836
@@ -399,10 +557,15 @@ mod tests {
 
     #[test]
     fn sub_matches_literal_brace_key() {
-        let mut l =
-            vec!["  typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION='❯'"
-                .to_string()];
-        sub(&mut l, "PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION", "'>'");
+        let mut l = vec![
+            "  typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION='❯'"
+                .to_string(),
+        ];
+        sub(
+            &mut l,
+            "PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION",
+            "'>'",
+        );
         assert!(l[0].ends_with("_CONTENT_EXPANSION='>'"), "{}", l[0]);
     }
 
@@ -471,16 +634,31 @@ mod tests {
         assert!(out.contains("# Wizard options: lean, unicode, 2 lines."));
         // MODE / INSTANT_PROMPT substitutions landed (RHS replaced, not
         // left as the template default).
-        assert!(out.contains("typeset -g POWERLEVEL9K_MODE=nerdfont-complete"), "MODE not set");
-        assert!(out.contains("typeset -g POWERLEVEL9K_INSTANT_PROMPT=verbose"), "INSTANT_PROMPT not set");
-        assert!(out.contains("typeset -g POWERLEVEL9K_PROMPT_ADD_NEWLINE=false"), "ADD_NEWLINE not set");
+        assert!(
+            out.contains("typeset -g POWERLEVEL9K_MODE=nerdfont-complete"),
+            "MODE not set"
+        );
+        assert!(
+            out.contains("typeset -g POWERLEVEL9K_INSTANT_PROMPT=verbose"),
+            "INSTANT_PROMPT not set"
+        );
+        assert!(
+            out.contains("typeset -g POWERLEVEL9K_PROMPT_ADD_NEWLINE=false"),
+            "ADD_NEWLINE not set"
+        );
         // The `{{key}}` template-substitution placeholders p10k uses are
         // all resolved — none should survive.
-        assert!(!out.contains("POWERLEVEL9K_MODE={"), "unresolved MODE placeholder");
+        assert!(
+            !out.contains("POWERLEVEL9K_MODE={"),
+            "unresolved MODE placeholder"
+        );
         // Every non-empty, non-comment line is a valid `typeset`/keyword —
         // a crude corruption check (no line begins with a stray `=`).
         for line in out.lines() {
-            assert!(!line.trim_start().starts_with('='), "corrupt line: {line:?}");
+            assert!(
+                !line.trim_start().starts_with('='),
+                "corrupt line: {line:?}"
+            );
         }
     }
 

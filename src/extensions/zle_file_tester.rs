@@ -28,8 +28,7 @@ use crate::ported::params::getsparam;
 use crate::ported::subst::{filesubstr, singsub};
 use crate::ported::utils::errflag;
 use crate::ported::zsh_h::{
-    Bang, Bnull, Bnullkeep, Comma, Dash, Dnull, Inpar, Inparmath, Nularg, Qtick, Snull, Tick,
-    Tilde,
+    Bang, Bnull, Bnullkeep, Comma, Dash, Dnull, Inpar, Inparmath, Nularg, Qtick, Snull, Tick, Tilde,
 };
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -525,10 +524,7 @@ fn fs_is_case_insensitive(path: &str, case_sensitivity_cache: &mut CaseSensitivi
 
 /// fish:428-437 — Other platforms don't have _PC_CASE_SENSITIVE.
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn fs_is_case_insensitive(
-    _path: &str,
-    _case_sensitivity_cache: &mut CaseSensitivityCache,
-) -> bool {
+fn fs_is_case_insensitive(_path: &str, _case_sensitivity_cache: &mut CaseSensitivityCache) -> bool {
     false
 }
 
@@ -806,8 +802,7 @@ fn string_prefixes_string_case_insensitive(proposed_prefix: &str, value: &str) -
 #[cfg(test)]
 mod tests {
     use super::{
-        is_potential_path, FileTester, IsErr, IsFile, OperationContext, PathFlags,
-        RedirectionMode,
+        is_potential_path, FileTester, IsErr, IsFile, OperationContext, PathFlags, RedirectionMode,
     };
     use std::fs::{self, create_dir_all, File, Permissions};
     use std::os::unix::fs::PermissionsExt as _;
@@ -1084,10 +1079,34 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(is_potential_path("al", true, &wds[1..], &ctx, path_require_dir));
-        assert!(is_potential_path("alpha/", true, &wds[1..], &ctx, path_require_dir));
-        assert!(is_potential_path("aard", true, &wds[1..], &ctx, PathFlags::default()));
-        assert!(!is_potential_path("aard", false, &wds[1..], &ctx, PathFlags::default()));
+        assert!(is_potential_path(
+            "al",
+            true,
+            &wds[1..],
+            &ctx,
+            path_require_dir
+        ));
+        assert!(is_potential_path(
+            "alpha/",
+            true,
+            &wds[1..],
+            &ctx,
+            path_require_dir
+        ));
+        assert!(is_potential_path(
+            "aard",
+            true,
+            &wds[1..],
+            &ctx,
+            PathFlags::default()
+        ));
+        assert!(!is_potential_path(
+            "aard",
+            false,
+            &wds[1..],
+            &ctx,
+            PathFlags::default()
+        ));
         assert!(!is_potential_path(
             "alp/",
             true,
@@ -1100,10 +1119,34 @@ mod tests {
             }
         ));
 
-        assert!(!is_potential_path("balpha/", true, &wds[1..], &ctx, path_require_dir));
-        assert!(!is_potential_path("aard", true, &wds[1..], &ctx, path_require_dir));
-        assert!(!is_potential_path("aarde", true, &wds[1..], &ctx, path_require_dir));
-        assert!(!is_potential_path("aarde", true, &wds[1..], &ctx, PathFlags::default()));
+        assert!(!is_potential_path(
+            "balpha/",
+            true,
+            &wds[1..],
+            &ctx,
+            path_require_dir
+        ));
+        assert!(!is_potential_path(
+            "aard",
+            true,
+            &wds[1..],
+            &ctx,
+            path_require_dir
+        ));
+        assert!(!is_potential_path(
+            "aarde",
+            true,
+            &wds[1..],
+            &ctx,
+            path_require_dir
+        ));
+        assert!(!is_potential_path(
+            "aarde",
+            true,
+            &wds[1..],
+            &ctx,
+            PathFlags::default()
+        ));
 
         assert!(is_potential_path(
             "is_potential_path_test/aardvark",
@@ -1148,6 +1191,12 @@ mod tests {
             &ctx,
             PathFlags::default()
         ));
-        assert!(is_potential_path("/usr", true, &wds[..1], &ctx, path_require_dir));
+        assert!(is_potential_path(
+            "/usr",
+            true,
+            &wds[..1],
+            &ctx,
+            path_require_dir
+        ));
     }
 }

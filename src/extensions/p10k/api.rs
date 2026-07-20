@@ -40,7 +40,8 @@ pub fn is_hidden(seg: &str) -> bool {
     if map.is_empty() {
         return false;
     }
-    map.iter().any(|(k, &hidden)| hidden && part_matches(k, seg))
+    map.iter()
+        .any(|(k, &hidden)| hidden && part_matches(k, seg))
 }
 
 /// A stored display key matches segment `seg` when it is the bare name,
@@ -88,11 +89,15 @@ pub fn display_set(pattern: &str, states: &[&str]) -> bool {
 /// `reply` array.
 pub fn display_dump(patterns: &[&str]) -> Vec<String> {
     let g = DISPLAY_STATE.lock().unwrap();
-    let Some(map) = g.as_ref() else { return Vec::new() };
+    let Some(map) = g.as_ref() else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for (k, &hidden) in map.iter() {
         let show = patterns.is_empty()
-            || patterns.iter().any(|p| *p == "*" || part_matches(k, p) || *p == k.as_str());
+            || patterns
+                .iter()
+                .any(|p| *p == "*" || part_matches(k, p) || *p == k.as_str());
         if show {
             out.push(k.clone());
             out.push(if hidden { "hide".into() } else { "show".into() });

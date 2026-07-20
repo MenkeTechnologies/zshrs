@@ -50,26 +50,26 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 /// by this module; `Some(vec![])` = handled but hidden this prompt.
 pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
     match name {
-        "user" => Some(user_segments()),                           // p10k:1636
-        "host" => Some(host_segments()),                           // p10k:1662
-        "date" => Some(date_segments()),                           // p10k:3500
-        "public_ip" => Some(public_ip_segments()),                 // p10k:1500
-        "vpn_ip" => Some(vpn_ip_segments()),                       // p10k:2301
-        "detect_virt" => Some(detect_virt_segments()),             // p10k:2274
-        "toolbox" => Some(toolbox_segments()),                     // p10k:1676
-        "xplr" => Some(xplr_segments()),                           // p10k:4897
-        "docker_machine" => Some(docker_machine_segments()),       // p10k:2175
-        "dropbox" => Some(dropbox_segments()),                     // p10k:4540
-        "openfoam" => Some(openfoam_segments()),                   // p10k:4411
-        "chruby" => Some(chruby_segments()),                       // p10k:3121
-        "dotnet_version" => Some(dotnet_version_segments()),       // p10k:2649
-        "php_version" => Some(php_version_segments()),             // p10k:2673
-        "swift_version" => Some(swift_version_segments()),         // p10k:4425
-        "laravel_version" => Some(laravel_version_segments()),     // p10k:2323
+        "user" => Some(user_segments()),                       // p10k:1636
+        "host" => Some(host_segments()),                       // p10k:1662
+        "date" => Some(date_segments()),                       // p10k:3500
+        "public_ip" => Some(public_ip_segments()),             // p10k:1500
+        "vpn_ip" => Some(vpn_ip_segments()),                   // p10k:2301
+        "detect_virt" => Some(detect_virt_segments()),         // p10k:2274
+        "toolbox" => Some(toolbox_segments()),                 // p10k:1676
+        "xplr" => Some(xplr_segments()),                       // p10k:4897
+        "docker_machine" => Some(docker_machine_segments()),   // p10k:2175
+        "dropbox" => Some(dropbox_segments()),                 // p10k:4540
+        "openfoam" => Some(openfoam_segments()),               // p10k:4411
+        "chruby" => Some(chruby_segments()),                   // p10k:3121
+        "dotnet_version" => Some(dotnet_version_segments()),   // p10k:2649
+        "php_version" => Some(php_version_segments()),         // p10k:2673
+        "swift_version" => Some(swift_version_segments()),     // p10k:4425
+        "laravel_version" => Some(laravel_version_segments()), // p10k:2323
         "terraform_version" => Some(terraform_version_segments()), // p10k:4957
-        "symfony2_version" => Some(symfony2_version_segments()),   // p10k:3427
-        "rspec_stats" => Some(rspec_stats_segments()),             // p10k:3210
-        "symfony2_tests" => Some(symfony2_tests_segments()),       // p10k:3416
+        "symfony2_version" => Some(symfony2_version_segments()), // p10k:3427
+        "rspec_stats" => Some(rspec_stats_segments()),         // p10k:3210
+        "symfony2_tests" => Some(symfony2_tests_segments()),   // p10k:3416
         _ => None,
     }
 }
@@ -520,7 +520,11 @@ fn cached_cmd(cmd: &str, args: &[&str]) -> Option<String> {
             .map(|s| s.trim_end_matches('\n').to_string())
     })?;
     // p10k:2429-2430 — empty output is a miss.
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -555,7 +559,9 @@ fn upfind_pred(pred: &dyn Fn(&Path) -> bool) -> Option<PathBuf> {
 /// the `*.(csproj|…)` half of glob-style upglobs. Without GLOB_DOTS a
 /// leading dot never matches.
 fn dir_has_ext(dir: &Path, exts: &[&str]) -> bool {
-    let Ok(rd) = std::fs::read_dir(dir) else { return false };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return false;
+    };
     for entry in rd.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -576,7 +582,9 @@ fn dir_has_ext(dir: &Path, exts: &[&str]) -> bool {
 /// entries are neither matched nor descended; `**/` does not follow
 /// symlinked directories (that would be `***/`).
 fn glob_recursive(base: &Path, dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in rd.flatten() {
         let name = entry.file_name();
         let name_s = name.to_string_lossy().into_owned();
@@ -636,7 +644,11 @@ fn swift_version_extract(out: &str) -> Option<String> {
 fn terraform_version_extract(out: &str) -> Option<String> {
     let v = out.strip_prefix("Terraform v")?; // p10k:4959-4960
     let v = v.split('\n').next().unwrap_or(v); // p10k:4961 — ${v%%$'\n'*}
-    if v.is_empty() { None } else { Some(v.to_string()) } // p10k:4962
+    if v.is_empty() {
+        None
+    } else {
+        Some(v.to_string())
+    } // p10k:4962
 }
 
 /// p10k:2330 — `${${(M)v:#Laravel Framework *}#Laravel Framework }`:
@@ -718,7 +730,11 @@ fn containerenv_toolbox_name(content: &str) -> Option<String> {
     } else {
         name
     };
-    if unq.is_empty() { None } else { Some(unq.to_string()) }
+    if unq.is_empty() {
+        None
+    } else {
+        Some(unq.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -814,7 +830,14 @@ fn date_segments() -> Vec<Segment> {
     // every precmd, so passing the escape through IS the precmd
     // snapshot (same passthrough as segments_sys::time_segments).
     // p10k:3508 — `$0 "$_p9k_color2" "$_p9k_color1" "DATE_ICON" 0 '' …`
-    vec![make_segment("date", None, color2(), color1(), "DATE_ICON", fmt)]
+    vec![make_segment(
+        "date",
+        None,
+        color2(),
+        color1(),
+        "DATE_ICON",
+        fmt,
+    )]
 }
 
 // ---------------------------------------------------------------------
@@ -870,7 +893,11 @@ fn fetch_public_ip(method: &str, host: &str) -> Option<String> {
         _ => None,
     }?;
     // p10k:1550 — [[ $ip =~ '^[0-9a-f.:]+$' ]] || ip=''
-    if valid_public_ip(&fetched) { Some(fetched) } else { None }
+    if valid_public_ip(&fetched) {
+        Some(fetched)
+    } else {
+        None
+    }
 }
 
 fn public_ip_segments() -> Vec<Segment> {
@@ -1162,7 +1189,14 @@ fn openfoam_segments() -> Vec<Segment> {
         format!("F-X: {}", esc_pct(tail)) // p10k:4415
     };
     // p10k:4413/4415 — `"$0" "yellow" "$_p9k_color1" '' 0 '' …`
-    vec![make_segment("openfoam", None, "yellow", color1(), "", content)]
+    vec![make_segment(
+        "openfoam",
+        None,
+        "yellow",
+        color1(),
+        "",
+        content,
+    )]
 }
 
 // ---------------------------------------------------------------------
@@ -1412,7 +1446,14 @@ fn build_test_stats_segments(
         return vec![];
     };
     // p10k:3444-3446 — `${1}_<STATE> <bg> "$_p9k_color1" TEST_ICON 0 '' …`
-    vec![make_segment(name, Some(state), bg, color1(), "TEST_ICON", content)]
+    vec![make_segment(
+        name,
+        Some(state),
+        bg,
+        color1(),
+        "TEST_ICON",
+        content,
+    )]
 }
 
 fn rspec_stats_segments() -> Vec<Segment> {
@@ -1584,10 +1625,8 @@ mod tests {
     #[test]
     fn containerenv_toolbox_name_forms() {
         assert_eq!(
-            containerenv_toolbox_name(
-                "engine=\"podman\"\nname=\"fedora-toolbox-39\"\nimage=\"x\""
-            )
-            .as_deref(),
+            containerenv_toolbox_name("engine=\"podman\"\nname=\"fedora-toolbox-39\"\nimage=\"x\"")
+                .as_deref(),
             Some("fedora-toolbox-39")
         );
         assert_eq!(
