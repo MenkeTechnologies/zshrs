@@ -664,14 +664,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // 23 rows; zsh emits none.
         let live_pending = {
             use crate::ported::zle::compcore as cc;
-            let m = cc::matches
-                .get()
-                .map(|l| l.lock().map(|g| g.len()).unwrap_or(0))
-                .unwrap_or(0);
-            let fm = cc::fmatches
-                .get()
-                .map(|l| l.lock().map(|g| g.len()).unwrap_or(0))
-                .unwrap_or(0);
+            let m = crate::comp_match_handles::matches_arc().lock().map(|g| g.len()).unwrap_or(0);
+            let fm = crate::comp_match_handles::fmatches_arc().lock().map(|g| g.len()).unwrap_or(0);
             m + fm
         };
         let lastdescr = getaparam("_lastdescr").unwrap_or_default();

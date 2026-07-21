@@ -420,13 +420,21 @@ pub struct Cmgroup {
     /// Number of compctls used.
     pub ccount: i32, // c:61
     /// LinkList of explanations (mid-build accumulator before `expls`).
-    pub lexpls: Vec<Cexpl>, // c:62
+    ///
+    /// c:62 — in C the `l*` accumulators ARE the LinkLists the file-scope
+    /// `expls`/`matches`/`fmatches`/`allccs` globals alias (`begcmgroup`:
+    /// `matches = mgroup->lmatches`). The port makes that alias explicit with a
+    /// shared `Arc<Mutex<…>>`: every clone of this group (into `amatches` AND
+    /// `mgroup`) and the file-scope handle share ONE allocation, so a `compadd`
+    /// append flows into all of them with no copy — killing the copy-desync bug
+    /// class. See `begcmgroup` / `crate::comp_match_handles`.
+    pub lexpls: std::sync::Arc<std::sync::Mutex<Vec<Cexpl>>>, // c:62
     /// LinkList of matches (mid-build accumulator before `matches`).
-    pub lmatches: Vec<Cmatch>, // c:63
+    pub lmatches: std::sync::Arc<std::sync::Mutex<Vec<Cmatch>>>, // c:63
     /// LinkList of matches with fignore-removed entries kept.
-    pub lfmatches: Vec<Cmatch>, // c:64
+    pub lfmatches: std::sync::Arc<std::sync::Mutex<Vec<Cmatch>>>, // c:64
     /// LinkList of compctls used (mid-build accumulator).
-    pub lallccs: Vec<String>, // c:65
+    pub lallccs: std::sync::Arc<std::sync::Mutex<Vec<String>>>, // c:65
     /// Group number.
     pub num: i32, // c:66
     /// Number of opened braces.

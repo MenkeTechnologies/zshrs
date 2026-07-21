@@ -2403,7 +2403,7 @@ pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {
             }
         }
     }
-    let mcell = matches.get_or_init(|| Mutex::new(Vec::new())); // c:2066
+    let mcell = crate::comp_match_handles::matches_arc(); // c:2066
     if let Ok(mut g) = mcell.lock() {
         g.push(cm);
     }
@@ -3037,7 +3037,7 @@ pub fn addmatches(
             // char-based auto-remove-suffix was inert. Patch them on the just-
             // pushed match copy (the port's add_match_data returns a value).
             {
-                if let Ok(mut g) = matches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                if let Ok(mut g) = crate::comp_match_handles::matches_arc().lock() {
                     if let Some(last) = g.last_mut() {
                         last.rems = dat.rems.clone(); // c:2560
                         last.remf = dat.remf.clone(); // c:2561
@@ -3664,9 +3664,9 @@ pub fn add_match_data(
 
     // c:3064 — push cm into matches/fmatches LinkList.
     let cell = if alt != 0 {
-        fmatches.get_or_init(|| Mutex::new(Vec::new()))
+        crate::comp_match_handles::fmatches_arc()
     } else {
-        matches.get_or_init(|| Mutex::new(Vec::new()))
+        crate::comp_match_handles::matches_arc()
     };
     if let Ok(mut g) = cell.lock() {
         g.push(cm.clone());
@@ -3701,23 +3701,18 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {
         };
         if let Some(active) = reused {
             // c:3090-3093 — `expls = p->lexpls; matches = p->lmatches;
-            //   fmatches = p->lfmatches; allccs = p->lallccs;`. In C these
-            //   are pointer aliases into the reused group so appends keep
-            //   flowing into it. The Rust port keeps them as separate
-            //   Mutex globals, so restore their contents from the group;
-            //   `endcmgroup` flushes them back on close.
-            if let Ok(mut m) = expls.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                *m = active.lexpls.clone();
-            }
-            if let Ok(mut m) = matches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                *m = active.lmatches.clone();
-            }
-            if let Ok(mut m) = fmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                *m = active.lfmatches.clone();
-            }
-            if let Ok(mut m) = allccs.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                *m = active.lallccs.clone();
-            }
+            //   fmatches = p->lfmatches; allccs = p->lallccs;`. These are
+            //   pointer aliases into the reused group so appends keep flowing
+            //   into it. `active` was `.cloned()` from `amatches`, and the
+            //   `l*` fields are `Arc<Mutex<…>>`, so this clone SHARES the same
+            //   allocations as the `amatches` original — rebinding the handles
+            //   to them makes every subsequent append land in both, no copy.
+            crate::comp_match_handles::rebind_current(
+                &active.lmatches,
+                &active.lfmatches,
+                &active.lexpls,
+                &active.lallccs,
+            );
             let mc = mgroup.get_or_init(|| Mutex::new(None));
             if let Ok(mut s) = mc.lock() {
                 *s = Some(active);
@@ -3730,23 +3725,21 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {
     grp.flags = flags; // c:3108
     let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut g) = cell.lock() {
-        g.insert(0, grp.clone()); // c:3121-3124
+        g.insert(0, grp.clone()); // c:3121-3124 — shares grp's Arc l* fields
     }
+    // c:3110-3118 — alias the file-scope handles to the fresh group's (empty)
+    // `l*` Arcs. Same allocation as the `amatches` clone above, so appends
+    // land in both. No clearing needed: the new group's accumulators start
+    // empty. Rebind BEFORE moving `grp` into `mgroup`.
+    crate::comp_match_handles::rebind_current(
+        &grp.lmatches,
+        &grp.lfmatches,
+        &grp.lexpls,
+        &grp.lallccs,
+    );
     let mc = mgroup.get_or_init(|| Mutex::new(None));
     if let Ok(mut s) = mc.lock() {
         *s = Some(grp);
-    }
-    if let Ok(mut g) = expls.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        g.clear();
-    }
-    if let Ok(mut g) = matches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        g.clear();
-    }
-    if let Ok(mut g) = fmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        g.clear();
-    }
-    if let Ok(mut g) = allccs.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        g.clear();
     }
 }
 
@@ -3767,28 +3760,13 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
     // stays 0.
     let yl = ylist.unwrap_or_default();
 
-    // Snapshot the file-scope accumulators before touching amatches
-    // (distinct mutexes; snapshot-first keeps the lock scopes disjoint).
-    let m_snap = matches
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let fm_snap = fmatches
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let ex_snap = expls
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let ac_snap = allccs
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
+    // c:3131 — in C this is a one-liner (`mgroup->ylist = ylist`): `matches`
+    // etc. already ARE `mgroup->lmatches` (aliased in begcmgroup), so nothing
+    // to flush. The port now mirrors that — the group's `l*` are shared
+    // `Arc`s the file-scope handles point at, so `compadd`'s appends are
+    // already in the group. Only the per-clone SCALAR fields (`ylist`,
+    // `new_`) still diverge between the `mgroup` holder and the `amatches`
+    // entry, so copy those; the `l*` need no copy.
 
     // Identify the current group and record ylist on the mgroup holder.
     let (name, flags, new_) = {
@@ -3805,27 +3783,24 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
         }
     };
 
+    // Does the closing group carry any live content? Read the SHARED `l*`
+    // Arcs (via handles that drop their guard before we lock the inner Vec,
+    // so no lock is held into the `amatches` block below → no deadlock).
+    // `newmatches` must be marked whenever a group holds matches OR an
+    // explanation-only message (`_message -e`), else permmatches early-returns
+    // on its stale cache and the group never displays.
+    let flushed_any = !crate::comp_match_handles::matches_arc().lock().unwrap().is_empty()
+        || !crate::comp_match_handles::fmatches_arc().lock().unwrap().is_empty()
+        || !crate::comp_match_handles::expls_arc().lock().unwrap().is_empty();
+
     let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
-    // Rust-only correctness note (no C counterpart — C aliases `matches` to
-    // the current group's mlist so permmatches always sees live matches):
-    // the port keeps `matches` as a separate global flushed here, so a
-    // `permmatches` triggered mid-completion (e.g. a completer's
-    // `$compstate[nmatches]` read) can process a still-open group BEFORE its
-    // matches are flushed, cache nmatches with that group empty, and — since
-    // permmatches early-returns when `newmatches==0` — never re-count it
-    // after this flush. Every `compadd -J g2` past the first vanished. Mark
-    // `newmatches` when a flush actually moves matches into a group so the
-    // next permmatches recomputes instead of returning the stale cache.
-    let flushed_any = !m_snap.is_empty() || !fm_snap.is_empty() || !ex_snap.is_empty();
+    // Copy ONLY the scalar fields to the amatches entry; its `l*` Arcs are the
+    // same allocations as this group's, already carrying the appended matches.
     if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
         if let Some(grp) = g
             .iter_mut()
             .find(|grp| grp.name == name && (grp.flags & mask) == (flags & mask))
         {
-            grp.lmatches = m_snap;
-            grp.lfmatches = fm_snap;
-            grp.lexpls = ex_snap;
-            grp.lallccs = ac_snap;
             grp.ylist = yl;
             grp.new_ = new_;
         }
@@ -3853,7 +3828,7 @@ pub fn addexpl(always: bool) {
     let curexpl_count = curexpl_snap.as_ref().map(|e| e.count).unwrap_or(0);
     let curexpl_fcount = curexpl_snap.as_ref().map(|e| e.fcount).unwrap_or(0);
 
-    let elist = expls.get_or_init(|| Mutex::new(Vec::new()));
+    let elist = crate::comp_match_handles::expls_arc();
     if let Ok(mut g) = elist.lock() {
         for e in g.iter_mut() {
             // c:3145
@@ -4295,11 +4270,11 @@ pub fn permmatches(last: i32) -> i32 {
         if must_rebuild {
             // c:3456
             let src_list = if fi != 0 {
-                g.lfmatches.clone()
+                g.lfmatches.lock().unwrap().clone()
             }
             // c:3457
             else {
-                g.lmatches.clone()
+                g.lmatches.lock().unwrap().clone()
             }; // c:3461
 
             let (arr, nn, nl, ll) = makearray(src_list, g.flags); // c:3463
@@ -4315,7 +4290,7 @@ pub fn permmatches(last: i32) -> i32 {
                 smatches.store(2, Ordering::Relaxed); // c:3470
             }
             // c:3472 — makearray(lexpls, 0, 0, &ecount, NULL, NULL).
-            let mut exps = g.lexpls.clone(); // type=0 path
+            let mut exps = g.lexpls.lock().unwrap().clone(); // type=0 path
             g.ecount = exps.len() as i32;
             // c:3475 ccount = 0
             g.ccount = 0; // c:3475
@@ -4634,9 +4609,9 @@ pub static ripre: OnceLock<Mutex<String>> = OnceLock::new(); // c:118
 pub static isuf: OnceLock<Mutex<String>> = OnceLock::new(); // c:118
 
 /// Port of `mod_export LinkList matches` from compcore.c:124.
-pub static matches: OnceLock<Mutex<Vec<Cmatch>>> = OnceLock::new(); // c:124
+pub static matches: OnceLock<Mutex<std::sync::Arc<Mutex<Vec<Cmatch>>>>> = OnceLock::new(); // c:124 (Arc handle — see comp_match_handles)
 /// Port of `LinkList fmatches` from compcore.c:126.
-pub static fmatches: OnceLock<Mutex<Vec<Cmatch>>> = OnceLock::new(); // c:126
+pub static fmatches: OnceLock<Mutex<std::sync::Arc<Mutex<Vec<Cmatch>>>>> = OnceLock::new(); // c:126 (Arc handle)
 
 /// Port of `mod_export Cmgroup amatches` from compcore.c:135.
 pub static amatches: OnceLock<Mutex<Vec<Cmgroup>>> = OnceLock::new(); // c:135
@@ -4711,7 +4686,7 @@ pub static maxmlen: AtomicI32 = AtomicI32::new(0); // c:212
 pub static minmlen: AtomicI32 = AtomicI32::new(0); // c:212
 
 /// Port of `LinkList expls` from compcore.c:218.
-pub static expls: OnceLock<Mutex<Vec<Cexpl>>> = OnceLock::new(); // c:218
+pub static expls: OnceLock<Mutex<std::sync::Arc<Mutex<Vec<Cexpl>>>>> = OnceLock::new(); // c:218 (Arc handle)
 
 /// Port of `mod_export Cexpl curexpl` from compcore.c:221.
 pub static curexpl: OnceLock<Mutex<Option<Cexpl>>> = OnceLock::new(); // c:221
@@ -4729,7 +4704,7 @@ pub static ainfo: OnceLock<Mutex<Option<Aminfo>>> = OnceLock::new(); // c:246
 pub static fainfo: OnceLock<Mutex<Option<Aminfo>>> = OnceLock::new(); // c:246
 
 /// Port of `mod_export LinkList allccs` from compcore.c:259.
-pub static allccs: OnceLock<Mutex<Vec<String>>> = OnceLock::new(); // c:259
+pub static allccs: OnceLock<Mutex<std::sync::Arc<Mutex<Vec<String>>>>> = OnceLock::new(); // c:259 (Arc handle)
 
 /// Port of `int fromcomp` from compcore.c:271.
 pub static fromcomp: AtomicI32 = AtomicI32::new(0); // c:271
@@ -5863,15 +5838,14 @@ mod tests {
             .lock()
             .unwrap()
             .clear();
-        matches
-            .get_or_init(|| Mutex::new(Vec::new()))
+        crate::comp_match_handles::matches_arc()
             .lock()
             .unwrap()
             .clear();
         let mut dat = Cadata::default();
         dat.dummies = -1;
         let _ = addmatches(&mut dat, &["a".into(), "b".into()]);
-        let n = matches.get().unwrap().lock().unwrap().len();
+        let n = crate::comp_match_handles::matches_arc().lock().unwrap().len();
         assert!(n >= 2);
     }
 
@@ -5881,8 +5855,7 @@ mod tests {
         let _g = zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // c:3052-3067: cm.str/orig/pre/suf populated; mnum bumps by 1.
-        matches
-            .get_or_init(|| Mutex::new(Vec::new()))
+        crate::comp_match_handles::matches_arc()
             .lock()
             .unwrap()
             .clear();

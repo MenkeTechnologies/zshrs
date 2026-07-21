@@ -5178,15 +5178,13 @@ mod tests {
         crate::ported::zle::compcore::mnum.load(std::sync::atomic::Ordering::Relaxed)
     }
     fn clear_matches() {
-        crate::ported::zle::compcore::matches
-            .get_or_init(|| Mutex::new(Vec::new()))
+        crate::comp_match_handles::matches_arc()
             .lock()
             .unwrap()
             .clear();
     }
     fn last_match_orig() -> Option<String> {
-        crate::ported::zle::compcore::matches
-            .get_or_init(|| Mutex::new(Vec::new()))
+        crate::comp_match_handles::matches_arc()
             .lock()
             .unwrap()
             .last()
@@ -5228,8 +5226,7 @@ mod tests {
         );
         assert_eq!(mnum_now(), before, "no Cmatch may be registered");
         assert_eq!(
-            crate::ported::zle::compcore::matches
-                .get_or_init(|| Mutex::new(Vec::new()))
+            crate::comp_match_handles::matches_arc()
                 .lock()
                 .unwrap()
                 .len(),
@@ -5254,8 +5251,7 @@ mod tests {
         addmatch("foo.txt", None);
         addmatch("bar.txt", None);
         assert_eq!(mnum_now(), before + 2, "two Cmatches registered");
-        let reg = crate::ported::zle::compcore::matches
-            .get_or_init(|| Mutex::new(Vec::new()))
+        let reg = crate::comp_match_handles::matches_arc()
             .lock()
             .unwrap()
             .clone();
@@ -5284,8 +5280,7 @@ mod tests {
         assert_eq!(mnum_now(), before + 1, "one Cmatch registered");
         assert_eq!(last_match_orig().as_deref(), Some("HOME"));
         use crate::ported::zle::comp_h::CMF_FILE;
-        let reg = crate::ported::zle::compcore::matches
-            .get_or_init(|| Mutex::new(Vec::new()))
+        let reg = crate::comp_match_handles::matches_arc()
             .lock()
             .unwrap()
             .clone();
