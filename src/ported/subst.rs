@@ -8961,7 +8961,73 @@ pub fn paramsubst(
                 let lo1 = parse_idx(lo1_s, 1);
                 let hi1 = parse_idx(hi1_s, full.len() as i64);
                 let subarr = crate::ported::params::getarrvalue(&full, lo1, hi1);
-                if let Some((lo2_s, hi2_s)) = s2.split_once(',') {
+                // Flag subscript on the sub-array: `${a[lo,hi][(i|I|r|R)pat]}`.
+                // (i/I) return the 1-based index of the first/last matching
+                // element WITHIN the sub-array; (r/R) return the matched value.
+                // This MUST run before the numeric parse below — `parse_idx`
+                // can't read "(I)pat" and silently falls back to index 1,
+                // returning the wrong element. That broke e.g. `_compdef`'s
+                // `(( ! ${words[2,-1][(I)[^-]*]} || ... ))` with a bad-math error.
+                let flag_res: Option<String> = if s2.starts_with('(') {
+                    s2[1..].find(')').and_then(|cr| {
+                        let flags = &s2[1..1 + cr];
+                        let pat = &s2[1 + cr + 1..];
+                        let (want_i, want_ii) = (flags.contains('i'), flags.contains('I'));
+                        let (want_r, want_rr) = (flags.contains('r'), flags.contains('R'));
+                        if !(want_i || want_ii || want_r || want_rr) {
+                            return None; // other flags → let the numeric path handle it
+                        }
+                        let exact = flags.contains('e');
+                        let is_match = |elem: &str| -> bool {
+                            if exact {
+                                elem == pat
+                            } else if pat.is_empty() {
+                                elem.is_empty()
+                            } else {
+                                patcompile(
+                                    &{
+                                        let mut t = pat.to_string();
+                                        crate::ported::glob::tokenize(&mut t);
+                                        t
+                                    },
+                                    PAT_HEAPDUP as i32,
+                                    None,
+                                )
+                                .map_or(false, |p| pattry(&p, elem))
+                            }
+                        };
+                        let n = subarr.len();
+                        if want_i || want_ii {
+                            // (i) first match else len+1; (I) last match else 0.
+                            let idx = if want_ii {
+                                (0..n).rev().find(|&k| is_match(&subarr[k])).map_or(0, |k| k + 1)
+                            } else {
+                                (0..n).find(|&k| is_match(&subarr[k])).map_or(n + 1, |k| k + 1)
+                            };
+                            Some(idx.to_string())
+                        } else {
+                            // (r) first matching value; (R) last; empty if none.
+                            let hit = if want_rr {
+                                (0..n).rev().find(|&k| is_match(&subarr[k]))
+                            } else {
+                                (0..n).find(|&k| is_match(&subarr[k]))
+                            };
+                            Some(hit.map_or_else(String::new, |k| subarr[k].clone()))
+                        }
+                    })
+                } else {
+                    None
+                };
+                if let Some(res) = flag_res {
+                    if res.is_empty() {
+                        split_parts = Some(Vec::new());
+                        isarr = -1;
+                    } else {
+                        split_parts = Some(vec![res.clone()]);
+                        isarr = 1;
+                    }
+                    res
+                } else if let Some((lo2_s, hi2_s)) = s2.split_once(',') {
                     // Slice-of-slice → array result.
                     let lo2 = parse_idx(lo2_s, 1);
                     let hi2 = parse_idx(hi2_s, subarr.len() as i64);
