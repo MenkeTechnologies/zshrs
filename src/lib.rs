@@ -127,6 +127,10 @@ pub mod subexp_cleanup;
 /// `vm_pool` submodule — per-thread pool of recyclable fusevm VMs.
 #[path = "extensions/vm_pool.rs"]
 pub mod vm_pool;
+/// Shared-handle accessors for the completion match accumulators (Rust-original
+/// glue restoring C's `matches = mgroup->lmatches` pointer alias; see the module
+/// doc). Deliberately outside `src/ported/` — not a C-fn port.
+pub mod comp_match_handles;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in vm_helper) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.
