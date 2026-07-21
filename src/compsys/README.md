@@ -13,7 +13,7 @@
 
 > *"Tab is the most powerful key on the keyboard."*
 
-The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/zshrs) Tab completion — ported from zsh's `Src/Zle/complist.c` and `Src/Zle/compresult.c` with **rkyv**-mmap'd bytecode shards (the completion cache), read-only SQLite **mirrors** for SQL/`dbview` introspection only (no role in Tab cache hit/miss), a full menuselect state machine, and zstyle configuration. 133 source files, 35k+ lines of Rust.
+The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/zshrs) Tab completion — ported from zsh's `Src/Zle/complist.c` and `Src/Zle/compresult.c` with **rkyv**-mmap'd bytecode shards (the completion cache), read-only SQLite **mirrors** for SQL/`dbview` introspection only (no role in Tab cache hit/miss), a full menuselect state machine, and zstyle configuration. 254 source files, 58k+ lines of Rust.
 
 ### [`zshrs`](https://github.com/MenkeTechnologies/zshrs) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang)
 
