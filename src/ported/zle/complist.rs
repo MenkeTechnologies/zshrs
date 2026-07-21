@@ -629,32 +629,41 @@ pub fn getcols(_unused: &str) -> i32 {
     unqueue_signals(); // c:540
 
     // c:543-549 — default-fill loop for unset color slots.
+    // c:205 — `static char *defcols[]`, ported 1:1 from the C table.
+    // C `NULL` entries (COL_OR, COL_MI, COL_EC, COL_HI, COL_DU) are
+    // represented as `""` so the default-fill leaves the slot empty, exactly
+    // as C leaves them NULL. This is load-bearing:
+    //   - COL_EC empty ⇒ `zcoff()` takes the COL_NO reset branch instead of
+    //     emitting a bogus "0" end-cap raw (which would print a literal `0`).
+    //   - COL_HI / COL_DU empty ⇒ the nolist/duplicate colour guards fall
+    //     through to `putmatchcol` (list-colors patterns) as in C.
+    // COL_OR / COL_MI empty are re-defaulted below from COL_LN / COL_FI.
     let defcols: [&str; NUM_COLS] = [
-        "0",
-        "0",
-        "01;34",
-        "01;36",
-        "33",
-        "01;35",
-        "01;33",
-        "01;33",
-        "01;05;37;41",
-        "01;05;37;41",
-        "37;41",
-        "30;43",
-        "30;42",
-        "34;42",
-        "37;44",
-        "01;32",
-        "\x1b[",
-        "m",
-        "0",
-        "0",
-        "0",
-        "7",
-        "0",
-        "0",
-        "0",
+        "0",     // COL_NO
+        "0",     // COL_FI
+        "1;31",  // COL_DI
+        "1;36",  // COL_LN
+        "33",    // COL_PI
+        "1;35",  // COL_SO
+        "1;33",  // COL_BD
+        "1;33",  // COL_CD
+        "",      // COL_OR (C: NULL → COL_LN)
+        "",      // COL_MI (C: NULL → COL_FI)
+        "37;41", // COL_SU
+        "30;43", // COL_SG
+        "30;42", // COL_TW
+        "34;42", // COL_OW
+        "37;44", // COL_ST
+        "1;32",  // COL_EX
+        "\x1b[", // COL_LC
+        "m",     // COL_RC
+        "",      // COL_EC (C: NULL — unset unless termcap standout-end sets it)
+        "0",     // COL_TC
+        "0",     // COL_SP
+        "7",     // COL_MA (reverse video)
+        "",      // COL_HI (C: NULL)
+        "",      // COL_DU (C: NULL)
+        "0",     // COL_SA
     ];
     let mut mc = MCOLORS.lock().unwrap();
     while mc.files.len() < NUM_COLS {
@@ -733,10 +742,33 @@ pub fn zcputs(s: &str, color: Option<&str>) -> String {
 
 // Turn off colouring.                                                     // c:597
 /// Port of `zcoff()` from Src/Zle/complist.c:597.
-pub fn zcoff() { // c:597
-                 // C body c:599-617 — emits the LS_COLORS no-color escape via
-                 //                    tputs(mcolors.files[COL_NO]->col,...).
-                 //                    No mcolors substrate: no-op.
+pub fn zcoff() {
+    // c:597
+    let fd = SHTTY.load(Ordering::Relaxed);
+    let out = if fd >= 0 { fd } else { 1 };
+    let cap_of = |idx: usize| -> String {
+        MCOLORS
+            .lock()
+            .ok()
+            .and_then(|cols| cols.files.get(idx).map(|f| f.col.clone()))
+            .unwrap_or_default()
+    };
+    let ec = cap_of(COL_EC);
+    if !ec.is_empty() {
+        // c:599-601 — COL_EC is a complete termcap end-cap (TCSTANDOUTEND);
+        // emit it raw and clear last_cap so the next zcputs re-emits.
+        let _ = write_loop(out, ec.as_bytes());
+        if let Ok(mut lc) = LAST_CAP.lock() {
+            lc.clear(); // c:601 — *last_cap = '\0'
+        }
+    } else {
+        // c:603 — `zcputs(NULL, COL_NO)`: the no-colour default cap. With
+        // COL_NO defaulting to "0" this is `\x1b[0m`; C falls back to "0"
+        // when the slot is unset, so mirror that fallback.
+        let no = cap_of(COL_NO);
+        let cap = if no.is_empty() { "0".to_string() } else { no };
+        let _ = zlrputs(&cap);
+    }
 }
 
 /// Direct port of `void cleareol(void)` from
@@ -2358,6 +2390,38 @@ pub fn clprintm(
     let zterm_columns = adjustcolumns() as i32;
     let mlines_v = MLINES.load(Ordering::SeqCst); // c:1735
 
+    // Colour-slot emitters used across the empty-cell, whole-line-display, and
+    // grid paths below. Closures (not free fns) so they stay local to clprintm.
+    let mcolor_col = |idx: usize| -> String {
+        MCOLORS
+            .lock()
+            .ok()
+            .and_then(|cols| cols.files.get(idx).map(|f| f.col.clone()))
+            .unwrap_or_default()
+    };
+    // Faithful `zcputs(g->name, COL_xx)` for a fixed slot: a termcap-derived
+    // cap (already a full ESC sequence, e.g. from TCSTANDOUTBEG) is emitted
+    // raw — `zlrputs` would double-wrap it into `\e[\e[7mm` garbage; a bare
+    // LS_COLORS code (`7`, `1;35`) is SGR-wrapped via `zlrputs`; an unset slot
+    // falls back to `zlrputs("0")` (a reset), matching C zcputs's trailing
+    // `zlrputs("0")` (complist.c:591). Group-pattern matching (C's
+    // `fc->prog`/`pattry`) is not modelled — these slots use bare specs.
+    let zcputs_slot = |idx: usize| {
+        // c:583
+        let cap = mcolor_col(idx);
+        if cap.is_empty() {
+            let _ = zlrputs("0"); // c:591
+            return;
+        }
+        if cap.starts_with('\x1b') {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out, cap.as_bytes());
+        } else {
+            let _ = zlrputs(&cap);
+        }
+    };
+
     // c:1735-1737 — DPUTS2(mselect >= 0 && ml >= mlines,
     //                      "clprintm called with ml too large (%d/%d)",
     //                      ml, mlines)
@@ -2391,14 +2455,14 @@ pub fn clprintm(
             if let Some(grp) = g {
                 // c:1745
                 let _ = grp;
-                // c:1745 — zcputs(g->name, COL_SP)
+                zcputs_slot(COL_SP); // c:1745 — zcputs(g->name, COL_SP)
                 // c:1747-1748 — pad with `width-2` spaces
                 let pad = (width - 2).max(0) as usize;
                 let pad_str = " ".repeat(pad);
                 let fd = SHTTY.load(Ordering::Relaxed);
                 let out_fd = if fd >= 0 { fd } else { 1 };
                 let _ = write_loop(out_fd, pad_str.as_bytes());
-                // c:1749 — zcoff() reset
+                zcoff(); // c:1749 — reset
             }
             MLPRINTED.store(0, Ordering::SeqCst); // c:1751
             return 0; // c:1752
@@ -2444,12 +2508,31 @@ pub fn clprintm(
             MMTABP.store(mm.max(0) as usize, Ordering::SeqCst); // c:1787
             MGTABP.store(mm.max(0) as usize, Ordering::SeqCst); // c:1788
         }
-        // c:1789-1797 — color selection. Stubbed to no-op output;
-        // the live zcputs / putmatchcol / putfilecol pipeline lands
-        // once those helpers port.
-        // c:1801 — compprintfmt(m->disp, 0, 1, 0, ml, &stop)
+        // c:1789-1804 — colour selection for the whole-line-display match,
+        // then the coloured (clprintfmt) or plain (compprintfmt) emit + reset.
         let disp = m_ref.disp.as_deref().unwrap_or("");
-        let _ = compprintfmt(disp, 0, 1, 0, ml, &mut 0); // c:1801
+        let group = g.and_then(|grp| grp.name.clone()).unwrap_or_default();
+        let mut subcols = 0i32;
+        if m_ref.gnum == mselect {
+            zcputs_slot(COL_MA); // c:1790 — selection highlight
+        } else if (m_ref.flags & CMF_NOLIST) != 0 && !mcolor_col(COL_HI).is_empty() {
+            zcputs_slot(COL_HI); // c:1791-1792 — nolist highlight
+        } else if mselect >= 0
+            && (m_ref.flags & (CMF_MULT | CMF_FMULT)) != 0
+            && !mcolor_col(COL_DU).is_empty()
+        {
+            zcputs_slot(COL_DU); // c:1793-1794 — duplicate
+        } else {
+            subcols = putmatchcol(&group, disp); // c:1796 — list-colors lookup
+        }
+        // c:1797-1802 — coloured line uses clprintfmt; otherwise compprintfmt.
+        if subcols != 0 {
+            let _ = clprintfmt(disp, ml); // c:1798
+        } else {
+            let mut stop = 0;
+            let _ = compprintfmt(disp, 0, 1, 0, ml, &mut stop); // c:1801
+        }
+        zcoff(); // c:1804 — reset the active cap
     } else {
         // c:1806-1898 — normal grid-cell display.
         let mx = if !g.is_some_and(|grp| grp.widths.is_empty()) {
@@ -2497,40 +2580,21 @@ pub fn clprintm(
             .unwrap_or_else(|| m_ref.str.as_deref().unwrap_or(""));
         let group = g.and_then(|grp| grp.name.clone()).unwrap_or_default();
 
-        // c:1855-1875 — pick the color cap and emit its prefix. COL_MA
-        // (selected), COL_HI (nolist), COL_DU (duplicate) are group-file
-        // colors; a filesystem match uses putfilecol; everything else is a
-        // list-colors pattern lookup via putmatchcol. Each writer emits its
-        // SGR prefix directly; `subcols` requests per-char (two-color)
-        // rendering inside clnicezputs.
+        // c:1844-1875 — pick the colour cap and emit its prefix. COL_MA
+        // (selected), COL_HI (nolist), COL_DU (duplicate) use the fixed
+        // slots via zcputs_slot; a filesystem match uses putfilecol;
+        // everything else is a list-colors pattern lookup via putmatchcol.
+        // `subcols` requests per-char (two-color) rendering in clnicezputs.
+        // NB: unlike the whole-line-display branch, the grid path does NOT
+        // gate COL_HI/COL_DU on the slot being set (C:1851-1854) — an empty
+        // slot falls back to an SGR reset inside zcputs_slot.
         let mut subcols = 0i32;
-        // helper: emit mcolors.files[idx] cap for the group (C zcputs).
-        // A cap read from termcap (COL_MA/COL_EC when getcols took the
-        // TCSTANDOUTBEG branch) is ALREADY a complete escape sequence
-        // (e.g. "\e[7m"); `zlrputs` SGR-wraps its argument ("\e[{cap}m"),
-        // which would double-wrap that into "\e[\e[7mm" garbage — the menu
-        // selection highlight rendered as nothing. Emit an already-escaped
-        // cap raw; SGR-wrap only bare LS_COLORS codes like "7" / "1;35".
-        let emit_filecol = |idx: usize| {
-            let cap = MCOLORS
-                .lock()
-                .ok()
-                .and_then(|mc| mc.files.get(idx).map(|f| f.col.clone()))
-                .unwrap_or_default();
-            if cap.starts_with('\x1b') {
-                let fd = SHTTY.load(Ordering::Relaxed);
-                let out = if fd >= 0 { fd } else { 1 };
-                let _ = write_loop(out, cap.as_bytes());
-            } else {
-                let _ = zlrputs(&cap);
-            }
-        };
         if m_ref.gnum == mselect {
-            emit_filecol(COL_MA); // c:1866
+            zcputs_slot(COL_MA); // c:1850/1866
         } else if (m_ref.flags & CMF_NOLIST) != 0 {
-            emit_filecol(COL_HI); // c:1868
+            zcputs_slot(COL_HI); // c:1852/1868
         } else if mselect >= 0 && (m_ref.flags & (CMF_MULT | CMF_FMULT)) != 0 {
-            emit_filecol(COL_DU); // c:1870
+            zcputs_slot(COL_DU); // c:1854/1870
         } else if m_ref.mode != 0 {
             // c:1855-1863 — filesystem match: putfilecol with orphan detect.
             let orphan = if m_ref.mode != 0 && m_ref.fmode == 0 {
@@ -2551,16 +2615,9 @@ pub fn clprintm(
 
         // c:1872 — `ret = clnicezputs(subcols, m->disp ? m->disp : m->str, ml);`
         let _ = clnicezputs(subcols, display, ml);
-        // c:1876 — `zcoff();` resets the cap (COL_NO / SGR reset).
-        {
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, b"\x1b[0m");
-        }
-        {
-            let mut lc = LAST_CAP.lock().unwrap();
-            lc.clear();
-        }
+        // c:1876 — `zcoff();` — reset the active cap (COL_EC end-cap or the
+        // COL_NO no-colour default). Now that zcoff() actually emits, the
+        // prior manual `\x1b[0m` + LAST_CAP clear is redundant.
         zcoff();
 
         let len_str = display.chars().count() as i32;
@@ -2608,7 +2665,7 @@ pub fn clprintm(
         // column still touched its neighbour.
         if lastc == 0 {
             // c:1899
-            emit_filecol(COL_SP); // c:1900 — zcputs(g->name, COL_SP)
+            zcputs_slot(COL_SP); // c:1900 — zcputs(g->name, COL_SP)
             let fd = SHTTY.load(Ordering::Relaxed);
             let out_fd = if fd >= 0 { fd } else { 1 };
             let _ = write_loop(out_fd, b"  "); // c:1901 — fputs("  ", shout)
@@ -2995,9 +3052,11 @@ pub fn complistmatches(
 
     // c:2023-2024 — save EXTENDEDGLOB; force it on for the listing pass.
     let extendedglob = isset(EXTENDEDGLOB);
-    // c:2024 — `opts[EXTENDEDGLOB] = 1;` — option mutation not yet
-    // exposed as a free fn; the typed `setopt(EXTENDEDGLOB)` path
-    // would set the bit. Carry-through.
+    // c:2024 — `opts[EXTENDEDGLOB] = 1;` — force ext-glob ON for the listing
+    // pass so list-colors patterns using the `(#b)`/`(#i)`/… globflags (which
+    // require EXTENDED_GLOB to compile) match even when the user hasn't set it
+    // globally. Restored on every exit path below (c:2038 / c:2072 / c:2121).
+    crate::ported::options::opt_state_set("extendedglob", true);
 
     // c:2026 — `getcols();` — parse ZLS_COLORS into mcolors.
     getcols("");
@@ -3022,6 +3081,7 @@ pub fn complistmatches(
         LISTSHOWN.store(0, Ordering::SeqCst);
         NOSELECT.store(1, Ordering::SeqCst);
         popheap();
+        crate::ported::options::opt_state_set("extendedglob", extendedglob); // c:2038
         return 1;
     }
 
@@ -3077,6 +3137,7 @@ pub fn complistmatches(
         if r != 0 {
             // c:2070
             popheap();
+            crate::ported::options::opt_state_set("extendedglob", extendedglob); // c:2072
             NOSELECT.store(1, Ordering::SeqCst);
             return 1;
         }
@@ -3210,7 +3271,7 @@ pub fn complistmatches(
 
     // c:2118-2120 — `amatches = oamatches; popheap();`
     popheap();
-    let _ = extendedglob; // c:2121 opts[EXTENDEDGLOB] = extendedglob
+    crate::ported::options::opt_state_set("extendedglob", extendedglob); // c:2121 opts[EXTENDEDGLOB] = extendedglob
 
     NOSELECT.load(Ordering::SeqCst) // c:2123 return noselect
 }
