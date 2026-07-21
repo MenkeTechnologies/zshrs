@@ -4495,23 +4495,162 @@ pub fn domenuselect(
             || (mode == 1 && (name == "self-insert" || name == "self-insert-unmeta"))
         {
             // c:2732-2820 — recursive interactive / accept-and-infer
-            // completion. This arm sets `comprecursive = 1` (c:2735, now
-            // ported as `COMPRECURSIVE` above) and then calls
-            // `menucomplete(zlenoargs)` (c:2778) as a *nested* completion.
-            // Blocked on one out-of-scope piece: the nested `menucomplete`
-            // routes through `docomplete`, whose recursion guard
-            // (zle_tricky.rs:712) tests only the thread-local `ACTIVE`
-            // flag and does not consult `comprecursive`. The C guard is
-            // `if (active && !comprecursive)` (zle_tricky.c:606), so the
-            // nested call is only admitted when `comprecursive` is set.
-            // Honouring it requires editing `docomplete` in zle_tricky.rs,
-            // outside this file's scope. (`domenuselect` also has no
-            // `menu_start`-hook caller in Rust yet, so this arm is currently
-            // unreachable regardless.) Accept the key as a no-op step
-            // rather than delete the line and fire a nested completion the
-            // guard will reject — which would fall into the "no matches"
-            // branch and trash the display.
-            continue;
+            // completion. Push the current menu state, insert the typed
+            // char, then re-run completion (`menucomplete`) with
+            // `comprecursive = 1` so `docomplete`'s recursion guard
+            // (zle_tricky.rs:712, which DOES honour comprecursive) admits
+            // the nested call. The rebuilt match set is the list narrowed
+            // by whatever the user has typed so far.
+            use crate::ported::zle::compcore::{
+                amatches as amatches_g, hasoldlist, iforcemenu, lastmatches as lastmatches_g,
+                menuacc, nmatches as nmatches_g, pmatches as pmatches_g,
+            };
+            let is_infer = name == "accept-and-infer-next-history";
+
+            // c:2688-2718 — push current state onto the menu stack `u`.
+            let info = MINFO
+                .get()
+                .and_then(|g| g.lock().ok())
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            u.push(MFrame {
+                line: ZLEMETALINE
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default(),
+                cs: ZLEMETACS.load(Ordering::SeqCst),
+                mline: MLINE.load(Ordering::SeqCst),
+                mlbeg: MLBEG.load(Ordering::SeqCst),
+                info,
+                amatches: amatches_g.get().and_then(|m| m.lock().ok().map(|v| v.clone())), // c:2696
+                pmatches: None,
+                lastmatches: None,
+                lastlmatches: None,
+                nolist,
+                acc: menuacc.load(Ordering::SeqCst),
+                brbeg: crate::ported::zle::compcore::BRBEG
+                    .get()
+                    .and_then(|m| m.lock().ok())
+                    .and_then(|g| g.clone()),
+                brend: crate::ported::zle::compcore::BREND
+                    .get()
+                    .and_then(|m| m.lock().ok())
+                    .and_then(|g| g.clone()),
+                nbrbeg: NBRBEG.load(Ordering::SeqCst),
+                nbrend: NBREND.load(Ordering::SeqCst),
+                nmatches: nmatches_g.load(Ordering::SeqCst),
+                origline: ORIGLINE
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default(),
+                origcs: ORIGCS.load(Ordering::SeqCst),
+                origll: ORIGLL.load(Ordering::SeqCst),
+                status: status.clone(),
+                mode,
+            });
+
+            // c:2719-2731 — reset completion state for the nested run.
+            crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::SeqCst);
+            menuacc.store(0, Ordering::SeqCst);
+            hasoldlist.store(0, Ordering::SeqCst);
+            if let Some(lk) = MINFO.get() {
+                if let Ok(mut mi) = lk.lock() {
+                    mi.cur = None; // c:2723 minfo.cur = NULL
+                }
+            }
+            crate::ported::zle::zle_misc::fixsuffix(); // c:2724
+            handleundo(); // c:2725
+            crate::ported::zle::zle_tricky::VALIDLIST.store(0, Ordering::SeqCst); // c:2726
+            // c:2727 — amatches = pmatches = lastmatches = NULL.
+            for g in [&amatches_g, &pmatches_g, &lastmatches_g] {
+                if let Some(m) = g.get() {
+                    if let Ok(mut v) = m.lock() {
+                        v.clear();
+                    }
+                }
+            }
+            crate::ported::zle::compresult::invalidate_list(); // c:2728
+            iforcemenu.store(1, Ordering::SeqCst); // c:2729
+            COMPRECURSIVE.store(1, Ordering::SeqCst); // c:2730
+
+            let mut saveline = String::new();
+            let mut savell = 0i32;
+            let mut savecs = 0i32;
+            if !is_infer {
+                // c:2740-2755 — restore origline, then insert the typed char.
+                let origline = ORIGLINE
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default();
+                set_zlemetaline(&origline, ORIGCS.load(Ordering::SeqCst));
+                // c:2756-2761 — selfinsert operates on the UNMETAFIED line
+                // (zleline/zlecs); sync meta→non-meta, insert, then back.
+                crate::ported::zle::compcore::unmetafy_line();
+                if name == "self-insert" {
+                    crate::ported::zle::zle_misc::selfinsert(&[]); // c:2758
+                } else {
+                    crate::ported::zle::zle_misc::selfinsertunmeta(&[]); // c:2760
+                }
+                crate::ported::zle::compcore::metafy_line();
+                if let Some(lk) = MINFO.get() {
+                    if let Ok(mut mi) = lk.lock() {
+                        mi.len += 1; // c:2762
+                        mi.end += 1; // c:2763
+                    }
+                }
+                saveline = ZLEMETALINE
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default();
+                savell = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
+                savecs = ZLEMETACS.load(Ordering::SeqCst);
+                iforcemenu.store(-1, Ordering::SeqCst); // c:2768
+            } else {
+                mode = 0; // c:2770
+            }
+
+            // c:2776-2779 — nested completion assumes an unmetafied line;
+            // the guard admits it via comprecursive.
+            crate::ported::zle::compcore::unmetafy_line();
+            crate::ported::zle::zle_tricky::menucomplete(&[]);
+            crate::ported::zle::compcore::metafy_line();
+            iforcemenu.store(0, Ordering::SeqCst); // c:2780
+
+            if !is_infer {
+                // c:2782-2784 — status = typed prefix + longest-match-so-far.
+                let _ = setmstatus(&mut status, &saveline, savell, savecs, None, None, None);
+            }
+
+            // c:2786-2810 — nothing left after filtering.
+            let has_cur = MINFO
+                .get()
+                .and_then(|g| g.lock().ok())
+                .map(|g| g.cur.is_some())
+                .unwrap_or(false);
+            if nmatches_g.load(Ordering::SeqCst) < 1 || !has_cur {
+                nolist = 1; // c:2787
+                *STATUSLINE.lock().unwrap() = if mode == 1 {
+                    Some(status.clone()) // c:2790 statusline = status
+                } else {
+                    None // c:2793
+                };
+                SHOWINGLIST.store(-2, Ordering::SeqCst); // c:2796
+                zrefresh(); // c:2797
+                NOSELECT.store(-1, Ordering::SeqCst); // c:2798
+                *STATUSLINE.lock().unwrap() = None; // c:2810
+                goto_getk = true;
+                continue; // c:2811 goto getk
+            }
+
+            // c:2812-2818 — adopt the filtered match set.
+            CLEARLIST.store(1, Ordering::SeqCst); // c:2812
+            LISTSHOWN.store(1, Ordering::SeqCst);
+            MSELECT.store(cur_gnum(), Ordering::SeqCst); // c:2813
+            setwish = 1; // c:2814 setwish = 1
+            wasnext = 1; // c:2814 wasnext = 1
+            MLINE.store(0, Ordering::SeqCst); // c:2815
+            MOLBEG.store(-42, Ordering::SeqCst); // c:2816
+            continue; // c:2817
         } else if name == "accept-and-hold" || name == "accept-and-menu-complete" {
             // c:2688-2731
             if mode == 1 {
