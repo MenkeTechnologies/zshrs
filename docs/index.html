@@ -1013,6 +1013,147 @@ Every subsequent call (client path, ZERO daemon RTT):
 
       <!-- ════════════════════════════════════════════════════════════ -->
       <section class="tutorial-section">
+        <h2><span class="section-num">[0x06b]</span> COMPLETION CODEPATH &mdash; ZSH vs ZSHRS</h2>
+
+        <p>Both shells share the same entry &mdash; zshrs ports <code>callcompfunc</code> faithfully &mdash; then split where each completion function actually runs. zsh re-interprets the whole framework as shell on <em>every</em> tab and walks <code>$fpath</code> to find the leaf; zshrs runs the framework as native Rust and resolves the leaf from an index. This is a structural codepath trace, not a benchmark &mdash; the claim is about which work exists on each path.</p>
+
+        <style>
+          .cc-fig { margin: 0.9rem 0 1rem; padding: 1rem; border: 1px solid var(--border); background: var(--bg-secondary); border-radius: 6px; overflow-x: auto; }
+          .cc-fig svg { width: 100%; min-width: 720px; height: auto; display: block; }
+          .cc-node { fill: var(--bg-card); stroke: var(--border); stroke-width: 1.2; }
+          .cc-nz { fill: var(--bg-card); stroke: var(--accent); stroke-width: 1.2; }
+          .cc-nr { fill: var(--bg-card); stroke: var(--cyan); stroke-width: 1.2; }
+          .cc-flow { fill: none; stroke: var(--border); stroke-width: 1.6; }
+          .cc-flow-z { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+          .cc-flow-r { fill: none; stroke: var(--cyan); stroke-width: 1.6; }
+          .cc-eye { font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; }
+          .cc-eye-z { fill: var(--accent); } .cc-eye-r { fill: var(--cyan); } .cc-eye-m { fill: var(--text-muted); }
+          .cc-title { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 13.5px; fill: var(--text); }
+          .cc-cite { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10.5px; fill: var(--text-dim); }
+          .cc-mid { font-family: 'Orbitron', sans-serif; font-size: 12.5px; letter-spacing: 0.08em; fill: var(--text); }
+          .cc-lab { font-family: 'Orbitron', sans-serif; font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--text-muted); }
+          .cc-hd { font-family: 'Orbitron', sans-serif; font-size: 12px; letter-spacing: 0.12em; }
+          .cc-chip-cost { fill: var(--red); fill-opacity: 0.14; stroke: var(--red); stroke-width: 1; }
+          .cc-chip-ok { fill: var(--cyan); fill-opacity: 0.12; stroke: var(--cyan); stroke-width: 1; }
+          .cc-ct-cost { font-family: 'Share Tech Mono', monospace; font-size: 9.5px; letter-spacing: 0.04em; fill: var(--red); }
+          .cc-ct-ok { font-family: 'Share Tech Mono', monospace; font-size: 9.5px; letter-spacing: 0.04em; fill: var(--cyan); }
+        </style>
+
+        <div class="cc-fig">
+          <svg viewBox="0 0 960 706" role="img" aria-label="Side-by-side flow of zsh versus zshrs tab-completion codepath">
+            <defs>
+              <marker id="ccah" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M1,1 L7,4 L1,7" fill="none" stroke="var(--border)" stroke-width="1.5"/></marker>
+              <marker id="ccahz" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M1,1 L7,4 L1,7" fill="none" stroke="var(--accent)" stroke-width="1.5"/></marker>
+              <marker id="ccahr" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M1,1 L7,4 L1,7" fill="none" stroke="var(--cyan)" stroke-width="1.5"/></marker>
+            </defs>
+
+            <rect class="cc-node" x="290" y="16" width="380" height="46" rx="8"/>
+            <text class="cc-mid" x="480" y="44" text-anchor="middle">zle complete-word &#8594; callcompfunc</text>
+
+            <path class="cc-flow" d="M480,62 V88 H230 V140" marker-end="url(#ccah)"/>
+            <path class="cc-flow" d="M480,62 V88 H730 V140" marker-end="url(#ccah)"/>
+
+            <text class="cc-hd cc-eye-z" x="230" y="104" text-anchor="middle">ZSH &#183; INTERPRETED, EVERY TAB</text>
+            <text class="cc-hd cc-eye-r" x="730" y="104" text-anchor="middle">ZSHRS &#183; NATIVE SPINE + CACHED LEAF</text>
+
+            <text class="cc-lab" x="480" y="192" text-anchor="middle">spine</text>
+            <text class="cc-lab" x="480" y="312" text-anchor="middle">resolve leaf</text>
+            <text class="cc-lab" x="480" y="432" text-anchor="middle">load + run leaf</text>
+            <text class="cc-lab" x="480" y="552" text-anchor="middle">emit</text>
+
+            <!-- ROW 1 SPINE -->
+            <rect class="cc-nz" x="40" y="140" width="380" height="96" rx="8"/>
+            <rect class="cc-chip-cost" x="352" y="151" width="56" height="18" rx="4"/>
+            <text class="cc-ct-cost" x="380" y="164" text-anchor="middle">COST</text>
+            <text class="cc-eye cc-eye-z" x="60" y="167">spine &#183; interpreted</text>
+            <text class="cc-title" x="60" y="191">_main_complete &#8594; _complete &#8594;</text>
+            <text class="cc-title" x="60" y="209">_normal &#8594; _dispatch</text>
+            <text class="cc-cite" x="60" y="228">~1,517 shell lines walked &#183; re-run every tab</text>
+
+            <rect class="cc-nr" x="540" y="140" width="380" height="96" rx="8"/>
+            <rect class="cc-chip-ok" x="852" y="151" width="56" height="18" rx="4"/>
+            <text class="cc-ct-ok" x="880" y="164" text-anchor="middle">NATIVE</text>
+            <text class="cc-eye cc-eye-r" x="560" y="167">spine &#183; compiled</text>
+            <text class="cc-title" x="560" y="191">dispatch_compsys &#8594; Rust fn ptr</text>
+            <text class="cc-cite" x="560" y="211">machine code, in the binary &#183; no wordcode walk</text>
+            <text class="cc-cite" x="560" y="228">router.rs:57 &#183; compcore.rs:776</text>
+
+            <!-- ROW 2 RESOLVE LEAF -->
+            <rect class="cc-nz" x="40" y="260" width="380" height="96" rx="8"/>
+            <rect class="cc-chip-cost" x="352" y="271" width="56" height="18" rx="4"/>
+            <text class="cc-ct-cost" x="380" y="284" text-anchor="middle">FS SCAN</text>
+            <text class="cc-eye cc-eye-z" x="60" y="287">resolve leaf</text>
+            <text class="cc-title" x="60" y="311">scan $fpath for _git</text>
+            <text class="cc-cite" x="60" y="331">51 dirs &#183; stat per dir until hit</text>
+            <text class="cc-cite" x="60" y="348">against a 16,806-file completion corpus</text>
+
+            <rect class="cc-nr" x="540" y="260" width="380" height="96" rx="8"/>
+            <rect class="cc-chip-ok" x="852" y="271" width="56" height="18" rx="4"/>
+            <text class="cc-ct-ok" x="880" y="284" text-anchor="middle">CACHE</text>
+            <text class="cc-eye cc-eye-r" x="560" y="287">resolve leaf</text>
+            <text class="cc-title" x="560" y="311">indexed cache lookup</text>
+            <text class="cc-cite" x="560" y="331">rkyv / SQLite &#183; mmap &#183; no $fpath walk</text>
+            <text class="cc-cite" x="560" y="348">getfpfunc &#8594; try_dump_file &#183; exec.rs:811</text>
+
+            <!-- ROW 3 LOAD + RUN -->
+            <rect class="cc-nz" x="40" y="380" width="380" height="96" rx="8"/>
+            <rect class="cc-chip-cost" x="352" y="391" width="56" height="18" rx="4"/>
+            <text class="cc-ct-cost" x="380" y="404" text-anchor="middle">PARSE</text>
+            <text class="cc-eye cc-eye-z" x="60" y="407">load + run &#183; interpreted</text>
+            <text class="cc-title" x="60" y="431">autoload + parse _git, then</text>
+            <text class="cc-title" x="60" y="449">_arguments &#8594; _describe &#8594; _tags</text>
+            <text class="cc-cite" x="60" y="468">parse on first tab &#183; interpret specs</text>
+
+            <rect class="cc-nr" x="540" y="380" width="380" height="96" rx="8"/>
+            <rect class="cc-chip-ok" x="874" y="391" width="34" height="18" rx="4"/>
+            <text class="cc-ct-ok" x="891" y="404" text-anchor="middle">JIT</text>
+            <text class="cc-eye cc-eye-r" x="560" y="407">load + run &#183; bytecode</text>
+            <text class="cc-title" x="560" y="431">fusevm bytecode + JIT</text>
+            <text class="cc-cite" x="560" y="451">hot chunks &#8594; native &#183; .fjit disk cache</text>
+            <text class="cc-cite" x="560" y="468">warm across launches &#183; Cargo.toml:103</text>
+
+            <!-- ROW 4 EMIT -->
+            <rect class="cc-nz" x="40" y="500" width="380" height="72" rx="8"/>
+            <text class="cc-eye cc-eye-m" x="60" y="527">emit</text>
+            <text class="cc-title" x="60" y="551">compadd</text>
+            <text class="cc-cite" x="60" y="565">C builtin</text>
+
+            <rect class="cc-nr" x="540" y="500" width="380" height="72" rx="8"/>
+            <rect class="cc-chip-ok" x="852" y="511" width="56" height="18" rx="4"/>
+            <text class="cc-ct-ok" x="880" y="524" text-anchor="middle">NATIVE</text>
+            <text class="cc-eye cc-eye-m" x="560" y="527">emit</text>
+            <text class="cc-title" x="560" y="551">bin_compadd</text>
+            <text class="cc-cite" x="560" y="565">native</text>
+
+            <path class="cc-flow-z" d="M230,236 V260" marker-end="url(#ccahz)"/>
+            <path class="cc-flow-z" d="M230,356 V380" marker-end="url(#ccahz)"/>
+            <path class="cc-flow-z" d="M230,476 V500" marker-end="url(#ccahz)"/>
+            <path class="cc-flow-r" d="M730,236 V260" marker-end="url(#ccahr)"/>
+            <path class="cc-flow-r" d="M730,356 V380" marker-end="url(#ccahr)"/>
+            <path class="cc-flow-r" d="M730,476 V500" marker-end="url(#ccahr)"/>
+
+            <path class="cc-flow-z" d="M230,572 V596 H480 V624" marker-end="url(#ccah)"/>
+            <path class="cc-flow-r" d="M730,572 V596 H480 V624" marker-end="url(#ccah)"/>
+            <rect class="cc-node" x="300" y="624" width="360" height="46" rx="8"/>
+            <text class="cc-mid" x="480" y="652" text-anchor="middle">matches on screen</text>
+          </svg>
+        </div>
+
+        <table class="arch-table">
+          <tr><th>Stage</th><th>zsh &mdash; every &lt;tab&gt;</th><th>zshrs</th></tr>
+          <tr><td>Spine</td><td><span class="highlight">interpret ~1,517 shell lines</span> (<code>_main_complete</code> &rarr; <code>_dispatch</code>)</td><td>native Rust fn pointer &mdash; compiled into the binary</td></tr>
+          <tr><td>Resolve leaf</td><td><span class="highlight">scan <code>$fpath</code></span> &mdash; 51 dirs, stat per dir until hit</td><td>indexed cache lookup (rkyv/SQLite, mmap) &mdash; no fpath walk</td></tr>
+          <tr><td>Load + run leaf</td><td><span class="highlight">autoload + parse</span> on first tab, interpret specs</td><td>fusevm bytecode + JIT &middot; <code>.fjit</code> disk cache, warm across launches</td></tr>
+          <tr><td>Emit</td><td><code>compadd</code> (C builtin)</td><td><code>bin_compadd</code> (native)</td></tr>
+        </table>
+
+        <p style="color:var(--text-muted);font-size:12px;font-family:'Share Tech Mono',ui-monospace,monospace;">
+          Sources: callcompfunc <code>compcore.c:544,:991</code> &middot; body-runner fork <code>compcore.rs:766&#8211;782</code> (native dispatch <code>:776</code>) &middot; router <code>router.rs:57&#8211;61</code> &middot; leaf resolution <code>exec.rs:811</code> (getfpfunc/try_dump_file) &middot; JIT disk cache <code>Cargo.toml:103</code>. Figures from this machine's fpath depth and completion corpus.
+        </p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
         <h2><span class="section-num">[0x07]</span> EXCLUSIVE BUILTINS</h2>
 
         <h3>Parallel Primitives (VM-executed, zero fork)</h3>
