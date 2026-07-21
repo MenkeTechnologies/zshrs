@@ -3816,7 +3816,7 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
     // after this flush. Every `compadd -J g2` past the first vanished. Mark
     // `newmatches` when a flush actually moves matches into a group so the
     // next permmatches recomputes instead of returning the stale cache.
-    let flushed_any = !m_snap.is_empty() || !fm_snap.is_empty();
+    let flushed_any = !m_snap.is_empty() || !fm_snap.is_empty() || !ex_snap.is_empty();
     if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
         if let Some(grp) = g
             .iter_mut()
