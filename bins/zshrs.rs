@@ -562,6 +562,7 @@ byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --bash       identical-behaviour drop-in for /bin/bash
   --ksh        identical-behaviour drop-in for /bin/ksh (ksh-93)
   --mksh       identical-behaviour drop-in for mksh (MirBSD ksh; ksh base)
+  --pdksh      identical-behaviour drop-in for pdksh (Public Domain ksh; ksh base)
   --sh         identical-behaviour drop-in for /bin/sh / POSIX (alias of --posix)
   --dash       identical-behaviour drop-in for /bin/dash (strict POSIX subset)
   --ash        identical-behaviour drop-in for ash (Almquist; alias of --dash)
@@ -1188,15 +1189,42 @@ pub fn zshrs_main() {
     //
     // `--emulate MODE` form is zsh-compat (Src/init.c:443) — looks at
     // the next arg as the mode name; same final mapping.
-    let explicit_mode: Option<ShellMode> = if args.iter().any(|a| a == "--dash" || a == "--ash") {
+    // The zsh-STYLE cross-emulation combos — `--sh --zsh`, `--ksh --zsh`, … —
+    // mean "the X OPTION deltas applied ON TOP OF zsh's own parser/semantics",
+    // i.e. exactly what `emulate X` does INSIDE a real zsh (lenient brace parse,
+    // zsh base-digit case, `let` auto-typing, …), NOT the real-shell drop-in.
+    // So SHELL_MODE stays Zsh (keeping the zsh parser); `zsh_style_emu` names
+    // the option deltas to layer on. Only fires when `--zsh` accompanies a
+    // sub-mode flag — a bare `--sh` is still the strict real-shell drop-in.
+    let has_zsh = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
+    let zsh_style_emu: Option<&str> = if has_zsh {
+        if args.iter().any(|a| a == "--dash" || a == "--ash") {
+            Some("dash")
+        } else if args.iter().any(|a| a == "--posix" || a == "--sh") {
+            Some("sh")
+        } else if args.iter().any(|a| a == "--bash") {
+            Some("sh") // bash shares the sh emulation base
+        } else if args.iter().any(|a| a == "--ksh" || a == "--mksh" || a == "--pdksh") {
+            Some("ksh")
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let explicit_mode: Option<ShellMode> = if zsh_style_emu.is_some() {
+        // zsh-STYLE: zsh parser/semantics; the option deltas apply via emu_name.
+        Some(ShellMode::Zsh)
+    } else if args.iter().any(|a| a == "--dash" || a == "--ash") {
         // ash and dash are the same Almquist strict-POSIX shell family.
         Some(ShellMode::Dash)
     } else if args.iter().any(|a| a == "--posix" || a == "--sh") {
         Some(ShellMode::Posix)
     } else if args.iter().any(|a| a == "--bash") {
         Some(ShellMode::Bash)
-    } else if args.iter().any(|a| a == "--ksh" || a == "--mksh") {
-        // mksh (MirBSD Korn shell) uses the same ksh emulation base.
+    } else if args.iter().any(|a| a == "--ksh" || a == "--mksh" || a == "--pdksh") {
+        // mksh (MirBSD Korn shell) and pdksh (Public Domain Korn shell)
+        // use the same ksh emulation base.
         Some(ShellMode::Ksh)
     } else if args.iter().any(|a| a == "--csh") {
         // csh emulation routes to Zsh mode (zshrs has no separate csh
@@ -1245,12 +1273,18 @@ pub fn zshrs_main() {
     // path that runs during shell init for `--ksh` etc. The Zsh /
     // Zshrs modes still go through this to set the canonical
     // EMULATE_ZSH bitmap (idempotent — that's the default).
-    let emu_name = match shell_mode() {
-        ShellMode::Ksh => "ksh",
-        ShellMode::Dash => "dash", // sh emulation + DASH_STRICT (see options::emulate)
-        ShellMode::Posix => "sh",
-        ShellMode::Bash => "sh", // bash ≈ sh emulation; bash-specific bits flagged via is_bash_mode()
-        ShellMode::Zsh | ShellMode::Zshrs => "zsh",
+    let emu_name = if let Some(sub) = zsh_style_emu {
+        // zsh-STYLE (`--X --zsh`): SHELL_MODE is Zsh, but the sub-mode's option
+        // deltas still layer on — this is what `emulate X` inside a real zsh does.
+        sub
+    } else {
+        match shell_mode() {
+            ShellMode::Ksh => "ksh",
+            ShellMode::Dash => "dash", // sh emulation + DASH_STRICT (see options::emulate)
+            ShellMode::Posix => "sh",
+            ShellMode::Bash => "sh", // bash ≈ sh emulation; bash-specific bits flagged via is_bash_mode()
+            ShellMode::Zsh | ShellMode::Zshrs => "zsh",
+        }
     };
     if argv0_basename == "csh" || args.iter().any(|a| a == "--csh") {
         zsh::ported::options::emulate("csh", true);
@@ -1667,6 +1701,7 @@ pub fn zshrs_main() {
                 || a == "--bash"
                 || a == "--ksh"
                 || a == "--mksh"
+                || a == "--pdksh"
                 || a == "--sh"
                 || a == "--dash"
                 || a == "--ash"

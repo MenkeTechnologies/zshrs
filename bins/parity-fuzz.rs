@@ -80,6 +80,214 @@ fn zsh_path() -> &'static str {
     })
 }
 
+/// The 10 "ways" of the parity matrix (mirrors `tests/emulation_parity.rs`
+/// `PARITY_CASES`): 8 real Bourne-family shells, each `zshrs --X` vs the real
+/// shell, PLUS 2 zsh-STYLE cross-emulation legs (`zshrs --sh --zsh` /
+/// `--ksh --zsh` vs real `zsh` running `emulate sh` / `emulate ksh`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ShellTarget {
+    Zsh,
+    Bash,
+    Ksh,
+    Sh,
+    Dash,
+    ShZsh,
+    KshZsh,
+    Mksh,
+    Pdksh,
+    Ash,
+}
+
+/// Which grammar the generator emits for a target.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum GenKind {
+    /// zsh feature grammar (the rich `Mode`-driven generator).
+    Rich,
+    /// ksh/POSIX (`set -A`, `typeset -i`, `[[`, substring, replace).
+    Ksh,
+    /// strict POSIX sh (no arrays / `[[` / substring / typeset).
+    Posix,
+    /// POSIX + bash extensions (`a=(…)`, `${!a[@]}`, `${v:o:l}`, `${v^^}`).
+    Bash,
+}
+
+/// How to invoke the reference (oracle) for a target.
+enum RefKind {
+    /// Real `zsh`: `-f -c` (rich zsh syntax).
+    Zsh,
+    /// A real shell binary (first installed candidate wins): `<bin> -c script`.
+    Real(&'static [&'static str]),
+    /// Real `zsh` running `emulate <mode>` before the script — the zsh-STYLE
+    /// legs, whose correct reference is zsh's OWN emulation, not the real shell.
+    ZshEmulate(&'static str),
+}
+
+struct TargetCfg {
+    name: &'static str,
+    /// zshrs invocation flags (e.g. `["--sh", "--zsh"]`).
+    flags: &'static [&'static str],
+    refk: RefKind,
+    gen: GenKind,
+}
+
+fn target_cfg(t: ShellTarget) -> TargetCfg {
+    use ShellTarget::*;
+    match t {
+        Zsh => TargetCfg { name: "zsh", flags: &["--zsh"], refk: RefKind::Zsh, gen: GenKind::Rich },
+        Bash => TargetCfg {
+            name: "bash",
+            flags: &["--bash"],
+            refk: RefKind::Real(&["bash", "/opt/homebrew/bin/bash", "/bin/bash", "/usr/bin/bash"]),
+            gen: GenKind::Bash,
+        },
+        Ksh => TargetCfg {
+            name: "ksh",
+            flags: &["--ksh"],
+            refk: RefKind::Real(&["ksh", "/opt/homebrew/bin/ksh", "/bin/ksh", "/usr/bin/ksh"]),
+            gen: GenKind::Ksh,
+        },
+        Sh => TargetCfg {
+            name: "sh",
+            flags: &["--sh"],
+            refk: RefKind::Real(&["/bin/sh"]),
+            gen: GenKind::Posix,
+        },
+        Dash => TargetCfg {
+            name: "dash",
+            flags: &["--dash"],
+            refk: RefKind::Real(&["dash", "/opt/homebrew/bin/dash", "/bin/dash", "/usr/bin/dash"]),
+            gen: GenKind::Posix,
+        },
+        ShZsh => TargetCfg {
+            name: "sh/zsh-style",
+            flags: &["--sh", "--zsh"],
+            refk: RefKind::ZshEmulate("sh"),
+            gen: GenKind::Rich,
+        },
+        KshZsh => TargetCfg {
+            name: "ksh/zsh-style",
+            flags: &["--ksh", "--zsh"],
+            refk: RefKind::ZshEmulate("ksh"),
+            gen: GenKind::Rich,
+        },
+        Mksh => TargetCfg {
+            name: "mksh",
+            flags: &["--mksh"],
+            refk: RefKind::Real(&["mksh", "/opt/homebrew/bin/mksh", "/bin/mksh", "/usr/bin/mksh"]),
+            gen: GenKind::Ksh,
+        },
+        Pdksh => TargetCfg {
+            name: "pdksh",
+            flags: &["--pdksh"],
+            // pdksh proper is rare; the mksh/oksh descendants share the base.
+            refk: RefKind::Real(&[
+                "pdksh",
+                "/usr/bin/pdksh",
+                "mksh",
+                "/opt/homebrew/bin/mksh",
+                "oksh",
+            ]),
+            gen: GenKind::Ksh,
+        },
+        Ash => TargetCfg {
+            name: "ash",
+            flags: &["--ash"],
+            refk: RefKind::Real(&["ash", "/opt/homebrew/bin/ash", "/bin/ash", "/usr/bin/ash"]),
+            gen: GenKind::Posix,
+        },
+    }
+}
+
+/// All 10 targets, for `--matrix` enumeration.
+const ALL_TARGETS: [ShellTarget; 10] = [
+    ShellTarget::Zsh,
+    ShellTarget::Bash,
+    ShellTarget::Ksh,
+    ShellTarget::Sh,
+    ShellTarget::Dash,
+    ShellTarget::ShZsh,
+    ShellTarget::KshZsh,
+    ShellTarget::Mksh,
+    ShellTarget::Pdksh,
+    ShellTarget::Ash,
+];
+
+fn target_from_name(s: &str) -> Option<ShellTarget> {
+    Some(match s {
+        "zsh" => ShellTarget::Zsh,
+        "bash" => ShellTarget::Bash,
+        "ksh" => ShellTarget::Ksh,
+        "sh" => ShellTarget::Sh,
+        "dash" => ShellTarget::Dash,
+        "sh/zsh-style" | "sh-zsh" | "shzsh" => ShellTarget::ShZsh,
+        "ksh/zsh-style" | "ksh-zsh" | "kshzsh" => ShellTarget::KshZsh,
+        "mksh" => ShellTarget::Mksh,
+        "pdksh" => ShellTarget::Pdksh,
+        "ash" => ShellTarget::Ash,
+        _ => return None,
+    })
+}
+
+// One target per process (`--matrix` re-execs the binary per target), so a
+// single set-once slot every worker thread reads is enough.
+static SHELL_TARGET: std::sync::OnceLock<ShellTarget> = std::sync::OnceLock::new();
+
+fn shell_target() -> ShellTarget {
+    SHELL_TARGET.get().copied().unwrap_or(ShellTarget::Zsh)
+}
+
+/// Resolve `name` to a runnable path: absolute names by existence, bare names
+/// through `$PATH`.
+fn in_path(name: &str) -> Option<String> {
+    if name.contains('/') {
+        return Path::new(name).exists().then(|| name.to_string());
+    }
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(':').filter(|d| !d.is_empty()) {
+        let cand = Path::new(dir).join(name);
+        if cand.exists() {
+            return Some(cand.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// The resolved reference binary for the current target's `RefKind::Real` /
+/// `RefKind::Zsh` / `RefKind::ZshEmulate`. `None` when a `Real` reference has no
+/// installed candidate — the run is SKIPPED (never failed), like the optional
+/// legs of the parity matrix.
+fn reference_bin(t: ShellTarget) -> Option<String> {
+    match target_cfg(t).refk {
+        RefKind::Zsh | RefKind::ZshEmulate(_) => Some(zsh_path().to_string()),
+        RefKind::Real(cands) => cands.iter().find_map(|n| in_path(n)),
+    }
+}
+
+/// `<path> (<version>)` for the run header, dispatched per target.
+fn reference_oracle_id() -> String {
+    let t = shell_target();
+    let cfg = target_cfg(t);
+    match cfg.refk {
+        RefKind::Zsh => zsh_oracle_id(),
+        RefKind::ZshEmulate(mode) => format!("{} (emulate {mode})", zsh_oracle_id()),
+        RefKind::Real(_) => {
+            let path = reference_bin(t).unwrap_or_else(|| cfg.name.to_string());
+            let ver = Command::new(&path)
+                .args([
+                    "-c",
+                    "printf %s \"${KSH_VERSION:-${BASH_VERSION:-${0##*/}}}\"",
+                ])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| cfg.name.to_string());
+            format!("{path} ({ver})")
+        }
+    }
+}
+
 /// `<path> (<$ZSH_PATCHLEVEL>)`, for the run header and the report file, so a
 /// divergence record can be attributed to the exact oracle that produced it.
 fn zsh_oracle_id() -> String {
@@ -255,31 +463,88 @@ fn stdin_mode() -> bool {
     *STDIN_MODE.get().unwrap_or(&false)
 }
 
+/// Run the reference (oracle) for the current target on `script`.
 fn run_zsh(script: &str, timeout: Duration) -> RunOut {
-    let mut cmd = Command::new(zsh_path());
-    if stdin_mode() {
-        cmd.args(["-f"]);
-    } else {
-        cmd.args(["-f", "-c", script]);
+    let t = shell_target();
+    let cfg = target_cfg(t);
+    match cfg.refk {
+        RefKind::Zsh => {
+            // Real zsh: `-f -c` (rich syntax). Honours Shinstdin (stdin) mode.
+            let mut cmd = Command::new(zsh_path());
+            if stdin_mode() {
+                cmd.args(["-f"]);
+            } else {
+                cmd.args(["-f", "-c", script]);
+            }
+            if let Some(dir) = FIXTURE_CWD.get() {
+                cmd.current_dir(dir);
+            }
+            run_with_timeout_stdin(cmd, timeout, stdin_mode().then_some(script))
+        }
+        RefKind::ZshEmulate(mode) => {
+            // zsh-STYLE leg: parse the script UNDER `emulate <mode>`.
+            //
+            // A single `-c "emulate <mode>\n<script>"` is WRONG: zsh parses the
+            // ENTIRE -c string under PLAIN-zsh options BEFORE the `emulate` line
+            // executes, so parse-time emulation deltas (IGNOREBRACES, SH_GLOB,
+            // …) never apply to the script's parse. That flawed oracle reported
+            // ~100+ phantom "brace-leniency" gaps for ShZsh — e.g. `f() { cmd }`
+            // parsed leniently by the plain-zsh reference but strictly by
+            // `zshrs --sh --zsh` (IGNOREBRACES active at parse), which is the
+            // CORRECT match to `zsh -o ignorebraces`.
+            //
+            // The `emulate <mode> -c "$s"` one-shot form DOES parse its argument
+            // under the emulation (Src/builtin.c bin_emulate → parses with the
+            // emulated option set). The script rides in as the positional `$1`
+            // so arbitrary quotes / `$` / backticks in it cannot break out of
+            // the fixed wrapper. `emulate -c` runs its body in the CURRENT
+            // positional scope, so we FIRST stash the script (`s=$1`) then clear
+            // the positionals (`set --`) — otherwise a script using `$#` / `$@`
+            // / `$*` would see the wrapper's own args (`$#`==1, `$@`==the script
+            // text) instead of the empty set that `zshrs -c <script>` runs with.
+            // The stash var uses an obscure name (`__oracle_src`) no generator
+            // ever emits, so a script that reads an unset `$s`/`$x` can't pick
+            // up the wrapper's captured text.
+            let mut cmd = Command::new(zsh_path());
+            let wrapper = format!("__oracle_src=$1; set --; emulate {mode} -c \"$__oracle_src\"");
+            cmd.args(["-f", "-c", &wrapper, "zsh", script]);
+            if let Some(dir) = FIXTURE_CWD.get() {
+                cmd.current_dir(dir);
+            }
+            run_with_timeout_stdin(cmd, timeout, None)
+        }
+        RefKind::Real(_) => {
+            // Real Bourne-family shell: `<bin> -c script`. Clear `$ENV` so no
+            // user rc perturbs the deterministic run.
+            let bin = reference_bin(t).unwrap_or_else(|| cfg.name.to_string());
+            let mut cmd = Command::new(bin);
+            cmd.args(["-c", script]);
+            cmd.env_remove("ENV");
+            if let Some(dir) = FIXTURE_CWD.get() {
+                cmd.current_dir(dir);
+            }
+            run_with_timeout_stdin(cmd, timeout, None)
+        }
     }
-    if let Some(dir) = FIXTURE_CWD.get() {
-        cmd.current_dir(dir);
-    }
-    run_with_timeout_stdin(cmd, timeout, stdin_mode().then_some(script))
 }
 
+/// Run `zshrs` in the current target's emulation on `script`.
 fn run_zshrs(script: &str, bin: &Path, timeout: Duration) -> RunOut {
+    let cfg = target_cfg(shell_target());
     let mut cmd = Command::new(bin);
-    if stdin_mode() {
-        cmd.args(["--zsh", "-f"]);
+    // Only the real-zsh target carries the Shinstdin (stdin) mode.
+    let stdin = matches!(cfg.refk, RefKind::Zsh) && stdin_mode();
+    if stdin {
+        cmd.args(cfg.flags).arg("-f");
     } else {
-        cmd.args(["--zsh", "-f", "-c", script]);
+        cmd.args(cfg.flags).args(["-f", "-c", script]);
     }
     cmd.env_remove("ZSHRS_CACHE");
+    cmd.env_remove("ENV");
     if let Some(dir) = FIXTURE_CWD.get() {
         cmd.current_dir(dir);
     }
-    run_with_timeout_stdin(cmd, timeout, stdin_mode().then_some(script))
+    run_with_timeout_stdin(cmd, timeout, stdin.then_some(script))
 }
 
 // ---------------------------------------------------------------------------
@@ -9467,10 +9732,410 @@ struct Args {
     mode: Mode,
     verify: usize,
     baseline: Option<PathBuf>,
+    shell: Option<ShellTarget>,
+    matrix: bool,
+}
+
+/// ksh/POSIX-portable generator for `--shell pdksh` — real pdksh (or mksh/oksh)
+/// vs `zshrs --pdksh`. Uses ONLY constructs the Public-Domain-Korn family and
+/// zshrs's ksh emulation both implement, and `printf` for ALL output (no
+/// `echo`/`print` escaping divergence). A reported divergence is therefore a
+/// real ksh-emulation gap, not a syntax mismatch. Deterministic per seed.
+fn gen_pdksh(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let ints = ["0", "1", "2", "3", "5", "7", "10", "42", "-1", "-3"];
+    let strs = ["abc", "hello", "a.b.c", "xxyy", "", "foobar", "a1b2"];
+    let words = ["one", "two", "three", "four"];
+    let mut stmts = Vec::new();
+    for _ in 0..rng.gen_range(2..=5) {
+        match rng.gen_range(0..27) {
+            // Integer arithmetic (guard div/mod by zero).
+            0 => {
+                let a = *pick(&mut rng, &ints);
+                let b = *pick(&mut rng, &ints);
+                let op = *pick(&mut rng, &["+", "-", "*", "/", "%"]);
+                let expr = if (op == "/" || op == "%") && b == "0" {
+                    format!("{a} + 1")
+                } else {
+                    format!("{a} {op} {b}")
+                };
+                stmts.push(format!("printf '%d\\n' \"$(( {expr} ))\""));
+            }
+            // Default / alternate value expansions.
+            1 => {
+                let v = *pick(&mut rng, &strs);
+                let alt = *pick(&mut rng, &["def", "ALT", ""]);
+                let op = *pick(&mut rng, &[":-", ":+", "-", "+", ":="]);
+                stmts.push(format!("v={v}; printf '%s\\n' \"${{v{op}{alt}}}\""));
+            }
+            // Prefix / suffix pattern strip.
+            2 => {
+                let v = *pick(&mut rng, &strs);
+                let pat = *pick(&mut rng, &["a", "a*", "*c", "x*", "?", "*"]);
+                let op = *pick(&mut rng, &["#", "##", "%", "%%"]);
+                stmts.push(format!("v={v}; printf '%s\\n' \"${{v{op}{pat}}}\""));
+            }
+            // Length.
+            3 => {
+                let v = *pick(&mut rng, &strs);
+                stmts.push(format!("v={v}; printf '%d\\n' \"${{#v}}\""));
+            }
+            // Positional parameters.
+            4 => {
+                let ws: Vec<&str> = (0..rng.gen_range(0..=4))
+                    .map(|_| *pick(&mut rng, &words))
+                    .collect();
+                let sel = *pick(&mut rng, &["$#", "$1", "$2", "$*", "$@"]);
+                stmts.push(format!(
+                    "set -- {}; printf '%s\\n' \"{sel}\"",
+                    ws.join(" ")
+                ));
+            }
+            // for loop accumulator.
+            5 => {
+                let nums: Vec<&str> = (0..rng.gen_range(1..=5))
+                    .map(|_| *pick(&mut rng, &["1", "2", "3", "4"]))
+                    .collect();
+                stmts.push(format!(
+                    "s=0; for i in {}; do s=$((s+i)); done; printf '%d\\n' \"$s\"",
+                    nums.join(" ")
+                ));
+            }
+            // while + [ ] arithmetic test.
+            6 => {
+                let lim = *pick(&mut rng, &["0", "1", "3", "5"]);
+                stmts.push(format!(
+                    "i=0; while [ \"$i\" -lt {lim} ]; do i=$((i+1)); done; printf '%d\\n' \"$i\""
+                ));
+            }
+            // case with glob patterns.
+            7 => {
+                let w = *pick(&mut rng, &["foo", "bar", "abc", "x"]);
+                let pat = *pick(&mut rng, &["f*", "*o", "a?c", "x", "*"]);
+                stmts.push(format!(
+                    "case {w} in {pat}) printf match;; *) printf no;; esac; printf '\\n'"
+                ));
+            }
+            // command substitution.
+            8 => {
+                let lit = *pick(&mut rng, &["sub", "inner", "z"]);
+                stmts.push(format!("printf '%s\\n' \"$(printf {lit})\""));
+            }
+            // integer test operators → $?.
+            9 => {
+                let a = *pick(&mut rng, &ints);
+                let b = *pick(&mut rng, &ints);
+                let op = *pick(&mut rng, &["-eq", "-ne", "-lt", "-gt", "-le", "-ge"]);
+                stmts.push(format!("[ {a} {op} {b} ]; printf '%d\\n' \"$?\""));
+            }
+            // typeset -i integer var.
+            10 => {
+                let a = *pick(&mut rng, &ints);
+                let b = *pick(&mut rng, &["1", "2", "3", "5"]);
+                stmts.push(format!(
+                    "typeset -i n=$(( {a} * {b} )); printf '%d\\n' \"$n\""
+                ));
+            }
+            // ksh array: set -A, index, count.
+            11 => {
+                let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                    .map(|_| *pick(&mut rng, &words))
+                    .collect();
+                let idx = rng.gen_range(0..ws.len());
+                stmts.push(format!(
+                    "set -A a {}; printf '%s\\n' \"${{a[{idx}]}}\"; printf '%d\\n' \"${{#a[@]}}\"",
+                    ws.join(" ")
+                ));
+            }
+            // arithmetic comparison (0/1 result).
+            12 => {
+                let a = *pick(&mut rng, &ints);
+                let b = *pick(&mut rng, &ints);
+                let cmp = *pick(&mut rng, &["<", ">", "<=", ">=", "==", "!="]);
+                stmts.push(format!("printf '%d\\n' \"$(( {a} {cmp} {b} ))\""));
+            }
+            // arithmetic in a non-decimal base (`16#`, `2#`, C `0x`).
+            13 => {
+                let n = *pick(&mut rng, &["16#ff", "2#1010", "8#17", "16#a", "0x1f", "0x10"]);
+                stmts.push(format!("printf '%d\\n' \"$(( {n} ))\""));
+            }
+            // bitwise operators.
+            14 => {
+                let a = *pick(&mut rng, &["3", "5", "12", "255", "1", "6"]);
+                let b = *pick(&mut rng, &["1", "2", "4", "7", "3"]);
+                let op = *pick(&mut rng, &["&", "|", "^", "<<", ">>"]);
+                stmts.push(format!("printf '%d\\n' \"$(( {a} {op} {b} ))\""));
+            }
+            // ternary in arithmetic.
+            15 => {
+                let a = *pick(&mut rng, &ints);
+                let b = *pick(&mut rng, &ints);
+                stmts.push(format!("printf '%d\\n' \"$(( {a} > {b} ? {a} : {b} ))\""));
+            }
+            // (( … )) arithmetic command.
+            16 => {
+                let e = *pick(&mut rng, &["x=5", "x=3+4", "x=2*3", "x=10%3", "x=8/2"]);
+                stmts.push(format!("(( {e} )); printf '%d\\n' \"$x\""));
+            }
+            // `let` arithmetic.
+            17 => {
+                let e = *pick(&mut rng, &["y=6/2", "y=7-1", "y=4*4", "y=9%4"]);
+                stmts.push(format!("let '{e}'; printf '%d\\n' \"$y\""));
+            }
+            // substring `${v:off:len}`.
+            18 => {
+                let v = *pick(&mut rng, &["abcdef", "hello", "0123456", "xy"]);
+                let off = rng.gen_range(0..4);
+                let len = rng.gen_range(1..4);
+                stmts.push(format!("v={v}; printf '%s\\n' \"${{v:{off}:{len}}}\""));
+            }
+            // pattern replace `${v/pat/rep}` / `${v//pat/rep}`.
+            19 => {
+                let v = *pick(&mut rng, &["abcabc", "xyxy", "aaa", "a.b.c"]);
+                let pat = *pick(&mut rng, &["a", "x", "b", "."]);
+                let rep = *pick(&mut rng, &["Q", "", "_"]);
+                let slash = *pick(&mut rng, &["/", "//"]);
+                stmts.push(format!("v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\""));
+            }
+            // `[[ … == pat ]]` pattern match → $?.
+            20 => {
+                let w = *pick(&mut rng, &["foobar", "abc", "x1", "a.b"]);
+                let pat = *pick(&mut rng, &["f*", "a?c", "*1", "z*", "a.*"]);
+                stmts.push(format!("[[ {w} == {pat} ]]; printf '%d\\n' \"$?\""));
+            }
+            // string `-z` / `-n` test.
+            21 => {
+                let v = *pick(&mut rng, &["", "abc"]);
+                let op = *pick(&mut rng, &["-z", "-n"]);
+                stmts.push(format!("v={v}; [ {op} \"$v\" ]; printf '%d\\n' \"$?\""));
+            }
+            // integer variable mutated by arithmetic.
+            22 => {
+                let a = *pick(&mut rng, &["1", "2", "5", "10"]);
+                let op = *pick(&mut rng, &["+", "*", "-"]);
+                let b = *pick(&mut rng, &["3", "2", "4"]);
+                stmts.push(format!(
+                    "x={a}; x=$(( x {op} {b} )); printf '%d\\n' \"$x\""
+                ));
+            }
+            // printf with hex / octal conversion.
+            23 => {
+                let n = *pick(&mut rng, &["255", "16", "8", "42", "0", "127"]);
+                let fmt = *pick(&mut rng, &["%x", "%o", "%d", "%X"]);
+                stmts.push(format!("printf '{fmt}\\n' {n}"));
+            }
+            // `typeset -i<base>` output radix (ksh prints lowercase: `16#ff`).
+            24 => {
+                let base = *pick(&mut rng, &["16", "2", "8", "36"]);
+                let n = *pick(&mut rng, &["255", "10", "42", "5", "100"]);
+                stmts.push(format!(
+                    "typeset -i{base} v={n}; print -r -- \"$v\""
+                ));
+            }
+            // `${!arr[@]}` / `[*]` array indices.
+            25 => {
+                let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                    .map(|_| *pick(&mut rng, &words))
+                    .collect();
+                let sub = *pick(&mut rng, &["@", "*"]);
+                stmts.push(format!(
+                    "set -A a {}; print -r -- \"${{!a[{sub}]}}\"",
+                    ws.join(" ")
+                ));
+            }
+            // `${!name}` name form (plain var → its own name).
+            _ => {
+                let v = *pick(&mut rng, &strs);
+                stmts.push(format!("v={v}; y=v; print -r -- \"${{!y}}\""));
+            }
+        }
+    }
+    stmts
+}
+
+/// One strict-POSIX statement — valid in sh/dash/ash AND their zshrs modes,
+/// `printf`-only output. No arrays / `[[` / substring / typeset / `let`.
+fn posix_one(rng: &mut StdRng) -> String {
+    let ints = ["0", "1", "2", "3", "5", "7", "10", "42", "-1", "-3"];
+    let strs = ["abc", "hello", "a.b.c", "xxyy", "", "foobar", "a1b2"];
+    let words = ["one", "two", "three", "four"];
+    match rng.gen_range(0..15) {
+        0 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &ints);
+            let op = *pick(rng, &["+", "-", "*", "/", "%"]);
+            let e = if (op == "/" || op == "%") && b == "0" {
+                format!("{a} + 1")
+            } else {
+                format!("{a} {op} {b}")
+            };
+            format!("printf '%d\\n' \"$(( {e} ))\"")
+        }
+        1 => {
+            let v = *pick(rng, &strs);
+            let alt = *pick(rng, &["def", "ALT", ""]);
+            let op = *pick(rng, &[":-", ":+", "-", "+", ":="]);
+            format!("v={v}; printf '%s\\n' \"${{v{op}{alt}}}\"")
+        }
+        2 => {
+            let v = *pick(rng, &strs);
+            let pat = *pick(rng, &["a", "a*", "*c", "x*", "?", "*"]);
+            let op = *pick(rng, &["#", "##", "%", "%%"]);
+            format!("v={v}; printf '%s\\n' \"${{v{op}{pat}}}\"")
+        }
+        3 => {
+            let v = *pick(rng, &strs);
+            format!("v={v}; printf '%d\\n' \"${{#v}}\"")
+        }
+        4 => {
+            let ws: Vec<&str> = (0..rng.gen_range(0..=4)).map(|_| *pick(rng, &words)).collect();
+            let sel = *pick(rng, &["$#", "$1", "$2", "$*", "$@"]);
+            format!("set -- {}; printf '%s\\n' \"{sel}\"", ws.join(" "))
+        }
+        5 => {
+            let nums: Vec<&str> = (0..rng.gen_range(1..=5))
+                .map(|_| *pick(rng, &["1", "2", "3", "4"]))
+                .collect();
+            format!(
+                "s=0; for i in {}; do s=$((s+i)); done; printf '%d\\n' \"$s\"",
+                nums.join(" ")
+            )
+        }
+        6 => {
+            let lim = *pick(rng, &["0", "1", "3", "5"]);
+            format!("i=0; while [ \"$i\" -lt {lim} ]; do i=$((i+1)); done; printf '%d\\n' \"$i\"")
+        }
+        7 => {
+            let w = *pick(rng, &["foo", "bar", "abc", "x"]);
+            let pat = *pick(rng, &["f*", "*o", "a?c", "x", "*"]);
+            format!("case {w} in {pat}) printf match;; *) printf no;; esac; printf '\\n'")
+        }
+        8 => {
+            let lit = *pick(rng, &["sub", "inner", "z"]);
+            format!("printf '%s\\n' \"$(printf {lit})\"")
+        }
+        9 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &ints);
+            let op = *pick(rng, &["-eq", "-ne", "-lt", "-gt", "-le", "-ge"]);
+            format!("[ {a} {op} {b} ]; printf '%d\\n' \"$?\"")
+        }
+        10 => {
+            let v = *pick(rng, &["", "abc"]);
+            let op = *pick(rng, &["-z", "-n"]);
+            format!("v={v}; [ {op} \"$v\" ]; printf '%d\\n' \"$?\"")
+        }
+        11 => {
+            // POSIX $(( )) has the C bitwise ops.
+            let a = *pick(rng, &["3", "5", "12", "255", "1", "6"]);
+            let b = *pick(rng, &["1", "2", "4", "7", "3"]);
+            let op = *pick(rng, &["&", "|", "^", "<<", ">>"]);
+            format!("printf '%d\\n' \"$(( {a} {op} {b} ))\"")
+        }
+        12 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &ints);
+            format!("printf '%d\\n' \"$(( {a} > {b} ? {a} : {b} ))\"")
+        }
+        13 => {
+            let n = *pick(rng, &["255", "16", "8", "42", "0", "127"]);
+            let fmt = *pick(rng, &["%x", "%o", "%d", "%X"]);
+            format!("printf '{fmt}\\n' {n}")
+        }
+        _ => {
+            let a = *pick(rng, &strs);
+            let b = *pick(rng, &strs);
+            let op = *pick(rng, &["=", "!="]);
+            format!("[ \"{a}\" {op} \"{b}\" ]; printf '%d\\n' \"$?\"")
+        }
+    }
+}
+
+/// strict-POSIX program generator (sh / dash / ash).
+fn gen_posix(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..rng.gen_range(2..=5))
+        .map(|_| posix_one(&mut rng))
+        .collect()
+}
+
+/// One bash-specific statement (arrays, substring, replace, case-mod, `[[`).
+fn bash_one(rng: &mut StdRng) -> String {
+    let words = ["one", "two", "three", "four"];
+    let strs = ["abcdef", "hello", "0123456", "a.b.c", "foobar"];
+    match rng.gen_range(0..8) {
+        0 => {
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4)).map(|_| *pick(rng, &words)).collect();
+            let idx = rng.gen_range(0..ws.len());
+            format!(
+                "a=({}); printf '%s\\n' \"${{a[{idx}]}}\"",
+                ws.join(" ")
+            )
+        }
+        1 => {
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4)).map(|_| *pick(rng, &words)).collect();
+            format!("a=({}); printf '%d\\n' \"${{#a[@]}}\"", ws.join(" "))
+        }
+        2 => {
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4)).map(|_| *pick(rng, &words)).collect();
+            format!("a=({}); printf '%s\\n' \"${{!a[@]}}\"", ws.join(" "))
+        }
+        3 => {
+            let v = *pick(rng, &strs);
+            let off = rng.gen_range(0..4);
+            let len = rng.gen_range(1..4);
+            format!("v={v}; printf '%s\\n' \"${{v:{off}:{len}}}\"")
+        }
+        4 => {
+            let v = *pick(rng, &["abcabc", "xyxy", "aaa", "a.b.c"]);
+            let pat = *pick(rng, &["a", "x", "b", "."]);
+            let rep = *pick(rng, &["Q", "", "_"]);
+            let slash = *pick(rng, &["/", "//"]);
+            format!("v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\"")
+        }
+        5 => {
+            let v = *pick(rng, &["hello", "ABC", "MixEd", "abc"]);
+            let op = *pick(rng, &["^^", ",,", "^", ","]);
+            format!("v={v}; printf '%s\\n' \"${{v{op}}}\"")
+        }
+        6 => {
+            let w = *pick(rng, &["foobar", "abc", "x1", "a.b"]);
+            let pat = *pick(rng, &["f*", "a?c", "*1", "z*"]);
+            format!("[[ {w} == {pat} ]]; printf '%d\\n' \"$?\"")
+        }
+        _ => {
+            let a = *pick(rng, &["1", "2", "3", "5"]);
+            let b = *pick(rng, &["2", "3", "4"]);
+            format!("declare -i n=$(( {a} * {b} )); printf '%d\\n' \"$n\"")
+        }
+    }
+}
+
+/// POSIX + bash-extension program generator (`--bash`).
+fn gen_bash(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = Vec::new();
+    for _ in 0..rng.gen_range(2..=5) {
+        // ~60% shared POSIX, ~40% bash-specific.
+        if rng.gen_range(0..10) < 6 {
+            stmts.push(posix_one(&mut rng));
+        } else {
+            stmts.push(bash_one(&mut rng));
+        }
+    }
+    stmts
 }
 
 /// Generate the statement list for a seed in the selected mode.
 fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
+    // Non-zsh targets ignore the zsh-feature Mode and use a grammar their shell
+    // family actually implements.
+    match target_cfg(shell_target()).gen {
+        GenKind::Rich => {}
+        GenKind::Ksh => return gen_pdksh(seed),
+        GenKind::Posix => return gen_posix(seed),
+        GenKind::Bash => return gen_bash(seed),
+    }
     match mode {
         Mode::Stateful => gen_program(seed),
         Mode::Expr => expr_program(seed),
@@ -9707,6 +10372,8 @@ fn parse_args() -> Args {
     let mut mode = Mode::Stateful;
     let mut verify = 1usize;
     let mut baseline: Option<PathBuf> = None;
+    let mut shell: Option<ShellTarget> = None;
+    let mut matrix = false;
     let mut jobs = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
@@ -9774,6 +10441,29 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            // `--shell <name>` — one of the 10 differential targets (default
+            // zsh): zsh, bash, ksh, sh, dash, sh/zsh-style, ksh/zsh-style,
+            // mksh, pdksh, ash.
+            "--shell" => {
+                i += 1;
+                match argv.get(i).and_then(|s| target_from_name(s)) {
+                    Some(t) => shell = Some(t),
+                    None => {
+                        eprintln!(
+                            "unknown --shell '{}'",
+                            argv.get(i).map(|s| s.as_str()).unwrap_or("")
+                        );
+                        std::process::exit(2);
+                    }
+                }
+            }
+            // `--matrix` — sweep all 10 targets in one run.
+            "--matrix" => matrix = true,
+            // `--<target>` shorthand for `--shell <target>` (e.g. `--pdksh`,
+            // `--bash`). Only real target names; falls through otherwise.
+            a if a.starts_with("--") && target_from_name(&a[2..]).is_some() => {
+                shell = target_from_name(&a[2..]);
+            }
             // `--<mode>` shorthand for every mode name (`--expr`, `--arith`, …).
             a if a.starts_with("--") && mode_from_name(&a[2..]).is_some() => {
                 mode = mode_from_name(&a[2..]).unwrap();
@@ -9812,6 +10502,10 @@ fn parse_args() -> Args {
                      gflag, select, bindkey, zmv, zcalc, rcexpand,\n\
                      cond, funclist, shinstdin\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
+                     --shell TARGET   zsh (default) | pdksh. pdksh differentials a\n\
+                                      real pdksh/mksh/oksh vs `zshrs --pdksh` using\n\
+                                      a ksh/POSIX generator (mode is ignored).\n\
+                                      `--pdksh` is shorthand. Skips if no ref found.\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
                                       away; the wording after it must agree)\n\
@@ -9858,6 +10552,8 @@ fn parse_args() -> Args {
         mode,
         verify,
         baseline,
+        shell,
+        matrix,
     }
 }
 
@@ -9922,10 +10618,70 @@ fn regex_lite_replace(s: &str, pat: &str, rep: &str) -> String {
     }
 }
 
+/// `--matrix`: re-exec this binary once per target (a clean single-target pass
+/// each), so the whole 10-way matrix runs from one command. Targets whose
+/// reference shell is absent are reported as SKIP, never a failure.
+fn run_matrix(args: &Args) {
+    let self_exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("parity-fuzz: cannot find own path for --matrix: {e}");
+            std::process::exit(2);
+        }
+    };
+    println!(
+        "═══ parity-fuzz 10-way matrix — {} cases/target, seed {} ═══",
+        args.count, args.base_seed
+    );
+    for t in ALL_TARGETS {
+        let cfg = target_cfg(t);
+        if reference_bin(t).is_none() {
+            println!("\n── {} ── SKIP (no reference shell installed)", cfg.name);
+            continue;
+        }
+        println!("\n── {} ──", cfg.name);
+        let _ = Command::new(&self_exe)
+            .args([
+                "--shell",
+                cfg.name,
+                "--count",
+                &args.count.to_string(),
+                "--seed",
+                &args.base_seed.to_string(),
+                "--jobs",
+                &args.jobs.to_string(),
+                "--timeout-ms",
+                &args.timeout_ms.to_string(),
+            ])
+            .status();
+    }
+}
+
 fn main() {
     let args = parse_args();
     let bin = zshrs_bin();
     let timeout = Duration::from_millis(args.timeout_ms);
+
+    // --matrix: run each of the 10 targets as a full single-target child pass
+    // (each prints its own oracle/divergence summary). The OnceLock/thread-local
+    // design is one-target-per-process, so re-exec keeps every pass clean.
+    if args.matrix {
+        run_matrix(&args);
+        return;
+    }
+
+    // Lock in the differential target before any worker calls run_zsh / gen_case.
+    let target = args.shell.unwrap_or(ShellTarget::Zsh);
+    SHELL_TARGET.set(target).ok();
+    // A target with no installed reference → SKIP (exit 0), the same best-effort
+    // policy as the optional legs of the parity matrix.
+    if reference_bin(target).is_none() {
+        eprintln!(
+            "parity-fuzz: --shell {} has no installed reference shell — skipping.",
+            target_cfg(target).name
+        );
+        return;
+    }
 
     if !bin.exists() {
         eprintln!(
@@ -9997,7 +10753,10 @@ fn main() {
             (script, z, r)
         };
         println!("program:\n  {}", show.replace('\n', "\n  "));
-        println!("--- zsh   exit={} timeout={} ---", z.exit, z.timed_out);
+        // Label the reference by the target's name (the pdksh leg may resolve
+        // to mksh/oksh; the zsh-style legs to `zsh` running `emulate X`).
+        let ref_label = target_cfg(shell_target()).name;
+        println!("--- ref[{ref_label}] exit={} timeout={} ---", z.exit, z.timed_out);
         let _ = std::io::stdout().write_all(&z.stdout);
         println!("--- zshrs exit={} timeout={} ---", r.exit, r.timed_out);
         let _ = std::io::stdout().write_all(&r.stdout);
@@ -10151,7 +10910,7 @@ fn main() {
         }
     }
 
-    let oracle = zsh_oracle_id();
+    let oracle = reference_oracle_id();
     println!(
         "\nfuzzed {checked} cases in {:.1}s ({:.0}/s)\n\
          oracle      : {}\n\

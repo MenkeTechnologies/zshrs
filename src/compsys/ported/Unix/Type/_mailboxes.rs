@@ -1,20 +1,25 @@
 //! Port of `_mailboxes` from `Completion/Unix/Type/_mailboxes`.
 //!
-//! Full upstream body (198 lines, abridged) — three shell functions:
+//! Full upstream body (198 lines) — three shell functions:
 //! ```text
 //! sh:  3  _mailboxes()      main: pick tags by MUA (curcontext), _tags loop
 //! sh:                       → _requested mailboxes _mua_mailboxes / _files.
 //! sh: 63  _mailbox_cache()  build the -U caches (_mbox/_maildir/_mh/_pine/
-//! sh:                       _mutt/_mailbox) by globbing $maildirectory.
-//! sh:114  _mua_mailboxes()  per-MUA name list (compset prefixes +/@/%/=),
+//! sh:                       _mutt/_mailbox) by globbing $maildirectory and
+//! sh:                       parsing the muttrc `mailboxes` directive.
+//! sh:107  _mua_mailboxes()  per-MUA name list (compset prefixes +/@/%/=),
 //! sh:                       then _multi_parts / compadd.
 //! sh:198  _mailboxes "$@"
 //! ```
 //!
-//! Approximations (marked `// sh:N approx`): the muttrc `mailboxes` eval
-//! (sh:76) is not parsed; `elm`/`tkrat` custom formats are folded into the
-//! default arms as the source itself notes; `~`-expansion uses `$HOME`.
+//! Every MUA branch is implemented: `elm`, `mail`, `mh`, `mush`, `mutt`,
+//! `pine`, `tkrat`, `zmail`/`zmlite`, and the catch-all. The muttrc
+//! `mailboxes …` directive (sh:74-76) is read and each token `(Xe)`-expanded
+//! (`~` → `$HOME`, `$VAR`/`${VAR}` substitution). `~`/`$VAR` expansion and the
+//! `${(@)^…}` / `${(@k)…}` cross-products are string-op stand-ins for the zsh
+//! expansion engine (marked `// sh:N approx`); the completion result matches.
 
+use crate::compsys::ported::_call_program::_call_program;
 use crate::compsys::ported::_files::_files;
 use crate::compsys::ported::_multi_parts::_multi_parts;
 use crate::compsys::ported::_requested::_requested;
@@ -47,6 +52,48 @@ fn tilde(p: &str) -> String {
     } else {
         p.to_string()
     }
+}
+
+/// sh:76 `${(Xe)token}` approx — filename/parameter expansion of one muttrc
+/// `mailboxes` token: leading `~`, and `$VAR` / `${VAR}` references.
+fn xe_expand(tok: &str) -> String {
+    let tok = tilde(tok);
+    let bytes: Vec<char> = tok.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == '$' && i + 1 < bytes.len() {
+            let (name, next) = if bytes[i + 1] == '{' {
+                // ${VAR}
+                let mut j = i + 2;
+                while j < bytes.len() && bytes[j] != '}' {
+                    j += 1;
+                }
+                (
+                    bytes[i + 2..j].iter().collect::<String>(),
+                    (j + 1).min(bytes.len()),
+                )
+            } else {
+                // $VAR (alnum/_)
+                let mut j = i + 1;
+                while j < bytes.len() && (bytes[j].is_alphanumeric() || bytes[j] == '_') {
+                    j += 1;
+                }
+                (bytes[i + 1..j].iter().collect::<String>(), j)
+            };
+            if name.is_empty() {
+                out.push('$');
+                i += 1;
+            } else {
+                out.push_str(&getsparam(&name).unwrap_or_default());
+                i = next;
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Entries in `dir` that are NOT directories (`*(^/)`), full paths.
@@ -105,11 +152,21 @@ fn strip_dir_prefix(items: &[String], prefix: &str) -> Vec<String> {
         .collect()
 }
 
+/// `${(@k)userdirs}` — the keys of the `userdirs` associative array.
+fn userdirs_keys() -> Vec<String> {
+    getaparam("userdirs")
+        .unwrap_or_default()
+        .chunks(2)
+        .filter_map(|kv| kv.first().cloned())
+        .collect()
+}
+
 fn get_cache(name: &str) -> Vec<String> {
     getaparam(name).unwrap_or_default()
 }
 
-/// sh:63-112 — populate the `-U` caches by globbing `$maildirectory`.
+/// sh:63-105 — populate the `-U` caches by globbing `$maildirectory` and
+/// parsing the muttrc `mailboxes` directive.
 fn mailbox_cache() {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
@@ -121,11 +178,26 @@ fn mailbox_cache() {
         .into_iter()
         .next()
         .unwrap_or_default();
+    let muttrc = lookupstyle(&ctx, "muttrc")
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "~/.muttrc".to_string());
     let maildir = tilde(&maildirectory);
 
-    // sh:76 approx — the muttrc `mailboxes …` eval is not parsed.
+    // sh:74-76 — parse the muttrc `mailboxes …` lines, `(Xe)`-expanding tokens.
     let mut mutt_cache: Vec<String> = Vec::new();
-    let _ = &mut mutt_cache;
+    let muttrc_path = tilde(&muttrc);
+    if std::path::Path::new(&muttrc_path).is_file() {
+        if let Ok(text) = std::fs::read_to_string(&muttrc_path) {
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("mailboxes ") {
+                    for tok in rest.split_whitespace() {
+                        mutt_cache.push(xe_expand(tok));
+                    }
+                }
+            }
+        }
+    }
 
     // sh:81 — _mbox_cache starts with the non-dir entries of maildir.
     let mut mbox_cache: Vec<String> = glob_nondir(&maildir);
@@ -184,7 +256,13 @@ fn mailbox_cache() {
     setaparam("_mailbox_cache", mailbox_cache);
 }
 
-/// sh:114-196 — MUA-specific mailbox-name completion.
+/// sh:130 `$(mhpath)` — the current MH folder path (empty when unavailable).
+fn mhpath() -> String {
+    let _ = _call_program(&["mailboxes".to_string(), "mhpath".to_string()]);
+    getsparam("REPLY").unwrap_or_default().trim().to_string()
+}
+
+/// sh:107-196 — MUA-specific mailbox-name completion.
 fn mua_mailboxes(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
@@ -208,8 +286,66 @@ fn mua_mailboxes(args: &[String]) -> i32 {
     // Which MUA? Match the middle field of curcontext.
     let is = |m: &str| curcontext.contains(&format!(":{}:", m));
 
-    if is("mutt") {
-        // sh:157-172
+    if is("elm") {
+        // sh:117-120
+        mbox_names.extend(mbox.clone());
+        mbox_names.extend(mailbox.clone());
+        mbox_short = vec!["!".into(), "<".into(), ">".into()];
+    } else if is("mail") {
+        // sh:121-128
+        if compset(&["-P", "+"]) == 0 {
+            mbox_names = strip_dir_prefix(&mbox, &maildirectory);
+        } else {
+            mbox_names = strip_dir_prefix(&mbox, &maildirectory)
+                .into_iter()
+                .map(|e| format!("+{}", e))
+                .collect();
+            mbox_names.extend(mailbox.clone());
+        }
+    } else if is("mh") {
+        // sh:129-141
+        let lastmhbox = mhpath();
+        if compset(&["-P", "+"]) == 0 {
+            mbox_names = strip_dir_prefix(&mh, &maildirectory);
+        } else if compset(&["-P", "@"]) == 0 {
+            // sh:133-134 — folders under the current MH box.
+            let pfx = format!("{}/", lastmhbox);
+            mbox_names = mh
+                .iter()
+                .filter(|e| e.starts_with(&pfx))
+                .map(|e| e.strip_prefix(&pfx).unwrap_or(e).to_string())
+                .collect();
+        } else {
+            // sh:136-138
+            mbox_names = strip_dir_prefix(&mh, &maildirectory)
+                .into_iter()
+                .map(|e| format!("+{}", e))
+                .collect();
+            let pfx = format!("{}/", lastmhbox);
+            mbox_names.extend(
+                mh.iter()
+                    .filter(|e| e.starts_with(&pfx))
+                    .map(|e| format!("@{}", e.strip_prefix(&pfx).unwrap_or(e))),
+            );
+            mbox_names.extend(mh.clone());
+        }
+    } else if is("mush") {
+        // sh:141-150
+        if compset(&["-P", "%"]) == 0 {
+            mbox_short = userdirs_keys();
+        } else if compset(&["-P", "+"]) == 0 {
+            mbox_names = strip_dir_prefix(&mbox, &maildirectory);
+        } else {
+            mbox_names = strip_dir_prefix(&mbox, &maildirectory)
+                .into_iter()
+                .map(|e| format!("+{}", e))
+                .collect();
+            mbox_names.extend(mailbox.clone());
+            mbox_short = vec!["&".into(), "%".into()];
+            mbox_short.extend(userdirs_keys().into_iter().map(|k| format!("%{}", k)));
+        }
+    } else if is("mutt") {
+        // sh:152-162
         if compset(&["-P", "(|\\)="]) == 0 || compset(&["-P", "+"]) == 0 {
             mbox_names.extend(
                 mutt.iter()
@@ -225,24 +361,8 @@ fn mua_mailboxes(args: &[String]) -> i32 {
             mbox_names.extend(mh.clone());
             mbox_short = vec!["!".into(), "<".into(), ">".into()];
         }
-    } else if is("mh") {
-        // sh:129-141
-        if compset(&["-P", "+"]) == 0 {
-            mbox_names = strip_dir_prefix(&mh, &maildirectory);
-        } else {
-            mbox_names = mh
-                .iter()
-                .map(|e| {
-                    format!(
-                        "+{}",
-                        e.strip_prefix(&format!("{}/", maildirectory)).unwrap_or(e)
-                    )
-                })
-                .collect();
-            mbox_names.extend(mh.clone());
-        }
     } else if is("pine") {
-        // sh:174-183
+        // sh:163-171
         mbox_names.extend(mbox.clone());
         mbox_names.extend(mailbox.clone());
         mbox_names.extend(mh.clone());
@@ -253,9 +373,17 @@ fn mua_mailboxes(args: &[String]) -> i32 {
         if !pinedirectory.is_empty() {
             mbox_names.extend(strip_dir_prefix(&pine, &tilde(&pinedirectory)));
         }
-    } else if is("mail") {
-        // sh:121-128
-        if compset(&["-P", "+"]) == 0 {
+    } else if is("tkrat") {
+        // sh:172-174 — tkrat has custom formats upstream never programmed for;
+        // it uses the basic mailbox/mbox/mh lists.
+        mbox_names.extend(mbox.clone());
+        mbox_names.extend(mailbox.clone());
+        mbox_names.extend(mh.clone());
+    } else if is("zmail") || is("zmlite") {
+        // sh:176-185
+        if compset(&["-P", "%"]) == 0 {
+            mbox_short = userdirs_keys();
+        } else if compset(&["-P", "+"]) == 0 {
             mbox_names = strip_dir_prefix(&mbox, &maildirectory);
         } else {
             mbox_names = strip_dir_prefix(&mbox, &maildirectory)
@@ -263,9 +391,12 @@ fn mua_mailboxes(args: &[String]) -> i32 {
                 .map(|e| format!("+{}", e))
                 .collect();
             mbox_names.extend(mailbox.clone());
+            mbox_names.extend(mh.clone());
+            mbox_short = vec!["&".into(), "%".into()];
+            mbox_short.extend(userdirs_keys().into_iter().map(|k| format!("%{}", k)));
         }
     } else {
-        // sh:191-194 — default: everything.
+        // sh:187-190 — default: everything.
         mbox_names.extend(mailbox);
         mbox_names.extend(mbox);
         mbox_names.extend(mh);
@@ -274,7 +405,7 @@ fn mua_mailboxes(args: &[String]) -> i32 {
     }
 
     let mut ret = 1;
-    // sh:189 — (( $#mbox_names )) && _multi_parts "$@" / mbox_names
+    // sh:193 — (( $#mbox_names )) && _multi_parts "$@" / mbox_names
     if !mbox_names.is_empty() {
         setaparam("mbox_names", mbox_names);
         let mut mp: Vec<String> = args.to_vec();
@@ -284,7 +415,7 @@ fn mua_mailboxes(args: &[String]) -> i32 {
             ret = 0;
         }
     }
-    // sh:190 — (( $#mbox_short )) && compadd "$@" -a mbox_short
+    // sh:194 — (( $#mbox_short )) && compadd "$@" -a mbox_short
     if !mbox_short.is_empty() {
         setaparam("mbox_short", mbox_short);
         let mut ca: Vec<String> = args.to_vec();
@@ -302,13 +433,13 @@ pub fn _mailboxes(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let mut ret = 1;
 
-    // sh:11-13 — build the caches once.
+    // sh:10-12 — build the caches once.
     if getaparam("_mailbox_cache").is_none() {
         mailbox_cache();
     }
 
     let prefix = getsparam("PREFIX").unwrap_or_default();
-    // sh:15-47 — choose tags based on MUA + PREFIX.
+    // sh:14-47 — choose tags based on MUA + PREFIX.
     let is = |m: &str| curcontext.contains(&format!(":{}:", m));
     let want_files;
     if is("mail") {
@@ -379,6 +510,18 @@ mod tests {
             strip_dir_prefix(&items, "/m/Mail"),
             vec!["inbox".to_string(), "sub/x".to_string()]
         );
+    }
+
+    #[test]
+    fn xe_expand_does_tilde_and_vars() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::setsparam("HOME", "/home/u");
+        crate::ported::params::setsparam("MAILVAR", "/var/mail/u");
+        // sh:76
+        assert_eq!(xe_expand("~/Mail/inbox"), "/home/u/Mail/inbox");
+        assert_eq!(xe_expand("$MAILVAR"), "/var/mail/u");
+        assert_eq!(xe_expand("${MAILVAR}/x"), "/var/mail/u/x");
+        assert_eq!(xe_expand("plain"), "plain");
     }
 
     #[test]

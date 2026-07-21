@@ -130,6 +130,14 @@ const PARITY_CASES: &[ParityCase] = &[
         optional: true,
     },
     ParityCase {
+        name: "pdksh",
+        zshrs_flags: &["--pdksh"],
+        candidates: &["pdksh", "/bin/pdksh", "/usr/bin/pdksh"],
+        ref_emulate: None,
+        extended: false,
+        optional: true,
+    },
+    ParityCase {
         name: "ash",
         zshrs_flags: &["--ash"],
         candidates: &["ash", "/bin/ash", "/usr/bin/ash"],
@@ -743,7 +751,7 @@ fn shell_aliases_map_to_base_modes() {
             "--ash vs --dash: {script}"
         );
     }
-    // mksh ≡ ksh: same emulation base (ksharrays etc.).
+    // mksh ≡ ksh and pdksh ≡ ksh: same emulation base (ksharrays etc.).
     for script in [
         "a=(x y z); printf '%s' \"${a[0]}\"", // 0-indexed arrays
         "print -r -- ${options[ksharrays]}",
@@ -753,6 +761,11 @@ fn shell_aliases_map_to_base_modes() {
             probe("--mksh", script),
             probe("--ksh", script),
             "--mksh vs --ksh: {script}"
+        );
+        assert_eq!(
+            probe("--pdksh", script),
+            probe("--ksh", script),
+            "--pdksh vs --ksh: {script}"
         );
     }
 }

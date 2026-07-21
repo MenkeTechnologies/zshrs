@@ -172,11 +172,16 @@ mod tests {
             extract_inet("    inet6 fe80::1%en0 prefixlen 64"),
             Some("fe80::1".to_string())
         );
-        // Linux `inet:addr` colon form.
+        // `inet:` colon form — sh:24 `inet(|6)(|:)[[:space:]]##` still
+        // requires whitespace after the optional `:`, so the address
+        // starts past the space.
         assert_eq!(
-            extract_inet("inet:127.0.0.1  Mask:255.0.0.0"),
+            extract_inet("inet: 127.0.0.1  Mask:255.0.0.0"),
             Some("127.0.0.1".to_string())
         );
+        // A colon with no following whitespace does NOT match the spec
+        // pattern (`[[:space:]]##` is 1-or-more), so no address is pulled.
+        assert_eq!(extract_inet("inet:127.0.0.1  Mask:255.0.0.0"), None);
         assert_eq!(extract_inet("ether aa:bb:cc:dd:ee:ff"), None);
     }
 
