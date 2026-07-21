@@ -792,6 +792,256 @@ pub mod compdump;
 /// `Completion/compaudit` (sh:1-176). Lives in its own file per
 /// upstream's layout.
 pub mod compaudit;
+// ── Non-leaf ports (OS-specific Type) batch 1 ──
+/// `_logical_volumes` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "AIX/Type/_logical_volumes.rs"]
+pub mod _logical_volumes;
+/// `_object_classes` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "AIX/Type/_object_classes.rs"]
+pub mod _object_classes;
+/// `_physical_volumes` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "AIX/Type/_physical_volumes.rs"]
+pub mod _physical_volumes;
+/// `_volume_groups` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "AIX/Type/_volume_groups.rs"]
+pub mod _volume_groups;
+/// `_bsd_disks` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_bsd_disks.rs"]
+pub mod _bsd_disks;
+/// `_fbsd_architectures` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_fbsd_architectures.rs"]
+pub mod _fbsd_architectures;
+/// `_fbsd_device_types` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_fbsd_device_types.rs"]
+pub mod _fbsd_device_types;
+/// `_file_flags` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_file_flags.rs"]
+pub mod _file_flags;
+/// `_jails` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_jails.rs"]
+pub mod _jails;
+/// `_ktrace_points` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_ktrace_points.rs"]
+pub mod _ktrace_points;
+/// `_login_classes` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_login_classes.rs"]
+pub mod _login_classes;
+/// `_nbsd_architectures` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_nbsd_architectures.rs"]
+pub mod _nbsd_architectures;
+/// `_obsd_architectures` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_obsd_architectures.rs"]
+pub mod _obsd_architectures;
+/// `_routing_domains` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_routing_domains.rs"]
+pub mod _routing_domains;
+/// `_routing_tables` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "BSD/Type/_routing_tables.rs"]
+pub mod _routing_tables;
+/// `_mac_applications` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Darwin/Type/_mac_applications.rs"]
+pub mod _mac_applications;
+/// `_mac_files_for_application` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Darwin/Type/_mac_files_for_application.rs"]
+pub mod _mac_files_for_application;
+/// `_deb_architectures` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Debian/Type/_deb_architectures.rs"]
+pub mod _deb_architectures;
+/// `_deb_codenames` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Debian/Type/_deb_codenames.rs"]
+pub mod _deb_codenames;
+/// `_debbugs_bugnumber` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Debian/Type/_debbugs_bugnumber.rs"]
+pub mod _debbugs_bugnumber;
+/// `_capabilities` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_capabilities.rs"]
+pub mod _capabilities;
+/// `_fuse_arguments` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_fuse_arguments.rs"]
+pub mod _fuse_arguments;
+/// `_fuse_values` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_fuse_values.rs"]
+pub mod _fuse_values;
+/// `_selinux_roles` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_selinux_roles.rs"]
+pub mod _selinux_roles;
+/// `_selinux_types` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_selinux_types.rs"]
+pub mod _selinux_types;
+/// `_selinux_users` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_selinux_users.rs"]
+pub mod _selinux_users;
+/// `_be_name` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Solaris/Type/_be_name.rs"]
+pub mod _be_name;
+/// `_zones` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Solaris/Type/_zones.rs"]
+pub mod _zones;
+/// `_x_borderwidth` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_borderwidth.rs"]
+pub mod _x_borderwidth;
+// ── Non-leaf ports (X + Zsh/Function + stragglers) batch 2 ──
+/// `_retrieve_mac_apps` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Darwin/Type/_retrieve_mac_apps.rs"]
+pub mod _retrieve_mac_apps;
+/// `_deb_files` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Debian/Type/_deb_files.rs"]
+pub mod _deb_files;
+/// `_deb_packages` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Debian/Type/_deb_packages.rs"]
+pub mod _deb_packages;
+/// `_selinux_contexts` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_selinux_contexts.rs"]
+pub mod _selinux_contexts;
+/// `_wakeup_capable_devices` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Linux/Type/_wakeup_capable_devices.rs"]
+pub mod _wakeup_capable_devices;
+/// `_svcs_fmri` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Solaris/Type/_svcs_fmri.rs"]
+pub mod _svcs_fmri;
+/// `_x_color` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_color.rs"]
+pub mod _x_color;
+/// `_x_colormapid` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_colormapid.rs"]
+pub mod _x_colormapid;
+/// `_x_cursor` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_cursor.rs"]
+pub mod _x_cursor;
+/// `_x_display` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_display.rs"]
+pub mod _x_display;
+/// `_x_extension` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_extension.rs"]
+pub mod _x_extension;
+/// `_x_font` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_font.rs"]
+pub mod _x_font;
+/// `_x_geometry` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_geometry.rs"]
+pub mod _x_geometry;
+/// `_x_keysym` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_keysym.rs"]
+pub mod _x_keysym;
+/// `_x_locale` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_locale.rs"]
+pub mod _x_locale;
+/// `_x_modifier` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_modifier.rs"]
+pub mod _x_modifier;
+/// `_x_name` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_name.rs"]
+pub mod _x_name;
+/// `_x_resource` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_resource.rs"]
+pub mod _x_resource;
+/// `_x_selection_timeout` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_selection_timeout.rs"]
+pub mod _x_selection_timeout;
+/// `_x_title` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_title.rs"]
+pub mod _x_title;
+/// `_x_visual` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_visual.rs"]
+pub mod _x_visual;
+/// `_x_window` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_x_window.rs"]
+pub mod _x_window;
+/// `_xft_fonts` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_xft_fonts.rs"]
+pub mod _xft_fonts;
+/// `_xt_session_id` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Type/_xt_session_id.rs"]
+pub mod _xt_session_id;
+/// `_x_arguments` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Utility/_x_arguments.rs"]
+pub mod _x_arguments;
+/// `_xt_arguments` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "X/Utility/_xt_arguments.rs"]
+pub mod _xt_arguments;
+/// `__arguments` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Function/__arguments.rs"]
+pub mod __arguments;
+/// `_add-zle-hook-widget` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Function/_add-zle-hook-widget.rs"]
+pub mod _add_zle_hook_widget;
+/// `_add-zsh-hook` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Function/_add-zsh-hook.rs"]
+pub mod _add_zsh_hook;
+/// `_vcs_info` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Function/_vcs_info.rs"]
+pub mod _vcs_info;
+/// `_zargs` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Function/_zargs.rs"]
+pub mod _zargs;
+/// `_zcalc` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Function/_zcalc.rs"]
+pub mod _zcalc;
+/// `_zsh-mime-handler` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Function/_zsh-mime-handler.rs"]
+pub mod _zsh_mime_handler;
 // ── Public re-exports ─────────────────────────────────────────────────
 // Items with richer export shapes (Opts structs, consts, etc.):
 
