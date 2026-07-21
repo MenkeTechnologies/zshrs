@@ -1287,6 +1287,79 @@ Every subsequent call (client path, ZERO daemon RTT):
 
       <!-- ════════════════════════════════════════════════════════════ -->
       <section class="tutorial-section">
+        <h2><span class="section-num">[0x06c]</span> HOT-LOOP EXECUTION &mdash; SIGIL SCAN vs JIT</h2>
+
+        <p>Inside a loop, zsh re-does parameter expansion on every pass: <code>prefork</code> runs <code>stringsubst</code>/<code>paramsubst</code>, which scan each word character-by-character for sigils (<code>$</code>, <code>${...}</code>, expansion flags) and re-expand, then the wordcode is walked again. The scan is <code>O(tokens)</code> work repeated <code>&times;N</code>. zshrs resolves sigils to fusevm bytecode ops <em>once</em> at compile time; the hot loop is then JIT-compiled to native code (Cranelift, cached in <code>.fjit</code>), so each pass runs machine code with no re-scan.</p>
+
+        <div class="cc-fig">
+            <svg viewBox="0 0 980 452" role="img" aria-label="Hot-loop execution: zsh re-scans sigils and walks wordcode every iteration versus zshrs compile-once bytecode and JIT">
+            <defs><marker id="hlz" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M1,1 L7,4 L1,7" fill="none" stroke="var(--accent)" stroke-width="1.4"/></marker><marker id="hlr" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M1,1 L7,4 L1,7" fill="none" stroke="var(--cyan)" stroke-width="1.4"/></marker></defs>
+            <text class="cc-hd cc-eye-z" x="250" y="26" text-anchor="middle">ZSH — INTERPRET, RE-SCAN EVERY PASS</text>
+            <text class="cc-hd cc-eye-r" x="730" y="26" text-anchor="middle">ZSHRS — COMPILE ONCE, JIT THE HOT LOOP</text>
+            <rect class="cc-nz" x="40" y="44" width="420" height="38" rx="6"/>
+            <text class="cc-fn" x="60" y="67">parse → wordcode  (token strings, unresolved)</text>
+            <rect class="cc-nr" x="520" y="44" width="420" height="38" rx="6"/>
+            <text class="cc-fn" x="540" y="67">compile → fusevm bytecode  (sigils → ops)</text>
+            <rect class="cc-chip-ok" x="866" y="52" width="60" height="18" rx="4"/>
+            <text class="cc-ct-ok" x="896" y="65" text-anchor="middle">ONCE</text>
+            <path class="cc-flow-z" d="M250,82 V104" marker-end="url(#hlz)"/>
+            <path class="cc-flow-r" d="M730,82 V104" marker-end="url(#hlr)"/>
+            <rect x="40" y="104" width="420" height="316" rx="10" fill="none" stroke="var(--accent)" stroke-width="1.3" style="stroke-dasharray:6 5;opacity:.75"/>
+            <rect x="520" y="104" width="420" height="316" rx="10" fill="none" stroke="var(--cyan)" stroke-width="1.3" style="stroke-dasharray:6 5;opacity:.75"/>
+            <text class="cc-eye cc-eye-z" x="56" y="124">loop body  ×N iterations</text>
+            <text class="cc-eye cc-eye-r" x="536" y="124">loop body  ×N iterations</text>
+            <rect class="cc-nz" x="74" y="138" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="88" y="158">walk wordcode</text>
+            <path class="cc-flow-z" d="M242,168 V188" marker-end="url(#hlz)"/>
+            <rect class="cc-nz" x="74" y="188" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="88" y="208">sigil scan each token</text>
+            <rect class="cc-chip-cost" x="360" y="194" width="40" height="18" rx="4"/>
+            <text class="cc-ct-cost" x="380" y="207" text-anchor="middle">×N</text>
+            <path class="cc-flow-z" d="M242,218 V238" marker-end="url(#hlz)"/>
+            <rect class="cc-nz" x="74" y="238" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="88" y="258">prefork / paramsubst expand</text>
+            <path class="cc-flow-z" d="M242,268 V288" marker-end="url(#hlz)"/>
+            <rect class="cc-nz" x="74" y="288" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="88" y="308">glob</text>
+            <path class="cc-flow-z" d="M242,318 V338" marker-end="url(#hlz)"/>
+            <rect class="cc-nz" x="74" y="338" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="88" y="358">exec</text>
+            <path class="cc-flow-z" d="M74,368 H52 V150 H74" marker-end="url(#hlz)" style="opacity:.85"/>
+            <text class="cc-cite" x="60" y="412">sigils re-scanned every pass · O(tokens) × N</text>
+            <rect class="cc-nr" x="554" y="138" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="568" y="158">fused loop ops (AccumSumLoop…)</text>
+            <path class="cc-flow-r" d="M722,168 V188" marker-end="url(#hlr)"/>
+            <rect class="cc-nr" x="554" y="188" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="568" y="208">hot? → tracing JIT · Cranelift</text>
+            <rect class="cc-chip-ok" x="842" y="194" width="38" height="18" rx="4"/>
+            <text class="cc-ct-ok" x="861" y="207" text-anchor="middle">JIT</text>
+            <path class="cc-flow-r" d="M722,218 V238" marker-end="url(#hlr)"/>
+            <rect class="cc-nr" x="554" y="238" width="336" height="30" rx="6"/>
+            <text class="cc-fn" x="568" y="258">run native  (·fjit cached)</text>
+            <path class="cc-flow-r" d="M554,268 H532 V150 H554" marker-end="url(#hlr)" style="opacity:.85"/>
+            <rect class="cc-nr" x="554" y="290" width="336" height="70" rx="6" style="stroke-dasharray:5 4;opacity:.5"/>
+            <text class="cc-cite" x="572" y="315">no per-token sigil scan in the loop —</text>
+            <text class="cc-cite" x="572" y="333">expansion resolved once at compile time,</text>
+            <text class="cc-cite" x="572" y="351">hot path runs as cached native code</text>
+            <text class="cc-cite" x="540" y="412">scanned once at compile · O(1) per pass</text>
+            </svg>
+        </div>
+
+        <table class="arch-table">
+          <tr><th>Per loop pass</th><th>zsh</th><th>zshrs</th></tr>
+          <tr><td>Sigil / expansion scan</td><td><span class="highlight">re-scanned each pass</span> (<code>stringsubst</code> / <code>paramsubst</code>)</td><td>resolved to ops once at compile</td></tr>
+          <tr><td>Dispatch</td><td>walk wordcode (<code>prefork</code> &rarr; exec)</td><td>fused loop ops, single-dispatch</td></tr>
+          <tr><td>Hot loop</td><td>interpreted every iteration</td><td>tracing JIT &rarr; native (Cranelift), <code>.fjit</code> cached</td></tr>
+          <tr><td>Cost per pass</td><td><span class="highlight">O(tokens)</span></td><td>O(1)</td></tr>
+        </table>
+
+        <p style="color:var(--text-muted);font-size:12px;font-family:'Share Tech Mono',ui-monospace,monospace;">
+          Sources: zsh per-exec expansion <code>prefork</code> Src/exec.c:2545, <code>stringsubst</code>/<code>paramsubst</code> Src/subst.c &middot; zshrs tracing JIT <code>src/fusevm_bridge.rs:1203&#8211;1212</code> (<code>enable_tracing_jit</code>), fused loop ops (<code>AccumSumLoop</code>, <code>SlotIncLtIntJumpBack</code>).
+        </p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
         <h2><span class="section-num">[0x07]</span> EXCLUSIVE BUILTINS</h2>
 
         <h3>Parallel Primitives (VM-executed, zero fork)</h3>
