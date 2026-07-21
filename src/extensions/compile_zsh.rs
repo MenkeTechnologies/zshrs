@@ -2257,7 +2257,11 @@ impl ZshCompiler {
             }
         }
 
-        let argc = (simple.words.len() - precmd_skip - 1) as u8;
+        // Un-truncated arg count. `argc` (u8, wrapping) feeds the xtrace /
+        // magic-equals peeks below unchanged; `argc_full` drives the actual
+        // dispatch, which handles the >255 overflow (see the pack below).
+        let argc_full = simple.words.len() - precmd_skip - 1;
+        let argc = argc_full as u8;
 
         // c:Src/exec.c:3285-3304 (prefork) + c:3702 (globlist) →
         // c:3720+ (addfd loop) — install the pipeline fds and open the
@@ -2301,8 +2305,11 @@ impl ZshCompiler {
         // trace_argc = (1 cmd-name) + (args after stripped modifiers).
         // Stack has all words[1..] pushed; XTRACE_ARGS peeks the last
         // (trace_argc - 1) of them so the modifier-victim slot is
-        // accounted for as the new cmd name.
-        let trace_argc = argc + 1;
+        // accounted for as the new cmd name. XTRACE_ARGS's argc is a u8,
+        // so cap at 255 (`argc + 1` would overflow when argc_full == 255)
+        // — xtrace of a >255-arg command traces only the first 254 args,
+        // best-effort; the real dispatch below still gets the full argv.
+        let trace_argc = (argc_full + 1).min(u8::MAX as usize) as u8;
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ARGS, trace_argc),
             0,
@@ -2411,6 +2418,28 @@ impl ZshCompiler {
             // quoted command names resolve.
             fusevm::shell_builtins::builtin_id(dispatch_first_raw)
                 .or_else(|| fusevm::shell_builtins::builtin_id(&first_clean))
+        };
+        // u8 argc overflow. `CallBuiltin`/`CallFunction` carry argc as a u8
+        // (op.rs `Call{,Builtin,Function}(u16, u8)`), so a command invoked
+        // with >255 args wraps argc mod 256 and the dispatch pops only the
+        // last `argc & 0xFF` slots — the rest leak on the VM stack. This bit
+        // compsys: a completer's `_arguments <specs…>` with a large option
+        // set (curl ships 274) collapsed to ~20 options because `_arguments`
+        // (a function) received only `274 & 0xFF` of its argv. Pack the
+        // pushed args into a single Array (Op::MakeArray, u16-counted),
+        // recursively flatten it (BUILTIN_ARGV_RFLATTEN — a brace/glob/`$arr`
+        // word contributes a NESTED Array that the call op's single-level
+        // splat would stringify), and dispatch with argc=1; the VM's
+        // CallFunction flatten (vm.rs) and pop_args' array-splat
+        // (fusevm_bridge) then restore the full positional list. Mirrors the
+        // MakeArray dodge used for `arr=(...)` literals.
+        let argc = if argc_full > u8::MAX as usize {
+            self.builder.emit(Op::MakeArray(argc_full as u16), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARGV_RFLATTEN, 1), 0);
+            1u8
+        } else {
+            argc
         };
         if let Some(builtin_id) = builtin_id {
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
