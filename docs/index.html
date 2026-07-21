@@ -1233,6 +1233,45 @@ Every subsequent call (client path, ZERO daemon RTT):
             </svg>
         </div>
 
+        <p style="margin-top:1rem;color:var(--text-dim);font-family:'Share Tech Mono',ui-monospace,monospace;font-size:12.5px;">This is <b style="color:var(--text)">every autoloaded function</b>, not just completers &#8212; in zsh that is the majority of the function surface (all of compsys, ZLE widgets, prompt themes, <code>vcs_info</code>, hooks). On first call zsh must find it in <code>$fpath</code> then lex &#8594; parse &#8594; compile &#8594; interpret it; zshrs mmaps the already-compiled fusevm bytecode straight from the rkyv shard &#8212; the whole compile pipeline is skipped.</p>
+
+        <div class="cc-fig">
+            <svg viewBox="0 0 980 172" role="img" aria-label="First-call autoload: zsh fpath-search and compile pipeline versus zshrs bytecode already in the rkyv shard">
+            <defs><marker id="f3z" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M1,1 L7,4 L1,7" fill="none" stroke="var(--accent)" stroke-width="1.4"/></marker><marker id="f3r" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto"><path d="M1,1 L7,4 L1,7" fill="none" stroke="var(--cyan)" stroke-width="1.4"/></marker></defs>
+            <text class="cc-hd cc-eye-m" x="80" y="22" style="font-size:11px">FIRST CALL OF ANY AUTOLOADED FN &#183; fpath search + compile  vs  bytecode already in rkyv</text>
+            <text class="cc-eye cc-eye-z" x="80" y="46">zsh &#183; every step, on first call</text>
+            <rect class="cc-nz" x="80" y="50" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="140" y="69" text-anchor="middle">search $fpath</text>
+            <path class="cc-flow-z" d="M200,65 H224" marker-end="url(#f3z)"/>
+            <rect class="cc-nz" x="226" y="50" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="286" y="69" text-anchor="middle">read file</text>
+            <path class="cc-flow-z" d="M346,65 H370" marker-end="url(#f3z)"/>
+            <rect class="cc-nz" x="372" y="50" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="432" y="69" text-anchor="middle">lex</text>
+            <path class="cc-flow-z" d="M492,65 H516" marker-end="url(#f3z)"/>
+            <rect class="cc-nz" x="518" y="50" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="578" y="69" text-anchor="middle">parse</text>
+            <path class="cc-flow-z" d="M638,65 H662" marker-end="url(#f3z)"/>
+            <rect class="cc-nz" x="664" y="50" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="724" y="69" text-anchor="middle">compile</text>
+            <path class="cc-flow-z" d="M784,65 H808" marker-end="url(#f3z)"/>
+            <rect class="cc-nz" x="810" y="50" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="870" y="69" text-anchor="middle">interpret</text>
+            <text class="cc-eye cc-eye-r" x="80" y="114">zshrs &#183; bytecode ready in ~/.zshrs/*.rkyv</text>
+            <rect class="cc-nr" x="80" y="118" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="140" y="137" text-anchor="middle">mmap rkyv shard</text>
+            <rect class="cc-nr" x="226" y="118" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="286" y="137" text-anchor="middle">fusevm Chunk</text>
+            <rect class="cc-nr" x="372" y="118" width="412" height="30" rx="6" style="stroke-dasharray:5 4;opacity:.55"/>
+            <text class="cc-cite" x="578" y="137" text-anchor="middle">skipped &#8212; no lex &#183; no parse &#183; no compile</text>
+            <rect class="cc-nr" x="810" y="118" width="120" height="30" rx="6"/>
+            <text class="cc-fn" x="870" y="137" text-anchor="middle">run bytecode</text>
+            <path class="cc-flow-r" d="M200,133 H224" marker-end="url(#f3r)"/>
+            <path class="cc-flow-r" d="M346,133 H370" marker-end="url(#f3r)"/>
+            <path class="cc-flow-r" d="M784,133 H808" marker-end="url(#f3r)"/>
+            </svg>
+        </div>
+
         <table class="arch-table">
           <tr><th>Stage</th><th>zsh &mdash; every &lt;tab&gt;</th><th>zshrs</th></tr>
           <tr><td>Spine</td><td><span class="highlight">interpret ~1,517 shell lines</span> (<code>_main_complete</code> &rarr; <code>_dispatch</code>)</td><td>native Rust fn pointer &mdash; compiled into the binary</td></tr>
