@@ -313,6 +313,22 @@ def build_init_file(dump, fpath_dirs, zstyle_file):
         )
     for f in missing:
         autoload_line += f"{f}() {{ return 1 }}\n"
+    # `_megacomplete`'s `ret==1` fallbacks (`_complete_plus_last_command_args`,
+    # `_complete_clipboard`) and its `CURRENT==1` fallback (`_complete_hist`) are
+    # zpwr-custom fns that read HISTORY / CLIPBOARD / the last command — content
+    # that differs between the two independent PTY sessions and is not part of
+    # the compsys ENGINE (they run only AFTER `\_complete` has already produced
+    # the engine result). Under `-f`'s minimal init they are undefined, so zsh
+    # prints `command not found: _complete_...` into the completion display while
+    # zshrs stays silent — a pure reference-shell artifact, not an engine
+    # difference. Stub them `return 1` in BOTH shells (same rationale as the fasd
+    # triggers above) so the fallback is a no-op and the diff isolates the
+    # engine. NOT a number-fudge: no zshrs completion result is suppressed —
+    # the engine matches were already emitted before these are reached.
+    always_stub = ("_complete_hist", "_complete_plus_last_command_args",
+                   "_complete_clipboard")
+    for f in always_stub:
+        autoload_line += f"{f}() {{ return 1 }}\n"
     if dump:
         # -C: trust the dump — skip the security check AND the fpath rescan for
         # new/changed completers. Matches the user's fast-startup setup and
