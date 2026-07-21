@@ -186,6 +186,7 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_object_files" => Some(_object_files::_object_files),
         "_perl_basepods" => Some(_perl_basepods::_perl_basepods),
         "_perl_modules" => Some(_perl_modules::_perl_modules),
+        "_perl_modules_caching_policy" => Some(_perl_modules::_perl_modules_caching_policy),
         "_pgids" => Some(_pgids::_pgids),
         "_pids" => Some(_pids::_pids),
         "_ports" => Some(_ports::_ports),

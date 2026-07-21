@@ -7867,6 +7867,28 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
         // dropped the create (returned None) — every new integer
         // param assignment was a no-op.
         let _ = was_unset;
+        // c:Src/params.c assignnparam — createparam picks the type as
+        //   ss ? PM_ARRAY : isset(POSIXIDENTIFIERS) ? PM_SCALAR
+        //     : (val.type & MN_INTEGER) ? PM_INTEGER : PM_FFLOAT
+        // So `let` / `(( … ))` do NOT auto-type a NEW variable as integer when
+        // POSIXIDENTIFIERS is set — the var is a plain scalar holding the
+        // decimal string, so a later `y=abc` keeps the string (plain zsh, with
+        // POSIXIDENTIFIERS off, arith-coerces it to 0). `typeset -i` is
+        // unaffected: it pre-creates the integer param, so `need_create` is
+        // false there. POSIXIDENTIFIERS is set by BOTH `emulate sh` and
+        // `emulate ksh` (and their `--sh`/`--ksh` drop-ins), off in zsh — so
+        // this correctly covers every non-zsh leg. Verified: `let 'y=5';
+        // y=abc; print $y` → `abc` in ksh93/mksh AND zsh `emulate sh`/`ksh`;
+        // only plain zsh → `0`. Also fixes `(( x=010 ))` → scalar `8` (was the
+        // integer `8#10`) under emulate sh.
+        if isset(crate::ported::zsh_h::POSIXIDENTIFIERS) {
+            let sval = if val.type_ == MN_FLOAT {
+                convfloat_underscore(val.d, 0)
+            } else {
+                convbase_underscore(val.l, 10, 0)
+            };
+            return assignsparam(s, &sval, flags);
+        }
         let new_type = if val.type_ == MN_FLOAT {
             PM_FFLOAT // c:3687
         } else {
@@ -10892,6 +10914,21 @@ pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
     if digs == 0 {
         digs = 1;
     }
+    // Digits > 9 print UPPERCASE in zsh (`16#FF`) but LOWERCASE in the Korn
+    // family (`16#ff`), which `--ksh`/`--mksh`/`--pdksh` are drop-ins for. zsh's
+    // own `emulate ksh` KEEPS uppercase, so this must fire ONLY for the
+    // real-shell-faithful ksh drop-in (`posix_faithful()`), not the zsh-STYLE
+    // `--ksh --zsh` leg (which must match `emulate ksh`). Verified vs
+    // `typeset -i16 v=255` (real ksh93/mksh → `16#ff`).
+    let alpha = if crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed)
+        & crate::ported::zsh_h::EMULATE_KSH
+        != 0
+        && crate::dash_mode::posix_faithful()
+    {
+        b'a'
+    } else {
+        b'A'
+    };
     let mut digits: Vec<u8> = vec![0u8; digs as usize];
     let mut i = digs - 1;
     let mut x = value as u64;
@@ -10900,7 +10937,7 @@ pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
         digits[i as usize] = if dig < 10 {
             b'0' + dig
         } else {
-            b'A' + dig - 10
+            alpha + dig - 10
         };
         x /= base_u;
         i -= 1;

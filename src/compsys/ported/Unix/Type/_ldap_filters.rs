@@ -14,13 +14,21 @@
 //! sh:115  _ldap_search_filters
 //! ```
 //!
-//! Approximations (marked `// sh:N approx`): `compquote` (sh:40) is treated as
-//! identity before the `${(q)…}` backslash-quoting, and `print -v disp`
-//! (sh:44) builds the 3-element operator-display array directly. The embedded
-//! zregexparse ACTION strings (`:tag:desc:cmd`, `-'code'`) are kept verbatim —
-//! they are eval'd at completion time by the regex engine, not here. The exact
-//! quoting interacts with live completion state and warrants verification on a
-//! real `ldapsearch` filter.
+//! Every RFC4515 filter branch of the `_regex_arguments` query (sh:52-89) is
+//! reproduced verbatim in `build_query` — operators (`! | &`), the per-attribute
+//! value completers (homeDirectory→`_directories`, loginShell→`/etc/shells`,
+//! mail→`_email_addresses`, objectClass→`classes`, uid/automountKey→`_users`,
+//! cn→`_alternative`), matching-rules, comparison operators, object-value
+//! message, brackets and nest tracking. The ACTION strings (`:tag:desc:cmd`,
+//! `-'code'`) are eval'd at completion time by the regex engine, not here.
+//!
+//! `compquote` (sh:43) is the completion-system builtin that re-quotes the
+//! `( ) & |` operator variables for the CURRENT quoting context
+//! (`$compstate[quote]`). zshrs does not yet expose that builtin, so this port
+//! applies the subsequent `${(q)…}` backslash-quoting (sh:44) directly — which
+//! is exactly what `compquote` reduces to in the common unquoted context
+//! (`$compstate[quote]` empty). `print -v disp` (sh:49) builds the operator
+//! display array directly.
 
 use crate::compsys::ported::_regex_arguments::_regex_arguments;
 use crate::ported::exec::dispatch_function_call;

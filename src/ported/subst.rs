@@ -5480,7 +5480,22 @@ pub fn paramsubst(
             // form, and handle it; the rarer `${!prefix*}` name-match still
             // falls through to the "bad substitution" reject below.
             let mut bash_handled = false;
-            if crate::dash_mode::bash_mode() && (nx.is_ascii_alphanumeric() || nx == '_') {
+            let bang_bash = crate::dash_mode::bash_mode();
+            // The Korn family (`--ksh`/`--mksh`/`--pdksh`) shares the array-index
+            // form `${!arr[@]}` / `[*]` with bash (verified vs ksh93/mksh →
+            // `0 1 2`; assoc → keys), but NOT the scalar indirect `${!name}`
+            // (ksh yields the NAME / nameref target, not bash's indirect value)
+            // nor `${!prefix@}` (mksh/pdksh lack it). So enter the block for
+            // either mode, but gate forms #1 / #3 on bash below.
+            // Real-shell-faithful ksh drop-in only (`posix_faithful()`): zsh's
+            // own `emulate ksh` does NOT give ksh's `${!arr[@]}` indices /
+            // `${!name}` name-form, so the zsh-STYLE `--ksh --zsh` leg must not
+            // take these arms.
+            let bang_ksh = crate::ported::options::emulation.load(Ordering::Relaxed)
+                & crate::ported::zsh_h::EMULATE_KSH
+                != 0
+                && crate::dash_mode::posix_faithful();
+            if (bang_bash || bang_ksh) && (nx.is_ascii_alphanumeric() || nx == '_') {
                 let mut j = idx;
                 while j < body_chars.len()
                     && (body_chars[j].is_ascii_alphanumeric() || body_chars[j] == '_')
@@ -5490,11 +5505,35 @@ pub fn paramsubst(
                 let target: String = body_chars[idx..j].iter().collect();
                 let after = &body_chars[j..];
                 if after.is_empty() {
-                    // `${!ident}` indirect. raw_value is fetched from var_name
-                    // later (subst.rs ~6030), so re-pointing does the indirect.
-                    var_name = crate::ported::params::getsparam(&target).unwrap_or_default();
-                    idx = body_chars.len();
-                    bash_handled = true;
+                    if bang_bash {
+                        // `${!ident}` indirect (BASH): raw_value is fetched from
+                        // var_name later (subst.rs ~6030), so re-pointing does
+                        // the indirect.
+                        var_name =
+                            crate::ported::params::getsparam(&target).unwrap_or_default();
+                        idx = body_chars.len();
+                        bash_handled = true;
+                    } else if bang_ksh {
+                        // `${!name}` (ksh): the name `name` resolves to as a
+                        // reference — a nameref's TARGET name, else the variable's
+                        // own name (NOT bash's indirect VALUE). Verified vs
+                        // ksh93/mksh: `x=abc;y=x;${!y}` → `y`,
+                        // `nameref y=Z;${!y}` → `Z`. Emitted directly as the
+                        // value via subexp_value (bypasses the var-lookup path).
+                        let resolved =
+                            match crate::ported::params::resolve_nameref_name(&target, None) {
+                                crate::ported::params::nameref_resolution::Target {
+                                    name, ..
+                                } => name,
+                                crate::ported::params::nameref_resolution::Placeholder(name) => {
+                                    name
+                                }
+                                _ => target.clone(),
+                            };
+                        subexp_value = Some(resolved);
+                        idx = body_chars.len();
+                        bash_handled = true;
+                    }
                 } else if after.len() == 3
                     && (after[0] == '[' || after[0] == Inbrack)
                     && (after[1] == '@' || after[1] == '*')
@@ -5522,10 +5561,12 @@ pub fn paramsubst(
                     subexp_array_temp = Some(temp);
                     idx = j; // leave [@]/[*] for the splat loop
                     bash_handled = true;
-                } else if after.len() == 1
+                } else if bang_bash
+                    && after.len() == 1
                     && matches!(after[0], '@' | '*' | '\u{87}' /* Star */)
                 {
-                    // `${!prefix@}` / `${!prefix*}` → the NAMES of all set
+                    // `${!prefix@}` / `${!prefix*}` (BASH only; mksh/pdksh lack
+                    // it) → the NAMES of all set
                     // parameters whose name begins with `prefix`, sorted (bash
                     // name-matching indirection). `@` splats them as separate
                     // words, `*` joins via IFS — same distinction as `$@`/`$*`,

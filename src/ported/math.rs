@@ -903,9 +903,17 @@ pub(crate) fn lexconstant() -> i32 {
                             break;
                         }
                     }
-                    if is_float_or_base {
-                        // c:501 — `.`/`e`/`E`/`#` after digits means
-                        // float/base-notation; treat as decimal/float.
+                    if is_float_or_base || probe == oct_start {
+                        // c:Src/math.c:489 — the octal branch is gated on
+                        // `ptr2 > nptr && *ptr2 != '.'/'e'/'E'/'#'`. `nptr`
+                        // is the char AFTER the leading `0`, so `ptr2 > nptr`
+                        // requires at least one further digit: a bare single
+                        // `0` (probe == oct_start) is NOT octal notation and
+                        // must NOT set lastbase=8. Without this, `integer c=0`
+                        // under `setopt octalzeroes` (emulate sh) displayed
+                        // `8#0` instead of `0`. `.`/`e`/`E`/`#` after digits
+                        // (is_float_or_base) likewise falls through to
+                        // decimal/float.
                         m_pos_sub(1); // rewind over leading 0
                     } else {
                         // Octal path. Advance over valid octal digits
