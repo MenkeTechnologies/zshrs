@@ -1089,10 +1089,10 @@ Every subsequent call (client path, ZERO daemon RTT):
 
             <rect class="cc-nr" x="540" y="260" width="380" height="96" rx="8"/>
             <rect class="cc-chip-ok" x="852" y="271" width="56" height="18" rx="4"/>
-            <text class="cc-ct-ok" x="880" y="284" text-anchor="middle">CACHE</text>
+            <text class="cc-ct-ok" x="880" y="284" text-anchor="middle">MMAP</text>
             <text class="cc-eye cc-eye-r" x="560" y="287">resolve leaf</text>
-            <text class="cc-title" x="560" y="311">indexed cache lookup</text>
-            <text class="cc-cite" x="560" y="331">rkyv / SQLite &#183; mmap &#183; no $fpath walk</text>
+            <text class="cc-title" x="560" y="311">rkyv shard &#183; mmap zero-copy</text>
+            <text class="cc-cite" x="560" y="331">rkyv-mmap'd shards ~/.zshrs/*.rkyv &#183; no $fpath walk</text>
             <text class="cc-cite" x="560" y="348">getfpfunc &#8594; try_dump_file &#183; exec.rs:811</text>
 
             <!-- ROW 3 LOAD + RUN -->
@@ -1142,7 +1142,7 @@ Every subsequent call (client path, ZERO daemon RTT):
         <table class="arch-table">
           <tr><th>Stage</th><th>zsh &mdash; every &lt;tab&gt;</th><th>zshrs</th></tr>
           <tr><td>Spine</td><td><span class="highlight">interpret ~1,517 shell lines</span> (<code>_main_complete</code> &rarr; <code>_dispatch</code>)</td><td>native Rust fn pointer &mdash; compiled into the binary</td></tr>
-          <tr><td>Resolve leaf</td><td><span class="highlight">scan <code>$fpath</code></span> &mdash; 51 dirs, stat per dir until hit</td><td>indexed cache lookup (rkyv/SQLite, mmap) &mdash; no fpath walk</td></tr>
+          <tr><td>Resolve leaf</td><td><span class="highlight">scan <code>$fpath</code></span> &mdash; 51 dirs, stat per dir until hit</td><td>rkyv-mmap'd shard (<code>~/.zshrs/*.rkyv</code>) + <code>.zwc</code> digest, mmap &mdash; no fpath walk</td></tr>
           <tr><td>Load + run leaf</td><td><span class="highlight">autoload + parse</span> on first tab, interpret specs</td><td>fusevm bytecode + JIT &middot; <code>.fjit</code> disk cache, warm across launches</td></tr>
           <tr><td>Emit</td><td><code>compadd</code> (C builtin)</td><td><code>bin_compadd</code> (native)</td></tr>
         </table>
