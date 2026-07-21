@@ -628,6 +628,20 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     if fn_name.is_empty() {
         return;
     } // c:552 getshfunc(NULL)
+    // Re-assert the `$module_path` compiled default at completion entry IF it
+    // has gone empty. `MODULE_PATH` is PM_DONTIMPORT (no env var seeds it), and
+    // its array half is not re-derived when the completion widget scope
+    // re-establishes the tied colon-arrays the way PATH/FPATH are from the
+    // environment — so `$module_path` reads empty inside completers, breaking
+    // every `_files -W module_path` (e.g. `zmodload <tab>`). Only restore when
+    // empty so a user's `module_path+=(…)` customization is preserved.
+    // module_path_init is idempotent (OnceLock-cached MODULE_DIR).
+    if crate::ported::params::getaparam("module_path")
+        .map(|a| a.is_empty())
+        .unwrap_or(true)
+    {
+        crate::ported::init::module_path_init();
+    }
     let _lv = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:548 int lv = lastval
     let _icf = INCOMPFUNC.load(Ordering::Relaxed); // c:555
     let _osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed); // c:555
