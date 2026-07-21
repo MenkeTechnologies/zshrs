@@ -7353,6 +7353,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Array(items)
     });
 
+    // BUILTIN_ARGV_RFLATTEN — recursively flatten a MakeArray-packed argv
+    // bundle so a >255-arg Call/CallFunction/CallBuiltin (dispatched with
+    // argc=1 over the single packed Array) recovers every positional arg. The
+    // call ops flatten only one level; a brace/glob/`$arr` word contributes a
+    // nested Array that would otherwise stringify. See the const doc.
+    vm.register_builtin(BUILTIN_ARGV_RFLATTEN, |vm, _argc| {
+        let v = vm.pop();
+        let mut out: Vec<String> = Vec::new();
+        flatten_array_value(v, &mut out);
+        Value::Array(out.into_iter().map(Value::str).collect())
+    });
+
     // Like XTRACE_LINE but reads the top `argc - 1` values from the
     // VM stack WITHOUT consuming them (peek), then pops a prefix
     // string at the top. Joins prefix + peeked args with spaces using
@@ -11004,6 +11016,19 @@ pub const BUILTIN_XTRACE_ARRAY_LINE: u16 = 649;
 /// by the array-literal codegen only when the literal has > u16::MAX elements
 /// (e.g. a .zcompdump's ~103k-element `_comps=(...)`).
 pub const BUILTIN_MAKE_ARRAY_COUNTED: u16 = 650;
+/// `BUILTIN_ARGV_RFLATTEN` — pop one `Op::MakeArray`-packed argv bundle and
+/// push it back as ONE recursively-flattened `Value::Array` of scalars. Emitted
+/// by the simple-command codegen ONLY on the >255-arg overflow path: the
+/// `Call`/`CallFunction`/`CallBuiltin` opcodes carry argc as a u8, so a command
+/// with more than 255 args is packed into a single Array (dispatched with
+/// argc=1) instead. But those call ops flatten their argv only ONE level, which
+/// would stringify a nested Array (a brace/glob/`$arr` word contributes a
+/// `Value::Array`). Pre-flattening here — same descent as
+/// [`flatten_array_value`], the array-assignment path — makes the bundle flat
+/// so the call op's single-level splat restores every positional arg. Bit
+/// compsys: a completer's `_arguments <specs…>` with a large brace-form option
+/// set (curl ships 59 `{-x,--long}` specs) dropped the long forms.
+pub const BUILTIN_ARGV_RFLATTEN: u16 = 653;
 /// `BUILTIN_ARRAY_JOIN_STAR` constant.
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
 /// `BUILTIN_SET_RAW_OPT` constant.
