@@ -631,18 +631,32 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         // asymmetry: an unbalanced `(` is a "bad pattern" in zsh, not a
         // literal, so only Outpar is demoted here.
         let mut open_paren: i32 = 0;
+        // Inside a `[...]` bracket class, `(`/`)` (Inpar/Outpar tokens) are
+        // LITERAL members, not group delimiters — so they must not move
+        // `open_paren`. The lexer tokenizes a `)` inside `[^)]` to Outpar
+        // (0x8a) all the same, so without this guard the bracket-interior
+        // Outpar wrongly decremented open_paren, and the real group-close
+        // then read `open_paren==0` and got demoted to a literal — collapsing
+        // `(|[^)]#…)` (every `_gnu_generic`/`_arguments --help` option-dedup
+        // pattern) into a "bad pattern". Track Inbrack(0x91)/Outbrack(0x92).
+        let mut in_bracket = false;
         let mut i = 0;
         while i < chars.len() {
             let c = chars[i];
             let cu = c as u32;
-            if cu == 0x88 {
+            if cu == 0x91 {
+                in_bracket = true; // Inbrack — fall through to the generic `[` emit.
+            } else if cu == 0x92 {
+                in_bracket = false; // Outbrack — fall through to the generic `]` emit.
+            }
+            if cu == 0x88 && !in_bracket {
                 // Inpar — opens a group.
                 open_paren += 1;
                 out.push('(');
                 i += 1;
                 continue;
             }
-            if cu == 0x8a {
+            if cu == 0x8a && !in_bracket {
                 // Outpar — closes an open group, else literal `)`.
                 if open_paren > 0 {
                     open_paren -= 1;
