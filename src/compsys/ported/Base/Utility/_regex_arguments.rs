@@ -151,7 +151,20 @@ pub fn dispatch_if_registered(funcname: &str) -> Option<i32> {
             .unwrap_or(false)
     };
     if known {
-        Some(dispatch_registered(funcname))
+        // Upstream `_regex_arguments` eval-defines `funcname` as a REAL shell
+        // function, so calling it (as an `_arguments`/comparguments action)
+        // pushes a `locallevel`. `comptags` is indexed by `locallevel`
+        // (computil.rs), so the generated function's inner `_alternative` →
+        // `_tags`/`comptags -i` lands at a DEEPER level and cannot clobber the
+        // caller's tag set. This Rust dispatch bypasses `doshfunc`, so without
+        // an explicit push the inner `comptags -i` overwrote comparguments'
+        // option tags at the SAME level — `sed <tab>` (via `_sed_expressions`'s
+        // `_alternative`) wiped the whole `-<<option>>-` list. Mirror the
+        // function-call level bump around the body.
+        crate::ported::utils::inc_locallevel();
+        let rc = dispatch_registered(funcname);
+        crate::ported::utils::dec_locallevel();
+        Some(rc)
     } else {
         None
     }
