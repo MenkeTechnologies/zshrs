@@ -173,22 +173,32 @@ pub fn wordclass(x: char) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardword(args: &[String]) -> i32 {
     // c:82
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         // c:86
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = vibackwardword(args); // c:89
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -252,21 +262,31 @@ pub fn viforwardword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardblankword(args: &[String]) -> i32 {
     // c:112
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = vibackwardblankword(args);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -312,22 +332,32 @@ pub fn viforwardblankword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn emacsforwardword(args: &[String]) -> i32 {
     // c:140
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         // c:144
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = emacsbackwardword(args); // c:147
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -360,21 +390,31 @@ pub fn emacsforwardword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardblankwordend(args: &[String]) -> i32 {
     // c:164
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = vibackwardblankwordend(args);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -433,21 +473,31 @@ pub fn viforwardblankwordend(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardwordend(args: &[String]) -> i32 {
     // c:198
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = vibackwardwordend(args);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -522,22 +572,32 @@ pub fn viforwardwordend(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn backwardword(args: &[String]) -> i32 {
     // c:240
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         // c:244
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = forwardword(args); // c:247
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -568,21 +628,31 @@ pub fn backwardword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardword(args: &[String]) -> i32 {
     // c:272
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = viforwardword(args);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -633,21 +703,31 @@ pub fn vibackwardword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardblankword(args: &[String]) -> i32 {
     // c:313
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = viforwardblankword(args);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -684,21 +764,31 @@ pub fn vibackwardblankword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardwordend(args: &[String]) -> i32 {
     // c:348
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = viforwardwordend(args);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -738,21 +828,31 @@ pub fn vibackwardwordend(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardblankwordend(args: &[String]) -> i32 {
     // c:375
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = viforwardblankwordend(args);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -778,21 +878,31 @@ pub fn vibackwardblankwordend(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn emacsbackwardword(args: &[String]) -> i32 {
     // c:397
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = emacsforwardword(args); // c:404
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -824,22 +934,32 @@ pub fn emacsbackwardword(args: &[String]) -> i32 {
 pub fn backwarddeleteword(args: &[String]) -> i32 {
     // c:429
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:429
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         // c:433
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = deleteword(args); // c:436
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -878,11 +998,17 @@ pub fn vibackwardkillword(_args: &[String]) -> i32 {
     let viinsbegin = VIINSBEGIN.load(std::sync::atomic::Ordering::SeqCst);
     let bol = findbol();
     let lim: usize = viinsbegin.max(bol);
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         return 1;
@@ -951,13 +1077,17 @@ pub fn backwardkillword(args: &[String]) -> i32 {
     if n < 0 {
         // c:504
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = killword(args); // c:507
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -996,11 +1126,17 @@ pub fn backwardkillword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn upcaseword(_args: &[String]) -> i32 {
     // c:533
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     let neg = n < 0; // c:536
     let ocs = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:536
@@ -1037,11 +1173,17 @@ pub fn upcaseword(_args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn downcaseword(_args: &[String]) -> i32 {
     // c:555
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     let neg = n < 0;
     let ocs = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
@@ -1076,11 +1218,17 @@ pub fn downcaseword(_args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn capitalizeword(_args: &[String]) -> i32 {
     // c:577
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     let neg = n < 0;
     let ocs = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
@@ -1131,22 +1279,32 @@ pub fn capitalizeword(_args: &[String]) -> i32 {
 pub fn deleteword(args: &[String]) -> i32 {
     // c:604
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         // c:609
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = backwarddeleteword(args); // c:612
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -1189,13 +1347,17 @@ pub fn killword(args: &[String]) -> i32 {
     if n < 0 {
         // c:633
         let saved = n;
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -n;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -n;
+            __g_zmod.flags |= MOD_MULT;
+        }
         let ret = backwardkillword(args); // c:636
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = saved;
-        __g_zmod.flags |= MOD_MULT;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = saved;
+            __g_zmod.flags |= MOD_MULT;
+        }
         return ret;
     }
     let mut n = n;
@@ -1227,11 +1389,17 @@ pub fn killword(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn transposewords(_args: &[String]) -> i32 {
     // c:652
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+    // the guard must not stay alive across the widget calls below.
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     let neg = n < 0;
     let ocs = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
@@ -2161,6 +2329,68 @@ mod tests {
         let _g2 = zle_test_setup();
         let r = vibackwardkillword(&[]);
         assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// Runs `f` on a helper thread and fails the test if it does not
+    /// return within 10s. Every widget below reads `ZMOD` and then calls
+    /// into the cut/kill path, which locks `ZMOD` again — a guard held
+    /// across that call blocks forever, and a plain call would hang the
+    /// test runner instead of failing it.
+    fn run_with_deadlock_timeout(what: &str, f: impl FnOnce() -> i32 + Send + 'static) -> i32 {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("{what} deadlocked (ZMOD guard held across a re-lock)"))
+    }
+
+    /// c:462 — `vi-backward-kill-word` (^W in vi insert mode) kills the
+    /// word before the cursor. Regression: the multiplier read held the
+    /// `ZMOD` guard across `backkill()` → `cut()` → `cuttext()`, which
+    /// re-locks `ZMOD` (`zle_utils.rs:744`). std's Mutex is not
+    /// reentrant, so the first ^W froze the shell with no output.
+    #[test]
+    fn vibackwardkillword_kills_last_word_without_deadlock() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        line("alpha beta gamma");
+        let end = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        ZLECS.store(end, std::sync::atomic::Ordering::SeqCst);
+        VIINSBEGIN.store(0, std::sync::atomic::Ordering::SeqCst);
+        let r = run_with_deadlock_timeout("vibackwardkillword", || vibackwardkillword(&[]));
+        assert_eq!(r, 0);
+        assert_eq!(
+            ZLELINE.lock().unwrap().iter().collect::<String>(),
+            "alpha beta ",
+        );
+    }
+
+    /// c:86-90 — a negative numeric argument makes `viforwardword` run
+    /// its mirror (`vibackwardword`) with the sign flipped. Regression:
+    /// the mirror block re-locked `ZMOD` while the multiplier-read guard
+    /// was still alive, so `ESC -1 W` deadlocked.
+    #[test]
+    fn viforwardword_negative_multiplier_mirrors_without_deadlock() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        line("alpha beta gamma");
+        ZLECS.store(
+            ZLELL.load(std::sync::atomic::Ordering::SeqCst),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -1;
+            __g_zmod.flags |= MOD_MULT;
+        }
+        let r = run_with_deadlock_timeout("viforwardword", || viforwardword(&[]));
+        assert_eq!(r, 0);
+        // Mirrored into vibackwardword: cursor walks back to the start of
+        // the last word rather than forward off the end.
+        assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 11);
+        // c:90 — the multiplier is restored before returning.
+        assert_eq!(ZMOD.lock().unwrap().mult, -1);
     }
 
     /// c:106 — `forwardword` is deterministic on empty buffer.
