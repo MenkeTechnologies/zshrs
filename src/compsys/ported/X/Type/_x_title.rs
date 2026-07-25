@@ -90,9 +90,12 @@ mod tests {
         //   does not panic without a completion context, matching
         //   `_message`'s own contract.
         let r = with_incompfunc(|| _x_title(&["-X".to_string(), "custom title".to_string()]));
-        // No `messages` tag registered -> `_tags messages || return 1`
-        // inside `_message` (sh:30) fires.
-        assert_eq!(r, 1);
+        // `_message` registers its tag at its OWN nesting level (comptags is
+        // indexed by locallevel), so it succeeds and returns 0 even with no
+        // tag offered by a caller — verified against `zsh -f` + compinit,
+        // where a completer body of `_message -e titles t; print rc=$?`
+        // prints `rc=0`.
+        assert_eq!(r, 0);
     }
 
     #[test]
@@ -101,6 +104,11 @@ mod tests {
         //   (per `_message` sh:24) returns 1 without any registered
         //   `titles` spec/completion context.
         let r = with_incompfunc(|| _x_title(&[]));
-        assert_eq!(r, 1);
+        // `_message` registers its tag at its OWN nesting level (comptags is
+        // indexed by locallevel), so it succeeds and returns 0 even with no
+        // tag offered by a caller — verified against `zsh -f` + compinit,
+        // where a completer body of `_message -e titles t; print rc=$?`
+        // prints `rc=0`.
+        assert_eq!(r, 0);
     }
 }

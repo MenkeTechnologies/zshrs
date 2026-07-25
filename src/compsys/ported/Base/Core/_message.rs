@@ -133,7 +133,23 @@ pub fn _message(args: &[String]) -> i32 {
         };
 
         // sh:16  _tags "$tag" && while _next_label "$tag" expl "$2"
-        if _tags(&[tag.clone()]) == 0 {
+        //
+        // `comptags` is indexed by `locallevel`, and in zsh `_message` is a
+        // real shell function, so its `_tags` registers ONE level below the
+        // caller's and is discarded on return. The Rust port calls the
+        // sibling `_tags` directly, which skips doshfunc's inc_locallevel —
+        // so this registration REPLACED the caller's. Concretely: an
+        // `_arguments` spec with an empty-action positional (`'*:key
+        // sequence: '`, `'*:in-string: '`) runs `_message -e` inside the
+        // `while _tags` loop; the clobber dropped the pending `options` tag
+        // set, so the loop re-offered the argument tag and option
+        // completion never happened — `bindkey -`, `fd -`, `rustup -` and
+        // every other such spec silently completed nothing. Same guard as
+        // _requested.rs. The `_next_label` loop must run INSIDE the nested
+        // level, where the tags were registered.
+        crate::ported::utils::inc_locallevel();
+        let tags_rc = _tags(&[tag.clone()]);
+        if tags_rc == 0 {
             loop {
                 let nl_args = vec![tag.clone(), "expl".to_string(), descr.clone()];
                 if _next_label(&nl_args) != 0 {
@@ -158,6 +174,7 @@ pub fn _message(args: &[String]) -> i32 {
                 ret = 0;
             }
         }
+        crate::ported::utils::dec_locallevel();
 
         // sh:21-22  if no matches AND compstate[insert] contains
         //   "unambiguous", clear compstate[insert].
@@ -179,7 +196,13 @@ pub fn _message(args: &[String]) -> i32 {
     let (mut argv, gopt) = run_gopt_message(args);
 
     // sh:30  _tags messages || return 1
+    //
+    // Same locallevel guard as the `-e` branch above: this registration
+    // must NOT replace the caller's tag sets. Everything below runs at the
+    // nested level, so each return path drops it again.
+    crate::ported::utils::inc_locallevel();
     if _tags(&["messages".to_string()]) != 0 {
+        crate::ported::utils::dec_locallevel();
         return 1;
     }
 
@@ -214,6 +237,7 @@ pub fn _message(args: &[String]) -> i32 {
     // sh:41  if [[ -n "$format$raw" ]]
     let combined = format!("{}{}", format_seed, if raw { "y" } else { "" });
     if combined.is_empty() {
+        crate::ported::utils::dec_locallevel();
         return 0;
     }
 
@@ -245,6 +269,7 @@ pub fn _message(args: &[String]) -> i32 {
     // sh:44
     let _ = setsparam("_comp_mesg", "yes");
 
+    crate::ported::utils::dec_locallevel();
     0
 }
 
@@ -264,9 +289,17 @@ mod tests {
     }
 
     #[test]
-    fn dash_e_with_no_specs_returns_one() {
-        // sh:24 — -e mode initial ret=1; never flipped to 0 when
-        //   _next_label produces no matches.
+    fn dash_e_registers_its_own_tag_level() {
+        // sh:16 — `_tags "$tag"` REGISTERS the tag at `_message`'s own
+        // function-nesting level (comptags is indexed by locallevel), so it
+        // succeeds even for a tag the caller never offered, and the
+        // `_next_label` loop then adds the message: ret=0.
+        //
+        // Checked against the reference shell — a completer whose whole body
+        // is `_message -e titles 'title'; print rc=$?` prints `rc=0` under
+        // `zsh -f` with compinit loaded. This test previously asserted 1,
+        // which was the signature of the missing inc_locallevel: `_tags`
+        // clobbered the CALLER's registration and reported failure.
         let r = with_incompfunc(|| {
             _message(&[
                 "-e".to_string(),
@@ -274,7 +307,7 @@ mod tests {
                 "descr".to_string(),
             ])
         });
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 
     #[test]
@@ -288,11 +321,14 @@ mod tests {
     }
 
     #[test]
-    fn default_mode_requires_messages_tag() {
-        // sh:30 — `_tags messages || return 1`. Without comptags
-        //   pre-registered, _tags returns 1 → _message returns 1.
+    fn default_mode_registers_the_messages_tag() {
+        // sh:30 — `_tags messages` registers `messages` at _message's own
+        // nesting level and succeeds, so the body runs to completion.
+        // `zsh -f` + compinit: a completer body of `_message -r 'raw text';
+        // print rc=$?` prints `rc=0`. (Asserted 1 before the missing
+        // inc_locallevel around this `_tags` call was added.)
         let r = with_incompfunc(|| _message(&["my message".to_string()]));
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 
     #[test]

@@ -93,16 +93,26 @@ mod tests {
         let r = with_incompfunc(|| {
             _x_geometry(&["-X".to_string(), "custom geometry".to_string()])
         });
-        assert_eq!(r, 1);
+        // `_message` registers its tag at its OWN nesting level (comptags is
+        // indexed by locallevel), so it succeeds and returns 0 even with no
+        // tag offered by a caller — verified against `zsh -f` + compinit,
+        // where a completer body of `_message -e titles t; print rc=$?`
+        // prints `rc=0`.
+        assert_eq!(r, 0);
     }
 
     #[test]
     fn dash_x_absent_routes_to_message_dash_e_geometries() {
         // sh:8 — falls back to `_message -e geometries 'geometry'`,
-        //   which (per `_message` sh:24) returns 1 without any
-        //   registered `geometries` spec/completion context.
+        //   which succeeds once `_message` registers `geometries` at its own
+        //   nesting level.
         let r = with_incompfunc(|| _x_geometry(&[]));
-        assert_eq!(r, 1);
+        // `_message` registers its tag at its OWN nesting level (comptags is
+        // indexed by locallevel), so it succeeds and returns 0 even with no
+        // tag offered by a caller — verified against `zsh -f` + compinit,
+        // where a completer body of `_message -e titles t; print rc=$?`
+        // prints `rc=0`.
+        assert_eq!(r, 0);
     }
 
     #[test]
@@ -110,6 +120,11 @@ mod tests {
         // sh:6 — `$argv[x + 1]` when `-X` is the last element yields
         //   an empty string (zsh out-of-range subscript -> "").
         let r = with_incompfunc(|| _x_geometry(&["-X".to_string()]));
-        assert_eq!(r, 1);
+        // `_message` registers its tag at its OWN nesting level (comptags is
+        // indexed by locallevel), so it succeeds and returns 0 even with no
+        // tag offered by a caller — verified against `zsh -f` + compinit,
+        // where a completer body of `_message -e titles t; print rc=$?`
+        // prints `rc=0`.
+        assert_eq!(r, 0);
     }
 }
