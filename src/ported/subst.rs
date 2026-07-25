@@ -6534,10 +6534,27 @@ pub fn paramsubst(
                     crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
                     _ => var_name.clone(),
                 };
-                let v = paramtab_hashed_storage()
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.get(resolved.as_str()).and_then(|m| m.get(sub).cloned()));
+                // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a
+                // LIVE gsu integer (`get_nmatches` = `permmatches(0) ? 0 :
+                // nmatches`), not stored data. zshrs keeps `$compstate` in the
+                // hashed store, which never held this key, so every shell-side
+                // completer read got the EMPTY string: `_parameters`'s
+                // `local -i nm=$compstate[nmatches]` … `(( compstate[nmatches]
+                // > nm ))` always reported "added nothing" and returned 1
+                // (`unset <TAB>` offered 197 names where zsh offers 496), and
+                // the same idiom in `_alternative`/`_describe`/`_arguments`
+                // silently mis-fired. Serve it live, exactly as C's getter.
+                let v = if resolved == "compstate" && sub == "nmatches" {
+                    Some(
+                        crate::ported::zle::compcore::get_compstate_str("nmatches")
+                            .unwrap_or_else(|| "0".to_string()),
+                    )
+                } else {
+                    paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .and_then(|s| s.get(resolved.as_str()).and_then(|m| m.get(sub).cloned()))
+                };
                 match v {
                     Some(val) => {
                         if want_key {
@@ -20459,11 +20476,21 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
-    if let Some(m) = paramtab_hashed_storage()
+    if let Some(mut m) = paramtab_hashed_storage()
         .lock()
         .ok()
         .and_then(|s| s.get(resolved.as_str()).cloned())
     {
+        // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
+        // integer, never stored data; splice the current value in so whole-map
+        // reads (`${(kv)compstate}`, `${compstate[@]}`) see it like C's getter.
+        if resolved == "compstate" {
+            m.insert(
+                "nmatches".to_string(),
+                crate::ported::zle::compcore::get_compstate_str("nmatches")
+                    .unwrap_or_else(|| "0".to_string()),
+            );
+        }
         // c:Src/hashtable.c scanhashtable — an associative array enumerates
         // in zsh hash-bucket order, not insertion order. The store keeps an
         // insertion-ordered IndexMap, so rebuild zsh's bucket layout to
