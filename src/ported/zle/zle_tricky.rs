@@ -871,6 +871,18 @@ pub fn docomplete(lst: i32) -> i32 {
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default();
+        // c:823 — `int ocs = zlemetacs, ne = noerrs;`. The cursor snapshot
+        // was missing from this port. `doexpansion` runs its own inner
+        // `docompletion` (c:2302) which leaves the cursor wherever that
+        // completion put it, and C restores it at c:834 BEFORE the outer
+        // `docompletion` re-runs. Without the restore, the second run
+        // extracted the word at the wrong cursor position, so the completer
+        // was never dispatched and every match computed by the first run was
+        // dropped: with TAB on its default `expand-or-complete` binding, any
+        // spec carrying a `*::`/`*:::` rest argument (`_rm`, `_typeset`,
+        // `_bindkey`, `_tar`) completed NOTHING at `cmd -<TAB>`, while the
+        // same spec worked when TAB was rebound to `complete-word`.
+        let ocs = ZLEMETACS.load(Ordering::SeqCst); // c:823
         let ne = crate::ported::exec::noerrs.load(Ordering::SeqCst); // c:839
         crate::ported::exec::noerrs.store(1, Ordering::SeqCst); // c:840
         let mut ret_local = doexpansion(&s_word, lst, olst, lincmd); // c:841
@@ -885,7 +897,8 @@ pub fn docomplete(lst: i32) -> i32 {
             .map(|g| g.clone())
             .unwrap_or_default();
         if olst == COMP_EXPAND_COMPLETE && ol_before == after {
-            // c:850-851 — clear ERRFLAG_ERROR, restore cursor.
+            // c:834 — `zlemetacs = ocs;` then c:835 clear ERRFLAG_ERROR.
+            ZLEMETACS.store(ocs, Ordering::SeqCst);
             crate::ported::utils::errflag
                 .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::SeqCst);
             ret_local = docompletion(&s_word, lst, lincmd); // c:865
@@ -1865,6 +1878,24 @@ pub fn get_comp_string() -> Option<String> {
         {
             let ws: Vec<String> = clwords.iter().map(|w| untokenize(w)).collect();
             let n = ws.len() as i32;
+            // c:82 — `mod_export char **clwords`. Stash the parsed word
+            // array where `callcompfunc` can rebuild `compwords` from it
+            // (compcore.c:634-645 does that on EVERY completion-function
+            // call). `expand-or-complete` runs the completion function
+            // TWICE per TAB — once inside `doexpansion`, once at
+            // zle_tricky.c:851 — but `get_comp_string` only runs once, so
+            // without this snapshot the second call inherited whatever the
+            // first left in `$words`/`$CURRENT`. Any `_arguments` spec with
+            // a `*::`/`*:::` rest argument calls `comparguments -W`, which
+            // RESTRICTS those to the rest-range (empty at `cmd -`), so the
+            // second pass saw no command word, never dispatched a
+            // completer, and threw away the matches the first pass had
+            // built: `rm -`, `typeset -`, `bindkey -`, `tar -` completed
+            // nothing on TAB's default binding.
+            if let Ok(mut g) = CLWORDS.lock() {
+                *g = ws.clone();
+            }
+            CLWPOS.store(clwpos, Ordering::SeqCst); // c:80
             // clwpos is 0-based; `$CURRENT` is 1-based. clwpos == -1 means
             // the cursor is past the last word (new trailing word).
             let cur = if clwpos < 0 { n + 1 } else { clwpos + 1 }.max(1);
@@ -1882,6 +1913,7 @@ pub fn get_comp_string() -> Option<String> {
             // (`var:0, gsu:0`). So publish them into paramtab directly, or
             // `_normal` sees `$CURRENT` unset → treats every position as
             // the command word and only ever offers command names.
+            tracing::debug!(target: "compsys_args", ?ws, cur, "get_comp_string publish words");
             crate::ported::params::setaparam("words", ws);
             crate::ported::params::setsparam("CURRENT", &cur.to_string());
         }
@@ -2897,6 +2929,21 @@ pub static WOULDINSTAB: AtomicI32 = AtomicI32::new(0); // c:101
 pub static NBRBEG: AtomicI32 = AtomicI32::new(0); // c:114
 /// Port of `mod_export int nbrend` from `Src/Zle/zle_tricky.c:114`.
 pub static NBREND: AtomicI32 = AtomicI32::new(0); // c:114
+
+/// Port of `mod_export char **clwords` from `Src/Zle/zle_tricky.c:82`.
+/// The parsed command-line word array `get_comp_string` builds;
+/// `callcompfunc` rebuilds `compwords` (`$words`) from it on every
+/// completion-function call (compcore.c:634-645). Untokenized, in
+/// command-line order.
+pub static CLWORDS: Mutex<Vec<String>> = Mutex::new(Vec::new()); // c:82
+
+/// Port of `mod_export int clwpos` from `Src/Zle/zle_tricky.c:80`.
+/// 0-based index into [`CLWORDS`] of the word being completed; `-1`
+/// when the cursor sits past the last word (a fresh trailing word).
+/// `callcompfunc` recomputes `compcurrent` (`$CURRENT`) from it on
+/// every call — `compcurrent = (usea ? clwpos + 1 - aadd : 0)`
+/// (compcore.c:751).
+pub static CLWPOS: AtomicI32 = AtomicI32::new(0); // c:80
 
 /// Port of `mod_export int origcs` from `Src/Zle/zle_tricky.c:75`.
 /// Cursor position saved at completion entry.

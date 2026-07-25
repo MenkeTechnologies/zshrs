@@ -210,6 +210,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
         false
     };
     if pending_match {
+        tracing::debug!(target: "compsys_args", pending, %insert_tab, "_main_complete EARLY RETURN: pending tab");
         set_compstate_str("insert", "tab");
         return 0;
     }
@@ -229,6 +230,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
                 || vared.is_empty()
                 || testforstyle(&format!(":completion:vared{}:", curcontext), "insert-tab") == 0)
         {
+            tracing::debug!(target: "compsys_args", %cur_insert, %insert_tab, "_main_complete EARLY RETURN: insert-tab");
             return 0;
         }
         // Strip the leading `tab` from compstate[insert]

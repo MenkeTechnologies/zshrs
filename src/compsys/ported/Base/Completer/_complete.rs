@@ -60,6 +60,13 @@ pub fn _complete() -> i32 {
 
     // sh:12  compcontext custom dispatch
     let compcontext = getsparam("compcontext").unwrap_or_default();
+    tracing::debug!(
+        target: "compsys_args",
+        %compcontext,
+        compskip = %getsparam("_compskip").unwrap_or_default(),
+        context = %get_compstate_str("context").unwrap_or_default(),
+        "_complete ENTER"
+    );
     if !compcontext.is_empty() {
         // sh:30  tag:descr:action form
         if compcontext.matches(':').count() >= 2 {

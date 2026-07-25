@@ -690,7 +690,66 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
 
     // c:591-617 — context selection.
     let context = compcontext_for(s); // c:591-617
+    tracing::debug!(
+        target: "compsys_args",
+        %context,
+        linwhat = linwhat.load(Ordering::Relaxed),
+        ispar = ispar.load(Ordering::Relaxed),
+        "callcompfunc context"
+    );
     set_compstate_str("context", &context); // c:619
+
+    // c:634-645 — `if (compwords) freearray(compwords); if (usea && …)
+    // { compwords = copy of clwords } else compwords = empty`. C rebuilds
+    // `$words` from the parsed line on EVERY call, which is what makes the
+    // SECOND completion pass of `expand-or-complete` (zle_tricky.c:851)
+    // see the full command line again — `get_comp_string` runs only once
+    // per TAB. This port was missing the rebuild, so a first pass that
+    // restricted `$words` (any `_arguments` spec with a `*::`/`*:::` rest
+    // argument calls `comparguments -W` → restrict_range) left the second
+    // pass with an empty word array: no command word, no completer
+    // dispatch, and every match from the first pass discarded.
+    //
+    // `usea` (c:590) is 0 only in the math context; C's `aadd` sub-case
+    // (parameter-subscript, c:626-630) needs `varname`, which this port
+    // does not compute yet — it is treated as 0 here, exactly as before.
+    {
+        use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS};
+        let usea = linwhat.load(Ordering::Relaxed) != IN_MATH_LW;
+        let ws: Vec<String> = if usea {
+            crate::ported::zle::zle_tricky::CLWORDS
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default() // c:639-643
+        } else {
+            Vec::new() // c:645
+        };
+        let n = ws.len() as i32;
+        // c:751 — `compcurrent = (usea ? (clwpos + 1 - aadd) : 0)`. Like
+        // `compwords`, this is RECOMPUTED per call, never carried over: the
+        // first pass' `comparguments -W` shifts it down to the restricted
+        // range, and reusing that value left the second pass pointing at
+        // the command word. `clwpos < 0` means the cursor sits past the
+        // last word (fresh trailing word) — same guard as the publish site
+        // in get_comp_string.
+        let clwpos = crate::ported::zle::zle_tricky::CLWPOS.load(Ordering::Relaxed);
+        let cur = if !usea {
+            0 // c:751 — math context: no words, no current
+        } else if clwpos < 0 {
+            n + 1
+        } else {
+            (clwpos + 1).max(1)
+        };
+        if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            *g = ws.clone();
+        }
+        COMPCURRENT.store(cur, Ordering::Relaxed);
+        // zshrs bridge: `$words`/`$CURRENT` are plain paramtab copies here
+        // (C binds them to the globals via gsu), so the rebuild has to
+        // reach the params too — see get_comp_string's publish site.
+        setaparam("words", ws);
+        let _ = crate::ported::params::setiparam("CURRENT", cur as i64);
+    }
 
     // c:721-727 — `$compstate[last_prompt]` etc. fed in from
     // do_completion via dolastprompt; we forward the current values.

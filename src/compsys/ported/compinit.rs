@@ -1007,11 +1007,17 @@ fn scan_directory(dir: &Path) -> Vec<CompFile> {
         Err(_) => return Vec::new(),
     };
 
-    let paths: Vec<PathBuf> = entries
+    let mut paths: Vec<PathBuf> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.is_file())
         .collect();
+    // sh:507 — `for _i_file in $_i_dir/^(…)(N)`. A zsh glob yields its
+    // matches SORTED, and that order decides which file claims a command
+    // name first (compdef -n keeps the first claim, sh:393). `read_dir`
+    // returns filesystem order, so without this sort the winner inside a
+    // directory varied by inode layout.
+    paths.sort();
 
     // Parallel scan of files within directory
     paths.par_iter().filter_map(|p| scan_file(p)).collect()
@@ -1173,23 +1179,25 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
     // sh:195-197 — initialize the pre/post-hook arrays.
     init_comp_funcs_arrays();
 
-    // Track seen function names (first one wins)
-    let seen: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
-
-    // Parallel scan of all directories
-    let all_files: Vec<CompFile> = fpath
+    // Parallel scan of all directories. Files are read concurrently but the
+    // RESULT keeps `$fpath` order (rayon's collect is order-preserving), which
+    // the dedup below depends on.
+    let scanned: Vec<CompFile> = fpath
         .par_iter()
         .filter(|dir| dir.as_os_str() != "." && dir.exists())
         .flat_map(|dir| scan_directory(dir))
-        .filter(|f| {
-            let mut seen = seen.lock().unwrap();
-            if seen.contains(&f.name) {
-                false
-            } else {
-                seen.insert(f.name.clone());
-                true
-            }
-        })
+        .collect();
+
+    // sh:509 — `(( $+_i_test[$_i_name] … )) && continue`: the FIRST `$fpath`
+    // directory holding a given completer filename wins; later copies are
+    // skipped. The previous code ran this dedup INSIDE the parallel filter
+    // against a shared `seen` set, so the surviving copy was whichever thread
+    // won the race — not the first in fpath order. Doing it here, over the
+    // already-ordered vector, makes the winner deterministic and correct.
+    let mut seen: HashSet<String> = HashSet::new();
+    let all_files: Vec<CompFile> = scanned
+        .into_iter()
+        .filter(|f| seen.insert(f.name.clone()))
         .collect();
 
     let files_scanned = all_files.len();
@@ -1209,15 +1217,31 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
                 match compdef {
                     CompDef::Commands(cmds) => {
                         for cmd in cmds {
+                            // sh:519 — compinit registers every scanned file with
+                            // `compdef -na`, and `-n` (new) means sh:393
+                            // `if [[ -z "$new" || -z "${_comps[$1]}" ]]` — an
+                            // EXISTING entry is kept, so the first `$fpath`
+                            // directory to claim a command owns it. zshrs inserted
+                            // unconditionally (last writer won), so with two files
+                            // claiming the same command (`_df` at fpath[24] has
+                            // `#compdef df gdf`; zsh-more-completions'
+                            // `_dwarffortress` at fpath[42] has `#compdef
+                            // dwarffortress df`) `df` completed as Dwarf Fortress
+                            // and `df -<TAB>` produced nothing.
+                            //
                             // Handle service syntax: cmd=service
                             if let Some(eq_pos) = cmd.find('=') {
                                 let cmd_name = &cmd[..eq_pos];
                                 let service = &cmd[eq_pos + 1..];
-                                result.comps.insert(cmd_name.to_string(), file.name.clone());
-                                result
-                                    .services
-                                    .insert(cmd_name.to_string(), service.to_string());
-                            } else {
+                                if !result.comps.contains_key(cmd_name) {
+                                    result.comps.insert(cmd_name.to_string(), file.name.clone());
+                                    // sh:395 — `_services[$cmd]` is set inside the
+                                    // same guard, never on its own.
+                                    result
+                                        .services
+                                        .insert(cmd_name.to_string(), service.to_string());
+                                }
+                            } else if !result.comps.contains_key(cmd) {
                                 result.comps.insert(cmd.clone(), file.name.clone());
                             }
                         }
@@ -2289,5 +2313,49 @@ mod tests {
             .cloned()
             .expect("_comps must be a hashed (associative) param");
         assert_eq!(map.get("git").map(String::as_str), Some("_git"));
+    }
+
+    /// compinit registers every scanned file with `compdef -na`, and `-n`
+    /// keeps an EXISTING `_comps` entry (Completion/compinit sh:393). So
+    /// when two completers claim the same command, the one in the earlier
+    /// `$fpath` directory owns it.
+    ///
+    /// Regression: the scan inserted unconditionally, so the LAST writer
+    /// won. On this host `_df` (`#compdef df gdf`, fpath[24]) lost to
+    /// zsh-more-completions' `_dwarffortress` (`#compdef dwarffortress
+    /// df`, fpath[42]) and `df -<TAB>` completed Dwarf Fortress options,
+    /// i.e. nothing.
+    #[test]
+    fn scan_keeps_first_fpath_claim_on_a_command() {
+        let _g = crate::test_util::global_state_lock();
+        let base = std::env::temp_dir().join("zshrs_compinit_firstwins_test");
+        let early = base.join("early");
+        let late = base.join("late");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&early).unwrap();
+        fs::create_dir_all(&late).unwrap();
+        // Same command claimed by two different files in two directories.
+        fs::write(early.join("_zzcmd"), "#compdef zzcmd zzother\n").unwrap();
+        fs::write(late.join("_zzgame"), "#compdef zzgame zzcmd\n").unwrap();
+
+        let result = compinit(&[early.clone(), late.clone()]);
+        assert_eq!(
+            result.comps.get("zzcmd").map(String::as_str),
+            Some("_zzcmd"),
+            "earlier fpath dir must keep the command"
+        );
+        // The later file still owns the commands nobody claimed first.
+        assert_eq!(
+            result.comps.get("zzgame").map(String::as_str),
+            Some("_zzgame")
+        );
+
+        // Reversing fpath order reverses the winner — order is what decides.
+        let reversed = compinit(&[late.clone(), early.clone()]);
+        assert_eq!(
+            reversed.comps.get("zzcmd").map(String::as_str),
+            Some("_zzgame")
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 }
