@@ -1068,11 +1068,18 @@ pub fn virevrepeatfind() -> i32 {
     // c:846-851 — `if (zmult < 0) { zmult = -zmult; ret = vifindchar(1);
     //                              zmult = -zmult; return ret }`.
     if ZMOD.lock().unwrap().mult < 0 {
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -__g_zmod.mult;
+        // Each ZMOD lock stays inside its own block: `vifindchar` locks
+        // ZMOD again, and std's Mutex is not reentrant (see zmult_arg,
+        // zle_main.rs). C negates `zmult` in place with no lock at all.
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -__g_zmod.mult;
+        }
         let ret = vifindchar(1);
-        let mut __g_zmod = ZMOD.lock().unwrap();
-        __g_zmod.mult = -__g_zmod.mult;
+        {
+            let mut __g_zmod = ZMOD.lock().unwrap();
+            __g_zmod.mult = -__g_zmod.mult;
+        }
         return ret;
     }
     // c:852-856 — toggle tailadd + vfinddir, repeat, restore.

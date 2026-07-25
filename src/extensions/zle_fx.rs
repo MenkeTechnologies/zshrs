@@ -184,6 +184,7 @@ const DELETE_WIDGETS: &[&str] = &[
     "delete-char",
     "delete-char-or-list",
     "backward-kill-word",
+    "vi-backward-kill-word",
     "backward-kill-line",
     "kill-word",
     "kill-line",
