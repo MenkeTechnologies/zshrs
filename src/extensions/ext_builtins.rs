@@ -2029,6 +2029,15 @@ impl ShellExecutor {
                                         };
                                         let mut batch: std::collections::HashMap<String, Vec<u8>> =
                                             std::collections::HashMap::with_capacity(bodies.len());
+                                        // Mirror C's `strinbeg()` (hist.c:1033) input-side
+                                        // gate for the whole batch: parsing a STRING must
+                                        // report EOF when the lexer buffer drains, never
+                                        // fall through to `inputline()`. `input::strin` is
+                                        // thread-local, so this bumps only this worker; the
+                                        // history half of strinbeg (hbegin/hend, global) is
+                                        // deliberately NOT run here — these parses must not
+                                        // touch the interactive history.
+                                        crate::ported::input::strin.with(|s| s.set(s.get() + 1));
                                         for (name, body) in &bodies {
                                             // Mirror Src/init.c errflag save/clear/check around parse.
                                             let saved_errflag = errflag.load(Ordering::Relaxed);
@@ -2053,6 +2062,8 @@ impl ShellExecutor {
                                                 }
                                             }
                                         }
+                                        // Mirror `strinend()` (hist.c:1049) — input side only.
+                                        crate::ported::input::strin.with(|s| s.set(s.get() - 1));
                                         let cached = batch.len();
                                         if let Err(e) = crate::autoload_cache::try_merge_in(batch) {
                                             tracing::warn!(error = %e, "compinit: rkyv merge_in failed");

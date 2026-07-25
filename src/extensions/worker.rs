@@ -32,6 +32,30 @@ use std::thread;
 /// A unit of work the pool can execute.
 type Task = Box<dyn FnOnce() + Send + 'static>;
 
+thread_local! {
+    /// True only on threads owned by a `WorkerPool`.
+    ///
+    /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+    /// C zsh is single-threaded: the one and only thread owns SHIN and
+    /// the line editor, so `inputline()` (Src/input.c:366) can read the
+    /// terminal unconditionally. zshrs runs background work (compinit
+    /// bytecode backfill, fpath scan, …) on pool threads that share the
+    /// process's `interact` / `SHINSTDIN` / SHTTY globals. When such a
+    /// task parses a shell body whose lexer buffer drains mid-construct,
+    /// the C-faithful "as a last resort, get some more input" arm
+    /// (input.c:354-356) fired ON THE WORKER and read the user's tty —
+    /// stealing keystrokes from ZLE. `in_worker_thread()` lets the input
+    /// layer treat that case as EOF instead.
+    static IN_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True when the calling thread is a worker-pool thread.
+///
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!! See `IN_WORKER`.
+pub fn in_worker_thread() -> bool {
+    IN_WORKER.with(|f| f.get())
+}
+
 /// Fixed-size thread pool with bounded FIFO task queue.
 ///
 /// zshrs-original — replaces C zsh's per-task `fork()` + `wait()`
@@ -85,6 +109,9 @@ impl WorkerPool {
             let handle = thread::Builder::new()
                 .name(format!("zshrs-worker-{}", id))
                 .spawn(move || {
+                    // Rust-only: mark this thread as pool-owned so the
+                    // input layer never reads the user's tty from it.
+                    IN_WORKER.with(|f| f.set(true));
                     loop {
                         let task = match rx.recv() {
                             Ok(task) => task,
@@ -462,5 +489,47 @@ mod tests {
         wait_for_count(&counter, 20, 5_000);
         drop(pool);
         assert_eq!(counter.load(Ordering::Relaxed), 20);
+    }
+
+    /// A pool thread must be identifiable as one, and `inputline()` must
+    /// report EOF there instead of prompting / reading SHIN.
+    ///
+    /// Regression: compinit's `-C` bytecode backfill parses ~47k autoload
+    /// bodies on the pool. A body whose lexer buffer drained mid-construct
+    /// fell through C's "as a last resort, get some more input" arm
+    /// (Src/input.c:354-356), so the WORKER read the user's terminal —
+    /// stealing keystrokes from ZLE, rendering PS2 (`> `) after every
+    /// `compinit -C`, and swallowing the following command lines.
+    #[test]
+    fn worker_threads_never_read_shin() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !in_worker_thread(),
+            "the shell thread must not be flagged as a pool thread"
+        );
+
+        let pool = WorkerPool::new(1);
+        let flagged = Arc::new(AtomicUsize::new(0));
+        let eof = Arc::new(AtomicUsize::new(0));
+        let f = Arc::clone(&flagged);
+        let e = Arc::clone(&eof);
+        pool.submit(move || {
+            if in_worker_thread() {
+                f.store(1, Ordering::SeqCst);
+            }
+            // Returns 1 (EOF) immediately; never touches the terminal.
+            if crate::ported::input::inputline() == 1 {
+                e.store(1, Ordering::SeqCst);
+            }
+        });
+        wait_for_count(&eof, 1, 5_000);
+        drop(pool);
+
+        assert_eq!(flagged.load(Ordering::SeqCst), 1, "pool thread not flagged");
+        assert_eq!(
+            eof.load(Ordering::SeqCst),
+            1,
+            "inputline() must return EOF on a pool thread"
+        );
     }
 }
