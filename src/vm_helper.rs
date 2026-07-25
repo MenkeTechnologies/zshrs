@@ -115,6 +115,23 @@ pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
+    // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a LIVE gsu
+    // integer (`get_nmatches` = `permmatches(0) ? 0 : nmatches`), not stored
+    // data, so the hashed store never held it and every shell-side read
+    // returned the EMPTY string. `_parameters` (`local -i nm=$compstate[
+    // nmatches]` … `(( compstate[nmatches] > nm ))`) therefore always
+    // reported "added nothing" and returned 1 — `unset <TAB>` offered 197
+    // names against zsh's 496 — and the same idiom in `_alternative`,
+    // `_describe` and `_arguments` mis-fired the same way.
+    if resolved == "compstate" && key == "nmatches" {
+        return Some((
+            true,
+            Some(
+                crate::ported::zle::compcore::get_compstate_str("nmatches")
+                    .unwrap_or_else(|| "0".to_string()),
+            ),
+        ));
+    }
     crate::ported::params::paramtab_hashed_storage()
         .lock()
         .ok()
