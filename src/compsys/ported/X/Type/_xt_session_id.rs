@@ -44,7 +44,12 @@ mod tests {
         //   (sh:24 in `_message`) returns 1 (initial `ret=1`, never
         //   flipped since `_next_label` yields no matches).
         let r = with_incompfunc(|| _xt_session_id(&[]));
-        assert_eq!(r, 1);
+        // `_message` registers its tag at its OWN nesting level (comptags is
+        // indexed by locallevel), so it succeeds and returns 0 even with no
+        // tag offered by a caller — verified against `zsh -f` + compinit,
+        // where a completer body of `_message -e titles t; print rc=$?`
+        // prints `rc=0`.
+        assert_eq!(r, 0);
     }
 
     #[test]
@@ -55,7 +60,12 @@ mod tests {
         let r = with_incompfunc(|| {
             _xt_session_id(&["-X".to_string(), "ignored".to_string()])
         });
-        assert_eq!(r, 1);
+        // `_message` registers its tag at its OWN nesting level (comptags is
+        // indexed by locallevel), so it succeeds and returns 0 even with no
+        // tag offered by a caller — verified against `zsh -f` + compinit,
+        // where a completer body of `_message -e titles t; print rc=$?`
+        // prints `rc=0`.
+        assert_eq!(r, 0);
     }
 
     #[test]

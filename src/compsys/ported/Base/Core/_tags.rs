@@ -245,6 +245,7 @@ fn run_default_sort(ctx: &str, argv: &[String]) {
     if !nodef {
         let _ = bin_comptry("comptry", argv, &make_ops(), 0);
     }
+    tracing::debug!(target: "compsys_args", ?order, ?argv, nodef, %ctx, "_tags default sort done");
 }
 
 /// Thin wrapper for zsh-style glob match used in `sh:50` argv

@@ -935,7 +935,8 @@ pub fn _arguments(args: &[String]) -> i32 {
             opts = true;
             let mut targ = subcs.clone();
             targ.push("options".to_string());
-            let _ = _tags(&targ); // sh:337
+            let rc_tags = _tags(&targ); // sh:337
+            tracing::debug!(target: "compsys_args", ?targ, rc_tags, "_arguments _tags(subcs+options)");
         } else {
             let _ = _tags(&subcs); // sh:338
         }
@@ -1205,7 +1206,21 @@ pub fn _arguments(args: &[String]) -> i32 {
                     || (!aret && !mesg && !tried) // -z "$aret$mesg$tried"
             };
             let cur_prefix = getsparam("PREFIX").unwrap_or_default();
-            if _requested(&["options".to_string()]) == 0
+            let requested_options = _requested(&["options".to_string()]);
+            tracing::debug!(
+                target: "compsys_args",
+                requested_options,
+                hasopts,
+                matched,
+                aret,
+                mesg,
+                tried,
+                %cur_prefix,
+                %origpre,
+                prefix_needed_ok,
+                "_arguments options gate"
+            );
+            if requested_options == 0
                 && !hasopts
                 && !matched
                 && (!aret || cur_prefix == origpre)
@@ -1228,7 +1243,21 @@ pub fn _arguments(args: &[String]) -> i32 {
 
                 // sh:489 — single-option mode?
                 let want_single = alwopt.is_empty() || !tried || alwopt == "arg";
-                if want_single && comparguments(&["-s", "single"]) == 0 {
+                let single_rc = if want_single {
+                    comparguments(&["-s", "single"])
+                } else {
+                    1
+                };
+                tracing::debug!(
+                    target: "compsys_args",
+                    want_single,
+                    single_rc,
+                    single = %getsparam("single").unwrap_or_default(),
+                    %alwopt,
+                    tried,
+                    "_arguments option branch"
+                );
+                if single_rc == 0 {
                     let single = getsparam("single").unwrap_or_default();
                     let word = prefix_suffix();
                     if single == "direct" {
