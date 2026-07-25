@@ -173,6 +173,10 @@ pub fn hist_is_in_word() -> i32 {
 /// ```
 pub fn ihwaddc(c: i32) {
     // c:357
+    // Rust-only: pool threads run C's `hwaddc = nohw` arm (c:1141).
+    if crate::worker::in_worker_thread() {
+        return;
+    }
     // c:360-361 — guard: history line must exist, no error/lex stop,
     // and we're not strictly inside alias-expansion-only input.
     if errflag.load(SeqCst) != 0 || lexstop.load(SeqCst) {
@@ -298,6 +302,10 @@ pub fn ihwaddc(c: i32) {
 /// the backing store for both code paths in zshrs.
 pub fn iaddtoline(c: i32) {
     // c:397
+    // Rust-only: pool threads run C's `addtoline = nohw` arm (c:1145).
+    if crate::worker::in_worker_thread() {
+        return;
+    }
     // c:399 — `if (!expanding || lexstop) return;`.
     if expanding.load(SeqCst) == 0 || lexstop.load(SeqCst) {
         return;
@@ -405,6 +413,10 @@ pub fn safeinungetc(c: i32) {
 /// ```
 pub fn ihgetc() -> i32 {
     // c:418
+    // Rust-only: pool threads run C's `hgetc = ingetc` arm (c:1139).
+    if crate::worker::in_worker_thread() {
+        return ingetc().map(|ch| ch as i32).unwrap_or(b' ' as i32);
+    }
     // c:420 — `int c = ingetc();`. C's ingetc returns the byte 32 (' ')
     // WITH lexstop set at EOF (input.c:322). zshrs's ingetc signals EOF as
     // `None`, so map None → ' ' (NOT -1): a negative `c` is reserved for
@@ -1390,6 +1402,24 @@ pub fn nohwe() { /* do nothing */
 /// shouldn't show up as user-typed words in `!:N` etc.
 pub fn ihwbegin(offset: i32) {
     // c:1656
+    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
+    // C flips `hgetc`/`hungetc`/`hwaddc`/`hwbegin`/`hwabort`/`hwend`/
+    // `addtoline` to their no-op twins (`ingetc`/`inungetc`/`nohw`/
+    // `nohwabort`/`nohwe`) whenever `stophist == 2` (c:1134-1145) —
+    // that is how a non-history parse avoids touching the history line
+    // buffers. `stophist`, `chline`, `hptr`, `chwords` and `chwordpos`
+    // are PROCESS globals in this port, so a worker-pool thread cannot
+    // set `stophist = 2` without also disabling the interactive shell's
+    // history. Background parses (compinit's bytecode backfill compiles
+    // ~47k autoload bodies on the pool) are never history events, so a
+    // pool thread behaves as if `stophist == 2`. Without this, the
+    // worker's `gettok` → `ihwbegin` raced `chwordpos`/`chwords` with
+    // the main thread's live command line and panicked in `Vec::resize`
+    // ("capacity overflow"), poisoning the mutex and killing the shell.
+    // Same guard on the other six hooks (c:1139-1145).
+    if crate::worker::in_worker_thread() {
+        return;
+    }
     // c:1658 — `int pos = hptr - chline + offset;`. The C `hptr` is
     // the current write position into the chline buffer; `pos` is
     // the byte offset from buffer start + caller-supplied offset.
@@ -2254,6 +2284,10 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
 /// Port of `void ihwabort(void)` from Src/hist.c.
 pub fn ihwabort() {
     // c:1675
+    // Rust-only: pool threads run C's `hwabort = nohwabort` arm (c:1143).
+    if crate::worker::in_worker_thread() {
+        return;
+    }
     let pos = chwordpos.load(SeqCst);
     if pos % 2 != 0 {
         chwordpos.fetch_sub(1, SeqCst);
@@ -2273,6 +2307,10 @@ pub fn ihwabort() {
 /// table when an alias expansion ended.
 pub fn ihwend() {
     // c:1686
+    // Rust-only: pool threads run C's `hwend = nohwe` arm (c:1144).
+    if crate::worker::in_worker_thread() {
+        return;
+    }
     let stop = stophist.load(SeqCst);
     let active = histactive.load(SeqCst);
     let inflags = crate::ported::input::inbufflags.with(|f| f.get());
@@ -3421,6 +3459,13 @@ pub fn hdynread(stop: i32) -> Option<String> {
 /// at the bottom).
 pub fn ihungetc(c: i32) {
     // c:989
+    // Rust-only: pool threads run C's `hungetc = inungetc` arm (c:1140).
+    if crate::worker::in_worker_thread() {
+        if let Some(ch) = char::from_u32(c as u32) {
+            crate::ported::input::inungetc(ch);
+        }
+        return;
+    }
     let mut c = c as u8 as char; // c:991 int c
     let mut doit = 1; // c:991 doit = 1
     while !lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)

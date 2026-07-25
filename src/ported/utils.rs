@@ -133,6 +133,18 @@ pub fn set_widearray(mb_array: &str) -> Vec<char> {
 /// ```
 /// WARNING: param names don't match C — Rust=(cmd, msg) vs C=(cmd, fmt, ap)
 fn zwarning(cmd: Option<&str>, msg: &str) {
+    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
+    // C zsh has one thread, so every diagnostic here belongs to the
+    // command the user just ran. zshrs parses/compiles shell bodies on
+    // worker-pool threads (compinit's bytecode backfill), and a body that
+    // fails to parse there is BACKGROUND noise, not a user-visible error:
+    // printing it stomps the live ZLE line (`zsh: unmatched "` landing in
+    // the middle of the prompt) and the ZLE_CMD_TRASH repaint below runs
+    // off-thread. Route worker-thread diagnostics to the log instead.
+    if crate::worker::in_worker_thread() {
+        tracing::debug!(cmd = ?cmd, msg = %msg, "background-thread diagnostic (not shown)");
+        return;
+    }
     // c:96 — `if (isatty(2)) zleentry(ZLE_CMD_TRASH);`
     // Flush any in-flight ZLE redraw state before the warning lands
     // on stderr — without this, half-painted edit lines bleed into

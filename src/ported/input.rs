@@ -530,6 +530,22 @@ pub fn ingetc() -> Option<char> {
 /// …; inbufflags = 0`) and returns 0 — exactly what `ingetc`'s
 /// "as a last resort, get some more input" arm (c:355) expects.
 pub fn inputline() -> i32 {
+    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
+    // C zsh is single-threaded, so this function can always read SHIN /
+    // drive ZLE. zshrs parses shell bodies on worker-pool threads
+    // (compinit's bytecode backfill parses ~47k autoload bodies), and
+    // `interact` / SHINSTDIN / SHTTY / USEZLE are process-globals — so a
+    // worker whose lexer buffer drained mid-construct fell through here
+    // and READ THE USER'S TERMINAL, competing with ZLE for keystrokes.
+    // Symptoms: the prompt after `compinit -C` rendered PS2 (`> `) and
+    // swallowed every following line, stray empty `zsh:N:` diagnostics,
+    // eaten/duplicated characters, and bogus parse errors. Background
+    // threads get EOF here, which is what C's `strin` gate (input.c:339)
+    // produces for string input.
+    if crate::worker::in_worker_thread() {
+        lexstop.with(|c| c.set(true));
+        return 1; // EOF — never prompt or read SHIN off the main thread
+    }
     // c:371-384 — if reading code interactively, work out the prompt: PS1
     // on the first line of a command, PS2 (continuation) otherwise.
     // `ingetcpmptl` is the SOURCE prompt string fed to promptexpand.
