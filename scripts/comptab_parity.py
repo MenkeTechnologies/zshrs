@@ -79,6 +79,7 @@ CRASH_MARKERS = (
 
 BUILTIN_CORPUS = [
     "",              # command position
+    "pr",            # partial command name — builtins + functions + externals
     "git ",
     "git chec",
     "git log --",
