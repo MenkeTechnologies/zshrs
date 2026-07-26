@@ -18844,6 +18844,44 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
                 }
                 if name_end > name_start {
                     let name: String = bytes[name_start..name_end].iter().collect();
+                    // `$#NAME[SUB]` — the length applies to the SUBSCRIPTED
+                    // element, not to the whole parameter: zsh gives
+                    // `a=(one two three); $(( $#a[2] ))` → 3 (strlen "two"),
+                    // `$(( $#a[1,2] ))` → 2 (slice element count), and
+                    // `$(( $#h[k] ))` → strlen of the assoc value. Stopping at
+                    // the NAME left the raw `[...]` in the math text, where the
+                    // `[` parsed as a `[#base]`/`[base]` prefix and errored —
+                    // `_print:7`'s `$#compstate[unambiguous]` made `print
+                    // -<TAB>` print "bad output format specification" twice
+                    // over the completion list. Hand the whole thing to the
+                    // normal substitution path, which already computes every
+                    // one of these forms (including nested `$#` inside the
+                    // subscript, as in `$#a[$#a]`).
+                    let sub_open = bytes.get(name_end).copied();
+                    if sub_open == Some('[') || sub_open == Some(Inbrack) {
+                        let mut depth = 0i32;
+                        let mut j = name_end;
+                        while j < bytes.len() {
+                            match bytes[j] {
+                                '[' | Inbrack => depth += 1,
+                                ']' | Outbrack => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+                        if j < bytes.len() {
+                            let sub: String = bytes[name_end..=j].iter().collect();
+                            let expanded = singsub(&format!("${{#{}{}}}", name, sub));
+                            out.push_str(&expanded);
+                            i = j + 1;
+                            continue;
+                        }
+                    }
                     // Read from `state` (the snapshot built via
                     // subst_state_from_executor); routes through the
                     // same data the executor exposed without reaching
