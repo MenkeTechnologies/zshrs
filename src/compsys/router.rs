@@ -43,7 +43,64 @@ pub fn try_rust_dispatch(name: &str) -> Option<fn(&[String]) -> i32> {
     if !name.starts_with('_') {
         return None;
     }
+    // A Rust port stands in for the STOCK upstream function of that name.
+    // When `$fpath` resolves the name to somebody else's file first — the
+    // user's own `~/.../comp_utils/_parameters`, a plugin's copy — zsh would
+    // autoload THAT, so the port must step aside or the customization is
+    // silently dead. This is how `unset <TAB>` diverged: zsh ran his
+    // `_parameters` (names + values, 496 entries), zshrs ran the port (bare
+    // names, 197).
+    if has_fpath_override(name) {
+        return None;
+    }
     rust_compsys_lookup(name)
+}
+
+/// True when `$fpath`'s FIRST file for `name` is not a stock zsh
+/// completion-function file, i.e. the user (or a plugin) overrides it.
+///
+/// zshrs-original — C has no native compsys tree to arbitrate against.
+/// Stock = the shipped `Completion/` tree, installed as
+/// `…/share/zsh/<version>/functions` (and `/usr/share/zsh/functions`).
+/// `site-functions` is NOT stock: third parties install there.
+///
+/// Memoized against the live `$fpath`; the map is rebuilt whenever fpath
+/// changes, so a mid-session `fpath=(…)` is honored. Without the memo this
+/// would stat up to `#fpath` directories on every completer call.
+fn has_fpath_override(name: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+    static MEMO: OnceLock<Mutex<(Vec<String>, HashMap<String, bool>)>> = OnceLock::new();
+
+    let fpath = crate::ported::params::getaparam("fpath").unwrap_or_default();
+    let memo = MEMO.get_or_init(|| Mutex::new((Vec::new(), HashMap::new())));
+    let mut guard = match memo.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    if guard.0 != fpath {
+        guard.0 = fpath.clone();
+        guard.1.clear();
+    }
+    if let Some(hit) = guard.1.get(name) {
+        return *hit;
+    }
+    let mut overridden = false;
+    for dir in &fpath {
+        let path = std::path::Path::new(dir).join(name);
+        if path.is_file() {
+            let stock = dir.contains("/share/zsh/")
+                && std::path::Path::new(dir)
+                    .file_name()
+                    .map(|f| f == "functions")
+                    .unwrap_or(false);
+            overridden = !stock;
+            break;
+        }
+    }
+    guard.1.insert(name.to_string(), overridden);
+    overridden
 }
 
 /// Dispatch compsys `_fn` `name` with `args`, honoring plugin overrides.
@@ -365,5 +422,50 @@ mod tests {
         // `_nosuch_xyz` has no Rust port — caller falls back to
         // shfunc autoload.
         assert!(rust_compsys_lookup("_nosuch_xyz").is_none());
+    }
+
+    /// A Rust port replaces the STOCK function of that name only. When
+    /// `$fpath` resolves the name to a user's or plugin's own file first,
+    /// zsh autoloads THAT, so `try_rust_dispatch` must decline.
+    ///
+    /// Regression: his `~/.zpwr/autoload/comp_utils/_parameters` (parameter
+    /// names WITH values) was shadowed by the port (bare names), so
+    /// `unset <TAB>` listed 197 entries where zsh listed 496.
+    #[test]
+    fn user_fpath_file_beats_the_rust_port() {
+        let _g = crate::test_util::global_state_lock();
+        let base = std::env::temp_dir().join("zshrs_router_override_test");
+        let user_dir = base.join("mine");
+        let stock_dir = base.join("share/zsh/5.9/functions");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::create_dir_all(&stock_dir).unwrap();
+        std::fs::write(stock_dir.join("_setup"), "#autoload\n").unwrap();
+
+        let saved = crate::ported::params::getaparam("fpath").unwrap_or_default();
+
+        // Stock dir only: the port answers.
+        crate::ported::params::setaparam(
+            "fpath",
+            vec![stock_dir.to_string_lossy().into_owned()],
+        );
+        assert!(try_rust_dispatch("_setup").is_some(), "stock file → port");
+
+        // The user's own copy earlier in fpath: the port steps aside.
+        std::fs::write(user_dir.join("_setup"), "#autoload\n# mine\n").unwrap();
+        crate::ported::params::setaparam(
+            "fpath",
+            vec![
+                user_dir.to_string_lossy().into_owned(),
+                stock_dir.to_string_lossy().into_owned(),
+            ],
+        );
+        assert!(
+            try_rust_dispatch("_setup").is_none(),
+            "user file earlier in fpath must win"
+        );
+
+        crate::ported::params::setaparam("fpath", saved);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
