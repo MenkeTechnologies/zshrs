@@ -2503,6 +2503,35 @@ pub fn addmatches(
 ) -> i32 {
     let _nm = mnum.load(Ordering::Relaxed); // c:2095 nm
 
+    // c:2093 — `Cmlist oms = mstack;`, restored at c:2622 `mstack = oms;`.
+    // The `-M` matcher a compadd carries is pushed onto `mstack` (c:2212) for
+    // the duration of THAT call only. This port pushed but never restored, so
+    // the matcher leaked into every later compadd of the same completion: once
+    // `_describe` added an option list with `-M 'r:|[_-]=* r:|=*'`, a following
+    // bare `compadd -k commands` matched the line prefix `-` against every
+    // command name. `hash -<TAB>` offered 1152 candidates where zsh offers the
+    // 6 options; the same leak inflates any completion that mixes a matcher-
+    // carrying compadd with a later plain one.
+    let oms_saved: Option<Box<Cmlist>> = mstack
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take());
+    if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+        *g = oms_saved.clone();
+    }
+    // Restores `mstack` on EVERY exit from this function (C restores at the
+    // single c:2622 return; the port has several early returns).
+    struct MstackRestore(Option<Box<Cmlist>>);
+    impl Drop for MstackRestore {
+        fn drop(&mut self) {
+            if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+                *g = self.0.take();
+            }
+        }
+    }
+    let _mstack_guard = MstackRestore(oms_saved);
+
     // c:2049 — C's `complist` global is GSU-backed by `$compstate[list]`, so a
     // completer's `compstate[list]="... packed"` write (e.g. `_describe`
     // setting the grouped/packed layout) is visible to `addmatch` via `complist`.
