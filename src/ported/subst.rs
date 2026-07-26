@@ -8001,6 +8001,9 @@ pub fn paramsubst(
                                 return None;
                             }
                         }
+                        // c:99-110 — a single-key read RESOLVES the autoload stub, so later
+                        // enumerations report its real type (see assoc_get).
+                        if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
                         (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
                     })()
                     .map(|_| sub.to_string())
@@ -8024,6 +8027,9 @@ pub fn paramsubst(
                                 return None;
                             }
                         }
+                        // c:99-110 — a single-key read RESOLVES the autoload stub, so later
+                        // enumerations report its real type (see assoc_get).
+                        if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
                         (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
                     })()
                 }
@@ -9290,6 +9296,9 @@ pub fn paramsubst(
                             return None;
                         }
                     }
+                    // c:99-110 — a single-key read RESOLVES the autoload stub, so later
+                    // enumerations report its real type (see assoc_get).
+                    if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
                     (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
                 })().is_some_and(|v| !v.is_empty())
         } else {
@@ -18111,6 +18120,9 @@ pub fn paramsubst(
                                 return None;
                             }
                         }
+                        // c:99-110 — a single-key read RESOLVES the autoload stub, so later
+                        // enumerations report its real type (see assoc_get).
+                        if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
                         (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
                     })()
                 }
@@ -20571,9 +20583,27 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
     let keys = PARTAB_SCAN_KEYS.with(|k| k.borrow().clone());
     let mut out = indexmap::IndexMap::new();
     for k in keys {
-        let v = (entry.getfn)(std::ptr::null_mut(), &k)
-            .and_then(|p| p.u_str)
-            .unwrap_or_default();
+        // c:Src/Modules/parameter.c:49-50 + :126-147 — ENUMERATING
+        // `$parameters` runs `scanpmparameters`, which types each node with
+        // `paramtypestr` and so reports a PM_AUTOLOAD stub as "undefined";
+        // it does NOT resolve the stub. Only a single-key read
+        // (`${parameters[aliases]}`, getpmparameter) materializes the name
+        // and then reports its real type. zsh:
+        //   `m=( ${(kv)parameters} ); print $m[aliases]`      → undefined
+        //   `${parameters[aliases]}` first, then the same scan → association-…
+        // zshrs seeds every module parameter eagerly, so without this the
+        // scan reported real types for all of them and
+        // `${(@k)parameters[(R)a*]}` matched 56 names against zsh's 18 —
+        // which is what put `unset <TAB>`'s candidates in the wrong
+        // `_parameters -g` bucket.
+        let v = if entry.name == "parameters" && crate::vm_helper::module_param_is_autoload_stub(&k)
+        {
+            "undefined".to_string() // c:50
+        } else {
+            (entry.getfn)(std::ptr::null_mut(), &k)
+                .and_then(|p| p.u_str)
+                .unwrap_or_default()
+        };
         out.insert(k, v);
     }
     Some(out)

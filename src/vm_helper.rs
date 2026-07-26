@@ -4106,6 +4106,32 @@ mod tests {
         assert_eq!(status, 0);
     }
 
+    /// A `zsh/parameter` param is an autoload stub until it is READ; the read
+    /// materializes it. `$parameters` enumerations type a stub as "undefined"
+    /// (Src/Modules/parameter.c:49-50) and never resolve it, which is what
+    /// puts those names in the right `_parameters -g` bucket.
+    ///
+    /// Reference behavior (`zsh -f`):
+    ///   `m=( ${(kv)parameters} ); print $m[aliases]`            → undefined
+    ///   `${parameters[aliases]}` first, then the same scan      → association-…
+    #[test]
+    fn module_params_are_autoload_stubs_until_read() {
+        let _g = crate::test_util::global_state_lock();
+        // `jobstates` is never touched by shell startup, unlike `aliases`.
+        assert!(
+            module_param_is_autoload_stub("jobstates"),
+            "untouched module param must read as a stub"
+        );
+        mark_module_param_used("jobstates");
+        assert!(
+            !module_param_is_autoload_stub("jobstates"),
+            "a read must materialize it"
+        );
+        // A core special (not module-provided) is never a stub.
+        assert!(!module_param_is_autoload_stub("path"));
+        assert!(!module_param_is_autoload_stub("PATH"));
+    }
+
     /// Phase 3 diagnostic: a worker must be able to run a USER-DEFINED function
     /// (defined on the main executor) — the function source lives in the shared
     /// shfunctab, and the worker lazy-compiles it from there. Its `typeset -g`
@@ -4756,7 +4782,48 @@ thread_local! {
 /// Lookup helper for `${name[key]}` magic-assoc reads — dispatches
 /// through canonical `PARTAB` (Src/Modules/parameter.c:2235 ports).
 /// Returns `None` if name isn't a known magic-assoc.
+/// Module parameters that have actually been touched this session.
+///
+/// zshrs-original bookkeeping for a C behavior that falls out of the module
+/// system there. zsh registers `zsh/parameter`'s params (`aliases`,
+/// `commands`, `functions`, …) as PM_AUTOLOAD stubs in `realparamtab`;
+/// touching ONE of them materializes only that name — its siblings stay
+/// stubs even though the module is now loaded. `paramtypestr`
+/// (Src/Modules/parameter.c:49-50) reports a PM_AUTOLOAD node as
+/// "undefined", which is what an enumeration of `$parameters` shows.
+/// zshrs seeds all of them eagerly (init_partab_params), so without this
+/// set every one reported its real type and `${(@k)parameters[(R)a*]}`
+/// matched 56 names against zsh's 18 — putting them in the wrong
+/// `_parameters -g` bucket (`unset <TAB>`: 418 entries vs zsh's 496).
+static MATERIALIZED_MODULE_PARAMS: std::sync::OnceLock<Mutex<HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+/// Record that `name` was read/written, so `$parameters` stops reporting it
+/// as an unmaterialized autoload stub. See [`MATERIALIZED_MODULE_PARAMS`].
+pub fn mark_module_param_used(name: &str) {
+    let set = MATERIALIZED_MODULE_PARAMS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut g = set.lock();
+    if !g.contains(name) {
+        g.insert(name.to_string());
+    }
+}
+
+/// True when `name` is still an untouched module-parameter stub — i.e. zsh
+/// would report it as PM_AUTOLOAD ("undefined") when enumerating
+/// `$parameters`. See [`MATERIALIZED_MODULE_PARAMS`].
+pub fn module_param_is_autoload_stub(name: &str) -> bool {
+    if !AUTOLOAD_PARAMS.iter().any(|(p, _)| *p == name) {
+        return false;
+    }
+    MATERIALIZED_MODULE_PARAMS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .contains(name)
+        .eq(&false)
+}
+
 pub fn partab_get(name: &str, key: &str) -> Option<String> {
+    mark_module_param_used(name);
     // c:Src/Modules/system.c:902,904 — `sysparams` and `errnos` are
     // bound by zsh/system's boot_/setup_ chain. Same for `mapfile`
     // from zsh/mapfile. Without explicit `zmodload`, these names
@@ -4799,6 +4866,7 @@ fn module_gated_partab_module(name: &str) -> Option<&'static str> {
 /// parameter.c:2239-2291 ports). Returns `None` if name isn't a
 /// known PM_ARRAY magic-assoc.
 pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
+    mark_module_param_used(name);
     // Bug #69 — gate module-bound PARTAB names on the owning
     // module's MOD_LINKED && !MOD_UNLOAD state.
     if let Some(modname) = module_gated_partab_module(name) {
@@ -4821,6 +4889,7 @@ pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
 /// Scan helper for `${(k)name}` — enumerates keys via canonical
 /// scanfn, collected into Vec via SCAN_KEYS thread-local.
 pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
+    mark_module_param_used(name);
     // Bug #69 — gate module-bound PARTAB names on the owning
     // module's MOD_LINKED && !MOD_UNLOAD state.
     if let Some(modname) = module_gated_partab_module(name) {
@@ -4877,7 +4946,12 @@ pub fn init_partab_params() {
     // internal-write path). Other specials that DO have internal-write
     // paths (e.g. funcstack from function-call tracking) get the bit
     // stripped so the runtime can mutate their u_arr. Bug #374.
+    // `parameters` is computed entirely by getpmparameter and has no
+    // internal-write path either (zsh: PM_READONLY_SPECIAL, c:2287), so it
+    // keeps the bit — `${parameters[parameters]}` reads
+    // `association-readonly-hide-hideval-special` in zsh.
     let user_protected: &[&str] = &[
+        "parameters",
         "reswords",
         "dis_reswords",
         "patchars",
