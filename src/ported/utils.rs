@@ -1775,10 +1775,20 @@ pub fn preprompt() {
     // partial) had its tail overwritten by the next prompt — zsh shows
     // `100%` then a fresh prompt line, zshrs showed the prompt painted
     // over the `100`.
+    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
+    // In C, `preprompt` runs only from loop() between commands, with the
+    // cursor at a known baseline. zshrs also reaches it while ZLE owns the
+    // screen — e.g. with a completion listing still displayed — and the mark
+    // plus its right-margin padding then lands INSIDE that listing, blanking
+    // the row from the cursor rightwards (`-z  -- push arguments%` … `stack`).
+    // Only write the mark when ZLE is not holding the display.
+    let zle_owns_screen = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0
+        || crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed) != 0;
     if isset(crate::ported::zsh_h::PROMPTSP)
         && isset(crate::ported::zsh_h::PROMPTCR)
         && crate::ported::init::use_exit_printed.load(Ordering::SeqCst) == 0
         && crate::ported::init::SHTTY.load(Ordering::Relaxed) >= 0
+        && !zle_owns_screen
     {
         // c:1550-1554 — `$PROMPT_EOL_MARK`, default `%B%S%#%s%b`.
         let eolmark = crate::ported::params::getsparam("PROMPT_EOL_MARK")
