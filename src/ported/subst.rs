@@ -8959,7 +8959,22 @@ pub fn paramsubst(
             // `-`. Normalize once here so BOTH the array-slice path and the
             // char-index path below parse negative indices correctly (else a
             // negative index silently reads as its numeric-parse default).
-            let s2_norm = s2.replace('\u{9b}', "-");
+            // The flag-subscript branch below tests `s2.starts_with('(')`, but
+            // whether the parens arrive LITERAL or as the lexer's Inpar/Outpar
+            // tokens (c:Src/zsh.h:163/165) depends on the context the word was
+            // compiled in: an inline `${a[1,3][(r)pat]}` reaches here already
+            // untokenized, while a scalar-assignment RHS (`v=${a[1,3][(r)pat]}`)
+            // arrives with `\u{88}r\u{8a}`. Untokenized, the test failed, the
+            // flag subscript fell through to the NUMERIC parse, and `parse_idx`
+            // defaulted to index 1 — so `v=${w[1,CURRENT][(r)-*P*]}` returned
+            // the slice's FIRST ELEMENT instead of the no-match empty. `_print`
+            // decides its `->prompt` branch on exactly that expression, which is
+            // why `print -<TAB>` offered prompt escapes instead of options.
+            // Normalize both token forms here, same as the Dash token above.
+            let s2_norm = s2
+                .replace('\u{9b}', "-")
+                .replace(crate::ported::zsh_h::Inpar, "(")
+                .replace(crate::ported::zsh_h::Outpar, ")");
             let s2 = s2_norm.as_str();
             // c:Src/params.c getindex chain — when the FIRST subscript is an
             // array SLICE (`[lo,hi]`, comma present) on an array, it yields a
