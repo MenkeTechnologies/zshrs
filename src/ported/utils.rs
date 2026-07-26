@@ -1758,15 +1758,64 @@ pub fn preprompt() {
     crate::ported::signals_h::winch_unblock();
     crate::ported::signals_h::winch_block();
 
-    // c:1545-1567 — PROMPT_SP heuristic (move the prompt to a fresh line
-    // when the previous command left dangling output). DEFERRED — a faithful
-    // port must call `countprompt(str, &w, 0, -1)` (c:1560) to size the
-    // PROMPT_EOL_MARK, but `countprompt` measures visible width by skipping
-    // `Inpar`/`Outpar` (0x88/0x8a) spans, whereas zshrs's `promptexpand`
-    // emits raw terminal escapes / readline `\x01`/`\x02` markers instead.
-    // Until the expander is reworked to emit Inpar/Outpar (so `countprompt`
-    // measures correctly), this can't be ported without reimplementing
-    // countprompt's job inline — which it must not. Left as a no-op.
+    // c:1543-1565 — PROMPT_SP heuristic: when the last command left
+    // dangling output (no trailing newline), print `$PROMPT_EOL_MARK`,
+    // pad to the right margin, then `\r` + w spaces + `\r`. On a line that
+    // already ended cleanly the marker is overwritten by the padding and
+    // nothing shows; on a partial line the pad wraps to the next row, so
+    // the prompt starts fresh and the truncated output stays visible with
+    // the inverse `%` marker.
+    //
+    // Was previously left as a no-op on the grounds that `countprompt`
+    // could not measure zshrs's expanded prompt (which carries readline
+    // `\x01`/`\x02` ignore markers rather than C's Inpar/Outpar). That is
+    // stale: countprompt accepts BOTH conventions (prompt.rs:3458).
+    //
+    // Without this, `printf 100` (or any output whose last line is
+    // partial) had its tail overwritten by the next prompt — zsh shows
+    // `100%` then a fresh prompt line, zshrs showed the prompt painted
+    // over the `100`.
+    if isset(crate::ported::zsh_h::PROMPTSP)
+        && isset(crate::ported::zsh_h::PROMPTCR)
+        && crate::ported::init::use_exit_printed.load(Ordering::SeqCst) == 0
+        && crate::ported::init::SHTTY.load(Ordering::Relaxed) >= 0
+    {
+        // c:1550-1554 — `$PROMPT_EOL_MARK`, default `%B%S%#%s%b`.
+        let eolmark = crate::ported::params::getsparam("PROMPT_EOL_MARK")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "%B%S%#%s%b".to_string());
+        // c:1555 — the mark is always `%`-expanded, whatever PROMPT_PERCENT
+        // is set to; restore the option afterwards (c:1559).
+        let percents = crate::ported::options::opt_state_get("promptpercent");
+        crate::ported::options::opt_state_set("promptpercent", true);
+        let (mark, _, _) = crate::ported::prompt::promptexpand(&eolmark, 1, None); // c:1557
+        let mut w: i32 = 0; // c:1552
+        let mut h: i32 = 1;
+        crate::ported::prompt::countprompt(&mark, &mut w, &mut h, -1); // c:1558
+        if let Some(p) = percents {
+            crate::ported::options::opt_state_set("promptpercent", p);
+        }
+        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let columns = adjustcolumns() as i32;
+        // c:1561-1562 — `fprintf(shout, "%*s\r%*s\r",
+        //   zterm_columns - w - !hasxn, "", w, "")`.
+        let pad = (columns - w - if crate::ported::init::hasxn.load(Ordering::SeqCst) != 0 {
+            0
+        } else {
+            1
+        })
+        .max(0) as usize;
+        // zshrs's `promptexpand` keeps C's Inpar/Outpar non-printing spans as
+        // readline RL_PROMPT_*_IGNORE bytes (\x01/\x02) — `countprompt` reads
+        // them (prompt.rs:3458) but the TERMINAL must never see them, exactly
+        // as zle_refresh filters them before every write (zle_refresh.rs:2274).
+        let mut out: String = mark.chars().filter(|&c| c != '\u{1}' && c != '\u{2}').collect();
+        out.push_str(&" ".repeat(pad));
+        out.push('\r');
+        out.push_str(&" ".repeat(w.max(0) as usize));
+        out.push('\r');
+        let _ = write_loop(fd, out.as_bytes()); // c:1560-1563
+    }
 
     // Reap any children that exited while the shell sat idle. zsh's
     // SIGCHLD handler reaps asynchronously during the ZLE read (signals
