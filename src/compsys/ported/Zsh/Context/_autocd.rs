@@ -20,13 +20,20 @@ use crate::ported::zsh_h::{isset, AUTOCD};
 /// when the `autocd` option is set.
 pub fn _autocd() -> i32 {
     // sh:3 — `_command_names`. Route through the router (NOT a direct
-    // `_command_names(&[])` call) so a plugin-registered override (ABI v4,
-    // `zmodload -R`) — e.g. the user's customized `_command_names` — wins
-    // over the built-in Rust port, exactly as it would if `_autocd` were
-    // the shell function invoking `_command_names` by name. `dispatch_compsys`
-    // resolves the override first, else the built-in port, so it always
-    // returns `Some` here.
-    let ret = crate::compsys::router::dispatch_compsys("_command_names", &[]).unwrap_or(1);
+    // `_command_names(&[])` call) so an override — a plugin-registered one
+    // (ABI v4, `zmodload -R`) or the user's own `$fpath` copy — wins over
+    // the built-in Rust port, exactly as it would if `_autocd` were the
+    // shell function invoking `_command_names` by name.
+    //
+    // `dispatch_compsys` returns None when NEITHER a plugin nor the port
+    // handles the name, which now also covers "the port stepped aside for a
+    // user `$fpath` file" (router.rs `has_fpath_override`). Treating that as
+    // failure left command-position completion dead for anyone shipping
+    // their own `_command_names` — `pr<TAB>` produced nothing. Fall back to
+    // the normal shell dispatch, which autoloads the file from `$fpath`.
+    let ret = crate::compsys::router::dispatch_compsys("_command_names", &[])
+        .or_else(|| dispatch_function_call("_command_names", &[]))
+        .unwrap_or(1);
 
     // sh:5  [[ -o autocd ]] && _cd || return ret
     if isset(AUTOCD) {
