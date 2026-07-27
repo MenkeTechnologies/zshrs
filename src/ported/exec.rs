@@ -5990,36 +5990,11 @@ pub fn doshfunc(
     // `ZSH_EVAL_CONTEXT` holds the `:`-joined form. Both written via
     // the PM_READONLY bypass (`u_arr`/`u_str` direct), the same shape
     // the binary's `-c` ZSH_EVAL_CONTEXT init uses (bins/zshrs.rs).
-    // A reusable `sync` closure is captured by the guard's Drop so
-    // the same write happens after the push (here) and the pop (on
-    // every return path / panic).
-    let sync_eval_ctx = |stack: &[String]| {
-        let joined = stack.join(":");
-        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut("zsh_eval_context") {
-                pm.u_arr = Some(stack.to_vec());
-                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-            }
-            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
-                pm.u_str = Some(joined);
-                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-            }
-        }
-    };
-    if let Ok(mut ctx) = zsh_eval_context.lock() {
-        ctx.push("shfunc".to_string());
-        sync_eval_ctx(&ctx);
-    }
-    struct EvalContextGuard<F: Fn(&[String])>(F);
-    impl<F: Fn(&[String])> Drop for EvalContextGuard<F> {
-        fn drop(&mut self) {
-            if let Ok(mut ctx) = zsh_eval_context.lock() {
-                ctx.pop();
-                (self.0)(&ctx);
-            }
-        }
-    }
-    let _eval_ctx_guard = EvalContextGuard(sync_eval_ctx);
+    // `EvalContextFrame` owns both halves (push + paramtab sync, then
+    // pop + sync on Drop) and is shared with the other C sites that
+    // reach `execode` with a label — `bin_eval` ("eval", builtin.c:6209)
+    // and the autoload body run ("loadautofunc", exec.c:5626).
+    let _eval_ctx_guard = EvalContextFrame::push("shfunc");
     // c:Src/exec.c — function bodies execute with `lineno` reset to
     // the relative line within the body (incremented per WC_PIPE
     // from the wordcode-encoded lineno). zsh's zerrmsg
@@ -7381,6 +7356,65 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
 /// `bin_dot`, `bin_eval`, `execode`, autoloads. Each `execode(prog,
 /// ..., "context")` pushes its label and pops on return.
 pub static zsh_eval_context: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// RAII form of C's `execode` context push/pop (`Src/exec.c:1265-1266`
+/// and the matching `zsh_eval_context[alen] = NULL` at c:1281).
+///
+/// zshrs does not route every nested execution through `execode`, so
+/// the callers that C reaches via `execode(prog, …, "label")` push
+/// their label with this guard instead. Dropping it pops, on every
+/// return path including a panic — C relies on the plain assignment at
+/// c:1281 being reached, which the guard reproduces more robustly.
+pub struct EvalContextFrame {
+    pushed: bool,
+}
+
+impl EvalContextFrame {
+    /// c:1265-1266 — `zsh_eval_context[alen] = context;`
+    pub fn push(context: &str) -> Self {
+        let mut pushed = false;
+        if let Ok(mut ctx) = zsh_eval_context.lock() {
+            ctx.push(context.to_string());
+            Self::sync(&ctx);
+            pushed = true;
+        }
+        Self { pushed }
+    }
+
+    /// Publish the `zsh_eval_context` stack into the shell-visible
+    /// params. C keeps ONE `char **zsh_eval_context` that the parameter
+    /// table points at directly (`IPDEF8`/`IPDEF9`, params.c:401/431),
+    /// so a push is instantly visible as `$zsh_eval_context` /
+    /// `$ZSH_EVAL_CONTEXT`. The Rust params own their storage, so every
+    /// mutation of the static has to be mirrored — through the
+    /// `u_arr`/`u_str` fields directly because both names are
+    /// `PM_READONLY_SPECIAL`.
+    fn sync(stack: &[String]) {
+        let joined = stack.join(":");
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                pm.u_arr = Some(stack.to_vec());
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                pm.u_str = Some(joined);
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+        }
+    }
+}
+
+impl Drop for EvalContextFrame {
+    fn drop(&mut self) {
+        // c:1281 — `zsh_eval_context[alen] = NULL;`
+        if self.pushed {
+            if let Ok(mut ctx) = zsh_eval_context.lock() {
+                ctx.pop();
+                Self::sync(&ctx);
+            }
+        }
+    }
+}
 
 /// Port of `static int donetrap;` from `Src/exec.c:1351`. Tracks
 /// whether the ZERR trap has already fired for the current sublist.

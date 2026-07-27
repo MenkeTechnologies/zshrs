@@ -861,6 +861,65 @@ pub fn autoload_stub_names(result: &CompInitResult) -> Vec<&str> {
         .collect()
 }
 
+/// sh:516 `builtin . "$_comp_dumpfile"` — the autoload half of sourcing
+/// a dump file, extracted without executing it.
+///
+/// When a dump file exists, upstream compinit does NOT scan `$fpath` at
+/// all (sh:491-518 sources the dump and sets `_i_done`, which skips the
+/// whole sh:523-550 scan). The names in `${(k)functions}` after such a
+/// compinit therefore come from the dump's `autoload` lines, and
+/// compdump writes those from a DIFFERENT rule than compinit's scan:
+///
+///   compdump:113  `_d_als=($^fpath/(${(o~j.|.)$(typeset +fm '_*')})(N:t))`
+///
+/// i.e. every currently-DEFINED function whose name starts with `_` and
+/// which also has a file somewhere in `$fpath` — no `#compdef` /
+/// `#autoload` first line required. That is a strict superset of the
+/// header-driven set `autoload_stub_names` derives from a scan: a
+/// headerless helper the user's rc autoloaded by hand is in the dump but
+/// invisible to any header-based scan. It can even name a function whose
+/// file has since been deleted from `$fpath`, because the dump is a
+/// snapshot (`autoload` on a missing file still creates the stub and only
+/// errors when called).
+///
+/// Two line shapes are produced by compdump and both are parsed here:
+///   compdump:118-129  one `autoload -Uz a b c \` + continuations, and
+///   compdump:135-138  one `autoload -Uz <opts> <name>` per `$_compautos`.
+/// Word-splitting mirrors the shell's: `autoload` must be the first word,
+/// tokens starting with `-` or `+` are option words, the rest are names.
+pub fn dump_autoload_names(path: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    let mut in_autoload = false;
+    for line in text.lines() {
+        let mut rest = line.trim();
+        if !in_autoload {
+            let Some(tail) = rest.strip_prefix("autoload") else {
+                continue;
+            };
+            // "autoloadfoo" is not the `autoload` command.
+            if !tail.is_empty() && !tail.starts_with(|c: char| c.is_ascii_whitespace()) {
+                continue;
+            }
+            rest = tail.trim_start();
+        }
+        // A trailing `\` continues the command onto the next line.
+        in_autoload = rest.ends_with('\\');
+        if in_autoload {
+            rest = rest[..rest.len() - 1].trim_end();
+        }
+        for word in rest.split_ascii_whitespace() {
+            if word.starts_with('-') || word.starts_with('+') {
+                continue; // `-Uz`, `+X`, …
+            }
+            names.push(word.to_string());
+        }
+    }
+    names
+}
+
 /// Default `$_comp_dumpfile` path (sh:129-134). User can override
 /// via `compinit -d <file>`; without that, use `${ZDOTDIR:-$HOME}`
 /// + `/.zcompdump`.
@@ -924,11 +983,48 @@ pub fn install_standard_complete_widgets() -> usize {
     count
 }
 
+/// `zmodload -i NAME` — mark a statically-linked module booted.
+///
+/// zsh has no `zmodload` call for these: referencing an autoloadable
+/// parameter or builtin loads its module implicitly (`autoparamfn` /
+/// `autobinfn`). zshrs registers those parameters and builtins at init
+/// without going through the module, so the module's `MOD_INIT_B` bit —
+/// the one `zmodload` / `zmodload -L` list on — never got set. Routing
+/// the implicit load through the real builtin reaches the same state.
+fn load_module_i(name: &str) {
+    let mut ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    ops.ind[b'i' as usize] = 1;
+    let _ = crate::ported::module::bin_zmodload("zmodload", &[name.to_string()], &ops, 0);
+}
+
+/// sh:201 — `: $funcstack`, with the upstream comment "Loading it now
+/// ensures that the `funcstack' parameter is always correct."
+///
+/// `funcstack` is one of `zsh/parameter`'s autoloadable parameters
+/// (Src/Modules/parameter.mdd), so that bare `:` command is a module
+/// load in disguise — after any compinit, a real zsh lists
+/// `zsh/parameter` in `zmodload -L`.
+pub fn touch_funcstack_param() {
+    load_module_i("zsh/parameter");
+}
+
 /// sh:564-569 — when the configured `completer` chain includes
 /// `_expand` AND `^i` is currently bound to `expand-or-complete`,
 /// rebind `^i` to `complete-word` so users don't get unexpected
 /// glob expansion on TAB.
 pub fn maybe_rebind_tab_for_expand() {
+    // sh:572 — `zstyle -a ':completion:' completer _i_line`. `zstyle` is
+    // `zsh/zutil`'s builtin (Src/Modules/zutil.mdd), so this line is what
+    // pulls the module in on every compinit and leaves it in
+    // `zmodload -L`. zshrs answers the query through the native
+    // `lookupstyle` below instead of the builtin, so the module was never
+    // marked booted: `zmodload -L` printed four lines against zsh's six.
+    load_module_i("zsh/zutil");
     let curcontext = crate::ported::params::getsparam("curcontext").unwrap_or_default();
     let completers = crate::ported::modules::zutil::lookupstyle(
         &format!(":completion:{}:", curcontext),
@@ -1627,11 +1723,18 @@ pub fn build_cache_from_fpath(
             .map_err(|e| std::io::Error::other(e.to_string()))?;
     }
 
-    // Populate postpatcomps (stored in patcomps with a marker, or separate table if needed)
-    // For now, we'll merge them into patcomps
+    // Populate postpatcomps table (_postpatcomps hash). These are the
+    // `#compdef -P pat` entries (compinit sh:404). They must NOT go into
+    // `patcomps`: `_dispatch` walks `_patcomps` before the `$_comps` name
+    // lookup (sh:26) and `_postpatcomps` after it (sh:71), and only the
+    // post pass sets `_compskip=default` (sh:72), which is what suppresses
+    // the sh:84 default-completer fallback. Merging the two tables ran
+    // every `-P` completer in the wrong phase without that flag, so
+    // `PATH=/usr/bin:<TAB>` ran `_dir_list` and then ALSO fell through to
+    // `_value` -> `_default`, listing every file instead of directories.
     for (pattern, function) in &result.postpatcomps {
         cache
-            .set_patcomp(pattern, function)
+            .set_postpatcomp(pattern, function)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
     }
 
@@ -1688,6 +1791,18 @@ pub fn load_from_cache(
         .map_err(|e| std::io::Error::other(e.to_string()))?
     {
         result.patcomps.insert(pat, func);
+    }
+
+    // Load postpatcomps - single query. Without this the `-C` cache-hit path
+    // published an EMPTY `_postpatcomps` (ext_builtins.rs, sh:116/121), so
+    // `_dispatch`'s post pass had nothing to walk and every `#compdef -P`
+    // completer (`_dir_list`, `_urls`, `_locales`, `_gcc`, `_python`, …) was
+    // dead on any shell that started from the cache.
+    for (pat, func) in cache
+        .postpatcomps_kv()
+        .map_err(|e| std::io::Error::other(e.to_string()))?
+    {
+        result.postpatcomps.insert(pat, func);
     }
 
     // Services are loaded on-demand via cache.get_service() - no need to preload
@@ -2713,6 +2828,62 @@ mod tests {
         );
         assert!(tab.get("_zzt_readme").is_none());
         drop(tab);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Regression: `compinit -C -d FILE` takes the sh:515-518 branch, which
+    /// sources the dump instead of scanning `$fpath` — so the dump's
+    /// `autoload` lines, not a header scan, decide what ends up in
+    /// `${(k)functions}`. compdump lists every defined `_*` function that
+    /// has a file in `$fpath` (compdump:113), which is why the real dump on
+    /// a zpwr host names 12 headerless helpers (`_command_names`,
+    /// `__zpwr_aliases`, …) that no `#compdef`/`#autoload` scan can find.
+    /// This asserts the parse of both line shapes compdump emits: the one
+    /// backslash-continued `autoload -Uz a b c` list (compdump:118-129) and
+    /// the per-`$_compautos` `autoload -Uz <opts> <name>` lines
+    /// (compdump:135-138).
+    #[test]
+    fn dump_autoload_names_reads_both_compdump_line_shapes() {
+        let dir = std::env::temp_dir().join("zshrs_compinit_dumpnames_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let dump = dir.join("zcompdump");
+        fs::write(
+            &dump,
+            concat!(
+                "#files: 3\tversion: 5.9.2\n",
+                "\n",
+                "_comps=(\n",
+                // A _comps KEY may literally be `autoload`; the quoting must
+                // keep it out of the name list.
+                "'autoload' '_autoload'\n",
+                "'zzt' '_zzt'\n",
+                ")\n",
+                "\n",
+                "zle -C _complete_help complete-word _complete_help\n",
+                "bindkey '^Xh' _complete_help\n",
+                "\n",
+                "autoload -Uz _zzt _zzt_two \\\n",
+                "           __zzt_headerless _zzt_gone\n",
+                "autoload -Uz +X _call_program\n",
+                "typeset -gUa _comp_assocs\n",
+            ),
+        )
+        .unwrap();
+
+        let names = dump_autoload_names(&dump);
+        assert_eq!(
+            names,
+            vec![
+                "_zzt",
+                "_zzt_two",
+                "__zzt_headerless",
+                "_zzt_gone",
+                "_call_program",
+            ],
+            "continuation lines, `+X`/`-Uz` option words and the quoted \
+             `_comps` key must all be handled"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

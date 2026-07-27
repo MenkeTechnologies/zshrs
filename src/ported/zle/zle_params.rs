@@ -38,6 +38,58 @@ use crate::ported::zsh_h::{
     ZLCON_SELECT, ZLCON_VARED,
 };
 
+/// Names of the ZLE special parameters, in the order of the C
+/// `zleparams[]` table (`Src/Zle/zle_params.c:141-188`) plus the
+/// `registers` special hash `makezleparams` adds at c:225.
+///
+/// C reaches these through `zleparams[]` itself; the Rust port has no
+/// such table (each entry's gsu is a plain accessor fn), so the NAMES
+/// are kept here for the callers that need to act on the whole family:
+/// `compcore::callcompfunc` stamps the completion-scope level onto them
+/// so `endparamscope` tears them down again (c:compcore.c:820/839).
+pub const ZLEPARAM_NAMES: &[&str] = &[
+    "BUFFER",               // c:142
+    "BUFFERLINES",          // c:143
+    "CONTEXT",              // c:145
+    "CURSOR",               // c:147
+    "CUTBUFFER",            // c:149
+    "HISTNO",               // c:150
+    "KEYMAP",               // c:151
+    "KEYS",                 // c:152
+    "KEYS_QUEUED_COUNT",    // c:153
+    "killring",             // c:155
+    "LASTABORTEDSEARCH",    // c:156
+    "LASTSEARCH",           // c:158
+    "LASTWIDGET",           // c:159
+    "LBUFFER",              // c:160
+    "MARK",                 // c:161
+    "NUMERIC",              // c:162
+    "PENDING",              // c:163
+    "POSTDISPLAY",          // c:164
+    "PREBUFFER",            // c:165
+    "PREDISPLAY",           // c:166
+    "RBUFFER",              // c:167
+    "REGION_ACTIVE",        // c:168
+    "region_highlight",     // c:169
+    "UNDO_CHANGE_NO",       // c:170
+    "UNDO_LIMIT_NO",        // c:172
+    "WIDGET",               // c:173
+    "WIDGETFUNC",           // c:174
+    "WIDGETSTYLE",          // c:175
+    "YANK_START",           // c:176
+    "YANK_END",             // c:177
+    "YANK_ACTIVE",          // c:178
+    "ISEARCHMATCH_START",   // c:179
+    "ISEARCHMATCH_END",     // c:180
+    "ISEARCHMATCH_ACTIVE",  // c:181
+    "SUFFIX_START",         // c:182
+    "SUFFIX_END",           // c:183
+    "SUFFIX_ACTIVE",        // c:184
+    "ZLE_RECURSIVE",        // c:185
+    "ZLE_STATE",            // c:186
+    "registers",            // c:225 createspecialhash
+];
+
 /// `$BUFFER` accessor — full edited line as a String.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c (the
 /// `BUFFER` getfn entry in `zleparams[]`).
@@ -60,7 +112,7 @@ use crate::ported::zsh_h::{
 /// widget functions see live values. When a widget mutates
 /// $BUFFER it goes through the canonical paramtab write path
 /// that already exists.
-pub fn makezleparams(_ro: i32) {
+pub fn makezleparams(ro: i32) {
     // c:194
 
     // Snapshot through the canonical GSU getter ports (get_buffer /
@@ -160,6 +212,18 @@ pub fn makezleparams(_ro: i32) {
     // RUST-ONLY (crate::zle_param_sync — adapter for C's live GSU
     // setters): record the values just snapshotted so the sync
     // boundaries can diff widget mutations against them.
+    //
+    // c:200-201 — `ro ? PM_READONLY : 0`. With `ro` set (the
+    // completion and trap call sites, compcore.c:820 / zle_main.c:2108)
+    // the params are READ-ONLY in C, so no assignment can ever need
+    // writing back to the editor. Arming the diff there would be worse
+    // than useless: the completion widget mutates the line AFTER
+    // `callcompfunc` returns, so a snapshot armed mid-completion would
+    // make the next sync boundary write the PRE-completion line back
+    // over the inserted match.
+    if ro != 0 {
+        return;
+    }
     crate::zle_param_sync::arm_snapshot(
         line,
         lbuf,
@@ -2129,5 +2193,93 @@ mod widget_killring_tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         scan_registers(0, None, 0);
+    }
+
+    /// c:200-201 — `createparam(zp->name, … | (ro ? PM_READONLY : 0))`.
+    /// With `ro` set (compcore.c:820 and zle_main.c:2108) the params are
+    /// read-only, so no assignment can ever need syncing back to the
+    /// editor and the write-back snapshot must NOT be armed. It matters
+    /// because the completion widget rewrites the line AFTER
+    /// `callcompfunc` returns: a snapshot armed mid-completion would make
+    /// the next sync boundary write the pre-completion line back over the
+    /// inserted match.
+    #[test]
+    fn makezleparams_arms_writeback_only_when_writable() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        crate::zle_param_sync::clear_snapshot();
+        makezleparams(1);
+        assert!(
+            !crate::zle_param_sync::active(),
+            "makezleparams(1) creates PM_READONLY params — arming the \
+             write-back diff would let a stale line overwrite the editor"
+        );
+
+        crate::zle_param_sync::clear_snapshot();
+        makezleparams(0);
+        assert!(
+            crate::zle_param_sync::active(),
+            "makezleparams(0) is the widget call site (zle_main.c:1534); \
+             its params ARE writable and must sync back"
+        );
+        crate::zle_param_sync::clear_snapshot();
+    }
+
+    /// `ZLEPARAM_NAMES` mirrors the C `zleparams[]` table
+    /// (`Src/Zle/zle_params.c:141-188`). `callcompfunc` walks it to stamp
+    /// the completion scope onto every published name, so a name missing
+    /// here is a name that leaks past `endparamscope` into the
+    /// interactive shell.
+    #[test]
+    fn zleparam_names_cover_every_published_param() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        // Every name makezleparams actually writes must be listed.
+        for name in [
+            "BUFFER",
+            "LBUFFER",
+            "RBUFFER",
+            "CURSOR",
+            "NUMERIC",
+            "KEYMAP",
+            "BUFFERLINES",
+            "KEYS",
+            "WIDGET",
+            "LASTWIDGET",
+            "WIDGETFUNC",
+            "WIDGETSTYLE",
+            "HISTNO",
+            "CONTEXT",
+            "PENDING",
+            "PREDISPLAY",
+            "POSTDISPLAY",
+            "region_highlight",
+            "MARK",
+            "REGION_ACTIVE",
+            "CUTBUFFER",
+            "killring",
+            "PREBUFFER",
+            "KEYS_QUEUED_COUNT",
+            "YANK_START",
+            "YANK_END",
+            "YANK_ACTIVE",
+            "ISEARCHMATCH_START",
+            "ISEARCHMATCH_END",
+            "ISEARCHMATCH_ACTIVE",
+            "SUFFIX_START",
+            "SUFFIX_END",
+            "SUFFIX_ACTIVE",
+            "ZLE_RECURSIVE",
+            "ZLE_STATE",
+            "UNDO_CHANGE_NO",
+            "UNDO_LIMIT_NO",
+        ] {
+            assert!(
+                ZLEPARAM_NAMES.contains(&name),
+                "{name} is published by makezleparams but missing from \
+                 ZLEPARAM_NAMES — it would survive the completion scope"
+            );
+        }
     }
 }

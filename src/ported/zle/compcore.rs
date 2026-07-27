@@ -972,6 +972,53 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             }
         }
     }
+
+    // c:820 — `makezleparams(1);`.
+    //
+    // This line was missing entirely, so EVERY completion function ran
+    // with no ZLE parameters at all: `$BUFFER`, `$LBUFFER`, `$RBUFFER`,
+    // `$CURSOR`, `$HISTNO`, `$WIDGET`, `$KEYS`, `$BUFFERLINES`,
+    // `$PENDING` all read as the empty string. `_fc` computes
+    // `(( num = num - HISTNO ))` to turn history event numbers into the
+    // negative offsets it completes, so `fc -<TAB>` offered nothing;
+    // more broadly any completer that inspects the line it is completing
+    // (`$BUFFER`/`$CURSOR`) saw an empty line.
+    crate::ported::zle::zle_params::makezleparams(1); // c:820
+    {
+        // c:839 — `endparamscope()` is what tears these down again in C:
+        // `makezleparams` creates each one PM_SPECIAL|PM_REMOVABLE|
+        // PM_LOCAL at `locallevel + 1` (zle_params.c:200-206), so leaving
+        // the completion scope unsets them and they never reach the
+        // interactive shell.
+        //
+        // The Rust `makezleparams` publishes through
+        // `setsparam`/`setiparam`/`setaparam` (the values live in the
+        // params, not behind a gsu vtable), which leaves them at the
+        // enclosing level as ordinary params. Stamp the same level and
+        // flags the comp params get above so `doshfunc`'s `endparamscope`
+        // removes them on the way out. Without this the names leaked into
+        // the interactive shell after the first TAB — `$BUFFER` and
+        // friends stayed set at the prompt, and `_parameters` offered
+        // them (its candidate filter is
+        // `${(@k)parameters[(R)…~*local*]}`).
+        //
+        // As with QIPREFIX above, `PM_READONLY` (c:201, `ro` is 1 here)
+        // is deliberately not stamped: C re-creates the params from
+        // scratch on every call, so the bit never blocks the next one,
+        // whereas a bit that outlived the teardown would fail the next
+        // widget's `makezleparams(0)` publish.
+        use crate::ported::zsh_h::{PM_REMOVABLE, PM_SPECIAL};
+        let level = crate::ported::params::locallevel.load(Ordering::Relaxed) + 1;
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            for name in crate::ported::zle::zle_params::ZLEPARAM_NAMES {
+                if let Some(pm) = tab.get_mut(*name) {
+                    pm.level = level; // c:206 `pm->level = locallevel + 1`
+                    pm.node.flags |= (PM_SPECIAL | PM_REMOVABLE) as i32; // c:200
+                }
+            }
+        }
+    }
+
     let cfret_val = crate::ported::exec::doshfunc(&mut synth_shf, largs, true, body_runner);
     crate::ported::zle::zle_tricky::cfret.store(cfret_val, Ordering::Relaxed);
 
@@ -6158,6 +6205,65 @@ mod tests {
             "",
             "compiprefix must be reset with $IPREFIX, not carried over"
         );
+    }
+
+    /// c:compcore.c:820 — `makezleparams(1)` publishes the ZLE special
+    /// params for the completion function, and c:839's `endparamscope`
+    /// takes them away again on the way out.
+    ///
+    /// The publish was missing entirely, so every completer saw
+    /// `$BUFFER`/`$CURSOR`/`$HISTNO`/`$WIDGET`/`$KEYS`/`$LBUFFER`/
+    /// `$RBUFFER`/`$BUFFERLINES`/`$PENDING` as the empty string.
+    ///
+    /// Both halves are pinned with ONE observable: seed `BUFFER` with a
+    /// sentinel at the enclosing scope first.
+    ///   * publish missing  → the sentinel survives (`Some(sentinel)`),
+    ///   * publish present but teardown missing → the live line survives,
+    ///   * both present      → the name is gone entirely.
+    /// Only the last is C behaviour.
+    #[test]
+    fn callcompfunc_publishes_and_tears_down_zle_params() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+
+        // `$FUNCNEST` is unset in a bare unit-test paramtab, and
+        // `getiparam` reports 0 for unset — which trips doshfunc's
+        // c:6000 guard (`funcstacksz >= zsh_funcnest`) on the very first
+        // frame and returns BEFORE c:839's endparamscope. Give it the
+        // shell's real default so the scope actually unwinds.
+        let funcnest_save = crate::ported::params::getiparam("FUNCNEST");
+        let _ = crate::ported::params::setiparam("FUNCNEST", 500);
+
+        const SENTINEL: &str = "@@not-published@@";
+        for name in ["BUFFER", "WIDGET", "LBUFFER"] {
+            let _ = crate::ported::params::setsparam(name, SENTINEL);
+        }
+        // A non-empty editor line so the publish is distinguishable from
+        // "published an empty string".
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "fc -".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(4, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(4, Ordering::SeqCst);
+
+        OFFS.store(1, Ordering::Relaxed);
+        callcompfunc("-", "_test_fn");
+        let _ = crate::ported::params::setiparam("FUNCNEST", funcnest_save);
+
+        for name in ["BUFFER", "WIDGET", "LBUFFER"] {
+            let after = crate::ported::params::getsparam(name);
+            assert_ne!(
+                after.as_deref(),
+                Some(SENTINEL),
+                "${name} still holds the pre-call sentinel — c:820 makezleparams(1) \
+                 never ran, so the completion function saw no ZLE parameters"
+            );
+            assert_eq!(
+                after, None,
+                "${name} outlived the completion scope — c:839 endparamscope must \
+                 unset every PM_LOCAL zleparam, or the name leaks into the \
+                 interactive shell after the first TAB"
+            );
+        }
     }
 
     /// Test-only serializer for tests that mutate file-scope globals.

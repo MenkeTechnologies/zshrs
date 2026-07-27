@@ -38,7 +38,7 @@ use crate::ported::module::{gethookdef, runhookdef};
 use crate::ported::params::paramtab;
 use crate::ported::subst::singsub;
 use crate::ported::utils::errflag;
-use crate::ported::utils::{adjustcolumns, adjustlines, write_loop, zputs};
+use crate::ported::utils::{adjustcolumns, adjustlines, niceztrlen, write_loop, zputs};
 use crate::ported::zle::comp_h::{
     Aminfo, Chdata, Cldata, Cline, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES,
     CGF_PACKED, CGF_ROWS, CLF_DIFF, CLF_JOIN, CLF_LINE, CLF_MATCHED, CLF_MID, CLF_MISS, CLF_NEW,
@@ -2511,8 +2511,15 @@ pub fn calclist(showall: i32) -> i32 {
                             nlines += 1 + printfmt(&disp, 0, false, false);
                             g.flags |= CGF_HASDL;
                         } else {
-                            let l =
-                                disp.chars().count() as i32 + if m.modec != '\0' { 1 } else { 0 };
+                            // c:1600 — `l = ZMB_nicewidth(m->disp) + !!m->modec`.
+                            // ZMB_nicewidth is `mb_niceformat(s, NULL, NULL, 0)`
+                            // (= `niceztrlen`), the width of the string as the
+                            // listing will PRINT it: a control byte occupies its
+                            // two-character escape, not one column. A plain
+                            // `chars().count()` under-measured every display
+                            // string holding a `\n`/`\t`, so the column width
+                            // `iprintm` pads to disagreed with what got printed.
+                            let l = niceztrlen(&disp) as i32 + if m.modec != '\0' { 1 } else { 0 };
                             ndisp += 1;
                             if l > glong {
                                 glong = l;
@@ -2532,7 +2539,8 @@ pub fn calclist(showall: i32) -> i32 {
                         }
                     } else {
                         let s = m.str.as_deref().unwrap_or("");
-                        let l = s.chars().count() as i32 + if m.modec != '\0' { 1 } else { 0 };
+                        // c:1615 — `l = ZMB_nicewidth(m->str) + !!m->modec`.
+                        let l = niceztrlen(s) as i32 + if m.modec != '\0' { 1 } else { 0 };
                         ndisp += 1;
                         if l > glong {
                             glong = l;
@@ -3356,6 +3364,28 @@ pub fn bld_all_str() -> String {
     buf // c:2238 ztrdup(buf)
 }
 
+/// A `std::io::Write` sink over a raw fd — the Rust stand-in for C's
+/// `FILE *shout`, so `mb_niceformat`'s stream arm has somewhere to
+/// write. `iprintm` is its only user.
+struct FdWrite(i32);
+
+impl std::io::Write for FdWrite {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        crate::ported::utils::write_loop(self.0, buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl FdWrite {
+    /// `mb_niceformat(s, shout, NULL, 0)` — write `s` in its nice
+    /// (escape-rendered) form and return the printed screen width.
+    fn niceformat(mut self, s: &str) -> i32 {
+        crate::ported::utils::mb_niceformat(s, Some(&mut self), None, 0) as i32
+    }
+}
+
 /// Port of `iprintm(Cmgroup g, Cmatch *mp, UNUSED(int mc), UNUSED(int ml), int lastc, int width)` from `Src/Zle/compresult.c:2241`.
 /// Direct port of `static void iprintm(Cmgroup g, Cmatch *mp, int mc,
 ///                                     int ml, int lastc, int width)`
@@ -3413,13 +3443,20 @@ pub fn iprintm(
             let _ = printfmt(d, 0, true, false);
             return 0; // c:2257
         }
-        let _ = write_loop(out, d.as_bytes()); // c:2260 niceformat
-        len = d.chars().count() as i32;
+        // c:2260 — `len = mb_niceformat(m->disp, shout, NULL, 0);`. The
+        // string goes to the terminal in its NICE form: a control byte is
+        // printed as its two-character escape (`\n`, `\t`, `^X`, `\M-x`),
+        // never raw. Writing the raw bytes let an embedded newline out of
+        // the cell and split the row — `unset <TAB>` (parameter values are
+        // the descriptions, and several hold newlines/tabs) rendered as a
+        // ragged listing whose line count no longer matched the one
+        // `calclist` had computed. The return value is the printed WIDTH,
+        // which is what the column padding below must use.
+        len = FdWrite(out).niceformat(d);
     } else {
         // c:2263
         let s = m.str.as_deref().unwrap_or("");
-        let _ = write_loop(out, s.as_bytes()); // c:2266
-        len = s.chars().count() as i32;
+        len = FdWrite(out).niceformat(s); // c:2266
         // c:2270-2273 — append modec for file-completion groups.
         if let Some(grp) = g {
             if (grp.flags & CGF_FILES) != 0 && m.modec != '\0' {
@@ -3631,6 +3668,38 @@ pub static INVCOUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 mod tests {
     use super::*;
     use crate::ported::zle::comp_h::Cline;
+
+    /// c:2260 — `iprintm` prints a match cell through
+    /// `mb_niceformat(…, shout, …)`, so a control character in the
+    /// display string reaches the terminal as its two-character escape
+    /// and the returned length is that PRINTED width. The port wrote the
+    /// raw bytes and returned `chars().count()`, so an embedded newline
+    /// broke out of the cell (splitting the listing row) and every width
+    /// that `calclist` had reserved for the row was wrong — the shape of
+    /// the `unset <TAB>` divergence, whose descriptions are parameter
+    /// values and several of those hold newlines/tabs.
+    #[test]
+    fn iprintm_writes_control_chars_in_nice_form() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let mut fds = [0 as libc::c_int; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe(2)");
+        let saved = SHTTY.load(Relaxed);
+        SHTTY.store(fds[1], Relaxed);
+        let mut m = Cmatch::default();
+        m.disp = Some("a\tb\nc".to_string());
+        // lastc=1 → no column padding, so the capture is exactly the cell.
+        let width = iprintm(None, Some(&m), 0, 0, 1, 0);
+        SHTTY.store(saved, Relaxed);
+        unsafe { libc::close(fds[1]) };
+        let mut buf = [0u8; 64];
+        let n = unsafe { libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        unsafe { libc::close(fds[0]) };
+        assert!(n > 0, "read from capture pipe");
+        let out = String::from_utf8_lossy(&buf[..n as usize]).to_string();
+        assert_eq!(out, "a\\tb\\nc", "control chars must be escape-rendered");
+        assert_eq!(width, 7, "returned width is the printed width");
+    }
 
     #[test]
     fn test_unambig_data() {

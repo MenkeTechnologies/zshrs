@@ -3918,6 +3918,48 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 None
             };
 
+            // c:2204-2207 — the single-letter-clump arm's condition includes
+            // the `ca_get_sopt(...) || (cur != compcurrent && nonempty(sopts))`
+            // test:
+            //     } else if (state.opt == 2 && d->single &&
+            //                (*line == '-' || *line == '+') &&
+            //                ((state.curopt = ca_get_sopt(d, line, &pe, &sopts)) ||
+            //                 (cur != compcurrent && sopts && nonempty(sopts)))) {
+            // When BOTH fail, C falls through to the `state.arg && cur <=
+            // compcurrent` positional/rest arm below. The port had hoisted only
+            // the first three conjuncts into the `else if` head and left the
+            // lookup inside the body, so a `-`/`+`-prefixed word that is
+            // neither a known option nor a single-letter clump consumed the
+            // whole chain and never reached the rest-arg arm: `cargo build --`
+            // left `ca_laststate.def` NULL, `comparguments -D` returned 1, and
+            // `_arguments`' `*:: :->args` state never fired — so `_cargo`
+            // listed its TOP-LEVEL options instead of descending into `build`.
+            let mut sopt_end = 0usize;
+            let sopt_arm: Option<Box<caopt>> = if opt_match.is_none()
+                && state.opt == 2
+                && d.single.is_some()
+                && line
+                    .as_bytes()
+                    .first()
+                    .copied()
+                    .map_or(false, |b| b == b'-' || b == b'+')
+            {
+                let mut tmp_sopts: Option<Vec<Box<caopt>>> = None;
+                let s_match = ca_get_sopt(d, &line, &mut sopt_end, &mut tmp_sopts); // c:2206
+                if let Some(queued) = tmp_sopts {
+                    sopts.extend(queued);
+                }
+                s_match.or_else(|| {
+                    // c:2207 `(cur != compcurrent && sopts && nonempty(sopts))`
+                    if cur != compcur && !sopts.is_empty() {
+                        Some(sopts.remove(0)) // c:2215 uremnode(sopts, firstnode(sopts))
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
             if let Some(co) = opt_match {
                 // Bind found opt details for later.
                 let co_name = co.name.clone().unwrap_or_default();
@@ -3985,29 +4027,10 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     }
                     state.curopt = None;
                 }
-            } else if state.opt == 2
-                && d.single.is_some()
-                && line
-                    .as_bytes()
-                    .first()
-                    .copied()
-                    .map_or(false, |b| b == b'-' || b == b'+')
-            {
+            } else if let Some(co) = sopt_arm {
                 // c:2204 — single-letter clump.
-                let mut end = 0usize;
-                let mut tmp_sopts: Option<Vec<Box<caopt>>> = None;
-                let s_match = ca_get_sopt(d, &line, &mut end, &mut tmp_sopts);
-                if let Some(queued) = tmp_sopts {
-                    sopts.extend(queued);
-                }
-                let active_sopt = s_match.or_else(|| {
-                    if cur != compcur && !sopts.is_empty() {
-                        Some(sopts.remove(0))
-                    } else {
-                        None
-                    }
-                });
-                if let Some(co) = active_sopt {
+                let end = sopt_end;
+                {
                     let co_name = co.name.clone().unwrap_or_default();
                     let co_type = co.r#type;
                     let co_num = co.num;
@@ -6265,8 +6288,16 @@ pub fn bin_compquote(
         if pm_type == 0 || (flags as u32 & crate::ported::zsh_h::PM_NAMEREF) != 0 {
             let s = getstrvalue(Some(v));
             let q = comp_quote(&s, p_flag as i32);
-            let mut nameref_re: &str = name.as_str();
-            setstrvalue(getvalue(Some(&mut vbuf), &mut nameref_re, 0), &q);
+            // C's `Value` points AT the live `Param`, so `setstrvalue(v, …)`
+            // lands in the parameter table. `fetchvalue` here CLONES the
+            // param into the `value` (params.rs:3709 `pm: Some(pm.clone())`),
+            // so writing through a re-fetched `value` mutated a copy and the
+            // caller's parameter never changed: `compquote` was a silent
+            // no-op, and with it every `-Q` quoting path in `_path_files` —
+            // `cp /etc/pa<TAB>` listed `paths~orig` where zsh lists
+            // `paths\~orig`. Write back by NAME so the assignment reaches the
+            // real (possibly function-local) parameter.
+            let _ = crate::ported::params::setsparam(name, &q);
         } else if pm_type == PM_ARRAY {
             // c:3706
             let arr = getvaluearr(Some(v));
@@ -6274,20 +6305,8 @@ pub fn bin_compquote(
                 .into_iter()
                 .map(|elem| comp_quote(&elem, p_flag as i32))
                 .collect();
-            // Re-fetch a fresh value for the setarrvalue call (getvalue
-            // consumed the prior borrow).
-            let mut vbuf2 = value {
-                pm: None,
-                arr: Vec::new(),
-                scanflags: 0,
-                valflags: 0,
-                start: 0,
-                end: 0,
-            };
-            let mut nameref2: &str = name.as_str();
-            if let Some(v2) = getvalue(Some(&mut vbuf2), &mut nameref2, 0) {
-                setarrvalue(v2, new_arr);
-            }
+            // Same clone-vs-pointer problem as the scalar arm above.
+            let _ = crate::ported::params::setaparam(name, new_arr);
         } else {
             // c:3720
             zwarnnam(nam, &format!("invalid parameter type: {}", name));
@@ -8384,6 +8403,83 @@ fn clone_cadef_shallow(d: &cadef) -> cadef {
 
 #[cfg(test)]
 mod tests {
+
+    /// c:Src/Zle/computil.c:2204-2207 — the single-letter-clump arm only runs
+    /// when `ca_get_sopt()` (or a queued `sopts` entry) actually matches;
+    /// otherwise C falls through to the `state.arg && cur <= compcurrent`
+    /// positional/rest arm at c:2259. The port had the arm's `else if` head
+    /// test only `state.opt == 2 && d->single && *line is -/+`, so a
+    /// `-`-prefixed word that is neither a known option nor a single-letter
+    /// clump (`--` on `cargo build --<TAB>`) swallowed the chain and the
+    /// `*:: :->args` rest spec was never reached: `ca_laststate.def` stayed
+    /// NULL, `comparguments -D` returned 1, and `_arguments` never entered
+    /// the `->args` state — `_cargo` listed its top-level options instead of
+    /// the `build` sub-command's.
+    #[test]
+    fn ca_parse_line_falls_through_to_rest_arg_for_unmatched_dash_word() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS, INCOMPFUNC};
+
+        // `_arguments -s -S -C $common '1: :_cargo_cmds' '*:: :->args'` — the
+        // shape `_cargo` passes for the top-level command.
+        let spec: Vec<String> = [
+            "",
+            "-s",
+            "-S",
+            ":",
+            "(-q --quiet)*-v[use verbose output]",
+            "(-q --quiet)*--verbose[use verbose output]",
+            "-Z+[pass unstable flags to cargo]: :_cargo_unstable_flags",
+            "--frozen[require that Cargo.lock and cache are up to date]",
+            "--color=[specify colorization option]:coloring:(auto always never)",
+            "(- 1 *)-h[show help message]",
+            "(- 1 *)--help[show help message]",
+            "1: :_cargo_cmds",
+            "*:: :->args",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        if let Ok(mut g) = COMPWORDS
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *g = vec![
+                "cargo".to_string(),
+                "build".to_string(),
+                "--".to_string(),
+            ];
+        }
+        COMPCURRENT.store(3, Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+
+        let mut d = parse_cadef("comparguments", &spec).expect("spec must parse");
+        // `*:: :->args` becomes `d->rest` with CAA_RARGS (c:1512).
+        assert_eq!(
+            d.rest.as_deref().map(|r| r.r#type),
+            Some(CAA_RARGS),
+            "`*:: :->args` must parse into d->rest as CAA_RARGS"
+        );
+        let all = Box::new(clone_cadef_shallow(&d));
+        assert_eq!(ca_parse_line(&mut d, &all, 0, 1), 0);
+
+        let (def_type, def_action) = {
+            let ls = ca_laststate.lock().unwrap();
+            (
+                ls.def.as_deref().map(|a| a.r#type),
+                ls.def.as_deref().and_then(|a| a.action.clone()),
+            )
+        };
+        assert_eq!(
+            def_type,
+            Some(CAA_RARGS),
+            "the trailing `--` must reach the rest-arg arm and land in              ca_laststate.def; got {:?}",
+            def_type
+        );
+        assert_eq!(def_action.as_deref(), Some("->args"));
+    }
+
     use super::*;
 
     // Tests for cd_get / cd_init / cd_sort / cd_prep removed — those
@@ -9734,6 +9830,62 @@ mod tests {
         assert_eq!(r, 0);
     }
 
+    /// c:3699-3719 — `compquote name…` REPLACES the named parameter's
+    /// value with the quoted form. C's `Value` points at the live
+    /// `Param`, so `setstrvalue`/`setarrvalue` land in the parameter
+    /// table; the Rust `fetchvalue` hands back a CLONE, so writing
+    /// through it left the caller's parameter untouched and the builtin
+    /// was a silent no-op. Everything that quotes its own matches then
+    /// added them unquoted: `cp /etc/pa<TAB>` listed `paths~orig` where
+    /// zsh lists `paths\~orig`.
+    #[test]
+    fn bin_compquote_writes_quoted_value_back_to_the_parameter() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        inittyptab();
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        // c:305 — a live completion always has at least QT_BACKSLASH on
+        // the stack; without it c:3691 short-circuits.
+        if let Ok(mut s) = COMPQSTACK
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *s = (QT_BACKSLASH as u8 as char).to_string();
+        }
+        let _ = crate::ported::params::setsparam("zzq_scalar", "x*y");
+        let _ = crate::ported::params::setaparam(
+            "zzq_array",
+            vec!["p*q".to_string(), "plain".to_string()],
+        );
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_compquote(
+            "compquote",
+            &["zzq_scalar".into(), "zzq_array".into()],
+            &ops,
+            0,
+        );
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
+        assert_eq!(r, 0);
+        assert_eq!(
+            crate::ported::params::getsparam("zzq_scalar").as_deref(),
+            Some("x\\*y"),
+            "scalar must come back quoted"
+        );
+        assert_eq!(
+            crate::ported::params::getaparam("zzq_array"),
+            Some(vec!["p\\*q".to_string(), "plain".to_string()]),
+            "every array element must come back quoted"
+        );
+        crate::ported::params::unsetparam("zzq_scalar");
+        crate::ported::params::unsetparam("zzq_array");
+    }
+
     /// c:3192-3203 — cv_quote_get_val unquotes input then delegates
     /// to cv_get_val. Quoted name with backslash should still match
     /// after parse_subst_string strips the quoting.
@@ -10105,3 +10257,4 @@ mod tests {
         let _: i32 = get_cadef("", &[]);
     }
 }
+

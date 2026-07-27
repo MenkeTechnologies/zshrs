@@ -2004,6 +2004,30 @@ impl ShellExecutor {
     #[tracing::instrument(level = "info", skip(self))]
     pub(crate) fn builtin_compinit(&mut self, args: &[String]) -> i32 {
         tracing::debug!(target: "compsys_args", ?args, "builtin_compinit ENTER");
+        // compinit sh:523 — `for _i_dir in $fpath`, and sh:455's
+        // `compaudit` likewise walks `$fpath`. Upstream reads the
+        // PARAMETER at call time, so the `fpath=( … )` line every
+        // .zshrc runs immediately before `compinit` is what gets
+        // scanned.
+        //
+        // `self.fpath` is not that: it is seeded once at startup from
+        // the inherited `$FPATH` env var (vm_helper.rs:1174/1287) and
+        // never resynced, so an `fpath=( … )` assignment was invisible
+        // here. Whenever the parent process exported FPATH the two
+        // happened to agree and the bug stayed hidden; with FPATH unset
+        // — which is the normal case for `zsh -f`, for a login shell
+        // that builds fpath in .zshrc, and for the parity harness's
+        // child env (scripts/comptab_parity.py `child_env`) — the scan
+        // got ZERO directories. That is not a silent no-op: the worker
+        // still completes and `set_comps_bulk` writes its empty result
+        // over the cache, so `$_comps` came back empty, `_dispatch`
+        // resolved every command to `-default-`, and completion was
+        // dead shell-wide until something re-populated the cache.
+        //
+        // Resync from the live parameter, keeping the env-derived value
+        // when `$fpath` is unset (module/plugin callers that never set
+        // the array).
+        self.fpath = crate::compsys::ported::shared::compinit_scan_dirs(&self.fpath);
         // Parse options
         // -C: use cache if valid (skip fpath scan)
         // -D: don't dump (don't write .zcompdump)
@@ -2058,6 +2082,12 @@ impl ShellExecutor {
         // on the fresh-scan path in `compinit::compinit()`.
         crate::compsys::ported::compinit::declare_compinit_globals(dump_file.as_deref());
 
+        // compinit sh:201 — `: $funcstack` ("Loading it now ensures that
+        // the `funcstack' parameter is always correct"). Reaching for a
+        // `zsh/parameter` parameter loads that module, so a real zsh lists
+        // it in `zmodload -L` after any compinit.
+        crate::compsys::ported::compinit::touch_funcstack_param();
+
         // compinit sh:455 `autoload -RUz compaudit` and sh:481
         // `autoload -RUz compdump compinstall` ("Make sure compdump is
         // available, even if we aren't going to use it"), plus sh:578
@@ -2076,6 +2106,51 @@ impl ShellExecutor {
             "compdump",    // sh:481
             "compinstall", // sh:481
         ]);
+
+        // compinit sh:515-518 — `-C` clears `_i_check` (sh:102-104), and
+        // with the check off an existing dump file is sourced outright:
+        //
+        //   else
+        //     builtin . "$_comp_dumpfile"
+        //     _i_done=yes
+        //   fi
+        //
+        // `_i_done` then skips the entire sh:523-550 `$fpath` scan, so on
+        // that path the dump — not the scan — is what defines every
+        // completer name the session ends up with. zshrs substitutes its
+        // own cache for the dump's `_comps`/`_services`/… payload, but the
+        // dump's `autoload` lines have no substitute: compdump lists every
+        // defined `_*` function that has a file in `$fpath`
+        // (compdump:113), which includes headerless helpers no
+        // `#compdef`/`#autoload` scan can see. On this host that was 12
+        // names — `_command_names`, `_parameters`, `_megacomplete`,
+        // `_complete_hist`, `__zpwr_aliases`, … — every one of them a
+        // `# -*- mode: sh -*-`-headed file, plus `_zemacs`, whose file has
+        // since left `$fpath` entirely. Missing stubs are observable well
+        // beyond `${(k)functions}`: the legacy `compcall` namespace census
+        // `_default` falls back to counts them, and `_tmux` derives its
+        // sub-command list from `${(M)${(k)functions}:#_tmux-*}`.
+        //
+        // Only the `-C` branch is mirrored. The checked branch (sh:492-514)
+        // loads the dump solely when its recorded file count and
+        // `$ZSH_VERSION` both still match; zshrs does not evaluate that
+        // condition and rescans instead — the same thing a real zsh does
+        // whenever the dump is stale.
+        if use_cache {
+            if let Some(dump) = crate::ported::params::getsparam("_comp_dumpfile") {
+                let dump = std::path::PathBuf::from(dump);
+                if dump.is_file() {
+                    let names = crate::compsys::ported::compinit::dump_autoload_names(&dump);
+                    let added = crate::compsys::ported::compinit::register_autoload_stubs(&names);
+                    tracing::info!(
+                        added,
+                        total = names.len(),
+                        dump = %dump.display(),
+                        "compinit: autoload stubs from dump"
+                    );
+                }
+            }
+        }
 
         // Run compaudit with SQLite cache (unless -u skips it entirely)
         if !use_insecure && !self.posix_mode {
