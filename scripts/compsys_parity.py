@@ -367,6 +367,14 @@ def child_env() -> dict:
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "COLUMNS": "80",
         "LINES": "24",
+        # zshrs ships ~145 builtins zsh does not have (peach, async, zf_*,
+        # dbview, ...), so any listing that enumerates $builtins diverges by
+        # construction. Those are deliberate zshrs FEATURES, not compat
+        # regressions, and scoring them as parity failures buries the real
+        # ones. This hides the extension names from the `builtins` table and
+        # the compctl namespace dump for the duration of the comparison ONLY
+        # — dispatch is untouched (`whence -w peach` still says builtin).
+        "ZSHRS_HIDE_EXT_BUILTINS": "1",
     }
     # Preserve HOME so the user's real `.zcompdump`/cache paths resolve.
     if "HOME" in os.environ:

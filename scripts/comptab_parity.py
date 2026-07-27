@@ -185,6 +185,18 @@ def child_env():
         # their ghost text would diff on every case with a history hit. This
         # silences the fx LAYER only; the completion engine is untouched.
         "ZSHRS_NATIVE_ZLE_FX": "0",
+        # Same principle, applied to the shell's own namespace: zshrs ships
+        # ~145 builtins zsh does not have (peach, async, zf_*, dbview, ...).
+        # Every listing that enumerates $builtins therefore diverges by
+        # construction — `pr<TAB>` gained printenv/profile, `rustup <TAB>`'s
+        # compctl fallback dumped 52080 names against zsh's 52017. Those are
+        # deliberate zshrs FEATURES, not compat regressions, and flagging
+        # them as parity failures buries the real ones. The flag hides the
+        # extension names from the `builtins` table and the compctl
+        # namespace dump for the duration of the comparison ONLY; dispatch
+        # is untouched (`whence -w peach` still reports a builtin) and
+        # nothing else about the shell changes.
+        "ZSHRS_HIDE_EXT_BUILTINS": "1",
         "RUST_BACKTRACE": "1",
     }
     if "HOME" in os.environ:
