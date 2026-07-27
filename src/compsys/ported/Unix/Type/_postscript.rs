@@ -35,7 +35,7 @@ pub fn _postscript(args: &[String]) -> i32 {
     a.extend(getaparam("expl").unwrap_or_default());
     a.push("-g".to_string());
     a.push(format!("*.(#i)(ps|eps){}(-.)", ext));
-    _files(&a)
+    crate::compsys::ported::shared::call_compfn("_files", &a, || _files(&a))
 }
 
 #[cfg(test)]

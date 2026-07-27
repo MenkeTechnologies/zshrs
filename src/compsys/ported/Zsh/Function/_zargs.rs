@@ -186,7 +186,7 @@ pub fn _zargs(_args: &[String]) -> i32 {
         }
         1 => {
             // sh:38  _files && ret=0
-            if _files(&[]) == 0 {
+            if crate::compsys::ported::shared::call_compfn("_files", &[], || _files(&[])) == 0 {
                 ret = 0;
             }
         }

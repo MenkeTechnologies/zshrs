@@ -40,7 +40,7 @@ pub fn _object_files(args: &[String]) -> i32 {
     ];
     a.extend(args.iter().cloned());
     a.extend(expl);
-    _files(&a)
+    crate::compsys::ported::shared::call_compfn("_files", &a, || _files(&a))
 }
 
 #[cfg(test)]

@@ -384,3 +384,104 @@ fn zshrs_home_overrides_global_config_path() {
         shell_out,
     );
 }
+
+// ─── `$fpath` override must survive a port→port call ──────────────────
+
+/// Run `script` under `backend = "rust"` with an extra `$fpath` dir that
+/// holds a single `_parameters` file setting `PROOF`.
+fn run_with_fpath_parameters(script: &str) -> (R, tempfile::TempDir) {
+    let fp = tempfile::tempdir().expect("fpath tempdir");
+    fs::write(
+        fp.path().join("_parameters"),
+        "#autoload\ntypeset -g PROOF=fpath_parameters_ran\n",
+    )
+    .expect("write _parameters");
+    let home = fresh_zshrs_home("rust");
+    let full = format!(
+        "fpath=( {} )\nautoload -Uz _parameters\n{}",
+        fp.path().display(),
+        script,
+    );
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", &full])
+        .env("ZSHRS_HOME", home.path())
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("spawn zshrs");
+    (
+        R {
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            exit: o.status.code().unwrap_or(-1),
+        },
+        fp,
+    )
+}
+
+/// PROOF #10 — control: a DIRECT `_parameters` call honours `$fpath`.
+///
+/// `router::try_rust_dispatch` steps aside when `has_fpath_override`
+/// finds a non-stock `_parameters` file, so the autoloaded shell
+/// function must win. If this ever fails, PROOF #11's premise is gone
+/// and the two failures should be read together.
+#[test]
+fn fpath_parameters_wins_over_rust_port() {
+    let (r, _fp) = run_with_fpath_parameters("_parameters\necho \"PROOF=$PROOF\"");
+    assert_eq!(r.exit, 0, "exit nonzero; stdout=`{}`", r.stdout);
+    assert!(
+        r.stdout.contains("PROOF=fpath_parameters_ran"),
+        "a non-stock `$fpath/_parameters` MUST shadow the Rust port; \
+         got stdout=`{}`",
+        r.stdout,
+    );
+}
+
+/// PROOF #11 — the override also wins when `_parameters` is reached
+/// from ANOTHER port rather than from the command line.
+///
+/// `_brace_parameter` (upstream sh:214) ends in a bare `_parameters -e`
+/// command word, so `$fpath` arbitration applies there exactly as it
+/// does at PROOF #10. The port used to call the Rust `_parameters` fn
+/// directly, which pins the port and silently kills the user's file:
+/// `${<TAB>`, `${(k)<TAB>` and `$fpath[<TAB>` listed the port's bare
+/// names (272 matches) instead of the user's name+value describe output
+/// (~400), while `$<TAB>` — routed through `_parameter`, which does go
+/// through `dispatch_function_call` — was correct.
+#[test]
+fn fpath_parameters_wins_when_called_from_brace_parameter() {
+    let (r, _fp) = run_with_fpath_parameters("_brace_parameter\necho \"PROOF=$PROOF\"");
+    assert_eq!(r.exit, 0, "exit nonzero; stdout=`{}`", r.stdout);
+    assert!(
+        r.stdout.contains("PROOF=fpath_parameters_ran"),
+        "`_brace_parameter` MUST reach `_parameters` BY NAME so a \
+         `$fpath` override still wins; got stdout=`{}` (a direct Rust \
+         call to `_parameters` produces exactly this)",
+        r.stdout,
+    );
+}
+
+/// PROOF #12 — source pin for the same class of bug in every port that
+/// finishes in `_parameters`.
+///
+/// `_subscript` (upstream sh:125, `_requested parameters && _parameters`)
+/// has the identical bug shape but is only reachable with live
+/// `$compstate` array context, so it cannot be driven from `-c` like
+/// PROOF #11. Pin it at the source level instead: importing the
+/// `_parameters` FN is what bypasses `has_fpath_override`; importing
+/// `call_parameters` is the arbitrated entry point.
+#[test]
+fn ports_reach_parameters_through_the_router() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for rel in [
+        "src/compsys/ported/Zsh/Context/_brace_parameter.rs",
+        "src/compsys/ported/Zsh/Context/_subscript.rs",
+    ] {
+        let body = fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        assert!(
+            !body.contains("use crate::compsys::ported::_parameters::_parameters;"),
+            "{rel} imports the `_parameters` fn directly — that pins the \
+             Rust port and drops a user's `$fpath/_parameters`. Use \
+             `call_parameters` (which goes through \
+             `dispatch_function_call` → `router::has_fpath_override`).",
+        );
+    }
+}

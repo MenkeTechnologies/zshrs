@@ -158,7 +158,7 @@ pub fn _zfs_dataset(args: &[String]) -> i32 {
 
     // sh:27-30 — with -p and an absolute PREFIX, complete filesystem paths.
     if opts.paths_allowed && prefix.starts_with('/') {
-        return _files(&[]);
+        return crate::compsys::ported::shared::call_compfn("_files", &[], || _files(&[]));
     }
 
     let words = getaparam("words").unwrap_or_default();

@@ -2557,11 +2557,27 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
         // c:2283-2289 — for COMP_LIST_EXPAND / COMP_EXPAND wrap
         // `globlist` between `opts[NULLGLOB]` toggles so glob
         // misses don't error.
+        //
+        // The option name MUST be the canonical one. `opt_state_get`
+        // canonicalises through `optlookup` (options.rs:1976), but
+        // `opt_state_set` (options.rs:1999) writes the caller's string
+        // verbatim: `opt_state_set("NULL_GLOB", …)` created a dead
+        // `"NULL_GLOB"` key while every reader — `isset(NULLGLOB)` →
+        // `opts_cache::authoritative` → `opt_state_get(opt_name(126))`
+        // (extensions/opts_cache.rs:86) — looks at `"nullglob"`. Both
+        // toggles were therefore no-ops, NULLGLOB stayed off inside
+        // `globlist`, and a non-matching pattern took glob.rs:1576's
+        // NOMATCH arm: `ls -d **/b<TAB>` printed
+        // `zsh: no matches found: **/b` onto the prompt line where zsh
+        // silently beeps. Deriving the name from the optno keeps this
+        // in lockstep with the `isset(NULLGLOB)` readers by
+        // construction.
         if lst == COMP_LIST_EXPAND || lst == COMP_EXPAND {
-            let ng = crate::ported::options::opt_state_get("NULL_GLOB").unwrap_or(false);
-            crate::ported::options::opt_state_set("NULL_GLOB", true);
-            crate::ported::subst::globlist(&mut vl, crate::ported::zsh_h::PREFORK_NO_UNTOK);
-            crate::ported::options::opt_state_set("NULL_GLOB", ng);
+            let nullglob = crate::ported::zsh_h::opt_name(crate::ported::zsh_h::NULLGLOB);
+            let ng = crate::ported::zsh_h::isset(crate::ported::zsh_h::NULLGLOB); // c:2284
+            crate::ported::options::opt_state_set(nullglob, true); // c:2286
+            crate::ported::subst::globlist(&mut vl, crate::ported::zsh_h::PREFORK_NO_UNTOK); // c:2287
+            crate::ported::options::opt_state_set(nullglob, ng); // c:2288
         }
         // c:2290-2291 — `if (errflag) goto end`.
         if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
@@ -4491,5 +4507,74 @@ mod tests {
         // c:2326 — `nonempty(vl) || !first` also fires after the LAST item,
         // so zsh leaves a trailing space too.
         assert_eq!(got, format!("ls {}/zzA {}/zzB ", d, d));
+    }
+
+    /// c:2284-2288 — `opts[NULLGLOB] = 1` around `globlist`, restored
+    /// after. A pattern that matches nothing must therefore be DROPPED
+    /// silently: `ls -d **/b<TAB>` beeps in zsh, it does not print
+    /// `no matches found`.
+    ///
+    /// The toggle was written through `opt_state_set("NULL_GLOB", …)`,
+    /// which stores the caller's string verbatim (options.rs:1999) while
+    /// `isset(NULLGLOB)` reads the canonical `"nullglob"` slot
+    /// (extensions/opts_cache.rs:86). Both writes landed in a key nobody
+    /// reads, NULLGLOB stayed off inside `globlist`, and the non-matching
+    /// word took glob.rs:1576's NOMATCH arm — `zerr` + `errflag`, with the
+    /// diagnostic painted over the prompt line mid-TAB.
+    #[test]
+    fn doexpansion_nullglob_toggle_drops_nonmatching_glob_silently() {
+        use crate::ported::options::opt_state_set;
+        use crate::ported::zsh_h::{
+            isset, opt_name, CSHNULLGLOB, EXECOPT, GLOBOPT, NOMATCH, NULLGLOB,
+        };
+
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        // Preconditions that make glob.rs:1576's NOMATCH arm live: globbing
+        // enabled, NOMATCH on, and neither null-glob option set.
+        opt_state_set(opt_name(GLOBOPT), true);
+        opt_state_set(opt_name(EXECOPT), true);
+        opt_state_set(opt_name(NOMATCH), true);
+        opt_state_set(opt_name(NULLGLOB), false);
+        opt_state_set(opt_name(CSHNULLGLOB), false);
+        // `zerr` only sets errflag when noerrs < 2 (utils.rs:224); a stale
+        // value from another test would make this assertion vacuous.
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = 0;
+        crate::ported::utils::errflag.store(0, Ordering::SeqCst);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let d = dir.path().to_str().expect("utf-8 tempdir").to_string();
+        std::fs::create_dir_all(dir.path().join("aa/bb")).expect("fixture dirs");
+        // The reported case: recursive `**/` with a trailing component that
+        // matches no directory anywhere in the tree.
+        let word = format!("{}/**/zz-no-such-entry", d);
+        let line = format!("ls -d {}", word);
+        seed_metaline(&line, line.chars().count() as i32);
+        WB.store(6, Ordering::SeqCst);
+        WE.store(line.chars().count() as i32, Ordering::SeqCst);
+
+        let rc = doexpansion(&word, COMP_EXPAND, COMP_EXPAND_COMPLETE, 0);
+
+        assert_eq!(
+            crate::ported::utils::errflag.load(Ordering::SeqCst),
+            0,
+            "a non-matching glob under the c:2286 NULLGLOB toggle must not \
+             raise NOMATCH — errflag set means `no matches found` was printed"
+        );
+        // c:2292-2293 — `empty(vl)` → `goto end` with the initial `ret = 1`,
+        // i.e. the caller beeps and the line is left alone.
+        assert_eq!(rc, 1, "no expansion happened, so doexpansion returns 1");
+        let got = crate::ported::zle::compcore::ZLEMETALINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        assert_eq!(got, line, "the command line must be untouched");
+        // c:2288 — `opts[NULLGLOB] = ng` puts the user's setting back.
+        assert!(
+            !isset(NULLGLOB),
+            "the c:2288 restore must return NULLGLOB to its pre-expansion state"
+        );
     }
 }

@@ -55,6 +55,23 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
 /// `_complete` — primary `completer` entry: dispatches to per-context
 /// `$_comps` entries based on `$compstate[context]`.
 pub fn _complete() -> i32 {
+    // sh:7 `local comp name oldcontext ret=1 service`.
+    //
+    // `comp`/`name`/`oldcontext`/`ret` are Rust locals here, but `service`
+    // is a real shell parameter: the port writes it with `setsparam` below
+    // and every `$_comps` entry reads it. Without the declaration that write
+    // landed at level 0, so `service` survived the completion AND read back
+    // as `scalar` instead of `scalar-local` — `_parameters` filters on
+    // `[(R)…~*local*]`, so `${<TAB>` / `$fpath[<TAB>` offered `service` as a
+    // parameter name and zsh does not. The other four are declared for the
+    // same reason `_main_complete` declares its whole `local` line: a
+    // `$parameters`/`typeset -p` read during completion must see what zsh
+    // sees. `_complete` is reached through `dispatch_function_call`, so
+    // `doshfunc`'s `endparamscope` performs the unwind.
+    {
+        use crate::compsys::ported::shared::declare_locals;
+        declare_locals(&["comp", "name", "oldcontext", "ret", "service"], 0);
+    }
     let mut ret: i32 = 1;
     let oldcontext = getsparam("curcontext").unwrap_or_default();
 
@@ -126,6 +143,19 @@ pub fn _complete() -> i32 {
     let context = get_compstate_str("context").unwrap_or_default();
     if context == "command" {
         let _ = setsparam("curcontext", &oldcontext);
+        // Direct Rust call, not a shell-function dispatch: `_normal`
+        // therefore contributes no `$funcstack` entry and no
+        // `$zsh_eval_context` frames, which is two of the six frames
+        // zshrs is short inside a live completion. Deliberate — see
+        // docs/COMPLETION_DISPATCH.md, Divergence C — and the two
+        // stacks stay consistent with each other precisely BECAUSE
+        // neither is faked here.
+        //
+        // Known consequence: an fpath `_normal` (user or plugin
+        // override) is bypassed, because `router::try_rust_dispatch`'s
+        // `has_fpath_override` gate only runs on the shell-function
+        // dispatch path. Same bug class as the `_command_names`
+        // override fix; tracked separately from Divergence C.
         if _normal(&["-s".to_string()]) == 0 {
             ret = 0;
         }

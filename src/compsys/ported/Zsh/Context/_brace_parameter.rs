@@ -27,7 +27,7 @@ use crate::compsys::ported::_describe::_describe;
 use crate::compsys::ported::_globqual_delims::_globqual_delims;
 use crate::compsys::ported::_history_modifiers::_history_modifiers;
 use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_parameters::_parameters;
+use crate::compsys::ported::_parameters::call_parameters;
 use crate::ported::params::{getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -367,7 +367,7 @@ pub fn _brace_parameter() -> i32 {
     }
 
     // sh:214  _parameters -e
-    _parameters(&[s("-e")])
+    call_parameters(&[s("-e")])
 }
 
 #[cfg(test)]

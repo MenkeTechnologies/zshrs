@@ -90,12 +90,14 @@ reaches it only through the `compfunc` indirection that
 `getshfunc` only *looks up* a Shfunc by name. `doshfunc` is what
 actually *executes* the body — both calls are required.
 
-## Rust chain — same shape, two architectural divergences
+## Rust chain — same shape, three architectural divergences
 
-Every link is ported. The Rust port splits one C function and
-replaces another's lookup mechanism; both are bucket-2
-architectural divergence (functionally equivalent end-state, see
-`PORT_CALL_COVERAGE.md`).
+Every link is ported. The Rust port splits one C function, replaces
+another's lookup mechanism, and — as a consequence of the second —
+reports a shorter `$zsh_eval_context` inside a live completion. The
+first two are bucket-2 architectural divergence (functionally
+equivalent end-state, see `PORT_CALL_COVERAGE.md`); the third is an
+observable divergence that is deliberately left open.
 
 | C function | Rust file:line | Status |
 |---|---|---|
@@ -169,6 +171,70 @@ either routes to a native Rust port or to the bytecode VM via
 `ported::exec::dispatch_function_call`. Both produce identical observable behavior because
 `doshfunc`'s scope plumbing is the same.
 
+### Divergence C — `$ZSH_EVAL_CONTEXT` is shorter inside a completion
+
+Observable, deliberate, and not going to be closed.
+
+C pushes a `zsh_eval_context` frame from every `execode(prog, …,
+"label")` call site (`Src/exec.c:1245-1282`). Two of those labels are
+produced by machinery the Rust chain does not run: `loadautofunc`
+(`Src/exec.c:5626`, "this body is running on the call that read its
+file out of `$fpath`") and the `eval` from `_complete`'s
+`eval "$comp"` / `_dispatch`'s equivalent. Divergence B replaces the
+`getshfunc` → `runshfunc` lookup with `router::try_rust_dispatch`, so
+a stock `_main_complete` / `_complete` / `_dispatch` never autoloads
+and never evals — it is already resident Rust.
+
+Measured on `ectxprobe <TAB>` against a stock fpath (fixture completer
+printing `${(j.+.)zsh_eval_context}` and `${(j.+.)funcstack}`):
+
+| | value |
+|---|---|
+| zsh `funcstack` | `_ectxprobe (eval) _dispatch _normal _complete _megacomplete _megacomplete _main_complete` |
+| zsh context (14) | `shfunc loadautofunc` \| `shfunc loadautofunc` \| `shfunc` \| `shfunc loadautofunc` \| `shfunc loadautofunc` \| `shfunc loadautofunc` \| `eval` \| `shfunc loadautofunc` |
+| zshrs `funcstack` | `_ectxprobe _dispatch _complete _megacomplete _megacomplete _main_complete` |
+| zshrs context (8) | `shfunc` \| `shfunc loadautofunc` \| `shfunc` \| `shfunc` \| `shfunc` \| `shfunc loadautofunc` |
+
+The six-frame deficit is: `loadautofunc` for `_main_complete`,
+`_complete` and `_dispatch`; `shfunc`+`loadautofunc` for `_normal`;
+and the `eval`. Note `_megacomplete` and the user's fixture completer
+DO carry a real `loadautofunc` — they are shell functions with no Rust
+port, so they take the ordinary autoload path.
+
+Why the frames are not synthesized:
+
+1. **Two of the six describe a call that does not happen at all.**
+   `_complete`'s port calls `_normal` as a direct Rust call
+   (`src/compsys/ported/Base/Completer/_complete.rs:129`), so `_normal`
+   is absent from `$funcstack` too. Faking its context frames would put
+   the two stacks into disagreement; faking the funcstack entry as well
+   would drag `$0`, `$LINENO`, `funcsourcetrace` and `_call_function`'s
+   diagnostics into the fiction.
+2. **Nothing reads them.** Every `zsh_eval_context` consumer surveyed
+   on a fully loaded install — the `[-1] == loadautofunc` idiom in ~30
+   generated completion files, the looser `== *func` form, upstream
+   `add-zle-hook-widget`'s three-way `case`, `bracketed-paste-magic`,
+   `chpwd_recent_dirs`' whole-string `toplevel(:[a-z]#func|)#`, and
+   zinit's `[1] = file` — reads the LAST frame, or the first, or the
+   whole string. None reads a middle frame or a count. The last-frame
+   semantics are already correct: a completion file autoloaded through
+   the Rust chain sees `loadautofunc`, verified live and pinned by
+   `consumer_idioms_match_zsh`.
+3. **`loadautofunc` has no truthful trigger in a port.** It means
+   "undefined until this call". A port is never undefined, so
+   synthesizing it needs a per-name pretend-loaded flag that would also
+   have to model `kshautoload` (`evalautofunc`), `autoload +X` (no
+   frame) and re-`autoload`ing — a state machine whose only output is a
+   string.
+4. **It would mislead.** `loadautofunc` and `eval` assert that a file
+   was read and a string was parsed. Neither happens, and anyone
+   tracing a completion in zshrs would go looking for both.
+
+Pinned by `tests/zsh_eval_context_frames.rs::compsys_ports_synthesize_no_eval_context_frames`.
+
+Outside a completion the stacks are byte-identical; see
+`eval_context_frames_match_zsh` in the same file.
+
 ## Test coverage of the chain
 
 - `src/ported/zle/zle_tricky.rs` — completecall, completeword,
@@ -179,6 +245,10 @@ either routes to a native Rust port or to the bytecode VM via
   the Comp widget registration path that compinit uses).
 - ZTST `test_corpus/Y0*.ztst` files — end-to-end completion
   scenarios that exercise the full chain via the test harness.
+- `tests/zsh_eval_context_frames.rs` — `consumer_idioms_match_zsh`
+  pins the four `$zsh_eval_context` tests real completion files
+  perform; `compsys_ports_synthesize_no_eval_context_frames` pins
+  Divergence C against being closed by fabrication.
 
 ## Why this matters for the port
 

@@ -27,7 +27,7 @@ pub fn _texi(args: &[String]) -> i32 {
     a.extend(getaparam("expl").unwrap_or_default());
     a.push("-g".to_string());
     a.push("*.(texinfo|texi)(-.)".to_string());
-    _files(&a)
+    crate::compsys::ported::shared::call_compfn("_files", &a, || _files(&a))
 }
 
 #[cfg(test)]

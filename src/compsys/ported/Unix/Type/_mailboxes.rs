@@ -488,7 +488,7 @@ pub fn _mailboxes(args: &[String]) -> i32 {
                 let _ = compset(&["-P", "-f"]);
             }
             let expl = getaparam("expl").unwrap_or_default();
-            if _files(&expl) == 0 {
+            if crate::compsys::ported::shared::call_compfn("_files", &expl, || _files(&expl)) == 0 {
                 ret = 0;
             }
         }

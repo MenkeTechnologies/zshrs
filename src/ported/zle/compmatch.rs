@@ -3823,12 +3823,11 @@ pub fn join_clines(
                     drop(x);
                     continue; // c:2749
                 }
-                // No match — advance.
-                po_slot = oo_slot;
-                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
-                pn_slot = nn_slot;
-                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
-                continue;
+                // c:2728 `if (tn) { … }` — when the scan finds nothing C does
+                // NOT advance: it falls out of this `if` into the SUF/MID and
+                // anchor tests below, in the same iteration. The port used to
+                // step both cursors and `continue`, which skipped the whole
+                // rest of the body and desynchronised the walk.
             }
 
             // c:2752-2774 — !o_new && n_new mirror case.
@@ -3856,11 +3855,8 @@ pub fn join_clines(
                     *nn_slot = tn_taken;
                     continue;
                 }
-                po_slot = oo_slot;
-                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
-                pn_slot = nn_slot;
-                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
-                continue;
+                // c:2757 `if (tn) { … }` — same fall-through as the mirror
+                // branch above; no cursor advance when the scan comes up empty.
             }
 
             // c:2777-2819 — SUF/MID mask differs.
@@ -4216,6 +4212,72 @@ fn patmatchrange(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:Src/Zle/compmatch.c:2752-2774 — the `!(o->flags & CLF_NEW) &&
+    /// (n->flags & CLF_NEW)` arm scans `n` for a non-NEW node whose anchor
+    /// matches `o`; when that scan comes up empty C leaves BOTH cursors where
+    /// they are and falls through to the SUF/MID (c:2777) and anchor (c:2822)
+    /// tests in the SAME iteration. The port used to advance `o` and `n` and
+    /// `continue`, which skipped the rest of the body and truncated the merged
+    /// cline after the first anchor.
+    ///
+    /// The two inputs below are what `bld_parts` really produces while
+    /// completing `--de` with `compadd -M 'r:|[_-]=* r:|=*'`: `--debug` splits
+    /// at both `-` anchors, while `--del` arrives unsplit because a preceding
+    /// `compadd -M` carrying a different spec left `bmatchers` without the
+    /// `[_-]` anchor (`update_bmatchers` prunes to what is on `mstack`,
+    /// c:121). Merging them must keep four characters of the line (`--de`);
+    /// the broken walk kept one, and Tab DELETED characters from the buffer
+    /// (`rsync --de<TAB>` produced `rsync -`).
+    #[test]
+    fn join_clines_keeps_prefix_when_new_side_has_no_anchor() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let bm = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+
+        // `--debug` split by the `r:|[_-]=*` anchor, exactly as the real
+        // `compadd -M 'r:|[_-]=* r:|=*'` builds it.
+        *bm.lock().unwrap() = None;
+        add_bmatchers(
+            crate::ported::zle::complete::parse_cmatcher("t", "r:|[_-]=* r:|=*")
+                .as_deref(),
+        );
+        let o = bld_parts("--debug", 7, 4, None, None).expect("cline for --debug");
+        assert!(
+            o.next.is_some() && o.next.as_ref().unwrap().next.is_some(),
+            "--debug must split into anchor + anchor + trailing"
+        );
+
+        // `--del` with the `[_-]` anchor no longer on bmatchers: one node.
+        *bm.lock().unwrap() = None;
+        add_bmatchers(crate::ported::zle::complete::parse_cmatcher("t", "r:|=*").as_deref());
+        let n = bld_parts("--del", 5, 4, None, None).expect("cline for --del");
+        assert!(n.next.is_none(), "--del must arrive as a single unsplit node");
+
+        // c:2712 — the first join seeds `ainfo->line` (compcore.c:3003).
+        let seeded = join_clines(None, Some(o));
+        let joined = join_clines(seeded, Some(n)).expect("merged cline");
+
+        // The merged node describes the whole matched prefix: `max` is the
+        // longest word seen (`--del`, 5) and `min` the shortest run that is
+        // still on the line. The broken walk returned the bare first `-`
+        // anchor instead, with max == 1.
+        assert_eq!(
+            joined.max, 5,
+            "merged cline must still span the whole matched word, got max={}",
+            joined.max
+        );
+        assert!(
+            joined.word.is_none() && joined.wlen == 0,
+            "the merged node must have dropped its single-char anchor word"
+        );
+        assert_ne!(
+            joined.flags & crate::ported::zle::comp_h::CLF_MISS,
+            0,
+            "c:2935 sets CLF_MISS on the merged node"
+        );
+        *bm.lock().unwrap() = None;
+    }
 
     #[test]
     fn test_pattern_match_equivalence_case_cross() {
