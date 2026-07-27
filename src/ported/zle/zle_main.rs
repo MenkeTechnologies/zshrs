@@ -1539,6 +1539,25 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
     if let Some(mut shf) = getshfunc(call_name) {
         // c:1514 — `int osc = sfcontext`.
         let osc = crate::ported::exec::sfcontext.load(Ordering::Relaxed);
+        // c:1514 `int osi = movefd(0);` + c:1521-1526:
+        //     if (osi > 0) {
+        //         /*
+        //          * Many commands don't like having a closed stdin, open on
+        //          * /dev/null instead
+        //          */
+        //         open("/dev/null", O_RDWR | O_NOCTTY); /* ignore failure */
+        //     }
+        // The port ran the widget body with the shell's own stdin still on
+        // fd 0. zsh deliberately parks fd 0 on /dev/null for the duration of
+        // a widget so a command inside it can never eat the keyboard input
+        // ZLE is about to read.
+        let osi = crate::ported::utils::movefd(0);
+        if osi > 0 {
+            unsafe {
+                let devnull = std::ffi::CString::new("/dev/null").unwrap();
+                let _ = libc::open(devnull.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+            }
+        }
         // c:1515 — `int oxt = isset(XTRACE);`.
         let oxt = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         // c:1537 — `ret = doshfunc(shf, largs, 1);`. Direct doshfunc
@@ -1611,6 +1630,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         if set_bindk != 0 {
             *BINDK.lock().unwrap() = save_bindk;
         }
+        let _ = crate::ported::utils::redup(osi, 0); // c:1556 redup(osi, 0)
         crate::zle_param_sync::end_vichg_frame(nestedvichg, isrepeat, rc); // c:1579-1595
         return rc;
     }

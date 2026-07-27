@@ -79,8 +79,26 @@ fn enumerate_params() -> Vec<(String, String, i32)> {
     out
 }
 
+/// Call `_parameters` by NAME, the way the upstream shell code does.
+///
+/// The shell contexts that end in `_parameters` (`_brace_parameter`,
+/// `_subscript`, `_parameter`, …) write a plain command word, so `$fpath`
+/// arbitration applies: a user's or plugin's own `_parameters` file is
+/// autoloaded instead of the stock one. `dispatch_function_call` runs that
+/// arbitration (`compsys::router::try_rust_dispatch` → `has_fpath_override`);
+/// calling [`_parameters`] as a Rust fn skips it and pins the port, which
+/// silently kills the override. Falls back to the port when there is no
+/// executor in scope (unit tests).
+pub fn call_parameters(args: &[String]) -> i32 {
+    crate::ported::exec::dispatch_function_call("_parameters", args)
+        .unwrap_or_else(|| _parameters(args))
+}
+
 /// `_parameters` — complete non-local parameter names. `-g <pat>`
 /// filters by parameter type-string.
+///
+/// Callers inside other ported completers must use [`call_parameters`], not
+/// this fn, so an `$fpath` override still wins.
 pub fn _parameters(args: &[String]) -> i32 {
     // sh:11
     let mut pattern_seed: Vec<String> = vec!["-g".to_string(), "*".to_string()];

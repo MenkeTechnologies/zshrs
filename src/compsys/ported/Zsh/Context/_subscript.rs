@@ -25,7 +25,7 @@
 use crate::compsys::ported::_all_labels::_all_labels;
 use crate::compsys::ported::_dynamic_directory_name::_dynamic_directory_name;
 use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_parameters::_parameters;
+use crate::compsys::ported::_parameters::call_parameters;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_values::_values;
@@ -478,7 +478,7 @@ pub fn _subscript(args: &[String]) -> i32 {
             }
 
             // sh:125  _requested parameters && _parameters && ret=0
-            if _requested(&[s("parameters")]) == 0 && _parameters(&[]) == 0 {
+            if _requested(&[s("parameters")]) == 0 && call_parameters(&[]) == 0 {
                 ret = 0;
             }
 

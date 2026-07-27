@@ -510,3 +510,26 @@ mod tests {
         assert!(!glob_match("exact", "xact"));
     }
 }
+
+/// Call another compsys completer BY NAME, so `$fpath` arbitration still runs.
+///
+/// zshrs-original — C has no port tree to arbitrate against. Every upstream
+/// completer reaches its helpers as a bare command word (`_files "$@"`), which
+/// goes through the normal function lookup, so a user's own `_files` earlier in
+/// `$fpath` wins. A Rust port that calls its sibling port as a plain Rust fn
+/// skips that lookup entirely: `crate::ported::exec::dispatch_function_call` is
+/// the only path that consults `compsys::router::try_rust_dispatch` and its
+/// `has_fpath_override` gate, so the user's file is silently dead.
+///
+/// This is not hypothetical. `_command_names` had the same defect (fixed in
+/// b8e714f7be) and `_parameters` had it in the `-brace-parameter-` /
+/// `-subscript-` contexts, which is why `echo ${<TAB>` offered zshrs's own
+/// parameter list instead of the user's. On this host `_files` is overridden at
+/// `~/.zpwr/autoload/comp_utils/_files` (fpath position 18, ahead of the stock
+/// tree at 24) and ten ports call it directly.
+///
+/// `fallback` runs only when no shell function and no registered port claims
+/// the name — i.e. in unit tests with no executor installed.
+pub fn call_compfn(name: &str, args: &[String], fallback: impl FnOnce() -> i32) -> i32 {
+    crate::ported::exec::dispatch_function_call(name, args).unwrap_or_else(fallback)
+}

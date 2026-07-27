@@ -1089,6 +1089,28 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         let onm = nmatches.load(Ordering::Relaxed); // c:965
         let odm = diffmatches.load(Ordering::Relaxed); // c:965
         let osi = movefd(0); // c:965 movefd(0)
+        // c:965 moves the shell's stdin off fd 0 and c:1013/1035/1039 `redup(osi, 0)`
+        // puts it back, so the completion function runs with fd 0 FREE — and
+        // the very next `open()`/`opendir()` in that window is handed
+        // descriptor 0. zsh parks /dev/null there for exactly the same window
+        // (the idiom, with its rationale, is spelled out at
+        // Src/Zle/zle_main.c:1521-1526: "Many commands don't like having a
+        // closed stdin, open on /dev/null instead"); measured against zsh 5.9,
+        // `[[ /dev/fd/0 -ef /dev/null ]]` is TRUE inside a completion
+        // function, while zshrs left fd 0 closed.
+        //
+        // A closed fd 0 is not merely untidy here: `_path_files -W /dev -g
+        // '*(-/)'` calls `opendir("/dev")`, which lands on descriptor 0, so
+        // `/dev/fd/0` — the target of the `/dev/stdin` symlink — resolves to
+        // the very directory being scanned. The `-/` qualifier then stats a
+        // directory and admits `/dev/stdin`, and `mount /dev/<TAB>` listed a
+        // bogus `stdin@` next to `fd/` and `monotonic/`.
+        if osi > 0 {
+            unsafe {
+                let devnull = std::ffi::CString::new("/dev/null").unwrap();
+                let _ = libc::open(devnull.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+            }
+        }
 
         // c:967-968 — bmatchers = mstack = NULL.
         if let Ok(mut g) = bmatchers.get_or_init(|| Mutex::new(None)).lock() {
@@ -5610,13 +5632,20 @@ fn movefd(fd: i32) -> i32 {
     crate::ported::utils::movefd(fd)
 }
 
-/// Adapter for `void redup(int new, int old)` from `Src/utils.c:2021` —
-/// delegates to the canonical port `ported::utils::redup`. Callers
-/// only need the new-fd form here; `old` is the inverse of movefd's
-/// reservation (passed as -1 to mean "no original").
+/// Adapter for `int redup(int x, int y)` from `Src/utils.c:2021` —
+/// delegates to the canonical port `ported::utils::redup`. Every caller
+/// here is one of C's three `redup(osi, 0)` sites (compcore.c:1013/1035/
+/// 1039), i.e. "put the descriptor `movefd(0)` parked at c:964 back on
+/// fd 0", so the target is 0.
+///
+/// The adapter used to pass `-1` as the target. `redup(osi, -1)` takes
+/// the `x != y` arm, `dup2(osi, -1)` fails with EBADF, and the saved
+/// descriptor is closed anyway — so the shell's stdin was DESTROYED by
+/// the first Tab and fd 0 stayed closed for the rest of the session
+/// (`cat` at the prompt after a completion read a bad descriptor).
 fn redup(new: i32) {
     // utils.c:2021
-    crate::ported::utils::redup(new, -1);
+    crate::ported::utils::redup(new, 0);
 }
 
 /// File-scope registry mirroring `Src/init.c`'s `zshhooks[]` table —
