@@ -124,11 +124,137 @@ impl Drop for CompSetupGuard {
     }
 }
 
+/// sh:41-43 — "Hide any `_comp_priv_prefix` variable that happens to be
+/// defined in the calling scope": `local _comp_priv_prefix` followed by
+/// `unset _comp_priv_prefix`.
+///
+/// Both halves are load-bearing. The bare `local` shadows a caller's
+/// value but also CREATES the parameter, so `$+_comp_priv_prefix` reads
+/// 1 until the `unset` removes it; the local scope survives the unset,
+/// which is why upstream writes it as two lines. The port had only the
+/// `local`, which left `$+_comp_priv_prefix` == 1 for every completion
+/// and flipped every completer that tests it into its "running under
+/// sudo" branch: `_chown:78`'s guard
+/// `(( EGID && $+commands[groups] && ! $+_comp_priv_prefix ))` went
+/// false, so `chown root:<TAB>` skipped `compadd -- $(groups)` (16
+/// names, what zsh lists) and fell through to `_groups` (165 names from
+/// dscacheutil) — over LISTMAX, hence "do you wish to see all 165
+/// possibilities (55 lines)?" where zsh prints the list. `_chflags:6`
+/// and `_file_flags:5` carry the same guard.
+fn hide_comp_priv_prefix() {
+    use crate::compsys::ported::shared::declare_locals;
+    declare_locals(&["_comp_priv_prefix"], 0); // sh:42
+    unsetparam("_comp_priv_prefix"); // sh:43
+}
+
 /// `_main_complete` — primary completion-dispatch entry. Args
 /// (when non-empty) override the configured `completer` style with
 /// the supplied chain.
 pub fn _main_complete(args: &[String]) -> i32 {
     tracing::debug!(target: "compsys_args", ?args, "_main_complete ENTER");
+    // sh:11 `local IFS=$' \t\n\0'`, sh:27-52 the big `local` block,
+    // sh:54 `typeset -U _lastdescr _comp_ignore _comp_colors`,
+    // sh:158 `integer SECONDS=0`, plus the `local -A
+    // _comp_caller_options` / `local -a reply` / `local REPLY` /
+    // `local REPORTTIME` that `eval "$_comp_setup"` (sh:25,
+    // compinit sh:180-190) contributes.
+    //
+    // Every name below is scratch space for the completer chain. The
+    // upstream function scopes them; this port used to create them at
+    // level 0 with `setsparam`, so they leaked out of the completion
+    // AND read back as `scalar` instead of `scalar-local`. Both
+    // matter: `_parameters` filters on `~*local*`, so the leaked
+    // names showed up as candidates for `unset <TAB>`.
+    {
+        use crate::compsys::ported::shared::{
+            declare_locals, declare_locals_keeping_value, PM_ARRAY, PM_HASHED, PM_UNIQUE,
+        };
+        // sh:11 + compinit sh:183 — `local IFS=$' \t\n\0'`. Declared
+        // before CompSetupGuard so the guard's write lands in the
+        // shadow and the caller's $IFS is restored by endparamscope.
+        declare_locals(&["IFS"], 0);
+        // compinit sh:180,187-190 — the `_comp_setup` locals.
+        declare_locals(&["_comp_caller_options"], PM_HASHED);
+        declare_locals(&["REPLY", "REPORTTIME"], 0);
+        declare_locals(&["reply"], PM_ARRAY);
+        // sh:27-40 — `local func funcs ret=1 tmp _compskip format nm
+        // call match min max i num _completers _completer
+        // _completer_num curtag _comp_force_list _matchers _matcher
+        // _c_matcher _matcher_num _comp_tags _comp_mesg mesg str
+        // context state state_descr line opt_args val_args
+        // curcontext=… _last_nmatches=-1 _last_menu_style
+        // _def_menu_style _menu_style sel _tags_level=0 _saved_exact=…
+        // _saved_lastprompt=… _saved_list=… _saved_insert=…
+        // _saved_colors=… _saved_colors_set=… _ambiguous_color=''`.
+        declare_locals(
+            &[
+                "func",
+                "funcs",
+                "ret",
+                "tmp",
+                "_compskip",
+                "format",
+                "nm",
+                "call",
+                "match",
+                "min",
+                "max",
+                "i",
+                "num",
+                "_completers",
+                "_completer",
+                "_completer_num",
+                "curtag",
+                "_comp_force_list",
+                "_matchers",
+                "_matcher",
+                "_c_matcher",
+                "_matcher_num",
+                "_comp_tags",
+                "_comp_mesg",
+                "mesg",
+                "str",
+                "context",
+                "state",
+                "state_descr",
+                "line",
+                "opt_args",
+                "val_args",
+                "_last_nmatches",
+                "_last_menu_style",
+                "_def_menu_style",
+                "_menu_style",
+                "sel",
+                "_tags_level",
+                "_saved_exact",
+                "_saved_lastprompt",
+                "_saved_list",
+                "_saved_insert",
+                "_saved_colors",
+                "_saved_colors_set",
+                "_ambiguous_color",
+            ],
+            0,
+        );
+        // sh:42 `local _comp_priv_prefix`, sh:46 `local -a
+        // precommands`, sh:52 `local -ar builtin_precommands`. The
+        // readonly half of sh:52 is dropped: the port assigns the list
+        // itself rather than initialising it in the declaration.
+        hide_comp_priv_prefix();
+        declare_locals(&["precommands", "builtin_precommands"], PM_ARRAY);
+        // sh:31 — `curcontext="$curcontext"`: local, but seeded from
+        // the enclosing scope (a widget may have set it).
+        declare_locals_keeping_value(&["curcontext"]);
+        // sh:54 — `typeset -U _lastdescr _comp_ignore _comp_colors`.
+        // `typeset` inside a function is local unless `-g`.
+        declare_locals(&["_lastdescr", "_comp_ignore", "_comp_colors"], PM_UNIQUE);
+        // sh:158 `integer SECONDS=0` is NOT mirrored: `$SECONDS` is a
+        // PM_SPECIAL whose value comes from a live timer, and shadowing
+        // it here would freeze the user's `$SECONDS` for the duration
+        // of every completion. Upstream only wants the frozen copy for
+        // the "Killed by signal after ${SECONDS}s" trap message
+        // (sh:160,165), which this port does not implement.
+    }
     // Merge any finished background compinit scan BEFORE the completer
     // lookup. The bg worker ships _comps/_services/_patcomps back over a
     // channel, but the lazy drain's only other caller was the --doctor
@@ -847,6 +973,26 @@ fn patch_completer_field(curcontext: &str, completer: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// sh:41-43 — after the hide idiom, `$+_comp_priv_prefix` must read
+    /// 0 even when the caller had the variable set. Dropping the `unset`
+    /// half made every completer's `$+_comp_priv_prefix` test true, which
+    /// is what sent `chown root:<TAB>` down `_groups` (165 matches, past
+    /// LISTMAX) instead of `compadd -- $(groups)` (16, listed outright).
+    #[test]
+    fn hide_comp_priv_prefix_leaves_parameter_unset() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::setaparam("_comp_priv_prefix", vec!["sudo".to_string()]);
+        assert!(
+            getaparam("_comp_priv_prefix").is_some(),
+            "probe setup failed"
+        );
+        hide_comp_priv_prefix();
+        assert!(
+            getaparam("_comp_priv_prefix").is_none(),
+            "sh:43 unset missing — $+_comp_priv_prefix still reads 1"
+        );
+    }
 
     #[test]
     fn empty_curcontext_initializes_floor() {

@@ -220,6 +220,19 @@ fn run_zparseopts(
 /// description `$3` and optional extra match-specs `$4..`.
 /// Returns 0 (sh:123).
 pub fn _description(args: &[String]) -> i32 {
+    // sh:3  local name nopt xopt format gname hidden hide match opts tag
+    // sh:4  local -a ign gropt sort
+    // sh:5  local -a match mbegin mend
+    {
+        use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
+        declare_locals(
+            &[
+                "name", "nopt", "xopt", "format", "gname", "hidden", "hide", "opts", "tag",
+            ],
+            0,
+        );
+        declare_locals(&["ign", "gropt", "sort", "match", "mbegin", "mend"], PM_ARRAY);
+    }
     // sh:3-5  local …
     let mut opts: Vec<String> = Vec::new(); // sh:7
     let nopt_seed: Vec<String> = Vec::new(); // sh:10

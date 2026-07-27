@@ -393,6 +393,15 @@ impl shfunc_table {
     pub fn restore(&mut self, snap: std::sync::Arc<HashMap<String, Box<shfunc>>>) {
         self.table = std::sync::Arc::try_unwrap(snap).unwrap_or_else(|arc| (*arc).clone());
     }
+    /// Pre-size the table for `additional` more entries. C's
+    /// `newhashtable` takes the expected size up front (`Src/hashtable.c`
+    /// `hcalloc(hashtab->hsize * sizeof(HashNode))`); the Rust port grows
+    /// on demand instead. `compinit` inserts ~46k autoload stubs in one
+    /// batch, so reserving once avoids a dozen rehashes of the whole map.
+    pub fn reserve(&mut self, additional: usize) {
+        self.table.reserve(additional);
+    }
+
     /// `add` — see implementation.
     pub fn add(&mut self, func: shfunc) -> Option<shfunc> {
         self.table

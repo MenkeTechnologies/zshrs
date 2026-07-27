@@ -76,6 +76,11 @@ fn run_zparseopts_wanted(args: &[String]) -> (Vec<String>, Vec<String>, Vec<Stri
 /// `_tags` calling `_all_labels` per round. Returns 0 if any
 /// iteration succeeded, 1 if none.
 pub fn _wanted(args: &[String]) -> i32 {
+    // sh:3  local -a __targs __gopt
+    crate::compsys::ported::shared::declare_locals(
+        &["__targs", "__gopt"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:3-5
     let (argv, targs, gopt) = run_zparseopts_wanted(args);
 

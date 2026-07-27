@@ -2756,10 +2756,21 @@ pub(crate) fn getarg<'a>(
     scalar: Option<&str>,
 ) -> Option<getarg_out<'a>> {
     let rest = idx.strip_prefix('(')?;
-    // Reject anything that looks like a char-class subscript: `[abc]`
-    // doesn't match this prefix, but `(...)` containing brackets is
-    // probably alternation — let it fall through to runtime instead.
-    if rest.starts_with(')') || rest.contains('[') {
+    // c:Src/params.c:1389-1391 — the flag scan walks `s` from just past
+    // the `(` and stops at the FIRST `)`/Outpar; everything after it is
+    // the search PATTERN, which C hands straight to patcompile (c:1697).
+    // A `[` therefore has no meaning to the flag scanner at all: it is
+    // either an ordinary pattern char-class (`(r)[dUurRtT]`) or, if it
+    // shows up among the flags themselves, an unknown flag that the
+    // `_ => bad` arm below already rejects the same way C's default arm
+    // does (c:1477-1483). A blanket `rest.contains('[')` bail therefore
+    // rejected every legitimate char-class pattern: `${${x}[(r)[abc]]}`
+    // returned None here, and paramsubst's subexp arm (subst.rs:6447-6463)
+    // falls back to the WHOLE value on None — so `_typeset`'s
+    // `${${(s::)use[$i]}[(r)[dUurRtT]]}` answered non-empty for every
+    // character and appended `$func` to every allargs key, dropping the
+    // specs whose key has no `f`/`p` variant (`functions -W`, `autoload -k`).
+    if rest.starts_with(')') {
         return None;
     }
     // Flag scanner per zshparam(1) "Subscript Flags" /
@@ -2969,8 +2980,36 @@ pub(crate) fn getarg<'a>(
             )
         };
         let key_compare = |target: &str| -> bool {
-            if exact || (match_against_key && !key_glob) {
-                // (e) literal, and k/K exact key compare (no glob).
+            if key_match && !exact {
+                // c:Src/params.c:653-660 — SCANPM_KEYMATCH (set for `k`/`K`
+                // at c:1714-1715) inverts the usual direction: the STORED KEY
+                // is compiled as the pattern and matched against the SUBSCRIPT
+                // text (`scanstr`), not the other way round:
+                //     char *tmp = dupstring(v.pm->node.nam);
+                //     tokenize(tmp); remnulargs(tmp);
+                //     if (!(prog = patcompile(tmp, 0, NULL)) ||
+                //         !pattry(prog, scanstr)) return;
+                // That is the whole point of the flag — `_netcat` stores glob
+                // keys (`'*-l*'`, `'*-i secs*'`, …) and asks
+                // `$optionmap[(K)$help]` for the options the binary's `-h`
+                // output mentions. A plain `target == pat` compare answered no
+                // for every key, so `nc -<TAB>`/`netstat -<TAB>` fell back to
+                // the raw assoc instead of the help-filtered option set.
+                // C compiles per node here too (c:654-659), so the one-shot
+                // `compiled_pat` above (which the r/R value scan needs for its
+                // 566k-entry history case) does not apply.
+                patcompile(
+                    &{
+                        let mut t = target.to_string();
+                        crate::ported::glob::tokenize(&mut t);
+                        t
+                    },
+                    PAT_HEAPDUP as i32,
+                    None,
+                )
+                .map_or(false, |p| pattry(&p, pat))
+            } else if exact || (match_against_key && !key_glob) {
+                // (e) literal key compare.
                 target == pat
             } else {
                 // i/I glob the key; r/R glob the value.
@@ -2990,7 +3029,19 @@ pub(crate) fn getarg<'a>(
                     out.push(if return_index { k.clone() } else { v.clone() });
                 }
             }
-            return Some(getarg_out::Value(Value::str(out.join(" "))));
+            // c:Src/params.c:1724-1734 — the MATCHMANY forms (`I`/`R`/`K`, or a
+            // negative `n` that flips `down`) set SCANPM_MATCHMANY, so getindex
+            // takes the `getvaluearr(v)` branch and the expansion is ARRAY-
+            // shaped: unquoted `$optionmap[(K)$help]` yields one word per match,
+            // which is how `_netcat` feeds `_arguments` twelve separate option
+            // specs. Joining here collapsed all twelve into a single word and
+            // `comparguments` rejected it ("invalid option definition"). Array
+            // and scalar callers are both served: `Value::Array::to_str`
+            // (fusevm value.rs:149-151) joins with " ", the exact string this
+            // used to return.
+            return Some(getarg_out::Value(Value::Array(
+                out.into_iter().map(Value::str).collect(),
+            )));
         }
         // c:1753 — `!--num` skips matches until the Nth.
         let mut remaining = num;
@@ -6929,23 +6980,33 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             crate::ported::hashtable::emptycmdnamtable();
         }
     }
-    // c:Src/params.c — `{ "PROMPT", PM_SCALAR|PM_ALIAS, &ps1, ... }` and the
-    // matching `{ "PS1", PM_SCALAR, &ps1, ... }` share the same backing
-    // pointer; assigning to PROMPT updates the byte that PS1 reads (and
-    // vice versa). Same for PROMPT2↔PS2, PROMPT3↔PS3, PROMPT4↔PS4.
-    // zshrs lacks PM_ALIAS — mirror the scalar write to the alias. Bug #518.
-    let alias_pair: Option<&str> = match name {
-        "PROMPT" => Some("PS1"),
-        "PS1" => Some("PROMPT"),
-        "PROMPT2" => Some("PS2"),
-        "PS2" => Some("PROMPT2"),
-        "PROMPT3" => Some("PS3"),
-        "PS3" => Some("PROMPT3"),
-        "PROMPT4" => Some("PS4"),
-        "PS4" => Some("PROMPT4"),
-        _ => None,
-    };
-    if let Some(other) = alias_pair {
+    // c:Src/params.c — the prompt specials are IPDEF7 entries that share one
+    // backing pointer: `{"PS1",…,&prompt}`, `{"PROMPT",…,&prompt}` and
+    // `{"prompt",…,&prompt}` are the SAME storage, so a write through any one
+    // of them is visible through all three (zshparam(1): "prompt <S> <Z>
+    // Same as PS1"). Likewise PS2/PROMPT2 (&prompt2), PS3/PROMPT3, PS4/PROMPT4,
+    // RPS1/RPROMPT (&rprompt) and RPS2/RPROMPT2 (&rprompt2).
+    // zshrs lacks PM_ALIAS — mirror the scalar write to every other member of
+    // the group. Bug #518.
+    //
+    // The lowercase `prompt` member is load-bearing for completion: zpwr's
+    // `$fpath` `_parameters` lists each parameter with `${(P)name}` as its
+    // description, so a `prompt` that reads back empty made `pr<TAB>` render
+    // `prompt  -- ` where zsh renders `prompt  -- <$PS1>`.
+    const ALIAS_GROUPS: &[&[&str]] = &[
+        &["PS1", "PROMPT", "prompt"],
+        &["PS2", "PROMPT2"],
+        &["PS3", "PROMPT3"],
+        &["PS4", "PROMPT4"],
+        &["RPS1", "RPROMPT"],
+        &["RPS2", "RPROMPT2"],
+    ];
+    let alias_group: &[&str] = ALIAS_GROUPS
+        .iter()
+        .copied()
+        .find(|g| g.contains(&name))
+        .unwrap_or(&[]);
+    for other in alias_group.iter().copied().filter(|n| *n != name) {
         if let Ok(mut tab) = paramtab().write() {
             let entry = tab.entry(other.to_string()).or_insert_with(|| {
                 Box::new(param {
@@ -11249,7 +11310,23 @@ pub fn endparamscope() {
                 // data is visible again. Mirrors the C copyparam +
                 // pm.old chain via parallel storage. Bug #415. Symmetric
                 // with the createparam push-side.
-                if was_assoc && outer_is_assoc {
+                //
+                // The condition must mirror the PUSH exactly: createparam
+                // (params.rs:2260) pushes whenever the OUTER pm is
+                // PM_HASHED and the new one is PM_LOCAL — the new pm's own
+                // type is irrelevant. Gating the pop on `was_assoc` (the
+                // LOCAL being hashed) stranded every save made by a
+                // NON-hashed local, leaving the cleared/empty bag in place
+                // for the rest of the process:
+                //   typeset -A h=(a 1); f(){ local h; }; f; echo ${h[a]}
+                // printed nothing instead of `1`, and `local options` /
+                // `local functions` (git-completion.bash's
+                // `__git_resolve_builtins`) permanently blanked the
+                // zsh/parameter magic assoc for the whole session.
+                // `pm.level > ll` already restricts this loop to locals,
+                // so `outer_is_assoc` alone is the mirror image.
+                let _ = was_assoc;
+                if outer_is_assoc {
                     let stk_mtx =
                         PARAMTAB_HASHED_SHADOW_STACK.get_or_init(|| Mutex::new(HashMap::new()));
                     let saved = if let Ok(mut stk) = stk_mtx.lock() {

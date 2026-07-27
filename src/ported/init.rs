@@ -1725,6 +1725,28 @@ pub fn noop_function_int(_nothing: i32) { // c:1720
                                           /* do nothing */                                                         // c:1720
 }
 
+/// Once-guard for the `zleentry` module autoload (c:1755 `case 0:`).
+///
+/// In C the guard IS `zle_load_state == 0`: ZLE is dlopened lazily by
+/// the first `zleentry` call, and that same call loads `zsh/compctl`
+/// alongside it (c:1764-1765). zshrs links ZLE in statically and
+/// initialises it earlier, in `zsh_main`, which already sets
+/// `zle_load_state = 1` — so the C gate can never fire at the first ZLE
+/// read. This flag restores the one-shot semantics for the
+/// module-registration half of c:1755-1773, which still has to happen
+/// at the first zleentry-equivalent call and not before.
+///
+/// The observable effect of that half: an interactive shell has
+/// `zsh/zle`, `zsh/complete` (a `zsh/compctl` dependency) and
+/// `zsh/compctl` marked loaded from its first line read onwards, while
+/// `-c` / script runs — which never reach a ZLE read — leave all three
+/// merely `autoloaded`. `_default` (Completion/Zsh/Context/_default)
+/// branches on `zmodload -e zsh/compctl` to decide whether the legacy
+/// `compcall` engine is available, so this is load-bearing for
+/// completion parity, not just for `zmodload` listings.
+pub static zle_modules_loaded: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Port of `mod_export char *zleentry(...)` from Src/init.c:1743.
 pub fn zleentry(cmd: i32) -> Option<String> {
     // c:1743
@@ -1733,10 +1755,23 @@ pub fn zleentry(cmd: i32) -> Option<String> {
         // c:1755
         0 => {
             // c:1756
-            // ZLE_CMD_TRASH=?, ZLE_CMD_RESET_PROMPT=?, ZLE_CMD_REFRESH=?
-            if cmd != 1 && cmd != 2 && cmd != 3 {
-                // c:1761-1762
-                // load_module("zsh/zle", NULL, 0)                           // c:1764
+            // c:1761-1762 — `if (cmd != ZLE_CMD_TRASH &&
+            //   cmd != ZLE_CMD_RESET_PROMPT && cmd != ZLE_CMD_REFRESH)`
+            if cmd != crate::ported::zsh_h::ZLE_CMD_TRASH
+                && cmd != crate::ported::zsh_h::ZLE_CMD_RESET_PROMPT
+                && cmd != crate::ported::zsh_h::ZLE_CMD_REFRESH
+            {
+                // c:1764 — `if (load_module("zsh/zle", NULL, 0) != 1)`
+                // then c:1765 `(void)load_module("zsh/compctl", NULL, 0)`.
+                // `zsh/compctl` pulls in `zsh/complete` through the
+                // compctl.mdd moddeps edge seeded in
+                // register_builtin_modules.
+                if !zle_modules_loaded.swap(true, Ordering::SeqCst) {
+                    let mut tab = crate::ported::module::MODULESTAB.lock().unwrap();
+                    if tab.load_module("zsh/zle") {
+                        tab.load_module("zsh/compctl"); // c:1765
+                    }
+                }
                 zle_load_state.store(2, Ordering::SeqCst); // c:1770
             }
         }

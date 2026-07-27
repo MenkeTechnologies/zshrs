@@ -47,12 +47,47 @@ fn make_ops() -> options {
 /// `_files`, then `_value` (when MAGICEQUALSUBST + `=` in PREFIX).
 pub fn _default(args: &[String]) -> i32 {
     // sh:5-13  use-compctl branch
+    //
+    // sh:5-6 is `{ zstyle -s … use-compctl ctl || zmodload -e
+    // zsh/compctl } && [[ "$ctl" != (no|false|0|off) ]]`. Two pieces
+    // were missing here:
+    //   * the `|| zmodload -e zsh/compctl` disjunct — with the style
+    //     unset (the normal case) upstream still enters the branch
+    //     whenever the legacy compctl module is loaded, with `ctl`
+    //     left at its `local ctl` empty value;
+    //   * the empty-`ctl` test: upstream compares `$ctl` against
+    //     `(no|false|0|off)`, and an unset `ctl` is none of those, so
+    //     an empty value ENTERS the branch. The port's extra
+    //     `!ctl.is_empty()` inverted that.
+    // sh:12 is `compcall "$opt[@]" || return 0` — `_default` gives up
+    // (rc 0) when compcall FAILS and otherwise falls through to
+    // `_files`. The port had the test the other way round.
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let ctl = lookupstyle(&format!(":completion:{}:", curcontext), "use-compctl")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    if !ctl.is_empty() && !matches!(ctl.as_str(), "no" | "false" | "0" | "off") {
+    let styleval = lookupstyle(&format!(":completion:{}:", curcontext), "use-compctl");
+    // `zstyle -s` succeeds iff the style is set, joining its values
+    // into `ctl`; on failure `ctl` keeps the empty `local ctl` value.
+    let styled = !styleval.is_empty();
+    let ctl = if styled {
+        styleval.join(" ")
+    } else {
+        String::new()
+    };
+    // `zmodload -e NAME` — c:Src/module.c:2637 bin_zmodload_exist:
+    // module found, its handle slot filled (static-link analog:
+    // MOD_INIT_B, i.e. boot_ ran) and not mid-unload.
+    let compctl_loaded = crate::ported::module::MODULESTAB
+        .lock()
+        .map(|t| {
+            t.modules
+                .get("zsh/compctl")
+                .map(|m| {
+                    (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                        && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+                })
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if (styled || compctl_loaded) && !matches!(ctl.as_str(), "no" | "false" | "0" | "off") {
         let mut opt: Vec<String> = Vec::new();
         if ctl.contains("first") {
             opt.push("-T".to_string());
@@ -60,8 +95,12 @@ pub fn _default(args: &[String]) -> i32 {
         if ctl.contains("default") {
             opt.push("-D".to_string());
         }
-        // sh:12 — compcall via dispatch (no Rust bin_compcall)
-        if dispatch_function_call("compcall", &opt).unwrap_or(1) == 0 {
+        // sh:12 — `compcall "$opt[@]" || return 0`.
+        // `compcall` is the zsh/compctl BUILTIN (c:Src/Zle/compctl.c:1676),
+        // not a shell function, so `dispatch_function_call` — which only
+        // resolves shfuncs / Rust completer ports — never reached it and
+        // the branch was a silent no-op even when it was entered.
+        if crate::ported::zle::compctl::bin_compcall("compcall", &opt, &make_ops(), 0) != 0 {
             return 0;
         }
     }

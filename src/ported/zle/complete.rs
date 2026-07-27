@@ -2065,7 +2065,7 @@ pub struct compparam {
 /// `Src/Zle/complete.c:1248`. Real-params table (CP_REALPARAMS) — the
 /// non-keyparam compsys parameters that live directly in the global
 /// paramtab.
-const COMPRPARAMS: &[compparam] = &[
+pub const COMPRPARAMS: &[compparam] = &[
     compparam {
         name: "words",
         r#type: PM_ARRAY as i32,

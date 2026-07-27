@@ -1089,6 +1089,17 @@ pub fn cd_init(
             new_str.len = str_s.len() as i32;
             new_str.width = niceztrlen(&str_s) as i32;
             new_str.kind = 0;
+            // c:527 `str->set = set;` — back-link every cdstr to the
+            // cdset it came from. C stores the pointer; the port stores
+            // the set's position in `cd_state.sets`, which is the index
+            // this set will occupy once `sets_collected` is chained.
+            // Without it every cdstr kept the `Default` 0 and `cd_get`
+            // (c:634 `run->strs->set->opts`) handed EVERY group the
+            // FIRST set's per-set compadd options — so `_arguments`'
+            // three-group `_describe` (`next -M m -- direct -S '' -M m
+            // -- equal -qS= -M m`) completed `ls --<TAB>` to `--color`
+            // with `next`'s default space suffix instead of `--color=`.
+            new_str.set = sets_collected.len();
             strs_vec.push(new_str);
         }
 
@@ -3247,8 +3258,18 @@ pub fn ca_foreign_opt(curset: &cadef, all: &cadef, option: &str) -> i32 {
 /// Direct port of `static Caarg ca_get_arg(Cadef d, int n)` from
 /// `Src/Zle/computil.c:1807-1823`. Walks `d->args` looking for the
 /// arg whose `[min, num]` range contains `n`. Falls back to `d->rest`
-/// when no positional matches. Returns a shallow clone (no `next`)
-/// of the matched arg.
+/// when no positional matches.
+///
+/// C returns the `Caarg` **pointer into `d->args`**, so the caller
+/// still sees `arg->next` and can walk the rest of the chain — which
+/// `ca_set_data` (c:2548-2562) relies on to emit `argument-2`,
+/// `argument-3`, … alongside `argument-1` when a leading spec is
+/// optional (`::foo:action`). The port used to return a shallow copy
+/// with `next: None`, so that walk always fell straight through to
+/// `d->rest`: `rustup <TAB>` offered `argument-1 argument-rest` where
+/// zsh offers `argument-1 argument-2 argument-rest`, and the
+/// subcommand list from `:: :_rustup_commands` never ran. Clone the
+/// whole chain so the returned arg keeps its successors.
 pub fn ca_get_arg(d: &cadef, mut n: i32) -> Option<Box<caarg>> {
     // c:1807
     if d.argsactive == 0 {
@@ -3275,41 +3296,15 @@ pub fn ca_get_arg(d: &cadef, mut n: i32) -> Option<Box<caarg>> {
     if let Some(node) = a {
         // c:1817
         if node.active != 0 && node.min <= n && node.num >= n {
-            return Some(Box::new(caarg {
-                // c:1818
-                next: None,
-                descr: node.descr.clone(),
-                xor: node.xor.clone(),
-                action: node.action.clone(),
-                r#type: node.r#type,
-                end: node.end.clone(),
-                opt: node.opt.clone(),
-                num: node.num,
-                min: node.min,
-                direct: node.direct,
-                active: node.active,
-                gsname: node.gsname.clone(),
-            }));
+            // c:1818 `return a;` — the live node, `next` chain intact.
+            return Some(Box::new(node.clone()));
         }
     }
 
     // c:1820 — rest fallback.
     if let Some(r) = d.rest.as_deref() {
         if r.active != 0 {
-            return Some(Box::new(caarg {
-                next: None,
-                descr: r.descr.clone(),
-                xor: r.xor.clone(),
-                action: r.action.clone(),
-                r#type: r.r#type,
-                end: r.end.clone(),
-                opt: r.opt.clone(),
-                num: r.num,
-                min: r.min,
-                direct: r.direct,
-                active: r.active,
-                gsname: r.gsname.clone(),
-            }));
+            return Some(Box::new(r.clone()));
         }
     }
     None // c:1820
@@ -9577,6 +9572,76 @@ mod tests {
         assert_eq!(r2.r#type, CRT_SIMPLE);
         assert_eq!(r2.count, 1);
         assert!(r2.next.is_none(), "no third run");
+    }
+
+    /// c:527 `str->set = set;` + c:634 `run->strs->set->opts` — each
+    /// `_describe` set must hand its OWN per-set compadd options to the
+    /// group `cd_get` emits for it.
+    ///
+    /// This is the `ls --<TAB>` regression: `_arguments` calls
+    /// `_describe -O option next -M m -- direct -S '' -M m -- equal
+    /// -qS= -M m` (Completion/Base/Utility/_arguments:527-530), so the
+    /// `=`-taking long options live in the third set whose per-set opt
+    /// is `-qS=`. When `cd_init` left every `cdstr.set` at the
+    /// `Default` 0, `cd_get` looked up set 0 for every run and handed
+    /// the `equal` group the `next` group's options — `--color`
+    /// completed with the default space suffix instead of `--color=`.
+    ///
+    /// Revert the `new_str.set = sets_collected.len()` assignment in
+    /// `cd_init` and the third assertion below fails with the FIRST
+    /// set's opts.
+    #[test]
+    fn cd_init_backlinks_each_cdstr_to_its_own_set() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // Three sets shaped like _arguments' next/direct/equal call.
+        setaparam("cdset_next", vec!["-a".to_string()]);
+        setaparam("cdset_direct", vec!["-b".to_string()]);
+        setaparam("cdset_equal", vec!["--color".to_string()]);
+        let args: Vec<String> = [
+            "cdset_next",
+            "-Mnext",
+            "--",
+            "cdset_direct",
+            "-S",
+            "",
+            "--",
+            "cdset_equal",
+            "-qS=",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // disp=0 → `compdescribe -i` shape: one CRT_SIMPLE run per set.
+        let rc = cd_init("compdescribe", "", "0", "", &[], &args, 0);
+        assert_eq!(rc, 0, "cd_init parsed the three sets");
+
+        let params: Vec<String> = ["cd_csl", "cd_opts", "cd_mats", "cd_dpys"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut groups: Vec<(Vec<String>, Vec<String>)> = Vec::new();
+        while cd_get(&params) == 0 {
+            groups.push((
+                crate::ported::params::getaparam("cd_mats").unwrap_or_default(),
+                crate::ported::params::getaparam("cd_opts").unwrap_or_default(),
+            ));
+        }
+        assert_eq!(groups.len(), 3, "one run per set: {:?}", groups);
+        assert_eq!(groups[0].0, vec!["-a".to_string()]);
+        assert_eq!(groups[0].1, vec!["-Mnext".to_string()]);
+        assert_eq!(groups[1].0, vec!["-b".to_string()]);
+        assert_eq!(
+            groups[1].1,
+            vec!["-S".to_string(), String::new()],
+            "second group must carry the SECOND set's opts"
+        );
+        assert_eq!(groups[2].0, vec!["--color".to_string()]);
+        assert_eq!(
+            groups[2].1,
+            vec!["-qS=".to_string()],
+            "the `equal` group must carry -qS= so `ls --<TAB>` inserts `--color=`"
+        );
     }
 
     /// c:846-895 — bin_compdescribe with invalid option returns 1.

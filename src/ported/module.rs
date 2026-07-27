@@ -1498,6 +1498,31 @@ impl modulestab {
             }
             self.modules.insert(name.to_string(), module);
         }
+
+        // c:Src/init.c:1705 `#include "bltinmods.list"` — the generated
+        // list ends with one `add_dep(MODULE, DEP)` call per `moddeps=`
+        // entry in the module's `.mdd` (emitted by
+        // `Src/mkbltnmlst.sh:75-77` for `load=yes` modules and
+        // `:96-98` for dynamic `load=no` ones). Without these edges
+        // `load_module("zsh/compctl")` never pulls in `zsh/complete`
+        // and `zsh/zle`, and `zmodload -d` prints nothing where zsh
+        // prints seven lines. The set below is exactly what
+        // `/opt/homebrew/bin/zsh -fc 'zmodload -d'` reports.
+        let static_moddeps: &[(&str, &[&str])] = &[
+            ("zsh/compctl", &["zsh/complete", "zsh/zle"][..]), // Src/Zle/compctl.mdd
+            ("zsh/complete", &["zsh/zle"][..]),                // Src/Zle/complete.mdd
+            ("zsh/complist", &["zsh/complete", "zsh/zle"][..]), // Src/Zle/complist.mdd
+            ("zsh/computil", &["zsh/complete", "zsh/zle"][..]), // Src/Zle/computil.mdd
+            ("zsh/zftp", &["zsh/net/tcp"][..]),                // Src/Modules/zftp.mdd
+            ("zsh/zleparameter", &["zsh/zle"][..]),            // Src/Zle/zleparameter.mdd
+            ("zsh/zutil", &["zsh/complete"][..]),              // Src/Modules/zutil.mdd
+        ];
+        for (name, deps) in static_moddeps {
+            for dep in *deps {
+                add_dep(self, name, dep); // c:2369
+            }
+        }
+
         // c:Src/init.c:1708 init_bltinmods — run per-module `boot_`
         // for each statically-linked default-loaded module so paramtab
         // entries (e.g. `watch`/`WATCH` from zsh/watch, c:734) get

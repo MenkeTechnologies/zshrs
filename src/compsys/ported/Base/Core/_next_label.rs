@@ -92,6 +92,8 @@ fn funcstack_depth() -> usize {
 /// to emit the per-tag option array. Returns 0 on advance, 1 when
 /// no specs remain.
 pub fn _next_label(args: &[String]) -> i32 {
+    // sh:3  local __gopt __descr __spec
+    crate::compsys::ported::shared::declare_locals(&["__gopt", "__descr", "__spec"], 0);
     // sh:3-6
     let (argv, gopt) = run_gopt(args);
 

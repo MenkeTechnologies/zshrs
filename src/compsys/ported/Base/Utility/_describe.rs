@@ -136,6 +136,22 @@ fn resolve_array_arg(arg: &str) -> Vec<String> {
 ///
 /// Signature preserved for callers (`_arguments`, `_alternative`).
 pub fn _describe(args: &[String]) -> i32 {
+    // sh:12-17 — `local _opt _expl _tmpm _tmpd _mlen _noprefix`,
+    // `local _type=values _descr _ret=1 _showd _nm _hide _args _grp
+    // _sep`, `local csl=… csl2`, `local _oargv _argv _new _strs _mats
+    // _opts _i _try=0`, `local OPTIND OPTARG`, `local -a _jvx12`.
+    {
+        use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
+        declare_locals(
+            &[
+                "_opt", "_expl", "_tmpm", "_tmpd", "_mlen", "_noprefix", "_type", "_descr", "_ret",
+                "_showd", "_nm", "_hide", "_args", "_grp", "_sep", "csl", "csl2", "_oargv", "_argv",
+                "_new", "_strs", "_mats", "_opts", "_i", "_try", "OPTIND", "OPTARG",
+            ],
+            0,
+        );
+        declare_locals(&["_jvx12"], PM_ARRAY);
+    }
     // sh:5-16 — locals.
     let mut _type = "values".to_string();
     let mut _noprefix = false;

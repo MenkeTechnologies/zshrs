@@ -164,8 +164,7 @@ fn dates_fmt(timespec: &str) -> String {
 }
 
 /// `_globquals` — complete glob qualifiers inside `(...)`.
-pub fn _globquals() -> i32 {
-    // sh:8  while [[ -n $PREFIX ]]; do
+pub fn _globquals() -> i32 {    // sh:8  while [[ -n $PREFIX ]]; do
     loop {
         // sh:8 loop guard.
         let before = getsparam("PREFIX").unwrap_or_default();

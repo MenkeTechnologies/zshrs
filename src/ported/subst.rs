@@ -6494,6 +6494,11 @@ pub fn paramsubst(
                 crate::ported::modules::parameter::PARTAB
                     .iter()
                     .find(|e_| e_.name == var_name.as_str())
+                    // c:Src/params.c:1090-1115 createparam — a `local
+                    // NAME` replaces the special's paramtab node, so the
+                    // getnode fast path must not fire while the plain
+                    // node is the visible binding.
+                    .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))
                     .filter(|e_| match e_.module {
                         Some(m_) => crate::ported::module::MODULESTAB
                             .lock()
@@ -6514,7 +6519,17 @@ pub fn paramsubst(
             } else if !sub.trim_start().starts_with('(')
                 && sub != "@"
                 && sub != "*"
-                && assoc_contains(&var_name)
+                // The gate must be "is this name in the HASHED STORE", not
+                // `assoc_contains` — that answers yes for the `zsh/parameter`
+                // magic assocs too (parameters/functions/aliases/options/…),
+                // whose data lives behind a getfn, not in the store. Entering
+                // this arm for one of those read an absent store entry and
+                // returned EMPTY: `${(ok)parameters[PATH]}` printed nothing
+                // where zsh prints `PATH` (the flagged-subscript forms skip
+                // the getfn arm above by design and need the map machinery
+                // below). `assoc_key_hit` answers Some only for a real hashed
+                // param, so magic assocs fall through as they did before.
+                && crate::vm_helper::assoc_key_hit(&var_name, sub).is_some()
             {
                 // Fast single-key assoc read. A plain `${assoc[key]}`
                 // (no subscript flags, not `@`/`*`) needs exactly one
@@ -7938,7 +7953,11 @@ pub fn paramsubst(
                     let arr = arrays_get(&var_name)?;
                     crate::ported::modules::parameter::PARTAB_ARRAY
                         .iter()
-                        .find(|e_| e_.name == var_name.as_str())?;
+                        .find(|e_| e_.name == var_name.as_str())
+                        // c:Src/params.c:1090-1115 createparam — a `local NAME`
+                        // replaces the special's paramtab node with a plain one, so
+                        // the magic getfn must not answer for this read.
+                        .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
                     let idx_n: i64 = crate::ported::math::mathevali(sub.trim()).unwrap_or(0);
                     let len = arr.len() as i64;
                     let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
@@ -7991,7 +8010,11 @@ pub fn paramsubst(
                         // ${commands[git]} would enumerate $PATH).
                         let e_ = crate::ported::modules::parameter::PARTAB
                             .iter()
-                            .find(|e_| e_.name == var_name.as_str())?;
+                            .find(|e_| e_.name == var_name.as_str())
+                            // c:Src/params.c:1090-1115 createparam — a `local NAME`
+                            // replaces the special's paramtab node with a plain one, so
+                            // the magic getfn must not answer for this read.
+                            .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
                         if let Some(m_) = e_.module {
                             if !crate::ported::module::MODULESTAB
                                 .lock()
@@ -8017,7 +8040,11 @@ pub fn paramsubst(
                         // ${commands[git]} would enumerate $PATH).
                         let e_ = crate::ported::modules::parameter::PARTAB
                             .iter()
-                            .find(|e_| e_.name == var_name.as_str())?;
+                            .find(|e_| e_.name == var_name.as_str())
+                            // c:Src/params.c:1090-1115 createparam — a `local NAME`
+                            // replaces the special's paramtab node with a plain one, so
+                            // the magic getfn must not answer for this read.
+                            .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
                         if let Some(m_) = e_.module {
                             if !crate::ported::module::MODULESTAB
                                 .lock()
@@ -9225,12 +9252,25 @@ pub fn paramsubst(
                 // over the user's 49k functions → precmd took minutes (the
                 // startup hang). PARTAB membership is a tiny fixed-size scan;
                 // magic assocs fall through to the single-key getfn path
-                // below (O(1)). Regular user assocs still use assoc_get.
+                // below (O(1)).
+                //
+                // A REGULAR user assoc needs the same treatment: this is a
+                // key-EXISTENCE test, and `assoc_get` clones the whole map
+                // and rebuilds zsh bucket order (re-hashing every key) to
+                // answer it. `assoc_key_hit` reads the same store under one
+                // lock with a single `contains_key`, so the answer is
+                // identical while the cost stops scaling with $#assoc. This
+                // is the set-ness probe every textual `$h[$k]` / `${#h[$k]}`
+                // expansion runs (the braced form is compiled straight to
+                // BUILTIN_ARRAY_INDEX and never lands here), so a shell loop
+                // over an N-entry hash was O(N²): 3000 keys took 8.7s against
+                // zsh's 0.003s, and `for k in ${(k)_comps}; do : $_comps[$k]`
+                // over the 51k-entry compsys table never finished.
                 || (crate::ported::modules::parameter::PARTAB
                     .iter()
                     .all(|e_| e_.name != var_name.as_str())
-                    && assoc_get(&var_name)
-                        .map(|m| m.contains_key(sub))
+                    && crate::vm_helper::assoc_key_hit(&var_name, sub)
+                        .map(|(contains, _)| contains)
                         .unwrap_or(false))
                 || arrays_get(&var_name)
                     .as_ref()
@@ -9301,7 +9341,11 @@ pub fn paramsubst(
                     // ${commands[git]} would enumerate $PATH).
                     let e_ = crate::ported::modules::parameter::PARTAB
                         .iter()
-                        .find(|e_| e_.name == var_name.as_str())?;
+                        .find(|e_| e_.name == var_name.as_str())
+                        // c:Src/params.c:1090-1115 createparam — a `local NAME`
+                        // replaces the special's paramtab node with a plain one, so
+                        // the magic getfn must not answer for this read.
+                        .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
                     if let Some(m_) = e_.module {
                         if !crate::ported::module::MODULESTAB
                             .lock()
@@ -17059,7 +17103,9 @@ pub fn paramsubst(
            // won't re-scan. `IN_PARAMSUBST_NEST` is bumped by stringsubst around
            // its paramsubst call (subst.rs:1064), so `== 0` means the non-
            // re-scanning (compiled/direct) path where #641's fix is needed.
-        let suffix = if suffix.contains('$') && IN_PARAMSUBST_NEST.with(|c| c.get()) == 0 {
+        let suffix_already_expanded =
+            suffix.contains('$') && IN_PARAMSUBST_NEST.with(|c| c.get()) == 0;
+        let suffix = if suffix_already_expanded {
             singsub(&suffix)
         } else {
             suffix
@@ -17558,6 +17604,67 @@ pub fn paramsubst(
             // clears it (c:3924). Gating on `isarr != 0` reproduces both.
             PARAMSUBST_LF_ARRAY.with(|c| c.set(isarr != 0 && !forced_split_to_one));
 
+            // c:Src/subst.c:4316-4324 — the plan9 (RC_EXPAND_PARAM / `${^a}`)
+            // cross product substitutes the TRAILING text ONCE, up front:
+            //     *--fstr = Marker;
+            //     init_list1(tl, fstr);
+            //     if (!eval && !stringsubst(&tl, firstnode(&tl), ssub, ret_flags, 0))
+            // and only then glues each array element to the already-expanded
+            // suffix nodes. The port instead carried the RAW suffix into every
+            // node and leaned on stringsubst re-scanning the returned position
+            // — which is inside the LAST node only. So a suffix holding its own
+            // expansion came out literal on every element but the last:
+            //     a=(x y z); v=V; print -rl -- ${^a}-"${v:+A"B"C}"
+            // gave `x-${v:+ABC}`, `y-${v:+ABC}`, `z-ABC` instead of three
+            // `-ABC`. (`${^a}-$v` escapes it because the compiler's word-segment
+            // path handles that shape; a suffix carrying a Bnull / quote marker
+            // falls through to this whole-word path instead.) That is exactly
+            // _man's
+            //     pages=( ${^pages}/"*${sect:+.$sect"*"}" )
+            // which left a literal `${sect:+.$sect*}` glued to every man
+            // directory but the last, so `man <TAB>` globbed ONE directory of
+            // 54 — 659 matches where zsh finds 33678.
+            //
+            // Extra nodes from a suffix that itself expands to MULTIPLE words
+            // are appended once after the whole cross product, per C's trailing
+            // `for (; tn; incnode(tn))` loop (c:4351-4359).
+            let mut plan9_suffix_tail: Vec<String> = Vec::new();
+            let mut plan9_pre_subst = false;
+            let suffix = if plan9
+                && !eval
+                // c:4261 — the `(!aval[0] || !aval[1])` single-element early
+                // return is skipped when plan9, so a 1-element array
+                // cross-products too. An EMPTY array is excluded: c:4362
+                // `if (plan9) { uremnode(l, n); return n; }` deletes the whole
+                // word, suffix and all.
+                && !parts.is_empty()
+                && !suffix_already_expanded
+                && suffix
+                    .chars()
+                    .any(|c| matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}'))
+            {
+                let mut tl = LinkList::default(); // c:4318 local_list1(tl)
+                tl.push_back(suffix.clone()); // c:4321 init_list1(tl, fstr)
+                let ssub = pf_flags & PREFORK_SINGLE; // c:1759
+                match stringsubst(&mut tl, 0, ssub, ret_flags, false) {
+                    // c:4323
+                    Some(_) => {
+                        plan9_pre_subst = true;
+                        for k in 1..tl.nodes.len() {
+                            if let Some(extra) = tl.getdata(k) {
+                                plan9_suffix_tail.push(extra.clone());
+                            }
+                        }
+                        tl.getdata(0).cloned().unwrap_or_default()
+                    }
+                    // c:4324 — `return NULL` on error; the Rust port has no
+                    // error return here, so keep the raw suffix.
+                    None => suffix,
+                }
+            } else {
+                suffix
+            };
+
             let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
             for (i, part) in parts.iter().enumerate() {
                 let s = if plan9 || parts.len() == 1 {
@@ -17581,6 +17688,9 @@ pub fn paramsubst(
                 };
                 nodes.push(s);
             }
+            // c:Src/subst.c:4351-4359 — a suffix whose own expansion produced
+            // extra words contributes them AFTER the whole cross product.
+            nodes.append(&mut plan9_suffix_tail);
             // c:Src/subst.c:184-187 — `else if (!keep) uremnode` — in
             // unquoted (qt=false) context the C source's prefork drops
             // empty list nodes BEFORE word-splitting reaches argv.
@@ -17622,7 +17732,12 @@ pub fn paramsubst(
                 // original last may be gone — consume the whole (new)
                 // last node; only empty nodes were dropped, so
                 // nothing scannable is skipped.
-                let last_pos = if nodes.len() == pre_retain_len {
+                let last_pos = if plan9_pre_subst {
+                    // c:4323 — the suffix already went through stringsubst
+                    // above, so pointing the caller back AT it would expand it
+                    // a second time. Consume the whole last node instead.
+                    nodes.last().map(|n| n.chars().count()).unwrap_or(0)
+                } else if nodes.len() == pre_retain_len {
                     last_value_chars
                 } else {
                     nodes.last().map(|n| n.chars().count()).unwrap_or(0)
@@ -17926,6 +18041,10 @@ pub fn paramsubst(
             } // c:1625
         } // c:1625
 
+        // Element list of a hash MATCHMANY search subscript (`(K)`/`(I)`/`(R)`),
+        // captured from getarg's array-shaped result so the unquoted splat below
+        // can emit one word per match. c:Src/params.c:1724-1734.
+        let mut flag_multi_parts: Option<Vec<String>> = None;
         let value = if let Some(sub) = subscript_str.as_deref() {
             // c:1625
             // Array / assoc element lookup. Port of zsh's
@@ -17934,7 +18053,23 @@ pub fn paramsubst(
             // (numeric / `*` / `@` / range), then scalar fallback
             // (zsh treats `$scalar[N]` as char-N of the scalar
             // string, 1-based; `$scalar[N,M]` as substring).
-            if let Some(map) = assoc_get(&var_name) {
+            if let Some((_, hit)) = (!sub.trim_start().starts_with('('))
+                .then(|| crate::vm_helper::assoc_key_hit(&var_name, sub))
+                .flatten()
+            {
+                // O(1) single-key fast path for the BARE `$h[key]` form
+                // (the braced `${h[key]}` arm has had one since the zpwr
+                // expandstats fix). A plain, non-flag subscript is an exact
+                // key lookup, so cloning the whole map below — and rebuilding
+                // zsh bucket order over every key — buys nothing. `assoc_key_hit`
+                // reads the same store under one lock and answers Some only
+                // when the name really is a hash, so the arm selection and the
+                // miss-is-empty result are unchanged. Without this, a loop over
+                // an N-entry hash ran O(N²): `for k in ${(k)h}; do : $h[$k];`
+                // over 3000 keys took 8.7s against zsh's 0.003s, and the same
+                // idiom over the 51k-entry `$_comps` never finished.
+                hit.unwrap_or_default() // c:1625
+            } else if let Some(map) = assoc_get(&var_name) {
                 // c:Src/params.c::getarg — (I)/(i)/(R)/(r)/(k)/(K)/(e)/(n)/(b)
                 // hash subscript routing. Delegate to the canonical getarg so
                 // the (e)-no-search exact KEY lookup and the search-flag value/
@@ -17954,6 +18089,14 @@ pub fn paramsubst(
                         }
                     })
                 {
+                    // c:Src/params.c:1724-1734 — a MATCHMANY search is array-
+                    // shaped (getvaluearr). getarg hands that back as
+                    // `Value::Array`; keep the element list so the unquoted
+                    // splat below emits one word per match instead of the
+                    // space-joined scalar.
+                    if let fusevm::Value::Array(ref parts) = v {
+                        flag_multi_parts = Some(parts.iter().map(|p| p.to_str()).collect());
+                    }
                     v.to_str().to_string()
                 } else {
                     map.get(sub).cloned().unwrap_or_default() // c:1625
@@ -18083,7 +18226,11 @@ pub fn paramsubst(
                     let arr = arrays_get(&var_name)?;
                     crate::ported::modules::parameter::PARTAB_ARRAY
                         .iter()
-                        .find(|e_| e_.name == var_name.as_str())?;
+                        .find(|e_| e_.name == var_name.as_str())
+                        // c:Src/params.c:1090-1115 createparam — a `local NAME`
+                        // replaces the special's paramtab node with a plain one, so
+                        // the magic getfn must not answer for this read.
+                        .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
                     let idx_n: i64 = crate::ported::math::mathevali(sub.trim()).unwrap_or(0);
                     let len = arr.len() as i64;
                     let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
@@ -18125,7 +18272,11 @@ pub fn paramsubst(
                         // ${commands[git]} would enumerate $PATH).
                         let e_ = crate::ported::modules::parameter::PARTAB
                             .iter()
-                            .find(|e_| e_.name == var_name.as_str())?;
+                            .find(|e_| e_.name == var_name.as_str())
+                            // c:Src/params.c:1090-1115 createparam — a `local NAME`
+                            // replaces the special's paramtab node with a plain one, so
+                            // the magic getfn must not answer for this read.
+                            .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
                         if let Some(m_) = e_.module {
                             if !crate::ported::module::MODULESTAB
                                 .lock()
@@ -18290,20 +18441,43 @@ pub fn paramsubst(
             || subscript_str.as_deref() == Some("*"); // c:3950
                                                       // Range subscript like `[1,3]` also produces array-shape
                                                       // slice — splat in non-DQ.
-        let splat_range = subscript_str
+        // c:Src/params.c:2037-2112 getindex — the `,` that opens a slice is
+        // the one the parse cursor sits on AFTER `getarg` has consumed the
+        // first index (`if (*s == ',') { s++; end = getarg(...) }`, c:2100).
+        // When the subscript opens with a flag group, getarg (c:1389) eats the
+        // group AND its search pattern all the way to the `]`, so no comma is
+        // ever left for that test — a comma inside the pattern is pattern text.
+        // Scanning the raw subscript for `,` instead misread
+        // `$optionmap[(K)$help]` (whose expanded pattern is a `-h` dump full of
+        // commas) as a SLICE, and the assoc-splat below returned every value in
+        // the hash: `nc -<TAB>` offered all 17 of `_netcat`'s option specs
+        // (`-G`/`-e`/`-g`/`-o`/`-q` included) instead of the 12 the binary's
+        // help actually mentions.
+        let sub_is_flag_group = subscript_str
             .as_deref()
-            .map(|s| s.contains(','))
-            .unwrap_or(false); // c:3950
+            .map(|s| {
+                let t = s.trim_start();
+                t.starts_with('(') || t.starts_with(crate::ported::zsh_h::Inpar)
+            })
+            .unwrap_or(false);
+        let splat_range = !sub_is_flag_group
+            && subscript_str
+                .as_deref()
+                .map(|s| s.contains(','))
+                .unwrap_or(false); // c:3950
                                // Assoc bare-name splat: `$assoc[@]` returns values, `$assoc[*]`
                                // returns values too. Per zsh, `(@k)assoc` returns keys; for
                                // bare `$assoc[@]` without (k), values is the convention.
         let splat_assoc = (splat_full || splat_range)        // c:3950
             && assoc_contains(&var_name); // c:3950
+                                          // c:Src/params.c:1724-1734 — a hash MATCHMANY subscript is array-shaped;
+                                          // `flag_multi_parts` holds the matched elements getarg found.
+        let splat_flag_multi = flag_multi_parts.is_some();
         if !qt                                                // c:3950
             && !ksharrays_bare // c:Src/params.c:2293-2296 — isarr=0, no splat
             && pf_flags & PREFORK_SINGLE == 0          // c:3950
-            && (subscript_str.is_none() || splat_full || splat_range) // c:3950
-            && (arrays_contains(&var_name) || splat_assoc)
+            && (subscript_str.is_none() || splat_full || splat_range || splat_flag_multi) // c:3950
+            && (arrays_contains(&var_name) || splat_assoc || splat_flag_multi)
         // c:3950
         {
             // c:3950
@@ -18346,7 +18520,14 @@ pub fn paramsubst(
             } else {
                 None
             }; // c:3950
-            if let Some(arr) = slice_arr.or(assoc_vals).or_else(|| arrays_get(&var_name)) {
+            // The MATCHMANY element list wins over every fallback: those return
+            // the WHOLE array/hash, while a search subscript selected a subset.
+            if let Some(arr) = flag_multi_parts
+                .clone()
+                .or(slice_arr)
+                .or(assoc_vals)
+                .or_else(|| arrays_get(&var_name))
+            {
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect(); // c:3950
                 let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
@@ -20258,7 +20439,7 @@ fn vars_contains(name: &str) -> bool {
 /// suffix because arrays_get("@") returned None and the array-index
 /// arm never fired — `set -- 1 2; print $@[@]` produced "1 2[@]"
 /// instead of zsh's "1 2".
-fn arrays_get(name: &str) -> Option<Vec<String>> {
+pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     // c:Src/params.c:570-575 — nameref deref before the read.
     if crate::ported::params::is_nameref(name) {
         let t = match crate::ported::params::resolve_nameref_name(name, None) {
@@ -20299,11 +20480,16 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
             return Some(v);
         }
     }
+    // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset
+    // NAME` replaces the special's paramtab node with a plain one, so
+    // none of the magic-array arms below may answer; fall through to
+    // the plain node's `u_arr` at the bottom of this function.
+    let magic_shadowed = crate::vm_helper::magic_special_shadowed(name);
     // c:Src/Modules/parameter.c:2239 — `dirstack` PM_SPECIAL array
     // reads the canonical DIRSTACK LinkList via dirs_gsu.getfn.
     // paramtab has no u_arr backing for it; route here so
     // `$dirstack` / `${#dirstack}` / `${dirstack[N]}` read live.
-    if name == "dirstack" {
+    if !magic_shadowed && name == "dirstack" {
         if let Ok(d) = crate::ported::modules::parameter::DIRSTACK.lock() {
             return Some(d.clone());
         }
@@ -20312,14 +20498,14 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     // populated at startup. signals[1] = "EXIT", signals[2] = "HUP",
     // etc. zsh exposes this as a special parameter via PM_ARRAY
     // (Src/Modules/parameter.c).
-    if name == "signals" {
+    if !magic_shadowed && name == "signals" {
         return Some(crate::ported::jobs::sig_names_for_signals_param());
     }
     // c:Src/Modules/parameter.c — `funcstack` PM_SPECIAL array
     // reads the canonical FUNCSTACK Vec via getfn. Same routing
     // as dirstack above so `$#funcstack` returns the call-depth.
     // FUNCSTACK holds funcstack structs; surface the .name field.
-    if name == "funcstack" {
+    if !magic_shadowed && name == "funcstack" {
         if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
             // c:Src/Modules/parameter.c — `$funcstack` exposes the
             // call-stack in INNERMOST-first order (funcstack[1] is
@@ -20336,7 +20522,7 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     // docs/BUGS.md. Module-load gate is implicit: getcurrenttime
     // is always linkable since the module is statically compiled
     // in.
-    if name == "epochtime" {
+    if !magic_shadowed && name == "epochtime" {
         return Some(crate::ported::modules::datetime::getcurrenttime());
     }
     // c:Src/Zle/zleparameter.c:132 — `keymaps` PM_ARRAY|PM_READONLY
@@ -20354,6 +20540,7 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     if let Some(entry) = crate::ported::modules::parameter::PARTAB_ARRAY
         .iter()
         .find(|e| e.name == name)
+        .filter(|_| !magic_shadowed)
     {
         if let Some(modname) = entry.module {
             if !crate::ported::module::MODULESTAB
@@ -20364,9 +20551,16 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
                 return None;
             }
         }
+        // c:Src/module.c:1198-1229 + Src/Modules/parameter.c:49-50 — READING
+        // the parameter is what resolves its PM_AUTOLOAD stub, after which
+        // `$parameters` reports the real type instead of "undefined".
+        crate::vm_helper::mark_module_param_used(name);
         return Some((entry.getfn)(std::ptr::null_mut()));
     }
-    if name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace" {
+    if !magic_shadowed
+        && (name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace")
+    {
+        crate::vm_helper::mark_module_param_used(name); // c:1198-1229
         // Route through the canonical ported getfns
         // (Src/Modules/parameter.c:648 functracegetfn, :679
         // funcsourcetracegetfn, :711 funcfiletracegetfn) instead of
@@ -20408,12 +20602,16 @@ fn arrays_contains(name: &str) -> bool {
     if name == "@" || name == "*" || name == "argv" {
         return true;
     }
+    // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset
+    // NAME` replaces the special's paramtab node with a plain one, so
+    // none of the magic-array arms below may claim the name.
+    let magic_shadowed = crate::vm_helper::magic_special_shadowed(name);
     // c:Src/Modules/parameter.c — special PM_ARRAY params backed by
     // ad-hoc storage (DIRSTACK list, signal-names table, etc.). The
     // matching arrays_get arm above synthesizes the Vec on each
     // call; mirror the "exists" bit here so `${#dirstack}` /
     // `${#signals}` length-op picks up an array source.
-    if name == "dirstack" || name == "signals" {
+    if !magic_shadowed && (name == "dirstack" || name == "signals") {
         return true;
     }
     // c:Src/Modules/parameter.c — funcstack/funcfiletrace/
@@ -20425,10 +20623,12 @@ fn arrays_contains(name: &str) -> bool {
     // Bug #276 in docs/BUGS.md. `funcstack` alone (no subscript)
     // worked because raw_value reads the sepjoin'd form; the [@]
     // subscript path needed the array-shape signal.
-    if matches!(
-        name,
-        "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace" | "epochtime"
-    ) {
+    if !magic_shadowed
+        && matches!(
+            name,
+            "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace" | "epochtime"
+        )
+    {
         return true;
     }
     // c:Src/Modules/parameter.c:2239-2291 — every PM_ARRAY magic param
@@ -20443,6 +20643,7 @@ fn arrays_contains(name: &str) -> bool {
     if let Some(entry) = crate::ported::modules::parameter::PARTAB_ARRAY
         .iter()
         .find(|e| e.name == name)
+        .filter(|_| !magic_shadowed)
     {
         if let Some(modname) = entry.module {
             return crate::ported::module::MODULESTAB
@@ -20541,6 +20742,15 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
+    // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset
+    // NAME` inside a function replaces the special's paramtab node with
+    // a plain one (the special is stashed in `pm->old`), so every later
+    // lookup in C finds the PLAIN node and the magic getfn/scanfn is
+    // unreachable until the scope pops. zshrs keeps the magic rows in
+    // separate static tables matched BY NAME, so re-impose the shadow.
+    if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+        return None;
+    }
     if let Some(mut m) = paramtab_hashed_storage()
         .lock()
         .ok()
@@ -20620,6 +20830,10 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
             return None;
         }
     }
+    // c:Src/module.c:1198-1229 + Src/Modules/parameter.c:49-50 — READING
+    // the parameter resolves its PM_AUTOLOAD stub; `$parameters` then
+    // reports the real type instead of "undefined".
+    crate::vm_helper::mark_module_param_used(&resolved);
     // C ScanFunc callback ABI (Src/zsh.h scantab): the scanfn walks
     // the special hash invoking a plain fn pointer per node — the
     // captureless callback collects into a thread-local, exactly the
@@ -20678,6 +20892,15 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
+    // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset
+    // NAME` inside a function replaces the special's paramtab node with
+    // a plain one (the special is stashed in `pm->old`), so every later
+    // lookup in C finds the PLAIN node and the magic getfn/scanfn is
+    // unreachable until the scope pops. zshrs keeps the magic rows in
+    // separate static tables matched BY NAME, so re-impose the shadow.
+    if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+        return None;
+    }
     if let Some(m) = paramtab_hashed_storage()
         .lock()
         .ok()
@@ -20728,6 +20951,8 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
     // shfunctab iteration order exactly, so the result is identical to
     // routing through the scanfn.
     if resolved == "functions" || resolved == "dis_functions" {
+        // c:Src/module.c:1198-1229 — the read resolves the PM_AUTOLOAD stub.
+        crate::vm_helper::mark_module_param_used(&resolved);
         let dis = resolved == "dis_functions";
         if let Ok(g) = shfunctab_lock().read() {
             return Some(
@@ -20756,6 +20981,8 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
             return None;
         }
     }
+    // c:Src/module.c:1198-1229 — the read resolves the PM_AUTOLOAD stub.
+    crate::vm_helper::mark_module_param_used(&resolved);
     thread_local! {
         static ASSOC_KEYS_SCAN: std::cell::RefCell<Vec<String>> =
             const { std::cell::RefCell::new(Vec::new()) };
@@ -20772,16 +20999,59 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
     Some(ASSOC_KEYS_SCAN.with(|k| std::mem::take(&mut *k.borrow_mut())))
 }
 
-/// True if `name` is an assoc-array in `paramtab_hashed_storage`.
+/// True if `name` is an assoc-array in `paramtab_hashed_storage`, or a
+/// PM_HASHED magic assoc from `zsh/parameter` & friends.
+///
+/// c:Src/Modules/parameter.c:2235+ — `aliases`, `options`, `commands`,
+/// `functions`, `parameters`, … are real PM_HASHED parameters in C, so
+/// every "is this a hash?" test in the expansion code answers yes for
+/// them. zshrs keeps them out of `paramtab_hashed_storage` (they are
+/// synthesized on demand by [`assoc_get`]), so the predicate has to
+/// consult `PARTAB` too — the same way [`arrays_contains`] consults
+/// `PARTAB_ARRAY` for `dirstack`/`funcstack`/`reswords`/…. Without the
+/// second arm every flagged or subscripted read of a magic assoc fell
+/// through to the scalar arm and expanded EMPTY: `${(P)v}` with
+/// v=aliases, `${aliases[@]}`, `${(U)options}`. That is what made
+/// `unset <TAB>` list bare names: the user's `_parameters` builds its
+/// descriptions with `${${(P)i}:0:100}`.
+///
+/// Module-gated rows (`sysparams`/`errnos`/`mapfile`/`langinfo`) only
+/// count once their module is loaded, matching [`assoc_get`].
 fn assoc_contains(name: &str) -> bool {
     // c:Src/params.c:570-575 — nameref deref before the read.
     let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
-    paramtab_hashed_storage()
+    // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset
+    // NAME` inside a function replaces the special's paramtab node with
+    // a plain one (the special is stashed in `pm->old`), so every later
+    // lookup in C finds the PLAIN node and the magic getfn/scanfn is
+    // unreachable until the scope pops. zshrs keeps the magic rows in
+    // separate static tables matched BY NAME, so re-impose the shadow.
+    if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+        return false;
+    }
+    if paramtab_hashed_storage()
         .lock()
         .map_or(false, |s| s.contains_key(resolved.as_str()))
+    {
+        return true;
+    }
+    // c:Src/Modules/parameter.c:2235-2298 partab[] — PM_HASHED rows.
+    match crate::ported::modules::parameter::PARTAB
+        .iter()
+        .find(|e| e.name == resolved.as_str())
+    {
+        Some(e) => match e.module {
+            Some(m) => crate::ported::module::MODULESTAB
+                .lock()
+                .map(|t| t.is_loaded(m))
+                .unwrap_or(false),
+            None => true,
+        },
+        None => false,
+    }
 }
 
 /// Flags for SUB_* matching — verbatim port of zsh.h:1981-1996.
@@ -21966,6 +22236,83 @@ mod tests {
         let (out2, _, _) = paramsubst("${(P)PSU_REF}", 0, false, 0, &mut 0);
         let _ = out;
         assert_eq!(out2, "real_value");
+    }
+
+    /// The `zsh/parameter` magic assocs are real PM_HASHED parameters
+    /// (c:Src/Modules/parameter.c:2235-2298), so every "is this a hash?"
+    /// gate in paramsubst has to answer yes for them — not just the bare
+    /// `${options}` form. Reference zsh 5.9.2:
+    ///
+    /// ```text
+    /// % zsh -f -c 'alias foo=bar; v=aliases; print -r -- "${(P)v}"'
+    /// bar
+    /// % zsh -f -c 'alias foo=bar; print -r -- "${(U)aliases}"'
+    /// BAR
+    /// ```
+    ///
+    /// zshrs expanded both to the EMPTY string because `assoc_contains`
+    /// only consulted `paramtab_hashed_storage`. That is what made
+    /// `unset <TAB>` list bare parameter names: the user's `_parameters`
+    /// builds each match's description with `${${(P)i}:0:100}`.
+    #[test]
+    fn paramsubst_magic_assoc_reads_through_flagged_and_indirect_forms() {
+        let _g = crate::test_util::global_state_lock();
+        // `options` is a PARTAB row that is always populated, so a
+        // non-empty result is unambiguous evidence the hash was reached.
+        let (direct, _, _) = paramsubst("${options}", 0, false, 0, &mut 0);
+        assert!(
+            !direct.is_empty(),
+            "c:2246 — bare ${{options}} must expand to the option values"
+        );
+        setsparam("PSU_MAGIC_REF", "options");
+        let (indirect, _, _) = paramsubst("${(P)PSU_MAGIC_REF}", 0, false, 0, &mut 0);
+        assert_eq!(
+            indirect, direct,
+            "c:2741 — `(P)` on a magic-assoc NAME reads the same values as \
+             the bare form"
+        );
+        let (upper, _, _) = paramsubst("${(U)options}", 0, false, 0, &mut 0);
+        assert_eq!(
+            upper,
+            direct.to_uppercase(),
+            "c:2834-2837 — a case-mod flag must not lose the magic-assoc value"
+        );
+        assert!(
+            assoc_contains("options"),
+            "c:2246 SPECIALPMDEF flags carry PM_HASHED — `options` IS a hash"
+        );
+    }
+
+    /// Reading a module parameter resolves its PM_AUTOLOAD stub
+    /// (c:Src/module.c:1198-1229), after which `$parameters` reports its
+    /// real type instead of "undefined" (c:Src/Modules/parameter.c:49-50).
+    /// Reference zsh 5.9.2:
+    ///
+    /// ```text
+    /// % zsh -f -c 'v=aliases; : ${(P)v}; typeset -A m; m=( ${(kv)parameters} )
+    ///              print -r -- $m[aliases]'
+    /// association-hide-hideval-special
+    /// ```
+    ///
+    /// zshrs only marked the name materialized on the single-key
+    /// `${parameters[NAME]}` path, so a WHOLE-VALUE read left it a stub and
+    /// `_parameters -g '^a*'` / `-g 'a*'` kept bucketing it as a non-array.
+    #[test]
+    fn whole_value_read_of_a_module_param_resolves_its_autoload_stub() {
+        let _g = crate::test_util::global_state_lock();
+        // `usergroups` is a PARTAB row no other expansion path touches, so
+        // its stub state still reflects this test's own read.
+        let _ = assoc_get("usergroups");
+        assert!(
+            !crate::vm_helper::module_param_is_autoload_stub("usergroups"),
+            "c:1198-1229 — the read resolves the stub"
+        );
+        // Same contract on the PM_ARRAY side (c:2239-2291 PARTAB_ARRAY).
+        let _ = arrays_get("dis_patchars");
+        assert!(
+            !crate::vm_helper::module_param_is_autoload_stub("dis_patchars"),
+            "c:1198-1229 — PM_ARRAY magic params resolve on read too"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════

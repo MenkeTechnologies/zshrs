@@ -164,6 +164,13 @@ fn dispatch_action(action_argv: &[String], prev_arr_vals: &[String], extras: &[S
 /// iteration succeeded (`__ret=0`), 1 otherwise (`__ret=1` initial,
 /// only flipped on action-success).
 pub fn _all_labels(args: &[String]) -> i32 {
+    // sh:3  local __gopt __len __tmp __pre __suf __ret=1 __descr __spec __prev
+    crate::compsys::ported::shared::declare_locals(
+        &[
+            "__gopt", "__len", "__tmp", "__pre", "__suf", "__ret", "__descr", "__spec", "__prev",
+        ],
+        0,
+    );
     // sh:3 locals
     let mut ret: i32 = 1;
 

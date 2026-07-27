@@ -667,6 +667,25 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         let _ = crate::ported::params::setsparam("ISUFFIX", "");
         let _ = crate::ported::params::setsparam("QIPREFIX", "");
         let _ = crate::ported::params::setsparam("QISUFFIX", "");
+        // c:complete.c:1235-1295 — in C these params ARE `compprefix`/
+        // `compsuffix`/`compiprefix`/`compisuffix` (gsu-bound, one
+        // storage), so the publish above resets the globals too. The Rust
+        // compparams have no gsu binding, so the globals kept the PREVIOUS
+        // call's values — and `expand-or-complete` calls this twice per
+        // TAB. Mirror the reset onto the globals. (Same block as
+        // addmatches below and bin_compfiles -p/-P in computil.rs.)
+        for (param, global) in [
+            ("PREFIX", &COMPPREFIX),
+            ("SUFFIX", &COMPSUFFIX),
+            ("IPREFIX", &COMPIPREFIX),
+            ("ISUFFIX", &crate::ported::zle::complete::COMPISUFFIX),
+        ] {
+            if let Some(v) = crate::ported::params::getsparam(param) {
+                if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
+                    *g = v;
+                }
+            }
+        }
 
         // c:720-723 — `complastprefix = ztrdup(compprefix);
         //              complastsuffix = ztrdup(compsuffix);`.
@@ -698,6 +717,35 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         "callcompfunc context"
     );
     set_compstate_str("context", &context); // c:619
+
+    // c:577 — `compparameter = compredirect = ""`, then c:586 (subscript),
+    // c:607 (IN_ENV value / array_value) overwrite it with `varname`, the
+    // parameter name `get_comp_string` split off the line. This publish was
+    // missing entirely, so `$compstate[parameter]` kept whatever a previous
+    // completion left: `_value` dispatched `-value-,,-default-` instead of
+    // `-value-,PATH,-default-` and never reached the per-parameter completer.
+    let compparameter = match context.as_str() {
+        "subscript" if linwhat.load(Ordering::Relaxed) == IN_MATH_LW => {
+            // c:585-588
+            crate::ported::zle::zle_tricky::VARNAME
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .unwrap_or_default()
+        }
+        "value" | "array_value" => {
+            // c:607
+            crate::ported::zle::zle_tricky::VARNAME
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .unwrap_or_default()
+        }
+        _ => String::new(), // c:577
+    };
+    set_compstate_str("parameter", &compparameter);
 
     // c:634-645 — `if (compwords) freearray(compwords); if (usea && …)
     // { compwords = copy of clwords } else compwords = empty`. C rebuilds
@@ -871,6 +919,59 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         sticky: None,
         body: None,
     };
+    // c:816-817 — `startparamscope(); makecompparams();`.
+    //
+    // C creates `$words` / `$CURRENT` / `$PREFIX` / `$SUFFIX` /
+    // `$IPREFIX` / `$ISUFFIX` / `$QIPREFIX` / `$QISUFFIX` /
+    // `$compstate` here with `createparam(name, type|PM_SPECIAL|
+    // PM_REMOVABLE|PM_LOCAL)` and then `pm->level = locallevel + 1`
+    // (addcompparams c:1300-1307, makecompparams c:1348). Their VALUES
+    // live in C globals reached through a gsu vtable, so creating them
+    // empty here costs nothing.
+    //
+    // zshrs has no gsu binding: the values live in the params, and the
+    // block above has already written every one of them with
+    // `setsparam`/`setaparam`/`setiparam` — i.e. at level 0, flagged as
+    // ordinary scalars. Re-running `createparam` would shadow those
+    // values with empty ones, so only the scope half of c:817 is
+    // applied: stamp the level and the special/removable bits onto the
+    // params that are already in place.
+    //
+    // Without this, `${(t)PREFIX}` read `scalar` instead of
+    // `scalar-local-special` and the names outlived the completion.
+    // `_parameters` filters candidates with
+    // `${(@k)parameters[(R)…~*local*]}`, so every one of these was
+    // offered as a completion for `unset <TAB>`.
+    //
+    // `PM_READONLY` (on QIPREFIX/QISUFFIX in the c:1256-1259 table) is
+    // deliberately not stamped: C re-creates the params on every
+    // `callcompfunc`, so its read-only bit never blocks the next call's
+    // write, whereas a sticky bit here would fail the next completion's
+    // `QIPREFIX=""`.
+    {
+        use crate::ported::zsh_h::{PM_REMOVABLE, PM_SPECIAL};
+        // c:1307 / c:1348 — `pm->level = locallevel + 1`.
+        let level = crate::ported::params::locallevel.load(Ordering::Relaxed) + 1;
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            for name in crate::ported::zle::complete::COMPRPARAMS
+                .iter()
+                .map(|cp| cp.name)
+                .chain(["compstate"])
+            {
+                if let Some(pm) = tab.get_mut(name) {
+                    pm.level = level;
+                    // c:1301 — `cp->type | PM_SPECIAL | PM_REMOVABLE |
+                    // PM_LOCAL`. PM_REMOVABLE is load-bearing:
+                    // `scanendscope` (params.c:5905) only takes the
+                    // "restore the shadowed value" branch for
+                    // `(flags & (PM_SPECIAL|PM_REMOVABLE)) == PM_SPECIAL`.
+                    // These params have no shadow to restore — they must
+                    // be deleted, which is the PM_REMOVABLE path.
+                    pm.node.flags |= (PM_SPECIAL | PM_REMOVABLE) as i32;
+                }
+            }
+        }
+    }
     let cfret_val = crate::ported::exec::doshfunc(&mut synth_shf, largs, true, body_runner);
     crate::ported::zle::zle_tricky::cfret.store(cfret_val, Ordering::Relaxed);
 
@@ -1305,7 +1406,17 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
         // — two source-level skipparens calls. Mirror that explicitly
         // so the call-coverage metric matches C.
         let mut b_str: &str = &s[b..];
-        let flag_ret: i32 = if qstring {
+        // `get_comp_string` hands this port the word UNTOKENIZED
+        // (zle_tricky.c:2219), so the `(`/`)` of a `${(flags)name}` group
+        // arrive as literals in the non-qstring case as well. Pick the pair
+        // that is actually present — the same accommodation the
+        // `Inbrace`/`{` test above already makes. Without it `skipparens`
+        // was handed `Inpar` against a literal `(`, returned -1 (its
+        // "wrong opening char" code) instead of 0, `b` never advanced past
+        // the flags, the name scan then found `(` where a name should be
+        // and `check_param` bailed with `ispar == 0`: `${(k)<TAB>` never
+        // reached the `-brace-parameter-` context at all.
+        let flag_ret: i32 = if qstring || char_at(bytes, b) == '(' {
             crate::ported::utils::skipparens('(', ')', &mut b_str)
         } else {
             crate::ported::utils::skipparens(Inpar, Outpar, &mut b_str)
@@ -2265,6 +2376,43 @@ pub fn set_comp_sep() -> i32 {
         COMPCURRENT.store(compcur, Ordering::Relaxed);
     }
 
+    // zshrs bridge: in C every comp* global written above IS the shell
+    // parameter (gsu-bound at complete.c:1235-1295 — one storage), so a
+    // completer sees the re-split word list the instant `compset -q`
+    // returns. zshrs's `$words` / `$CURRENT` / `$PREFIX` / … are plain
+    // paramtab copies published once per `callcompfunc`, so without this
+    // mirror they still describe the PRE-split line. `_trap` is
+    //     if [[ CURRENT -eq 2 ]]; then compset -q; _normal; else …
+    // and `_normal` re-reads `$words[1]` — which stayed `trap`, so it
+    // dispatched `_trap` again: unbounded recursion until FUNCNEST, with
+    // the error text landing in the user's buffer. Same mirror
+    // `restrict_range` (complete.rs:1301-1307) already does for its own
+    // COMPWORDS/COMPCURRENT edit.
+    {
+        let words = COMPWORDS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        setaparam("words", words);
+        let _ = crate::ported::params::setiparam(
+            "CURRENT",
+            COMPCURRENT.load(Ordering::Relaxed) as i64,
+        );
+        for (param, global) in [
+            ("PREFIX", &COMPPREFIX),
+            ("SUFFIX", &COMPSUFFIX),
+            ("IPREFIX", &COMPIPREFIX),
+            ("ISUFFIX", &COMPISUFFIX),
+            ("QIPREFIX", &COMPQIPREFIX),
+            ("QISUFFIX", &COMPQISUFFIX),
+            ("QUOTE", &COMPQUOTE),
+            ("QUOTING", &COMPQUOTING),
+        ] {
+            let _ = crate::ported::params::setsparam(param, &snap(global));
+        }
+    }
+
     // c:1935-1937 — restore instring / inbackt, ret = 0.
     INSTRING.store(ois, Ordering::Relaxed);
     INBACKT.store(oib, Ordering::Relaxed);
@@ -2654,6 +2802,31 @@ pub fn addmatches(
 
     // c:2210-2222 — push dat.match onto mstack (the matcher chain
     // queried by match_str during candidate evaluation).
+    //
+    // c:2094 `Cmlist oms = mstack` / c:2623 `mstack = oms` — the push is
+    // scoped to THIS addmatches call: C stack-allocates the link (`struct
+    // cmlist mst`) and restores the saved head on the way out. The port
+    // pushed but never restored, so a `compadd -M` matcher stayed live for
+    // every later compadd of the same completion. `ssh -<TAB>` showed it:
+    // _arguments adds its options with `-M 'r:|[_-]=* r:|=*'`, that spec
+    // survived onto _hosts' compadd, and match_str (c:593 walks the whole
+    // mstack) then let the typed `-` match any host CONTAINING a `-` —
+    // `ec2-23-20-9-23.compute-1.amazonaws.com` was offered where zsh
+    // offers options only. `MstackPop` restores on every exit path.
+    struct MstackPop(bool);
+    impl Drop for MstackPop {
+        fn drop(&mut self) {
+            if !self.0 {
+                return;
+            }
+            if let Ok(mut mst) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+                // C restores the saved head; since this frame pushed exactly
+                // one link, dropping it is the same list.
+                *mst = mst.take().and_then(|link| link.next);
+            }
+        }
+    }
+    let _mstack_pop = MstackPop(dat.match_.is_some());
     if let Some(ref m) = dat.match_ {
         // c:2210
         if let Ok(mut mst) = mstack.get_or_init(|| Mutex::new(None)).lock() {
@@ -2670,6 +2843,24 @@ pub fn addmatches(
         // c:2217 — addlinknode(matchers, dat->match).
         if let Ok(mut g) = matchers.get_or_init(|| Mutex::new(Vec::new())).lock() {
             g.push(m.clone());
+        }
+    }
+    // c:2220-2221 — `if (mnum && (mstack || bmatchers)) update_bmatchers();`
+    // prunes bmatchers of any matcher no longer on mstack; without it the
+    // restored stack and the bmatchers list drift apart.
+    if mnum.load(Ordering::Relaxed) != 0 {
+        let live = mstack
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map(|g| g.is_some())
+            .unwrap_or(false)
+            || bmatchers
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .map(|g| g.is_some())
+                .unwrap_or(false);
+        if live {
+            crate::ported::zle::compmatch::update_bmatchers();
         }
     }
 
@@ -5073,13 +5264,25 @@ fn compcontext_for(_s: &str) -> String {
         return "parameter".into();
     } // c:601
     let lw = linwhat.load(Ordering::Relaxed); // c:602
+    let insubscr = crate::ported::zle::zle_tricky::INSUBSCR.load(Ordering::Relaxed); // c:583
     match lw {
         // c:602
         x if x == IN_PAR_LW => "assign_parameter".into(), // c:603
-        x if x == IN_MATH_LW => "math".into(),            // c:604-611
-        x if x == IN_COND_LW => "condition".into(),       // c:613
-        x if x == IN_ENV_LW => "value".into(),            // c:615
-        _ => "command".into(),                            // c:617
+        // c:582-591 — inside an unclosed `[` the math context is a
+        // SUBSCRIPT, and `$compstate[parameter]` names the array
+        // (published by callcompfunc from `varname`). Without this
+        // `echo $fpath[<TAB>` never reached `_subscript`.
+        x if x == IN_MATH_LW && insubscr != 0 => "subscript".into(), // c:584
+        x if x == IN_MATH_LW => "math".into(),                       // c:590
+        x if x == IN_COND_LW => "condition".into(),                  // c:613
+        x if x == IN_ENV_LW => "value".into(),                       // c:615
+        // c:592-597 — `[` in COMMAND position is a subscript too.
+        _ if crate::ported::zle::zle_tricky::LINCMD.load(Ordering::Relaxed) != 0
+            && insubscr != 0 =>
+        {
+            "subscript".into() // c:594
+        }
+        _ => "command".into(), // c:617
     }
 }
 
@@ -5856,6 +6059,33 @@ mod tests {
         assert!(r.is_some(), "expected Some(b) inside $FOO");
     }
 
+    /// c:1194-1203 + c:1309 — `${(k)<cursor>` is a brace parameter: the
+    /// `(k)` flag group is skipped and `ispar` ends at 2, which is what
+    /// `compcontext_for` turns into `brace_parameter`.
+    ///
+    /// `get_comp_string` hands this port the word UNTOKENIZED, so the flag
+    /// group arrives as literal `(`/`)`. Handing those to
+    /// `skipparens(Inpar, Outpar, …)` returns -1 ("wrong opening char"),
+    /// `b` never moved past the flags, the name scan hit `(` and bailed —
+    /// `ispar` stayed 0, the context stayed `command`, and `echo ${(k)<TAB>`
+    /// produced nothing at all.
+    #[test]
+    fn check_param_brace_with_flag_group_sets_ispar_two() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        ispar.store(0, Ordering::Relaxed);
+        // `${(k)` with the cursor just past the `)`.
+        let s = "${(k)";
+        OFFS.store(s.len() as i32, Ordering::Relaxed);
+        let r = check_param(s, false, false);
+        assert!(r.is_some(), "cursor sits at the (empty) parameter name");
+        assert_eq!(
+            ispar.load(Ordering::Relaxed),
+            2,
+            "a flag group must still leave a brace-parameter context"
+        );
+    }
+
     #[test]
     fn callcompfunc_empty_fn_no_panic() {
         let _g = crate::test_util::global_state_lock();
@@ -5880,6 +6110,56 @@ mod tests {
         callcompfunc("foo", "_test_fn");
     }
 
+    /// c:complete.c:1235-1295 — `$PREFIX`/`$SUFFIX`/`$IPREFIX`/`$ISUFFIX`
+    /// and the `compprefix`/`compsuffix`/`compiprefix`/`compisuffix`
+    /// globals are ONE storage in C, so `callcompfunc`'s per-call publish
+    /// of the cursor word split resets BOTH.
+    ///
+    /// Regression for `PATH=/usr/bin:<TAB>`: `expand-or-complete` calls
+    /// the completion function twice per TAB and `_path_files` leaves its
+    /// last path component in `$PREFIX`. Because only the param was
+    /// republished, the second pass's `compset -P '*:'` (which reads the
+    /// GLOBAL) matched the stale `bin:` instead of the live `/usr/bin:` —
+    /// `$IPREFIX` came out `bin:` and the rebuilt line lost `/usr/`.
+    #[test]
+    fn callcompfunc_republishes_word_split_onto_comp_globals() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        // Leftovers from the previous completion pass.
+        *COMPPREFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = "bin:".to_string();
+        *COMPIPREFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = "PATH=/usr/".to_string();
+
+        // Cursor at the end of the word, as get_comp_string leaves it.
+        OFFS.store("/usr/bin:".chars().count() as i32, Ordering::Relaxed);
+        callcompfunc("/usr/bin:", "_test_fn");
+
+        assert_eq!(
+            COMPPREFIX
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap()
+                .clone(),
+            "/usr/bin:",
+            "compprefix must track the freshly published $PREFIX"
+        );
+        assert_eq!(
+            COMPIPREFIX
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap()
+                .clone(),
+            "",
+            "compiprefix must be reset with $IPREFIX, not carried over"
+        );
+    }
+
     /// Test-only serializer for tests that mutate file-scope globals.
     static GLOBAL_MUT_LOCK: Mutex<()> = Mutex::new(());
 
@@ -5888,6 +6168,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        // c:583/593 — the subscript arms key off `insubscr`; pin it off so
+        // the non-subscript routing below is deterministic (`zle_reset`
+        // does not clear it).
+        crate::ported::zle::zle_tricky::INSUBSCR.store(0, Ordering::Relaxed);
+        crate::ported::zle::zle_tricky::LINCMD.store(0, Ordering::Relaxed);
         ispar.store(2, Ordering::Relaxed);
         linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
         assert_eq!(compcontext_for("x"), "brace_parameter");
@@ -5902,6 +6187,37 @@ mod tests {
         assert_eq!(compcontext_for("x"), "value");
         linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
         assert_eq!(compcontext_for("x"), "command");
+    }
+
+    /// c:582-597 — with `insubscr` set, BOTH the math arm and the command
+    /// arm select the `subscript` context (so `_complete` dispatches
+    /// `-subscript-`). Regression for `echo $fpath[<TAB>`, which routed to
+    /// `math` and never reached `_subscript`.
+    #[test]
+    fn compcontext_for_routes_subscript_when_insubscr_set() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        use crate::ported::zle::zle_tricky::{INSUBSCR, LINCMD};
+        ispar.store(0, Ordering::Relaxed);
+        LINCMD.store(0, Ordering::Relaxed);
+
+        // c:584 — math context inside an unclosed subscript.
+        linwhat.store(IN_MATH_LW, Ordering::Relaxed);
+        INSUBSCR.store(1, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "subscript");
+        // c:590 — a real math expression stays `math`.
+        INSUBSCR.store(0, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "math");
+
+        // c:593-597 — `[` in command position is a subscript, not a command.
+        linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
+        LINCMD.store(1, Ordering::Relaxed);
+        INSUBSCR.store(1, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "subscript");
+        INSUBSCR.store(0, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "command");
+        LINCMD.store(0, Ordering::Relaxed);
     }
 
     #[test]
@@ -5935,6 +6251,36 @@ mod tests {
         let _ = addmatches(&mut dat, &["a".into(), "b".into()]);
         let n = crate::comp_match_handles::matches_arc().lock().unwrap().len();
         assert!(n >= 2);
+    }
+
+    /// c:2094 `Cmlist oms = mstack` / c:2623 `mstack = oms` — a `compadd -M`
+    /// matcher lives only for the duration of that one call. When the port
+    /// leaked it, `_arguments`' option matcher `r:|[_-]=* r:|=*` stayed live
+    /// for the `_hosts` compadd that followed and a typed `-` matched every
+    /// host CONTAINING a `-`, so `ssh -<TAB>` listed
+    /// `ec2-…compute-1.amazonaws.com` among the options.
+    #[test]
+    fn addmatches_restores_mstack_after_the_call() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        fn mstack_depth() -> usize {
+            let g = mstack.get_or_init(|| Mutex::new(None)).lock().unwrap();
+            let mut n = 0;
+            let mut cur = g.as_deref();
+            while let Some(link) = cur {
+                n += 1;
+                cur = link.next.as_deref();
+            }
+            n
+        }
+        let before = mstack_depth();
+        let mut dat = Cadata::default();
+        dat.dummies = -1;
+        dat.match_ = crate::ported::zle::complete::parse_cmatcher("compadd", "r:|[_-]=* r:|=*");
+        assert!(dat.match_.is_some(), "matcher spec must parse");
+        let _ = addmatches(&mut dat, &["a-b".into()]);
+        assert_eq!(mstack_depth(), before, "matcher leaked past its compadd");
     }
 
     #[test]
@@ -6071,6 +6417,32 @@ mod tests {
             getg(&COMPQISUFFIX)
         );
         assert_eq!(recon, "a b c", "qip + word + qis must reconstruct the arg");
+
+        // c:1926-1934 + c:complete.c:1235-1295 — in C `$words` / `$CURRENT`
+        // ARE `compwords` / `compcurrent` (gsu-bound, one storage), so the
+        // re-split is visible to the calling completer the moment `compset -q`
+        // returns. zshrs's params are separate paramtab copies, so the port
+        // has to publish them explicitly. Without that publish `_trap`
+        //     if [[ CURRENT -eq 2 ]]; then compset -q; _normal; else …
+        // left `$words` as `(trap -)` with `$CURRENT` still 2, `_normal`
+        // re-dispatched the command word `trap`, and `_trap` recursed until
+        // FUNCNEST — printing `maximum nested function level reached` into
+        // the user's edit buffer on `trap -<TAB>`.
+        assert_eq!(
+            crate::ported::params::getaparam("words"),
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]),
+            "compset -q must republish $words for the calling completer"
+        );
+        assert_eq!(
+            crate::ported::params::getsparam("CURRENT").as_deref(),
+            Some("2"),
+            "compset -q must republish $CURRENT for the calling completer"
+        );
+        assert_eq!(
+            crate::ported::params::getsparam("PREFIX").as_deref(),
+            Some("b"),
+            "compset -q must republish $PREFIX for the calling completer"
+        );
     }
 
     #[test]

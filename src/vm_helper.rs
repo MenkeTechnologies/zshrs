@@ -115,6 +115,14 @@ pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
+    // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset
+    // NAME` replaces a special's paramtab node with a plain one, so the
+    // name is no longer a hash. Answering here would strand the read on
+    // the O(1) assoc fast path and never reach paramsubst's scalar
+    // subscript arm (`${options[1]}` came back empty for a local).
+    if magic_special_shadowed(resolved.as_str()) {
+        return None;
+    }
     // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a LIVE gsu
     // integer (`get_nmatches` = `permmatches(0) ? 0 : nmatches`), not stored
     // data, so the hashed store never held it and every shell-side read
@@ -255,6 +263,43 @@ use std::process::{Child, Command, Stdio};
 pub use crate::bash_complete::CompSpec;
 pub use crate::ported::builtin::AutoloadFlags;
 pub use crate::ported::modules::zutil::zstyle_entry;
+
+/// One inline-assignment scope (`X=foo Y=bar cmd`).
+///
+/// `saved` holds `(name, prev_var, prev_env)` for each name the
+/// PREFIX assignments touched, so END_INLINE_ENV can put the shell
+/// var and the process env back.
+///
+/// `recording` is what keeps the frame from swallowing assignments
+/// the *command itself* performs. zsh's `addvars()` (Src/exec.c:4142)
+/// walks only the parsed WC_ASSIGN chain, and `save_params`
+/// (Src/exec.c:4410) snapshots only those names; once the command
+/// runs, the save list is closed. The bytecode emits the prefix
+/// assignments between BEGIN_INLINE_ENV and SEAL_INLINE_ENV, and
+/// SEAL clears this flag, so `X=y . file` no longer records (and
+/// then reverts) every global the sourced file assigns.
+pub struct InlineEnvFrame {
+    /// Per-name pre-assignment state: `(name, prev_var, prev_env)`.
+    pub saved: Vec<(String, Option<String>, Option<String>)>,
+    /// True only while the prefix assignments are being executed.
+    pub recording: bool,
+}
+
+impl InlineEnvFrame {
+    /// New frame, open for recording until SEAL_INLINE_ENV runs.
+    pub fn new() -> Self {
+        Self {
+            saved: Vec::new(),
+            recording: true,
+        }
+    }
+}
+
+impl Default for InlineEnvFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Snapshot of subshell-isolated state. Captured at `(` entry, restored at
 /// `)` exit. zsh subshell semantics: assignments inside `(…)` don't leak to
@@ -470,7 +515,7 @@ pub struct ShellExecutor {
     /// `(name, prev_var, prev_env)` per assigned name. zsh's
     /// equivalent is the parser-level "addvar" list executed under
     /// `addvars()` (Src/exec.c) right before the command exec.
-    pub inline_env_stack: Vec<Vec<(String, Option<String>, Option<String>)>>,
+    pub inline_env_stack: Vec<InlineEnvFrame>,
     /// Set by `expand_glob`'s no-match arm when `nomatch` is on (zsh
     /// default) — instructs the simple-command dispatcher to skip
     /// executing the current command, set last_status=1, and continue
@@ -2266,16 +2311,12 @@ impl ShellExecutor {
         let release = to_str(&uname_buf.release);
         let ostype = format!("{}{}", sysname, release); // c:968 (OSTYPE)
         crate::ported::params::setsparam("OSTYPE", &ostype);
-        // MACHTYPE / VENDOR: hardcoded per platform. macOS uses
-        // "arm" or "arm64" or "x86_64" for arm-derived MACHTYPE.
-        // Approximate the canonical homebrew value: short-form of
-        // the cputype.
-        let machtype = if cputype.starts_with("arm") {
-            "arm".to_string()
-        } else {
-            cputype.clone()
-        };
-        crate::ported::params::setsparam("MACHTYPE", &machtype); // c:967
+        // MACHTYPE: configure's `$host_cpu`, i.e. the config.guess
+        // canonical arch name — NOT uname's `machine`. The two differ
+        // on Apple Silicon (uname says `arm64`, config.guess says
+        // `aarch64`), and zsh reports the latter. Single source of
+        // truth: config_h::MACHTYPE (= build target arch).
+        crate::ported::params::setsparam("MACHTYPE", crate::ported::config_h::MACHTYPE); // c:967
         let vendor = if sysname == "darwin" {
             "apple"
         } else {
@@ -4822,7 +4863,62 @@ pub fn module_param_is_autoload_stub(name: &str) -> bool {
         .eq(&false)
 }
 
+/// True when the magic special parameter `name` (a `partab[]` row from
+/// `Src/Modules/parameter.c:2235-2298` — `options`, `functions`,
+/// `commands`, `parameters`, `dirstack`, …) is currently SHADOWED by a
+/// plain user parameter of the same name.
+///
+/// Rust-only helper with no C counterpart BY CONSTRUCTION: C zsh keeps
+/// specials and user parameters in the ONE `paramtab` hash, so ordinary
+/// hash lookup already implements this. `createparam`
+/// (c:Src/params.c:1090-1115) finds the existing special node, stashes
+/// it in `pm->old`, and inserts a fresh plain node under the same key;
+/// every later `getvalue` / `fetchvalue` / `gethashparam` therefore hits
+/// the plain node and the special's `gsu` callbacks are unreachable
+/// until `endparamscope` restores `pm->old`. zshrs instead keeps the
+/// magic rows in SEPARATE static tables (`PARTAB`, `PARTAB_ARRAY`) and
+/// matches them BY NAME, so a name-only match resurrected the special
+/// even while a local shadowed it. This predicate re-imposes C's
+/// shadowing on the split-table layout; it is architecture glue, not a
+/// port.
+///
+/// `init_partab_params` (below) seeds every magic row into `paramtab`
+/// with `PM_SPECIAL` (C's `SPECIALPMDEF` macro), and `local`/`typeset`
+/// replaces that node with one carrying no `PM_SPECIAL`, so the live
+/// node's `PM_SPECIAL` bit is exactly C's "is the special still the
+/// visible binding" test.
+///
+/// Returns false when the name has no `paramtab` node at all — that is
+/// a module-gated row (`sysparams`, `errnos`, `mapfile`, `langinfo`)
+/// seeded on demand, which the PARTAB walk must still answer for.
+///
+/// Symptom this fixes: git's `git-completion.bash`
+/// `__git_resolve_builtins` does `local options; eval
+/// "options=\${$var-}"` (git 2.55.0
+/// share/zsh/site-functions/git-completion.bash:500-501). `$options`
+/// read back the zsh/parameter option table (`off on off …`) instead of
+/// the local, so `git checkout --<TAB>` completed nothing.
+pub fn magic_special_shadowed(name: &str) -> bool {
+    // Only `partab[]` names can be shadowed in this sense — an ordinary
+    // user assoc / array has no special behind it, and its own paramtab
+    // node legitimately carries no PM_SPECIAL.
+    if !PARTAB.iter().any(|e| e.name == name)
+        && !PARTAB_ARRAY.iter().any(|e| e.name == name)
+    {
+        return false;
+    }
+    crate::ported::params::paramtab().read().map_or(false, |tab| {
+        tab.get(name)
+            .is_some_and(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL) == 0)
+    })
+}
+
 pub fn partab_get(name: &str, key: &str) -> Option<String> {
+    // C's paramtab lookup would already have found the shadowing local;
+    // the split-table port needs the explicit check.
+    if magic_special_shadowed(name) {
+        return None;
+    }
     mark_module_param_used(name);
     // c:Src/Modules/system.c:902,904 — `sysparams` and `errnos` are
     // bound by zsh/system's boot_/setup_ chain. Same for `mapfile`
@@ -4866,6 +4962,10 @@ fn module_gated_partab_module(name: &str) -> Option<&'static str> {
 /// parameter.c:2239-2291 ports). Returns `None` if name isn't a
 /// known PM_ARRAY magic-assoc.
 pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
+    // c:Src/params.c:1090-1115 createparam — see `partab_get`.
+    if magic_special_shadowed(name) {
+        return None;
+    }
     mark_module_param_used(name);
     // Bug #69 — gate module-bound PARTAB names on the owning
     // module's MOD_LINKED && !MOD_UNLOAD state.
@@ -4889,6 +4989,10 @@ pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
 /// Scan helper for `${(k)name}` — enumerates keys via canonical
 /// scanfn, collected into Vec via SCAN_KEYS thread-local.
 pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
+    // c:Src/params.c:1090-1115 createparam — see `partab_get`.
+    if magic_special_shadowed(name) {
+        return None;
+    }
     mark_module_param_used(name);
     // Bug #69 — gate module-bound PARTAB names on the owning
     // module's MOD_LINKED && !MOD_UNLOAD state.
@@ -4950,6 +5054,14 @@ pub fn init_partab_params() {
     // internal-write path either (zsh: PM_READONLY_SPECIAL, c:2287), so it
     // keeps the bit — `${parameters[parameters]}` reads
     // `association-readonly-hide-hideval-special` in zsh.
+    // The remaining names below are the rest of C's PM_READONLY_SPECIAL
+    // rows whose `partab[]` entry has a NULL gsu (c:2237/2243/2255/2265/
+    // :2272/2276-2280/2284/2296-2298 + Src/Zle/zleparameter.c:133): they
+    // are computed purely by their getfn/scanfn, so there is nothing for
+    // the runtime to write and the bit is safe to keep. Without them
+    // `${(t)builtins}` and friends reported
+    // `association-hide-hideval-special` where zsh reports
+    // `association-readonly-hide-hideval-special`.
     let user_protected: &[&str] = &[
         "parameters",
         "reswords",
@@ -4959,6 +5071,18 @@ pub fn init_partab_params() {
         "historywords",
         "errnos",
         "keymaps",
+        "builtins",             // c:2237
+        "dis_builtins",         // c:2243
+        "functions_source",     // c:2265
+        "dis_functions_source", // c:2247
+        "history",              // c:2272
+        "jobdirs",              // c:2276
+        "jobstates",            // c:2278
+        "jobtexts",             // c:2280
+        "modules",              // c:2284
+        "userdirs",             // c:2296
+        "usergroups",           // c:2297
+        "widgets",              // c:Src/Zle/zleparameter.c:133
     ];
     let mk_pm = |name: &str, flags: i32| -> Param {
         let keep_readonly = user_protected.contains(&name);
