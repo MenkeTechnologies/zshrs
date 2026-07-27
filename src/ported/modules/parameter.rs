@@ -1657,10 +1657,44 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
         };
         if dis_match {
             // c:786-789 — `defined` if handlerfunc present OR
-            // BINF_PREFIX set; else `undefined`. ported entries
-            // always have a handler in BUILTINS, so the BINF_PREFIX
-            // path is symbolic — surfaced via the flags check.
-            let has_handler = bn.handlerfunc.is_some();
+            // BINF_PREFIX set; else `undefined`.
+            //
+            // c:Src/module.c:1002 addbuiltin / :1265 add_autobin — an
+            // AUTOLOADED module contributes its builtins to `builtintab`
+            // as STUBS whose `handlerfunc` is NULL until the module is
+            // actually loaded; that is precisely the `undefined` arm.
+            // `zsh -fc` reports 27 such names (bindkey, compadd, zle,
+            // ulimit, zstyle, …) — the exact contents of the
+            // builtin→module auto-load registry at Src/init.c:1708
+            // init_bltinmods, ported to `MODULESTAB.autoload_builtins`.
+            // zshrs links every module statically, so its BUILTINS rows
+            // ALWAYS carry a handler and every name read `defined`,
+            // making `${builtins[zle]}` and `${builtins[(R)undefined]}`
+            // diverge. Model the stub state the way C does: a name in
+            // the auto-load registry has no handler until its module is
+            // loaded.
+            let has_handler = bn.handlerfunc.is_some()
+                && crate::ported::module::MODULESTAB
+                    .lock()
+                    .map(|t| match t.resolve_autoload_builtin(name) {
+                        // c:1265 — still a stub while the module is
+                        // merely registered for auto-load. "Actually
+                        // loaded" is C's `m->u.handle && !MOD_UNLOAD`
+                        // (c:1055), whose static-link analog is
+                        // MOD_INIT_B set / MOD_UNLOAD clear — the SAME
+                        // criterion getpmmodule and scanpmmodules use to
+                        // print `loaded` vs `autoloaded`. NOT
+                        // `is_loaded()`, which keys off MOD_LINKED and is
+                        // pre-seeded for every compiled-in module.
+                        Some(m) => t.modules.get(m).is_some_and(|md| {
+                            (md.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                                && (md.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+                        }),
+                        // c:1002 — a real bintab row from zsh/main or an
+                        // already-loaded module.
+                        None => true,
+                    })
+                    .unwrap_or(true);
             let has_prefix = (bn.node.flags & crate::ported::zsh_h::BINF_PREFIX as i32) != 0;
             let t = if has_handler || has_prefix {
                 "defined"
@@ -1775,7 +1809,6 @@ pub fn scanbuiltins(
         // C is a hash table so re-adds collapse, but Vec iteration
         // here visits each occurrence. Dedup by name to match the
         // hash-table shape `${#builtins}` exposes.
-        let is_zsh_mode = crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
         let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
         // c:825 — runtime DISABLED tracking lives in
         // BUILTINS_DISABLED (a HashSet maintained by `disable` /
@@ -1804,74 +1837,11 @@ pub fn scanbuiltins(
             if !pass {
                 continue;
             }
-            // c:Src/Modules/parameter.c:823 — `builtintab` membership
-            // skips when the owning module isn't loaded. Map each
-            // module-bound name to its module; entries from `zsh/main`
-            // (core builtins) return None and always pass.
-            if is_zsh_mode {
-                let owning_module: Option<&str> = match b.node.nam.as_str() {
-                    // zsh/files (Src/Modules/files.c:806-824).
-                    "chmod" | "chgrp" | "chown" | "ln" | "mkdir" | "mv" | "rm" | "rmdir"
-                    | "sync" => Some("zsh/files"),
-                    "zf_chmod" | "zf_chgrp" | "zf_chown" | "zf_ln" | "zf_mkdir" | "zf_mv"
-                    | "zf_rm" | "zf_rmdir" | "zf_sync" => Some("zsh/files"),
-                    // zsh/zftp (Src/Modules/zftp.c).
-                    "zftp" => Some("zsh/zftp"),
-                    // zsh/net/tcp (Src/Modules/tcp.c).
-                    "ztcp" => Some("zsh/net/tcp"),
-                    // zsh/net/socket (Src/Modules/socket.c).
-                    "zsocket" => Some("zsh/net/socket"),
-                    // zsh/stat (Src/Modules/stat.c).
-                    "stat" | "zstat" => Some("zsh/stat"),
-                    // zsh/zselect (Src/Modules/zselect.c).
-                    "zselect" => Some("zsh/zselect"),
-                    // zsh/zpty (Src/Modules/zpty.c).
-                    "zpty" => Some("zsh/zpty"),
-                    // zsh/zprof (Src/Modules/zprof.c).
-                    "zprof" => Some("zsh/zprof"),
-                    // zsh/system (Src/Modules/system.c).
-                    "zsystem" | "syserror" | "sysopen" | "sysread" | "sysseek" | "syswrite" => {
-                        Some("zsh/system")
-                    }
-                    // zsh/clone (Src/Modules/clone.c).
-                    "clone" => Some("zsh/clone"),
-                    // zsh/curses (Src/Modules/curses.c).
-                    "zcurses" => Some("zsh/curses"),
-                    // zsh/db/gdbm (Src/Modules/db_gdbm.c).
-                    "ztie" | "zuntie" | "zgdbmpath" => Some("zsh/db/gdbm"),
-                    // zsh/pcre (Src/Modules/pcre.c).
-                    "pcre_compile" | "pcre_match" | "pcre_study" => Some("zsh/pcre"),
-                    // zsh/example (Src/Modules/example.c).
-                    "example" => Some("zsh/example"),
-                    // zsh/cap (Src/Modules/cap.c).
-                    "cap" | "getcap" | "setcap" => Some("zsh/cap"),
-                    // zsh/attr (Src/Modules/attr.c).
-                    "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => Some("zsh/attr"),
-                    // zsh/datetime (Src/Modules/datetime.c).
-                    "strftime" => Some("zsh/datetime"),
-                    // zsh/param/private — Src/Modules/param_private.c:217.
-                    "private" => Some("zsh/param/private"),
-                    // c:Src/Modules/parameter.c — `hashinfo` does NOT
-                    // exist in upstream zsh. The zshrs BUILTINS entry
-                    // (builtin.rs:12172) is a zshrs-only debug helper.
-                    // Suppress in --zsh mode so `${(k)builtins}` doesn't
-                    // expose a name zsh doesn't have. Same for `mem` /
-                    // `patdebug` / `nameref` — debug builtins in
-                    // zshrs's BUILTINS table that have no upstream
-                    // counterpart.
-                    "hashinfo" | "mem" | "patdebug" | "nameref" => Some("__zshrs_only"),
-                    // zsh/main core builtins.
-                    _ => None,
-                };
-                if let Some(modname) = owning_module {
-                    let loaded = crate::ported::module::MODULESTAB
-                        .lock()
-                        .map(|t| t.is_loaded(modname))
-                        .unwrap_or(false);
-                    if !loaded {
-                        continue;
-                    }
-                }
+            // c:Src/Modules/parameter.c:823 — `builtintab` membership.
+            // One predicate, shared with the compctl namespace dump:
+            // see `builtin_in_builtintab`.
+            if !crate::ext_builtins::builtin_in_builtintab(&b.node.nam) {
+                continue;
             }
             if !emitted.insert(b.node.nam.clone()) {
                 continue;
@@ -1887,11 +1857,17 @@ pub fn scanbuiltins(
         // dispatch in-process exactly like core builtins but have no
         // entry in the C-port BUILTINS table, so `${(k)builtins}` — and
         // therefore compsys's `_builtins` command-position completion —
-        // never offered names such as `doctor`, `peach`, `help`, or
-        // `zassert_eq`. Emit them for the `builtins` param (dis == 0)
-        // in default mode only; `--zsh` strict emulation keeps the
-        // 103-name zsh-parity set (these names don't exist in zsh).
-        if dis == 0 && !is_zsh_mode {
+        // would never offer names such as `doctor`, `peach`, `help`, or
+        // `zassert_eq`. Emit them for the `builtins` param (dis == 0).
+        //
+        // `hide_ext_builtins()` suppresses them in two cases:
+        //   * `--zsh` strict emulation (these names don't exist in zsh),
+        //   * `ZSHRS_HIDE_EXT_BUILTINS` — the parity harnesses' knob, so
+        //     a byte-for-byte `${(ko)builtins}` diff against real zsh
+        //     isn't drowned in ~145 zshrs-original names. It is a
+        //     MEASUREMENT flag, not a compat mode: dispatch is untouched
+        //     (`peach` still runs, `whence -w peach` still says builtin).
+        if dis == 0 && !crate::ext_builtins::hide_ext_builtins() {
             for name in crate::ext_builtins::EXT_BUILTIN_NAMES {
                 let n = (*name).to_string();
                 if disabled_set.contains(&n) {
@@ -3400,8 +3376,20 @@ pub fn getpmuserdir(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1651 — `nameddirtab->filltable(nameddirtab);` populates the
     // nameddir table from /etc/passwd. Static-link path: query
     // getpwnam(3) directly; same data source.
+    // c:1657 — the lookup is `nameddirtab->getnode(nameddirtab, name)`
+    // AFTER c:1651's filltable, and filltable is a no-op in a
+    // non-interactive shell (Src/utils.c:1193-1194 `if (!interact)
+    // return;` inside adduserdir — see scanpmuserdirs below). With an
+    // empty table C takes the c:1660-1663 else-arm: empty value,
+    // PM_UNSET. zshrs queries getpwnam directly, which has no such gate,
+    // so `zsh -f -c 'print ${userdirs[root]}'` printed `/var/root` where
+    // zsh prints nothing (and `${+userdirs[root]}` read 1 vs 0).
     let cname = std::ffi::CString::new(name).ok()?;
-    let pwd = unsafe { libc::getpwnam(cname.as_ptr()) }; // c:1657 nd lookup
+    let pwd = if crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+        unsafe { libc::getpwnam(cname.as_ptr()) } // c:1657 nd lookup
+    } else {
+        std::ptr::null_mut() // c:1660 — empty nameddirtab, no node
+    };
     let (value, found) = if !pwd.is_null() {
         let dir = unsafe { std::ffi::CStr::from_ptr((*pwd).pw_dir) };
         (dir.to_string_lossy().into_owned(), true) // c:1659 nd->dir
@@ -3454,6 +3442,22 @@ pub fn scanpmuserdirs(
     func: Option<ScanFunc>, // c:1669
     flags: i32,
 ) {
+    // c:1676 `nameddirtab->filltable(nameddirtab)` →
+    // Src/hashnameddir.c:96 fillnameddirtable, whose getpwent loop feeds
+    // every entry through `adduserdir(pw->pw_name, pw->pw_dir,
+    // ND_USERNAME, 1)` — and adduserdir's FIRST statement is
+    // Src/utils.c:1193-1194 `if (!interact) return;` ("We don't maintain
+    // a hash table in non-interactive shells"). So in a NON-interactive
+    // shell nameddirtab never receives the passwd entries and the walk at
+    // c:1682-1692 finds nothing: `zsh -f -c 'print ${#userdirs}'` is 0
+    // even though `~root` still expands (that goes through getpwnam in
+    // filesubstr, not through this table). zshrs inlines the passwd
+    // enumeration here instead of routing it through adduserdir, so it
+    // skipped that gate and reported every account in the directory
+    // service — 136 entries against zsh's 0.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+        return; // c:Src/utils.c:1193-1194 via c:1676 filltable
+    }
     if let Some(f) = func {
         unsafe {
             libc::setpwent();

@@ -36,7 +36,7 @@
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
-use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
 use crate::ported::subst::{filesubstr, singsub};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
@@ -134,6 +134,15 @@ fn zstyle_t_default(ctx: &str, style: &str) -> bool {
 
 /// Flat-assoc lookup for `_comp_caller_options[key]` style access.
 fn assoc_get(name: &str, key: &str) -> Option<String> {
+    // `_comp_caller_options` is PM_HASHED (`_main_complete` publishes it
+    // with `sethparam`); `getaparam` returns None for anything that is not
+    // PM_ARRAY, so the hash must be read through gethkparam/gethparam
+    // (c:params.c:3117/3131). Flat key/value arrays remain supported.
+    let keys = gethkparam(name).unwrap_or_default();
+    if !keys.is_empty() {
+        let vals = gethparam(name).unwrap_or_default();
+        return keys.iter().position(|k| k == key).and_then(|i| vals.get(i).cloned());
+    }
     get_arr(name)
         .chunks(2)
         .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
@@ -209,9 +218,10 @@ fn match_skips_prefix(s: &str, squeeze: bool) -> String {
     s[..i].to_string()
 }
 
-/// `tmp1=( $~tmp1 )` — tokenise + glob-expand each element. Elements
-/// that still carry wildcards after expansion (no match) are dropped,
-/// approximating completion's nullglob-style file generation.
+/// `tmp1=( $~tmp1 )` — tokenise + glob-expand each element. A pattern
+/// that matches nothing contributes nothing (glob_path already returns
+/// an empty vec in that case); everything glob_path returns is a real
+/// path and is kept verbatim.
 fn tilde_glob(pats: &[String]) -> Vec<String> {
     // C: `tmp1=( $~tmp1 )` (sh:472) — force filename generation. Route through
     // the canonical `glob_path` (what `globlist` uses), which is qualifier-
@@ -223,9 +233,22 @@ fn tilde_glob(pats: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for p in pats {
         for e in crate::ported::glob::glob_path(p) {
-            if !crate::ported::glob::hasbraces(&e, true) && !has_active_glob(&e) {
-                out.push(e);
+            // A RESULT is a filename, never a pattern: testing it for
+            // glob metacharacters deleted every real file whose NAME
+            // contains one. `/etc` alone has 29 such files (`profile~orig`,
+            // `group~previous`, …), so `cat /etc/<TAB>` offered 87 of 116
+            // matches — under LISTMAX (100), which silently swallowed the
+            // "do you wish to see all 116 possibilities" query zsh prints.
+            // glob_path returns an empty vec when a pattern matches nothing
+            // (glob.rs:4122), so no result-side wildcard test is needed to
+            // suppress non-matching patterns. The one case where glob_path
+            // echoes its input back is a pattern that failed to COMPILE
+            // (glob.rs:3903, `!BADPATTERN` → "treat as an ordinary literal
+            // string"); drop that echo, as before.
+            if e == *p && has_active_glob(p) {
+                continue;
             }
+            out.push(e);
         }
     }
     out
@@ -368,8 +391,7 @@ pub fn zparse_pathfiles(args: &[String]) -> Parsed {
 // ---- main ----------------------------------------------------------
 
 /// `_path_files` — file/directory completion entry point.
-pub fn _path_files(argv: &[String]) -> i32 {
-    // sh:3 — match/mbegin/mend are populated by _have_glob_qual.
+pub fn _path_files(argv: &[String]) -> i32 {    // sh:3 — match/mbegin/mend are populated by _have_glob_qual.
     let curcontext = get_str("curcontext");
     let ctx = format!(":completion:{}:", curcontext);
     let paths_ctx = format!(":completion:{}:paths", curcontext);
@@ -1722,6 +1744,55 @@ fn match_leading_pattern(pre: &str, pp: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `tmp1=( $~tmp1 )` (sh:472) must keep every path the glob really
+    /// matched, including files whose NAME contains a pattern
+    /// metacharacter. The previous result-side `has_active_glob` filter
+    /// deleted them: `/etc` holds 29 such files (`profile~orig`,
+    /// `group~previous`, …), so `cat /etc/<TAB>` generated 87 matches
+    /// instead of 116 — below LISTMAX (100), which silently swallowed
+    /// zsh's "do you wish to see all 116 possibilities (58 lines)?"
+    /// query. Regression guard for that whole chain.
+    #[test]
+    fn tilde_glob_keeps_files_whose_names_contain_glob_metachars() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // One name per metacharacter class the old filter tripped on.
+        let names = [
+            "plain",
+            "a~orig",
+            "c#hash",
+            "d^caret",
+            "e*star",
+            "f?q",
+            "g[br]",
+            "i|pipe",
+            "j<lt>",
+        ];
+        for n in &names {
+            std::fs::write(dir.path().join(n), b"").expect("write");
+        }
+        let pat = format!("{}/*", dir.path().display());
+        let got = tilde_glob(&[pat]);
+        let mut got_names: Vec<String> = got
+            .iter()
+            .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
+            .collect();
+        got_names.sort();
+        let mut want: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(got_names, want, "tilde_glob dropped real files");
+    }
+
+    /// A pattern that matches nothing contributes nothing — `glob_path`
+    /// returns an empty vec, so no result-side wildcard test is needed
+    /// to suppress it.
+    #[test]
+    fn tilde_glob_drops_non_matching_pattern() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("only"), b"").expect("write");
+        let pat = format!("{}/nosuchprefix*", dir.path().display());
+        assert!(tilde_glob(&[pat]).is_empty());
+    }
 
     #[test]
     fn zparse_dirs_only() {

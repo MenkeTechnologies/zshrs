@@ -492,7 +492,9 @@ pub fn set_histno(x: i64) {
     // zshrs uses History.cursor as the active history index. Clamp
     // to entries.len() when x is out of range (matches the
     // quietgethist NULL-result early-return).
-    let idx = x.max(0) as usize;
+    // `x` is an EVENT NUMBER (what `quietgethist` takes), and events are
+    // 1-based, so the History.cursor index is one less. See get_histno.
+    let idx = (x - 1).max(0) as usize;
     if idx <= history().lock().unwrap().entries.len() {
         history().lock().unwrap().cursor = idx;
     }
@@ -501,9 +503,18 @@ pub fn set_histno(x: i64) {
 /// Port of `get_histno(UNUSED(Param pm))` from Src/Zle/zle_params.c:514.
 pub fn get_histno() -> i64 {
     // c:514
-    // c:514 — `return histline`. zshrs tracks the editing history
-    // line via the History.cursor field (offset into entries Vec).
-    history().lock().unwrap().cursor as i64
+    // c:514 — `return histline`. `histline` is an EVENT NUMBER
+    // (c:Src/hist.c — it tracks `curhist`, which is `lasthist + 1` while
+    // the new line is being edited), and zsh numbers events from 1. zshrs
+    // tracks the same position as `History.cursor`, a 0-BASED index into
+    // `entries` that `zle_hist.rs:287` parks at `entries.len()` at each
+    // prompt. Returning the raw index therefore reported one less than
+    // zsh at every point: with 2 entries zsh's `$HISTNO` is 3, zshrs's
+    // was 2. `_fc` computes `(( num = num - HISTNO ))` to turn event
+    // numbers into the negative offsets it completes (`-1`, `-2`, …), so
+    // the off-by-one produced `0`/`1` — none of which match the `-`
+    // prefix — and `fc -<TAB>` offered no history events at all.
+    history().lock().unwrap().cursor as i64 + 1
 }
 
 /// `$BUFFERLINES` accessor — number of newline-separated lines.

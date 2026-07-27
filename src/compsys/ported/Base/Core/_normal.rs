@@ -50,6 +50,14 @@ fn make_ops() -> options {
 /// handles history-modifier completion, dispatches command-position
 /// vs arg-position completion.
 pub fn _normal(args: &[String]) -> i32 {
+    // sh:3  local _comp_command1 _comp_command2 _comp_command precommand
+    // sh:4  local -A opts
+    // (`opts` is spelled `opts_flat` by this port's zparseopts call.)
+    {
+        use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
+        declare_locals(&["_comp_command1", "_comp_command2", "_comp_command"], 0);
+        declare_locals(&["precommand", "opts_flat"], PM_ARRAY);
+    }
     // sh:6  zparseopts -A opts -D - P p+:-=precommand s
     //   The `-A opts` flag makes opts an assoc; we approximate with
     //   a flat array `opts_flat` of [flag, value, ...] where the
@@ -76,9 +84,16 @@ pub fn _normal(args: &[String]) -> i32 {
     );
     let opts_flat = getaparam("opts_flat").unwrap_or_default();
     let precommand = getaparam("precommand").unwrap_or_default();
-    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
-    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    // Tear down the zparseopts-bridge scratch globals. `__compsys_argv` and
+    // `opts_flat` are not real zsh identifiers at all (zsh operates on
+    // positional `$argv` and on the `local -A opts` of sh:4); `precommand` is
+    // sh:3's `local`, so it must not survive into the completers this
+    // function goes on to dispatch. It did: `_command_names` reaches
+    // `_parameters`, which lists every NON-local parameter, so a leaked
+    // global `precommand` showed up as a match for `pr<TAB>`. Bug #657.
     crate::ported::params::unsetparam(src);
+    crate::ported::params::unsetparam("opts_flat");
+    crate::ported::params::unsetparam("precommand");
     let saw_s = opts_flat.contains(&"-s".to_string());
     let saw_p_cap = opts_flat.contains(&"-P".to_string());
 

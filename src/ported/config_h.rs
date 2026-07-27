@@ -959,7 +959,21 @@ pub const IOCTL_IN_SYS_IOCTL: i32 = 1;
 pub const LONG_IS_64_BIT: i32 = 1;
 
 /// Define to be the machine type (microprocessor class or machine model).
-pub const MACHTYPE: &str = "arm";
+///
+/// C zsh freezes configure's `$host_cpu` here, which config.guess
+/// canonicalizes: an Apple Silicon host reports `aarch64-apple-darwinN`,
+/// so homebrew zsh has `MACHTYPE=aarch64` (verified:
+/// `zsh -f -c 'typeset -p MACHTYPE'` → `typeset MACHTYPE=aarch64`).
+/// The Rust equivalent of that canonical host_cpu is the build target
+/// arch, which spells the same names (`aarch64`, `x86_64`, `arm`,
+/// `riscv64`), so MACHTYPE tracks the architecture the binary was
+/// compiled for on every platform instead of being frozen to one.
+///
+/// This value is load-bearing for completion parity: `_gcc` switches its
+/// `-m*` option list on `case $MACHTYPE in ... aarch64) ... arm) ...`
+/// (`Completion/Unix/Command/_gcc:34,66,448`), so a wrong MACHTYPE
+/// silently completes another CPU's flags.
+pub const MACHTYPE: &str = std::env::consts::ARCH;
 
 // Define for Maildir support
 // /* #undef MAILDIR_SUPPORT */
@@ -1789,6 +1803,30 @@ mod tests {
     fn machtype_non_empty_ascii() {
         assert!(!MACHTYPE.is_empty(), "MACHTYPE must be non-empty");
         assert!(MACHTYPE.is_ascii(), "MACHTYPE must be ASCII");
+    }
+
+    /// c:962 — MACHTYPE is configure's `$host_cpu`, the name config.guess
+    /// prints, NOT uname's `machine`. On Apple Silicon those differ:
+    /// config.guess says `aarch64-apple-darwinN` while `uname -m` says
+    /// `arm64`, and zsh reports the former (`zsh -f -c 'typeset -p
+    /// MACHTYPE'` → `typeset MACHTYPE=aarch64`). This was hardcoded to
+    /// `"arm"`, which sent `_gcc`'s `case $MACHTYPE in` (Completion/Unix/
+    /// Command/_gcc:34,66,448) down the 32-bit ARM arm rather than the
+    /// aarch64 arm: `gcc -<TAB>` offered 17 ARM/SuperH `-m*` flags that
+    /// do not exist on this CPU and hid the 3 AArch64 ones, so zshrs
+    /// reported "1652 possibilities" where zsh reports 1638.
+    #[test]
+    fn machtype_is_config_guess_host_cpu_not_uname_machine() {
+        assert_eq!(
+            MACHTYPE,
+            std::env::consts::ARCH,
+            "MACHTYPE must track the build target arch"
+        );
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(
+            MACHTYPE, "aarch64",
+            "config.guess spells 64-bit ARM `aarch64`, never `arm`"
+        );
     }
 
     /// c:979 — OSTYPE is non-empty ASCII string (e.g. "darwin23.6.0").

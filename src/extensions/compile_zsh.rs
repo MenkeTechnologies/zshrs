@@ -1680,6 +1680,23 @@ impl ZshCompiler {
             if has_redirects {
                 self.emit_redir_scope_begin(&simple.redirs);
             }
+            // c:Src/exec.c:4142 addvars — the prefix assignments of
+            // `X=y $cmd` commit AFTER the arg words expand (so `$X` in
+            // the args still reads the pre-assign value) but BEFORE the
+            // command dispatches, so the spawned process inherits
+            // `X=y` in its env. This arm previously emitted neither the
+            // assigns nor the matching END, so BEGIN_INLINE_ENV (above)
+            // pushed a frame that was never popped: `X=y $cmd` ran with
+            // X unset, and every LATER plain assignment in the script
+            // landed in the orphaned still-`recording` frame and got
+            // zputenv'd into the process env.
+            if has_inline_env_scope {
+                for assign in &simple.assigns {
+                    self.last_assign_had_cmd_subst = false;
+                    self.compile_assign(assign);
+                }
+                self.emit_seal_inline_env();
+            }
             // Replace fusevm's Op::Exec with BUILTIN_EXEC_DYNAMIC so
             // empty-argv expansion (`\$(exit 1)` produces "") preserves
             // the cmd-subst's last_status. Op::Exec hardcodes 0 for
@@ -1692,6 +1709,15 @@ impl ZshCompiler {
             self.builder.emit(Op::SetStatus, 0);
             if has_redirects {
                 self.builder.emit(Op::WithRedirectsEnd, 0);
+            }
+            // c:Src/exec.c:4410 restore_params — pop the frame and put
+            // the shell var + process env back the way they were.
+            if has_inline_env_scope {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_END_INLINE_ENV, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
             }
             return;
         }
@@ -1952,6 +1978,7 @@ impl ZshCompiler {
                         self.last_assign_had_cmd_subst = false;
                         self.compile_assign(assign);
                     }
+                    self.emit_seal_inline_env();
                 }
                 self.builder.emit(Op::CallBuiltin(opcode, argc), 0);
                 self.builder.emit(Op::SetStatus, 0);
@@ -2290,6 +2317,7 @@ impl ZshCompiler {
                     chain_had_cmd_subst = true;
                 }
             }
+            self.emit_seal_inline_env();
         }
 
         // xtrace: emit a runtime print of the EXPANDED command line
@@ -2532,6 +2560,20 @@ impl ZshCompiler {
             );
             self.builder.emit(Op::Pop, 0);
         }
+    }
+
+    /// Close the inline-env frame's save list, right after the prefix
+    /// assignments of `X=foo cmd` commit and before `cmd` dispatches.
+    /// c:Src/exec.c:4410 — `save_params` snapshots only the parsed
+    /// WC_ASSIGN chain; nothing the command itself assigns belongs in
+    /// the restore list. Without the seal, `X=y . file` reverted every
+    /// global the sourced file defined.
+    fn emit_seal_inline_env(&mut self) {
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_SEAL_INLINE_ENV, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
     }
 
     /// Open a simple command's redirect scope: WithRedirectsBegin +
@@ -6821,9 +6863,34 @@ impl ZshCompiler {
                             // Inner segment: don't let it emit its own
                             // default-word glob bracket (the outer word
                             // owns the assembled-word pass).
+                            //
+                            // c:Src/subst.c:283 — `qt` is a property of the
+                            // INDIVIDUAL `$` token, not of the word:
+                            //   n = paramsubst(list, n, &str, (c == Qstring), …)
+                            // The lexer (Src/lex.c dquote_parse) emits Qstring
+                            // (`\u{8c}`) for a `$` inside `"…"` and Stringg
+                            // (`\u{85}`) outside, so `"$a"post` has a QUOTED
+                            // expansion even though the WORD is not a single DQ
+                            // span. `word_is_single_dq_span` only sees the word
+                            // shape, so this segment used to compile unquoted:
+                            // the array stayed array-shaped and CONCAT split it
+                            // into words (`x` `y` `zpost`) where zsh sepjoins to
+                            // one word (`x y zpost`). Bump dq_context_depth for
+                            // exactly this segment so its compile takes the same
+                            // DQ paths a whole-word `"$a"` takes. Qtick
+                            // (`\u{99}`) is the same marker for `` ` `` inside
+                            // DQ.
+                            let seg_is_dq = exp.starts_with(crate::ported::zsh_h::Qstring)
+                                || exp.starts_with(crate::ported::zsh_h::Qtick);
+                            if seg_is_dq {
+                                self.dq_context_depth += 1;
+                            }
                             self.word_seg_depth += 1;
                             self.compile_word_str(exp);
                             self.word_seg_depth -= 1;
+                            if seg_is_dq {
+                                self.dq_context_depth -= 1;
+                            }
                         }
                     }
                     // Mixed plan9/splice words defer ALL combination to the
@@ -13062,7 +13129,33 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
     let mut in_dq = false;
     let mut in_tick = false;
     let mut depth: i32 = 0;
+    let mut brace_nest: i32 = 0;
+    // WHY the two nesting rules below matter: when this scan ends with
+    // `depth != 0` the splitter reports "unbalanced" and the whole
+    // `name=( … )` word falls through to the GENERIC word path. There
+    // RC_EXPAND_PARAM cross-products the element array against the
+    // surrounding `name=(` / `)` literal text, so `typeset`/`local` is
+    // invoked once PER ELEMENT (`v=((-h --host)-h)`, then
+    // `v=(X --username)-U)`) and the last assignment wins — an N-element
+    // array collapses to 1. `_postgresql`'s `_pgsql_psql` builds its whole
+    // `_arguments` spec list that way, which is what silenced `psql <TAB>`.
+    //
+    // c:Src/lex.c — a BACKSLASH-escaped metachar is inert. The lexer hands
+    // `\(` down as Bnull (`\u{9f}`) + `(`, and raw-source paths keep the
+    // literal `\`. Neither opens a nesting level, so step over the escaped
+    // char instead of counting it.
+    let mut esc = false;
     for &c in body {
+        if esc {
+            esc = false;
+            cur.push(c);
+            continue;
+        }
+        if c == '\u{9f}' || (c == '\\' && !in_sq) {
+            esc = true;
+            cur.push(c);
+            continue;
+        }
         match c {
             '\u{9d}' => {
                 in_sq = !in_sq;
@@ -13076,16 +13169,37 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
                 in_tick = !in_tick;
                 cur.push(c);
             }
+            // Inbrace \u{8f} / Outbrace \u{90} (zsh.h:169-170). Braces are
+            // counted unconditionally: they bound `${…}` and brace expansion,
+            // and the whitespace they enclose is word-internal.
+            '{' | '\u{8f}' if !in_sq && !in_dq => {
+                depth += 1;
+                brace_nest += 1;
+                cur.push(c);
+            }
+            '}' | '\u{90}' if !in_sq && !in_dq => {
+                depth -= 1;
+                brace_nest = (brace_nest - 1).max(0);
+                cur.push(c);
+            }
             // Inpar \u{88} / Inparmath \u{89} open; Outpar \u{8a} /
-            // Outparmath \u{8b} close (zsh.h:163-166 — Outpar is
-            // \u{8a}, NOT \u{89}; the first cut used \u{89} so a
-            // `$(…)` element never re-balanced and the splitter
-            // bailed as unbalanced, skipping the pack rewrite).
-            '(' | '\u{88}' | '\u{89}' | '{' | '\u{8f}' | '[' | '\u{91}' if !in_sq && !in_dq => {
+            // Outparmath \u{8b} close (zsh.h:163-166 — Outpar is \u{8a}, NOT
+            // \u{89}; the first cut used \u{89} so a `$(…)` element never
+            // re-balanced and the splitter bailed as unbalanced, skipping the
+            // pack rewrite). Inbrack \u{91} / Outbrack \u{92} (zsh.h:171-172).
+            //
+            // Counted only OUTSIDE a `${…}` body: in there the parens and
+            // brackets are the substitution's PATTERN / REPLACEMENT text and
+            // are under no obligation to balance —
+            //     ${(@)common_opts_conn/#\(-U/(2 -U}      (_postgresql:993)
+            // has one `(` in the replacement `(2 -U` with no `)`.
+            '(' | '\u{88}' | '\u{89}' | '[' | '\u{91}'
+                if !in_sq && !in_dq && brace_nest == 0 =>
+            {
                 depth += 1;
                 cur.push(c);
             }
-            ')' | '\u{8a}' | '\u{8b}' | '}' | '\u{90}' | ']' | '\u{92}' if !in_sq && !in_dq => {
+            ')' | '\u{8a}' | '\u{8b}' | ']' | '\u{92}' if !in_sq && !in_dq && brace_nest == 0 => {
                 depth -= 1;
                 cur.push(c);
             }

@@ -29,7 +29,7 @@ use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::glob::{matchpat, tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
-use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{isset, options, CASEGLOB, EXTENDEDGLOB, MAX_OPS};
 
@@ -60,7 +60,17 @@ fn zstyle_t(ctx: &str, style: &str) -> bool {
         Some("yes") | Some("true") | Some("on") | Some("1")
     )
 }
+/// `$name[key]` for an associative parameter. `_comp_caller_options` is
+/// PM_HASHED (`_main_complete` publishes it with `sethparam`) and
+/// `getaparam` only ever returns PM_ARRAY values, so the hash has to be
+/// read via `gethkparam`/`gethparam` (c:params.c:3117/3131). The flat
+/// key/value-array path stays as a fallback for `setaparam`-staged assocs.
 fn assoc_get(name: &str, key: &str) -> Option<String> {
+    let keys = gethkparam(name).unwrap_or_default();
+    if !keys.is_empty() {
+        let vals = gethparam(name).unwrap_or_default();
+        return keys.iter().position(|k| k == key).and_then(|i| vals.get(i).cloned());
+    }
     getaparam(name)
         .unwrap_or_default()
         .chunks(2)

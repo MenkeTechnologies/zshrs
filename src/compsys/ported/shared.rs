@@ -2,6 +2,98 @@
 //! library.rs) so the `ported/` tree stands alone.
 
 use std::path::Path;
+
+// =====================================================================
+// Function-local parameter declarations for the Rust ports.
+// =====================================================================
+//
+// An upstream completion function opens with a `local`/`typeset` line
+// (`Completion/Base/Core/_main_complete:11,27-54`). Every scratch name
+// it touches is therefore created at `locallevel`, reads back as
+// `…-local` through `${(t)name}`, and is unwound by `endparamscope`
+// when the function returns.
+//
+// A Rust port assigns the same names with `setsparam`/`setaparam`,
+// which routes through `createparam(name, PM_SCALAR)` — no PM_LOCAL,
+// so the parameter is born at level 0 and both properties are lost:
+// `${(t)_comp_tags}` reads `scalar` and the name survives the call.
+// That is observable: the user's `_parameters`
+// (`~/.zpwr/autoload/comp_utils/_parameters:34`) filters candidates
+// with `${(@k)parameters[(R)${pattern[2]}~*local*]}`, i.e. it drops
+// every parameter whose type string contains `local`. Leaked port
+// scratch names slipped through that filter and `unset <TAB>` offered
+// them alongside the user's real parameters.
+//
+// `declare_locals` is the one place that gap is closed: it is the
+// Rust-port spelling of the upstream `local NAME …` line and mirrors
+// the PM_LOCAL branch of `bin_typeset` (`src/ported/builtin.rs:5570`,
+// port of `Src/builtin.c:2469-2575`).
+
+pub use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_UNIQUE};
+
+/// Declare `names` local to the CURRENT function scope — the Rust-port
+/// equivalent of an upstream completion function's `local NAME …` line.
+///
+/// `kind` carries the type/attribute bits the shell source spells out
+/// (`PM_ARRAY` for `local -a`, `PM_HASHED` for `local -A`, `PM_UNIQUE`
+/// for `typeset -U`); pass `0` for a plain scalar `local`.
+///
+/// Mirrors `Src/builtin.c:2469-2575` (`typeset_single`'s PM_LOCAL arm):
+/// only allocate a shadow when the visible parameter lives at a LOWER
+/// scope than the current `locallevel`, then stamp `pm->level =
+/// locallevel` so `endparamscope` unwinds it. At top level
+/// (`locallevel == 0`) C's `pm->level < locallevel` can never hold, so
+/// nothing is declared — the port then behaves exactly as it does today
+/// when run outside a function (unit tests, `--doctor`).
+pub fn declare_locals(names: &[&str], kind: u32) {
+    use crate::ported::params::{createparam, locallevel, paramtab};
+    use crate::ported::zsh_h::PM_LOCAL;
+    use std::sync::atomic::Ordering;
+
+    let cur = locallevel.load(Ordering::Relaxed); // c:2469 locallevel
+    if cur == 0 {
+        return;
+    }
+    for name in names {
+        // c:2469 — `(!pm || pm->level < locallevel)`.
+        let needs_shadow = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(*name).map(|pm| pm.level < cur))
+            .unwrap_or(true);
+        if !needs_shadow {
+            continue;
+        }
+        // c:2470 — `createparam(pname, on | PM_LOCAL)`.
+        let _ = createparam(name, (kind | PM_LOCAL) as i32);
+        // c:2575 — `else if (on & PM_LOCAL) pm->level = locallevel;`
+        // plus the attribute stamp so `typeset -U` keeps PM_UNIQUE.
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(pm) = tab.get_mut(*name) {
+                pm.level = cur;
+                pm.node.flags |= (kind & PM_UNIQUE) as i32;
+            }
+        }
+    }
+}
+
+/// `local NAME="$NAME"` — declare `names` local while carrying the
+/// enclosing scope's scalar value into the shadow.
+///
+/// Upstream spells this out where the completer chain must keep
+/// reading an inherited value it is also allowed to overwrite:
+/// `_main_complete:31` (`curcontext="$curcontext"`), `_tags:19`,
+/// `_dispatch:4`. A bare [`declare_locals`] would hand the port an
+/// empty parameter instead.
+pub fn declare_locals_keeping_value(names: &[&str]) {
+    for name in names {
+        let inherited = crate::ported::params::getsparam(name);
+        declare_locals(&[name], 0);
+        if let Some(v) = inherited {
+            let _ = crate::ported::params::setsparam(name, &v);
+        }
+    }
+}
 /// `is_executable` — see implementation.
 pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]

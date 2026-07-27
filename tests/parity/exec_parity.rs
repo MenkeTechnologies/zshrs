@@ -244,3 +244,87 @@ mod dup_fd {
         assert_parity_in(d.path(), script);
     }
 }
+
+/// c:Src/exec.c:4142 `addvars` + c:4410 `save_params`/`restore_params`
+/// — an inline assignment prefix on a command whose FIRST WORD IS
+/// DYNAMIC (`X=y $cmd`, `X=y ~/bin/foo`, `X=y =ls`, `X=y $(...)`).
+///
+/// The compiler's dynamic-command-name arm
+/// (`src/extensions/compile_zsh.rs`, `first_is_dynamic`) used to emit
+/// `BUILTIN_BEGIN_INLINE_ENV` and then `return` without ever compiling
+/// the prefix assignments or emitting the matching `SEAL`/`END`. Two
+/// bugs fell out of that:
+///
+///   1. the assignment never happened, so `X=y $cmd` ran `cmd` with
+///      `X` unset (no export to the child, no visibility to a shell
+///      function);
+///   2. the pushed frame was never popped and stayed in its
+///      `recording` state, so EVERY later plain assignment in the
+///      script was recorded into the orphaned frame and `zputenv`'d —
+///      `Z=hello` after a dynamic inline-env command leaked into the
+///      process environment.
+mod dynamic_first_word_inline_env {
+    use super::*;
+
+    /// The prefix assignment reaches the external command's env.
+    #[test]
+    fn exports_to_external_child() {
+        assert_parity(r#"cmd=env; X=y $cmd | grep '^X='"#);
+    }
+
+    /// Same via `printenv`, which reads the variable by name.
+    #[test]
+    fn exports_to_printenv_child() {
+        assert_parity(r#"cmd=printenv; X=y $cmd X"#);
+    }
+
+    /// A shell function sees the value, and it is gone afterwards —
+    /// the `restore_params` half of the pairing.
+    #[test]
+    fn visible_in_function_then_restored() {
+        assert_parity(
+            r#"f() { print -r -- "in=[$X]" }; cmd=f; X=y $cmd; print -r -- "after=[$X]""#,
+        );
+    }
+
+    /// zsh does NOT persist the assignment across a builtin here
+    /// (no POSIX_BUILTINS), so `eval` sees it and the caller does not.
+    #[test]
+    fn visible_in_eval_then_restored() {
+        assert_parity(
+            r#"cmd=eval; X=y $cmd 'print -r -- "in=[$X]"'; print -r -- "after=[$X]""#,
+        );
+    }
+
+    /// c:Src/exec.c:3285-3304 — prefork (arg expansion) runs BEFORE
+    /// addvars, so the command's own args still see the PRE-assignment
+    /// value. `X=y $cmd "[$X]"` must print `[]`, not `[y]`.
+    #[test]
+    fn args_expand_before_the_assignment_commits() {
+        assert_parity(r#"cmd=echo; X=y $cmd "[$X]""#);
+    }
+
+    /// The leaked-frame corruption: a plain assignment AFTER a dynamic
+    /// inline-env command must not be exported to the process env.
+    #[test]
+    fn later_plain_assignment_is_not_exported() {
+        assert_parity(
+            r#"cmd=true; X=y $cmd; Z=hello; env | grep '^Z=' || print -r -- 'Z NOT exported'"#,
+        );
+    }
+
+    /// A following inline-env command still scopes correctly — the
+    /// orphaned frame must not swallow its restore.
+    #[test]
+    fn following_inline_env_command_still_scopes() {
+        assert_parity(r#"cmd=true; X=y $cmd; A=1 true; print -r -- "[$A][$X]""#);
+    }
+
+    /// c:Src/subst.c:799 `filesubstr` — `=cmd` is the other
+    /// `first_is_dynamic` trigger the compiler routes through
+    /// BUILTIN_EXEC_DYNAMIC, so it must scope identically.
+    #[test]
+    fn equals_command_word_scopes_the_same() {
+        assert_parity(r#"X=y =printenv X; print -r -- "after=[$X]""#);
+    }
+}

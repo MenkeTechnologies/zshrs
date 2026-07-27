@@ -37,6 +37,12 @@ impl crate::ported::vm_helper::ShellExecutor {
                     // `#compdef -k`/`-K` header bindings — must run on the
                     // shell thread (dispatches zle -C + bindkey).
                     crate::compsys::ported::compinit::apply_keybindings(&bg.result);
+                    // compinit sh:337/sh:541 — `compdef -na` autoloads every
+                    // completer it registers, so `${(k)functions}` holds a stub
+                    // for each one (see `register_autoload_stubs`).
+                    crate::compsys::ported::compinit::register_autoload_stubs(
+                        crate::compsys::ported::compinit::autoload_stub_names(&bg.result),
+                    );
                     self.set_assoc("_comps".to_string(), bg.result.comps.into_iter().collect());
                     self.set_assoc(
                         "_services".to_string(),
@@ -110,6 +116,13 @@ impl crate::ported::vm_helper::ShellExecutor {
         if !no_dump {
             let _ = crate::compsys::compdump(&result, &dump_path, "zshrs-0.1.0");
         }
+
+        // compinit sh:337/sh:541 — `compdef -na` autoloads every completer it
+        // registers, so `${(k)functions}` holds a stub for each one (see
+        // `register_autoload_stubs`).
+        crate::compsys::ported::compinit::register_autoload_stubs(
+            crate::compsys::ported::compinit::autoload_stub_names(&result),
+        );
 
         // Set up _comps associative array
         self.set_assoc(

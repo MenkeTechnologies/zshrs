@@ -98,6 +98,15 @@ fn make_ops() -> options {
 ///   * without args (next-set mode): `comptags -N$prev`.
 pub fn _tags(args: &[String]) -> i32 {
     // sh:3  local prev
+    // sh:19 local curcontext="$curcontext" order tag nodef tmp
+    //   (upstream declares the second group only inside the `(( $# ))`
+    //   branch; this port has no early-return before that test that
+    //   would observe the difference.)
+    {
+        use crate::compsys::ported::shared::{declare_locals, declare_locals_keeping_value};
+        declare_locals(&["prev", "order", "tag", "nodef", "tmp"], 0);
+        declare_locals_keeping_value(&["curcontext"]);
+    }
     // sh:10-13 — `--` as first arg sets `prev = "-"` (the suffix that
     //   becomes `-i-` / `-T-` / `-N-`, telling comptags to use the
     //   preceding nesting level).

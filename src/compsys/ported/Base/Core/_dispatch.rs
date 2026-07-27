@@ -89,6 +89,18 @@ fn assoc_flat(name: &str) -> Vec<String> {
 /// `_compskip` reset; first non-flag arg becomes the curcontext
 /// field; remaining args are tried in order against `$_comps`.
 pub fn _dispatch(args: &[String]) -> i32 {
+    // sh:3  local comp pat val name i ret=1 _compskip="$_compskip"
+    // sh:4  local curcontext="$curcontext" service str noskip
+    // sh:5  local -a match mbegin mend
+    {
+        use crate::compsys::ported::shared::{
+            declare_locals, declare_locals_keeping_value, PM_ARRAY,
+        };
+        declare_locals(&["comp", "pat", "val", "name", "i", "ret", "str", "noskip"], 0);
+        declare_locals_keeping_value(&["_compskip", "curcontext"]);
+        declare_locals(&["service"], 0);
+        declare_locals(&["match", "mbegin", "mend"], PM_ARRAY);
+    }
     let mut ret: i32 = 1;
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
     let saved_compskip = getsparam("_compskip").unwrap_or_default();

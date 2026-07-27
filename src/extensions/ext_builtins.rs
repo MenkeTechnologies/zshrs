@@ -23,6 +23,138 @@
 /// (`ch-lsp-extensions` chapter in `docs/reference.html`). When you
 /// add a `pub(crate) fn builtin_X` method below, ALSO add `X` here
 /// (sorted) so the inventory stays in sync.
+/// True when the shell's user-visible BUILTIN TABLE must omit
+/// [`EXT_BUILTIN_NAMES`] — the `builtins` magic assoc
+/// (`Src/Modules/parameter.c`'s `scanbuiltins` port) and the legacy
+/// compctl builtin namespace (`Src/Zle/compctl.c`'s `dumphashtable`
+/// port).
+///
+/// Two ways to turn on:
+///
+///   * `--zsh` strict emulation — those names do not exist in zsh, so
+///     the emulated namespace must not invent them.
+///   * `ZSHRS_HIDE_EXT_BUILTINS` set to any non-empty value — a
+///     MEASUREMENT knob for the byte-for-byte parity harnesses, so they
+///     can diff zshrs's zsh-compatible namespace against real zsh
+///     without ~145 zshrs-original builtins showing up as spurious
+///     diffs. It is NOT a compat mode: nothing else about the shell
+///     changes, and in particular DISPATCH is untouched — `peach`,
+///     `doctor`, `async` still run, and `whence -w`/`type`/`command -v`
+///     still resolve them as builtins.
+///
+/// The env read is cached: both callers are name-enumeration hot paths
+/// (`${(k)builtins}`, command-position completion). The `--zsh` half is
+/// read live because the mode flag is set during argument parsing.
+pub fn hide_ext_builtins() -> bool {
+    static HIDE_ENV: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let env_hide = *HIDE_ENV.get_or_init(|| {
+        std::env::var_os("ZSHRS_HIDE_EXT_BUILTINS").is_some_and(|v| !v.is_empty())
+    });
+    env_hide || crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The module each statically-linked builtin belongs to, or `None` for
+/// a `zsh/main` core builtin that is always present.
+///
+/// In C `builtintab` is a live hash table: a module's builtins are
+/// added by `addbuiltins()` when the module loads and removed when it
+/// unloads, so `builtintab` only ever holds names that are callable
+/// right now. zshrs links every module statically and keeps ONE flat
+/// `BUILTINS` slice (`src/ported/builtin.rs`), so the module→name
+/// association that C carries implicitly in table membership has to be
+/// spelled out here.
+///
+/// `"__zshrs_only"` marks entries in zshrs's `BUILTINS` table that have
+/// no upstream counterpart at all (debug/bytecode hooks); no `zmodload`
+/// can make them appear in a real zsh.
+pub fn builtin_owning_module(name: &str) -> Option<&'static str> {
+    match name {
+        // zsh/files (Src/Modules/files.c:806-824).
+        "chmod" | "chgrp" | "chown" | "ln" | "mkdir" | "mv" | "rm" | "rmdir" | "sync" => {
+            Some("zsh/files")
+        }
+        "zf_chmod" | "zf_chgrp" | "zf_chown" | "zf_ln" | "zf_mkdir" | "zf_mv" | "zf_rm"
+        | "zf_rmdir" | "zf_sync" => Some("zsh/files"),
+        // zsh/zftp (Src/Modules/zftp.c).
+        "zftp" => Some("zsh/zftp"),
+        // zsh/net/tcp (Src/Modules/tcp.c).
+        "ztcp" => Some("zsh/net/tcp"),
+        // zsh/net/socket (Src/Modules/socket.c).
+        "zsocket" => Some("zsh/net/socket"),
+        // zsh/stat (Src/Modules/stat.c).
+        "stat" | "zstat" => Some("zsh/stat"),
+        // zsh/zselect (Src/Modules/zselect.c).
+        "zselect" => Some("zsh/zselect"),
+        // zsh/zpty (Src/Modules/zpty.c).
+        "zpty" => Some("zsh/zpty"),
+        // zsh/zprof (Src/Modules/zprof.c).
+        "zprof" => Some("zsh/zprof"),
+        // zsh/system (Src/Modules/system.c).
+        "zsystem" | "syserror" | "sysopen" | "sysread" | "sysseek" | "syswrite" => {
+            Some("zsh/system")
+        }
+        // zsh/clone (Src/Modules/clone.c).
+        "clone" => Some("zsh/clone"),
+        // zsh/curses (Src/Modules/curses.c).
+        "zcurses" => Some("zsh/curses"),
+        // zsh/db/gdbm (Src/Modules/db_gdbm.c).
+        "ztie" | "zuntie" | "zgdbmpath" => Some("zsh/db/gdbm"),
+        // zsh/pcre (Src/Modules/pcre.c).
+        "pcre_compile" | "pcre_match" | "pcre_study" => Some("zsh/pcre"),
+        // zsh/example (Src/Modules/example.c).
+        "example" => Some("zsh/example"),
+        // zsh/cap (Src/Modules/cap.c).
+        "cap" | "getcap" | "setcap" => Some("zsh/cap"),
+        // zsh/attr (Src/Modules/attr.c).
+        "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => Some("zsh/attr"),
+        // zsh/datetime (Src/Modules/datetime.c).
+        "strftime" => Some("zsh/datetime"),
+        // zsh/param/private — Src/Modules/param_private.c:217.
+        "private" => Some("zsh/param/private"),
+        // zshrs-only debug / bytecode hooks with no upstream builtin.
+        "hashinfo" | "mem" | "patdebug" | "nameref" | "__rust_compile" => Some("__zshrs_only"),
+        // zsh/main core builtins.
+        _ => None,
+    }
+}
+
+/// Would C's live `builtintab` currently contain `name`?
+///
+/// This is THE predicate for "is this builtin name visible to a
+/// namespace walk right now". Both walkers must agree or the shell
+/// reports one set through `${(k)builtins}` and a different one through
+/// command-position completion:
+///
+///   * `scanbuiltins` — the `builtins` / `dis_builtins` magic assocs
+///     (port of `Src/Modules/parameter.c:816-840`);
+///   * `makecomplistflags` — the compctl namespace dump
+///     (port of `Src/Zle/compctl.c:3654`, which walks `builtintab`).
+///
+/// They had drifted: only the first applied the module gate, so
+/// `rustup <TAB>` — which falls through `_default` to `compcall` — put
+/// 44 names (`strftime`, `zstat`, `zpty`, `zf_chmod`, `pcre_match`, …)
+/// into the match list that `${#builtins}` correctly reported as
+/// absent, and that a real zsh only exposes after the owning
+/// `zmodload`.
+///
+/// The gate is applied under `hide_ext_builtins()` — `--zsh` strict
+/// emulation and the `ZSHRS_HIDE_EXT_BUILTINS` parity knob. Default
+/// zshrs mode keeps the auto-load posture where every statically-linked
+/// module builtin is callable without an explicit `zmodload`, and
+/// dispatch is never affected either way.
+pub fn builtin_in_builtintab(name: &str) -> bool {
+    if !crate::ext_builtins::hide_ext_builtins() {
+        return true;
+    }
+    match builtin_owning_module(name) {
+        None => true,
+        Some(modname) => crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_loaded(modname))
+            .unwrap_or(false),
+    }
+}
+
 pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "add_zsh_hook",
     "arch",
@@ -1919,6 +2051,32 @@ impl ShellExecutor {
             i += 1;
         }
 
+        // compinit sh:116-197 — the `typeset -g…` block at the top of
+        // compinit's body. Unconditional upstream, so it must run
+        // before every branch below (including the `-C` cache-hit
+        // early return and the insecure-directory bail-out), not just
+        // on the fresh-scan path in `compinit::compinit()`.
+        crate::compsys::ported::compinit::declare_compinit_globals(dump_file.as_deref());
+
+        // compinit sh:455 `autoload -RUz compaudit` and sh:481
+        // `autoload -RUz compdump compinstall` ("Make sure compdump is
+        // available, even if we aren't going to use it"), plus sh:578
+        // `autoload -RUz compinit compaudit` at the very end. These are
+        // unconditional lines in compinit's own body — they fire on
+        // every path, dump-hit or fresh-scan alike, so a real zsh always
+        // finishes compinit with all three names in `${(k)functions}`.
+        // zshrs derived its autoload stubs purely from the fpath/cache
+        // scan, and none of the three carries a `#compdef` / `#autoload`
+        // header, so they were the only names compinit itself guarantees
+        // that zshrs was missing. Registered before the audit call so
+        // the insecure-directory early return below still leaves
+        // `compaudit` callable, exactly as sh:455 does.
+        crate::compsys::ported::compinit::register_autoload_stubs([
+            "compaudit",   // sh:455
+            "compdump",    // sh:481
+            "compinstall", // sh:481
+        ]);
+
         // Run compaudit with SQLite cache (unless -u skips it entirely)
         if !use_insecure && !self.posix_mode {
             if let Some(ref cache) = self.plugin_cache {
@@ -1984,6 +2142,24 @@ impl ShellExecutor {
                                 "compinit: using cached completions"
                             );
                         }
+                        // compinit sh:337/sh:541 — every registered completer is
+                        // `autoload -rUz`'d, so `${(k)functions}` lists all of
+                        // them. Completers depend on that: `_tmux` derives its
+                        // sub-command list from `${(M)${(k)functions}:#_tmux-*}`
+                        // (_tmux sh:1967), which silently lost the `_tmux-*`
+                        // helpers in $fpath while this table stayed empty.
+                        let stub_t0 = std::time::Instant::now();
+                        if let Ok(names) = cache.list_autoload_names() {
+                            let added =
+                                crate::compsys::ported::compinit::register_autoload_stubs(&names);
+                            tracing::info!(
+                                added,
+                                total = names.len(),
+                                ms = stub_t0.elapsed().as_millis() as u64,
+                                "compinit: autoload stubs"
+                            );
+                        }
+
                         self.set_assoc("_comps".to_string(), result.comps.into_iter().collect());
                         self.set_assoc(
                             "_services".to_string(),
@@ -1992,6 +2168,20 @@ impl ShellExecutor {
                         self.set_assoc(
                             "_patcomps".to_string(),
                             result.patcomps.into_iter().collect(),
+                        );
+                        // sh:116/121 — `_postpatcomps` and `_compautos`
+                        // are populated from the same dump/scan as the
+                        // three above (compdump sh:112-131 writes all
+                        // five). Publishing only three left
+                        // `${(k)_postpatcomps}` empty on the cache-hit
+                        // path even though the cache held the entries.
+                        self.set_assoc(
+                            "_postpatcomps".to_string(),
+                            result.postpatcomps.into_iter().collect(),
+                        );
+                        self.set_assoc(
+                            "_compautos".to_string(),
+                            result.compautos.into_iter().collect(),
                         );
 
                         // Background: fill bytecode blobs for any autoloads that have body but no chunk.

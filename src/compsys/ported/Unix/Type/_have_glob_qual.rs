@@ -25,10 +25,23 @@
 //! text before it, and `match[5]` the qualifier body (`[^)|~]*` for A,
 //! `[^)]*` for B). Return status is the `[[ … ]]` result (0 = has quals).
 
-use crate::ported::params::{getaparam, setaparam};
+use crate::ported::params::{getaparam, gethkparam, gethparam, setaparam};
 
-/// Flat assoc lookup (the key/value layout params use in the port).
+/// `$name[key]` for an associative parameter.
+///
+/// `_comp_caller_options` is a real PM_HASHED param (`_main_complete`
+/// publishes it with `sethparam`), and `getaparam` returns `None` for
+/// anything that is not PM_ARRAY — so the hash MUST be read through
+/// `gethkparam`/`gethparam` (c:params.c:3117/3131). The flat
+/// key/value-array fallback is kept for callers that stage the assoc
+/// with `setaparam` (the unit tests below, and ports that build a
+/// scratch array).
 fn assoc_get(name: &str, key: &str) -> Option<String> {
+    let keys = gethkparam(name).unwrap_or_default();
+    if !keys.is_empty() {
+        let vals = gethparam(name).unwrap_or_default();
+        return keys.iter().position(|k| k == key).and_then(|i| vals.get(i).cloned());
+    }
     getaparam(name)?
         .chunks(2)
         .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
@@ -106,7 +119,6 @@ pub fn _have_glob_qual(args: &[String]) -> i32 {
     }
     let bareglob = assoc_get("_comp_caller_options", "bareglobqual").as_deref() == Some("on");
     let extglob = assoc_get("_comp_caller_options", "extendedglob").as_deref() == Some("on");
-
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len();
 
@@ -221,5 +233,35 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         set_caller_opt(false, false);
         assert_eq!(_have_glob_qual(&["*(-/".to_string()]), 1);
+    }
+
+    /// sh:18-19 — `$_comp_caller_options[bareglobqual]` must be read from
+    /// the REAL associative parameter. `_main_complete` publishes it with
+    /// `sethparam` (PM_HASHED), and `getaparam` only ever yields PM_ARRAY
+    /// values, so a flat-array-only lookup silently saw `off` for every
+    /// option: `_have_glob_qual` returned 1 for every word and `ls *(<TAB>`
+    /// offered zero glob qualifiers instead of zsh's 47.
+    #[test]
+    fn caller_options_read_from_a_real_hash() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::unsetparam("_comp_caller_options");
+        let _ = crate::ported::params::sethparam(
+            "_comp_caller_options",
+            vec![
+                "bareglobqual".to_string(),
+                "on".to_string(),
+                "extendedglob".to_string(),
+                "off".to_string(),
+            ],
+        );
+        setaparam("compstate", vec!["quote".to_string(), String::new()]);
+        assert_eq!(
+            _have_glob_qual(&["*(-/".to_string()]),
+            0,
+            "bareglobqual=on in a PM_HASHED _comp_caller_options must be seen"
+        );
+        let m = getaparam("match").unwrap();
+        assert_eq!(m[4], "-/");
+        let _ = crate::ported::params::unsetparam("_comp_caller_options");
     }
 }

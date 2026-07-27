@@ -1592,3 +1592,326 @@ fn background_amp_actually_runs_the_child() {
     assert_eq!(content, "wrote\n");
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn rc_expand_param_substitutes_the_trailing_text_for_every_element() {
+    // c:Src/subst.c:4316-4324 — the plan9 (`${^arr}`) cross product runs
+    // `stringsubst` over the text FOLLOWING the expansion once, up front, then
+    // glues the result to every array element. zshrs instead carried the raw
+    // trailing text into each node and relied on the caller re-scanning the
+    // returned position, which points inside the LAST node only — so a trailing
+    // `${…}` was substituted for the final element and emitted LITERALLY for
+    // all the others.
+    //
+    // The shapes below all route through the whole-word expansion path (the
+    // compiler's word-segment fast path is skipped once the word carries a
+    // Bnull / quote marker), which is where the divergence lived.
+    //
+    // Real-world case: Unix/Command/_man's
+    //     pages=( ${^pages}/"*${sect:+.$sect"*"}" )
+    // left a literal `${sect:+.$sect*}` glued to every man directory but the
+    // last, so `man <TAB>` offered 659 pages instead of 33678.
+
+    // Nested double quotes inside the trailing `${…}`.
+    ok(
+        r#"a=(x y z); v=V; print -rl -- ${^a}-"${v:+A"B"C}""#,
+        "x-ABC\ny-ABC\nz-ABC\n",
+    );
+    // Backslash-escaped quotes (Bnull) reach the same path.
+    ok(
+        r#"a=(x y z); v=V; print -rl -- ${^a}-${v:+A\"B\"C}"#,
+        "x-A\"B\"C\ny-A\"B\"C\nz-A\"B\"C\n",
+    );
+    // A trailing expansion that is EMPTY must not leave the source text behind
+    // either — this is the exact `${sect:+…}` shape _man hits with no section.
+    ok(
+        r#"a=(x y z); s=; print -rl -- ${^a}/"*${s:+.$s"*"}""#,
+        "x/*\ny/*\nz/*\n",
+    );
+    // Non-empty leg of the same shape.
+    ok(
+        r#"a=(x y z); s=3; print -rl -- ${^a}/"*${s:+.$s"*"}""#,
+        "x/*.3*\ny/*.3*\nz/*.3*\n",
+    );
+    // c:4261 — the single-element early return is skipped when plan9, so a
+    // 1-element array cross-products too (this leg regressed independently).
+    ok(
+        r#"a=(only); v=V; print -rl -- ${^a}-"${v:+A"B"C}""#,
+        "only-ABC\n",
+    );
+    // `${^^arr}` forces plan9 OFF: prefix sticks to the first element and the
+    // trailing text to the last, and it must still be substituted there.
+    ok(
+        r#"a=(x y z); v=V; print -rl -- ${^^a}-"${v:+A"B"C}""#,
+        "x\ny\nz-ABC\n",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `local NAME` shadowing a zsh/parameter magic special
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// c:Src/params.c:1090-1115 `createparam` — declaring `local NAME` inside a
+/// function where NAME is one of zsh/parameter's magic specials (`options`,
+/// `functions`, `dirstack`, …) does NOT reach through to the special. C keeps
+/// specials and user parameters in the ONE `paramtab` hash: createparam stashes
+/// the special in `pm->old` and inserts a plain node under the same key, so
+/// every read until `endparamscope` sees the LOCAL.
+///
+/// zshrs keeps the magic rows in separate static tables (`PARTAB` /
+/// `PARTAB_ARRAY`) matched by NAME, so before the fix the special won every
+/// read that went through the full `paramsubst` path while the shadowing local
+/// only answered the bare `$name` fast path.
+///
+/// Real-world breakage: git 2.55.0's `git-completion.bash`
+/// `__git_resolve_builtins` (share/zsh/site-functions/git-completion.bash:
+/// 500-501) does `local options; eval "options=\${$var-}"`. `$options` read
+/// back the option table (`off on off …`), the `[ -z "$options" ]` guard took
+/// the WRONG branch, and `___git_resolved_builtins` ended up as the 3-char
+/// string `off` instead of git's 546-char option list — `git checkout --<TAB>`
+/// completed nothing.
+#[test]
+fn local_shadows_magic_special_hash_param() {
+    // Every read form of a shadowed `options`: bare, length, case flag,
+    // scalar range subscript, negative char subscript. All must see the local.
+    ok(
+        r#"f(){ local options; options="hello world"; print -r -- "$options ${#options} ${(U)options} ${options[1,5]} ${options[-1]}"; }; f"#,
+        "hello world 11 HELLO WORLD hello d\n",
+    );
+    // The special must be restored intact once the scope pops.
+    ok(
+        r#"f(){ local options; options=x; }; f; print -r -- ${(t)options} ${options[interactive]}"#,
+        "association-hide-hideval-special off\n",
+    );
+}
+
+/// The exact `__git_resolve_builtins` shape: `local` + an `eval`-generated
+/// assignment through `${$var-}` indirection, then the `[ -z ]` branch that
+/// decides whether to shell out for the option list. The pre-fix bug made the
+/// guard take the non-empty branch and return the option table.
+#[test]
+fn local_shadows_magic_special_through_eval_assign() {
+    ok(
+        r#"f(){ local v=__nosuch_param; local options; eval "options=\${$v-}"; if [ -z "$options" ]; then options=" --a --b "; fi; print -r -- "[$options] ${#options}"; }; f"#,
+        "[ --a --b ] 9\n",
+    );
+}
+
+/// Same shadowing rule for a PM_ARRAY magic special (`dirstack`, c:Src/Modules/
+/// parameter.c:2239) and for a PM_HASHED one read by name (`functions`).
+/// `${#dirstack}` counted the live directory stack instead of the local's
+/// characters before the fix.
+#[test]
+fn local_shadows_magic_special_array_param() {
+    ok(
+        r#"f(){ local dirstack; dirstack=qqq; print -r -- "$dirstack ${#dirstack}"; }; f; print -r -- ${(t)dirstack}"#,
+        "qqq 3\narray-hide-hideval-special\n",
+    );
+    ok(
+        r#"f(){ local functions; functions=zzz; print -r -- "$functions ${#functions}"; }; f; print -r -- ${(t)functions}"#,
+        "zzz 3\nassociation-hide-hideval-special\n",
+    );
+}
+
+/// Guard against over-reach: an ORDINARY user assoc must keep working. Its
+/// paramtab node legitimately carries no PM_SPECIAL, so a naive
+/// "no PM_SPECIAL ⇒ shadowed" predicate would have disabled every user hash.
+#[test]
+fn user_assoc_unaffected_by_magic_shadow_guard() {
+    ok(
+        r#"typeset -A h=(a 1 b 2); print -r -- "${h[a]} ${#h} ${(t)h}""#,
+        "1 2 association\n",
+    );
+}
+
+/// c:Src/params.c:3926-3934 `scanendscope` / `unsetparam_pm` — popping a local
+/// scope restores the outer binding's DATA, not just its paramtab node. zshrs
+/// keeps assoc values in a parallel name-keyed store, and `createparam`
+/// (params.rs:2260) saves + clears that store whenever the OUTER pm is
+/// PM_HASHED. The matching restore in `endparamscope` was gated on the LOCAL
+/// also being hashed, so a NON-hashed local (`local h` over an assoc `h`,
+/// `local options` over the zsh/parameter magic assoc) cleared the store and
+/// never put it back — the outer assoc stayed blank for the rest of the
+/// process.
+#[test]
+fn scalar_local_over_assoc_restores_outer_data_on_scope_exit() {
+    ok(
+        r#"typeset -A h=(a 1 b 2); f(){ local h; h=zzz; print -r -- "in [${h[a]}] [$h] ${(t)h}"; }; f; print -r -- "out [${h[a]}] ${(t)h}""#,
+        "in [] [zzz] scalar-local\nout [1] association\n",
+    );
+    // A hashed local over a hashed outer must still swap cleanly (the case the
+    // original gate covered) — the fix must not regress it.
+    ok(
+        r#"typeset -A h=(a 1); f(){ typeset -A h; h[x]=v; print -r -- "in [${h[a]}][${h[x]}]"; }; f; print -r -- "out [${h[a]}][${h[x]}]""#,
+        "in [][v]\nout [1][]\n",
+    );
+    // A hashed local with NO outer binding must leave nothing behind.
+    ok(
+        r#"f(){ typeset -A H; H[x]=v; }; f; print -r -- "[${H[x]}]""#,
+        "[]\n",
+    );
+}
+
+/// `getarg`'s flag-subscript parser bailed on any `[` anywhere in the
+/// subscript (`rest.contains('[')`), so a char-class search pattern was never
+/// parsed at all. `paramsubst`'s subexp arm falls back to the WHOLE value when
+/// getarg answers None, so `${${x}[(r)[abc]]}` returned the entire value
+/// instead of the match. `_typeset` keys its option table with exactly that
+/// idiom — `${${(s::)use[$i]}[(r)[dUurRtT]]:+$func}` — so every character
+/// tested "matched", `$func` was appended to every lookup key, and the specs
+/// whose key has no `f`/`p` variant vanished: `functions -<TAB>` lost `-W`,
+/// `-k`, `-m`, `-z` and `autoload -<TAB>` lost `-k`.
+#[test]
+fn flag_subscript_pattern_may_contain_a_character_class() {
+    // The exact `_typeset` shape: a 1-element array from `(s::)`, probed with
+    // a char-class pattern. `k`/`W` are NOT in the class, so both must answer
+    // empty; `U`/`t` ARE, so both must answer the character.
+    ok(
+        r#"for c in U k t W; do print -rn -- "[${${(s::)c}[(r)[dUurRtT]]}]"; done; print -r -- ."#,
+        "[U][][t][].\n",
+    );
+    // Direct forms: a bracket in the pattern must not disable the subscript.
+    ok(
+        r#"x=abc; print -r -- "[${${x}[(r)[abc]*]}][${${x}[(r)[xyz]*]}][${${x}[(i)[xyz]*]}]""#,
+        "[a][][4]\n",
+    );
+}
+
+/// `(k)`/`(K)` invert the usual match direction: c:Src/params.c:653-660
+/// compiles the stored KEY as a pattern and matches it against the subscript
+/// text. zshrs compared the key to the subscript with `==`, so glob-keyed
+/// tables never matched. `_netcat`/`_netstat` build their option list with
+/// `$optionmap[(K)$help]` over keys like `'*-l*'`, so `nc -<TAB>` fell back to
+/// the unfiltered table.
+#[test]
+fn hash_key_match_subscript_treats_keys_as_patterns() {
+    // The subscript must carry a `$` expansion: that is the shape `_netcat`
+    // uses (`$optionmap[(K)"$help"]`) and the only one that reaches the
+    // runtime `getarg` path rather than a compile-time constant rebuild.
+    ok(
+        r#"typeset -A m=('*-l*' L '*-b*' B '*ZZ*' Z); h='has -l and -b'; print -r -- "[$m[(K)"$h"]][$m[(k)"$h"]]""#,
+        "[L B][L]\n",
+    );
+}
+
+/// Two shape bugs on the UNBRACED `$assoc[(flags)pat]` form:
+///   * a `,` inside the search PATTERN was read as a slice separator, and the
+///     assoc-splat then returned EVERY value in the hash (c:Src/params.c:2100
+///     only tests for `,` AFTER getarg has consumed the flag group and its
+///     pattern, so a comma in the pattern is never a slice);
+///   * a MATCHMANY search (`I`/`R`/`K`) is array-shaped in C
+///     (c:Src/params.c:1724-1734 `getvaluearr`), but the port joined the
+///     matches into one word — `comparguments` then rejected `_netcat`'s
+///     twelve option specs as a single "invalid option definition".
+#[test]
+fn unbraced_hash_search_subscript_keeps_shape_and_ignores_pattern_commas() {
+    // Comma inside the pattern: still one match, NOT the whole hash.
+    ok(
+        r#"typeset -A m=('*-l*' L '*-b*' B '*ZZ*' Z); h='x, -l y'; a=( $m[(K)"$h"] ); print -r -- "$#a:$a""#,
+        "1:L\n",
+    );
+    // MATCHMANY keeps one word per match even when a value contains spaces.
+    ok(
+        r#"typeset -A m=('*-l*' 'L one' '*-b*' 'B two'); h='has -l and -b'; a=( $m[(K)"$h"] ); print -r -- "$#a:[$a[1]][$a[2]]""#,
+        "2:[L one][B two]\n",
+    );
+    // A real slice must still slice, and a single-match search stay scalar.
+    ok(
+        r#"arr=(alpha beta gamma); a=( $arr[2,3] ); b=( $arr[(r)*a*] ); print -r -- "$#a:$a $#b:$b""#,
+        "2:beta gamma 1:alpha\n",
+    );
+}
+
+/// RC_EXPAND_PARAM must not cross-product a QUOTED array read, nor an array
+/// read that is the RHS of a scalar assignment.
+///
+/// c:Src/subst.c:4245 `if (isarr)` gates the whole plan9 block (c:4316), and
+/// two earlier arms have already zeroed `isarr` for a bare array read:
+///   c:3032 `if (qt && !getlen && isarr > 0) { val = sepjoin(aval, sep, 1);
+///           isarr = 0; }`                                    — DQ context
+///   c:3905 `if (nojoin == 0 || sep) { val = sepjoin(aval, sep, 1);
+///           isarr = 0; }` under `if (ssub || …)` at c:3901
+///                                                            — PREFORK_SINGLE
+/// so `"$a"Z` is ONE IFS-joined word and `c=p$a-s` is one joined scalar even
+/// with the option on. zshrs distributed both, which is how `_sqlite`'s
+///     exclusive=( {,-}-{no,}header )
+///     options+=( "($exclusive)"$^dashes'-header[turn headers on]' )
+/// reached `comparguments` as five words beginning `(-noheader` —
+/// `sqlite3 -<TAB>` printed `comparguments: invalid argument: (-noheader`
+/// into the edit buffer instead of completing.
+#[test]
+fn rc_expand_param_leaves_quoted_and_scalar_assign_array_reads_joined() {
+    // Quoted read with adjacent literal text on either side.
+    ok(
+        r#"setopt rcexpandparam; a=(x y); print -rl -- "$a"Z; print -rl -- Z"$a"; print -rl -- "${a}"Z"#,
+        "x yZ\nZx y\nx yZ\n",
+    );
+    // `(@)` / `[@]` / `$@` keep array shape in DQ (c:2797 isarr = -1), so the
+    // suffix still sticks per element — the join must NOT swallow those.
+    ok(
+        r#"setopt rcexpandparam; a=(x y); print -rl -- "${a[@]}"Z; print -rl -- "${a[*]}"Z"#,
+        "xZ\nyZ\nx yZ\n",
+    );
+    // Scalar-assignment RHS (c:3901 ssub) joins before plan9 can distribute.
+    ok(
+        r#"setopt rcexpandparam; a=(x y); b=$a; c=p$a-s; d="$a"Z; print -rl -- "$b" "$c" "$d""#,
+        "x y\npx y-s\nx yZ\n",
+    );
+    // The `_sqlite` spec shape verbatim: quoted join + `$^` on the neighbour.
+    ok(
+        r#"setopt rcexpandparam; excl=(-noheader -header); dashes=('' -); o=( "($excl)"$^dashes'-header[on]' ); print -rl -- $o"#,
+        "(-noheader -header)-header[on]\n(-noheader -header)--header[on]\n",
+    );
+    // Unquoted stays a cross product — the fix must not over-reach.
+    ok(
+        r#"setopt rcexpandparam; a=(x y); print -rl -- p$a-s"#,
+        "px-s\npy-s\n",
+    );
+}
+
+/// A typeset-family `name=( … )` initializer whose element is a `${…}`
+/// substitution carrying UNBALANCED parens in its pattern/replacement must
+/// still be recognised as a paren-init.
+///
+/// `split_typeset_paren_init` counts `(`/`)` to find element boundaries. An
+/// escaped `\(` (lexed as Bnull + `(`) and a bare `(` inside a `${…}` body are
+/// both inert, but both were counted — the scan ended `depth != 0`, the
+/// splitter reported "unbalanced", and the whole word fell through to the
+/// generic word path. There RC_EXPAND_PARAM cross-products the element array
+/// against the surrounding `name=(` / `)` text, so `local` ran once PER
+/// ELEMENT and the last assignment won: an N-element array collapsed to 1.
+/// `_postgresql`'s `_pgsql_psql` builds its entire `_arguments` spec list as
+///     local -a args=( … ${(@)common_opts_conn/#\(-U/(2 -U} … )
+/// so `psql -<TAB>` silently produced nothing.
+#[test]
+fn typeset_paren_init_survives_unbalanced_parens_inside_a_substitution() {
+    let spec = r#"c=('(-h --host)-h' '(-U --username)-U')"#;
+    // Escaped `\(` in the pattern AND a bare `(` in the replacement.
+    ok(
+        &format!(
+            r#"setopt rcexpandparam; {spec}; local -a v=( ${{(@)c/#\(-U/(2 -U}} ); print -r -- "$#v"; print -rl -- $v"#
+        ),
+        "2\n(-h --host)-h\n(2 -U --username)-U\n",
+    );
+    // Same word with literal elements around the substitution.
+    ok(
+        &format!(
+            r#"setopt rcexpandparam; {spec}; local -a v=( + x ${{(@)c/#\(-U/(2 -U}} tail ); print -r -- "$#v""#
+        ),
+        "5\n",
+    );
+    // Option off — the collapse also happened there, as an
+    // "inconsistent type for assignment" abort.
+    ok(
+        &format!(
+            r#"{spec}; local -a v=( ${{(@)c/#\(-U/(2 -U}} ); print -r -- "$#v""#
+        ),
+        "2\n",
+    );
+    // Balanced nesting must keep working: `$( … )` and `${ … }` elements stay
+    // whole, and unquoted whitespace outside them still splits elements.
+    ok(
+        r#"local -a w=( a$(print -n b c)d "e f" ${(j:-:)$(print x y)} g ); print -r -- "$#w""#,
+        "5\n",
+    );
+}

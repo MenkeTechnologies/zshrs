@@ -4783,6 +4783,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // bash sparse arrays: `"${a[*]}"` joins only LIVE elements,
                 // dropping hole slots. No-op in --zsh (no holes tracked).
                 crate::bash_arrays::compact(&name, arr).join(&sep)
+            } else if let Some(arr) = crate::ported::subst::arrays_get(&name) {
+                // c:Src/Modules/parameter.c:2239-2291 partab[] — the PM_ARRAY
+                // magic specials (reswords/patchars/dis_*/…) are getfn-backed,
+                // so `getaparam`'s `pm->u.arr` read (behind `exec.array`) comes
+                // back NULL and the join fell through to the scalar fallback,
+                // which is empty. Same omission the `[@]` splat had.
+                arr.join(&sep)
+            } else if let Some(map) = crate::ported::subst::assoc_get(&name) {
+                // c:Src/Modules/parameter.c:2235-2298 partab[] — the PM_HASHED
+                // magic assocs (aliases/functions/options/…) live behind a
+                // scanfn+getfn pair, not in the executor's assoc storage, so
+                // `exec.assoc` above misses them and `${aliases[*]}` joined an
+                // empty scalar where zsh joins the alias VALUES.
+                map.values().cloned().collect::<Vec<_>>().join(&sep)
             } else {
                 exec.get_variable(&name)
             };
@@ -4903,6 +4917,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Value::Array(v.iter().map(Value::str).collect())
                 }
                 None => {
+                    // c:Src/Modules/parameter.c:2235-2298 partab[] — the
+                    // PM_HASHED magic assocs (aliases/functions/parameters/
+                    // options/commands/builtins/modules/widgets/nameddirs/…)
+                    // are real hash params in C, so `${aliases[@]}` takes the
+                    // ordinary getvaluearr path and enumerates their VALUES.
+                    // zshrs keeps them OUT of the executor's assoc storage
+                    // (they are synthesized on demand by `subst::assoc_get`),
+                    // so the `exec.assoc` probe above missed and this arm fell
+                    // through to the scalar fallback, which returned an EMPTY
+                    // array: `alias foo=bar; print -r -- "${aliases[@]}"` gave
+                    // nothing where zsh gives `bar man whence`. Every other
+                    // form already routed through paramsubst's own magic-assoc
+                    // arms; only the flagless `[@]`/`[*]` splat compiles to
+                    // BUILTIN_ARRAY_ALL and reached here.
+                    //
+                    // Placed in the `None` arm so a real indexed array or a
+                    // user-defined assoc of the same name still wins, and so
+                    // no ordinary array read pays for the PARTAB scan.
+                    //
+                    // Same gap on the PM_ARRAY side (c:2239-2291 partab[]
+                    // rows: reswords/dis_reswords/patchars/dis_patchars/…):
+                    // `getaparam` reads `pm->u.arr`, which is NULL on the
+                    // placeholder node zshrs installs for a getfn-backed
+                    // special, so `${reswords[@]}` splatted nothing. Route
+                    // through the canonical `arrays_get` getfn dispatch.
+                    if let Some(arr) = crate::ported::subst::arrays_get(&name) {
+                        return Value::Array(arr.into_iter().map(Value::str).collect());
+                    }
+                    if let Some(map) = crate::ported::subst::assoc_get(&name) {
+                        return Value::Array(map.values().cloned().map(Value::str).collect());
+                    }
                     // Fall back to scalar lookup. zsh (unlike bash)
                     // does NOT IFS-split a scalar variable in a for
                     // list — `for w in $scalar` iterates ONCE with the
@@ -5232,7 +5277,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `setopt KSH_ARRAYS rc_expand_param; print -r -- $acc` splatted every
         // element while zsh prints just "p1".
         let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
-        if rc_expand && !ksh_arrays {
+        // c:Src/subst.c:4245 `if (isarr)` gates the whole plan9 block
+        // (c:4316), and TWO earlier arms have already zeroed `isarr` for a
+        // bare array read that is quoted or scalar-substituted:
+        //   c:3032 `if (qt && !getlen && isarr > 0) { val = sepjoin(aval,
+        //           sep, 1); isarr = 0; }`                       — DQ context
+        //   c:3905 `if (nojoin == 0 || sep) { val = sepjoin(aval, sep, 1);
+        //           isarr = 0; }` under `if (ssub || …)` at c:3901
+        //                                          — PREFORK_SINGLE (scalar
+        //                                            assignment RHS)
+        // So RC_EXPAND_PARAM never cross-products a plain `"$a"` / `b=$a`;
+        // the array collapses to one IFS-joined scalar first. `force_dq` is
+        // exactly the compiler's flag for those two contexts (it is set for
+        // `in_dq || scalar_assign_depth > 0 || assign_builtin_arg_depth > 0`),
+        // Without this gate `setopt rcexpandparam; a=(x y); print -rl -- "$a"Z`
+        // emitted `xZ` / `yZ` instead of zsh's single `x yZ` — which is how
+        // `_sqlite`'s `"($exclusive)"$^dashes'-header[…]'` reached
+        // `comparguments` as five words starting `(-noheader`.
+        //
+        // Only the compile-time flag is consulted. The runtime
+        // `in_dq_context` counter stays set while a `$(…)` INSIDE double
+        // quotes runs its body, so reading it here would join an unquoted
+        // `$a` in `"$(print -l -- $a)"`.
+        if rc_expand && !ksh_arrays && !force_dq {
             let arr_val = with_executor(|exec| {
                 sync_status(exec);
                 exec.array(&name)
@@ -5644,13 +5711,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return;
             }
             // Inline-assignment frame tracking (`X=foo cmd` reverts on
-            // command return).
-            if !exec.inline_env_stack.is_empty() {
+            // command return). Only the PREFIX assignments belong in
+            // the frame: c:Src/exec.c:4410 save_params snapshots the
+            // parsed WC_ASSIGN chain and nothing else. The frame stays
+            // on the stack while the command runs, so gate on
+            // `recording` (cleared by SEAL_INLINE_ENV once the prefix
+            // assignments have committed) — otherwise every assignment
+            // the command itself makes gets recorded and then reverted
+            // (`X=y . file` wiped every global the file defined).
+            if exec
+                .inline_env_stack
+                .last()
+                .is_some_and(|frame| frame.recording)
+            {
                 let prev_var = crate::ported::params::getsparam(&name);
                 let prev_env = env::var(&name).ok();
                 exec.inline_env_stack
                     .last_mut()
                     .unwrap()
+                    .saved
                     .push((name.clone(), prev_var, prev_env));
                 let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
                 // c:Src/params.c:5354
@@ -6266,14 +6345,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // execute_simple → restore-after-exec contract.
     vm.register_builtin(BUILTIN_BEGIN_INLINE_ENV, |_vm, _argc| {
         with_executor(|exec| {
-            exec.inline_env_stack.push(Vec::new());
+            exec.inline_env_stack
+                .push(crate::vm_helper::InlineEnvFrame::new());
+        });
+        Value::Status(0)
+    });
+    // Closes the frame's save list — see BUILTIN_SEAL_INLINE_ENV.
+    vm.register_builtin(BUILTIN_SEAL_INLINE_ENV, |_vm, _argc| {
+        with_executor(|exec| {
+            if let Some(frame) = exec.inline_env_stack.last_mut() {
+                frame.recording = false;
+            }
         });
         Value::Status(0)
     });
     vm.register_builtin(BUILTIN_END_INLINE_ENV, |_vm, _argc| {
         with_executor(|exec| {
             if let Some(frame) = exec.inline_env_stack.pop() {
-                for (name, prev_var, prev_env) in frame.into_iter().rev() {
+                for (name, prev_var, prev_env) in frame.saved.into_iter().rev() {
                     match prev_var {
                         Some(v) => {
                             exec.set_scalar(name.clone(), v);
@@ -6302,7 +6391,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if persist {
                     return; // c:3971 — no save/restore under POSIX_BUILTINS
                 }
-                for (name, prev_var, prev_env) in frame.into_iter().rev() {
+                for (name, prev_var, prev_env) in frame.saved.into_iter().rev() {
                     match prev_var {
                         Some(v) => {
                             exec.set_scalar(name.clone(), v);
@@ -11077,6 +11166,17 @@ pub const BUILTIN_RESTORE_TRY_BLOCK_STATUS: u16 = 432;
 pub const BUILTIN_BEGIN_INLINE_ENV: u16 = 433;
 /// `BUILTIN_END_INLINE_ENV` constant.
 pub const BUILTIN_END_INLINE_ENV: u16 = 434;
+/// Closes the current inline-env frame's save list. Emitted right
+/// after the prefix assignments of `X=foo cmd` have committed and
+/// before `cmd` dispatches, so assignments performed BY the command
+/// are not recorded into (and therefore not reverted with) the frame.
+/// c:Src/exec.c:4410 `save_params` snapshots only the parsed
+/// WC_ASSIGN chain; the list is closed before the builtin/shell
+/// function runs. Without the seal, `X=y . file` reverted every
+/// global the sourced file assigned — which emptied git's
+/// `git-completion.bash` option tables (`__git_log_common_options`
+/// et al.) that `_git` sources via `GIT_SOURCING_ZSH_COMPLETION=y . …`.
+pub const BUILTIN_SEAL_INLINE_ENV: u16 = 654;
 
 /// `[[ -o option ]]` — shell-option-set test. Stack: \[option_name\].
 /// Normalizes the name (strip underscores, lowercase) and reads

@@ -675,6 +675,192 @@ pub fn init_comp_funcs_arrays() {
     crate::ported::params::setaparam("comppostfuncs", Vec::new());
 }
 
+/// `typeset -g[H][A|a] NAME` — declare a global parameter with the
+/// given type/attribute bits WITHOUT disturbing an existing value.
+///
+/// Port of the `bin_typeset` path upstream's declarations take
+/// (`Src/builtin.c:2469-2575`): when the name is absent the parameter
+/// is created with the requested type; when it is already present only
+/// the attribute bits are OR'd in. `compinit`'s `typeset -gHA _comps`
+/// on a re-`compinit` must not empty the table it just loaded, which is
+/// exactly the "already present" arm.
+fn declare_global(name: &str, kind: u32, attrs: u32) {
+    use crate::ported::params::{paramtab, setaparam, sethparam, setsparam};
+    use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED};
+
+    let exists = paramtab()
+        .read()
+        .ok()
+        .map(|t| t.contains_key(name))
+        .unwrap_or(false);
+    if !exists {
+        // Create through the canonical typed setters, NOT a bare
+        // `createparam`: for a hashed parameter the values live in
+        // `paramtab_hashed_storage`, and only `sethparam` allocates
+        // that side. A raw `createparam(PM_HASHED)` produced a
+        // `_comps` that existed but could never be filled — `${#_comps}`
+        // stayed 0 and `_dispatch` found no completer for ANY command,
+        // so every `<cmd> <TAB>` silently did nothing.
+        if kind & PM_HASHED != 0 {
+            sethparam(name, Vec::new());
+        } else if kind & PM_ARRAY != 0 {
+            setaparam(name, Vec::new());
+        } else {
+            let _ = setsparam(name, "");
+        }
+    }
+    // c:Src/builtin.c:2575 — attribute-only update on an existing
+    // parameter; the value is left alone, which is what a re-`compinit`
+    // needs (`typeset -gHA _comps` must not empty a loaded table).
+    if let Ok(mut tab) = paramtab().write() {
+        if let Some(pm) = tab.get_mut(name) {
+            pm.node.flags |= attrs as i32;
+        }
+    }
+}
+
+/// compinit sh:116-197 — the global parameters `compinit` itself
+/// declares, before any of its branches run.
+///
+/// ```text
+/// sh:116  typeset -gHA _comps _services _patcomps _postpatcomps
+/// sh:121  typeset -gHA _compautos
+/// sh:126  typeset -gHA _lastcomp
+/// sh:131  typeset -g _comp_dumpfile="$_i_dumpfile"      (-d FILE)
+/// sh:133  typeset -g _comp_dumpfile="${ZDOTDIR:-$HOME}/.zcompdump"
+/// sh:138  typeset -gHa _comp_options
+/// sh:180  typeset -gH _comp_setup='…'
+/// sh:195  typeset -ga compprefuncs comppostfuncs
+/// ```
+///
+/// These are unconditional lines in `compinit`'s body — they run on
+/// every path, dump-hit and fresh-scan alike. zshrs keeps the completer
+/// tables in Rust and only published `_comps`/`_services`/`_patcomps`
+/// on the `-C` cache-hit path, so a real session was missing eight
+/// names that upstream always has, and the four assocs it did publish
+/// carried no `-H` (`PM_HIDEVAL`) bit. That is directly observable:
+/// `unset <TAB>` runs `_vars` → `_parameters`, which offers every
+/// parameter whose `${(t)}` lacks `local`, so the missing declarations
+/// were missing completions.
+pub fn declare_compinit_globals(dumpfile: Option<&str>) {
+    use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_HIDEVAL, PM_UNIQUE};
+
+    // sh:116 / sh:121 / sh:126 — `typeset -gHA …`.
+    for name in [
+        "_comps",
+        "_services",
+        "_patcomps",
+        "_postpatcomps",
+        "_compautos",
+        "_lastcomp",
+    ] {
+        declare_global(name, PM_HASHED, PM_HIDEVAL);
+    }
+
+    // sh:129-134 — `_comp_dumpfile` defaults to
+    // `${ZDOTDIR:-$HOME}/.zcompdump` and is overridden by `-d FILE`.
+    // `typeset -g NAME=VALUE` assigns unconditionally, so an explicit
+    // `-d` always wins; without one the default only fills an
+    // empty/absent value.
+    match dumpfile {
+        Some(f) if !f.is_empty() => {
+            let _ = crate::ported::params::setsparam("_comp_dumpfile", f); // sh:131
+        }
+        _ => {
+            if crate::ported::params::getsparam("_comp_dumpfile")
+                .map(|s| s.is_empty())
+                .unwrap_or(true)
+            {
+                let _ = crate::ported::params::setsparam(
+                    "_comp_dumpfile",
+                    &default_dumpfile_path().to_string_lossy(),
+                ); // sh:133
+            }
+        }
+    }
+
+    // sh:138-172 — `typeset -gHa _comp_options` + the option list.
+    declare_global("_comp_options", PM_ARRAY, PM_HIDEVAL);
+    crate::ported::params::setaparam(
+        "_comp_options",
+        COMP_OPTIONS.iter().map(|s| s.to_string()).collect(),
+    );
+
+    // sh:180-190 — `typeset -gH _comp_setup='…'`.
+    declare_global("_comp_setup", 0, PM_HIDEVAL);
+    let _ = crate::ported::params::setsparam("_comp_setup", COMP_SETUP_EVAL);
+
+    // sh:195-197 — `typeset -ga compprefuncs comppostfuncs` then both
+    // reset to empty.
+    init_comp_funcs_arrays();
+
+    // compdump sh:134-135 — `typeset -gUa _comp_assocs`. compdump
+    // writes those two lines into every dump file, and `compinit -C`
+    // reaches them by sourcing it (sh:493 `builtin . "$_comp_dumpfile"`).
+    // zshrs parses the dump into its own cache instead of sourcing it,
+    // so the declaration has to be made here to reach the same state.
+    declare_global("_comp_assocs", PM_ARRAY, PM_UNIQUE);
+}
+
+/// sh:337 — `[[ -n "$autol" ]] && autoload -rUz "$func"`.
+///
+/// compinit registers every scanned completion file with `compdef -na
+/// "${_i_name}" …` (sh:541), and the `-a` in that call is what makes
+/// `compdef` run `autoload -rUz "$func"` at sh:337. The dump-file fast
+/// path (sh:493 `builtin . "$_comp_dumpfile"`) reaches the same state
+/// from compdump's single `autoload -Uz …` line. Either way a real zsh
+/// finishes `compinit` with an autoload stub in `shfunctab` for EVERY
+/// completer basename found in `$fpath`, and completers read that table:
+/// `_tmux` builds its sub-command list from
+/// `${(M)${(k)functions}:#_tmux-*}` (_tmux sh:1967).
+///
+/// zshrs bulk-loads `$_comps` from its own cache and materializes bodies
+/// lazily, so it skipped this step entirely; `${(k)functions}` held only
+/// the functions the session had actually defined.
+///
+/// Only names with no existing `shfunctab` entry get a stub, mirroring
+/// `bin_functions`' behaviour of leaving an already-defined function
+/// alone. Flags match `autoload -rUz`: `PM_UNDEFINED | PM_UNALIASED`
+/// (c:Src/builtin.c:3352-3355) and `PM_ZSHSTORED` (c:3372). Returns the
+/// number of stubs added.
+pub fn register_autoload_stubs<I, S>(names: I) -> usize
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    use crate::ported::zsh_h::{PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED};
+    let flags = (PM_UNDEFINED | PM_UNALIASED | PM_ZSHSTORED) as i32;
+    let mut added = 0usize;
+    let names = names.into_iter();
+    let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() else {
+        return 0;
+    };
+    tab.reserve(names.size_hint().0);
+    for name in names {
+        let name = name.as_ref();
+        if name.is_empty() || tab.contains_key(name) {
+            continue;
+        }
+        let mut stub = crate::ported::hashtable::shfunc_autoload(name);
+        stub.node.flags = flags;
+        tab.add(stub);
+        added += 1;
+    }
+    added
+}
+
+/// Autoload-stub names contributed by a completed scan — every file
+/// whose header was `#compdef` or `#autoload`, which is exactly the set
+/// compinit hands to `compdef -na` / `autoload -rUz` at sh:537-547.
+pub fn autoload_stub_names(result: &CompInitResult) -> Vec<&str> {
+    result
+        .files
+        .iter()
+        .filter(|f| matches!(f.def, CompFileDef::CompDef(_) | CompFileDef::Autoload(_)))
+        .map(|f| f.name.as_str())
+        .collect()
+}
+
 /// Default `$_comp_dumpfile` path (sh:129-134). User can override
 /// via `compinit -d <file>`; without that, use `${ZDOTDIR:-$HOME}`
 /// + `/.zcompdump`.
@@ -781,6 +967,17 @@ pub enum CompDef {
     Pattern(Vec<String>),
     /// Post-pattern completion: #compdef -P 'pattern' [pattern...]
     PostPattern(Vec<String>),
+    /// One header that registers MORE THAN ONE kind, because `-N`/`-p`/`-P`
+    /// switch the target table for the words that FOLLOW them (compinit
+    /// sh:384-420). `_gcc`'s header is the canonical case:
+    /// `#compdef gcc g++ … -value-,CFLAGS,-default- … -P gcc-* -P g++-* -P c++-*`
+    /// — eight command names, six `-value-` contexts, then three
+    /// post-patterns, all from one line.
+    Mixed {
+        commands: Vec<String>,
+        patterns: Vec<String>,
+        postpatterns: Vec<String>,
+    },
     /// Key binding: #compdef -k style key1 key2 ...
     KeyBinding { style: String, keys: Vec<String> },
     /// Widget key binding: #compdef -K widget style key
@@ -870,39 +1067,19 @@ fn parse_first_line(line: &str) -> CompFileDef {
             return CompFileDef::None;
         }
 
-        // Check for special options first
-        match parts[0] {
-            // c:compinit sh:277,387-396 — `-p pattern` sets type=pattern; every
-            // remaining word is a PATTERN key inserted into `_patcomps` (NOT
-            // `_comps`). Collect all patterns after the flag.
-            "-p" if parts.len() >= 2 => {
-                let pats: Vec<String> = parts[1..]
-                    .iter()
-                    .filter(|p| **p != "-p")
-                    .map(|s| s.to_string())
-                    .collect();
-                if pats.is_empty() {
-                    CompFileDef::None
-                } else {
-                    CompFileDef::CompDef(CompDef::Pattern(pats))
-                }
-            }
-            // c:compinit sh:279,389-403 — `-P pattern` sets type=postpattern; every
-            // remaining word is a PATTERN key inserted into `_postpatcomps` (a
-            // post-pattern is tried AFTER normal completion). It does NOT go into
-            // `_comps`. (Previously mis-routed to `_comps` via CompDef::Commands.)
-            "-P" if parts.len() >= 2 => {
-                let pats: Vec<String> = parts[1..]
-                    .iter()
-                    .filter(|p| **p != "-P")
-                    .map(|s| s.to_string())
-                    .collect();
-                if pats.is_empty() {
-                    CompFileDef::None
-                } else {
-                    CompFileDef::CompDef(CompDef::PostPattern(pats))
-                }
-            }
+        // sh:534-539 — ONLY a leading `-[pPkK]` (optionally `n`-suffixed)
+        // is passed to compdef as an option:
+        //     if [[ $_i_line[1] = -[pPkK](n|) ]]; then
+        //       compdef ${_i_line[1]}na "$name" "${(@)_i_line[2,-1]}"
+        //     else
+        //       compdef -na "$name" "${_i_line[@]}"
+        // Everything else — `-n`, `-m`, `-default-`, a bare `-` — is an
+        // ordinary positional word, not a flag. (`_squishy`'s
+        // `#compdef squishy "python -m squishy"` is read by `read -rA`,
+        // which does no quote processing, so zsh really does register a
+        // command literally named `-m`.)
+        let leading = parts[0].strip_suffix('n').filter(|f| f.len() == 2);
+        match leading.unwrap_or(parts[0]) {
             "-k" if parts.len() >= 3 => CompFileDef::CompDef(CompDef::KeyBinding {
                 style: parts[1].to_string(),
                 keys: parts[2..].iter().map(|s| s.to_string()).collect(),
@@ -912,28 +1089,55 @@ fn parse_first_line(line: &str) -> CompFileDef {
                 style: parts[2].to_string(),
                 key: parts[3].to_string(),
             }),
-            _ => {
-                // Parse command definitions, including:
-                // - bare "-" (maps to '-' in _comps)
-                // - context entries like "-default-", "-redirect-", "-value-,VAR,-default-"
-                // - regular commands
-                //
-                // Skip actual option flags like "-n" but keep context entries
-                let cmds: Vec<String> = parts
-                    .iter()
-                    .filter(|s| {
-                        // Keep if:
-                        // - bare hyphen "-"
-                        // - context entry like "-foo-" or "-value-,X,-default-"
-                        // - regular command (no leading hyphen)
-                        **s == "-" || is_context_entry(s) || !s.starts_with('-')
-                    })
-                    .map(|s| s.to_string())
-                    .collect();
-                if cmds.is_empty() {
-                    CompFileDef::None
-                } else {
-                    CompFileDef::CompDef(CompDef::Commands(cmds))
+            flag => {
+                // sh:384-420 — the positional loop. `type` starts at whatever
+                // the leading flag set (sh:277-285) and is RE-SET by any `-N`
+                // / `-p` / `-P` met along the way, so one header can feed
+                // `_comps`, `_patcomps` and `_postpatcomps` at once. Handling
+                // the flag only in first position lost every trailing `-P` in
+                // the tree — `_gcc`'s `gcc-*`/`g++-*`/`c++-*`, `_lua`'s
+                // `lua[0-9.-]##`, `_ruby`, `_php`, `_shasum`, `_rmlint`,
+                // `_urls`, `_directories`, `_locales`, `_ccache` … 15 of
+                // zsh's 25 `_postpatcomps` entries were missing, and the
+                // patterns were wrongly registered as literal command names
+                // in `_comps` instead.
+                let mut ty = match flag {
+                    "-p" => 1,
+                    "-P" => 2,
+                    _ => 0,
+                };
+                let start = usize::from(ty != 0);
+                let mut commands: Vec<String> = Vec::new();
+                let mut patterns: Vec<String> = Vec::new();
+                let mut postpatterns: Vec<String> = Vec::new();
+                for word in &parts[start..] {
+                    match *word {
+                        "-N" => ty = 0,  // sh:385-386
+                        "-p" => ty = 1,  // sh:387-388
+                        "-P" => ty = 2,  // sh:389-390
+                        _ => match ty {
+                            1 => patterns.push(word.to_string()),
+                            2 => postpatterns.push(word.to_string()),
+                            _ => commands.push(word.to_string()),
+                        },
+                    }
+                }
+                match (
+                    commands.is_empty(),
+                    patterns.is_empty(),
+                    postpatterns.is_empty(),
+                ) {
+                    (true, true, true) => CompFileDef::None,
+                    (false, true, true) => CompFileDef::CompDef(CompDef::Commands(commands)),
+                    (true, false, true) => CompFileDef::CompDef(CompDef::Pattern(patterns)),
+                    (true, true, false) => {
+                        CompFileDef::CompDef(CompDef::PostPattern(postpatterns))
+                    }
+                    _ => CompFileDef::CompDef(CompDef::Mixed {
+                        commands,
+                        patterns,
+                        postpatterns,
+                    }),
                 }
             }
         }
@@ -1017,7 +1221,23 @@ fn scan_directory(dir: &Path) -> Vec<CompFile> {
     // name first (compdef -n keeps the first claim, sh:393). `read_dir`
     // returns filesystem order, so without this sort the winner inside a
     // directory varied by inode layout.
-    paths.sort();
+    //
+    // The comparator has to be zsh's, not Rust's byte-wise `Ord`:
+    // c:Src/glob.c:1976 sorts matches with `gmatchcmp`, whose GS_NAME arm
+    // (c:946) is `zstrcmp(…, 0)` → `strcoll` under the current LC_COLLATE.
+    // Byte order put `_act-runner` (`-` = 0x2D) ahead of `_act_runner`
+    // (`_` = 0x5F) while en_US.UTF-8 collation puts `_act_runner` first,
+    // so ~40 commands whose completer has a `-`/`_` twin in the same
+    // directory (`act_runner`, `amdgpu_top`, `cloud_sql_proxy`, `dh_make`,
+    // …) got the WRONG file's function registered in `$_comps`.
+    paths.sort_by(|a, b| {
+        let name = |p: &Path| {
+            p.file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        crate::ported::sort::zstrcmp(&name(a), &name(b), 0)
+    });
 
     // Parallel scan of files within directory
     paths.par_iter().filter_map(|p| scan_file(p)).collect()
@@ -1256,6 +1476,36 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
                     CompDef::PostPattern(pats) => {
                         // c:compinit sh:403 — `_postpatcomps[$1]="$func"`.
                         for pat in pats {
+                            result.postpatcomps.insert(pat.clone(), file.name.clone());
+                        }
+                    }
+                    // One header feeding several tables (sh:384-420). Each
+                    // list lands in exactly the table its `-N`/`-p`/`-P`
+                    // prefix selected; the command half keeps the same
+                    // first-claim-wins + `cmd=service` handling as above.
+                    CompDef::Mixed {
+                        commands,
+                        patterns,
+                        postpatterns,
+                    } => {
+                        for cmd in commands {
+                            if let Some(eq_pos) = cmd.find('=') {
+                                let cmd_name = &cmd[..eq_pos];
+                                let service = &cmd[eq_pos + 1..];
+                                if !result.comps.contains_key(cmd_name) {
+                                    result.comps.insert(cmd_name.to_string(), file.name.clone());
+                                    result
+                                        .services
+                                        .insert(cmd_name.to_string(), service.to_string());
+                                }
+                            } else if !result.comps.contains_key(cmd) {
+                                result.comps.insert(cmd.clone(), file.name.clone());
+                            }
+                        }
+                        for pat in patterns {
+                            result.patcomps.insert(pat.clone(), file.name.clone());
+                        }
+                        for pat in postpatterns {
                             result.postpatcomps.insert(pat.clone(), file.name.clone());
                         }
                     }
@@ -2030,6 +2280,50 @@ mod tests {
         }
     }
 
+    /// sh:384-420 — `-N`/`-p`/`-P` are POSITIONAL: they re-target the words
+    /// that follow, anywhere in the line. Reading a flag only in first
+    /// position registered `_gcc`'s three post-patterns as literal command
+    /// names, so `gcc-14 <TAB>` never reached `_gcc` and `$_postpatcomps`
+    /// held 10 entries where zsh 5.9.2 holds 25.
+    #[test]
+    fn test_parse_compdef_trailing_flags_switch_table() {
+        let line = "#compdef gcc g++ -value-,CFLAGS,-default- -P gcc-* -P g++-* -p early*";
+        match parse_first_line(line) {
+            CompFileDef::CompDef(CompDef::Mixed {
+                commands,
+                patterns,
+                postpatterns,
+            }) => {
+                assert_eq!(commands, vec!["gcc", "g++", "-value-,CFLAGS,-default-"]);
+                assert_eq!(patterns, vec!["early*"]);
+                assert_eq!(postpatterns, vec!["gcc-*", "g++-*"]);
+            }
+            other => panic!("Expected Mixed, got {:?}", other),
+        }
+        // `-N` switches back to plain command names (sh:385-386).
+        match parse_first_line("#compdef -p pat* -N cmd") {
+            CompFileDef::CompDef(CompDef::Mixed {
+                commands,
+                patterns,
+                postpatterns,
+            }) => {
+                assert_eq!(commands, vec!["cmd"]);
+                assert_eq!(patterns, vec!["pat*"]);
+                assert!(postpatterns.is_empty());
+            }
+            other => panic!("Expected Mixed, got {:?}", other),
+        }
+        // sh:534-539 — only a leading `-[pPkK](n|)` is an option. Anything
+        // else is a positional NAME, including `-m` (which is how zsh ends
+        // up with a command literally named `-m` from `_squishy`'s header).
+        match parse_first_line(r#"#compdef squishy "python -m squishy""#) {
+            CompFileDef::CompDef(CompDef::Commands(cmds)) => {
+                assert_eq!(cmds, vec!["squishy", "\"python", "-m", "squishy\""]);
+            }
+            other => panic!("Expected Commands, got {:?}", other),
+        }
+    }
+
     #[test]
     fn test_parse_autoload() {
         let def = parse_first_line("#autoload -U -z");
@@ -2357,5 +2651,68 @@ mod tests {
             Some("_zzgame")
         );
         let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression: `compinit` must leave an autoload stub in `shfunctab`
+    /// for every completer it registers (sh:337 `autoload -rUz "$func"`,
+    /// reached via the `compdef -na` at sh:541), because completers read
+    /// `$functions` to discover their siblings — `_tmux` derives its
+    /// sub-command list from `${(M)${(k)functions}:#_tmux-*}`
+    /// (_tmux sh:1967). zshrs bulk-loaded `$_comps` without this step, so
+    /// `tmux <TAB>` was missing the five `_tmux-*` helpers in `$fpath`.
+    #[test]
+    fn scan_registers_autoload_stubs_for_every_completer() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = std::env::temp_dir().join("zshrs_compinit_stubs_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("_zzt"), "#compdef zzt\n").unwrap();
+        fs::write(dir.join("_zzt-helper"), "#compdef zzt-helper\n").unwrap();
+        fs::write(dir.join("_zzt_util"), "#autoload\n").unwrap();
+        // A file with neither header contributes no function.
+        fs::write(dir.join("_zzt_readme"), "just text\n").unwrap();
+
+        // A name already defined must survive untouched — `bin_functions`
+        // leaves an existing function alone.
+        for n in ["_zzt", "_zzt-helper", "_zzt_util", "_zzt_readme"] {
+            if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+                t.remove(n);
+            }
+        }
+        if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+            let mut defined = crate::ported::hashtable::shfunc_autoload("_zzt");
+            defined.node.flags = 0;
+            defined.body = Some("true".to_string());
+            t.add(defined);
+        }
+
+        let result = compinit(&[dir.clone()]);
+        let names = autoload_stub_names(&result);
+        assert!(names.contains(&"_zzt-helper"), "got {names:?}");
+        assert!(names.contains(&"_zzt_util"), "got {names:?}");
+        assert!(!names.contains(&"_zzt_readme"), "got {names:?}");
+
+        assert_eq!(
+            register_autoload_stubs(&names),
+            2,
+            "the already-defined _zzt must not be re-stubbed"
+        );
+
+        let tab = crate::ported::hashtable::shfunctab_lock();
+        let tab = tab.read().unwrap();
+        for n in ["_zzt-helper", "_zzt_util"] {
+            let shf = tab.get(n).unwrap_or_else(|| panic!("{n} has no stub"));
+            let flags = shf.node.flags as u32;
+            assert!(flags & crate::ported::zsh_h::PM_UNDEFINED != 0, "{n}");
+            assert!(flags & crate::ported::zsh_h::PM_UNALIASED != 0, "{n}");
+        }
+        assert_eq!(
+            tab.get("_zzt").and_then(|f| f.body.clone()),
+            Some("true".to_string()),
+            "an already-defined function must keep its body"
+        );
+        assert!(tab.get("_zzt_readme").is_none());
+        drop(tab);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -623,7 +623,27 @@ pub fn inputline() -> i32 {
         //   ingetcline = zleentry(ZLE_CMD_READ, ingetcpmptl, ingetcpmptr,
         //                         flags, context); histdone |= HISTFLAG_SETTY;`
         // zleentry dispatches to the ZLE module's zle_main_entry; zshrs
-        // links ZLE in (no module-load hop) so call it directly.
+        // links ZLE in so it calls the entry point directly — but the
+        // module-registration half of zleentry still has to run, because
+        // it is what marks `zsh/zle`/`zsh/complete`/`zsh/compctl` loaded
+        // (init.c:1764-1765). `_default` keys off `zmodload -e
+        // zsh/compctl` to decide whether the legacy compctl engine is
+        // available, so skipping this made interactive completion
+        // diverge from zsh. One-shot, on the first ZLE read, exactly
+        // where C's lazy `load_module` fires.
+        // c:init.c:1764-1765 — `if (load_module("zsh/zle", NULL, 0) != 1)
+        //   (void)load_module("zsh/compctl", NULL, 0);`. `zsh/compctl`
+        // pulls in `zsh/complete` through the compctl.mdd moddeps edge.
+        // ZLE_CMD_READ is not one of the three commands c:1761-1762
+        // exempts, so the load always fires here on the first read.
+        if !crate::ported::init::zle_modules_loaded
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let mut tab = crate::ported::module::MODULESTAB.lock().unwrap();
+            if tab.load_module("zsh/zle") {
+                tab.load_module("zsh/compctl"); // c:init.c:1765
+            }
+        }
         let mut flags = crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY;
         if isset(crate::ported::zsh_h::IGNOREEOF) {
             flags |= crate::ported::zsh_h::ZLRF_IGNOREEOF;

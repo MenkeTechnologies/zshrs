@@ -705,6 +705,9 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
 /// AFTERCOMPLETEHOOK chain (c:878).
 pub fn docomplete(lst: i32) -> i32 {
     // c:599
+    // c:601 — `int olst = lst`; `lst` is then narrowed in place by the
+    // expand-vs-complete decision at c:704-793.
+    let mut lst = lst;
     // c:606-609 — recursion guard. The C source uses a static `active`
     // flag; we mirror via thread_local since each worker runs its own
     // completion.
@@ -827,6 +830,194 @@ pub fn docomplete(lst: i32) -> i32 {
     let s_word: String = origword.unwrap_or_else(|| line.clone());
     let lincmd = LINCMD.load(Ordering::SeqCst); // c:805
     let olst = lst; // c:816 — `olst` is the original `lst` saved before dispatch
+
+    // c:703-793 — `if (s) { if (lst == COMP_EXPAND_COMPLETE) { … } }`:
+    // decide whether this TAB expands or completes. Skipping it left `lst`
+    // at COMP_EXPAND_COMPLETE, which breaks BOTH arms of expand-or-complete:
+    //   * `doexpansion` only runs `globlist` for COMP_EXPAND /
+    //     COMP_LIST_EXPAND (c:2283), so `ls *<TAB>` / `ls -d **/<TAB>` never
+    //     globbed and the word was left untouched;
+    //   * `COMP_ISEXPAND(lst)` stayed true, so `docompletion` ran TWICE per
+    //     TAB — once from `doexpansion` (c:2301) and once from c:865 — and
+    //     the second, contextless run discarded the first run's matches.
+    //     That is what made `echo ${<TAB>` list nothing even though the
+    //     `-brace-parameter-` pass had already built 241 matches.
+    if lst == COMP_EXPAND_COMPLETE {
+        use crate::ported::hashtable::cmdnamtab_lock;
+        use crate::ported::utils::{itype_end, skipparens, strpfx};
+        use crate::ported::ztype_h::idigit;
+        use crate::ported::zsh_h::{
+            Equals, Hat, Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Pound, Qstring, Qtick, Quest,
+            Star, Stringg, Tick, Tilde, GLOBCOMPLETE, RECEXACT,
+        };
+        // c:706 `char *q = s` — the TOKENIZED word (see COMP_STRING_TOK).
+        let s_tok: String = COMP_STRING_TOK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let sc: Vec<char> = if s_tok.is_empty() {
+            s_word.chars().collect()
+        } else {
+            s_tok.chars().collect()
+        };
+        // c:739/781 — `zlemetacs - wb`, the cursor's offset inside the word.
+        let cs_off =
+            (ZLEMETACS.load(Ordering::SeqCst) - WB.load(Ordering::SeqCst)).max(0) as usize;
+        let mut q: usize = 0; // c:706
+                              // c:708-731 — `=word`: expand when it names a command, and (unless
+                              // the completion module is absent or REC_EXACT is set) only when
+                              // exactly one command carries that prefix.
+        if sc.first() == Some(&Equals) {
+            q = 1; // c:710
+            let name: String = sc[q..].iter().collect();
+            let hashed = cmdnamtab_lock()
+                .read()
+                .map(|t| t.get(&name).is_some())
+                .unwrap_or(false);
+            let path: Vec<String> =
+                crate::ported::params::getaparam("path").unwrap_or_default();
+            let pc = crate::ported::hashtable::pathchecked.load(Ordering::Relaxed);
+            // c:712 — `cmdnamtab->getnode(cmdnamtab, q) || hashcmd(q, pathchecked)`.
+            if hashed
+                || crate::ported::exec::hashcmd(&name, &path[pc.min(path.len())..]).is_some()
+            {
+                if !HASCOMPMOD.load(Ordering::SeqCst) || isset(RECEXACT) {
+                    lst = COMP_EXPAND; // c:714
+                } else {
+                    // c:716-728 — count prefix matches, stopping at two.
+                    let mut n = 0;
+                    if let Ok(t) = cmdnamtab_lock().read() {
+                        for (nam, _) in t.iter() {
+                            if strpfx(&name, nam)
+                                && crate::ported::exec::findcmd(nam, 0, 0).is_some()
+                            {
+                                n += 1;
+                            }
+                            if n == 2 {
+                                break; // c:725
+                            }
+                        }
+                    }
+                    if n == 1 {
+                        lst = COMP_EXPAND; // c:729-730
+                    }
+                }
+            }
+        }
+        // c:732-770 — walk the parameter expressions in the word.
+        if lst == COMP_EXPAND_COMPLETE {
+            loop {
+                // c:735 — `for (; *q && *q != String; q++)`.
+                while q < sc.len() && sc[q] != Stringg {
+                    q += 1;
+                }
+                // c:736 — a `$` that starts `$(`, `$((` or `$[` is not a
+                // parameter expression; stop looking (c:768 `else break`).
+                if q >= sc.len()
+                    || sc.get(q + 1) == Some(&Inpar)
+                    || sc.get(q + 1) == Some(&Inparmath)
+                    || sc.get(q + 1) == Some(&Inbrack)
+                {
+                    break;
+                }
+                q += 1; // c:737 — `*++q`
+                if sc.get(q) == Some(&Inbrace) {
+                    // c:738-740 — a BALANCED `${…}` that ends exactly at the
+                    // cursor expands. An unbalanced one (`${<TAB>`) does not,
+                    // and falls through to c:765 → COMP_COMPLETE, which is
+                    // what puts the cursor in the `-brace-parameter-` context.
+                    let tail: String = sc[q..].iter().collect();
+                    let mut rest: &str = &tail;
+                    let n = skipparens(Inbrace, Outbrace, &mut rest);
+                    q += tail.chars().count() - rest.chars().count();
+                    if n == 0 && q == cs_off {
+                        lst = COMP_EXPAND; // c:740
+                    }
+                } else {
+                    // c:745-748 — skip what may precede the parameter name.
+                    while q < sc.len() {
+                        let c = sc[q];
+                        if c != '^' && c != Hat && c != '=' && c != Equals && c != '~' && c != Tilde
+                        {
+                            break;
+                        }
+                        q += 1;
+                    }
+                    // c:749-750 — `${#name}` / `${+name}`.
+                    if matches!(sc.get(q), Some('#') | Some(&Pound) | Some('+'))
+                        && sc.get(q + 1) != Some(&Stringg)
+                    {
+                        q += 1;
+                    }
+                    // c:752 — `sav2 = *(t = q)`.
+                    let t = q;
+                    let sav2 = sc.get(t).copied();
+                    // c:753-762 — find the end of the name. The token branch
+                    // detokenizes the first char in place (c:754
+                    // `*q = ztokens[*q - Pound]`) so `checkparams` sees the
+                    // real `?`/`*`/`$`/`"` special-parameter name.
+                    let mut detok: Option<char> = None;
+                    match sav2 {
+                        Some(c) if c == Quest || c == Star || c == Stringg || c == Qstring => {
+                            let idx = (c as u32 - Pound as u32) as usize;
+                            detok = crate::ported::lex::ztokens.chars().nth(idx);
+                            q += 1; // c:754
+                        }
+                        Some('?') | Some('*') | Some('$') | Some('-') | Some('!') | Some('@') => {
+                            q += 1; // c:756
+                        }
+                        Some(c) if idigit(c as u8) => {
+                            // c:758 — `do q++; while (idigit(*q));`
+                            while matches!(sc.get(q), Some(&d) if idigit(d as u8)) {
+                                q += 1;
+                            }
+                        }
+                        _ => {
+                            // c:760 — `q = itype_end(q, INAMESPC, 0)`.
+                            let rest: String = sc[t.min(sc.len())..].iter().collect();
+                            let span = itype_end(&rest, crate::ported::ztype_h::INAMESPC, false);
+                            q = t + rest[..span].chars().count();
+                        }
+                    }
+                    // c:763-766 — `*q = '\0'` makes `t` the bare name; expand
+                    // when the cursor sits at its end and it names a param.
+                    let mut nm: Vec<char> = sc[t.min(sc.len())..q.min(sc.len())].to_vec();
+                    if let (Some(fc), false) = (detok, nm.is_empty()) {
+                        nm[0] = fc;
+                    }
+                    let name: String = nm.into_iter().collect();
+                    if cs_off == q
+                        && (sav2.map(|c| idigit(c as u8)).unwrap_or(false)
+                            || checkparams(&name) != 0)
+                    {
+                        lst = COMP_EXPAND; // c:765
+                    }
+                }
+                if lst != COMP_EXPAND {
+                    lst = COMP_COMPLETE; // c:769-770
+                }
+                // c:772 — `while (q < s + zlemetacs - wb)`.
+                if q >= cs_off {
+                    break;
+                }
+            }
+        }
+        // c:774-782 — still undecided: a backtick or `$` anywhere in the
+        // word means expansion, otherwise completion.
+        if lst == COMP_EXPAND_COMPLETE {
+            let has_subst = sc
+                .iter()
+                .any(|&c| c == Tick || c == Qtick || c == Stringg || c == Qstring);
+            lst = if has_subst { COMP_EXPAND } else { COMP_COMPLETE };
+        }
+        // c:785-786 — and expand if the word has wildcards and GLOB_COMPLETE
+        // is off.
+        let s_for_wilds: String = sc.iter().collect();
+        if !isset(GLOBCOMPLETE) && cmphaswilds(&s_for_wilds) != 0 {
+            lst = COMP_EXPAND;
+        }
+    }
 
     // c:817-870 — dispatch on `lst`.
     let ret;
@@ -1231,6 +1422,13 @@ pub fn get_comp_string() -> Option<String> {
     // c:1091 — `int ona = noaliases;` (save for restore at exit).
     let ona = noaliases();
 
+    // Clear the tokenized-word bridge (see the stash at the c:2219 return):
+    // every path that fails to produce a word must not leave the PREVIOUS
+    // completion's tokens visible to `docomplete`.
+    if let Ok(mut g) = COMP_STRING_TOK.get_or_init(|| Mutex::new(String::new())).lock() {
+        g.clear();
+    }
+
     // c:1117 METACHECK() — the metafied line must already be present.
     let meta_snap: String = match ZLEMETALINE.get() {
         Some(m) => m.lock().unwrap().clone(),
@@ -1371,6 +1569,23 @@ pub fn get_comp_string() -> Option<String> {
     let mut zlemetacs_qsub: i32; // c:1106
     let mut tt: Option<String>; // c:1114 cursor-word capture
 
+    // c:1515/1615/1696 — `(keypm = paramtab->getnode(paramtab, varname)) &&
+    // (keypm->node.flags & PM_HASHED)`: an associative array makes the
+    // subscript an assoc KEY context (insubscr 2) instead of a math index
+    // (insubscr 1). Local closure — the build gate only admits module-level
+    // `fn`s that exist in the C source.
+    let param_is_hashed = |name: &str| -> bool {
+        !name.is_empty()
+            && crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get(name)
+                        .map(|p| (p.node.flags & crate::ported::zsh_h::PM_HASHED as i32) != 0)
+                })
+                .unwrap_or(false)
+    };
+
     's_restart: loop {
         INWHAT.store(IN_NOTHING, Ordering::SeqCst); // c:1157
         LEX_PARBEGIN.set(-1); // c:1159
@@ -1380,6 +1595,9 @@ pub fn get_comp_string() -> Option<String> {
         cmdstr = None; // c:1162-1163
         let mut cmdtok: lextok = NULLTOK; // c:1164
         varname = None; // c:1165-1166
+        if let Ok(mut g) = VARNAME.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None; // c:1165-1166
+        }
         INSUBSCR.store(0, Ordering::SeqCst); // c:1167
         clwpos = -1; // c:1168
         zcontext_save(); // c:1169
@@ -1766,13 +1984,12 @@ pub fn get_comp_string() -> Option<String> {
             }
         }
 
-        // c:1482-1541 — resolve `s` from the token kind.
-        let s: String;
+        // c:1482-1541 — resolve `s` from the token kind. Where C sets
+        // `s = NULL` the word is not taken from the lexer at all: the
+        // IN_MATH block at c:1621-1706 rebuilds it from the line.
+        let mut s: String = String::new();
         if INWHAT.load(Ordering::SeqCst) == IN_MATH {
-            // c:1482-1483 — IN_MATH word extraction NOT YET PORTED.
-            set_noaliases(ona);
-            zcontext_restore();
-            return None;
+            // c:1482-1483 — `s = NULL`; the IN_MATH block below rebuilds it.
         } else if t0 == NULLTOK || t0 == ENDINPUT {
             // c:1484-1489 — empty line.
             s = String::new();
@@ -1798,6 +2015,9 @@ pub fn get_comp_string() -> Option<String> {
             // c:1503 — namespace ident end.
             let ns_off = crate::ported::utils::itype_end(&ttv, INAMESPC, false).min(ttv.len());
             varname = Some(ztrdup(&ttv[..ns_off])); // c:1506-1508
+            if let Ok(mut g) = VARNAME.get_or_init(|| Mutex::new(None)).lock() {
+                *g = varname.clone(); // c:1506-1507
+            }
             let mut soff = ns_off;
             if ttv.as_bytes().get(soff) == Some(&b'+') {
                 soff += 1; // c:1509-1510
@@ -1808,10 +2028,20 @@ pub fn get_comp_string() -> Option<String> {
             let after_paren_off = ttv.len() - rest.len();
             let wb0 = WB.load(Ordering::SeqCst);
             if sp > 0 || (after_paren_off as i32) > (zlemetacs_qsub - wb0) {
-                // c:1513-1519 — array subscript => IN_MATH (not ported).
-                set_noaliases(ona);
-                zcontext_restore();
-                return None;
+                // c:1513-1519 — cursor inside `NAME[…]` on the LHS of an
+                // assignment: `s = NULL`, complete the subscript as math.
+                // c:1513 — `s = NULL`; the IN_MATH block below rebuilds it.
+                INWHAT.store(IN_MATH, Ordering::SeqCst); // c:1514
+                                                         // c:1515-1519 — a PM_HASHED param takes insubscr 2 (assoc key),
+                                                         // anything else 1.
+                INSUBSCR.store(
+                    if param_is_hashed(varname.as_deref().unwrap_or("")) {
+                        2
+                    } else {
+                        1
+                    },
+                    Ordering::SeqCst,
+                );
             } else if {
                 let c = ttv[after_paren_off..].chars().next();
                 c == Some('=') || c == Some(crate::ported::zsh_h::Equals)
@@ -1862,6 +2092,233 @@ pub fn get_comp_string() -> Option<String> {
         }
 
         set_noaliases(ona); // c:1562
+
+        // c:1564-1620 — "Check if we are in an array subscript. We simply
+        // assume that we are in a subscript if we are in brackets." The
+        // lexer hands `s` back TOKENIZED, so `[`/`]` are `Inbrack`/
+        // `Outbrack`, never the literal characters.
+        if INWHAT.load(Ordering::SeqCst) != IN_MATH {
+            let sc: Vec<char> = s.chars().collect();
+            let wb0 = WB.load(Ordering::SeqCst);
+            // c:1590 — the scan stops at the cursor (`s + zlemetacs_qsub - wb`).
+            let cursor_off = ((zlemetacs_qsub - wb0).max(0) as usize).min(sc.len());
+            // c:1576/1601 — `itype_end(p, IIDENT, 1) == p` is the C idiom for
+            // "this character is not an identifier character".
+            let is_ident = |c: char| {
+                let mut b = [0u8; 4];
+                crate::ported::utils::itype_end(
+                    c.encode_utf8(&mut b),
+                    crate::ported::ztype_h::IIDENT as u32,
+                    true,
+                ) != 0
+            };
+            let mut depth = 0i32; // c:1572 `i`
+            let mut nb: Option<usize> = None; // c:1570
+            let mut ne: Option<usize> = None;
+            // c:1576-1579 — `nnb` tracks the start of the current identifier
+            // run; a non-ident first character is skipped over.
+            let mut nnb: usize = match sc.first() {
+                Some(&c) if is_ident(c) => 0,
+                _ => 1,
+            };
+            let mut tt_i = 0usize; // c:1580
+            if LINCMD.load(Ordering::SeqCst) != 0 {
+                // c:1581-1589 — `[`s at the start of a COMMAND are not
+                // matched by a closing bracket; skip them.
+                while tt_i < cursor_off && sc[tt_i] == Inbrack {
+                    tt_i += 1;
+                }
+            }
+            while tt_i < cursor_off {
+                // c:1590
+                if sc[tt_i] == Inbrack {
+                    // c:1591-1595
+                    depth += 1;
+                    nb = Some(nnb);
+                    ne = Some(tt_i);
+                    tt_i += 1;
+                } else if depth != 0 && sc[tt_i] == Outbrack {
+                    // c:1596-1598
+                    depth -= 1;
+                    tt_i += 1;
+                } else {
+                    // c:1599-1604
+                    if !is_ident(sc[tt_i]) {
+                        nnb = tt_i + 1;
+                    }
+                    tt_i += 1;
+                }
+            }
+            if depth != 0 {
+                // c:1606 — an unclosed `[` before the cursor.
+                INWHAT.store(IN_MATH, Ordering::SeqCst); // c:1607
+                INSUBSCR.store(1, Ordering::SeqCst); // c:1608
+                if let (Some(nb), Some(ne)) = (nb, ne) {
+                    if nb < ne {
+                        // c:1609-1618
+                        let vn: String = sc[nb..ne].iter().collect(); // c:1613
+                        if param_is_hashed(&vn) {
+                            INSUBSCR.store(2, Ordering::SeqCst); // c:1617
+                        }
+                        varname = Some(vn);
+                        if let Ok(mut g) = VARNAME.get_or_init(|| Mutex::new(None)).lock() {
+                            *g = varname.clone(); // c:1612-1613
+                        }
+                    }
+                }
+            }
+        }
+
+        // c:1621-1706 — IN_MATH word extraction. `s` is rebuilt out of the
+        // metafied LINE (not the lexer word) between the enclosing bracket
+        // and the cursor, so an unterminated `$name[` yields the empty
+        // subscript text rather than the whole `$name[` word. Without this
+        // `docomplete`'s expand-or-complete probe (c:783-792) saw the `$`
+        // in `$name[` and ran `doexpansion`, replacing the buffer with the
+        // expanded parameter.
+        if INWHAT.load(Ordering::SeqCst) == IN_MATH {
+            let mut line: Vec<char> = ZLEMETALINE
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.chars().collect())
+                .unwrap_or_default();
+            // c:1544-1548 — C lexes a COPY of the line carrying the injected
+            // `x` placeholder (c:937-944) and restores `zlemetaline` to the
+            // ORIGINAL right before this block, so the word it slices out
+            // never contains the placeholder. This port keeps one buffer and
+            // removes the placeholder at the end of the function, so drop it
+            // from the local working copy here — otherwise `$fpath[<TAB>`
+            // extracted the word `x` instead of the empty subscript.
+            let addedx_here = ADDEDX.load(Ordering::SeqCst);
+            if addedx_here > 0 {
+                let cs = (zlemetacs.max(0) as usize).min(line.len());
+                let end = (cs + addedx_here as usize).min(line.len());
+                if cs < end {
+                    line.drain(cs..end);
+                }
+            }
+            let line = line;
+            let ll = line.len() as i32;
+            let compfunc_active = crate::ported::zle::compcore::compfunc
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .map(|f| !f.is_empty())
+                .unwrap_or(false);
+            let at = |i: i32| -> char {
+                if i >= 0 && i < ll {
+                    line[i as usize]
+                } else {
+                    '\0'
+                }
+            };
+            // c:1651/1660/1683 — `itype_end(p, IIDENT, 0)`.
+            let is_ident_ch = |c: char| {
+                let mut b = [0u8; 4];
+                crate::ported::utils::itype_end(
+                    c.encode_utf8(&mut b),
+                    crate::ported::ztype_h::IIDENT as u32,
+                    true,
+                ) != 0
+            };
+            if compfunc_active || INSUBSCR.load(Ordering::SeqCst) == 2 {
+                // c:1626-1637 — walk back to the bracket/paren that opened
+                // this subscript, counting nesting.
+                let mut wbv = zlemetacs - 1;
+                let mut lev = 0i32;
+                while wbv > 0 {
+                    let c = at(wbv);
+                    if c == ']' || c == ')' {
+                        lev += 1;
+                    } else if c == '[' {
+                        // c:1630 — `if (!lev--) break;`
+                        let was = lev;
+                        lev -= 1;
+                        if was == 0 {
+                            break;
+                        }
+                    } else if c == '(' {
+                        // c:1632-1636
+                        if lev == 0 && at(wbv - 1) == '(' {
+                            break;
+                        }
+                        if lev != 0 {
+                            lev -= 1;
+                        }
+                    }
+                    wbv -= 1;
+                }
+                let p_at = wbv; // c:1638 `p = zlemetaline + wb`
+                wbv += 1; // c:1639
+                WB.store(wbv, Ordering::SeqCst);
+                let open = at(p_at);
+                if open == '[' || open == '(' {
+                    // c:1640-1645 — a CLOSED bracket bounds the word at the
+                    // matching close; an unterminated one leaves `we` alone.
+                    let close = if open == '[' { ']' } else { ')' };
+                    let byte_off: usize = line[..(p_at.max(0) as usize).min(line.len())]
+                        .iter()
+                        .map(|c| c.len_utf8())
+                        .sum();
+                    let full: String = line.iter().collect();
+                    let mut rest: &str = &full[byte_off..];
+                    if crate::ported::utils::skipparens(open, close, &mut rest) == 0 {
+                        let consumed = full[byte_off..].len() - rest.len();
+                        let consumed_chars = full[byte_off..byte_off + consumed].chars().count();
+                        WE.store(p_at + consumed_chars as i32 - 1, Ordering::SeqCst); // c:1642
+                        if INSUBSCR.load(Ordering::SeqCst) == 2 {
+                            INSUBSCR.store(3, Ordering::SeqCst); // c:1644
+                        }
+                    }
+                }
+            } else {
+                // c:1646-1670 — a real math expression: complete parameter
+                // names, so the word is the identifier around the cursor.
+                let mut we_i = zlemetacs;
+                while we_i < ll && is_ident_ch(at(we_i)) {
+                    we_i += 1;
+                }
+                WE.store(we_i, Ordering::SeqCst); // c:1651
+                let mut wb_i = zlemetacs;
+                while wb_i > 0 && is_ident_ch(at(wb_i - 1)) {
+                    wb_i -= 1;
+                }
+                WB.store(wb_i, Ordering::SeqCst); // c:1666
+            }
+            // c:1672-1675 — `s` is the line text between wb and we.
+            let wbv = WB.load(Ordering::SeqCst).clamp(0, ll);
+            let wev = WE.load(Ordering::SeqCst).clamp(wbv, ll);
+            s = line[wbv as usize..wev as usize].iter().collect();
+            // c:1677-1703 — the identifier immediately before the `[` names
+            // the parameter being subscripted (`$compstate[parameter]`).
+            if wbv > 2 && at(wbv - 1) == '[' {
+                let sqbr = wbv - 1;
+                let mut w_i = sqbr;
+                while w_i > 0 && is_ident_ch(at(w_i - 1)) {
+                    w_i -= 1;
+                }
+                if w_i < sqbr {
+                    // c:1693-1702
+                    let vn: String = line[w_i as usize..sqbr as usize].iter().collect(); // c:1695
+                    if param_is_hashed(&vn) {
+                        if INSUBSCR.load(Ordering::SeqCst) != 3 {
+                            INSUBSCR.store(2, Ordering::SeqCst); // c:1699
+                        }
+                    } else {
+                        INSUBSCR.store(1, Ordering::SeqCst); // c:1701
+                    }
+                    varname = Some(vn);
+                    if let Ok(mut g) = VARNAME.get_or_init(|| Mutex::new(None)).lock() {
+                        *g = varname.clone(); // c:1694-1695
+                    }
+                }
+            }
+            // c:1705 — `parse_subst_string(s)` re-tokenizes the extracted
+            // text; the returned string is discarded by C (it parses in
+            // place for its side effects on the token flags).
+            let _ = crate::ported::lex::parse_subst_string(&s);
+        }
 
         // c:1708 — offs = zlemetacs - wb (prefix/suffix split point).
         let wb = WB.load(Ordering::SeqCst);
@@ -1948,6 +2405,16 @@ pub fn get_comp_string() -> Option<String> {
         // c:2219 — zcontext_restore(); return s.
         // NOTE: quote-form cleanup (c:1709-1926) + brace-expansion
         // (c:1931-2218) not ported; return the lexer word untokenized.
+        //
+        // C returns `s` TOKENIZED, and `docomplete`'s expand-vs-complete
+        // decision (c:704-793) is written entirely in parser tokens —
+        // `String`, `Inbrace`, `Star`, `Quest`, `Tick` — precisely so a
+        // quoted `\*` (a literal `*` in `s`) is NOT mistaken for a glob.
+        // Since this port untokenizes before returning, stash the
+        // tokenized form for that decision to read.
+        if let Ok(mut g) = COMP_STRING_TOK.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = s.clone();
+        }
         zcontext_restore();
         return Some(untokenize(&s));
     }
@@ -2179,25 +2646,16 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
             let quoted = quotename(&node, 0);
             let unt = crate::ported::lex::untokenize(&quoted);
             inststr(&unt);
-            // c:2326-2330 — between items, insert a space.
+            // c:2326-2330 — between items, insert a space:
+            //   `spaceinline(1); zlemetaline[zlemetacs++] = ' ';`
+            // The Rust `spaceinline` opens the gap in the EDITOR buffer
+            // (`zle_utils::ZLELINE`), not in the metafied one C is holding
+            // here, so the old open-gap-then-poke-a-byte pair wrote nothing
+            // when the cursor sat at end-of-line — `ls -d *<TAB>` expanded to
+            // `aaccf1` instead of `aa cc f1`. `inststrlen`'s meta branch is
+            // exactly C's gap-plus-store pair against ZLEMETALINE.
             if !vl.empty() || !first {
-                spaceinline(1);
-                let pos = ZLEMETACS.load(Ordering::SeqCst);
-                if let Some(metabuf) = ZLEMETALINE.get() {
-                    if let Ok(mut m) = metabuf.lock() {
-                        if (pos as usize) < m.len() {
-                            // C: `zlemetaline[zlemetacs++] = ' '`.
-                            // Rust String mutation: replace one
-                            // char at byte offset pos.
-                            let mut bytes = m.as_bytes().to_vec();
-                            if (pos as usize) < bytes.len() {
-                                bytes[pos as usize] = b' ';
-                                *m = String::from_utf8_lossy(&bytes).into_owned();
-                            }
-                        }
-                        ZLEMETACS.store(pos + 1, Ordering::SeqCst);
-                    }
-                }
+                let _ = inststrlen(" ", true, 1);
             }
             first = false;
         }
@@ -2274,7 +2732,16 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
     let zterm_columns = crate::ported::zle::zle_refresh::WINW
         .load(Ordering::Relaxed)
         .max(1);
-    let mut out = String::new();
+    // c:2558-2567 — C emits the format's RAW BYTES (`putc(*p++, shout)`,
+    // un-Meta-ing as it goes). The buffer must therefore be bytes: pushing
+    // each input byte into a Rust `String` as `byte as char` widened every
+    // byte ≥ 0x80 to U+0080..U+00FF, and `out.as_bytes()` then re-encoded
+    // each of those as two UTF-8 bytes. A description carrying `’`
+    // (e2 80 99) reached the terminal as c3 a2 c2 80 c2 99 — the terminal
+    // rendered `â` and swallowed the U+0080/U+0099 C1 controls plus the
+    // rest of the row (`brew --<TAB>` listed
+    // "Display the path to Homebrewâ").
+    let mut out: Vec<u8> = Vec::new();
     while i < bytes.len() {
         let c = bytes[i];
         if doesc && c == b'%' {
@@ -2290,14 +2757,14 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
             match bytes[i] {
                 b'%' => {
                     // c:2447
-                    out.push('%');
+                    out.push(b'%');
                     cc += 1;
                 }
                 b'n' => {
                     // c:2455
                     let s = n.to_string();
                     cc += s.chars().count() as i32;
-                    out.push_str(&s);
+                    out.extend_from_slice(s.as_bytes());
                 }
                 b'B' | b'b' | b'S' | b's' | b'U' | b'u' | b'F' | b'f' | b'K' | b'k' => {
                     // c:2466-2521 — text attrs (Bold/Standout/Underline/
@@ -2308,12 +2775,12 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
                     // c:2522 — literal `%{ ... %}`.
                     i += 1;
                     while i < bytes.len() && bytes[i] != b'}' {
-                        out.push(bytes[i] as char);
+                        out.push(bytes[i]);
                         i += 1;
                     }
                 }
                 ch => {
-                    out.push(ch as char);
+                    out.push(ch);
                     cc += 1;
                 }
             }
@@ -2325,14 +2792,21 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
             cc += 1; // c:2538
             l += 1 + ((cc - 1) / zterm_columns); // c:2550
             cc = 0; // c:2551
-            out.push('\n'); // c:2553
+            out.push(b'\n'); // c:2553
             i += 1;
         } else {
-            // c:2555-2572 — an ordinary character advances the column by its
-            // display width (1 for the ASCII bytes this byte-wise loop sees).
-            out.push(c as char);
-            cc += 1; // c:2570 (WCWIDTH; 1 per byte here)
-            i += 1;
+            // c:2555-2572 — `MB_METACHARLENCONV(p, &cchar)` takes the WHOLE
+            // next multibyte character, C emits its bytes verbatim, and the
+            // column counter advances by `WCWIDTH_WINT(cchar)` — the glyph's
+            // display width, not its byte count. zshrs strings are native
+            // UTF-8, so the character is `fmt[i..]`'s first `char` and its
+            // width is `zwcwidth` (the same convention `niceztrlen` /
+            // `mb_niceformat` already use for every other width in this port).
+            let ch = fmt[i..].chars().next().unwrap_or(c as char);
+            let clen = ch.len_utf8();
+            out.extend_from_slice(&bytes[i..i + clen]);
+            cc += crate::ported::utils::zwcwidth(ch) as i32; // c:2570
+            i += clen;
         }
     }
     if dopr {
@@ -2347,7 +2821,7 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
         use std::sync::atomic::Ordering;
         let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
         let out_fd = if fd >= 0 { fd } else { 1 };
-        let _ = write_loop(out_fd, out.as_bytes());
+        let _ = write_loop(out_fd, &out);
     }
     // c:2595 — `return l + (cc / zterm_columns);`. printfmt returns the number
     // of DISPLAY LINES the format occupies (beyond the first) — NOT the
@@ -2955,6 +3429,25 @@ pub static ORIGLL: AtomicI32 = AtomicI32::new(0); // c:75
 /// Port of `mod_export int insubscr` from `Src/Zle/zle_tricky.c:405`.
 /// != 0 if we are inside `${name[...]}` or `${(P)name[...]}`.
 pub static INSUBSCR: AtomicI32 = AtomicI32::new(0); // c:405
+
+/// Port of `mod_export char *varname` from `Src/Zle/zle_tricky.c:389`.
+/// Name of the parameter whose value / subscript is being completed —
+/// set by `get_comp_string` from the `NAME=` split (c:1506-1507), the
+/// array-subscript scan (c:1612-1613) and the `[` back-search
+/// (c:1694-1695). `callcompfunc` publishes it as `$compstate[parameter]`
+/// (compcore.c:586/607/629).
+pub static VARNAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new(); // c:389
+
+/// The word `get_comp_string` extracted, still TOKENIZED.
+///
+/// zshrs bridge, no C counterpart: C's `get_comp_string` returns the
+/// tokenized word and `docomplete` reads it directly (c:706 `char *q = s`).
+/// This port untokenizes at its c:2219 return (the quote-form cleanup at
+/// c:1709-1926 is not ported), which would leave the c:704-793
+/// expand-vs-complete decision unable to distinguish a glob `*` (`Star`)
+/// from a quoted `\*` (a plain `*`). The tokenized string is stashed here
+/// on the way out so that decision reads exactly what C reads.
+pub static COMP_STRING_TOK: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new();
 
 /// Port of `mod_export int instring` from `Src/Zle/zle_tricky.c:419`.
 /// QT_NONE (0), QT_SINGLE, QT_DOUBLE, QT_DOLLARS, or QT_BACKSLASH.
@@ -3871,5 +4364,132 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: Option<String> = get_comp_string();
+    }
+
+    use crate::ported::zle::compcore::INWHAT;
+    use crate::ported::zsh_h::IN_MATH;
+
+    /// c:1564-1620 + c:1621-1706 — an UNTERMINATED array subscript puts
+    /// the completion in the subscript context: `inwhat` becomes IN_MATH,
+    /// `insubscr` 1, `varname` the array name, and the completion word is
+    /// the (here empty) subscript text — NOT the `$fpath[` line word.
+    ///
+    /// Regression: without the subscript scan, `get_comp_string` handed
+    /// back the whole `$fpath[` word. `docomplete`'s expand-or-complete
+    /// probe (c:783-792) then saw the `$`, chose COMP_EXPAND, and
+    /// `doexpansion` replaced the buffer with all 50 `$fpath` entries
+    /// concatenated instead of listing subscript candidates.
+    #[test]
+    fn get_comp_string_unterminated_subscript_enters_math_context() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let line = "echo $fpath[";
+        seed_metaline(line, line.chars().count() as i32);
+
+        let word = get_comp_string();
+
+        assert_eq!(
+            INWHAT.load(Ordering::SeqCst),
+            IN_MATH,
+            "unclosed `[` must switch the completion to the math/subscript context"
+        );
+        assert_eq!(
+            INSUBSCR.load(Ordering::SeqCst),
+            1,
+            "a plain (non-assoc) array subscript is insubscr == 1"
+        );
+        assert_eq!(
+            VARNAME
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .unwrap()
+                .clone(),
+            Some("fpath".to_string()),
+            "the identifier before `[` names the subscripted parameter"
+        );
+        assert_eq!(
+            word.as_deref(),
+            Some(""),
+            "the completion word is the subscript text, not the `$fpath[` line word"
+        );
+        // c:1639/1642 — the word spans the (empty) range just after `[`.
+        assert_eq!(WB.load(Ordering::SeqCst), line.chars().count() as i32);
+    }
+
+    /// c:1590 — a CLOSED subscript leaves the ordinary word context
+    /// alone. Guards the scan against firing on every `[`.
+    #[test]
+    fn get_comp_string_closed_subscript_stays_out_of_math() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let line = "echo $fpath[1] ";
+        seed_metaline(line, line.chars().count() as i32);
+
+        let _ = get_comp_string();
+
+        assert_ne!(
+            INWHAT.load(Ordering::SeqCst),
+            IN_MATH,
+            "a balanced `[...]` is not a subscript context"
+        );
+        assert_eq!(INSUBSCR.load(Ordering::SeqCst), 0);
+    }
+
+    /// Seed the metafied completion line + cursor the way `docomplete`
+    /// does before calling `get_comp_string`.
+    fn seed_metaline(line: &str, cursor: i32) {
+        use crate::ported::zle::compcore as cc;
+        if let Ok(mut g) = cc::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = line.to_string();
+        }
+        if let Ok(mut g) = cc::ZLEMETALINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = line.to_string();
+        }
+        cc::ZLECS.store(cursor, Ordering::SeqCst);
+        cc::ZLELL.store(line.chars().count() as i32, Ordering::SeqCst);
+        cc::ZLEMETACS.store(cursor, Ordering::SeqCst);
+        cc::ZLEMETALL.store(line.chars().count() as i32, Ordering::SeqCst);
+    }
+
+    /// c:2326-2330 — `spaceinline(1); zlemetaline[zlemetacs++] = ' ';`
+    /// separates the expansions `doexpansion` splices into the line.
+    ///
+    /// The Rust `spaceinline` opens its gap in the EDITOR buffer, not in
+    /// the metafied one `doexpansion` is editing, so the old
+    /// open-a-gap-then-poke-a-byte pair wrote nothing once the cursor
+    /// reached end-of-line: `ls *<TAB>` expanded to `aaccf1` rather than
+    /// `aa cc f1`.
+    #[test]
+    fn doexpansion_separates_expansions_with_spaces() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let d = dir.path().to_str().expect("utf-8 tempdir").to_string();
+        for n in ["zzA", "zzB"] {
+            std::fs::write(dir.path().join(n), b"").expect("fixture file");
+        }
+        let word = format!("{}/zz*", d);
+        let line = format!("ls {}", word);
+        seed_metaline(&line, line.chars().count() as i32);
+        WB.store(3, Ordering::SeqCst);
+        WE.store(line.chars().count() as i32, Ordering::SeqCst);
+
+        let rc = doexpansion(&word, COMP_EXPAND, COMP_EXPAND_COMPLETE, 0);
+
+        let got = crate::ported::zle::compcore::ZLEMETALINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        assert_eq!(rc, 0, "an expansion that changed the word returns 0");
+        // c:2326 — `nonempty(vl) || !first` also fires after the LAST item,
+        // so zsh leaves a trailing space too.
+        assert_eq!(got, format!("ls {}/zzA {}/zzB ", d, d));
     }
 }

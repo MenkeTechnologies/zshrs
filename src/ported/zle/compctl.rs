@@ -1444,7 +1444,7 @@ pub fn bin_compcall(
     _func: i32,
 ) -> i32 {
     // C: c:1680-1683 — incompfunc check
-    let incompfunc = INCOMPFUNC.with(|c| c.get());
+    let incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
     if incompfunc != 1 {
         eprintln!("{}: can only be called from completion function", name);
         return 1;
@@ -1621,10 +1621,19 @@ pub(crate) fn maketildelist() {
     }
 }
 
-// Are we inside a completion function? Set by the completion-driver
-// entry/exit hooks (compctl_make / compctl_cleanup). Mirrors the C
-// `incompfunc` global from Src/Zle/zle_tricky.c.
-thread_local! { static INCOMPFUNC: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+// Are we inside a completion function? Mirrors the C `incompfunc`
+// global from Src/Zle/zle_tricky.c:46 — there is exactly ONE such
+// global in C, set to 1 by `callcompfunc` (c:838) before the user's
+// completion widget runs.
+//
+// This file used to keep its own private thread-local of the same
+// name, which shadowed `zle::complete::INCOMPFUNC` (the one
+// `callcompfunc` actually writes). It was therefore always 0 during
+// a real completion, so `compcall` took its `incompfunc != 1` error
+// path — `_default`'s compctl bridge could never add matches and
+// `rustup <TAB>` lost the whole compctl-side candidate list zsh
+// shows. Alias the single global instead.
+use crate::ported::zle::complete::INCOMPFUNC;
 
 /// `compctl -K`'s bound `compctlread` callback.
 /// Port of `compctlread(char *name, char **args, Options ops, char *reply)` from Src/Zle/compctl.c:190 (~150 lines).
@@ -2647,7 +2656,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     *OFFS.lock().unwrap() = lip + lp;
 
     // c:2379-2381 — incompfunc = 2 during the nested list build, 1 after.
-    INCOMPFUNC.with(|c| c.set(2));
+    INCOMPFUNC.store(2, std::sync::atomic::Ordering::Relaxed);
     let incmd = *CLWPOS.lock().unwrap() == 0; // c:2380 — `!clwpos`
     let ret = makecomplistglobal(
         &str_in,
@@ -2655,7 +2664,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
         crate::ported::zle::zle_h::COMP_COMPLETE,
         flags,
     ); // c:2380
-    INCOMPFUNC.with(|c| c.set(1)); // c:2381
+    INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed); // c:2381
 
     // c:2382-2396 — restore the saved state.
     *ISUF.lock().unwrap() = oisuf;
@@ -3536,7 +3545,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     //     case) C forces ispattern=0 anyway, so patcomp/filecomp stay
     //     None; the non-empty-comppatmatch path is not built here.
     // =================================================================
-    let incompfunc = INCOMPFUNC.with(|c| c.get());
+    let incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
     let instr = *INSTRING.lock().unwrap_or_else(|e| e.into_inner());
     // Port of the `quotename(s)` macro (c:1757). NB: C's
     // `quotestring("", QT_BACKSLASH)` returns "" (the `''` form is only
@@ -4112,17 +4121,31 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
             .unwrap_or_default();
         dumphashtable(funcs, -3);
-        // c:3654 — builtins.
+        // c:3654 — builtins. C walks `builtintab`, which holds only the
+        // builtins of currently-LOADED modules; zshrs keeps one flat
+        // static `BUILTINS` slice, so the membership test has to be
+        // made explicitly. `builtin_in_builtintab` is the same
+        // predicate `scanbuiltins` uses for the `builtins` magic assoc
+        // (Src/Modules/parameter.c:823), so the two namespaces cannot
+        // drift. Without it this dump offered 44 module builtins
+        // (`strftime`, `zstat`, `zpty`, `zf_chmod`, `pcre_match`, …)
+        // that `${(k)builtins}` did not list and that real zsh only
+        // exposes after the owning `zmodload`.
         let mut builtins: Vec<String> = crate::ported::builtin::BUILTINS
             .iter()
             .map(|b| b.node.nam.clone())
+            .filter(|n| crate::ext_builtins::builtin_in_builtintab(n))
             .collect();
         // zshrs extension builtins dispatch in-process but have no
         // entry in the C-port BUILTINS table, so command-position
-        // completion never offered `doctor`, `peach`, `zassert_eq`,
-        // etc. Offer them in default mode; strict `--zsh` emulation
-        // keeps only zsh's own builtin set.
-        if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+        // completion would never offer `doctor`, `peach`, `zassert_eq`,
+        // etc. `hide_ext_builtins()` (shared with the `builtins` magic
+        // assoc in the Src/Modules/parameter.c port, so the two
+        // namespaces can't drift) drops them under `--zsh` strict
+        // emulation and under `ZSHRS_HIDE_EXT_BUILTINS` — the parity
+        // harnesses' measurement knob, which changes NOTHING else:
+        // the names still dispatch and still resolve via `whence`.
+        if !crate::ext_builtins::hide_ext_builtins() {
             builtins.extend(
                 crate::ext_builtins::EXT_BUILTIN_NAMES
                     .iter()
@@ -4211,7 +4234,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             let largs: Vec<String> = vec![func_name.clone(), s.to_string()];
             // c:3722-3724 — `if (incompfunc != 1) incompctlfunc = 1;
             //                sfcontext = SFC_COMPLETE;`.
-            let in_compfunc = INCOMPFUNC.with(|c| c.get());
+            let in_compfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
             if in_compfunc != 1 {
                 INCOMPCTLFUNC.with(|c| c.set(true));
             }
@@ -4259,7 +4282,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
                 let largs: Vec<String> = vec![ylist.clone()];
                 // c:3898-3900 — same SFC_COMPLETE / incompctlfunc=1
                 // bracketing as cc.func above.
-                let in_compfunc = INCOMPFUNC.with(|c| c.get());
+                let in_compfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
                 if in_compfunc != 1 {
                     INCOMPCTLFUNC.with(|c| c.set(true));
                 }
@@ -5124,7 +5147,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        INCOMPFUNC.with(|c| c.set(0));
+        INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
@@ -5140,7 +5163,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        INCOMPFUNC.with(|c| c.set(1));
+        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
@@ -5150,7 +5173,7 @@ mod tests {
         let r = bin_compcall("compcall", &["-T".to_string()], &ops, 0);
         assert_eq!(r, 0);
         // Reset
-        INCOMPFUNC.with(|c| c.set(0));
+        INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[test]
