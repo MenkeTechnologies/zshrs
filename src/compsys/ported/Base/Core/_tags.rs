@@ -102,11 +102,16 @@ pub fn _tags(args: &[String]) -> i32 {
     //   (upstream declares the second group only inside the `(( $# ))`
     //   branch; this port has no early-return before that test that
     //   would observe the difference.)
-    {
-        use crate::compsys::ported::shared::{declare_locals, declare_locals_keeping_value};
-        declare_locals(&["prev", "order", "tag", "nodef", "tmp"], 0);
-        declare_locals_keeping_value(&["curcontext"]);
-    }
+    // `_alternative` (and several other ports) reach `_tags` as a plain
+    // Rust call, so nothing pushes a parameter scope for it and nothing
+    // unwinds the declarations below. `tmp` is the collision that bit:
+    // `_files` keeps its `zparseopts '/=tmp' 'g+:-=tmp'` result there,
+    // and after `_alternative` -> `_tags` it read back empty.
+    let mut _scope = crate::compsys::ported::shared::LocalScope::declare(
+        &["prev", "order", "tag", "nodef", "tmp"],
+        0,
+    );
+    _scope.also_keeping_value(&["curcontext"]);
     // sh:10-13 — `--` as first arg sets `prev = "-"` (the suffix that
     //   becomes `-i-` / `-T-` / `-N-`, telling comptags to use the
     //   preceding nesting level).
@@ -364,6 +369,38 @@ mod tests {
             let r = _tags(&["options".to_string(), "values".to_string()]);
             crate::ported::params::setsparam("_sort_tags", "");
             r
+        });
+    }
+
+    #[test]
+    fn does_not_leave_callers_tmp_shadowed() {
+        // Regression twin of `_description::does_not_leave_callers_opts_shadowed`.
+        // `_tags` declares `tmp` (sh:19) and `_alternative` calls it as a
+        // plain Rust call, so the declaration used to survive for the rest
+        // of the caller's body. `_files` keeps its
+        // `zparseopts '/=tmp' 'g+:-=tmp'` result there, so losing it
+        // dropped both `-/` and `-g '<pat>'`.
+        use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
+        use crate::ported::params::{endparamscope, getaparam, setaparam};
+        use crate::ported::utils::inc_locallevel;
+
+        let _ = with_incompfunc(|| {
+            crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
+            inc_locallevel(); // the caller's own function scope
+            declare_locals(&["tmp"], PM_ARRAY);
+            setaparam("tmp", vec!["-g*(-%b,-/)".to_string()]);
+
+            inc_locallevel(); // the scope `_alternative` runs in
+            let _ = _tags(&["options".to_string()]);
+            let seen = getaparam("tmp").unwrap_or_default();
+            endparamscope();
+            endparamscope();
+            assert_eq!(
+                seen,
+                vec!["-g*(-%b,-/)".to_string()],
+                "_tags leaked its `tmp` declaration into the caller"
+            );
+            0
         });
     }
 }

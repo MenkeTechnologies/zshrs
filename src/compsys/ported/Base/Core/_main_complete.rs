@@ -124,6 +124,94 @@ impl Drop for CompSetupGuard {
     }
 }
 
+/// sh:164-166 / sh:169-171 — the two handler bodies, verbatim. Only the
+/// exit status differs (130 = 128+SIGINT, 131 = 128+SIGQUIT).
+const COMP_TRAPS: [(&str, &str); 2] = [
+    (
+        "TRAPINT",
+        "\tzle -M \"Killed by signal in ${funcstack[2]} after ${SECONDS}s\";\n\tzle -R\n\treturn 130",
+    ),
+    (
+        "TRAPQUIT",
+        "\tzle -M \"Killed by signal in ${funcstack[2]} after ${SECONDS}s\";\n\tzle -R\n\treturn 131",
+    ),
+];
+
+/// sh:161-172 — the interrupt/quit handlers the completer installs
+/// around the whole completer chain:
+///
+/// ```text
+/// # We assume localtraps to be in effect here ...
+/// integer SECONDS=0
+/// TRAPINT() {
+///   zle -M "Killed by signal in ${funcstack[2]} after ${SECONDS}s";
+///   zle -R
+///   return 130
+/// }
+/// TRAPQUIT() { ... return 131 }
+/// ```
+///
+/// Defining a `TRAP<SIG>` shell function IS how the trap gets installed:
+/// `setfunction` (c:Src/Modules/parameter.c:305-313) recognises the
+/// `TRAP` prefix and calls `settrap(sn, NULL, ZSIG_FUNC)`, so one call
+/// both publishes the name into `${(k)functions}` and arms the signal.
+/// Without them a ^C landing inside a slow completer unwound through the
+/// shell's default SIGINT path instead of returning 130 from the widget
+/// with a `zle -M` notice on screen.
+///
+/// The comment at sh:161 ("We assume localtraps to be in effect here")
+/// refers to `setopt localtraps` in `_comp_setup` (compinit sh:182):
+/// both the trap and the function definition are undone when
+/// `_main_complete` returns, so the names must NOT outlive the widget.
+/// `CompSetupGuard` covers the option half; this guard covers the
+/// function half, and — like localtraps — restores any same-named
+/// handler the caller had rather than blindly deleting.
+///
+/// The `${SECONDS}s` both bodies interpolate is the local shadow
+/// `declare_local_seconds` installs for sh:162 — elapsed seconds inside
+/// this completion, not the caller's uptime counter.
+struct CompTrapGuard {
+    /// Per name, the handler body that was installed before — `None`
+    /// when the caller had no such function.
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl CompTrapGuard {
+    /// sh:163-172 — install both handlers, remembering what they replaced.
+    fn install() -> Self {
+        let mut saved = Vec::with_capacity(COMP_TRAPS.len());
+        for (name, body) in COMP_TRAPS {
+            // The caller's handler is restored by BODY, not by node: the
+            // trap arming lives in `settrap`, which only `setfunction`
+            // (c:Src/Modules/parameter.c:305-313) performs — re-adding a
+            // raw `shfunctab` node would leave the signal disarmed.
+            let prev = crate::ported::hashtable::shfunctab_lock()
+                .read()
+                .ok()
+                .and_then(|t| t.get(name).and_then(|f| f.body.clone()));
+            crate::ported::modules::parameter::setfunction(name, body.to_string(), 0);
+            saved.push((name, prev));
+        }
+        CompTrapGuard { saved }
+    }
+}
+
+impl Drop for CompTrapGuard {
+    /// `localtraps` (compinit sh:182) — restore the caller's handlers on
+    /// every exit path, including the early `return`s in the chain loop.
+    /// `removeshfuncnode` also `removetrap`s the signal (hashtable.rs
+    /// c:Src/hashtable.c removeshfuncnode), so a completion never leaves
+    /// SIGINT pointing at a function that is no longer defined.
+    fn drop(&mut self) {
+        for (name, prev) in self.saved.drain(..) {
+            crate::ported::hashtable::removeshfuncnode(name);
+            if let Some(body) = prev {
+                crate::ported::modules::parameter::setfunction(name, body, 0);
+            }
+        }
+    }
+}
+
 /// sh:41-43 — "Hide any `_comp_priv_prefix` variable that happens to be
 /// defined in the calling scope": `local _comp_priv_prefix` followed by
 /// `unset _comp_priv_prefix`.
@@ -145,6 +233,93 @@ fn hide_comp_priv_prefix() {
     use crate::compsys::ported::shared::declare_locals;
     declare_locals(&["_comp_priv_prefix"], 0); // sh:42
     unsetparam("_comp_priv_prefix"); // sh:43
+}
+
+/// sh:52 — `local -ar builtin_precommands=(- builtin eval exec
+/// nocorrect noglob time)`.
+///
+/// The declaration and the VALUE are one statement upstream; the port
+/// split them (declare in the `local` block, assign here) because
+/// `declare_locals` cannot stamp `PM_READONLY` before the write. Both
+/// halves are observable:
+///
+///   * the list itself — `_command_names:28` and `_pick_variant:15`
+///     branch on `(( ${#precommands:|builtin_precommands} ))`, i.e.
+///     "is any active precommand NOT one of these six". With the array
+///     left empty every precommand looked non-builtin, so `sudo <TAB>`
+///     took the external-only branch.
+///   * the `-r` bit — `${(t)builtin_precommands}` must read
+///     `array-local-readonly`, which is what the `_parameters`
+///     `~*local*` filter and `typeset -p` both report.
+fn seed_builtin_precommands() {
+    setaparam(
+        "builtin_precommands",
+        ["-", "builtin", "eval", "exec", "nocorrect", "noglob", "time"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    );
+    crate::compsys::ported::shared::mark_readonly(&["builtin_precommands"]);
+}
+
+/// sh:162 — `integer SECONDS=0`.
+///
+/// `$SECONDS` is a `PM_SPECIAL` backed by a live timer. `integer` inside
+/// a function creates a LOCAL shadow of it (`Src/builtin.c:2469-2575`
+/// takes the same PM_LOCAL branch for specials), so the frozen zero is
+/// visible only for the duration of the completion and `endparamscope`
+/// hands the caller's live `$SECONDS` back. That is exactly the
+/// semantics upstream relies on for the "Killed by signal in … after
+/// ${SECONDS}s" trap text at sh:164/169.
+///
+/// The port previously skipped this line to avoid freezing the user's
+/// `$SECONDS`; that reasoning was wrong (the shadow is scoped), and the
+/// cost was visible: `${(t)SECONDS}` read `integer-special` instead of
+/// `integer-local-special`, so `_parameters`' `[(R)…~*local*]` filter
+/// kept `SECONDS` and `unset <TAB>` offered a name zsh does not.
+fn declare_local_seconds() {
+    use crate::compsys::ported::shared::{declare_locals, PM_INTEGER};
+    declare_locals(&["SECONDS"], PM_INTEGER);
+    let _ = crate::ported::params::setiparam("SECONDS", 0);
+}
+
+/// sh:115-124 — `_def_menu_style=( "$_last_menu_style[@]" )` followed by
+/// `_last_menu_style=()`.
+///
+/// `_setup default` (sh:114) stashes the `menu` style it resolved into
+/// `_last_menu_style`; these two lines move that value into
+/// `_def_menu_style` and clear the staging array so each completer's own
+/// `_setup` call starts empty. The menu decision at sh:241 appends
+/// `_def_menu_style` to `_menu_style` — with the move never ported,
+/// `$_def_menu_style` was permanently empty and the context-default
+/// `menu` style was dropped from every decision.
+///
+/// It also settles the type: both names read `array-local` in zsh, where
+/// the port left them at the `scalar-local` its `local` line created.
+fn move_menu_style_to_default() {
+    let last = getaparam("_last_menu_style").unwrap_or_default();
+    setaparam("_def_menu_style", last); // sh:115
+    setaparam("_last_menu_style", Vec::new()); // sh:124
+}
+
+/// sh:176-180 — `funcs=( "$compprefuncs[@]" ); compprefuncs=(); for func
+/// in "$funcs[@]"; do "$func"; done`.
+///
+/// The pre-functions half of the `compprefuncs`/`comppostfuncs` pair.
+/// The port had only the post half (sh:405), so a function registered on
+/// `compprefuncs` — the documented hook for "run once before the next
+/// completion", used by `_complete_debug`, `_correct_word` and by user
+/// widgets — never ran and never got cleared, leaving the array to grow
+/// across completions.
+fn run_compprefuncs() {
+    let funcs = getaparam("compprefuncs").unwrap_or_default(); // sh:176
+    setaparam("funcs", funcs.clone());
+    setaparam("compprefuncs", Vec::new()); // sh:177
+    for f in &funcs {
+        // sh:178-180 — `for func in "$funcs[@]"; do "$func"; done`.
+        let _ = setsparam("func", f);
+        let _ = crate::ported::exec::dispatch_function_call(f, &[]);
+    }
 }
 
 /// `_main_complete` — primary completion-dispatch entry. Args
@@ -238,22 +413,19 @@ pub fn _main_complete(args: &[String]) -> i32 {
         );
         // sh:42 `local _comp_priv_prefix`, sh:46 `local -a
         // precommands`, sh:52 `local -ar builtin_precommands`. The
-        // readonly half of sh:52 is dropped: the port assigns the list
-        // itself rather than initialising it in the declaration.
+        // `-r` half of sh:52 is applied by `seed_builtin_precommands`
+        // below, after the list is assigned — see `mark_readonly`.
         hide_comp_priv_prefix();
         declare_locals(&["precommands", "builtin_precommands"], PM_ARRAY);
+        seed_builtin_precommands();
         // sh:31 — `curcontext="$curcontext"`: local, but seeded from
         // the enclosing scope (a widget may have set it).
         declare_locals_keeping_value(&["curcontext"]);
         // sh:54 — `typeset -U _lastdescr _comp_ignore _comp_colors`.
         // `typeset` inside a function is local unless `-g`.
         declare_locals(&["_lastdescr", "_comp_ignore", "_comp_colors"], PM_UNIQUE);
-        // sh:158 `integer SECONDS=0` is NOT mirrored: `$SECONDS` is a
-        // PM_SPECIAL whose value comes from a live timer, and shadowing
-        // it here would freeze the user's `$SECONDS` for the duration
-        // of every completion. Upstream only wants the frozen copy for
-        // the "Killed by signal after ${SECONDS}s" trap message
-        // (sh:160,165), which this port does not implement.
+        // sh:162 `integer SECONDS=0` — see `declare_local_seconds`.
+        declare_local_seconds();
     }
     // Merge any finished background compinit scan BEFORE the completer
     // lookup. The bg worker ships _comps/_services/_patcomps back over a
@@ -467,16 +639,25 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let _ = setsparam("_tags_level", "0");
     let _ = setsparam("_comp_tags", "");
     let _ = setsparam("_comp_mesg", "");
-    setaparam("_lastdescr", Vec::new());
-    setaparam("_comp_ignore", Vec::new());
-    setaparam("_comp_colors", Vec::new());
-    // sh:54 — `typeset -U _lastdescr _comp_ignore _comp_colors`. This
-    // `typeset -U` declaration was not ported: the arrays are created above via
-    // `setaparam` (plain, no PM_UNIQUE), so every later `+=` append (`_setup`
-    // per completer, `_path_files`/`_files` ignore accumulation, the ambiguous-
-    // color injection) duplicates entries. zshrs's `setaparam` DOES honor
-    // PM_UNIQUE (params.rs:7367/4627 → arrunique), so flagging the params once
-    // here makes all subsequent appends dedupe automatically, matching zsh.
+    // sh:54 — `typeset -U _lastdescr _comp_ignore _comp_colors`. The
+    // PM_UNIQUE bit is what makes every later `+=` append (`_setup` per
+    // completer, `_path_files`/`_files` ignore accumulation, the
+    // ambiguous-color injection) dedupe; zshrs's `setaparam` honors it
+    // (params.rs:7367/4627 → arrunique). `declare_locals` above already
+    // stamps it inside a function scope; this re-stamp covers the
+    // `locallevel == 0` callers (unit tests, `--doctor`) where
+    // `declare_locals` is a no-op by construction.
+    //
+    // The three names are deliberately NOT pre-assigned to empty arrays
+    // here. `typeset -U` without `-a` declares SCALARS, so zsh reports
+    // `${(t)_lastdescr}` as `scalar-local-unique` at this point and only
+    // converts on the first array assignment (`_description`'s
+    // `_lastdescr=(…)`). Seeding empty arrays made the port report
+    // `array-local-unique` for the whole completion — a `${(t)}`
+    // divergence on three names, with no upstream statement behind it.
+    // The per-completion reset the seeding provided now comes from the
+    // `declare_locals` shadow, which starts empty and is unwound by
+    // `endparamscope`.
     {
         let mut tab = crate::ported::params::paramtab().write().unwrap();
         for nm in ["_lastdescr", "_comp_ignore", "_comp_colors"] {
@@ -485,6 +666,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
             }
         }
     }
+
+    // sh:114-124 — `_setup default` has already run (above); move the
+    // `menu` style it staged into `_def_menu_style` and clear the stage.
+    move_menu_style_to_default();
 
     // sh:137-151  completer chain
     //   `-` as first arg + ≥3 args → run only argv[1] (call mode)
@@ -513,6 +698,14 @@ pub fn _main_complete(args: &[String]) -> i32 {
     // Publish the chain so other completers (e.g. _prefix / _ignored)
     //   can inspect it via `$_completers`.
     setaparam("_completers", chain.clone());
+
+    // sh:161-172 — "We assume localtraps to be in effect here": install
+    // TRAPINT / TRAPQUIT for the duration of the completer chain. Dropped
+    // (and the caller's handlers restored) on every exit path below.
+    let _comp_traps = CompTrapGuard::install();
+
+    // sh:174-180 — "Call the pre-functions."
+    run_compprefuncs();
 
     let mut ret: i32 = 1;
     let mut completer_num: i64 = 1;
@@ -550,13 +743,22 @@ pub fn _main_complete(args: &[String]) -> i32 {
             );
         }
 
-        // sh:180  matcher-list loop
+        // sh:200-201 — `zstyle -a ":completion:${curcontext}:" matcher-list
+        // _matchers || _matchers=( '' )`, then sh:205 iterates `$_matchers`.
+        //
+        // Upstream keeps the list in the `_matchers` PARAMETER, not in a
+        // shell-local temporary, and downstream code reads it back:
+        // `_path_files:1620` sizes its per-matcher work off
+        // `${#_matchers}`, and `${(t)_matchers}` must read `array-local`.
+        // The port kept the list only in this Rust `Vec`, so `$_matchers`
+        // stayed the empty scalar its `local` line created.
         let matchers = lookupstyle(&format!(":completion:{}:", curcontext), "matcher-list");
         let matcher_list: Vec<String> = if matchers.is_empty() {
             vec!["".to_string()]
         } else {
             matchers
         };
+        setaparam("_matchers", matcher_list.clone());
         let mut matcher_num: i64 = 1;
         let mut combined_matcher = String::new();
         for m in &matcher_list {
@@ -974,6 +1176,184 @@ fn patch_completer_field(curcontext: &str, completer: &str) -> String {
 mod tests {
     use super::*;
 
+    /// `${(t)name}` for a live parameter — the exact string
+    /// `$parameters[name]` reports, via the same
+    /// `Src/Modules/parameter.c:43-95` renderer.
+    fn type_of(name: &str) -> String {
+        crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(name)
+                    .map(|pm| crate::ported::modules::parameter::paramtypestr(pm))
+            })
+            .unwrap_or_default()
+    }
+
+    /// Run `body` one function scope deep, so `declare_locals` takes its
+    /// `pm->level < locallevel` branch (`Src/builtin.c:2469`) instead of
+    /// the `locallevel == 0` early return.
+    fn in_function_scope<T>(body: impl FnOnce() -> T) -> T {
+        crate::ported::utils::inc_locallevel();
+        let out = body();
+        crate::ported::params::endparamscope();
+        out
+    }
+
+    /// sh:52 — `local -ar builtin_precommands=(- builtin eval exec
+    /// nocorrect noglob time)`.
+    ///
+    /// Two regressions in one line. The VALUE was never assigned, so
+    /// `_command_names:28` / `_pick_variant:15`'s
+    /// `(( ${#precommands:|builtin_precommands} ))` saw an empty
+    /// exclusion list; and the `-r` bit was never stamped, so
+    /// `${(t)builtin_precommands}` read `array-local` where zsh reads
+    /// `array-local-readonly`.
+    #[test]
+    fn builtin_precommands_is_the_readonly_local_array_upstream_declares() {
+        let _g = crate::test_util::global_state_lock();
+        in_function_scope(|| {
+            crate::compsys::ported::shared::declare_locals(
+                &["builtin_precommands"],
+                crate::compsys::ported::shared::PM_ARRAY,
+            );
+            seed_builtin_precommands();
+            assert_eq!(
+                getaparam("builtin_precommands").unwrap_or_default(),
+                vec!["-", "builtin", "eval", "exec", "nocorrect", "noglob", "time"],
+                "sh:52 value missing — ${{#precommands:|builtin_precommands}} misreads"
+            );
+            assert_eq!(
+                type_of("builtin_precommands"),
+                "array-local-readonly",
+                "sh:52 is `local -ar`"
+            );
+        });
+    }
+
+    /// sh:162 — `integer SECONDS=0`.
+    ///
+    /// The shadow must be LOCAL: `_parameters` drops every candidate
+    /// whose type matches `*local*`, so a non-local `SECONDS` was
+    /// offered by `unset <TAB>` where zsh offers nothing.
+    #[test]
+    fn seconds_shadow_is_integer_local_special() {
+        let _g = crate::test_util::global_state_lock();
+        // A bare test binary never runs `createparamtable`, so stand the
+        // PM_SPECIAL timer parameter up the way `Src/params.c` does
+        // before checking that the shadow inherits its `-special`.
+        let _ = crate::ported::params::setiparam("SECONDS", 7);
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("SECONDS") {
+                pm.node.flags |= crate::ported::zsh_h::PM_SPECIAL as i32;
+            }
+        }
+        let before = type_of("SECONDS");
+        assert_eq!(before, "integer-special", "probe setup failed");
+        in_function_scope(|| {
+            declare_local_seconds();
+            assert_eq!(
+                type_of("SECONDS"),
+                "integer-local-special",
+                "sh:162 `integer SECONDS=0` not mirrored"
+            );
+        });
+        assert_eq!(
+            type_of("SECONDS"),
+            before,
+            "endparamscope must hand the caller's live $SECONDS back"
+        );
+    }
+
+    /// sh:54 — `typeset -U _lastdescr _comp_ignore _comp_colors`.
+    ///
+    /// `typeset -U` without `-a` declares SCALARS; zsh reports
+    /// `scalar-local-unique` until the first array assignment. Seeding
+    /// them as empty arrays made the port report `array-local-unique`
+    /// for the whole completion.
+    #[test]
+    fn typeset_u_trio_declares_unique_local_scalars() {
+        let _g = crate::test_util::global_state_lock();
+        in_function_scope(|| {
+            crate::compsys::ported::shared::declare_locals(
+                &["_lastdescr", "_comp_ignore", "_comp_colors"],
+                crate::compsys::ported::shared::PM_UNIQUE,
+            );
+            for nm in ["_lastdescr", "_comp_ignore", "_comp_colors"] {
+                assert_eq!(type_of(nm), "scalar-local-unique", "sh:54 type for {nm}");
+            }
+            // …and a full pass through `_main_complete` must leave them
+            // that way. The regression this pins was three
+            // `setaparam(nm, Vec::new())` calls in the body, which
+            // converted all three to `array-local-unique` before any
+            // completer ran — a `${(t)}` divergence with no upstream
+            // statement behind it.
+            let _ = _main_complete(&[]);
+            for nm in ["_lastdescr", "_comp_ignore", "_comp_colors"] {
+                assert_ne!(
+                    type_of(nm),
+                    "array-local-unique",
+                    "sh:54 declares scalars; {nm} was seeded as an array"
+                );
+            }
+        });
+    }
+
+    /// sh:115/124 — `_def_menu_style=( "$_last_menu_style[@]" )` then
+    /// `_last_menu_style=()`. Without the move, `$_def_menu_style` stayed
+    /// empty and the context-default `menu` style never reached the
+    /// sh:241 decision; both names also read `scalar-local` instead of
+    /// `array-local`.
+    #[test]
+    fn menu_style_moves_from_stage_to_default() {
+        let _g = crate::test_util::global_state_lock();
+        in_function_scope(|| {
+            crate::compsys::ported::shared::declare_locals(
+                &["_last_menu_style", "_def_menu_style"],
+                0,
+            );
+            setaparam("_last_menu_style", vec!["select=2".to_string()]);
+            move_menu_style_to_default();
+            assert_eq!(
+                getaparam("_def_menu_style").unwrap_or_default(),
+                vec!["select=2".to_string()],
+                "sh:115 move missing"
+            );
+            assert!(
+                getaparam("_last_menu_style").unwrap_or_default().is_empty(),
+                "sh:124 clear missing"
+            );
+            assert_eq!(type_of("_def_menu_style"), "array-local");
+            assert_eq!(type_of("_last_menu_style"), "array-local");
+        });
+    }
+
+    /// sh:176-180 — the `compprefuncs` half of the pre/post hook pair.
+    /// The port shipped only the post half, so a registered
+    /// pre-function never ran and the array was never drained.
+    #[test]
+    fn compprefuncs_are_consumed_and_published_as_funcs() {
+        let _g = crate::test_util::global_state_lock();
+        in_function_scope(|| {
+            crate::compsys::ported::shared::declare_locals(&["funcs"], 0);
+            setaparam(
+                "compprefuncs",
+                vec!["_zzz_probe_a".to_string(), "_zzz_probe_b".to_string()],
+            );
+            run_compprefuncs();
+            assert_eq!(
+                getaparam("funcs").unwrap_or_default(),
+                vec!["_zzz_probe_a".to_string(), "_zzz_probe_b".to_string()],
+                "sh:176 `funcs=( \"$compprefuncs[@]\" )` missing"
+            );
+            assert!(
+                getaparam("compprefuncs").unwrap_or_default().is_empty(),
+                "sh:177 `compprefuncs=()` missing"
+            );
+            assert_eq!(type_of("funcs"), "array-local");
+        });
+    }
+
     /// sh:41-43 — after the hide idiom, `$+_comp_priv_prefix` must read
     /// 0 even when the caller had the variable set. Dropping the `unset`
     /// half made every completer's `$+_comp_priv_prefix` test true, which
@@ -1041,6 +1421,79 @@ mod tests {
         // Restore the real pre-test state.
         dosetopt(csh, was_csh as i32, 0);
         dosetopt(null, was_null as i32, 0);
+    }
+
+    /// sh:161-172 — the completer chain runs with `TRAPINT`/`TRAPQUIT`
+    /// defined, so a ^C inside a slow completer returns 130 from the
+    /// widget with a `zle -M` notice instead of unwinding through the
+    /// shell's default SIGINT path. The names are observable: real zsh
+    /// answers `${+functions[TRAPINT]}` == 1 from inside a completer and
+    /// 0 once the widget has returned (`localtraps`, compinit sh:182).
+    /// zshrs answered 0 in both places — the block was never ported.
+    #[test]
+    fn comp_trap_guard_installs_both_handlers_and_restores_caller() {
+        use crate::ported::hashtable::{removeshfuncnode, shfunctab_lock};
+        use crate::ported::modules::parameter::setfunction;
+        let _g = crate::test_util::global_state_lock();
+
+        let body_of = |n: &str| -> Option<String> {
+            shfunctab_lock()
+                .read()
+                .ok()
+                .and_then(|t| t.get(n).and_then(|f| f.body.clone()))
+        };
+
+        // A caller-installed SIGINT handler must survive the completion.
+        removeshfuncnode("TRAPINT");
+        removeshfuncnode("TRAPQUIT");
+        setfunction("TRAPINT", "\tprint caller-int".to_string(), 0);
+
+        {
+            let _traps = CompTrapGuard::install();
+            // sh:166 / sh:171 — the two bodies differ only in the status.
+            assert!(
+                body_of("TRAPINT")
+                    .as_deref()
+                    .is_some_and(|b| b.contains("return 130")),
+                "sh:163-167 TRAPINT not installed for the completer chain"
+            );
+            assert!(
+                body_of("TRAPQUIT")
+                    .as_deref()
+                    .is_some_and(|b| b.contains("return 131")),
+                "sh:168-172 TRAPQUIT not installed for the completer chain"
+            );
+        }
+
+        // localtraps — the caller's handler is back, verbatim, and the
+        // name that had none is gone rather than left behind.
+        assert_eq!(
+            body_of("TRAPINT").as_deref(),
+            Some("\tprint caller-int"),
+            "the caller's TRAPINT must be restored, not clobbered"
+        );
+        assert!(
+            body_of("TRAPQUIT").is_none(),
+            "TRAPQUIT was undefined before the completion and must not leak out"
+        );
+        removeshfuncnode("TRAPINT");
+    }
+
+    /// Same contract at the real call site: no completion may leave the
+    /// handlers behind, on any return path out of the chain loop.
+    #[test]
+    fn main_complete_leaves_no_trap_functions_behind() {
+        use crate::ported::hashtable::{removeshfuncnode, shfunctab_lock};
+        let _g = crate::test_util::global_state_lock();
+        removeshfuncnode("TRAPINT");
+        removeshfuncnode("TRAPQUIT");
+        let _ = setsparam("curcontext", "a:b:c:d");
+        let _ = _main_complete(&[]);
+        let tab = shfunctab_lock();
+        let tab = tab.read().unwrap();
+        for n in ["TRAPINT", "TRAPQUIT"] {
+            assert!(tab.get(n).is_none(), "{n} leaked out of _main_complete");
+        }
     }
 
     #[test]

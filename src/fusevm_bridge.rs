@@ -1544,33 +1544,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                   // in a function). zshrs pushed "shfunc" and, since #1065, "cmdsubst",
                                   // but never "eval". Popped on every return path by the guard, matching
                                   // execode's stack discipline. Bug #1065 (eval leg).
-        let sync_eval_ctx = |stack: &[String]| {
-            let joined = stack.join(":");
-            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-                if let Some(pm) = tab.get_mut("zsh_eval_context") {
-                    pm.u_arr = Some(stack.to_vec());
-                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-                }
-                if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
-                    pm.u_str = Some(joined);
-                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-                }
-            }
-        };
-        if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
-            ctx.push("eval".to_string());
-            sync_eval_ctx(&ctx);
-        }
-        struct EvalCtxGuard<F: Fn(&[String])>(F);
-        impl<F: Fn(&[String])> Drop for EvalCtxGuard<F> {
-            fn drop(&mut self) {
-                if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
-                    ctx.pop();
-                    (self.0)(&ctx);
-                }
-            }
-        }
-        let _eval_ctx_guard = EvalCtxGuard(sync_eval_ctx);
+        let _eval_ctx_guard = crate::ported::exec::EvalContextFrame::push("eval");
         // c:Src/builtin.c:6163-6178 — `eval` pushes a funcstack frame named
         // "(eval)" (tp = FS_EVAL), gated on `ineval = !isset(EVALLINENO)` /
         // `if (!ineval)` — i.e. pushed when EVAL_LINENO is SET, which is the
@@ -4840,13 +4814,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // SCANPM_ISVAR_AT, i.e. `isarr != 0` (c:2915). An empty result is
         // therefore an empty ARRAY, and plan9 deletes the whole word
         // (c:4362) rather than keeping the surrounding text.
+        //
+        // The note describes the EMPTY value this expansion produces, so it
+        // must not survive a NON-empty one: the bit is read by concat_plan9
+        // when the word folds left-associatively, and a later non-empty
+        // segment overwriting it made `setopt rcexpandparam; e=''; a=(x y);
+        // print -rl -- ${e}${a}` delete the whole word instead of printing
+        // `x` and `y` (c:4437 keeps the surrounding text for a scalar
+        // empty; only c:4362's empty ARRAY deletes it). Restore the
+        // incoming bit whenever the result is not an empty array.
+        let saved_empty_is_scalar = empty_is_scalar();
         note_empty_is_scalar(false);
-        // bash `"${PIPESTATUS[@]}"` / `"${FUNCNAME[@]}"` / `"${BASH_VERSINFO[@]}"`
-        // splat — alias the zsh-native special. No-op in --zsh.
-        if let Some(v) = crate::dash_mode::bash_special_array(&name) {
-            return Value::Array(v.into_iter().map(Value::str).collect());
-        }
-        with_executor(|exec| {
+        let array_all = |vm: &mut fusevm::VM| -> Value {
+            let _ = &vm;
+            // bash `"${PIPESTATUS[@]}"` / `"${FUNCNAME[@]}"` / `"${BASH_VERSINFO[@]}"`
+            // splat — alias the zsh-native special. No-op in --zsh.
+            if let Some(v) = crate::dash_mode::bash_special_array(&name) {
+                return Value::Array(v.into_iter().map(Value::str).collect());
+            }
+            with_executor(|exec| {
             // Special positional names — splice the positional list.
             if name == "@" || name == "*" || name == "argv" {
                 return Value::Array(exec.pparams().iter().map(Value::str).collect());
@@ -5010,7 +4996,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
             }
-        })
+            })
+        };
+        let result = array_all(vm);
+        if !matches!(&result, Value::Array(a) if a.is_empty()) {
+            note_empty_is_scalar(saved_empty_is_scalar);
+        }
+        result
     });
 
     // BUILTIN_ARRAY_FLATTEN(N): pops N values, flattens one level of Array
@@ -5310,7 +5302,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // scalar bit; a preceding empty-SCALAR expansion in the same
                 // word would otherwise leave it set and keep the word alive
                 // (`empty=''; e=(); a=("$empty"); print -rl -- x$e y`).
-                note_empty_is_scalar(false);
+                // Only an EMPTY array may clear it: a non-empty one carries
+                // no emptiness of its own, and clearing on it wiped the bit a
+                // preceding empty SCALAR had set — `setopt rcexpandparam;
+                // e=''; a=(x y); print -rl -- $e$a` lost the whole word.
+                if arr.is_empty() {
+                    note_empty_is_scalar(false);
+                }
                 return Value::Array(arr.into_iter().map(Value::str).collect());
             }
         }
@@ -5439,7 +5437,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             // c:4245 — a real array reference: `isarr != 0`, so an empty
             // one takes plan9's word-removal path, not the scalar path.
-            note_empty_is_scalar(false);
+            // Only note it when the array IS empty — see the rc_expand arm
+            // above for why a non-empty read must not touch the bit.
+            if items.is_empty() {
+                note_empty_is_scalar(false);
+            }
             return Value::Array(items.into_iter().map(Value::str).collect());
         }
         let (val, in_dq, is_known) = with_executor(|exec| {

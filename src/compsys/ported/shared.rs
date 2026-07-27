@@ -29,7 +29,7 @@ use std::path::Path;
 // the PM_LOCAL branch of `bin_typeset` (`src/ported/builtin.rs:5570`,
 // port of `Src/builtin.c:2469-2575`).
 
-pub use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_UNIQUE};
+pub use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_INTEGER, PM_READONLY, PM_UNIQUE};
 
 /// Declare `names` local to the CURRENT function scope — the Rust-port
 /// equivalent of an upstream completion function's `local NAME …` line.
@@ -77,6 +77,127 @@ pub fn declare_locals(names: &[&str], kind: u32) {
     }
 }
 
+/// A parameter scope for a Rust port that is invoked as a DIRECT Rust
+/// call rather than through `dispatch_function_call`.
+///
+/// `declare_locals` only stamps `pm->level = locallevel`; the unwind is
+/// `endparamscope`'s job, and that runs from `doshfunc`. A port reached
+/// by a plain Rust call (`_alternative` -> `_tags(&…)` /
+/// `_next_label(&…)` -> `_description(&…)`) therefore never gets one, so
+/// every name in its `declare_locals` list stayed shadowed for the rest
+/// of the CALLER's body.
+///
+/// Concretely: `_tags` declares `tmp` and `_description` declares
+/// `opts`, and both names are `_files`' own locals holding the results
+/// of its `zparseopts -a opts '/=tmp' 'g+:-=tmp' … W: …` line. After
+/// `_alternative` ran either port, `_files` saw `opts=()` / `tmp=()`, so
+/// `-W /dev` and `-g '*(-%b,-/)'` were both dropped — `mount /dev/<TAB>`
+/// listed every file in `$PWD` and `PATH=…:<TAB>` listed files instead
+/// of directories.
+///
+/// Holding one of these for the port's body reproduces the visible half
+/// of what a real shell function gets from `endparamscope`
+/// (`Src/params.c:5867-5933`, the `pm->level > locallevel` arm): each
+/// declared name is put back exactly as the caller left it.
+///
+/// It restores by NAME rather than by bumping `locallevel` and calling
+/// `endparamscope`, because a port's body also writes caller-visible
+/// state (`_comp_tags`, `curtag`, the `expl` array named by
+/// `_description`'s `$2`). A whole-scope unwind takes those with it —
+/// `_tags` then reported "comptags: no tags registered" for every
+/// context.
+pub struct LocalScope {
+    saved: Vec<(String, Option<Box<crate::ported::zsh_h::param>>)>,
+}
+
+impl LocalScope {
+    /// Declare `names` local (see [`declare_locals`]) and remember what
+    /// each one looked like beforehand.
+    pub fn declare(names: &[&str], kind: u32) -> Self {
+        let mut scope = LocalScope { saved: Vec::new() };
+        scope.also(names, kind);
+        scope
+    }
+
+    /// Add more names to an existing scope — the port equivalent of a
+    /// second `local -a …` line.
+    pub fn also(&mut self, names: &[&str], kind: u32) {
+        if let Ok(tab) = crate::ported::params::paramtab().read() {
+            for name in names {
+                self.saved
+                    .push(((*name).to_string(), tab.get(*name).cloned()));
+            }
+        }
+        declare_locals(names, kind);
+    }
+
+    /// `local NAME="$NAME"` — see [`declare_locals_keeping_value`].
+    pub fn also_keeping_value(&mut self, names: &[&str]) {
+        if let Ok(tab) = crate::ported::params::paramtab().read() {
+            for name in names {
+                self.saved
+                    .push(((*name).to_string(), tab.get(*name).cloned()));
+            }
+        }
+        declare_locals_keeping_value(names);
+    }
+}
+
+impl Drop for LocalScope {
+    fn drop(&mut self) {
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            for (name, prev) in self.saved.iter().rev() {
+                match prev {
+                    Some(pm) => {
+                        tab.insert(name.clone(), pm.clone());
+                    }
+                    None => {
+                        tab.remove(name);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `typeset -r NAME` applied AFTER the value is in place — the second
+/// half of an upstream `local -ar NAME=(…)` / `local -r NAME=…` line.
+///
+/// [`declare_locals`] cannot carry `PM_READONLY` itself: `createparam`
+/// stamps the bit immediately, and the port assigns the value on the
+/// NEXT statement, so the assignment would be rejected as a write to a
+/// read-only parameter. Upstream has no such split — `local -ar x=(…)`
+/// is one operation whose value lands before the bit does — so the port
+/// declares, assigns, then calls this.
+///
+/// Mirrors the `PM_READONLY` arm of `typeset_single`
+/// (`Src/builtin.c:2469-2575`): the bit is OR'd onto the existing
+/// `pm->node.flags`, and because the param already lives at
+/// `locallevel`, `endparamscope` unwinds it with the rest of the scope.
+///
+/// Skipped at `locallevel == 0` for the same reason [`declare_locals`]
+/// returns early there: with no function scope there is no shadow to
+/// stamp and no `endparamscope` to unstamp it, so the bit would pin the
+/// caller's GLOBAL parameter read-only forever — the next completion's
+/// own assignment would then fail with "read-only variable". Upstream
+/// cannot reach that state at all: `local -ar` is a syntax error outside
+/// a function.
+pub fn mark_readonly(names: &[&str]) {
+    use crate::ported::params::{locallevel, paramtab};
+    use crate::ported::zsh_h::PM_READONLY;
+    use std::sync::atomic::Ordering;
+    if locallevel.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    if let Ok(mut tab) = paramtab().write() {
+        for name in names {
+            if let Some(pm) = tab.get_mut(*name) {
+                pm.node.flags |= PM_READONLY as i32;
+            }
+        }
+    }
+}
+
 /// `local NAME="$NAME"` — declare `names` local while carrying the
 /// enclosing scope's scalar value into the shadow.
 ///
@@ -94,6 +215,27 @@ pub fn declare_locals_keeping_value(names: &[&str]) {
         }
     }
 }
+/// The directory list `compinit` must scan: `$fpath` as it stands at
+/// call time (`Completion/compinit:523` `for _i_dir in $fpath`, and
+/// `compaudit` at sh:455), falling back to `env_fpath` when the array is
+/// unset or empty.
+///
+/// `ShellExecutor::fpath` (vm_helper.rs:532) is seeded once at startup
+/// from `$FPATH` (vm_helper.rs:1174/1287) and never resynced, so the
+/// `fpath=( … )` line that precedes `compinit` in every .zshrc was
+/// invisible to the scan. With `$FPATH` exported the two agreed by
+/// accident; without it — `zsh -f`, a login shell that builds `fpath` in
+/// .zshrc, the parity harness's child env — the scan got ZERO
+/// directories, and the worker's empty result was then written over the
+/// completion cache, leaving `$_comps` empty and every command falling
+/// through to `-default-`.
+pub fn compinit_scan_dirs(env_fpath: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    match crate::ported::params::getaparam("fpath") {
+        Some(live) if !live.is_empty() => live.iter().map(std::path::PathBuf::from).collect(),
+        _ => env_fpath.to_vec(),
+    }
+}
+
 /// `is_executable` — see implementation.
 pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
@@ -257,6 +399,73 @@ pub fn get_ignored_patterns(context: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// compinit sh:523 — the scan reads `$fpath`, not the `$FPATH` the
+    /// process happened to inherit.
+    ///
+    /// Regression: `builtin_compinit` scanned `ShellExecutor::fpath`,
+    /// which is env-seeded at startup and never resynced, so
+    /// `fpath=( … ); compinit` scanned the STARTUP list. With no `FPATH`
+    /// exported that list is empty, the worker returned zero completers,
+    /// and the empty result was written over the completion cache —
+    /// `$_comps` empty, every command resolved to `-default-`.
+    #[test]
+    fn compinit_scans_the_live_fpath_array_not_the_startup_env() {
+        use std::path::PathBuf;
+        let _g = crate::test_util::global_state_lock();
+        let env_seeded = vec![PathBuf::from("/from/FPATH/env")];
+
+        crate::ported::params::setaparam(
+            "fpath",
+            vec!["/live/one".to_string(), "/live/two".to_string()],
+        );
+        assert_eq!(
+            compinit_scan_dirs(&env_seeded),
+            vec![PathBuf::from("/live/one"), PathBuf::from("/live/two")],
+            "sh:523 scans $fpath"
+        );
+
+        // Unset / empty array — keep the env-derived list rather than
+        // scanning nothing.
+        crate::ported::params::setaparam("fpath", Vec::new());
+        assert_eq!(compinit_scan_dirs(&env_seeded), env_seeded);
+        crate::ported::params::unsetparam("fpath");
+        assert_eq!(compinit_scan_dirs(&env_seeded), env_seeded);
+    }
+
+    /// `mark_readonly` is the `-r` of `local -ar` (sh:52) and must not
+    /// escape the function scope: stamped at `locallevel == 0` the bit
+    /// would pin the caller's global read-only forever, and the next
+    /// completion's own assignment would fail with "read-only variable".
+    #[test]
+    fn mark_readonly_is_scoped_to_a_function() {
+        use crate::ported::modules::parameter::paramtypestr;
+        let _g = crate::test_util::global_state_lock();
+        let type_of = |n: &str| {
+            crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(n).map(|pm| paramtypestr(pm)))
+                .unwrap_or_default()
+        };
+
+        crate::ported::params::setaparam("_ro_probe", vec!["a".to_string()]);
+        mark_readonly(&["_ro_probe"]);
+        assert_eq!(type_of("_ro_probe"), "array", "no scope — no readonly bit");
+
+        crate::ported::utils::inc_locallevel();
+        declare_locals(&["_ro_probe"], PM_ARRAY);
+        crate::ported::params::setaparam("_ro_probe", vec!["b".to_string()]);
+        mark_readonly(&["_ro_probe"]);
+        assert_eq!(type_of("_ro_probe"), "array-local-readonly");
+        crate::ported::params::endparamscope();
+        assert_eq!(
+            type_of("_ro_probe"),
+            "array",
+            "endparamscope must unwind the readonly shadow"
+        );
+        crate::ported::params::unsetparam("_ro_probe");
+    }
 
     // glob_match coverage migrated from `compsys/base.rs` when the
     // local glob_match helper there was removed in favor of this

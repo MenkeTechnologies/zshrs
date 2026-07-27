@@ -177,8 +177,24 @@ impl CompsysCache {
                 function TEXT NOT NULL
             ) WITHOUT ROWID;
 
-            -- Pattern completions
+            -- Pattern completions (`#compdef -p pat`, compinit sh:399 ->
+            -- `_patcomps`). Consulted BEFORE the `$_comps` name lookup.
             CREATE TABLE IF NOT EXISTS patcomps (
+                pattern TEXT PRIMARY KEY,
+                function TEXT NOT NULL
+            ) WITHOUT ROWID;
+
+            -- Post-pattern completions (`#compdef -P pat`, compinit sh:404 ->
+            -- `_postpatcomps`). A SEPARATE table on purpose: `_dispatch`
+            -- walks `_patcomps` before the `$_comps` lookup and
+            -- `_postpatcomps` after it, and the post pass sets
+            -- `_compskip=default` first (_dispatch sh:72) so the sh:84
+            -- default fallback is suppressed. Storing both in `patcomps`
+            -- (the pre-fix behaviour) ran every `-P` completer in the PRE
+            -- phase without that flag, so `PATH=/usr/bin:<TAB>` ran
+            -- `_dir_list` AND then fell through to `_value`/`_default`,
+            -- listing every file instead of only directories.
+            CREATE TABLE IF NOT EXISTS postpatcomps (
                 pattern TEXT PRIMARY KEY,
                 function TEXT NOT NULL
             ) WITHOUT ROWID;
@@ -285,6 +301,62 @@ impl CompsysCache {
                 "#,
             )?;
         }
+        self.migrate_completion_tables()?;
+        Ok(())
+    }
+
+    /// Schema generation for the completion-mapping tables (`comps`,
+    /// `services`, `patcomps`, `postpatcomps`). Bump whenever a change makes
+    /// previously-written rows un-interpretable, and old caches rebuild
+    /// silently on next `compinit`.
+    ///
+    /// 2 — `postpatcomps` split out of `patcomps`. Before this, `#compdef -P`
+    ///     patterns were written into `patcomps` ("For now, we'll merge them
+    ///     into patcomps"), so a generation-1 cache cannot say which of its
+    ///     `patcomps` rows are really post-patterns.
+    const COMPLETION_SCHEMA_GENERATION: &'static str = "2";
+
+    /// Drop the completion mappings when they were written by an older,
+    /// incompatible generation. `comps` going empty makes
+    /// `compinit::cache_is_valid` false, so the next `compinit` re-scans
+    /// `$fpath` and repopulates every table — no user-visible step.
+    fn migrate_completion_tables(&self) -> rusqlite::Result<()> {
+        let current: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'completion_schema'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        if current.as_deref() == Some(Self::COMPLETION_SCHEMA_GENERATION) {
+            return Ok(());
+        }
+        let stale: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM comps", [], |row| row.get(0))
+            .unwrap_or(0);
+        if stale > 0 {
+            tracing::info!(
+                rows = stale,
+                from = current.as_deref().unwrap_or("1"),
+                to = Self::COMPLETION_SCHEMA_GENERATION,
+                "compsys cache: completion tables from an older generation, rebuilding"
+            );
+        }
+        self.conn.execute_batch(
+            r#"
+            DELETE FROM comps;
+            DELETE FROM services;
+            DELETE FROM patcomps;
+            DELETE FROM postpatcomps;
+            DELETE FROM fts_comps;
+            "#,
+        )?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('completion_schema', ?1)",
+            params![Self::COMPLETION_SCHEMA_GENERATION],
+        )?;
         Ok(())
     }
 
@@ -722,6 +794,36 @@ impl CompsysCache {
             }
         }
         Ok(None)
+    }
+
+    // =========================================================================
+    // Post-pattern completions (_postpatcomps)
+    // =========================================================================
+
+    /// Register a post-pattern completion (`#compdef -P pat`).
+    pub fn set_postpatcomp(&self, pattern: &str, function: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO postpatcomps (pattern, function) VALUES (?1, ?2)",
+            params![pattern, function],
+        )?;
+        Ok(())
+    }
+
+    /// All `_postpatcomps` entries as (pattern, function) pairs.
+    pub fn postpatcomps_kv(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT pattern, function FROM postpatcomps")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect()
+    }
+
+    /// Count of `_postpatcomps` entries.
+    pub fn postpatcomps_count(&self) -> rusqlite::Result<i64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM postpatcomps", [], |row| row.get(0))
     }
 
     // =========================================================================
@@ -1892,5 +1994,60 @@ _arguments $opts
         assert!(names.contains("alpha"));
         assert!(names.contains("beta"));
         assert!(names.contains("gamma"));
+    }
+
+    #[test]
+    fn postpatcomps_do_not_land_in_patcomps() {
+        // Regression: `build_cache_from_fpath` used to write every
+        // `#compdef -P` pattern into the `patcomps` table ("For now, we'll
+        // merge them into patcomps"), and `load_from_cache` never read a
+        // post-pattern back at all. On the `compinit -C` path that left
+        // `$_postpatcomps` EMPTY and `$_patcomps` holding all 25 upstream
+        // post-patterns, so `_dispatch` ran `-P` completers in its PRE
+        // pass — before the `$_comps` lookup and without the
+        // `_compskip=default` that the post pass sets. `PATH=/usr/bin:<TAB>`
+        // therefore ran `_dir_list` AND the `-default-` fallback, listing
+        // every file instead of only directories.
+        let cache = CompsysCache::memory().unwrap();
+        cache.set_patcomp("*/(init|rc[0-9S]#).d/*", "_init_d").unwrap();
+        cache
+            .set_postpatcomp("-value-,*PATH,-default-", "_dir_list")
+            .unwrap();
+
+        let pat = cache.patcomps_kv().unwrap();
+        assert_eq!(pat, vec![("*/(init|rc[0-9S]#).d/*".to_string(), "_init_d".to_string())]);
+
+        let post = cache.postpatcomps_kv().unwrap();
+        assert_eq!(
+            post,
+            vec![("-value-,*PATH,-default-".to_string(), "_dir_list".to_string())]
+        );
+        assert_eq!(cache.postpatcomps_count().unwrap(), 1);
+        assert_eq!(cache.patcomps_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn generation_one_completion_tables_are_rebuilt() {
+        // A cache written before the split cannot say which of its
+        // `patcomps` rows were really `-P` post-patterns, so the whole
+        // completion mapping set is dropped and `compinit` re-scans.
+        // Emptying `comps` is what makes `compinit::cache_is_valid` false.
+        let mut cache = CompsysCache::memory().unwrap();
+        cache.set_comps_bulk(&[("git".to_string(), "_git".to_string())]).unwrap();
+        cache.set_patcomp("-value-,*PATH,-default-", "_dir_list").unwrap();
+        // Pretend this DB predates the split.
+        cache
+            .conn
+            .execute("DELETE FROM metadata WHERE key = 'completion_schema'", [])
+            .unwrap();
+
+        cache.migrate_completion_tables().unwrap();
+
+        assert_eq!(cache.comp_count().unwrap(), 0, "stale comps must be dropped");
+        assert_eq!(cache.patcomps_count().unwrap(), 0);
+        assert_eq!(
+            cache.get_metadata("completion_schema").unwrap().as_deref(),
+            Some(CompsysCache::COMPLETION_SCHEMA_GENERATION)
+        );
     }
 }

@@ -223,16 +223,22 @@ pub fn _description(args: &[String]) -> i32 {
     // sh:3  local name nopt xopt format gname hidden hide match opts tag
     // sh:4  local -a ign gropt sort
     // sh:5  local -a match mbegin mend
-    {
-        use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
-        declare_locals(
-            &[
-                "name", "nopt", "xopt", "format", "gname", "hidden", "hide", "opts", "tag",
-            ],
-            0,
-        );
-        declare_locals(&["ign", "gropt", "sort", "match", "mbegin", "mend"], PM_ARRAY);
-    }
+    // Same reason as `_tags`: `_next_label` reaches this port as a plain
+    // Rust call, so without an explicit scope the declarations below
+    // never unwind. `opts` is the collision that bit — it is also the
+    // name `_files` parks its `zparseopts -a opts … W: …` result in.
+    // The result array named by `$2` (`expl`) is NOT in the list, so it
+    // still lands in the caller's scope exactly as upstream sh:118 does.
+    let mut _scope = crate::compsys::ported::shared::LocalScope::declare(
+        &[
+            "name", "nopt", "xopt", "format", "gname", "hidden", "hide", "opts", "tag",
+        ],
+        0,
+    );
+    _scope.also(
+        &["ign", "gropt", "sort", "match", "mbegin", "mend"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:3-5  local …
     let mut opts: Vec<String> = Vec::new(); // sh:7
     let nopt_seed: Vec<String> = Vec::new(); // sh:10
@@ -838,5 +844,44 @@ mod tests {
         let (stripped, _m, r, _o) = extract_description_parts("seek (-10)");
         assert_eq!(stripped, "seek");
         assert_eq!(r, "-10");
+    }
+
+    #[test]
+    fn does_not_leave_callers_opts_shadowed() {
+        // Regression: `_description` declares `opts` (sh:3). Reached as a
+        // plain Rust call from `_next_label`, nothing popped that
+        // declaration, so it stayed visible for the REST of the caller's
+        // body. `_files` parks its `zparseopts -a opts … -W: …` result in
+        // exactly that name, so after one `_alternative` pass its `-W /dev`
+        // was gone and `mount /dev/<TAB>` completed `$PWD` instead.
+        //
+        // The assertion is deliberately taken while still INSIDE the
+        // deeper scope — that is where the caller resumes and where the
+        // pre-fix shadow was observable.
+        use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
+        use crate::ported::params::endparamscope;
+        use crate::ported::utils::inc_locallevel;
+
+        let _ = with_incompfunc(|| {
+            inc_locallevel(); // the caller's own function scope
+            declare_locals(&["opts"], PM_ARRAY);
+            setaparam("opts", vec!["-W".to_string(), "/dev".to_string()]);
+
+            inc_locallevel(); // the scope `_alternative` runs in
+            let _ = _description(&[
+                "files".to_string(),
+                "expl".to_string(),
+                "file".to_string(),
+            ]);
+            let seen = getaparam("opts").unwrap_or_default();
+            endparamscope();
+            endparamscope();
+            assert_eq!(
+                seen,
+                vec!["-W".to_string(), "/dev".to_string()],
+                "_description leaked its `opts` declaration into the caller"
+            );
+            0
+        });
     }
 }

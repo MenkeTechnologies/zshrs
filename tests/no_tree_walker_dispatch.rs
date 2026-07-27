@@ -1915,3 +1915,66 @@ fn typeset_paren_init_survives_unbalanced_parens_inside_a_substitution() {
         "5\n",
     );
 }
+
+/// RC_EXPAND_PARAM: an empty SCALAR juxtaposed with a non-empty array must
+/// keep the word (`c:Src/subst.c:4437` — the scalar never enters the array
+/// emit block, so it contributes `""` and the surrounding text survives).
+/// Only a genuine empty ARRAY deletes the whole word (`c:Src/subst.c:4362`
+/// `if (plan9) { uremnode(l, n); return n; }`).
+///
+/// zshrs collapses both shapes to an empty `Value::Array` and carries the
+/// missing bit in a thread-local flag. The flag was written on EVERY array
+/// read, not just empty ones, so the non-empty right-hand segment cleared
+/// the bit the empty left-hand scalar had set and the word was deleted.
+///
+/// `compinit` puts `rcexpandparam` in `$_comp_options`, so every completer
+/// runs with the option ON. `_netstat` ends with
+///     sock=''
+///     args+=( - sockets ${sock}${sockets} )
+/// which lost all eight socket-set specs before `comparguments -i` saw them:
+/// `netstat -<TAB>` dropped `-A -L -W -a -f -l -n` from the listing.
+#[test]
+fn rcexpandparam_empty_scalar_prefix_keeps_the_array_word() {
+    // Braced and bare reads, prefix and suffix position.
+    ok(
+        r#"setopt rcexpandparam; e=''; a=(x y z); v=( ${e}${a} ); print -r -- $#v; print -rl -- $v"#,
+        "3\nx\ny\nz\n",
+    );
+    ok(
+        r#"setopt rcexpandparam; e=''; a=(x y z); v=( $e$a ); print -r -- $#v"#,
+        "3\n",
+    );
+    ok(
+        r#"setopt rcexpandparam; e=''; a=(x y z); v=( ${a}${e} ); print -r -- $#v"#,
+        "3\n",
+    );
+    ok(
+        r#"setopt rcexpandparam; e=''; a=(x y z); v=( ${e}${a}${e} ); print -r -- $#v"#,
+        "3\n",
+    );
+    // A real EMPTY ARRAY still deletes the word — the bit must not be
+    // "always scalar" either.
+    ok(
+        r#"setopt rcexpandparam; ea=(); a=(x y z); v=( ${ea}${a} ); print -r -- $#v"#,
+        "0\n",
+    );
+    ok(
+        r#"setopt rcexpandparam; ea=(); v=( x${ea}y ); print -r -- $#v"#,
+        "0\n",
+    );
+    // …and an empty scalar between literals keeps its word.
+    ok(
+        r#"setopt rcexpandparam; e=''; v=( x${e}y ); print -r -- $#v; print -rl -- $v"#,
+        "1\nxy\n",
+    );
+    // The exact `_netstat` shape: `- <setname> ${sock}${sockets}`.
+    ok(
+        r#"setopt rcexpandparam
+sock=''
+sockets=( '-A[show address of a PCB]' '-L[show size of listen queues]' '-W[avoid truncating]' )
+args=()
+args+=( - sockets ${sock}${sockets} )
+print -r -- $#args"#,
+        "5\n",
+    );
+}

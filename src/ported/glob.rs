@@ -3776,8 +3776,21 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
             while k < cv.len() {
                 let c = cv[k];
                 match c {
-                    '\u{9f}' => {
-                        // Bnull escape — next char is literal.
+                    // Escape — the next char is a literal, never the
+                    // exclusion operator. Three spellings reach here:
+                    // `zshtokenize` emits Bnull for `\X` (c:3591) and
+                    // Bnullkeep under ZSHTOK_SUBST (the flag `shtokenize`
+                    // uses, so every `${~var}` pattern), and an UNtokenized
+                    // raw `\X` arrives from zshrs's programmatic glob entry
+                    // (`glob_path`) — the same raw form `patcomppiece`
+                    // already accepts (pattern.rs, `b'\\'` arm). Recognising
+                    // only Bnull split `a\~b*` at an ESCAPED tilde and turned
+                    // the literal `~` into an exclusion, so `_path_files`'
+                    // `tmp1=( $~tmp1 )` — whose patterns have the typed word
+                    // quoted with QT_BACKSLASH_PATTERN (computil.c:5001) —
+                    // matched nothing: `cp /etc/paths~or<TAB>` completed to
+                    // nothing where zsh inserts `/etc/paths\~orig`.
+                    Bnull | Bnullkeep | '\\' => {
                         cur.push(c);
                         if k + 1 < cv.len() {
                             cur.push(cv[k + 1]);
@@ -6071,6 +6084,59 @@ mod tests {
 
         let result = xpandbraces(&tok("{a..e}"), false);
         assert_eq!(result, vec!["a", "b", "c", "d", "e"]);
+    }
+
+    /// c:Src/glob.c — an ESCAPED `~` is a literal, never the
+    /// extendedglob exclusion operator. `shtokenize` (ZSHTOK_SUBST,
+    /// c:3591) encodes `\X` as `Bnullkeep X` — that is the form every
+    /// `${~var}` pattern arrives in, including `_path_files`' final
+    /// `tmp1=( $~tmp1 )` whose patterns were quoted with
+    /// QT_BACKSLASH_PATTERN by `compfiles` (computil.c:5001). The
+    /// exclusion splitter recognised only `Bnull`, so it split at the
+    /// escaped tilde and the glob matched nothing:
+    /// `cp /etc/paths~or<TAB>` inserted nothing where zsh inserts
+    /// `/etc/paths\~orig`.
+    #[test]
+    fn glob_escaped_tilde_is_literal_not_exclusion() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = TempDir::new().unwrap();
+        let base = dir.path();
+        File::create(base.join("a~b")).unwrap();
+        File::create(base.join("aXb")).unwrap();
+
+        let saved = opt_state_get("extendedglob");
+        opt_state_set("extendedglob", true);
+
+        // Bnullkeep (`${~var}`), Bnull (plain tokenize) and the raw
+        // backslash form that `glob_path` callers such as `_path_files`
+        // hand over untokenized must all be treated as an escape.
+        for tokflags in [Some(ZSHTOK_SUBST), Some(0), None] {
+            let mut pattern = format!("{}/a\\~b*", base.display());
+            if let Some(flags) = tokflags {
+                zshtokenize(&mut pattern, flags);
+            }
+            let mut state = globdata::new();
+            let results = globdata_glob(&mut state, &pattern);
+            assert_eq!(
+                results.len(),
+                1,
+                "escaped tilde must match literally (tokflags={tokflags:?}), got {results:?}"
+            );
+            assert!(results[0].ends_with("a~b"), "matched {:?}", results[0]);
+        }
+
+        // An UNescaped top-level `~` still excludes.
+        let mut pattern = format!("{}/a*~*Xb", base.display());
+        zshtokenize(&mut pattern, ZSHTOK_SUBST);
+        let mut state = globdata::new();
+        let results = globdata_glob(&mut state, &pattern);
+        assert_eq!(results.len(), 1, "exclusion still applies, got {results:?}");
+        assert!(results[0].ends_with("a~b"), "matched {:?}", results[0]);
+
+        match saved {
+            Some(v) => opt_state_set("extendedglob", v),
+            None => opt_state_unset("extendedglob"),
+        }
     }
 
     #[test]

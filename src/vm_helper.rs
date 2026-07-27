@@ -2711,6 +2711,11 @@ impl ShellExecutor {
         if let Some(rc) = crate::compsys::ported::_regex_arguments::dispatch_if_registered(name) {
             return Some(rc);
         }
+        // c:Src/exec.c:5626 — see the twin site in
+        // `dispatch_function_call`: a body loaded on THIS call runs one
+        // `zsh_eval_context` frame deeper ("loadautofunc") than the
+        // caller's "shfunc".
+        let mut did_autoload = false;
         // Autoload prelude (same as dispatch_function_call's).
         if !self.functions_compiled.contains_key(name) {
             // On-demand $fpath autoload for `_`-prefixed compsys helpers that
@@ -2747,6 +2752,7 @@ impl ShellExecutor {
                 crate::ported::lex::set_noaliases(unaliased); // c:5697
                 let _restore_noaliases = NoAliasesRestore(noalias_save); // c:5704
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
+                    did_autoload = true; // c:5626 — body runs as "loadautofunc"
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
                     let _ = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
@@ -2778,6 +2784,10 @@ impl ShellExecutor {
             }
         }
         let chunk = self.functions_compiled.get(name).cloned()?;
+        // c:5626 — `execode(shf->funcdef, 1, 0, "loadautofunc")`. Held
+        // across the body run and dropped with the VM below.
+        let _load_ctx =
+            did_autoload.then(|| crate::ported::exec::EvalContextFrame::push("loadautofunc"));
         let seed_status = self.last_status();
         let _ = args; // fusevm body reads $1..$N from PPARAMS
                       // Reuse a VM from the per-thread pool instead of building one from
@@ -2856,6 +2866,12 @@ impl ShellExecutor {
         // intercepts natively: it supplies the body, so no shell autoload
         // or compiled chunk is needed — same as a built-in Rust port.
         let has_plugin_override = crate::extensions::plugin_host::compfn_override(name).is_some();
+        // c:Src/exec.c:5626 — the body of a function loaded on THIS call
+        // runs through `execode(shf->funcdef, 1, 0, "loadautofunc")`
+        // (execautofn_basic), nested inside runshfunc's "shfunc" frame.
+        // zshrs performs the load here, before `doshfunc`, so the flag
+        // carries the fact into the body_runner that pushes the frame.
+        let mut did_autoload = false;
         // Autoload prelude skipped when a Rust port OR plugin override wins
         // — no upstream shell function to load.
         if direct_rust_fn.is_none()
@@ -2903,6 +2919,7 @@ impl ShellExecutor {
                                                               // early `return Some(1)` paths below.
                 let _restore_noaliases = NoAliasesRestore(noalias_save);
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
+                    did_autoload = true; // c:5626 — body runs as "loadautofunc"
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
                     let load_rc = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
@@ -2958,7 +2975,16 @@ impl ShellExecutor {
                             let saved_exit_val = EXIT_VAL.swap(0, Relaxed);
                             let saved_shell_exiting = SHELL_EXITING.swap(0, Relaxed);
                             sourcelevel.fetch_add(1, Relaxed);
-                            let _ = self.execute_script_zsh_pipeline(&registered);
+                            {
+                                // c:Src/exec.c:5739 — the ksh-autoload branch
+                                // runs the file through
+                                // `execode(prog, 1, 0, "evalautofunc")`, so
+                                // that label is on `zsh_eval_context` while
+                                // the file body executes.
+                                let _ctx =
+                                    crate::ported::exec::EvalContextFrame::push("evalautofunc");
+                                let _ = self.execute_script_zsh_pipeline(&registered);
+                            }
                             sourcelevel.fetch_sub(1, Relaxed);
                             RETFLAG.store(saved_retflag, Relaxed);
                             BREAKS.store(saved_breaks, Relaxed);
@@ -3155,6 +3181,14 @@ impl ShellExecutor {
         let body_args: Vec<String> = args.to_vec();
         let name_owned = name.to_string();
         let body_runner = move || -> i32 {
+            // c:Src/exec.c:5626 — `execode(shf->funcdef, 1, 0,
+            // "loadautofunc")`. On the call that autoloaded the function,
+            // C runs its body one `zsh_eval_context` frame deeper than
+            // runshfunc's "shfunc", which is why zsh reports
+            // `shfunc:loadautofunc:…` down a chain of freshly autoloaded
+            // completers where zshrs reported a flat `shfunc:shfunc:…`.
+            let _load_ctx = did_autoload
+                .then(|| crate::ported::exec::EvalContextFrame::push("loadautofunc"));
             // Branch: plugin override (ABI v4) → built-in Rust port →
             // fusevm Chunk (autoloaded shell body). All run INSIDE
             // doshfunc's scope so prologue/epilogue applies identically.
