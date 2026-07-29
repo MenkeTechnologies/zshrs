@@ -91,8 +91,8 @@ pub const INIT_SYMBOL: &[u8] = b"znative_init\0";
 /// * `host`   — the host API table (call back into the shell through it).
 /// * `argc`   — number of elements in `argv`.
 /// * `argv`   — NUL-terminated C strings; `argv[0]` is the command name,
-///              `argv[1..]` the arguments. Valid only for the duration
-///              of the call; copy anything you need to keep.
+///   `argv[1..]` the arguments. Valid only for the duration of the call;
+///   copy anything you need to keep.
 ///
 /// Returns the command's exit status (0 = success), like any shell
 /// builtin.
@@ -256,7 +256,7 @@ impl Host {
     /// Evaluate shell `code`; returns its exit status.
     pub fn eval(&self, code: &str) -> i32 {
         match CString::new(code) {
-            Ok(c) => (self.t().eval)(self.api, c.as_ptr()) as i32,
+            Ok(c) => (self.t().eval)(self.api, c.as_ptr()),
             Err(_) => 1,
         }
     }
@@ -371,7 +371,7 @@ impl Host {
             }
         }
         let argv: Vec<*const c_char> = cargs.iter().map(|c| c.as_ptr()).collect();
-        (self.t().comp_dispatch)(self.api, argv[0], argv.len(), argv.as_ptr()) as i32
+        (self.t().comp_dispatch)(self.api, argv[0], argv.len(), argv.as_ptr())
     }
 
     /// Empty the command-name hash — the observable effect of the

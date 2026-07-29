@@ -265,7 +265,7 @@ pub fn handle_no_transport(args: &[String]) -> Option<i32> {
         match args[i].as_str() {
             "--url" | "--token" => {
                 if i + 1 >= args.len() {
-                    return Some(usage_err(&format!("{} requires an argument", &args[i])));
+                    return Some(usage_err(&format!("{} requires an argument", args[i])));
                 }
                 i += 2;
             }

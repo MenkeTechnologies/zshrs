@@ -78,6 +78,7 @@ fn eltpcmp_backwards_inverts_embedded_null_shorter_sorts_below_rule() {
 /// - Descending natural: `[file20, file10, file2, file1]`
 /// - Lex-reverse (the wrong answer): `[file2, file20, file10, file1]`
 ///   (because lex-`file2` > lex-`file10` since `'2' > '1'` at byte 4)
+///
 /// A regen that applies BACKWARDS as a post-sort `Vec::reverse()` of
 /// the ascending result would coincidentally produce the right answer
 /// here — but a regen that ANDs out `SORTIT_NUMERICALLY` when
@@ -153,6 +154,7 @@ fn strmetasort_combined_case_insensitive_backwards_emits_reverse_of_folded_order
 /// since strmetasort takes &mut [String]):
 /// - Ascending signed natural: `[-10, -5, 0, 3]`
 /// - Descending signed natural: `[3, 0, -5, -10]`
+///
 /// A regen that drops NUMERICALLY_SIGNED in the BACKWARDS path would
 /// treat `-` as a literal char (lex compare with `-` < ASCII digits)
 /// and produce a wrong ordering — caught by the position of `-10`

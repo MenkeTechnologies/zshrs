@@ -462,7 +462,7 @@ impl Supervisor {
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| super::DaemonError::other(format!("spawn `{}`: {}", &command[0], e)))?;
+            .map_err(|e| super::DaemonError::other(format!("spawn `{}`: {}", command[0], e)))?;
 
         let pid = child.id().map(|p| p as i32);
         // Pipe-mode jobs hand stdout/stderr to the existing line-buffered

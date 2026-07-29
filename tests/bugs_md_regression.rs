@@ -1349,7 +1349,7 @@ fn bug652_process_substitution_does_not_leak_fds() {
     assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
     let fds: usize = out
         .split_once("fds=")
-        .and_then(|(_, r)| r.trim().split_whitespace().next())
+        .and_then(|(_, r)| r.split_whitespace().next())
         .and_then(|s| s.parse().ok())
         .unwrap_or(9999);
     // A leak would put this in the hundreds; a healthy shell keeps a

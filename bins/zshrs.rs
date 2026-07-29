@@ -39,6 +39,7 @@ impl CompsysCompletion {
 #[allow(unused_imports)]
 use CompsysCompletion as Completion;
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default)]
 enum MenuAction {
     #[default]
@@ -51,8 +52,10 @@ enum MenuAction {
     PageUp,
     PageDown,
 }
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct MenuState;
+#[allow(dead_code)]
 impl MenuState {
     fn new() -> Self {
         Self
@@ -74,14 +77,17 @@ impl MenuState {
         MenuRendering::default()
     }
 }
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct MenuRendering {
     lines: Vec<MenuLine>,
 }
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct MenuLine {
     content: String,
 }
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct MenuResult;
 
@@ -1200,10 +1206,12 @@ pub fn zshrs_main() {
     let zsh_style_emu: Option<&str> = if has_zsh {
         if args.iter().any(|a| a == "--dash" || a == "--ash") {
             Some("dash")
-        } else if args.iter().any(|a| a == "--posix" || a == "--sh") {
+        } else if args
+            .iter()
+            // bash shares the sh emulation base, so it selects the same mode.
+            .any(|a| a == "--posix" || a == "--sh" || a == "--bash")
+        {
             Some("sh")
-        } else if args.iter().any(|a| a == "--bash") {
-            Some("sh") // bash shares the sh emulation base
         } else if args.iter().any(|a| a == "--ksh" || a == "--mksh" || a == "--pdksh") {
             Some("ksh")
         } else {
