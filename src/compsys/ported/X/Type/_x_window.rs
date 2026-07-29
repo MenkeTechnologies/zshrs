@@ -157,17 +157,18 @@ mod tests {
 
     #[test]
     fn matches_window_line_rejects_header_and_summary_lines() {
-        assert!(!matches_window_line("xwininfo: Window id: 0x1e3 (the root window)"));
+        assert!(!matches_window_line(
+            "xwininfo: Window id: 0x1e3 (the root window)"
+        ));
         assert!(!matches_window_line("   3 children:"));
-        assert!(!matches_window_line("     0x1400002 (has no name): ()  1x1+0+0  +0+0"));
+        assert!(!matches_window_line(
+            "     0x1400002 (has no name): ()  1x1+0+0  +0+0"
+        ));
     }
 
     #[test]
     fn strip_leading_ws_removes_spaces_and_tabs() {
-        assert_eq!(
-            strip_leading_ws("   \t 0x1 \"a\""),
-            "0x1 \"a\"".to_string()
-        );
+        assert_eq!(strip_leading_ws("   \t 0x1 \"a\""), "0x1 \"a\"".to_string());
         assert_eq!(strip_leading_ws("0x1 \"a\""), "0x1 \"a\"".to_string());
     }
 
@@ -181,7 +182,10 @@ mod tests {
 
     #[test]
     fn extract_name_falls_back_to_remainder_without_closing_quote() {
-        assert_eq!(extract_name("0x1 \"unterminated"), "unterminated".to_string());
+        assert_eq!(
+            extract_name("0x1 \"unterminated"),
+            "unterminated".to_string()
+        );
     }
 
     #[test]

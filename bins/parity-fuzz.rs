@@ -133,11 +133,21 @@ struct TargetCfg {
 fn target_cfg(t: ShellTarget) -> TargetCfg {
     use ShellTarget::*;
     match t {
-        Zsh => TargetCfg { name: "zsh", flags: &["--zsh"], refk: RefKind::Zsh, gen: GenKind::Rich },
+        Zsh => TargetCfg {
+            name: "zsh",
+            flags: &["--zsh"],
+            refk: RefKind::Zsh,
+            gen: GenKind::Rich,
+        },
         Bash => TargetCfg {
             name: "bash",
             flags: &["--bash"],
-            refk: RefKind::Real(&["bash", "/opt/homebrew/bin/bash", "/bin/bash", "/usr/bin/bash"]),
+            refk: RefKind::Real(&[
+                "bash",
+                "/opt/homebrew/bin/bash",
+                "/bin/bash",
+                "/usr/bin/bash",
+            ]),
             gen: GenKind::Bash,
         },
         Ksh => TargetCfg {
@@ -155,7 +165,12 @@ fn target_cfg(t: ShellTarget) -> TargetCfg {
         Dash => TargetCfg {
             name: "dash",
             flags: &["--dash"],
-            refk: RefKind::Real(&["dash", "/opt/homebrew/bin/dash", "/bin/dash", "/usr/bin/dash"]),
+            refk: RefKind::Real(&[
+                "dash",
+                "/opt/homebrew/bin/dash",
+                "/bin/dash",
+                "/usr/bin/dash",
+            ]),
             gen: GenKind::Posix,
         },
         ShZsh => TargetCfg {
@@ -173,7 +188,12 @@ fn target_cfg(t: ShellTarget) -> TargetCfg {
         Mksh => TargetCfg {
             name: "mksh",
             flags: &["--mksh"],
-            refk: RefKind::Real(&["mksh", "/opt/homebrew/bin/mksh", "/bin/mksh", "/usr/bin/mksh"]),
+            refk: RefKind::Real(&[
+                "mksh",
+                "/opt/homebrew/bin/mksh",
+                "/bin/mksh",
+                "/usr/bin/mksh",
+            ]),
             gen: GenKind::Ksh,
         },
         Pdksh => TargetCfg {
@@ -9786,10 +9806,7 @@ fn gen_pdksh(seed: u64) -> Vec<String> {
                     .map(|_| *pick(&mut rng, &words))
                     .collect();
                 let sel = *pick(&mut rng, &["$#", "$1", "$2", "$*", "$@"]);
-                stmts.push(format!(
-                    "set -- {}; printf '%s\\n' \"{sel}\"",
-                    ws.join(" ")
-                ));
+                stmts.push(format!("set -- {}; printf '%s\\n' \"{sel}\"", ws.join(" ")));
             }
             // for loop accumulator.
             5 => {
@@ -9856,7 +9873,10 @@ fn gen_pdksh(seed: u64) -> Vec<String> {
             }
             // arithmetic in a non-decimal base (`16#`, `2#`, C `0x`).
             13 => {
-                let n = *pick(&mut rng, &["16#ff", "2#1010", "8#17", "16#a", "0x1f", "0x10"]);
+                let n = *pick(
+                    &mut rng,
+                    &["16#ff", "2#1010", "8#17", "16#a", "0x1f", "0x10"],
+                );
                 stmts.push(format!("printf '%d\\n' \"$(( {n} ))\""));
             }
             // bitwise operators.
@@ -9895,7 +9915,9 @@ fn gen_pdksh(seed: u64) -> Vec<String> {
                 let pat = *pick(&mut rng, &["a", "x", "b", "."]);
                 let rep = *pick(&mut rng, &["Q", "", "_"]);
                 let slash = *pick(&mut rng, &["/", "//"]);
-                stmts.push(format!("v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\""));
+                stmts.push(format!(
+                    "v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\""
+                ));
             }
             // `[[ … == pat ]]` pattern match → $?.
             20 => {
@@ -9914,9 +9936,7 @@ fn gen_pdksh(seed: u64) -> Vec<String> {
                 let a = *pick(&mut rng, &["1", "2", "5", "10"]);
                 let op = *pick(&mut rng, &["+", "*", "-"]);
                 let b = *pick(&mut rng, &["3", "2", "4"]);
-                stmts.push(format!(
-                    "x={a}; x=$(( x {op} {b} )); printf '%d\\n' \"$x\""
-                ));
+                stmts.push(format!("x={a}; x=$(( x {op} {b} )); printf '%d\\n' \"$x\""));
             }
             // printf with hex / octal conversion.
             23 => {
@@ -9928,9 +9948,7 @@ fn gen_pdksh(seed: u64) -> Vec<String> {
             24 => {
                 let base = *pick(&mut rng, &["16", "2", "8", "36"]);
                 let n = *pick(&mut rng, &["255", "10", "42", "5", "100"]);
-                stmts.push(format!(
-                    "typeset -i{base} v={n}; print -r -- \"$v\""
-                ));
+                stmts.push(format!("typeset -i{base} v={n}; print -r -- \"$v\""));
             }
             // `${!arr[@]}` / `[*]` array indices.
             25 => {
@@ -9988,7 +10006,9 @@ fn posix_one(rng: &mut StdRng) -> String {
             format!("v={v}; printf '%d\\n' \"${{#v}}\"")
         }
         4 => {
-            let ws: Vec<&str> = (0..rng.gen_range(0..=4)).map(|_| *pick(rng, &words)).collect();
+            let ws: Vec<&str> = (0..rng.gen_range(0..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
             let sel = *pick(rng, &["$#", "$1", "$2", "$*", "$@"]);
             format!("set -- {}; printf '%s\\n' \"{sel}\"", ws.join(" "))
         }
@@ -10065,19 +10085,22 @@ fn bash_one(rng: &mut StdRng) -> String {
     let strs = ["abcdef", "hello", "0123456", "a.b.c", "foobar"];
     match rng.gen_range(0..8) {
         0 => {
-            let ws: Vec<&str> = (0..rng.gen_range(1..=4)).map(|_| *pick(rng, &words)).collect();
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
             let idx = rng.gen_range(0..ws.len());
-            format!(
-                "a=({}); printf '%s\\n' \"${{a[{idx}]}}\"",
-                ws.join(" ")
-            )
+            format!("a=({}); printf '%s\\n' \"${{a[{idx}]}}\"", ws.join(" "))
         }
         1 => {
-            let ws: Vec<&str> = (0..rng.gen_range(1..=4)).map(|_| *pick(rng, &words)).collect();
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
             format!("a=({}); printf '%d\\n' \"${{#a[@]}}\"", ws.join(" "))
         }
         2 => {
-            let ws: Vec<&str> = (0..rng.gen_range(1..=4)).map(|_| *pick(rng, &words)).collect();
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
             format!("a=({}); printf '%s\\n' \"${{!a[@]}}\"", ws.join(" "))
         }
         3 => {
@@ -10756,7 +10779,10 @@ fn main() {
         // Label the reference by the target's name (the pdksh leg may resolve
         // to mksh/oksh; the zsh-style legs to `zsh` running `emulate X`).
         let ref_label = target_cfg(shell_target()).name;
-        println!("--- ref[{ref_label}] exit={} timeout={} ---", z.exit, z.timed_out);
+        println!(
+            "--- ref[{ref_label}] exit={} timeout={} ---",
+            z.exit, z.timed_out
+        );
         let _ = std::io::stdout().write_all(&z.stdout);
         println!("--- zshrs exit={} timeout={} ---", r.exit, r.timed_out);
         let _ = std::io::stdout().write_all(&r.stdout);

@@ -40,7 +40,10 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
     let keys = gethkparam(name).unwrap_or_default();
     if !keys.is_empty() {
         let vals = gethparam(name).unwrap_or_default();
-        return keys.iter().position(|k| k == key).and_then(|i| vals.get(i).cloned());
+        return keys
+            .iter()
+            .position(|k| k == key)
+            .and_then(|i| vals.get(i).cloned());
     }
     getaparam(name)?
         .chunks(2)

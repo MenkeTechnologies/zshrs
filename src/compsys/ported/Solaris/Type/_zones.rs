@@ -90,11 +90,7 @@ pub fn _zones(args: &[String]) -> i32 {
     let zones: Vec<String> = out.split_whitespace().map(String::from).collect();
 
     // sh:10  _description zones expl zone
-    let _ = _description(&[
-        "zones".to_string(),
-        "expl".to_string(),
-        "zone".to_string(),
-    ]);
+    let _ = _description(&["zones".to_string(), "expl".to_string(), "zone".to_string()]);
 
     // sh:11  compadd "$@" "$expl[@]" - ${=...}
     let mut cadd: Vec<String> = rest;

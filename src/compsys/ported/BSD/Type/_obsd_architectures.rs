@@ -24,8 +24,8 @@ fn make_ops() -> options {
 
 /// sh:6 — static list of OpenBSD architecture names.
 const ARCHITECTURES: &[&str] = &[
-    "alpha", "amd64", "arm64", "armv7", "hppa", "i386", "landisk", "loongson", "luna88k",
-    "macppc", "octeon", "sparc64",
+    "alpha", "amd64", "arm64", "armv7", "hppa", "i386", "landisk", "loongson", "luna88k", "macppc",
+    "octeon", "sparc64",
 ];
 
 /// `_obsd_architectures` — complete OpenBSD architecture names.

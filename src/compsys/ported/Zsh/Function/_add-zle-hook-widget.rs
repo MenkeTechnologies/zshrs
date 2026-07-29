@@ -129,7 +129,9 @@ pub fn _add_zle_hook_widget_types(args: &[String]) -> i32 {
 pub fn _add_zle_hook_widget_widgets(_args: &[String]) -> i32 {
     // sh:15 — (( $+opt_args[-d] )): was -d given on the command line?
     let opt_args = getaparam("opt_args").unwrap_or_default();
-    let has_d = opt_args.chunks(2).any(|kv| kv.first().map(String::as_str) == Some("-d"));
+    let has_d = opt_args
+        .chunks(2)
+        .any(|kv| kv.first().map(String::as_str) == Some("-d"));
 
     if has_d {
         // sh:17 — zstyle -g tmp $line[1] widgets
@@ -217,12 +219,7 @@ mod tests {
     fn arguments_call_carries_full_spec_set() {
         // Reconstruct the spec vector the entry builds and assert shape,
         // without invoking a completion context.
-        let mut call: Vec<String> = vec![
-            "-s".into(),
-            "-w".into(),
-            "-S".into(),
-            ":".into(),
-        ];
+        let mut call: Vec<String> = vec!["-s".into(), "-w".into(), "-S".into(), ":".into()];
         // The six option specs + two positional action specs = 8.
         let specs = 8;
         for _ in 0..specs {
@@ -236,8 +233,7 @@ mod tests {
         // With no active completion, _arguments returns a non-panicking
         // status; assert it is a valid shell rc (0/1/300-range).
         let _g = crate::test_util::global_state_lock();
-        crate::ported::zle::complete::INCOMPFUNC
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         let rc = _add_zle_hook_widget(&[]);
         assert!((0..=300).contains(&rc));
     }

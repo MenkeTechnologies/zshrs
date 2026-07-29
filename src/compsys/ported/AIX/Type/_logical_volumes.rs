@@ -213,10 +213,7 @@ mod tests {
     fn awk_filter_emits_name_colon_mountpoint_when_not_na() {
         // fields: 1=lv00 2=jfs2 3=1 4=1 5=1 6=open/syncd 7=/home
         let lines = vec!["lv00 jfs2 1 1 1 open/syncd /home".to_string()];
-        assert_eq!(
-            awk_lv_filter(&lines),
-            vec!["lv00:/home".to_string()]
-        );
+        assert_eq!(awk_lv_filter(&lines), vec!["lv00:/home".to_string()]);
     }
 
     #[test]

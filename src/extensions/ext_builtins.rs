@@ -47,9 +47,8 @@
 /// read live because the mode flag is set during argument parsing.
 pub fn hide_ext_builtins() -> bool {
     static HIDE_ENV: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let env_hide = *HIDE_ENV.get_or_init(|| {
-        std::env::var_os("ZSHRS_HIDE_EXT_BUILTINS").is_some_and(|v| !v.is_empty())
-    });
+    let env_hide = *HIDE_ENV
+        .get_or_init(|| std::env::var_os("ZSHRS_HIDE_EXT_BUILTINS").is_some_and(|v| !v.is_empty()));
     env_hide || crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
 }
 

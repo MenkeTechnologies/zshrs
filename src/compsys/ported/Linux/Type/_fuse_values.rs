@@ -217,7 +217,10 @@ mod tests {
     fn fvals_specs_are_intact() {
         assert_eq!(FVALS.len(), 19);
         assert_eq!(FVALS[0], "ro[mount filesystem read-only]");
-        assert_eq!(FVALS[FVALS.len() - 1], "attr_timeout[cache timeout for attributes]:timeout (s)");
+        assert_eq!(
+            FVALS[FVALS.len() - 1],
+            "attr_timeout[cache timeout for attributes]:timeout (s)"
+        );
     }
 
     #[test]

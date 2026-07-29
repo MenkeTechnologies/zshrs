@@ -845,11 +845,11 @@ pub fn docomplete(lst: i32) -> i32 {
     if lst == COMP_EXPAND_COMPLETE {
         use crate::ported::hashtable::cmdnamtab_lock;
         use crate::ported::utils::{itype_end, skipparens, strpfx};
-        use crate::ported::ztype_h::idigit;
         use crate::ported::zsh_h::{
-            Equals, Hat, Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Pound, Qstring, Qtick, Quest,
-            Star, Stringg, Tick, Tilde, GLOBCOMPLETE, RECEXACT,
+            Equals, Hat, Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Pound, Qstring, Qtick,
+            Quest, Star, Stringg, Tick, Tilde, GLOBCOMPLETE, RECEXACT,
         };
+        use crate::ported::ztype_h::idigit;
         // c:706 `char *q = s` — the TOKENIZED word (see COMP_STRING_TOK).
         let s_tok: String = COMP_STRING_TOK
             .get_or_init(|| Mutex::new(String::new()))
@@ -862,8 +862,7 @@ pub fn docomplete(lst: i32) -> i32 {
             s_tok.chars().collect()
         };
         // c:739/781 — `zlemetacs - wb`, the cursor's offset inside the word.
-        let cs_off =
-            (ZLEMETACS.load(Ordering::SeqCst) - WB.load(Ordering::SeqCst)).max(0) as usize;
+        let cs_off = (ZLEMETACS.load(Ordering::SeqCst) - WB.load(Ordering::SeqCst)).max(0) as usize;
         let mut q: usize = 0; // c:706
                               // c:708-731 — `=word`: expand when it names a command, and (unless
                               // the completion module is absent or REC_EXACT is set) only when
@@ -875,12 +874,10 @@ pub fn docomplete(lst: i32) -> i32 {
                 .read()
                 .map(|t| t.get(&name).is_some())
                 .unwrap_or(false);
-            let path: Vec<String> =
-                crate::ported::params::getaparam("path").unwrap_or_default();
+            let path: Vec<String> = crate::ported::params::getaparam("path").unwrap_or_default();
             let pc = crate::ported::hashtable::pathchecked.load(Ordering::Relaxed);
             // c:712 — `cmdnamtab->getnode(cmdnamtab, q) || hashcmd(q, pathchecked)`.
-            if hashed
-                || crate::ported::exec::hashcmd(&name, &path[pc.min(path.len())..]).is_some()
+            if hashed || crate::ported::exec::hashcmd(&name, &path[pc.min(path.len())..]).is_some()
             {
                 if !HASCOMPMOD.load(Ordering::SeqCst) || isset(RECEXACT) {
                     lst = COMP_EXPAND; // c:714
@@ -1009,7 +1006,11 @@ pub fn docomplete(lst: i32) -> i32 {
             let has_subst = sc
                 .iter()
                 .any(|&c| c == Tick || c == Qtick || c == Stringg || c == Qstring);
-            lst = if has_subst { COMP_EXPAND } else { COMP_COMPLETE };
+            lst = if has_subst {
+                COMP_EXPAND
+            } else {
+                COMP_COMPLETE
+            };
         }
         // c:785-786 — and expand if the word has wildcards and GLOB_COMPLETE
         // is off.
@@ -1425,7 +1426,10 @@ pub fn get_comp_string() -> Option<String> {
     // Clear the tokenized-word bridge (see the stash at the c:2219 return):
     // every path that fails to produce a word must not leave the PREVIOUS
     // completion's tokens visible to `docomplete`.
-    if let Ok(mut g) = COMP_STRING_TOK.get_or_init(|| Mutex::new(String::new())).lock() {
+    if let Ok(mut g) = COMP_STRING_TOK
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+    {
         g.clear();
     }
 
@@ -2353,8 +2357,8 @@ pub fn get_comp_string() -> Option<String> {
                 *g = ws.clone();
             }
             CLWPOS.store(clwpos, Ordering::SeqCst); // c:80
-            // clwpos is 0-based; `$CURRENT` is 1-based. clwpos == -1 means
-            // the cursor is past the last word (new trailing word).
+                                                    // clwpos is 0-based; `$CURRENT` is 1-based. clwpos == -1 means
+                                                    // the cursor is past the last word (new trailing word).
             let cur = if clwpos < 0 { n + 1 } else { clwpos + 1 }.max(1);
             // Keep the internal statics in sync…
             if let Ok(mut g) = crate::ported::zle::complete::COMPWORDS
@@ -2412,7 +2416,10 @@ pub fn get_comp_string() -> Option<String> {
         // quoted `\*` (a literal `*` in `s`) is NOT mistaken for a glob.
         // Since this port untokenizes before returning, stash the
         // tokenized form for that decision to read.
-        if let Ok(mut g) = COMP_STRING_TOK.get_or_init(|| Mutex::new(String::new())).lock() {
+        if let Ok(mut g) = COMP_STRING_TOK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
             *g = s.clone();
         }
         zcontext_restore();
@@ -4455,10 +4462,7 @@ mod tests {
     /// does before calling `get_comp_string`.
     fn seed_metaline(line: &str, cursor: i32) {
         use crate::ported::zle::compcore as cc;
-        if let Ok(mut g) = cc::ZLELINE
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-        {
+        if let Ok(mut g) = cc::ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
             *g = line.to_string();
         }
         if let Ok(mut g) = cc::ZLEMETALINE

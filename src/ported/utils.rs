@@ -1809,17 +1809,22 @@ pub fn preprompt() {
         let columns = adjustcolumns() as i32;
         // c:1561-1562 — `fprintf(shout, "%*s\r%*s\r",
         //   zterm_columns - w - !hasxn, "", w, "")`.
-        let pad = (columns - w - if crate::ported::init::hasxn.load(Ordering::SeqCst) != 0 {
-            0
-        } else {
-            1
-        })
+        let pad = (columns
+            - w
+            - if crate::ported::init::hasxn.load(Ordering::SeqCst) != 0 {
+                0
+            } else {
+                1
+            })
         .max(0) as usize;
         // zshrs's `promptexpand` keeps C's Inpar/Outpar non-printing spans as
         // readline RL_PROMPT_*_IGNORE bytes (\x01/\x02) — `countprompt` reads
         // them (prompt.rs:3458) but the TERMINAL must never see them, exactly
         // as zle_refresh filters them before every write (zle_refresh.rs:2274).
-        let mut out: String = mark.chars().filter(|&c| c != '\u{1}' && c != '\u{2}').collect();
+        let mut out: String = mark
+            .chars()
+            .filter(|&c| c != '\u{1}' && c != '\u{2}')
+            .collect();
         out.push_str(&" ".repeat(pad));
         out.push('\r');
         out.push_str(&" ".repeat(w.max(0) as usize));

@@ -92,8 +92,22 @@ fn parse_keysymdef(raw: &str) -> Vec<String> {
 /// sh:15-17 — fallback keysym list when no `keysymdef.h` was found.
 fn default_keysyms() -> Vec<String> {
     let mut v: Vec<String> = [
-        "BackSpace", "Tab", "Linefeed", "Clear", "Return", "Pause", "Escape", "Delete", "Left",
-        "Right", "Up", "Down", "Space", "Home", "Begin", "End",
+        "BackSpace",
+        "Tab",
+        "Linefeed",
+        "Clear",
+        "Return",
+        "Pause",
+        "Escape",
+        "Delete",
+        "Left",
+        "Right",
+        "Up",
+        "Down",
+        "Space",
+        "Home",
+        "Begin",
+        "End",
     ]
     .iter()
     .map(|s| s.to_string())

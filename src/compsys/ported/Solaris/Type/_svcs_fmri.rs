@@ -341,14 +341,20 @@ mod tests {
 
     #[test]
     fn strip_before_prefix_unchanged_when_no_match() {
-        assert_eq!(strip_before_prefix("svc:/network/ssh", "xyz"), "svc:/network/ssh");
+        assert_eq!(
+            strip_before_prefix("svc:/network/ssh", "xyz"),
+            "svc:/network/ssh"
+        );
     }
 
     #[test]
     fn strip_last_colon_suffix_truncates_at_last_colon() {
         // sh:48 `${fmri%:*}`
         assert_eq!(strip_last_colon_suffix("ssh:default"), "ssh");
-        assert_eq!(strip_last_colon_suffix("svc:/network/ssh:default"), "svc:/network/ssh");
+        assert_eq!(
+            strip_last_colon_suffix("svc:/network/ssh:default"),
+            "svc:/network/ssh"
+        );
         assert_eq!(strip_last_colon_suffix("no-colon"), "no-colon");
     }
 

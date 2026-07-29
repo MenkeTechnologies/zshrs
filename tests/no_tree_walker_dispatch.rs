@@ -1903,9 +1903,7 @@ fn typeset_paren_init_survives_unbalanced_parens_inside_a_substitution() {
     // Option off — the collapse also happened there, as an
     // "inconsistent type for assignment" abort.
     ok(
-        &format!(
-            r#"{spec}; local -a v=( ${{(@)c/#\(-U/(2 -U}} ); print -r -- "$#v""#
-        ),
+        &format!(r#"{spec}; local -a v=( ${{(@)c/#\(-U/(2 -U}} ); print -r -- "$#v""#),
         "2\n",
     );
     // Balanced nesting must keep working: `$( … )` and `${ … }` elements stay

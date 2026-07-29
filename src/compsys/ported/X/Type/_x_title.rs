@@ -40,11 +40,7 @@ pub fn _x_title(args: &[String]) -> i32 {
         _message(&["-r".to_string(), msg])
     } else {
         // sh:8  _message -e titles 'title'
-        _message(&[
-            "-e".to_string(),
-            "titles".to_string(),
-            "title".to_string(),
-        ])
+        _message(&["-e".to_string(), "titles".to_string(), "title".to_string()])
     }
 }
 

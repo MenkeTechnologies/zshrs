@@ -90,9 +90,7 @@ mod tests {
         //   only in the non-`-r`-early-return path; here confirm the
         //   raw text is forwarded and the call does not panic without
         //   a completion context, matching `_message`'s own contract).
-        let r = with_incompfunc(|| {
-            _x_borderwidth(&["-X".to_string(), "custom width".to_string()])
-        });
+        let r = with_incompfunc(|| _x_borderwidth(&["-X".to_string(), "custom width".to_string()]));
         // `_message` registers its tag at its OWN nesting level (comptags is
         // indexed by locallevel), so it succeeds and returns 0 even with no
         // tag offered by a caller — verified against `zsh -f` + compinit,

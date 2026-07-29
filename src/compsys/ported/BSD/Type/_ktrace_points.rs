@@ -57,7 +57,10 @@ fn build_points(ostype: &str) -> Vec<String> {
     ];
 
     // sh:13-17  dragonfly*|freebsd*|netbsd*) points+=( w ) ;|
-    if ostype.starts_with("dragonfly") || ostype.starts_with("freebsd") || ostype.starts_with("netbsd") {
+    if ostype.starts_with("dragonfly")
+        || ostype.starts_with("freebsd")
+        || ostype.starts_with("netbsd")
+    {
         points.push("w[context switches]".to_string());
     }
     // sh:18-22  freebsd*|openbsd*) points+=( t ) ;|

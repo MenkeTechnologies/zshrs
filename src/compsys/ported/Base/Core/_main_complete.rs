@@ -254,10 +254,18 @@ fn hide_comp_priv_prefix() {
 fn seed_builtin_precommands() {
     setaparam(
         "builtin_precommands",
-        ["-", "builtin", "eval", "exec", "nocorrect", "noglob", "time"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        [
+            "-",
+            "builtin",
+            "eval",
+            "exec",
+            "nocorrect",
+            "noglob",
+            "time",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
     );
     crate::compsys::ported::shared::mark_readonly(&["builtin_precommands"]);
 }
@@ -994,8 +1002,14 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // 23 rows; zsh emits none.
         let live_pending = {
             use crate::ported::zle::compcore as cc;
-            let m = crate::comp_match_handles::matches_arc().lock().map(|g| g.len()).unwrap_or(0);
-            let fm = crate::comp_match_handles::fmatches_arc().lock().map(|g| g.len()).unwrap_or(0);
+            let m = crate::comp_match_handles::matches_arc()
+                .lock()
+                .map(|g| g.len())
+                .unwrap_or(0);
+            let fm = crate::comp_match_handles::fmatches_arc()
+                .lock()
+                .map(|g| g.len())
+                .unwrap_or(0);
             m + fm
         };
         let lastdescr = getaparam("_lastdescr").unwrap_or_default();
@@ -1220,7 +1234,15 @@ mod tests {
             seed_builtin_precommands();
             assert_eq!(
                 getaparam("builtin_precommands").unwrap_or_default(),
-                vec!["-", "builtin", "eval", "exec", "nocorrect", "noglob", "time"],
+                vec![
+                    "-",
+                    "builtin",
+                    "eval",
+                    "exec",
+                    "nocorrect",
+                    "noglob",
+                    "time"
+                ],
                 "sh:52 value missing — ${{#precommands:|builtin_precommands}} misreads"
             );
             assert_eq!(

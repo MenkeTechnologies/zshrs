@@ -53,7 +53,8 @@ fn build_call(service: &str) -> Vec<String> {
 
     // sh:21-25 — specs=( … ) only for vcs_info_hookdel.
     if service == "vcs_info_hookdel" {
-        call.push("-a[remove all occurrences, not just the first]".to_string()); // sh:23
+        call.push("-a[remove all occurrences, not just the first]".to_string());
+        // sh:23
     }
 
     // sh:30 — ":hook type:($hook_types)"

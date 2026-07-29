@@ -2463,8 +2463,10 @@ impl ZshCompiler {
         // MakeArray dodge used for `arr=(...)` literals.
         let argc = if argc_full > u8::MAX as usize {
             self.builder.emit(Op::MakeArray(argc_full as u16), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARGV_RFLATTEN, 1), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARGV_RFLATTEN, 1),
+                0,
+            );
             1u8
         } else {
             argc
@@ -13193,9 +13195,7 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
             // are under no obligation to balance —
             //     ${(@)common_opts_conn/#\(-U/(2 -U}      (_postgresql:993)
             // has one `(` in the replacement `(2 -U` with no `)`.
-            '(' | '\u{88}' | '\u{89}' | '[' | '\u{91}'
-                if !in_sq && !in_dq && brace_nest == 0 =>
-            {
+            '(' | '\u{88}' | '\u{89}' | '[' | '\u{91}' if !in_sq && !in_dq && brace_nest == 0 => {
                 depth += 1;
                 cur.push(c);
             }

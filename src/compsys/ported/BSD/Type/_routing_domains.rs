@@ -43,10 +43,7 @@ pub fn _routing_domains(args: &[String]) -> i32 {
     ]);
 
     // sh:6  $(_call_program routing-domains netstat -R)
-    let _ = _call_program(&[
-        "routing-domains".to_string(),
-        "netstat -R".to_string(),
-    ]);
+    let _ = _call_program(&["routing-domains".to_string(), "netstat -R".to_string()]);
     let out = getsparam("REPLY").unwrap_or_default();
     let domains = rdomain_lines(&out);
 
@@ -65,10 +62,7 @@ mod tests {
     #[test]
     fn rdomain_lines_keeps_only_prefixed_and_strips_prefix() {
         let out = "Rdomain 0\nsomething else\nRdomain 12\nRdomain12 not-a-match\n";
-        assert_eq!(
-            rdomain_lines(out),
-            vec!["0".to_string(), "12".to_string()]
-        );
+        assert_eq!(rdomain_lines(out), vec!["0".to_string(), "12".to_string()]);
     }
 
     #[test]

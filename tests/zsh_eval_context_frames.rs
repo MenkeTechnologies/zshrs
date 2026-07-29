@@ -52,7 +52,10 @@ fn fixture_fpath() -> Option<tempfile::TempDir> {
             "ectxB() { print -r -- \"B=[$ZSH_EVAL_CONTEXT]\"; \
              eval 'print -r -- \"E=[$ZSH_EVAL_CONTEXT]\"; ectxC' }\n",
         ),
-        ("ectxC", "ectxC() { print -r -- \"C=[$ZSH_EVAL_CONTEXT]\" }\n"),
+        (
+            "ectxC",
+            "ectxC() { print -r -- \"C=[$ZSH_EVAL_CONTEXT]\" }\n",
+        ),
     ] {
         let mut f = std::fs::File::create(dir.path().join(name)).ok()?;
         f.write_all(body.as_bytes()).ok()?;

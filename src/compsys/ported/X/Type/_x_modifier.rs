@@ -70,9 +70,23 @@ mod tests {
         assert_eq!(
             wanted_argv,
             vec![
-                "modifiers", "expl", "modifier", "compadd", "-V", "grp", "-M",
-                "m:{a-z}={A-Z}", "-", "Shift", "Lock", "Control", "Mod1", "Mod2", "Mod3",
-                "Mod4", "Mod5",
+                "modifiers",
+                "expl",
+                "modifier",
+                "compadd",
+                "-V",
+                "grp",
+                "-M",
+                "m:{a-z}={A-Z}",
+                "-",
+                "Shift",
+                "Lock",
+                "Control",
+                "Mod1",
+                "Mod2",
+                "Mod3",
+                "Mod4",
+                "Mod5",
             ]
         );
     }

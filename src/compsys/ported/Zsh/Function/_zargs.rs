@@ -225,10 +225,7 @@ mod tests {
 
     #[test]
     fn eofstr_from_long_and_short_forms() {
-        assert_eq!(
-            compute_eofstr(&["zargs".into(), "--eof=EOF".into()]),
-            "EOF"
-        );
+        assert_eq!(compute_eofstr(&["zargs".into(), "--eof=EOF".into()]), "EOF");
         assert_eq!(compute_eofstr(&["zargs".into(), "-eEOF".into()]), "EOF");
         // `(r)` picks the FIRST matching word, forward order.
         assert_eq!(
@@ -289,7 +286,8 @@ mod tests {
                 .to_string()
         ));
         assert!(a.contains(
-            &"(--eof -e)-e+[change the end-of-input-args string from \"--\" to eof-str]".to_string()
+            &"(--eof -e)-e+[change the end-of-input-args string from \"--\" to eof-str]"
+                .to_string()
         ));
         // Non-brace specs kept verbatim.
         assert!(a.contains(&"--help[print summary and exit]".to_string()));
@@ -312,7 +310,10 @@ mod tests {
         let _ = _zargs(&[]);
         // After the shift, words start at the wrapped command and
         // CURRENT is offset by cmdpos (5): 7 - 5 = 2.
-        assert_eq!(getaparam("words").unwrap_or_default(), vec!["cmd".to_string()]);
+        assert_eq!(
+            getaparam("words").unwrap_or_default(),
+            vec!["cmd".to_string()]
+        );
         assert_eq!(getsparam("CURRENT").unwrap_or_default(), "2");
     }
 }

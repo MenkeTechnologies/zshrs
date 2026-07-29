@@ -5509,8 +5509,7 @@ pub fn paramsubst(
                         // `${!ident}` indirect (BASH): raw_value is fetched from
                         // var_name later (subst.rs ~6030), so re-pointing does
                         // the indirect.
-                        var_name =
-                            crate::ported::params::getsparam(&target).unwrap_or_default();
+                        var_name = crate::ported::params::getsparam(&target).unwrap_or_default();
                         idx = body_chars.len();
                         bash_handled = true;
                     } else if bang_ksh {
@@ -8026,7 +8025,9 @@ pub fn paramsubst(
                         }
                         // c:99-110 — a single-key read RESOLVES the autoload stub, so later
                         // enumerations report its real type (see assoc_get).
-                        if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
+                        if e_.name == "parameters" {
+                            crate::vm_helper::mark_module_param_used(sub);
+                        }
                         (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
                     })()
                     .map(|_| sub.to_string())
@@ -8056,7 +8057,9 @@ pub fn paramsubst(
                         }
                         // c:99-110 — a single-key read RESOLVES the autoload stub, so later
                         // enumerations report its real type (see assoc_get).
-                        if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
+                        if e_.name == "parameters" {
+                            crate::vm_helper::mark_module_param_used(sub);
+                        }
                         (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
                     })()
                 }
@@ -9065,9 +9068,14 @@ pub fn paramsubst(
                         if want_i || want_ii {
                             // (i) first match else len+1; (I) last match else 0.
                             let idx = if want_ii {
-                                (0..n).rev().find(|&k| is_match(&subarr[k])).map_or(0, |k| k + 1)
+                                (0..n)
+                                    .rev()
+                                    .find(|&k| is_match(&subarr[k]))
+                                    .map_or(0, |k| k + 1)
                             } else {
-                                (0..n).find(|&k| is_match(&subarr[k])).map_or(n + 1, |k| k + 1)
+                                (0..n)
+                                    .find(|&k| is_match(&subarr[k]))
+                                    .map_or(n + 1, |k| k + 1)
                             };
                             Some(idx.to_string())
                         } else {
@@ -18288,7 +18296,9 @@ pub fn paramsubst(
                         }
                         // c:99-110 — a single-key read RESOLVES the autoload stub, so later
                         // enumerations report its real type (see assoc_get).
-                        if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
+                        if e_.name == "parameters" {
+                            crate::vm_helper::mark_module_param_used(sub);
+                        }
                         (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
                     })()
                 }
@@ -18441,18 +18451,18 @@ pub fn paramsubst(
             || subscript_str.as_deref() == Some("*"); // c:3950
                                                       // Range subscript like `[1,3]` also produces array-shape
                                                       // slice — splat in non-DQ.
-        // c:Src/params.c:2037-2112 getindex — the `,` that opens a slice is
-        // the one the parse cursor sits on AFTER `getarg` has consumed the
-        // first index (`if (*s == ',') { s++; end = getarg(...) }`, c:2100).
-        // When the subscript opens with a flag group, getarg (c:1389) eats the
-        // group AND its search pattern all the way to the `]`, so no comma is
-        // ever left for that test — a comma inside the pattern is pattern text.
-        // Scanning the raw subscript for `,` instead misread
-        // `$optionmap[(K)$help]` (whose expanded pattern is a `-h` dump full of
-        // commas) as a SLICE, and the assoc-splat below returned every value in
-        // the hash: `nc -<TAB>` offered all 17 of `_netcat`'s option specs
-        // (`-G`/`-e`/`-g`/`-o`/`-q` included) instead of the 12 the binary's
-        // help actually mentions.
+                                                      // c:Src/params.c:2037-2112 getindex — the `,` that opens a slice is
+                                                      // the one the parse cursor sits on AFTER `getarg` has consumed the
+                                                      // first index (`if (*s == ',') { s++; end = getarg(...) }`, c:2100).
+                                                      // When the subscript opens with a flag group, getarg (c:1389) eats the
+                                                      // group AND its search pattern all the way to the `]`, so no comma is
+                                                      // ever left for that test — a comma inside the pattern is pattern text.
+                                                      // Scanning the raw subscript for `,` instead misread
+                                                      // `$optionmap[(K)$help]` (whose expanded pattern is a `-h` dump full of
+                                                      // commas) as a SLICE, and the assoc-splat below returned every value in
+                                                      // the hash: `nc -<TAB>` offered all 17 of `_netcat`'s option specs
+                                                      // (`-G`/`-e`/`-g`/`-o`/`-q` included) instead of the 12 the binary's
+                                                      // help actually mentions.
         let sub_is_flag_group = subscript_str
             .as_deref()
             .map(|s| {
@@ -18465,9 +18475,9 @@ pub fn paramsubst(
                 .as_deref()
                 .map(|s| s.contains(','))
                 .unwrap_or(false); // c:3950
-                               // Assoc bare-name splat: `$assoc[@]` returns values, `$assoc[*]`
-                               // returns values too. Per zsh, `(@k)assoc` returns keys; for
-                               // bare `$assoc[@]` without (k), values is the convention.
+                                   // Assoc bare-name splat: `$assoc[@]` returns values, `$assoc[*]`
+                                   // returns values too. Per zsh, `(@k)assoc` returns keys; for
+                                   // bare `$assoc[@]` without (k), values is the convention.
         let splat_assoc = (splat_full || splat_range)        // c:3950
             && assoc_contains(&var_name); // c:3950
                                           // c:Src/params.c:1724-1734 — a hash MATCHMANY subscript is array-shaped;
@@ -18520,8 +18530,8 @@ pub fn paramsubst(
             } else {
                 None
             }; // c:3950
-            // The MATCHMANY element list wins over every fallback: those return
-            // the WHOLE array/hash, while a search subscript selected a subset.
+               // The MATCHMANY element list wins over every fallback: those return
+               // the WHOLE array/hash, while a search subscript selected a subset.
             if let Some(arr) = flag_multi_parts
                 .clone()
                 .or(slice_arr)
@@ -20561,16 +20571,16 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
         && (name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace")
     {
         crate::vm_helper::mark_module_param_used(name); // c:1198-1229
-        // Route through the canonical ported getfns
-        // (Src/Modules/parameter.c:648 functracegetfn, :679
-        // funcsourcetracegetfn, :711 funcfiletracegetfn) instead of
-        // duplicating the frame-walk inline. The previous inline copy
-        // emitted `<filename>:<lineno>` for funcfiletrace, missing
-        // the C `f->prev->flineno + f->lineno` join for frames whose
-        // parent is a function/eval (parameter.c:747) — so
-        // `funcfiletrace[1]` inside a nested call showed the raw
-        // caller-relative line (0) instead of the absolute file line.
-        // Bug #515/#585 history retained in the getfns' doc comments.
+                                                        // Route through the canonical ported getfns
+                                                        // (Src/Modules/parameter.c:648 functracegetfn, :679
+                                                        // funcsourcetracegetfn, :711 funcfiletracegetfn) instead of
+                                                        // duplicating the frame-walk inline. The previous inline copy
+                                                        // emitted `<filename>:<lineno>` for funcfiletrace, missing
+                                                        // the C `f->prev->flineno + f->lineno` join for frames whose
+                                                        // parent is a function/eval (parameter.c:747) — so
+                                                        // `funcfiletrace[1]` inside a nested call showed the raw
+                                                        // caller-relative line (0) instead of the absolute file line.
+                                                        // Bug #515/#585 history retained in the getfns' doc comments.
         return Some(match name {
             "funcfiletrace" => {
                 crate::ported::modules::parameter::funcfiletracegetfn(std::ptr::null_mut())

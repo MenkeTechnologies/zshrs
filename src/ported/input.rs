@@ -636,8 +636,7 @@ pub fn inputline() -> i32 {
         // pulls in `zsh/complete` through the compctl.mdd moddeps edge.
         // ZLE_CMD_READ is not one of the three commands c:1761-1762
         // exempts, so the load always fires here on the first read.
-        if !crate::ported::init::zle_modules_loaded
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        if !crate::ported::init::zle_modules_loaded.swap(true, std::sync::atomic::Ordering::SeqCst)
         {
             let mut tab = crate::ported::module::MODULESTAB.lock().unwrap();
             if tab.load_module("zsh/zle") {

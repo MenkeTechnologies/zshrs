@@ -139,6 +139,9 @@ mod tests {
             assert!(s.iter().any(|x| x.starts_with(lead)), "missing {lead}");
         }
         // Escaped colons in the final positional catch-all are preserved.
-        assert!(s.last().unwrap().contains("\\:recipient's address\\:_email_addresses"));
+        assert!(s
+            .last()
+            .unwrap()
+            .contains("\\:recipient's address\\:_email_addresses"));
     }
 }

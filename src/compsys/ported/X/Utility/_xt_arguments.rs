@@ -216,8 +216,7 @@ mod tests {
 
     #[test]
     fn parse_leading_no_rawret_without_dash_r() {
-        let (opts, remaining, rawret) =
-            parse_leading(&["-Ostuff".to_string(), "spec".to_string()]);
+        let (opts, remaining, rawret) = parse_leading(&["-Ostuff".to_string(), "spec".to_string()]);
         assert_eq!(opts, vec!["-Ostuff"]);
         assert!(!rawret);
         assert_eq!(remaining, vec!["spec".to_string()]);

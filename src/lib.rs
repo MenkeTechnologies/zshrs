@@ -66,9 +66,9 @@ pub mod ported;
 /// `test_util` submodule.
 #[cfg(test)]
 pub mod test_util;
-pub mod tolerant_sort;
 /// `tiers` submodule.
 pub mod tiers;
+pub mod tolerant_sort;
 
 // Back-compat: re-export every ported submodule at the crate root so
 // historical call sites (`crate::exec::`, `crate::subst::`,
@@ -91,6 +91,10 @@ pub mod bash_complete;
 /// `canonical_apply` submodule.
 #[path = "extensions/canonical_apply.rs"]
 pub mod canonical_apply;
+/// Shared-handle accessors for the completion match accumulators (Rust-original
+/// glue restoring C's `matches = mgroup->lmatches` pointer alias; see the module
+/// doc). Deliberately outside `src/ported/` — not a C-fn port.
+pub mod comp_match_handles;
 /// `compile_zsh` submodule.
 #[path = "extensions/compile_zsh.rs"]
 pub mod compile_zsh;
@@ -129,10 +133,6 @@ pub mod subexp_cleanup;
 /// `vm_pool` submodule — per-thread pool of recyclable fusevm VMs.
 #[path = "extensions/vm_pool.rs"]
 pub mod vm_pool;
-/// Shared-handle accessors for the completion match accumulators (Rust-original
-/// glue restoring C's `matches = mgroup->lmatches` pointer alias; see the module
-/// doc). Deliberately outside `src/ported/` — not a C-fn port.
-pub mod comp_match_handles;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in vm_helper) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.

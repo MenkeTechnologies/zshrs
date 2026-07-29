@@ -279,7 +279,12 @@ fn update_source() -> String {
         //   word-splits into apt-helper's argv.
         let targets_raw = run_capture(
             "apt-get",
-            &["indextargets", "--format", "$(FILENAME)", "Created-By: Sources"],
+            &[
+                "indextargets",
+                "--format",
+                "$(FILENAME)",
+                "Created-By: Sources",
+            ],
         );
         let target_args: Vec<&str> = targets_raw.split_whitespace().collect();
         let mut helper_args: Vec<&str> = vec!["cat-file"];
@@ -330,7 +335,8 @@ pub fn _debs_caching_policy(args: &[String]) -> i32 {
             .map(|t| t > cache_mtime)
             .unwrap_or(false)
     };
-    if newer_than_cache("/var/cache/apt/pkgcache.bin") || newer_than_cache("/var/lib/dpkg/available")
+    if newer_than_cache("/var/cache/apt/pkgcache.bin")
+        || newer_than_cache("/var/lib/dpkg/available")
     {
         0
     } else {

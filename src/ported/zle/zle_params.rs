@@ -48,46 +48,46 @@ use crate::ported::zsh_h::{
 /// `compcore::callcompfunc` stamps the completion-scope level onto them
 /// so `endparamscope` tears them down again (c:compcore.c:820/839).
 pub const ZLEPARAM_NAMES: &[&str] = &[
-    "BUFFER",               // c:142
-    "BUFFERLINES",          // c:143
-    "CONTEXT",              // c:145
-    "CURSOR",               // c:147
-    "CUTBUFFER",            // c:149
-    "HISTNO",               // c:150
-    "KEYMAP",               // c:151
-    "KEYS",                 // c:152
-    "KEYS_QUEUED_COUNT",    // c:153
-    "killring",             // c:155
-    "LASTABORTEDSEARCH",    // c:156
-    "LASTSEARCH",           // c:158
-    "LASTWIDGET",           // c:159
-    "LBUFFER",              // c:160
-    "MARK",                 // c:161
-    "NUMERIC",              // c:162
-    "PENDING",              // c:163
-    "POSTDISPLAY",          // c:164
-    "PREBUFFER",            // c:165
-    "PREDISPLAY",           // c:166
-    "RBUFFER",              // c:167
-    "REGION_ACTIVE",        // c:168
-    "region_highlight",     // c:169
-    "UNDO_CHANGE_NO",       // c:170
-    "UNDO_LIMIT_NO",        // c:172
-    "WIDGET",               // c:173
-    "WIDGETFUNC",           // c:174
-    "WIDGETSTYLE",          // c:175
-    "YANK_START",           // c:176
-    "YANK_END",             // c:177
-    "YANK_ACTIVE",          // c:178
-    "ISEARCHMATCH_START",   // c:179
-    "ISEARCHMATCH_END",     // c:180
-    "ISEARCHMATCH_ACTIVE",  // c:181
-    "SUFFIX_START",         // c:182
-    "SUFFIX_END",           // c:183
-    "SUFFIX_ACTIVE",        // c:184
-    "ZLE_RECURSIVE",        // c:185
-    "ZLE_STATE",            // c:186
-    "registers",            // c:225 createspecialhash
+    "BUFFER",              // c:142
+    "BUFFERLINES",         // c:143
+    "CONTEXT",             // c:145
+    "CURSOR",              // c:147
+    "CUTBUFFER",           // c:149
+    "HISTNO",              // c:150
+    "KEYMAP",              // c:151
+    "KEYS",                // c:152
+    "KEYS_QUEUED_COUNT",   // c:153
+    "killring",            // c:155
+    "LASTABORTEDSEARCH",   // c:156
+    "LASTSEARCH",          // c:158
+    "LASTWIDGET",          // c:159
+    "LBUFFER",             // c:160
+    "MARK",                // c:161
+    "NUMERIC",             // c:162
+    "PENDING",             // c:163
+    "POSTDISPLAY",         // c:164
+    "PREBUFFER",           // c:165
+    "PREDISPLAY",          // c:166
+    "RBUFFER",             // c:167
+    "REGION_ACTIVE",       // c:168
+    "region_highlight",    // c:169
+    "UNDO_CHANGE_NO",      // c:170
+    "UNDO_LIMIT_NO",       // c:172
+    "WIDGET",              // c:173
+    "WIDGETFUNC",          // c:174
+    "WIDGETSTYLE",         // c:175
+    "YANK_START",          // c:176
+    "YANK_END",            // c:177
+    "YANK_ACTIVE",         // c:178
+    "ISEARCHMATCH_START",  // c:179
+    "ISEARCHMATCH_END",    // c:180
+    "ISEARCHMATCH_ACTIVE", // c:181
+    "SUFFIX_START",        // c:182
+    "SUFFIX_END",          // c:183
+    "SUFFIX_ACTIVE",       // c:184
+    "ZLE_RECURSIVE",       // c:185
+    "ZLE_STATE",           // c:186
+    "registers",           // c:225 createspecialhash
 ];
 
 /// `$BUFFER` accessor — full edited line as a String.

@@ -98,8 +98,16 @@ fn nmatches() -> i64 {
 /// the `-` word.
 fn nmatches_live() -> i64 {
     use crate::ported::zle::compcore as cc;
-    let live_m = crate::comp_match_handles::matches_arc().lock().ok().map(|g| g.len()).unwrap_or(0);
-    let live_fm = crate::comp_match_handles::fmatches_arc().lock().ok().map(|g| g.len()).unwrap_or(0);
+    let live_m = crate::comp_match_handles::matches_arc()
+        .lock()
+        .ok()
+        .map(|g| g.len())
+        .unwrap_or(0);
+    let live_fm = crate::comp_match_handles::fmatches_arc()
+        .lock()
+        .ok()
+        .map(|g| g.len())
+        .unwrap_or(0);
     nmatches() + (live_m + live_fm) as i64
 }
 

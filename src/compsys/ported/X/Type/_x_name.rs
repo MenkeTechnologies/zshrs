@@ -40,11 +40,7 @@ pub fn _x_name(args: &[String]) -> i32 {
         }
         None => {
             // sh:8  _message -e names 'name'
-            _message(&[
-                "-e".to_string(),
-                "names".to_string(),
-                "name".to_string(),
-            ])
+            _message(&["-e".to_string(), "names".to_string(), "name".to_string()])
         }
     }
 }
@@ -55,7 +51,10 @@ mod tests {
 
     #[test]
     fn find_last_dash_x_absent_is_none() {
-        assert_eq!(find_last_dash_x(&["-a".to_string(), "-b".to_string()]), None);
+        assert_eq!(
+            find_last_dash_x(&["-a".to_string(), "-b".to_string()]),
+            None
+        );
     }
 
     #[test]
@@ -106,10 +105,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         let _ = crate::ported::params::setsparam("_comp_mesg", "");
-        assert_eq!(
-            _x_name(&["-X".to_string(), "%d".to_string()]),
-            1
-        );
+        assert_eq!(_x_name(&["-X".to_string(), "%d".to_string()]), 1);
         assert_ne!(
             crate::ported::params::getsparam("_comp_mesg").as_deref(),
             Some("yes"),
