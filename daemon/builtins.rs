@@ -1853,111 +1853,6 @@ fn zunsubscribe(args: &[String]) -> i32 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dispatch_unknown_returns_none() {
-        assert!(dispatch("not_a_zthing", &["not_a_zthing".into()]).is_none());
-    }
-
-    #[test]
-    fn parse_send_args_shell_id() {
-        let args: Vec<String> = vec!["zsend".into(), "42".into(), "git".into(), "status".into()];
-        let (target, msg) = parse_send_args(&args, "zsend").unwrap();
-        assert_eq!(target, json!({ "shell_id": 42 }));
-        assert_eq!(msg, "git status");
-    }
-
-    #[test]
-    fn parse_send_args_all() {
-        let args: Vec<String> = vec!["zsend".into(), "--all".into(), "echo".into(), "hi".into()];
-        let (target, msg) = parse_send_args(&args, "zsend").unwrap();
-        assert_eq!(target, json!({ "all": true }));
-        assert_eq!(msg, "echo hi");
-    }
-
-    #[test]
-    fn parse_send_args_tag() {
-        let args: Vec<String> = vec![
-            "zsend".into(),
-            "--tag".into(),
-            "prod".into(),
-            "deploy".into(),
-        ];
-        let (target, msg) = parse_send_args(&args, "zsend").unwrap();
-        assert_eq!(target, json!({ "tag": "prod" }));
-        assert_eq!(msg, "deploy");
-    }
-
-    #[test]
-    fn try_dispatch_unknown_returns_none() {
-        assert!(try_dispatch("ls", &["ls".into()]).is_none());
-        assert!(try_dispatch("not_a_zthing", &["not_a_zthing".into()]).is_none());
-    }
-
-    #[test]
-    fn is_zshrs_builtin_recognises_full_namespace() {
-        for n in &[
-            "zcache",
-            "zls",
-            "zid",
-            "zping",
-            "ztag",
-            "zuntag",
-            "zsend",
-            "znotify",
-            "zsubscribe",
-            "zunsubscribe",
-            "zjob",
-            "zsync",
-            "zask",
-            "zlog",
-        ] {
-            assert!(is_zshrs_builtin(n), "expected {n} to be recognised");
-        }
-        assert!(!is_zshrs_builtin("ls"));
-        assert!(!is_zshrs_builtin(""));
-    }
-
-    #[test]
-    fn zshrs_builtin_names_no_zsh_clash() {
-        // Per docs/DAEMON.md "z* builtin family (locked, no shadowing of zsh)".
-        let zsh_owned: &[&str] = &[
-            "zmv",
-            "zparseopts",
-            "zformat",
-            "zstat",
-            "zstyle",
-            "zprof",
-            "zcompile",
-            "zargs",
-            "zcurses",
-            "zsystem",
-            "ztie",
-            "zuntie",
-            "zselect",
-            "zsocket",
-            "zftp",
-            "zpty",
-            "zed",
-            "zcalc",
-            "zregexparse",
-            "zutil",
-            "zmodload",
-            "zle",
-        ];
-        for name in ZSHRS_BUILTIN_NAMES {
-            assert!(
-                !zsh_owned.contains(name),
-                "zshrs builtin `{}` collides with zsh-owned namespace",
-                name
-            );
-        }
-    }
-}
-
 /// `zwhere` — query the daemon's federated definitions catalog from
 /// inside zshrs. Thin client over the `definitions_query` op (same
 /// thing `zd defs query` calls). Always available in default zshrs;
@@ -2232,3 +2127,108 @@ fn zd(args: &[String]) -> i32 {
 
 // Used by callers that want a no-op suppress for unused-import warnings.
 fn _unused(_: DaemonError) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_unknown_returns_none() {
+        assert!(dispatch("not_a_zthing", &["not_a_zthing".into()]).is_none());
+    }
+
+    #[test]
+    fn parse_send_args_shell_id() {
+        let args: Vec<String> = vec!["zsend".into(), "42".into(), "git".into(), "status".into()];
+        let (target, msg) = parse_send_args(&args, "zsend").unwrap();
+        assert_eq!(target, json!({ "shell_id": 42 }));
+        assert_eq!(msg, "git status");
+    }
+
+    #[test]
+    fn parse_send_args_all() {
+        let args: Vec<String> = vec!["zsend".into(), "--all".into(), "echo".into(), "hi".into()];
+        let (target, msg) = parse_send_args(&args, "zsend").unwrap();
+        assert_eq!(target, json!({ "all": true }));
+        assert_eq!(msg, "echo hi");
+    }
+
+    #[test]
+    fn parse_send_args_tag() {
+        let args: Vec<String> = vec![
+            "zsend".into(),
+            "--tag".into(),
+            "prod".into(),
+            "deploy".into(),
+        ];
+        let (target, msg) = parse_send_args(&args, "zsend").unwrap();
+        assert_eq!(target, json!({ "tag": "prod" }));
+        assert_eq!(msg, "deploy");
+    }
+
+    #[test]
+    fn try_dispatch_unknown_returns_none() {
+        assert!(try_dispatch("ls", &["ls".into()]).is_none());
+        assert!(try_dispatch("not_a_zthing", &["not_a_zthing".into()]).is_none());
+    }
+
+    #[test]
+    fn is_zshrs_builtin_recognises_full_namespace() {
+        for n in &[
+            "zcache",
+            "zls",
+            "zid",
+            "zping",
+            "ztag",
+            "zuntag",
+            "zsend",
+            "znotify",
+            "zsubscribe",
+            "zunsubscribe",
+            "zjob",
+            "zsync",
+            "zask",
+            "zlog",
+        ] {
+            assert!(is_zshrs_builtin(n), "expected {n} to be recognised");
+        }
+        assert!(!is_zshrs_builtin("ls"));
+        assert!(!is_zshrs_builtin(""));
+    }
+
+    #[test]
+    fn zshrs_builtin_names_no_zsh_clash() {
+        // Per docs/DAEMON.md "z* builtin family (locked, no shadowing of zsh)".
+        let zsh_owned: &[&str] = &[
+            "zmv",
+            "zparseopts",
+            "zformat",
+            "zstat",
+            "zstyle",
+            "zprof",
+            "zcompile",
+            "zargs",
+            "zcurses",
+            "zsystem",
+            "ztie",
+            "zuntie",
+            "zselect",
+            "zsocket",
+            "zftp",
+            "zpty",
+            "zed",
+            "zcalc",
+            "zregexparse",
+            "zutil",
+            "zmodload",
+            "zle",
+        ];
+        for name in ZSHRS_BUILTIN_NAMES {
+            assert!(
+                !zsh_owned.contains(name),
+                "zshrs builtin `{}` collides with zsh-owned namespace",
+                name
+            );
+        }
+    }
+}
