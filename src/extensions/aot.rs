@@ -329,6 +329,15 @@ pub fn build(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf, Strin
 ///
 /// # Safety
 /// `vm` is the live run VM passed by the fusevm runtime; borrowed only here.
+///
+/// Behind the default-on `aot-hook` feature because the symbol is `#[no_mangle]`:
+/// it is the ONE definition fusevm's AOT runtime resolves by name, so a
+/// dependent crate that provides its own — strykelang does, for its own
+/// `--aot` — links two and the build dies with "symbol multiply defined"
+/// (under `lto = "fat"`, as a bare `failed to load bitcode`). zshrs's own
+/// `zbuild --native` links `libzsh.a` from a default build and is unaffected;
+/// a consumer that only wants the lib takes `default-features = false`.
+#[cfg(feature = "aot-hook")]
 #[no_mangle]
 pub extern "C" fn fusevm_aot_register_builtins(vm: *mut fusevm::VM) {
     // SAFETY: the fusevm runtime hands us the live run VM for this call.

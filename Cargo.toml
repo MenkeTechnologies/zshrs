@@ -45,7 +45,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.12.27"
+version = "0.12.28"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
@@ -168,7 +168,16 @@ ureq = { version = "2", default-features = false, features = ["json"], optional 
 base64 = { version = "0.22", optional = true }
 
 [features]
-default = ["daemon"]
+default = ["daemon", "aot-hook"]
+# `aot-hook` compiles `fusevm_aot_register_builtins` — the `#[no_mangle]` symbol
+# fusevm's AOT runtime resolves by name when it links a native binary against
+# `libzsh.a` (see src/extensions/aot.rs). ON by default so `zbuild --native`
+# keeps working from an ordinary build. A crate that depends on zshrs as a
+# *library* and provides its own AOT hook (strykelang does) must take
+# `default-features = false`, or the two `#[no_mangle]` definitions collide at
+# link time — under `lto = "fat"` that surfaces as a bare
+# "failed to load bitcode of module zsh-….rcgu.o".
+aot-hook = []
 # `daemon` enables the zshrs-daemon dep. Disable with --no-default-features
 # to compile zshrs lib without dragging the daemon crate into the build —
 # useful while the daemon is mid-refactor in a concurrent session and the
