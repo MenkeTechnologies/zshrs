@@ -11,19 +11,36 @@ documentation = "https://docs.rs/zshrs"
 readme = "README.md"
 keywords = ["shell", "zsh", "bytecode", "terminal", "unix"]
 categories = ["command-line-utilities"]
+# Keep the published crate lean: ship `src/`, `bins/`, the workspace member
+# crates, README/LICENSE — nothing else. Everything below stays in git for
+# local/CI use but is omitted from `cargo package` / the crates.io tarball.
+# Mirrors strykelang's exclude set.
+#
+# NOTE: the old `**/*parity*` glob also matched `bins/parity-fuzz.rs`, the
+# source of the declared `[[bin]] parity-fuzz` target — which would drop a
+# build input from the tarball. Excluded by directory instead.
 exclude = [
-    "/tests/",
     "/.github/",
+    "/tests/",
+    "/test/",
     "/test_data/",
     "/test_corpus/",
-    "**/*parity*",
+    "/parity/",
+    "/examples/",
     "/docs/",
+    "/editors/",
     "/scripts/",
     "/bench/",
+    "/benches/",
     "/vendor/",
+    "/tools/",
+    "/fuzz/",
     "/completions/",
     "/zshrs_dump.*",
-    "/examples/"
+    "/tmux",
+    "/zterm_columns",
+    "/.module_audit.md",
+    "/TODO.md",
 ]
 
 
