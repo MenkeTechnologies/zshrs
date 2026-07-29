@@ -1212,7 +1212,10 @@ pub fn zshrs_main() {
             .any(|a| a == "--posix" || a == "--sh" || a == "--bash")
         {
             Some("sh")
-        } else if args.iter().any(|a| a == "--ksh" || a == "--mksh" || a == "--pdksh") {
+        } else if args
+            .iter()
+            .any(|a| a == "--ksh" || a == "--mksh" || a == "--pdksh")
+        {
             Some("ksh")
         } else {
             None
@@ -1230,7 +1233,10 @@ pub fn zshrs_main() {
         Some(ShellMode::Posix)
     } else if args.iter().any(|a| a == "--bash") {
         Some(ShellMode::Bash)
-    } else if args.iter().any(|a| a == "--ksh" || a == "--mksh" || a == "--pdksh") {
+    } else if args
+        .iter()
+        .any(|a| a == "--ksh" || a == "--mksh" || a == "--pdksh")
+    {
         // mksh (MirBSD Korn shell) and pdksh (Public Domain Korn shell)
         // use the same ksh emulation base.
         Some(ShellMode::Ksh)

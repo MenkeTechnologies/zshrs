@@ -78,7 +78,10 @@ mod tests {
         assert!(best);
         // sh:7 — `argv[(i)-b]=()` removes a single array slot (the
         // first index match), leaving any later "-b" untouched.
-        assert_eq!(rest, vec!["-J".to_string(), "grp".to_string(), "-b".to_string()]);
+        assert_eq!(
+            rest,
+            vec!["-J".to_string(), "grp".to_string(), "-b".to_string()]
+        );
     }
 
     #[test]
@@ -91,11 +94,9 @@ mod tests {
     #[test]
     fn returns_one_without_registered_tags() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::zle::complete::INCOMPFUNC
-            .store(1, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::zle::complete::INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
         let r = _x_visual(&[]);
-        crate::ported::zle::complete::INCOMPFUNC
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(r, 1);
     }
 }

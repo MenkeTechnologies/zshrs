@@ -50,7 +50,9 @@ fn bugnumbers_in(dir: &str) -> Vec<String> {
     names
         .into_iter()
         .filter_map(|name| {
-            let stem = name.strip_suffix(".html").or_else(|| name.strip_suffix(".mbox"))?;
+            let stem = name
+                .strip_suffix(".html")
+                .or_else(|| name.strip_suffix(".mbox"))?;
             if !stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit()) {
                 Some(stem.to_string())
             } else {

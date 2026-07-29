@@ -521,9 +521,9 @@ pub fn scanpmparameters(
        // being an autoload stub here (C: the module load that answers this
        // read defines the node). Its siblings stay stubs until touched.
     crate::vm_helper::mark_module_param_used("parameters");
-       // Snapshot names + per-entry data under read lock so func() can
-       // re-enter paramtab without deadlock — C is single-threaded so
-       // walks the live table directly.
+    // Snapshot names + per-entry data under read lock so func() can
+    // re-enter paramtab without deadlock — C is single-threaded so
+    // walks the live table directly.
     let entries: Vec<(String, u32, String)> = {
         // c:135 — C `realparamtab` walk. Rust port keeps a separate
         // `realparamtab` static that's never been wired to the live
@@ -540,16 +540,16 @@ pub fn scanpmparameters(
             .map(|(name, p)| {
                 let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
                     || (flags as u32 & SCANPM_WANTKEYS) == 0; // c:140-142
-                // c:49-50 — `if (pm->node.flags & PM_AUTOLOAD) return
-                // dupstring("undefined");`. In C the `zsh/parameter` params
-                // sit in realparamtab as PM_AUTOLOAD stubs and materialize
-                // ONE AT A TIME as they are touched (loading the module for
-                // `$parameters` does not define its siblings), so an
-                // enumeration reports "undefined" for the untouched ones.
-                // zshrs seeds them all eagerly, so the stub state is tracked
-                // separately; without this every one reported its real type
-                // and `_parameters -g '^a*'` / `-g 'a*'` bucketed them the
-                // opposite way from zsh.
+                                                              // c:49-50 — `if (pm->node.flags & PM_AUTOLOAD) return
+                                                              // dupstring("undefined");`. In C the `zsh/parameter` params
+                                                              // sit in realparamtab as PM_AUTOLOAD stubs and materialize
+                                                              // ONE AT A TIME as they are touched (loading the module for
+                                                              // `$parameters` does not define its siblings), so an
+                                                              // enumeration reports "undefined" for the untouched ones.
+                                                              // zshrs seeds them all eagerly, so the stub state is tracked
+                                                              // separately; without this every one reported its real type
+                                                              // and `_parameters -g '^a*'` / `-g 'a*'` bucketed them the
+                                                              // opposite way from zsh.
                 let val = if want_val {
                     if crate::vm_helper::module_param_is_autoload_stub(name) {
                         "undefined".to_string() // c:50

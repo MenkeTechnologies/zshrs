@@ -178,7 +178,10 @@ fn mac_parse_info_plist(app_path: &str) -> (Vec<String>, Vec<String>) {
     "#;
     // sh:30  command awk $s "$app_path/Contents/Info.plist"
     let plist = format!("{}/Contents/Info.plist", app_path);
-    let output = std::process::Command::new("awk").arg(script).arg(&plist).output();
+    let output = std::process::Command::new("awk")
+        .arg(script)
+        .arg(&plist)
+        .output();
 
     let mut exts = Vec::new();
     let mut types = Vec::new();
@@ -188,9 +191,14 @@ fn mac_parse_info_plist(app_path: &str) -> (Vec<String>, Vec<String>) {
         //   line is `NAME=( "a" "b" … )`; parse the two known shapes
         //   directly instead of a general shell `eval`.
         for line in stdout.lines() {
-            if let Some(body) = line.strip_prefix("exts=(").and_then(|s| s.strip_suffix(')')) {
+            if let Some(body) = line
+                .strip_prefix("exts=(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
                 exts = parse_quoted_words(body);
-            } else if let Some(body) = line.strip_prefix("types=(").and_then(|s| s.strip_suffix(')'))
+            } else if let Some(body) = line
+                .strip_prefix("types=(")
+                .and_then(|s| s.strip_suffix(')'))
             {
                 types = parse_quoted_words(body);
             }
@@ -306,12 +314,8 @@ mod tests {
     fn zparse_pulls_recognized_flags_leaving_rest() {
         // sh:38 — `-q` (bool) and `-o VALUE` (value-taking) go to `opts`;
         //   the app-name positional is left in `rest`.
-        let (opts, rest) = zparse_files_opts(&[
-            "-q".into(),
-            "-o".into(),
-            "extended".into(),
-            "Safari".into(),
-        ]);
+        let (opts, rest) =
+            zparse_files_opts(&["-q".into(), "-o".into(), "extended".into(), "Safari".into()]);
         assert_eq!(
             opts,
             vec!["-q".to_string(), "-o".to_string(), "extended".to_string()]
@@ -350,10 +354,7 @@ mod tests {
         //   both macOS, where the path simply won't exist, and Linux CI,
         //   where the pseudo-path is invalid): deterministic `false`.
         let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "zshrs_test_mac_rsrc_check_{}",
-            std::process::id()
-        ));
+        let path = dir.join(format!("zshrs_test_mac_rsrc_check_{}", std::process::id()));
         std::fs::write(&path, b"hello").unwrap();
         let result = mac_rsrc_check(path.to_str().unwrap(), &["APPL".to_string()]);
         let _ = std::fs::remove_file(&path);

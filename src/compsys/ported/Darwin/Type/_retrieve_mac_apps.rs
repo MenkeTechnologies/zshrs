@@ -212,9 +212,7 @@ fn match_atoms(atoms: &[(Atom, bool)], text: &[char]) -> bool {
             }
         }
         _ => {
-            !text.is_empty()
-                && atom_matches(atom, text[0])
-                && match_atoms(&atoms[1..], &text[1..])
+            !text.is_empty() && atom_matches(atom, text[0]) && match_atoms(&atoms[1..], &text[1..])
         }
     }
 }
@@ -558,9 +556,7 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
     }
 
     // sh:69-70
-    let mac_apps_empty = getaparam("_mac_apps")
-        .map(|v| v.is_empty())
-        .unwrap_or(true);
+    let mac_apps_empty = getaparam("_mac_apps").map(|v| v.is_empty()).unwrap_or(true);
     let need_rebuild = (mac_apps_empty || _cache_invalid(&["Mac_applications".to_string()]) == 0)
         && _retrieve_cache(&["Mac_applications".to_string()]) != 0;
 
@@ -571,9 +567,7 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
 
     // sh:74-84  choose retrieve method (cached in the search-method style).
     let search_ctx = format!(":completion:*:*:{}:commands", service);
-    let mut retrieve = lookupstyle(&search_ctx, "search-method")
-        .into_iter()
-        .next();
+    let mut retrieve = lookupstyle(&search_ctx, "search-method").into_iter().next();
     if retrieve.is_none() {
         // sh:76-82
         retrieve = Some(if mdutil_root_indexed() {
@@ -640,10 +634,8 @@ mod tests {
 
     #[test]
     fn caching_policy_stale_after_one_week() {
-        let dir = std::env::temp_dir().join(format!(
-            "zshrs_mac_apps_cache_test_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("zshrs_mac_apps_cache_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("cache");
         std::fs::write(&file, b"x").unwrap();

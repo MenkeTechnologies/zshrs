@@ -4833,169 +4833,171 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Value::Array(v.into_iter().map(Value::str).collect());
             }
             with_executor(|exec| {
-            // Special positional names — splice the positional list.
-            if name == "@" || name == "*" || name == "argv" {
-                return Value::Array(exec.pparams().iter().map(Value::str).collect());
-            }
-            // c:Src/Modules/parameter.c — funcstack/funcfiletrace/
-            // funcsourcetrace/functrace are PM_ARRAY|PM_READONLY
-            // specials backed by the canonical FUNCSTACK Vec.
-            // `${funcstack[@]}` inside a function call should splat
-            // the innermost-first names; without this branch the
-            // runtime fell to the scalar fallback (get_variable
-            // returns empty for these specials) and `[@]` came out
-            // empty. Bug #276 in docs/BUGS.md. Mirrors the parallel
-            // arrays_get handler at src/ported/subst.rs ~10685.
-            // c:Src/Modules/datetime.c:256 — `epochtime` PM_ARRAY|
-            // PM_READONLY backed by getcurrenttime(). Same parallel
-            // arrangement as the FUNCSTACK-backed specials below.
-            if name == "epochtime" {
-                let arr = crate::ported::modules::datetime::getcurrenttime();
-                return Value::Array(arr.into_iter().map(Value::str).collect());
-            }
-            if matches!(
-                name.as_str(),
-                "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
-            ) {
-                // Route the three trace arrays through the canonical
-                // ported getfns (Src/Modules/parameter.c:648/:679/:711)
-                // — the previous inline copy emitted wrong shapes
-                // (bare filename for funcfiletrace, `name:lineno` for
-                // functrace instead of `caller:lineno`); same dedup as
-                // the parallel arrays_get handler in subst.rs.
-                let vals: Vec<String> = match name.as_str() {
-                    "funcstack" => crate::ported::modules::parameter::FUNCSTACK
-                        .lock()
-                        .map(|f| f.iter().rev().map(|fs| fs.name.clone()).collect())
-                        .unwrap_or_default(),
-                    "funcfiletrace" => crate::ported::modules::parameter::funcfiletracegetfn(
-                        std::ptr::null_mut(),
-                    ),
-                    "funcsourcetrace" => crate::ported::modules::parameter::funcsourcetracegetfn(
-                        std::ptr::null_mut(),
-                    ),
-                    _ => crate::ported::modules::parameter::functracegetfn(std::ptr::null_mut()),
-                };
-                return Value::Array(vals.into_iter().map(Value::str).collect());
-            }
-            // c:Src/params.c — `${assoc[@]}` enumerates VALUES (per
-            // params.c:1696-1750 hashparam splat). Check assoc
-            // storage BEFORE the scalar fallback so an associative
-            // array named X resolves `${X[@]}` to the values, not
-            // empty. Bug #109 in docs/BUGS.md: `${h[@]}` on an
-            // assoc routed through BUILTIN_ARRAY_ALL, which only
-            // consulted `exec.array(name)` (the indexed-array map)
-            // — that lookup missed for assocs, fell through to
-            // `get_variable("h")` (also empty for an assoc-only
-            // name), and returned `Array(vec![])`. zsh's expected
-            // behavior is to enumerate values.
-            if let Some(assoc_map) = exec.assoc(&name) {
-                return Value::Array(
-                    assoc_map.values().cloned().map(Value::str).collect(),
-                );
-            }
-            match exec.array(&name) {
-                Some(v) => {
-                    // bash sparse arrays: `"${a[@]}"` splats only LIVE
-                    // elements, dropping hole slots (`a[5]=q` padding,
-                    // `unset a[i]`). No-op in --zsh (no holes tracked).
-                    let v = crate::bash_arrays::compact(&name, v);
-                    Value::Array(v.iter().map(Value::str).collect())
+                // Special positional names — splice the positional list.
+                if name == "@" || name == "*" || name == "argv" {
+                    return Value::Array(exec.pparams().iter().map(Value::str).collect());
                 }
-                None => {
-                    // c:Src/Modules/parameter.c:2235-2298 partab[] — the
-                    // PM_HASHED magic assocs (aliases/functions/parameters/
-                    // options/commands/builtins/modules/widgets/nameddirs/…)
-                    // are real hash params in C, so `${aliases[@]}` takes the
-                    // ordinary getvaluearr path and enumerates their VALUES.
-                    // zshrs keeps them OUT of the executor's assoc storage
-                    // (they are synthesized on demand by `subst::assoc_get`),
-                    // so the `exec.assoc` probe above missed and this arm fell
-                    // through to the scalar fallback, which returned an EMPTY
-                    // array: `alias foo=bar; print -r -- "${aliases[@]}"` gave
-                    // nothing where zsh gives `bar man whence`. Every other
-                    // form already routed through paramsubst's own magic-assoc
-                    // arms; only the flagless `[@]`/`[*]` splat compiles to
-                    // BUILTIN_ARRAY_ALL and reached here.
-                    //
-                    // Placed in the `None` arm so a real indexed array or a
-                    // user-defined assoc of the same name still wins, and so
-                    // no ordinary array read pays for the PARTAB scan.
-                    //
-                    // Same gap on the PM_ARRAY side (c:2239-2291 partab[]
-                    // rows: reswords/dis_reswords/patchars/dis_patchars/…):
-                    // `getaparam` reads `pm->u.arr`, which is NULL on the
-                    // placeholder node zshrs installs for a getfn-backed
-                    // special, so `${reswords[@]}` splatted nothing. Route
-                    // through the canonical `arrays_get` getfn dispatch.
-                    if let Some(arr) = crate::ported::subst::arrays_get(&name) {
-                        return Value::Array(arr.into_iter().map(Value::str).collect());
-                    }
-                    if let Some(map) = crate::ported::subst::assoc_get(&name) {
-                        return Value::Array(map.values().cloned().map(Value::str).collect());
-                    }
-                    // Fall back to scalar lookup. zsh (unlike bash)
-                    // does NOT IFS-split a scalar variable in a for
-                    // list — `for w in $scalar` iterates ONCE with the
-                    // scalar value. Word-splitting requires either
-                    // sh_word_split option or explicit `${(s.,.)scalar}`.
-                    let val = exec.get_variable(&name);
-                    if val.is_empty() && !exec.has_scalar(&name) && env::var(&name).is_err() {
-                        // c:Src/subst.c:3480-3485 — `${arr[@]}` on a genuinely
-                        // UNSET parameter under NO_UNSET is a "parameter not set"
-                        // error (vunset > 0 && unset(UNSET)), exactly like the
-                        // scalar `$arr`, the `${arr[*]}` splat, and `${arr[1]}`
-                        // — all of which already fire it via GET_VAR. The `[@]`
-                        // splat path returned an empty array silently, so
-                        // `setopt NO_UNSET; print "${arr[@]}"` exited 0 where zsh
-                        // exits 1. A DECLARED-but-empty array (`arr=()`) resolves
-                        // to `Some(vec![])` above and never reaches here, so it
-                        // still splats to nothing without erroring — matching zsh.
-                        if opt_state_get("nounset").unwrap_or(false) {
-                            crate::ported::utils::zerr(&format!("{}: parameter not set", name));
-                            crate::ported::utils::errflag.fetch_or(
-                                crate::ported::zsh_h::ERRFLAG_ERROR,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            exec.set_last_status(1);
+                // c:Src/Modules/parameter.c — funcstack/funcfiletrace/
+                // funcsourcetrace/functrace are PM_ARRAY|PM_READONLY
+                // specials backed by the canonical FUNCSTACK Vec.
+                // `${funcstack[@]}` inside a function call should splat
+                // the innermost-first names; without this branch the
+                // runtime fell to the scalar fallback (get_variable
+                // returns empty for these specials) and `[@]` came out
+                // empty. Bug #276 in docs/BUGS.md. Mirrors the parallel
+                // arrays_get handler at src/ported/subst.rs ~10685.
+                // c:Src/Modules/datetime.c:256 — `epochtime` PM_ARRAY|
+                // PM_READONLY backed by getcurrenttime(). Same parallel
+                // arrangement as the FUNCSTACK-backed specials below.
+                if name == "epochtime" {
+                    let arr = crate::ported::modules::datetime::getcurrenttime();
+                    return Value::Array(arr.into_iter().map(Value::str).collect());
+                }
+                if matches!(
+                    name.as_str(),
+                    "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
+                ) {
+                    // Route the three trace arrays through the canonical
+                    // ported getfns (Src/Modules/parameter.c:648/:679/:711)
+                    // — the previous inline copy emitted wrong shapes
+                    // (bare filename for funcfiletrace, `name:lineno` for
+                    // functrace instead of `caller:lineno`); same dedup as
+                    // the parallel arrays_get handler in subst.rs.
+                    let vals: Vec<String> = match name.as_str() {
+                        "funcstack" => crate::ported::modules::parameter::FUNCSTACK
+                            .lock()
+                            .map(|f| f.iter().rev().map(|fs| fs.name.clone()).collect())
+                            .unwrap_or_default(),
+                        "funcfiletrace" => crate::ported::modules::parameter::funcfiletracegetfn(
+                            std::ptr::null_mut(),
+                        ),
+                        "funcsourcetrace" => {
+                            crate::ported::modules::parameter::funcsourcetracegetfn(
+                                std::ptr::null_mut(),
+                            )
                         }
-                        // c:Src/subst.c:3480-3485 — an UNSET parameter takes the
-                        // `vunset` arm: `val = dupstring("")` with isarr left at
-                        // 0. That is a SCALAR empty, so plan9 keeps the
-                        // surrounding text (`setopt rcexpandparam;
-                        // print -r -- "[${unset[@]}]"` → `[]`), unlike a
-                        // DECLARED-but-empty array (`arr=()`, matched by the
-                        // `Some(vec![])` arm above), which sets isarr and gets
-                        // the word deleted at c:4362.
-                        note_empty_is_scalar(true);
-                        Value::Array(vec![])
-                    } else if opt_state_get("shwordsplit").unwrap_or(false) {
-                        // c:3921 `aval = sepsplit(val, spsep, 0, 1)` — same
-                        // splitter as `${=name}` (Src/utils.c:3711 spacesplit),
-                        // not a naive `split().filter(non-empty)`: only the
-                        // IFS-WHITESPACE-derived empty fields are elided; the
-                        // `nulstring` ones an IFS-NON-whitespace separator makes
-                        // survive (c:Src/subst.c:36).
-                        let nulstring = crate::ported::zsh_h::Nularg.to_string();
-                        let parts: Vec<Value> =
-                            crate::ported::utils::sepsplit(&val, None, false)
-                                .into_iter()
-                                .filter_map(|w| {
-                                    if w == nulstring {
-                                        Some(Value::str(String::new()))
-                                    } else if w.is_empty() {
-                                        None // c:184-187 prefork uremnode
-                                    } else {
-                                        Some(Value::str(w))
-                                    }
-                                })
-                                .collect();
-                        Value::Array(parts)
-                    } else {
-                        Value::Array(vec![Value::str(val)])
+                        _ => {
+                            crate::ported::modules::parameter::functracegetfn(std::ptr::null_mut())
+                        }
+                    };
+                    return Value::Array(vals.into_iter().map(Value::str).collect());
+                }
+                // c:Src/params.c — `${assoc[@]}` enumerates VALUES (per
+                // params.c:1696-1750 hashparam splat). Check assoc
+                // storage BEFORE the scalar fallback so an associative
+                // array named X resolves `${X[@]}` to the values, not
+                // empty. Bug #109 in docs/BUGS.md: `${h[@]}` on an
+                // assoc routed through BUILTIN_ARRAY_ALL, which only
+                // consulted `exec.array(name)` (the indexed-array map)
+                // — that lookup missed for assocs, fell through to
+                // `get_variable("h")` (also empty for an assoc-only
+                // name), and returned `Array(vec![])`. zsh's expected
+                // behavior is to enumerate values.
+                if let Some(assoc_map) = exec.assoc(&name) {
+                    return Value::Array(assoc_map.values().cloned().map(Value::str).collect());
+                }
+                match exec.array(&name) {
+                    Some(v) => {
+                        // bash sparse arrays: `"${a[@]}"` splats only LIVE
+                        // elements, dropping hole slots (`a[5]=q` padding,
+                        // `unset a[i]`). No-op in --zsh (no holes tracked).
+                        let v = crate::bash_arrays::compact(&name, v);
+                        Value::Array(v.iter().map(Value::str).collect())
+                    }
+                    None => {
+                        // c:Src/Modules/parameter.c:2235-2298 partab[] — the
+                        // PM_HASHED magic assocs (aliases/functions/parameters/
+                        // options/commands/builtins/modules/widgets/nameddirs/…)
+                        // are real hash params in C, so `${aliases[@]}` takes the
+                        // ordinary getvaluearr path and enumerates their VALUES.
+                        // zshrs keeps them OUT of the executor's assoc storage
+                        // (they are synthesized on demand by `subst::assoc_get`),
+                        // so the `exec.assoc` probe above missed and this arm fell
+                        // through to the scalar fallback, which returned an EMPTY
+                        // array: `alias foo=bar; print -r -- "${aliases[@]}"` gave
+                        // nothing where zsh gives `bar man whence`. Every other
+                        // form already routed through paramsubst's own magic-assoc
+                        // arms; only the flagless `[@]`/`[*]` splat compiles to
+                        // BUILTIN_ARRAY_ALL and reached here.
+                        //
+                        // Placed in the `None` arm so a real indexed array or a
+                        // user-defined assoc of the same name still wins, and so
+                        // no ordinary array read pays for the PARTAB scan.
+                        //
+                        // Same gap on the PM_ARRAY side (c:2239-2291 partab[]
+                        // rows: reswords/dis_reswords/patchars/dis_patchars/…):
+                        // `getaparam` reads `pm->u.arr`, which is NULL on the
+                        // placeholder node zshrs installs for a getfn-backed
+                        // special, so `${reswords[@]}` splatted nothing. Route
+                        // through the canonical `arrays_get` getfn dispatch.
+                        if let Some(arr) = crate::ported::subst::arrays_get(&name) {
+                            return Value::Array(arr.into_iter().map(Value::str).collect());
+                        }
+                        if let Some(map) = crate::ported::subst::assoc_get(&name) {
+                            return Value::Array(map.values().cloned().map(Value::str).collect());
+                        }
+                        // Fall back to scalar lookup. zsh (unlike bash)
+                        // does NOT IFS-split a scalar variable in a for
+                        // list — `for w in $scalar` iterates ONCE with the
+                        // scalar value. Word-splitting requires either
+                        // sh_word_split option or explicit `${(s.,.)scalar}`.
+                        let val = exec.get_variable(&name);
+                        if val.is_empty() && !exec.has_scalar(&name) && env::var(&name).is_err() {
+                            // c:Src/subst.c:3480-3485 — `${arr[@]}` on a genuinely
+                            // UNSET parameter under NO_UNSET is a "parameter not set"
+                            // error (vunset > 0 && unset(UNSET)), exactly like the
+                            // scalar `$arr`, the `${arr[*]}` splat, and `${arr[1]}`
+                            // — all of which already fire it via GET_VAR. The `[@]`
+                            // splat path returned an empty array silently, so
+                            // `setopt NO_UNSET; print "${arr[@]}"` exited 0 where zsh
+                            // exits 1. A DECLARED-but-empty array (`arr=()`) resolves
+                            // to `Some(vec![])` above and never reaches here, so it
+                            // still splats to nothing without erroring — matching zsh.
+                            if opt_state_get("nounset").unwrap_or(false) {
+                                crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+                                crate::ported::utils::errflag.fetch_or(
+                                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                exec.set_last_status(1);
+                            }
+                            // c:Src/subst.c:3480-3485 — an UNSET parameter takes the
+                            // `vunset` arm: `val = dupstring("")` with isarr left at
+                            // 0. That is a SCALAR empty, so plan9 keeps the
+                            // surrounding text (`setopt rcexpandparam;
+                            // print -r -- "[${unset[@]}]"` → `[]`), unlike a
+                            // DECLARED-but-empty array (`arr=()`, matched by the
+                            // `Some(vec![])` arm above), which sets isarr and gets
+                            // the word deleted at c:4362.
+                            note_empty_is_scalar(true);
+                            Value::Array(vec![])
+                        } else if opt_state_get("shwordsplit").unwrap_or(false) {
+                            // c:3921 `aval = sepsplit(val, spsep, 0, 1)` — same
+                            // splitter as `${=name}` (Src/utils.c:3711 spacesplit),
+                            // not a naive `split().filter(non-empty)`: only the
+                            // IFS-WHITESPACE-derived empty fields are elided; the
+                            // `nulstring` ones an IFS-NON-whitespace separator makes
+                            // survive (c:Src/subst.c:36).
+                            let nulstring = crate::ported::zsh_h::Nularg.to_string();
+                            let parts: Vec<Value> =
+                                crate::ported::utils::sepsplit(&val, None, false)
+                                    .into_iter()
+                                    .filter_map(|w| {
+                                        if w == nulstring {
+                                            Some(Value::str(String::new()))
+                                        } else if w.is_empty() {
+                                            None // c:184-187 prefork uremnode
+                                        } else {
+                                            Some(Value::str(w))
+                                        }
+                                    })
+                                    .collect();
+                            Value::Array(parts)
+                        } else {
+                            Value::Array(vec![Value::str(val)])
+                        }
                     }
                 }
-            }
             })
         };
         let result = array_all(vm);
@@ -5728,11 +5730,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             {
                 let prev_var = crate::ported::params::getsparam(&name);
                 let prev_env = env::var(&name).ok();
-                exec.inline_env_stack
-                    .last_mut()
-                    .unwrap()
-                    .saved
-                    .push((name.clone(), prev_var, prev_env));
+                exec.inline_env_stack.last_mut().unwrap().saved.push((
+                    name.clone(),
+                    prev_var,
+                    prev_env,
+                ));
                 let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
                 // c:Src/params.c:5354
             }

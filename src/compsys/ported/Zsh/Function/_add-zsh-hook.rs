@@ -128,7 +128,10 @@ mod tests {
             specs[2],
             "(-L -d -U -z -k)-D[interpret HOOK as pattern to remove from the array]"
         );
-        assert_eq!(specs[3], "(-L -d -D)-U[suppress alias expansion for functions]");
+        assert_eq!(
+            specs[3],
+            "(-L -d -D)-U[suppress alias expansion for functions]"
+        );
         assert_eq!(
             specs[4],
             "(-L -d -D -k)-z[mark function for zsh-style autoloading]"
@@ -171,8 +174,9 @@ mod tests {
         // via `_wanted`, otherwise all functions via `_functions`.
         assert!(HOOKS_FN_SOURCE.starts_with("_add-zsh-hook_hooks() {"));
         assert!(HOOKS_FN_SOURCE.contains("(( $+opt_args[-d] ))"));
-        assert!(HOOKS_FN_SOURCE
-            .contains(r#"_wanted functions expl "installed hook" compadd -a - "$line[1]_functions""#));
+        assert!(HOOKS_FN_SOURCE.contains(
+            r#"_wanted functions expl "installed hook" compadd -a - "$line[1]_functions""#
+        ));
         assert!(HOOKS_FN_SOURCE.contains("_functions && return 0"));
         assert!(HOOKS_FN_SOURCE.contains("return 1"));
     }

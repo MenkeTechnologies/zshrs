@@ -152,8 +152,7 @@ mod tests {
         // leaves `desc` empty; `_describe` on an empty array fails, so
         // `ret` stays at its sh:3 initial value of 1.
         let _g = crate::test_util::global_state_lock();
-        crate::ported::zle::complete::INCOMPFUNC
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(_wakeup_capable_devices(&[]), 1);
     }
 }

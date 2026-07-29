@@ -34,7 +34,8 @@
 use crate::compsys::ported::_values::_values;
 
 /// sh:8-9 — mutual-exclusion group `d`: the "disk-like" device types.
-const D_GROUP: &str = "da sa printer proc worm cd scanner optical changer comm array enclosure floppy";
+const D_GROUP: &str =
+    "da sa printer proc worm cd scanner optical changer comm array enclosure floppy";
 
 /// sh:10 — mutual-exclusion group `i`: the interface types.
 const I_GROUP: &str = "IDE SCSI other";

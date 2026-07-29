@@ -1208,9 +1208,9 @@ fn parse_first_line(line: &str) -> CompFileDef {
                 let mut postpatterns: Vec<String> = Vec::new();
                 for word in &parts[start..] {
                     match *word {
-                        "-N" => ty = 0,  // sh:385-386
-                        "-p" => ty = 1,  // sh:387-388
-                        "-P" => ty = 2,  // sh:389-390
+                        "-N" => ty = 0, // sh:385-386
+                        "-p" => ty = 1, // sh:387-388
+                        "-P" => ty = 2, // sh:389-390
                         _ => match ty {
                             1 => patterns.push(word.to_string()),
                             2 => postpatterns.push(word.to_string()),
@@ -1226,9 +1226,7 @@ fn parse_first_line(line: &str) -> CompFileDef {
                     (true, true, true) => CompFileDef::None,
                     (false, true, true) => CompFileDef::CompDef(CompDef::Commands(commands)),
                     (true, false, true) => CompFileDef::CompDef(CompDef::Pattern(patterns)),
-                    (true, true, false) => {
-                        CompFileDef::CompDef(CompDef::PostPattern(postpatterns))
-                    }
+                    (true, true, false) => CompFileDef::CompDef(CompDef::PostPattern(postpatterns)),
                     _ => CompFileDef::CompDef(CompDef::Mixed {
                         commands,
                         patterns,

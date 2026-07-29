@@ -2009,18 +2009,26 @@ _arguments $opts
         // therefore ran `_dir_list` AND the `-default-` fallback, listing
         // every file instead of only directories.
         let cache = CompsysCache::memory().unwrap();
-        cache.set_patcomp("*/(init|rc[0-9S]#).d/*", "_init_d").unwrap();
+        cache
+            .set_patcomp("*/(init|rc[0-9S]#).d/*", "_init_d")
+            .unwrap();
         cache
             .set_postpatcomp("-value-,*PATH,-default-", "_dir_list")
             .unwrap();
 
         let pat = cache.patcomps_kv().unwrap();
-        assert_eq!(pat, vec![("*/(init|rc[0-9S]#).d/*".to_string(), "_init_d".to_string())]);
+        assert_eq!(
+            pat,
+            vec![("*/(init|rc[0-9S]#).d/*".to_string(), "_init_d".to_string())]
+        );
 
         let post = cache.postpatcomps_kv().unwrap();
         assert_eq!(
             post,
-            vec![("-value-,*PATH,-default-".to_string(), "_dir_list".to_string())]
+            vec![(
+                "-value-,*PATH,-default-".to_string(),
+                "_dir_list".to_string()
+            )]
         );
         assert_eq!(cache.postpatcomps_count().unwrap(), 1);
         assert_eq!(cache.patcomps_count().unwrap(), 1);
@@ -2033,8 +2041,12 @@ _arguments $opts
         // completion mapping set is dropped and `compinit` re-scans.
         // Emptying `comps` is what makes `compinit::cache_is_valid` false.
         let mut cache = CompsysCache::memory().unwrap();
-        cache.set_comps_bulk(&[("git".to_string(), "_git".to_string())]).unwrap();
-        cache.set_patcomp("-value-,*PATH,-default-", "_dir_list").unwrap();
+        cache
+            .set_comps_bulk(&[("git".to_string(), "_git".to_string())])
+            .unwrap();
+        cache
+            .set_patcomp("-value-,*PATH,-default-", "_dir_list")
+            .unwrap();
         // Pretend this DB predates the split.
         cache
             .conn
@@ -2043,7 +2055,11 @@ _arguments $opts
 
         cache.migrate_completion_tables().unwrap();
 
-        assert_eq!(cache.comp_count().unwrap(), 0, "stale comps must be dropped");
+        assert_eq!(
+            cache.comp_count().unwrap(),
+            0,
+            "stale comps must be dropped"
+        );
         assert_eq!(cache.patcomps_count().unwrap(), 0);
         assert_eq!(
             cache.get_metadata("completion_schema").unwrap().as_deref(),

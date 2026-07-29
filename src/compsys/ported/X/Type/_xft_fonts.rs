@@ -290,9 +290,11 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
                 ];
                 r2.extend(suf.clone());
                 r2.extend(
-                    ["thin", "bold", "regular", "medium", "semibold", "heavy", "roman"]
-                        .iter()
-                        .map(|s| s.to_string()),
+                    [
+                        "thin", "bold", "regular", "medium", "semibold", "heavy", "roman",
+                    ]
+                    .iter()
+                    .map(|s| s.to_string()),
                 );
                 if _requested(&r2) == 0 {
                     ret = 0;

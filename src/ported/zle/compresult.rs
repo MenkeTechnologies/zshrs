@@ -3457,7 +3457,7 @@ pub fn iprintm(
         // c:2263
         let s = m.str.as_deref().unwrap_or("");
         len = FdWrite(out).niceformat(s); // c:2266
-        // c:2270-2273 — append modec for file-completion groups.
+                                          // c:2270-2273 — append modec for file-completion groups.
         if let Some(grp) = g {
             if (grp.flags & CGF_FILES) != 0 && m.modec != '\0' {
                 let mut buf = [0u8; 4];

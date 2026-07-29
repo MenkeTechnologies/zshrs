@@ -291,9 +291,7 @@ mod dynamic_first_word_inline_env {
     /// (no POSIX_BUILTINS), so `eval` sees it and the caller does not.
     #[test]
     fn visible_in_eval_then_restored() {
-        assert_parity(
-            r#"cmd=eval; X=y $cmd 'print -r -- "in=[$X]"'; print -r -- "after=[$X]""#,
-        );
+        assert_parity(r#"cmd=eval; X=y $cmd 'print -r -- "in=[$X]"'; print -r -- "after=[$X]""#);
     }
 
     /// c:Src/exec.c:3285-3304 — prefork (arg expansion) runs BEFORE

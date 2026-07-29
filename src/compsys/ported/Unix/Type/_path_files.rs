@@ -141,7 +141,10 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
     let keys = gethkparam(name).unwrap_or_default();
     if !keys.is_empty() {
         let vals = gethparam(name).unwrap_or_default();
-        return keys.iter().position(|k| k == key).and_then(|i| vals.get(i).cloned());
+        return keys
+            .iter()
+            .position(|k| k == key)
+            .and_then(|i| vals.get(i).cloned());
     }
     get_arr(name)
         .chunks(2)
@@ -391,7 +394,8 @@ pub fn zparse_pathfiles(args: &[String]) -> Parsed {
 // ---- main ----------------------------------------------------------
 
 /// `_path_files` — file/directory completion entry point.
-pub fn _path_files(argv: &[String]) -> i32 {    // sh:3 — match/mbegin/mend are populated by _have_glob_qual.
+pub fn _path_files(argv: &[String]) -> i32 {
+    // sh:3 — match/mbegin/mend are populated by _have_glob_qual.
     let curcontext = get_str("curcontext");
     let ctx = format!(":completion:{}:", curcontext);
     let paths_ctx = format!(":completion:{}:paths", curcontext);
@@ -1758,15 +1762,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         // One name per metacharacter class the old filter tripped on.
         let names = [
-            "plain",
-            "a~orig",
-            "c#hash",
-            "d^caret",
-            "e*star",
-            "f?q",
-            "g[br]",
-            "i|pipe",
-            "j<lt>",
+            "plain", "a~orig", "c#hash", "d^caret", "e*star", "f?q", "g[br]", "i|pipe", "j<lt>",
         ];
         for n in &names {
             std::fs::write(dir.path().join(n), b"").expect("write");

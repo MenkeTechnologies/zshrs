@@ -351,7 +351,9 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_routing_domains" => Some(_routing_domains::_routing_domains),
         "_routing_tables" => Some(_routing_tables::_routing_tables),
         "_mac_applications" => Some(_mac_applications::_mac_applications),
-        "_mac_files_for_application" => Some(_mac_files_for_application::_mac_files_for_application),
+        "_mac_files_for_application" => {
+            Some(_mac_files_for_application::_mac_files_for_application)
+        }
         "_deb_architectures" => Some(_deb_architectures::_deb_architectures),
         "_deb_codenames" => Some(_deb_codenames::_deb_codenames),
         "_debbugs_bugnumber" => Some(_debbugs_bugnumber::_debbugs_bugnumber),
@@ -445,10 +447,7 @@ mod tests {
         let saved = crate::ported::params::getaparam("fpath").unwrap_or_default();
 
         // Stock dir only: the port answers.
-        crate::ported::params::setaparam(
-            "fpath",
-            vec![stock_dir.to_string_lossy().into_owned()],
-        );
+        crate::ported::params::setaparam("fpath", vec![stock_dir.to_string_lossy().into_owned()]);
         assert!(try_rust_dispatch("_setup").is_some(), "stock file → port");
 
         // The user's own copy earlier in fpath: the port steps aside.

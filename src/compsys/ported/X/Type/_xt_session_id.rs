@@ -57,9 +57,7 @@ mod tests {
         // sh:3 — args passed to `_xt_session_id` itself are irrelevant;
         //   it never inspects `$@`, always calling the fixed
         //   `_message -e ids 'session ID'` invocation.
-        let r = with_incompfunc(|| {
-            _xt_session_id(&["-X".to_string(), "ignored".to_string()])
-        });
+        let r = with_incompfunc(|| _xt_session_id(&["-X".to_string(), "ignored".to_string()]));
         // `_message` registers its tag at its OWN nesting level (comptags is
         // indexed by locallevel), so it succeeds and returns 0 even with no
         // tag offered by a caller — verified against `zsh -f` + compinit,

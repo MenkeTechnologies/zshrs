@@ -90,9 +90,7 @@ mod tests {
         //   forwarded to `_message -r`. No `messages` tag is
         //   registered in this headless context, so `_message`'s own
         //   `_tags messages || return 1` (sh:30) fires.
-        let r = with_incompfunc(|| {
-            _x_geometry(&["-X".to_string(), "custom geometry".to_string()])
-        });
+        let r = with_incompfunc(|| _x_geometry(&["-X".to_string(), "custom geometry".to_string()]));
         // `_message` registers its tag at its OWN nesting level (comptags is
         // indexed by locallevel), so it succeeds and returns 0 even with no
         // tag offered by a caller — verified against `zsh -f` + compinit,

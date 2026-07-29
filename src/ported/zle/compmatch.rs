@@ -4239,8 +4239,7 @@ mod tests {
         // `compadd -M 'r:|[_-]=* r:|=*'` builds it.
         *bm.lock().unwrap() = None;
         add_bmatchers(
-            crate::ported::zle::complete::parse_cmatcher("t", "r:|[_-]=* r:|=*")
-                .as_deref(),
+            crate::ported::zle::complete::parse_cmatcher("t", "r:|[_-]=* r:|=*").as_deref(),
         );
         let o = bld_parts("--debug", 7, 4, None, None).expect("cline for --debug");
         assert!(
@@ -4252,7 +4251,10 @@ mod tests {
         *bm.lock().unwrap() = None;
         add_bmatchers(crate::ported::zle::complete::parse_cmatcher("t", "r:|=*").as_deref());
         let n = bld_parts("--del", 5, 4, None, None).expect("cline for --del");
-        assert!(n.next.is_none(), "--del must arrive as a single unsplit node");
+        assert!(
+            n.next.is_none(),
+            "--del must arrive as a single unsplit node"
+        );
 
         // c:2712 — the first join seeds `ainfo->line` (compcore.c:3003).
         let seeded = join_clines(None, Some(o));

@@ -3187,8 +3187,8 @@ impl ShellExecutor {
             // runshfunc's "shfunc", which is why zsh reports
             // `shfunc:loadautofunc:…` down a chain of freshly autoloaded
             // completers where zshrs reported a flat `shfunc:shfunc:…`.
-            let _load_ctx = did_autoload
-                .then(|| crate::ported::exec::EvalContextFrame::push("loadautofunc"));
+            let _load_ctx =
+                did_autoload.then(|| crate::ported::exec::EvalContextFrame::push("loadautofunc"));
             // Branch: plugin override (ABI v4) → built-in Rust port →
             // fusevm Chunk (autoloaded shell body). All run INSIDE
             // doshfunc's scope so prologue/epilogue applies identically.
@@ -4936,15 +4936,15 @@ pub fn magic_special_shadowed(name: &str) -> bool {
     // Only `partab[]` names can be shadowed in this sense — an ordinary
     // user assoc / array has no special behind it, and its own paramtab
     // node legitimately carries no PM_SPECIAL.
-    if !PARTAB.iter().any(|e| e.name == name)
-        && !PARTAB_ARRAY.iter().any(|e| e.name == name)
-    {
+    if !PARTAB.iter().any(|e| e.name == name) && !PARTAB_ARRAY.iter().any(|e| e.name == name) {
         return false;
     }
-    crate::ported::params::paramtab().read().map_or(false, |tab| {
-        tab.get(name)
-            .is_some_and(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL) == 0)
-    })
+    crate::ported::params::paramtab()
+        .read()
+        .map_or(false, |tab| {
+            tab.get(name)
+                .is_some_and(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL) == 0)
+        })
 }
 
 pub fn partab_get(name: &str, key: &str) -> Option<String> {

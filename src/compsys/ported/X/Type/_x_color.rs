@@ -251,10 +251,7 @@ mod tests {
     fn populate_cache_is_a_noop_once_already_set() {
         // sh:13 — `$+_cache_x_colors` existence check short-circuits.
         let _g = crate::test_util::global_state_lock();
-        crate::ported::params::setaparam(
-            "_cache_x_colors",
-            vec!["custom".to_string()],
-        );
+        crate::ported::params::setaparam("_cache_x_colors", vec!["custom".to_string()]);
         populate_cache_if_unset();
         assert_eq!(
             getaparam("_cache_x_colors"),

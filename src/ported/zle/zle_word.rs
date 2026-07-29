@@ -934,10 +934,10 @@ pub fn emacsbackwardword(args: &[String]) -> i32 {
 pub fn backwarddeleteword(args: &[String]) -> i32 {
     // c:429
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:429
-    // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
-    // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
-    // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
-    // the guard must not stay alive across the widget calls below.
+                                                                 // !!! RUST-ONLY SCOPING !!! C reads `zmult` (`#define zmult
+                                                                 // (zmod.mult)`, Src/Zle/zle.h:267) as a plain global — no lock.
+                                                                 // zshrs holds `zmod` in a Mutex, and std Mutex is NOT reentrant, so
+                                                                 // the guard must not stay alive across the widget calls below.
     let n = {
         let __g_zmod = ZMOD.lock().unwrap();
         if __g_zmod.flags & MOD_MULT != 0 {

@@ -2456,7 +2456,7 @@ pub fn clprintm(
                 // c:1745
                 let _ = grp;
                 zcputs_slot(COL_SP); // c:1745 — zcputs(g->name, COL_SP)
-                // c:1747-1748 — pad with `width-2` spaces
+                                     // c:1747-1748 — pad with `width-2` spaces
                 let pad = (width - 2).max(0) as usize;
                 let pad_str = " ".repeat(pad);
                 let fd = SHTTY.load(Ordering::Relaxed);
@@ -4522,7 +4522,9 @@ pub fn domenuselect(
                 mline: MLINE.load(Ordering::SeqCst),
                 mlbeg: MLBEG.load(Ordering::SeqCst),
                 info,
-                amatches: amatches_g.get().and_then(|m| m.lock().ok().map(|v| v.clone())), // c:2696
+                amatches: amatches_g
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|v| v.clone())), // c:2696
                 pmatches: None,
                 lastmatches: None,
                 lastlmatches: None,
@@ -4561,7 +4563,7 @@ pub fn domenuselect(
             crate::ported::zle::zle_misc::fixsuffix(); // c:2724
             handleundo(); // c:2725
             crate::ported::zle::zle_tricky::VALIDLIST.store(0, Ordering::SeqCst); // c:2726
-            // c:2727 — amatches = pmatches = lastmatches = NULL.
+                                                                                  // c:2727 — amatches = pmatches = lastmatches = NULL.
             for g in [&amatches_g, &pmatches_g, &lastmatches_g] {
                 if let Some(m) = g.get() {
                     if let Ok(mut v) = m.lock() {

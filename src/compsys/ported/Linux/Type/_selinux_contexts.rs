@@ -169,10 +169,7 @@ mod tests {
 
     #[test]
     fn zparse_a_p_pulls_a_and_p_leaving_rest_unused() {
-        let (types, users) = zparse_a_p(&[
-            "-a".to_string(),
-            "file_type".to_string(),
-        ]);
+        let (types, users) = zparse_a_p(&["-a".to_string(), "file_type".to_string()]);
         assert_eq!(types, vec!["-a".to_string(), "file_type".to_string()]);
         assert!(users.is_empty());
 
@@ -221,6 +218,9 @@ mod tests {
         // return 1 outside completion context; assert the dispatch
         // path itself picks index 0 by checking PART_NAMES directly.
         assert_eq!(PART_NAMES[0], "users");
-        assert_eq!(_selinux_contexts(&["-a".to_string(), "file_type".to_string()]), 1);
+        assert_eq!(
+            _selinux_contexts(&["-a".to_string(), "file_type".to_string()]),
+            1
+        );
     }
 }

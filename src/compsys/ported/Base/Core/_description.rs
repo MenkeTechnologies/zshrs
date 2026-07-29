@@ -868,11 +868,7 @@ mod tests {
             setaparam("opts", vec!["-W".to_string(), "/dev".to_string()]);
 
             inc_locallevel(); // the scope `_alternative` runs in
-            let _ = _description(&[
-                "files".to_string(),
-                "expl".to_string(),
-                "file".to_string(),
-            ]);
+            let _ = _description(&["files".to_string(), "expl".to_string(), "file".to_string()]);
             let seen = getaparam("opts").unwrap_or_default();
             endparamscope();
             endparamscope();

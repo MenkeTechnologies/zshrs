@@ -115,7 +115,10 @@ mod tests {
             class_name_from_line("staff|Staff Members:\\"),
             Some("staff".to_string())
         );
-        assert_eq!(class_name_from_line("bareword"), Some("bareword".to_string()));
+        assert_eq!(
+            class_name_from_line("bareword"),
+            Some("bareword".to_string())
+        );
     }
 
     #[test]
@@ -147,10 +150,8 @@ staff|Staff Members:\\
 
     #[test]
     fn login_conf_d_basenames_lists_sorted_visible_entries() {
-        let dir = std::env::temp_dir().join(format!(
-            "zshrs_login_classes_test_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("zshrs_login_classes_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("zzz.conf"), b"").unwrap();

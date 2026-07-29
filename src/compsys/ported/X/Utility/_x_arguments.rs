@@ -160,7 +160,9 @@ mod tests {
         for ok in ["-C", "-R", "-W", "-s", "-w", "-O", "-Oxx"] {
             assert!(matches_leading_opt(ok), "{ok} should match");
         }
-        for no in ["-Wx", "-Cx", "-d", "-r", "--", "-", "", "-F", "-Fgrp", "spec"] {
+        for no in [
+            "-Wx", "-Cx", "-d", "-r", "--", "-", "", "-F", "-Fgrp", "spec",
+        ] {
             assert!(!matches_leading_opt(no), "{no} should not match");
         }
     }
@@ -214,11 +216,8 @@ mod tests {
     #[test]
     fn parse_leading_stops_at_first_nonopt() {
         // First non-matching word ends the loop; nothing after is consumed.
-        let (opts, remaining, rawret) = parse_leading(&[
-            "-W".to_string(),
-            "spec".to_string(),
-            "-C".to_string(),
-        ]);
+        let (opts, remaining, rawret) =
+            parse_leading(&["-W".to_string(), "spec".to_string(), "-C".to_string()]);
         assert_eq!(opts, vec!["-W"]);
         assert!(!rawret);
         assert_eq!(remaining, vec!["spec".to_string(), "-C".to_string()]);

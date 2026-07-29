@@ -198,10 +198,22 @@ mod tests {
 
     #[test]
     fn leading_opt_guard_matches_spec() {
-        for ok in ["-C", "-R", "-W", "-s", "-w", "-O", "-Oxx", "-F", "-Fgrp", "-F-"] {
+        for ok in [
+            "-C", "-R", "-W", "-s", "-w", "-O", "-Oxx", "-F", "-Fgrp", "-F-",
+        ] {
             assert!(matches_leading_opt(ok), "{ok} should match");
         }
-        for no in ["-Wx", "-Cx", "-d", "-r", "--", "-", "", "(-d -f)-d[x]", "spec"] {
+        for no in [
+            "-Wx",
+            "-Cx",
+            "-d",
+            "-r",
+            "--",
+            "-",
+            "",
+            "(-d -f)-d[x]",
+            "spec",
+        ] {
             assert!(!matches_leading_opt(no), "{no} should not match");
         }
     }
@@ -214,7 +226,8 @@ mod tests {
         // brace expansions flattened.
         assert!(with.contains(&"(-h --help)-h[display help and exit]".to_string()));
         assert!(with.contains(&"(-h --help)--help[display help and exit]".to_string()));
-        assert!(with.contains(&"(-V --version)--version[show version information and exit]".to_string()));
+        assert!(with
+            .contains(&"(-V --version)--version[show version information and exit]".to_string()));
 
         let without = build_fargs(false);
         assert_eq!(without.len(), 8);
@@ -259,8 +272,11 @@ mod tests {
     #[test]
     fn parse_leading_f_consumes_value_and_adds_a() {
         // `-F grp` → cvalsvar=grp, both words consumed, ` -A grp` in fsopt.
-        let (opts, remaining, rawret) =
-            parse_leading(vec!["-F".to_string(), "grp".to_string(), "spec".to_string()]);
+        let (opts, remaining, rawret) = parse_leading(vec![
+            "-F".to_string(),
+            "grp".to_string(),
+            "spec".to_string(),
+        ]);
         assert!(opts.is_empty());
         assert!(!rawret);
         assert_eq!(remaining[0], "spec");
@@ -273,8 +289,7 @@ mod tests {
     #[test]
     fn parse_leading_glued_f_value() {
         // `-Fgrp` glued form → same cvalsvar=grp.
-        let (_opts, remaining, _r) =
-            parse_leading(vec!["-Fgrp".to_string(), "spec".to_string()]);
+        let (_opts, remaining, _r) = parse_leading(vec!["-Fgrp".to_string(), "spec".to_string()]);
         assert_eq!(
             remaining[1],
             "*-o[specify mount options]:mount option:_fuse_values -A grp mount\\ option"
@@ -284,8 +299,7 @@ mod tests {
     #[test]
     fn parse_leading_dash_cvalsvar_suppresses_o_spec() {
         // `-F -` (glued as `-F-`) → cvalsvar="-", no -o spec appended.
-        let (_opts, remaining, _r) =
-            parse_leading(vec!["-F-".to_string(), "spec".to_string()]);
+        let (_opts, remaining, _r) = parse_leading(vec!["-F-".to_string(), "spec".to_string()]);
         assert_eq!(remaining, vec!["spec".to_string()]);
     }
 }

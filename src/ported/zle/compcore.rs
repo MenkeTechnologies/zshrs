@@ -628,14 +628,14 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     if fn_name.is_empty() {
         return;
     } // c:552 getshfunc(NULL)
-    // Re-assert the `$module_path` compiled default at completion entry IF it
-    // has gone empty. `MODULE_PATH` is PM_DONTIMPORT (no env var seeds it), and
-    // its array half is not re-derived when the completion widget scope
-    // re-establishes the tied colon-arrays the way PATH/FPATH are from the
-    // environment — so `$module_path` reads empty inside completers, breaking
-    // every `_files -W module_path` (e.g. `zmodload <tab>`). Only restore when
-    // empty so a user's `module_path+=(…)` customization is preserved.
-    // module_path_init is idempotent (OnceLock-cached MODULE_DIR).
+      // Re-assert the `$module_path` compiled default at completion entry IF it
+      // has gone empty. `MODULE_PATH` is PM_DONTIMPORT (no env var seeds it), and
+      // its array half is not re-derived when the completion widget scope
+      // re-establishes the tied colon-arrays the way PATH/FPATH are from the
+      // environment — so `$module_path` reads empty inside completers, breaking
+      // every `_files -W module_path` (e.g. `zmodload <tab>`). Only restore when
+      // empty so a user's `module_path+=(…)` customization is preserved.
+      // module_path_init is idempotent (OnceLock-cached MODULE_DIR).
     if crate::ported::params::getaparam("module_path")
         .map(|a| a.is_empty())
         .unwrap_or(true)
@@ -1089,22 +1089,22 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         let onm = nmatches.load(Ordering::Relaxed); // c:965
         let odm = diffmatches.load(Ordering::Relaxed); // c:965
         let osi = movefd(0); // c:965 movefd(0)
-        // c:965 moves the shell's stdin off fd 0 and c:1013/1035/1039 `redup(osi, 0)`
-        // puts it back, so the completion function runs with fd 0 FREE — and
-        // the very next `open()`/`opendir()` in that window is handed
-        // descriptor 0. zsh parks /dev/null there for exactly the same window
-        // (the idiom, with its rationale, is spelled out at
-        // Src/Zle/zle_main.c:1521-1526: "Many commands don't like having a
-        // closed stdin, open on /dev/null instead"); measured against zsh 5.9,
-        // `[[ /dev/fd/0 -ef /dev/null ]]` is TRUE inside a completion
-        // function, while zshrs left fd 0 closed.
-        //
-        // A closed fd 0 is not merely untidy here: `_path_files -W /dev -g
-        // '*(-/)'` calls `opendir("/dev")`, which lands on descriptor 0, so
-        // `/dev/fd/0` — the target of the `/dev/stdin` symlink — resolves to
-        // the very directory being scanned. The `-/` qualifier then stats a
-        // directory and admits `/dev/stdin`, and `mount /dev/<TAB>` listed a
-        // bogus `stdin@` next to `fd/` and `monotonic/`.
+                             // c:965 moves the shell's stdin off fd 0 and c:1013/1035/1039 `redup(osi, 0)`
+                             // puts it back, so the completion function runs with fd 0 FREE — and
+                             // the very next `open()`/`opendir()` in that window is handed
+                             // descriptor 0. zsh parks /dev/null there for exactly the same window
+                             // (the idiom, with its rationale, is spelled out at
+                             // Src/Zle/zle_main.c:1521-1526: "Many commands don't like having a
+                             // closed stdin, open on /dev/null instead"); measured against zsh 5.9,
+                             // `[[ /dev/fd/0 -ef /dev/null ]]` is TRUE inside a completion
+                             // function, while zshrs left fd 0 closed.
+                             //
+                             // A closed fd 0 is not merely untidy here: `_path_files -W /dev -g
+                             // '*(-/)'` calls `opendir("/dev")`, which lands on descriptor 0, so
+                             // `/dev/fd/0` — the target of the `/dev/stdin` symlink — resolves to
+                             // the very directory being scanned. The `-/` qualifier then stats a
+                             // directory and admits `/dev/stdin`, and `mount /dev/<TAB>` listed a
+                             // bogus `stdin@` next to `fd/` and `monotonic/`.
         if osi > 0 {
             unsafe {
                 let devnull = std::ffi::CString::new("/dev/null").unwrap();
@@ -2464,10 +2464,8 @@ pub fn set_comp_sep() -> i32 {
             .map(|g| g.clone())
             .unwrap_or_default();
         setaparam("words", words);
-        let _ = crate::ported::params::setiparam(
-            "CURRENT",
-            COMPCURRENT.load(Ordering::Relaxed) as i64,
-        );
+        let _ =
+            crate::ported::params::setiparam("CURRENT", COMPCURRENT.load(Ordering::Relaxed) as i64);
         for (param, global) in [
             ("PREFIX", &COMPPREFIX),
             ("SUFFIX", &COMPSUFFIX),
@@ -4137,9 +4135,18 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
     // `newmatches` must be marked whenever a group holds matches OR an
     // explanation-only message (`_message -e`), else permmatches early-returns
     // on its stale cache and the group never displays.
-    let flushed_any = !crate::comp_match_handles::matches_arc().lock().unwrap().is_empty()
-        || !crate::comp_match_handles::fmatches_arc().lock().unwrap().is_empty()
-        || !crate::comp_match_handles::expls_arc().lock().unwrap().is_empty();
+    let flushed_any = !crate::comp_match_handles::matches_arc()
+        .lock()
+        .unwrap()
+        .is_empty()
+        || !crate::comp_match_handles::fmatches_arc()
+            .lock()
+            .unwrap()
+            .is_empty()
+        || !crate::comp_match_handles::expls_arc()
+            .lock()
+            .unwrap()
+            .is_empty();
 
     let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
     // Copy ONLY the scalar fields to the amatches entry; its `l*` Arcs are the
@@ -6384,7 +6391,10 @@ mod tests {
         let mut dat = Cadata::default();
         dat.dummies = -1;
         let _ = addmatches(&mut dat, &["a".into(), "b".into()]);
-        let n = crate::comp_match_handles::matches_arc().lock().unwrap().len();
+        let n = crate::comp_match_handles::matches_arc()
+            .lock()
+            .unwrap()
+            .len();
         assert!(n >= 2);
     }
 

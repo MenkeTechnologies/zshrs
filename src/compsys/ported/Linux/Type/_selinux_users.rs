@@ -41,10 +41,7 @@ const DEFAULT_SEUSERS: &[&str] = &[
 /// falling back to the well-known default identity set.
 pub fn _selinux_users(args: &[String]) -> i32 {
     // sh:5  seusers=( ${(f)"$(_call_program selinux-users seinfo --flat -u)"} )
-    let _ = _call_program(&[
-        "selinux-users".to_string(),
-        "seinfo --flat -u".to_string(),
-    ]);
+    let _ = _call_program(&["selinux-users".to_string(), "seinfo --flat -u".to_string()]);
     let out = getsparam("REPLY").unwrap_or_default();
     let mut seusers: Vec<String> = out.lines().map(str::to_string).collect();
 

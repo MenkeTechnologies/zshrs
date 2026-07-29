@@ -96,7 +96,10 @@ pub fn _dispatch(args: &[String]) -> i32 {
         use crate::compsys::ported::shared::{
             declare_locals, declare_locals_keeping_value, PM_ARRAY,
         };
-        declare_locals(&["comp", "pat", "val", "name", "i", "ret", "str", "noskip"], 0);
+        declare_locals(
+            &["comp", "pat", "val", "name", "i", "ret", "str", "noskip"],
+            0,
+        );
         declare_locals_keeping_value(&["_compskip", "curcontext"]);
         declare_locals(&["service"], 0);
         declare_locals(&["match", "mbegin", "mend"], PM_ARRAY);

@@ -8445,11 +8445,7 @@ mod tests {
             .get_or_init(|| std::sync::Mutex::new(Vec::new()))
             .lock()
         {
-            *g = vec![
-                "cargo".to_string(),
-                "build".to_string(),
-                "--".to_string(),
-            ];
+            *g = vec!["cargo".to_string(), "build".to_string(), "--".to_string()];
         }
         COMPCURRENT.store(3, Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
@@ -10257,4 +10253,3 @@ mod tests {
         let _: i32 = get_cadef("", &[]);
     }
 }
-
