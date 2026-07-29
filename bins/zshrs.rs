@@ -1556,6 +1556,32 @@ pub fn zshrs_main() {
         std::process::exit(zsh::dap::run_dap(addr));
     }
 
+    // --tiers FILE: run the script, then report which fusevm execution tier
+    // took each of its chunks — asked of fusevm's own eligibility and cache
+    // predicates, so the answer comes from the compiler that would have done
+    // the work. The script's own output precedes the report.
+    if let Some(i) = args.iter().position(|a| a == "--tiers") {
+        let Some(path) = args.get(i + 1) else {
+            eprintln!("zshrs: --tiers: requires a script path");
+            std::process::exit(1);
+        };
+        let src = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("zshrs: --tiers: {path}: {e}");
+                std::process::exit(1);
+            }
+        };
+        match zsh::tiers::report(&src) {
+            Ok(r) => println!("{r}"),
+            Err(e) => {
+                eprintln!("zshrs: --tiers: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     // --dump-reflection: emit the JSON consumed by the IntelliJ "zshrs"
     // reflection tool window. One top-level key per category.
     if args.iter().any(|a| a == "--dump-reflection") {

@@ -151,6 +151,8 @@ Autoload function    ──► rkyv shard ──► deserialize Chunk ──► 
                          (microseconds)
 ```
 
+Enabling the JIT is not the same as being compiled by it. `zshrs --tiers script.zsh` runs the script and then asks fusevm's own predicates — `is_block_eligible`, `block_jit_is_compiled`, `trace_is_compiled`, `find_jit_region` — which tier took each chunk, reporting the script body and every function body it dispatched. Chunks that reach neither tier list the op kinds responsible, so the output is a diagnosis (what to make native next) rather than a verdict.
+
 The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/parse.c`); only the bytecode compiler is original Rust. The 4-tier `ZshProgram → ZshList → ZshSublist → ZshPipe → ZshCommand` AST is preserved verbatim from zsh, ensuring per-construct behavior parity. The bytecode compiler targets the same `Op` enum that [strykelang](https://github.com/MenkeTechnologies/strykelang) uses. Both frontends share fused superinstructions, extension dispatch, and the Cranelift JIT path.
 
 ### Execution Pipeline
