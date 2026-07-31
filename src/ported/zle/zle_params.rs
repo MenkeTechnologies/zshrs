@@ -1363,12 +1363,15 @@ mod isearch_tests {
 mod batch_getters_tests {
     use super::*;
 
+    /// c:514 — `$HISTNO` is an EVENT number and zsh numbers events from
+    /// 1, while `History.cursor` is a 0-based index into `entries`, so
+    /// the accessor reports `cursor + 1` (see the get_histno comment).
     #[test]
     fn get_histno_reads_history_cursor() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         history().lock().unwrap().cursor = 7;
-        assert_eq!(get_histno(), 7);
+        assert_eq!(get_histno(), 8);
     }
 
     #[test]
@@ -1642,7 +1645,11 @@ mod widget_killring_tests {
             num: 2,
             time: None,
         });
+        // Event numbers are 1-based, cursor is a 0-based index into
+        // `entries` (see get_histno) — event 1 parks the cursor at 0.
         set_histno(1);
+        assert_eq!(history().lock().unwrap().cursor, 0);
+        set_histno(2);
         assert_eq!(history().lock().unwrap().cursor, 1);
         // Beyond-end clamp: x > entries.len() → no change (early
         // return mirrors C's `quietgethist returns NULL → return`).

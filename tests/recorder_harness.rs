@@ -435,17 +435,18 @@ fn function_forms_all_capture() {
     // accepts. The lexer + parser were extended to handle the
     // keyword form `function NAME { body }` (including non-empty
     // bodies, multi-name declarations, and `-T`/`-U`-style flags).
-    // 13 events total:
+    // 14 events total (each verified against zsh 5.9):
     //   1× POSIX `name() { body }`
     //   1× keyword `function name { body }` (the previously-broken case)
     //   1× mixed `function name() { body }`
     //   1× empty-body POSIX
-    //   1× empty-body keyword
+    //   1× empty-body keyword (`{ }` — the brace pair must be spaced)
     //   3× multi-name keyword form (one declaration installs N names)
     //   1× keyword + `-T` flag (flag stripped, name kept)
-    //   1× keyword + `-U` flag
+    //   2× keyword + `-U`: `-U` is NOT a funcdef flag, so zsh installs
+    //      it as a function name alongside the real one
     //   3× `autoload` registrations across two declarations
-    assert_counts("20_function_forms.zsh", &[("function", 13)]);
+    assert_counts("20_function_forms.zsh", &[("function", 14)]);
 }
 
 #[test]

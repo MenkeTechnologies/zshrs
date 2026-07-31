@@ -3457,7 +3457,13 @@ pub fn setmstatus(
 
         // c:2228-2232 — replace line with sline.
         ZLEMETACS.store(0, Ordering::SeqCst); // c:2228
-        foredel(zlemetall, 0); // c:2229 CUT_RAW
+                                              // c:2229 — `foredel(zlemetall, CUT_RAW)`. The flag is REQUIRED on a
+                                              // metafied line: without it foredel takes the non-raw path and
+                                              // deletes NOTHING, so the `spaceinline` + copy below appended the
+                                              // saved line's head onto the text already there and left the tail as
+                                              // NUL padding — the command row rendered `cd /sbin^@^@^@^@` where zsh
+                                              // restores `cd /s`.
+        foredel(zlemetall, crate::ported::zle::zle_h::CUT_RAW); // c:2229
         spaceinline(sll); // c:2230
         if let Some(zml_mutex) = ZLEMETALINE.get() {
             if let Ok(mut g) = zml_mutex.lock() {
@@ -3469,6 +3475,16 @@ pub fn setmstatus(
                 }
             }
         }
+        // c:2230-2231 — on return from `spaceinline(sll)` + the memcpy the
+        // metafied line is exactly `sll` bytes long, so C's `zlemetall == sll`
+        // (in metafied mode `zlell` IS `zlemetall`, so `foredel`/`spaceinline`
+        // maintain it). zshrs's `spaceinline`/`foredel` only track the char
+        // `ZLELL`, leaving `ZLEMETALL` at the 0 `foredel` reached — which reads
+        // as "line not metafied" everywhere else, including `docomplete`'s
+        // exit bridge (zle_tricky.rs:1134). That bridge then skipped its
+        // `unmetafy_line()` and copied the EMPTY `compcore::ZLELINE` into the
+        // editor, blanking the command row on `tab,tab,s,ctrl-g`.
+        ZLEMETALL.store(sll, Ordering::SeqCst);
         ZLEMETACS.store(scs, Ordering::SeqCst); // c:2232
     } else {
         // c:2233
@@ -3750,6 +3766,107 @@ pub fn domenuselect(
     let _wasmeta: i32; // c:2394
     let mut status = String::new(); // c:2396
 
+    // ===== zshrs bridge: the single-line-buffer invariant =====
+    //
+    // No C counterpart, and none is possible: C's `domenuselect`
+    // (complist.c:2383) edits ONE line buffer. `zlemetaline` IS the editor's
+    // line — the widgets it dispatches (`selfinsert` at c:2758, and the
+    // `foredel`/`spaceinline` line rewrites at c:2455, c:2229, c:2665, c:2760,
+    // c:3140) mutate exactly the buffer that `zrefresh` redisplays, so no
+    // synchronisation is needed or expressible.
+    //
+    // This port SPLITS that buffer in two:
+    //   * the COMPLETION buffer — `compcore::ZLEMETALINE` (metafied) and
+    //     `compcore::ZLELINE`/`ZLECS`/`ZLELL` (unmetafied), which
+    //     `compcore::unmetafy_line`/`metafy_line` convert between, and which
+    //     everything in this file plus `docomplete` reads and writes;
+    //   * the EDITOR buffer — `zle_main::ZLELINE`/`ZLECS`/`ZLELL`, which is
+    //     what actually renders and what the ZLE widgets in `zle_misc` mutate.
+    //
+    // The two closures below re-establish "one buffer" at the only two places
+    // the split can be observed, and are the ONLY sync points in this
+    // function:
+    //
+    //   `push_line_to_editor` — the completion line became authoritative
+    //   (domenuselect rewrote it), so hand it to the editor. Folded into
+    //   `set_zlemetaline` below so every whole-line rewrite in this function
+    //   syncs by construction, and called once more after `setmstatus`
+    //   (c:2782), which performs the same rewrite internally.
+    //
+    //   `with_editor_line` — a dispatched widget is about to run and will
+    //   read/write the EDITOR buffer. Seed the editor from the completion
+    //   line, run the widget, then take the result back. This wraps the whole
+    //   interactive self-insert dispatch at c:2756-2761.
+    //
+    // Without them the typed filter character landed in a buffer the
+    // surrounding code never read (`saveline` came back as the pre-keystroke
+    // line: measured sll=4 for `cd /` where zsh had 5 for `cd /s`), and the
+    // undo/backward-delete-char restore at c:2747-2790 rewrote a line the
+    // editor never saw (`tab,tab,s,bs` left `cd /s` on the command row where
+    // zsh shows `cd /`).
+    let push_line_to_editor = || {
+        // Read whichever half of the completion buffer is live. C's
+        // domenuselect is metafied throughout (`METACHECK()` at c:2205), but
+        // this port dips in and out of meta around `menucomplete`, so accept
+        // both and convert with the canonical `stringaszleline` (the same call
+        // `unmetafy_line` makes at compcore.rs:5264) rather than assuming the
+        // metafied bytes are already valid editor chars.
+        let meta = ZLEMETALINE
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        let (chars, cs) = if !meta.is_empty() {
+            let mut out_cs: i32 = 0;
+            let v = crate::ported::zle::zle_utils::stringaszleline(
+                &meta,
+                ZLEMETACS.load(Ordering::SeqCst),
+                None,
+                None,
+                Some(&mut out_cs),
+            );
+            (v, out_cs)
+        } else {
+            let v: Vec<char> = crate::ported::zle::compcore::ZLELINE
+                .get_or_init(|| std::sync::Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.chars().collect())
+                .unwrap_or_default();
+            (
+                v,
+                crate::ported::zle::compcore::ZLECS.load(Ordering::SeqCst),
+            )
+        };
+        let ll = chars.len();
+        if let Ok(mut g) = crate::ported::zle::zle_main::ZLELINE.lock() {
+            *g = chars;
+        }
+        crate::ported::zle::zle_main::ZLECS.store((cs.max(0) as usize).min(ll), Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(ll, Ordering::SeqCst);
+    };
+
+    // Run `widget` with the EDITOR buffer standing in for C's single line
+    // buffer: seed it from the unmetafied completion line, dispatch, then copy
+    // the widget's result back. MUST be called between `unmetafy_line()` and
+    // `metafy_line()` — that is the window in which C's widgets run (c:2756).
+    let with_editor_line = |widget: &dyn Fn()| {
+        push_line_to_editor();
+        widget();
+        let ed: String = crate::ported::zle::zle_main::ZLELINE
+            .lock()
+            .map(|g| g.iter().collect())
+            .unwrap_or_default();
+        let ed_ll = ed.chars().count() as i32;
+        let ed_cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+        if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *g = ed;
+        }
+        crate::ported::zle::compcore::ZLECS.store(ed_cs.clamp(0, ed_ll), Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLELL.store(ed_ll, Ordering::SeqCst);
+    };
+
     // Replace the entire metafied ZLE line (`ZLEMETALINE`) with `content` and
     // move the metafied cursor to byte offset `cs`. This is the net effect of
     // C's recurring menu-select idiom
@@ -3775,6 +3892,9 @@ pub fn domenuselect(
         }
         ZLEMETALL.store(content.len() as i32, Ordering::SeqCst);
         ZLEMETACS.store(cs, Ordering::SeqCst);
+        // zshrs bridge — see `push_line_to_editor` above. In C this rewrite
+        // hits the buffer the editor redisplays; here it does not, so sync.
+        push_line_to_editor();
     };
 
     // c:2398-2399 — bail-out when no previous list. `hasoldlist` is
@@ -4453,10 +4573,16 @@ pub fn domenuselect(
 
         // ===== dispatch ladder (c:2641-3452) =====
         if name.is_empty() || name == "send-break" {
-            // c:2643-2647
+            // c:2644-2648 — `zbeep(); molbeg = -1; break;`. C leaves `broken`
+            // ALONE here (only the top-of-loop `noselect` bail at c:2586 and
+            // the unknown-widget arm at c:3414 ever set it). Setting it made
+            // the tail return `!noselect ^ acc` == 1 instead of the
+            // `(dat && !broken)` arm's `acc ? 1 : 2` == 2, and only a 2 makes
+            // `after_complete` (compcore.c:522-531) restore `origline` and run
+            // `clearlist = 1; invalidatelist()` — so aborting an interactive
+            // menu with ^G left the match list painted on screen.
             crate::ported::utils::zbeep();
             MOLBEG.store(-1, Ordering::SeqCst);
-            broken = 1;
             break;
         } else if nolist != 0
             && name != "undo"
@@ -4587,12 +4713,17 @@ pub fn domenuselect(
                 set_zlemetaline(&origline, ORIGCS.load(Ordering::SeqCst));
                 // c:2756-2761 — selfinsert operates on the UNMETAFIED line
                 // (zleline/zlecs); sync meta→non-meta, insert, then back.
+                // `with_editor_line` is the bridge that makes the dispatched
+                // widget see (and hand back) the same line C's single buffer
+                // would have given it — see its definition above.
                 crate::ported::zle::compcore::unmetafy_line();
-                if name == "self-insert" {
-                    crate::ported::zle::zle_misc::selfinsert(&[]); // c:2758
-                } else {
-                    crate::ported::zle::zle_misc::selfinsertunmeta(&[]); // c:2760
-                }
+                with_editor_line(&|| {
+                    if name == "self-insert" {
+                        crate::ported::zle::zle_misc::selfinsert(&[]); // c:2758
+                    } else {
+                        crate::ported::zle::zle_misc::selfinsertunmeta(&[]); // c:2760
+                    }
+                });
                 crate::ported::zle::compcore::metafy_line();
                 if let Some(lk) = MINFO.get() {
                     if let Ok(mut mi) = lk.lock() {
@@ -4620,7 +4751,45 @@ pub fn domenuselect(
 
             if !is_infer {
                 // c:2782-2784 — status = typed prefix + longest-match-so-far.
-                let _ = setmstatus(&mut status, &saveline, savell, savecs, None, None, None);
+                //
+                // The three out-params are what select setmstatus's `if (csp)`
+                // branch (c:2211): it reads the prefix from the LIVE line
+                // (`zlemetaline[wb..zlemetacs]`), which `menucomplete()` just
+                // above has filled in with the inserted match, then restores
+                // the saved line. Passing None took the `else` arm (c:2233)
+                // and reported `complastprefix`/`complastsuffix` — only the
+                // characters the user typed. Under `menu select interactive`,
+                // `cd /<TAB><TAB>s` therefore showed `interactive: /s[]`
+                // where zsh shows `interactive: /sbin[]`.
+                modeline = setmstatus(
+                    &mut status,
+                    &saveline,
+                    savell,
+                    savecs,
+                    Some(&mut modecs),
+                    Some(&mut modell),
+                    Some(&mut modelen),
+                );
+
+                // zshrs bridge — `setmstatus` performs the same whole-line
+                // rewrite `set_zlemetaline` does (c:2228-2232), restoring
+                // `saveline` (the line as the user typed it) over the line
+                // `menucomplete` just left the inserted match in. It is a free
+                // function, so it cannot carry the sync `set_zlemetaline`
+                // folds in — do it here. `docomplete` copies the COMPLETED
+                // line into the editor buffer on its way out
+                // (zle_tricky.rs:1137-1151), which runs BEFORE this restore,
+                // so without this the command row kept showing the inserted
+                // match (`cd /sbin`) while zsh shows the line as typed
+                // (`cd /s`).
+                //
+                // Deliberately does NOT call `unmetafy_line()`: that clears
+                // `ZLEMETALINE` and zeroes `ZLEMETALL`, leaving the loop
+                // unmetafied where C stays metafied (`METACHECK()`, c:2205).
+                // The next keystroke's undo-frame push (c:2691 `s->line =
+                // dupstring(zlemetaline)`) then captured an EMPTY line, so
+                // backward-delete-char restored nothing.
+                push_line_to_editor();
             }
 
             // c:2786-2810 — nothing left after filtering.
@@ -5480,6 +5649,15 @@ pub fn domenuselect(
         if let Some(c) = cell(p) {
             crate::ported::zle::compresult::do_single(&c); // c:3450
             MSELECT.store(c.gnum, Ordering::SeqCst); // c:3451
+
+            // zshrs bridge — see `push_line_to_editor` above. `do_single`
+            // rewrites the word in the COMPLETION buffer (`ZLEMETALINE` /
+            // `ZLEMETACS`, compresult.rs:1412); in C that IS the buffer
+            // `zrefresh` redisplays, so c:3450 needs no sync. Here the pick
+            // has to be handed to the EDITOR buffer or menu navigation never
+            // reaches the screen: measured `tab,tab,s,down` leaving the editor
+            // on `cd /s` while the completion buffer already held `cd /sbin/`.
+            push_line_to_editor();
         }
     }
 
@@ -5537,8 +5715,22 @@ pub fn domenuselect(
             NOSELECT.store(nos, Ordering::SeqCst);
         }
     }
-    if NOSELECT.load(Ordering::SeqCst) == 0 {
-        // c:3485-3512 (dat == NULL → the `!dat` branch is taken).
+    if NOSELECT.load(Ordering::SeqCst) == 0 && acc != 0 {
+        // c:3485 — `if (!noselect && (!dat || acc))`.
+        //
+        // `dat` is C's `Chdata` argument. Both C call sites are reproduced in
+        // this port and BOTH make it non-NULL here: `after_complete`
+        // (compcore.c:517) passes `&cdat` through `runhookdef(MENUSTARTHOOK)`,
+        // and the `menu-select` widget (c:3512, which is the only caller that
+        // passes NULL) is ported as a delegation to `menucomplete`
+        // (complist.rs `menuselect`) — so it too arrives here through the
+        // menu_start hook. The Rust hook signature carries a null `_dat`
+        // pointer only because `runhookdef` has no chdata plumbing yet; the
+        // C-visible value is non-NULL, hence `!dat` is false and the guard is
+        // `acc`. Treating it as NULL ran this final zrefresh on the abort path
+        // and repainted the list that `after_complete`'s `ret == 2` arm
+        // (compcore.c:528-530) is supposed to clear — measured as
+        // `tab,tab,s,ctrl-g` leaving `-<<directory>>-` + `sbin/` on screen.
         MLBEG.store(-1, Ordering::SeqCst);
         SHOWINGLIST.store(
             if validlist != 0 && nolist == 0 { -2 } else { 0 },
@@ -5558,11 +5750,22 @@ pub fn domenuselect(
     MLBEG.store(-1, Ordering::SeqCst); // c:3513
 
     let _ = step;
-    // c:3517 — `return (broken == 2 ? 3 : ((dat && !broken) ? ... :
-    //          (!noselect ^ acc)))`. dat is NULL in the direct-call port,
-    //          so the tail reduces to `!noselect ^ acc`.
+    // c:3517 — `return (broken == 2 ? 3 :
+    //                   ((dat && !broken) ? (acc ? 1 : 2) : (!noselect ^ acc)))`.
+    // `dat` is non-NULL on every path that reaches this function in this port
+    // — see the c:3485 comment above for why. The `acc ? 1 : 2` arm is what
+    // tells `after_complete` (compcore.c:522-531) that the menu was ABORTED
+    // rather than accepted: only a 2 makes it restore `origline` and set
+    // `clearlist` + `invalidatelist()`. Collapsing the tail to
+    // `!noselect ^ acc` returned 1 on abort, so the restore never ran.
     if broken == 2 {
         3
+    } else if broken == 0 {
+        if acc != 0 {
+            1
+        } else {
+            2
+        }
     } else {
         ((NOSELECT.load(Ordering::SeqCst) == 0) as i32) ^ acc
     }

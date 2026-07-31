@@ -5193,6 +5193,14 @@ mod tests {
     #[test]
     fn countprompt_recognises_canonical_inpar_outpar_nularg_bytes() {
         let _g = crate::test_util::global_state_lock();
+        // Pin the geometry: a test binary has no tty, so `adjustcolumns`
+        // (utils.rs:2312) falls through the TIOCGWINSZ probe to
+        // `$COLUMNS`. That is unset here only until some earlier test
+        // publishes `COLUMNS=0` (the honest value for a non-interactive
+        // shell), after which the c:1158 wrap loop collapses `w` to the
+        // last character's width on every step and this test measures
+        // wrapping instead of Inpar/Outpar accounting.
+        crate::ported::params::setiparam("COLUMNS", 80);
         let mut w = 0i32;
         let mut h = 0i32;
         // `abc%{...%}def` shape: `abc` (3 cols), Inpar+escape+Outpar
@@ -5227,6 +5235,8 @@ mod tests {
     #[test]
     fn countprompt_zero_width_for_rl_ignore_markers_from_expand_prompt() {
         let _g = crate::test_util::global_state_lock();
+        // Pin the geometry — see countprompt_recognises_canonical_… above.
+        crate::ported::params::setiparam("COLUMNS", 80);
         // `%{...%}` → `\x01...\x02`; visible text `ab` + `cd` = 4 columns.
         let expanded = expand_prompt("ab%{\x1b[31m%}cd");
         assert!(

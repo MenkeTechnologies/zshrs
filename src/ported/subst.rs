@@ -7280,6 +7280,26 @@ pub fn paramsubst(
                         None if down && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) => {
                             arr.first().cloned().unwrap_or_default() // c:2140
                         }
+                        None if down => {
+                            // Strict (non-KSHZEROSUBSCRIPT) subscript 0 — the
+                            // SAME c:2146-2171 VALFLAG_EMPTY range the literal
+                            // `a[0]` arm below takes, so it must resolve the
+                            // same way through `getarrvalue`: zero elements
+                            // for a non-empty array, but ONE empty element
+                            // when the array is empty (start stays negative →
+                            // `arrdup_max(nular, 1)`, c:2568-2570). Answering
+                            // a bare empty scalar here made
+                            // `${#${(@)a[(R)*]}}` report 0 on `a=()` where zsh
+                            // reports 1.
+                            let slice = crate::ported::params::getarrvalue(&arr, 0, 0);
+                            if slice.is_empty() {
+                                String::new()
+                            } else {
+                                isarr = 1;
+                                split_parts = Some(slice.clone()); // c:2596 (aval)
+                                slice.join(" ")
+                            }
+                        }
                         None => String::new(),
                     }
                 } else if let Some((flag_body, num_str)) = (|s: &str| -> Option<(String, String)> {
@@ -7551,6 +7571,47 @@ pub fn paramsubst(
                         (if ksh_arrays { i } else { i + 1 }).to_string()
                     } else if i >= 0 && (i as usize) < arr.len() {
                         arr[i as usize].clone()
+                    } else if idx_n == 0
+                        && !ksh_arrays
+                        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT)
+                    {
+                        // c:Src/params.c:2146-2171 — `a[0]` under strict
+                        // (non-KSHZEROSUBSCRIPT) rules is NOT an element
+                        // access. C flags the value VALFLAG_EMPTY, sets
+                        // `start = -1` and `com = 1`, i.e. it becomes a
+                        // RANGE `[-1,0)`. `getarrvalue` (c:2559-2570) then
+                        // resolves it against the array length:
+                        //   * non-empty → `v->start += arrlen` pushes start
+                        //     past `v->end`, so `v->end <= v->start` gives
+                        //     ZERO elements;
+                        //   * EMPTY     → start stays negative, so the
+                        //     `v->start < 0` arm returns `arrdup_max(nular, 1)`
+                        //     — ONE empty element.
+                        // Hence `${#a[0]}` is 1 for `a=()` and 0 for
+                        // `a=(one two)`. Returning a bare scalar here made
+                        // both 0, which also surfaced through the reverse
+                        // value-search: `a[(R)pat]` on an empty array
+                        // resolves to index 0 (c:1760 `return !down`), so
+                        // `${#${(@)a[(R)*]}}` reported 0 instead of 1.
+                        // `getarrvalue`'s bounds are 1-based, and (0,0) maps
+                        // to C's (v->start = -1, v->end = 0).
+                        //
+                        // Only the ONE-element (empty-array) outcome takes
+                        // the array shape. The zero-element outcome stays a
+                        // plain empty scalar: a quoted non-`(@)` expansion
+                        // joins its array to a scalar before the flags run
+                        // (c:3029-3036), so `${(qq)a[0]}` on a NON-empty
+                        // array must still print `''` — publishing an empty
+                        // `aval` there routes `(qq)` down the per-element arm
+                        // and prints nothing at all.
+                        let slice = crate::ported::params::getarrvalue(&arr, 0, 0);
+                        if slice.is_empty() {
+                            String::new()
+                        } else {
+                            isarr = 1;
+                            split_parts = Some(slice.clone()); // c:2596 (aval)
+                            slice.join(" ")
+                        }
                     } else {
                         String::new()
                     }
@@ -14446,9 +14507,20 @@ pub fn paramsubst(
                                     value = modified.join(" ");
                                     split_parts = Some(modified);
                                 }
+                            } else {
+                                // qt (quoted array-with-offset): the modifier
+                                // hits the unused scalar `val`, so the ARRAY
+                                // output is unchanged — but C still MAKES the
+                                // `modify(&val, &s)` call (c:3654 + c:3767),
+                                // and a bad modifier letter emits
+                                // "unrecognized modifier `c'" + sets errflag
+                                // there (c:3786-3791), aborting the whole
+                                // expansion. Skipping the call swallowed that
+                                // diagnostic: `"${arr:0:x}"` printed the whole
+                                // array where zsh errors out. Discard the
+                                // result, keep the side effects.
+                                let _ = modify(&value, mod_tail);
                             }
-                            // qt (quoted array-with-offset): modifier hits the
-                            // unused scalar val → array output unchanged.
                         } else {
                             value = modify(&value, mod_tail);
                         }

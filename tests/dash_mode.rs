@@ -31,12 +31,45 @@ fn run_dash_mode(script: &str) -> (String, i32) {
     )
 }
 
-/// Query an emulation option via the `$options` associative array —
-/// reliable across emulations, unlike bare `setopt`'s listing whose
-/// format shifts under sh/ksh/posixbuiltins.
+/// The `set -o` line for `name` — the option name as printed, plus its
+/// on/off state. Emitted verbatim so the dash-vs-sh comparison below can
+/// diff the raw text.
+///
+/// `$options[name]` is NOT usable here: subscripted parameter expansion
+/// is one of the zsh extensions DASH_STRICT rejects (`${options[x]}` →
+/// `bad substitution`, exit 1), so probing an option that way under
+/// `--dash` measures the strict-mode rejection, not the option. `set -o`
+/// is POSIX and legal in every emulation.
+fn set_o_line(args: &[&str], name: &str) -> String {
+    let out = Command::new(zshrs_bin())
+        .args(args)
+        .args(["-c", "set -o"])
+        .output()
+        .expect("zshrs failed to spawn");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|l| {
+            let word = l.split_whitespace().next().unwrap_or("");
+            word == name || word.strip_prefix("no") == Some(name)
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Whether `name` is on under `--dash`. zsh's `set -o` prints each
+/// option under whichever spelling is currently OFF (`shwordsplit off`
+/// when it is unset, `noshwordsplit off` when it is set) — verified
+/// byte-for-byte against `zsh -f -c 'emulate sh; set -o'`.
 fn option_on(name: &str) -> bool {
-    let (out, _) = run_dash_mode(&format!("print -r -- ${{options[{name}]}}"));
-    out.trim() == "on"
+    let line = set_o_line(&["--dash", "-f"], name);
+    let mut it = line.split_whitespace();
+    let (word, state) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
+    if word == name {
+        state == "on"
+    } else {
+        state == "off"
+    }
 }
 
 // ── dash is sh for options: EMULATE_SH presets must be set ──────────────
@@ -71,21 +104,10 @@ fn dash_mode_matches_sh_option_presets() {
         "shglob",
         "bsdecho",
     ] {
-        let dash = run_dash_mode(&format!("print -r -- ${{options[{opt}]}}")).0;
-        let sh = Command::new(zshrs_bin())
-            .args([
-                "--sh",
-                "-f",
-                "-c",
-                &format!("print -r -- ${{options[{opt}]}}"),
-            ])
-            .output()
-            .expect("spawn");
-        assert_eq!(
-            dash.trim(),
-            String::from_utf8_lossy(&sh.stdout).trim(),
-            "option `{opt}` differs between --dash and --sh"
-        );
+        let dash = set_o_line(&["--dash", "-f"], opt);
+        let sh = set_o_line(&["--sh", "-f"], opt);
+        assert!(!dash.is_empty(), "option `{opt}` missing from `set -o`");
+        assert_eq!(dash, sh, "option `{opt}` differs between --dash and --sh");
     }
 }
 

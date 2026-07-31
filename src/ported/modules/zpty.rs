@@ -1583,17 +1583,35 @@ mod tests {
         assert_ne!(r, 0, "invalid fd → nonzero error");
     }
 
+    /// Spawn a trivial child, reap it, and hand back its pid — a pid that
+    /// is guaranteed gone, so `kill(pid, 0)` fails with ESRCH.
+    ///
+    /// Needed because pid `0` is NOT a dead pid: POSIX `kill(0, sig)`
+    /// targets every process in the *caller's* process group, so it
+    /// succeeds and `checkptycmd` (c:538-542) never flips `cmd->fin`.
+    /// A ptycmd built with pid 0 therefore makes `ptywritestr`'s retry
+    /// loop (c:718) spin forever on a permanent `EBADF` write error.
+    fn reaped_pid() -> i32 {
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", ":"])
+            .spawn()
+            .expect("spawn /bin/sh");
+        let pid = child.id() as i32;
+        child.wait().expect("reap /bin/sh");
+        pid
+    }
+
     /// c:713 — `ptywritestr(cmd, "x", 1)` with closed master_fd → write(2)
-    /// returns -1 with EBADF; checkptycmd's `kill(pid, 0)` fails (pid=0
-    /// is invalid signal target on most platforms), so `cmd->fin` flips
-    /// true and the loop breaks. Final return: `all == 0 && fin == 1`
-    /// → `cmd->fin + 1 == 2` per c:739.
+    /// returns -1 with EBADF; checkptycmd's `kill(pid, 0)` fails with
+    /// ESRCH for the reaped pid, so `cmd->fin` flips true and the loop
+    /// breaks. Final return: `all == 0 && fin == 1` → `cmd->fin + 1 == 2`
+    /// per c:739.
     #[test]
     fn ptywritestr_invalid_fd_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
-        let mut cmd = ptycmd::new("dummy", vec![], -1, 0, false, false);
+        let mut cmd = ptycmd::new("dummy", vec![], -1, reaped_pid(), false, false);
         let r = ptywritestr(&mut cmd, b"data");
-        assert_ne!(r, 0, "closed fd → nonzero per c:739");
+        assert_eq!(r, 2, "closed fd + dead child → cmd->fin + 1 per c:739");
     }
 
     /// c:548 — `ptyread(nam, cmd, [], noblock=true, mustmatch=false)`

@@ -490,8 +490,15 @@ pub fn _description(args: &[String]) -> i32 {
             format!("d:{}", descr_val),
         ];
         zfmt_argv.extend(extra_args);
-        if argv.len() > 2 {
-            zfmt_argv.extend(argv[2..].iter().cloned());
+        // sh:89 `${(@)argv[2,-1]}` — after the sh:78 `shift 2` the shell's
+        // `$1` is the description and `$2` is the FIRST caller-supplied
+        // zformat spec, so 1-based `argv[2,-1]` is 0-based `argv[1..]`.
+        // Slicing from 2 here dropped that first spec: `_approximate`'s
+        // "e:$_comp_correct" never reached zformat, so the `corrections`
+        // group header rendered `(errors: )`, and `_expand`/`_user_expand`
+        // lost their only spec ("o:$word") entirely.
+        if argv.len() > 1 {
+            zfmt_argv.extend(argv[1..].iter().cloned());
         }
         // Pre-set "format" param so bin_zformat -F has a target var
         // even if its internal write expects an existing entry.

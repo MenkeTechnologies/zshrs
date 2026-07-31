@@ -1704,7 +1704,14 @@ fn setup_glob_fixture() -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create fixture dir");
     std::fs::create_dir_all(dir.join("dir1")).unwrap();
-    std::fs::create_dir_all(dir.join("dir2")).unwrap();
+    // Exactly ONE directory. A second one would stat to the SAME size as the
+    // first on ext4 (every directory is one 4096-byte block until it spills),
+    // and equal `(oL)` keys leave `gmatchcmp` returning 0 — zsh then sorts
+    // with a bare `qsort(3)` (Src/glob.c:1977), whose tie order is
+    // unspecified. That produced a phantom `[a-d]*(oL)` / `**/*(oL)`
+    // divergence in CI where the only difference was `dir1 dir2` vs
+    // `dir2 dir1`. Same reasoning as the dangling-symlink note below: every
+    // entry in this fixture must have a UNIQUE size.
 
     // (name, size, mtime-offset-seconds). Sizes all distinct; mtimes all distinct.
     let files: &[(&str, usize, i64)] = &[
@@ -1742,9 +1749,8 @@ fn setup_glob_fixture() -> PathBuf {
     let _ = std::fs::remove_file(&link);
     let dangling_target = "x".repeat(42);
     let _ = std::os::unix::fs::symlink(&dangling_target, &link);
-    // Stagger directory mtimes too.
+    // Stagger the directory mtime too.
     set_mtime(&dir.join("dir1"), base_epoch + 1000);
-    set_mtime(&dir.join("dir2"), base_epoch + 1100);
     dir
 }
 
@@ -3624,10 +3630,17 @@ fn gen_redir(seed: u64) -> Vec<String> {
     // A unique dir per case keeps parallel workers from colliding, and the
     // name is derived from the seed (not a PID/timestamp) so a replay of the
     // same seed produces byte-identical output.
-    let mut stmts = vec![
-        format!("d=${{TMPDIR:-/tmp}}/pf_redir_{seed}"),
-        "command rm -rf $d; command mkdir -p $d; cd $d".to_string(),
-    ];
+    // ONE statement, not two: the minimizer drops statements independently,
+    // and dropping a separate `d=…` line left `cd $d` behind as a BARE `cd`
+    // (an unset `$d` expands to nothing), which goes to $HOME — every
+    // following `> f` then wrote into the user's home directory. Keeping the
+    // assignment welded to the `cd` makes that unreachable, and
+    // `cd -- "$d" || exit 0` (the guarded form gen_dirstack already uses)
+    // refuses to fall back to $HOME even if the value is somehow empty.
+    let mut stmts = vec![format!(
+        "d=${{TMPDIR:-/tmp}}/pf_redir_{seed}; command rm -rf -- \"$d\"; \
+         command mkdir -p -- \"$d\"; cd -- \"$d\" || exit 0"
+    )];
 
     match rng.gen_range(0..9) {
         // NAMED-FD open FAILURE: `{var}<file` (missing file) / `{var}>file`
@@ -4590,8 +4603,14 @@ fn gen_builtin(seed: u64) -> Vec<String> {
 fn gen_cmdsub(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec![
-        format!("d=${{TMPDIR:-/tmp}}/pf_cs_{seed}"),
-        "command rm -rf $d; command mkdir -p $d; cd $d".to_string(),
+        // Assignment WELDED to the cd — see the same note in gen_redir. A
+        // dropped `d=…` line turned `cd $d` into a bare `cd` (→ $HOME) and
+        // the `> f` / `> g` / `> h` below then landed in the user's home
+        // directory.
+        format!(
+            "d=${{TMPDIR:-/tmp}}/pf_cs_{seed}; command rm -rf -- \"$d\"; \
+             command mkdir -p -- \"$d\"; cd -- \"$d\" || exit 0"
+        ),
         "printf 'l1\\nl2\\nl3\\n' > f; printf 'trail\\n\\n\\n' > g; printf 'noeol' > h".to_string(),
         "IFS=$' \\t\\n'".to_string(),
     ];
@@ -10739,12 +10758,15 @@ fn main() {
         // never run from the source tree — see setup_scratch_fixture.
         //
         // redir and cmdsub belong here for exactly the reason in that doc, and
-        // are the two modes most defined by redirecting. Both open with
-        // `d=…/pf_*_$seed; cd $d` and then write RELATIVE names (`> f1`,
-        // `> f2`, `> g`), so the probes are safe as written — but the
-        // minimizer drops statements, and dropping the `cd $d` line leaves
-        // `print -r -- teed > f1 > f2` running in whatever cwd the harness
-        // has, i.e. the repo root. Same failure the alias mode hit.
+        // are the two modes most defined by redirecting. Both open with a
+        // single `d=…/pf_*_$seed; …; cd -- "$d" || exit 0` statement and then
+        // write RELATIVE names (`> f1`, `> f2`, `> g`). The minimizer drops
+        // statements, so that cd must stay welded to its assignment: when the
+        // two were separate lines, dropping the `d=…` line turned `cd $d`
+        // into a BARE `cd` and the probe wrote `f`/`g`/`h` into the user's
+        // $HOME. With the cd gone entirely the writes land here, in the
+        // scratch fixture, instead of the repo root. Same failure the alias
+        // mode hit.
         Mode::Alias
         | Mode::Procsub
         | Mode::Errexit

@@ -6560,8 +6560,13 @@ mod tests {
     fn setmathvar_assoc_post_increment_mutates_hash_element() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("counts");
-        // Create assoc with apple=10.
-        let _ = crate::ported::params::assignsparam("counts[apple]", "10", 0);
+        // Create assoc with apple=10 — `sethparam` is the `typeset -A`
+        // equivalent. A bare `counts[apple]=10` on an UNSET name is not:
+        // zsh math-evaluates the subscript of a non-assoc, so it fails
+        // with "assignment to invalid subscript range" (verified against
+        // /bin/zsh) and no param is created.
+        let _ =
+            crate::ported::params::sethparam("counts", vec!["apple".to_string(), "10".to_string()]);
         // (( counts[apple]++ )) → read 10, write 11.
         let _ = setmathvar(
             "counts[apple]",
@@ -6585,8 +6590,15 @@ mod tests {
     fn setmathvar_assoc_assign_creates_slot_preserving_siblings() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("h");
-        let _ = crate::ported::params::assignsparam("h[a]", "1", 0);
-        let _ = crate::ported::params::assignsparam("h[b]", "2", 0);
+        let _ = crate::ported::params::sethparam(
+            "h",
+            vec![
+                "a".to_string(),
+                "1".to_string(),
+                "b".to_string(),
+                "2".to_string(),
+            ],
+        );
         let _ = setmathvar(
             "h[c]",
             mnumber {
@@ -6687,7 +6699,7 @@ mod tests {
     fn setmathvar_assoc_three_increments_compound_to_three() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("hc");
-        let _ = crate::ported::params::assignsparam("hc[x]", "0", 0);
+        let _ = crate::ported::params::sethparam("hc", vec!["x".to_string(), "0".to_string()]);
         for _ in 0..3 {
             // Read current then write read+1 — like (( hc[x]++ )).
             let cur = assoc_read("hc", "x")
@@ -6717,7 +6729,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("hv");
         // Create the assoc first (typeset -A hv).
-        let _ = crate::ported::params::assignsparam("hv[seed]", "0", 0);
+        let _ = crate::ported::params::sethparam("hv", vec!["seed".to_string(), "0".to_string()]);
         // (( hv[fresh]++ )) — fresh slot should become 1.
         let _ = setmathvar(
             "hv[fresh]",
@@ -6743,7 +6755,7 @@ mod tests {
     fn setmathvar_subscript_respects_noeval_guard() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("nev");
-        let _ = crate::ported::params::assignsparam("nev[k]", "1", 0);
+        let _ = crate::ported::params::sethparam("nev", vec!["k".to_string(), "1".to_string()]);
         M_NOEVAL.with(|n| n.set(1));
         let v = mnumber {
             l: 999,

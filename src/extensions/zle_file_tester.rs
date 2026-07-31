@@ -841,6 +841,8 @@ mod tests {
     // fish:478-525 — `test_ispath`.
     #[test]
     fn test_ispath() {
+        // Directory walks + the shared fd table — see test_is_potential_path.
+        let _g = crate::test_util::global_state_lock();
         let temp = TempDirWithCtx::new();
         let tester = temp.file_tester();
 
@@ -869,6 +871,7 @@ mod tests {
     // fish:527-555 — `test_iscdpath`.
     #[test]
     fn test_iscdpath() {
+        let _g = crate::test_util::global_state_lock();
         let temp = TempDirWithCtx::new();
         let tester = temp.file_tester();
 
@@ -888,6 +891,7 @@ mod tests {
     // fish:557-743 — `test_redirections`.
     #[test]
     fn test_redirections() {
+        let _g = crate::test_util::global_state_lock();
         // fish:559 — Note we use is_ok and is_err since we don't care about the IsFile part.
         let temp = TempDirWithCtx::new();
         let tester = temp.file_tester();
@@ -1053,6 +1057,14 @@ mod tests {
     // (fish uses a cwd-relative "test/" fixture tree).
     #[test]
     fn test_is_potential_path() {
+        // `is_potential_path` walks directories with `std::fs::read_dir`,
+        // whose open dirfd lives in the SAME process-wide fd space the
+        // ported fd-table tests (zclose / redup / movefd / sysopen) hand
+        // out and close. A concurrent stale close lands on the dirfd and
+        // std aborts in `ReadDir::drop` with "unexpected error during
+        // closedir: EBADF" — see the thread-safety guard in
+        // `utils::zclose`. Serialise against those tests.
+        let _g = crate::test_util::global_state_lock();
         let temp = TempDirWithCtx::new();
         let root = temp.tempdir.path();
 

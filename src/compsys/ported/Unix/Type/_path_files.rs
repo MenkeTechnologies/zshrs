@@ -509,6 +509,30 @@ pub fn _path_files(argv: &[String]) -> i32 {
         }
     }
 
+    // ZLE-special scoping (c:Src/Zle/complete.c:1307-1317 `addcompparams`,
+    // c:Src/Zle/zle_params.c:200-206 `makezleparams`): PREFIX / SUFFIX /
+    // IPREFIX / ISUFFIX are created `PM_SPECIAL|PM_REMOVABLE|PM_LOCAL` with
+    // `pm->level = locallevel + 1`, i.e. they belong to the scope of the
+    // TOP completion function. Any deeper shell function that ASSIGNS one
+    // gets a local shadow (c:Src/params.c:1130 — `oldpm->level ==
+    // locallevel` fails, so a new param with `pm->old = oldpm` is pushed),
+    // and popping that scope restores the old value through the special's
+    // gsu setter. Net effect upstream: `PREFIX=...` inside `_path_files` is
+    // visible to the builtins it calls but is UNDONE for its caller. That is
+    // why upstream _path_files never restores PREFIX explicitly and still
+    // leaves it untouched (measured: a probe completer around
+    // `_path_files -/` for `foo /sr` reads `/sr` before AND after in zsh).
+    //
+    // The port runs ported compsys functions as plain Rust fns against one
+    // global parameter store, so the assignments below leaked out: after the
+    // first (empty) matcher-list pass, PREFIX was left as `sr` instead of
+    // `/sr`, so the second pass completed relative to $PWD and `cd /sr<TAB>`
+    // answered `src/` instead of `/usr`. Snapshot here — AFTER sh:7/24-26/77
+    // `compset`, which writes compprefix/compiprefix through the BUILTIN and
+    // therefore is NOT scoped — and restore at the single exit below.
+    let entry_prefix = get_str("PREFIX");
+    let entry_suffix = get_str("SUFFIX");
+
     // sh:80-93 — resolve -W into prepaths.
     if !prepaths.is_empty() {
         let tmp1s = prepaths.get(1).cloned().unwrap_or_default();
@@ -1643,6 +1667,11 @@ pub fn _path_files(argv: &[String]) -> i32 {
         a.push("exppaths".into());
         compadd(a);
     }
+
+    // Pop the ZLE-special scope (see the snapshot comment above): upstream
+    // gets this for free from PM_LOCAL, the port has to do it by hand.
+    setsparam("PREFIX", &entry_prefix);
+    setsparam("SUFFIX", &entry_suffix);
 
     // sh:895 — return status.
     if nm != cs_i("nmatches") {

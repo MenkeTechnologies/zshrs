@@ -35,6 +35,17 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     };
+    // Seed the option table with zsh's own defaults. A test binary
+    // never runs `parseargs`/`setupvals`, so `OPTS_LIVE` starts EMPTY
+    // and every `isset(X)` reports false — including options zsh
+    // enables by default (UNSET, EXECOPT, PROMPTPERCENT, CASEMATCH…).
+    // That made `let ZL_X=5` fail with "parameter not set" (NO_UNSET
+    // semantics) whenever no earlier test had happened to populate the
+    // table as a side effect. `emulate("zsh", fully)` is the canonical
+    // populator (Src/options.c:533 → installemulation c:523), and
+    // running it per-test also rolls back whatever options the previous
+    // test flipped.
+    crate::ported::options::emulate("zsh", true);
     // `assignstrvalue` (and downstream `setsparam`/`setiparam`/etc.)
     // bails out at the top with `if unset(EXECOPT) return;`. The
     // option default is OFF in test builds, so without enabling it

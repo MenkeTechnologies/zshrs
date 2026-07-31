@@ -124,6 +124,12 @@ mod tests {
     #[test]
     fn empty_historywords_returns_one() {
         let _g = crate::test_util::global_state_lock();
+        // `compstate[nmatches]` is a LIVE GSU integer (complete.c:1411)
+        // backed by the `nmatches` counter — writing it through
+        // `set_compstate_str` is a no-op, the reader always consults the
+        // counter. Zero the counter itself so a non-zero count left by
+        // an earlier completion test doesn't turn "no matches" into 0.
+        crate::ported::zle::compcore::nmatches.store(0, std::sync::atomic::Ordering::Relaxed);
         setaparam("historywords", Vec::new());
         assert_eq!(_history(), 1);
     }

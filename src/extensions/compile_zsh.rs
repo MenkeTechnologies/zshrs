@@ -2221,7 +2221,28 @@ impl ZshCompiler {
             // from the split remainder). Non-assignment args
             // (`export PATH`) keep normal word semantics.
             let arg_is_assign = head_is_typeset_family && is_typeset_scalar_assign(word);
-            if head_is_typeset_family {
+            // c:Src/exec.c par_simple/addvars — the assignment (no-split)
+            // treatment belongs to the VALUE of a `NAME=VALUE` argument, not
+            // to every word of a BINF_ASSIGN command. A bare `$name` argument
+            // is an ordinary word, so an ARRAY there splats one word per
+            // element, exactly as it would for any other builtin.
+            //
+            // Bumping the depth unconditionally routed it through
+            // GET_VAR_DQ, which joins the array to one space-separated
+            // scalar. `_git_commands` (Completion/Unix/Command/_git:6503)
+            // declares its eleven category arrays with
+            //     local -a cmdtypes; cmdtypes=( main_porcelain_commands … )
+            //     local -a $cmdtypes
+            // so the second line arrived as ONE name — the whole list —
+            // and typeset rejected it:
+            //     _git_commands:local:3: not valid in this context:
+            //         main_porcelain_commands user_commands …
+            // which printed onto the command line during `git <TAB>`.
+            // A bare SCALAR must still not IFS-split (`v="a b"; local $v`
+            // is an error in zsh too), and that is unaffected: the flag
+            // only stops applying to the whole-word bare-reference shape.
+            let arg_is_bare_param = !arg_is_assign && word_is_bare_param_ref(word);
+            if head_is_typeset_family && !arg_is_bare_param {
                 self.assign_builtin_arg_depth += 1;
             }
             if arg_is_assign {
@@ -2231,7 +2252,7 @@ impl ZshCompiler {
             if arg_is_assign {
                 self.assign_context_depth -= 1;
             }
-            if head_is_typeset_family {
+            if head_is_typeset_family && !arg_is_bare_param {
                 self.assign_builtin_arg_depth -= 1;
             }
             // c:Src/options.c GLOB_SUBST + Src/subst.c — when an
@@ -13028,6 +13049,44 @@ fn render_cond(c: &crate::parse::ZshCond) -> String {
 /// NO IFS split. Used by the simple-command argv loop to put the
 /// whole word in assign context (`export ZPWR_TTY=$(tty)` must keep
 /// "not a tty" as one value, not split it into extra export names).
+/// Whether the whole word is a single bare parameter reference — `$name`
+/// or `${name}`, unquoted and with nothing around it.
+///
+/// Used to keep a BINF_ASSIGN builtin's bare `$arr` argument on the normal
+/// word path (array splats to one word per element) while `NAME=VALUE`
+/// arguments keep assignment semantics. Anything with a subscript, a flag
+/// block, quotes, or surrounding text is NOT this shape and keeps the
+/// assignment treatment.
+fn word_is_bare_param_ref(word: &str) -> bool {
+    let c: Vec<char> = word.chars().collect();
+    // The lexer replaces a bare `$` with the `Stringg` token (zsh.h:160,
+    // \u{85}); `${...}` keeps a literal `$`. Accept both spellings —
+    // matching only the literal one made `local -a $t` miss while
+    // `local -a ${t}` hit, which is the same word in zsh's grammar.
+    if c.len() < 2 || !(c[0] == '$' || c[0] == crate::ported::zsh_h::Stringg) {
+        return false;
+    }
+    let s: String = c[1..].iter().collect();
+    let b = s.as_bytes();
+    let inner: &[u8] = if b.first() == Some(&b'{') {
+        if b.last() != Some(&b'}') || b.len() < 3 {
+            return false;
+        }
+        &b[1..b.len() - 1]
+    } else {
+        b
+    };
+    if inner.is_empty() {
+        return false;
+    }
+    // Plain identifier only: no `[sub]`, no `(flags)`, no `:-` modifiers.
+    let first_ok = inner[0] == b'_' || inner[0].is_ascii_alphabetic();
+    first_ok
+        && inner
+            .iter()
+            .all(|c| *c == b'_' || c.is_ascii_alphanumeric())
+}
+
 fn is_typeset_scalar_assign(word: &str) -> bool {
     let chars: Vec<char> = word.chars().collect();
     // NAME — ident chars only (same rule as split_typeset_paren_init).

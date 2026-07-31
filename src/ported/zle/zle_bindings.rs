@@ -1421,12 +1421,15 @@ mod tests {
         assert_eq!(getkeystring("^a"), vec![0x01]);
     }
 
-    /// `\M-X` → 0x1b + 'X' (Meta-prefix).
+    /// `\M-X` sets the meta BIT on the following char — `t[-1] |= 0x80`
+    /// (Src/utils.c:7272-7274) — it does not expand to an ESC prefix.
+    /// `'X'` (0x58) | 0x80 = 0xd8, matching `printf %s $'\M-X'` under
+    /// zsh 5.9 byte-for-byte.
     #[test]
-    fn getkeystring_meta_dash_X_is_esc_X() {
+    fn getkeystring_meta_dash_X_sets_meta_bit() {
         let _g = crate::test_util::global_state_lock();
         let r = getkeystring(r"\M-X");
-        assert_eq!(r, vec![0x1b, b'X']);
+        assert_eq!(r, vec![b'X' | 0x80]);
     }
 
     /// Mixed: `\eOA` (escape + literal OA).

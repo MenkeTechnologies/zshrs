@@ -131,6 +131,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("WIDGET", "_history-complete-older");
         let _ = setsparam("LASTWIDGET", "");
+        // `compstate[nmatches]` is a LIVE GSU integer (complete.c:1411)
+        // backed by the `nmatches` counter, so writing it through
+        // `set_compstate_str` is a no-op — the reader ignores the stored
+        // hash for this one key. Zero the counter itself, or matches
+        // added by an earlier completion test make this widget report
+        // "found something" and return 0.
+        crate::ported::zle::compcore::nmatches.store(0, std::sync::atomic::Ordering::Relaxed);
         set_compstate_str("nmatches", "0");
         assert_eq!(_history_complete_word(), 1);
     }

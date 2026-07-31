@@ -812,9 +812,20 @@ pub fn docomplete(lst: i32) -> i32 {
         crate::ported::zle::compcore::ZLECS.store(ed_cs, Ordering::SeqCst);
         crate::ported::zle::compcore::ZLELL.store(ed_ll, Ordering::SeqCst);
     }
-    if crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) == 0 {
-        crate::ported::zle::compcore::metafy_line();
-    }
+    // c:636 — `metafy_line();`, UNCONDITIONAL in C.
+    //
+    // The block above has just refreshed `compcore::ZLELINE` from the editor
+    // buffer, so it is authoritative here and `ZLEMETALINE` must be re-derived
+    // from it. Skipping the call when `ZLEMETALL` was non-zero left a STALE
+    // metafied line in place for any completion that runs while a previous
+    // one's metafied state is still around — which is exactly the
+    // menuselect interactive-filter loop (complist.rs:2776-2779 unmetafies,
+    // calls menucomplete, re-metafies on every filter keystroke). The
+    // unambiguous match was inserted into that stale buffer, the caller's
+    // `metafy_line()` then re-derived it from the untouched `ZLELINE`, and
+    // the insert vanished: `interactive: /s[]` where zsh shows
+    // `interactive: /sbin[]`.
+    crate::ported::zle::compcore::metafy_line();
 
     // c:664-810 — `get_comp_string()` extracts the cursor word and
     // sets origword/lincmd/wb/we. The Rust port runs the (best-effort)

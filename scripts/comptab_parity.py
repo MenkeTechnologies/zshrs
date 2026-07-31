@@ -57,65 +57,39 @@ except ImportError:
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SENTINEL = "@CT@"
 
-KEYS = {
-    "tab": b"\t",
-    "btab": b"\x1b[Z",
-    "up": b"\x1b[A",
-    "down": b"\x1b[B",
-    "cr": b"\r",
-    "esc": b"\x1b",
-    "ctrl-c": b"\x03",
-}
+# Keystrokes, cases and key SEQUENCES all live in parity_corpus so this
+# harness and compsys_parity.py exercise the identical corpus — a case added
+# for one is automatically run by both.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from parity_corpus import (  # noqa: E402
+    CASES,
+    DEFAULT_SEQUENCES,
+    KEY_SEQUENCES,
+    KEYS,
+    cases_by_tag,
+    random_subset,
+    read_statements,
+    shrink,
+)
 
 # Panic / abort signatures either shell may emit onto its pty.
 CRASH_MARKERS = (
     "panicked at",
     "capacity overflow",
-    "RUST_BACKTRACE",
+    # The panic FOOTER, not the bare variable name: the harness exports
+    # RUST_BACKTRACE=1 into both children, so any completion listing that
+    # enumerates the environment (`unset <TAB>`, `$parameters`, `$commands[`)
+    # contains the literal string and was scored as a crash — on the
+    # REFERENCE zsh, no less, which turned real passes into fake failures and
+    # buried the genuine divergence on the same case.
+    "run with `RUST_BACKTRACE",
     "Segmentation fault",
     "Abort trap",
     "fatal runtime error",
 )
 
-BUILTIN_CORPUS = [
-    "",              # command position
-    "pr",            # partial command name — builtins + functions + externals
-    "git ",
-    "git chec",
-    "git log --",
-    "wget -",
-    "curl -",
-    "ssh -",
-    "tar -",
-    "find -",
-    "grep -",
-    "ls -",
-    "chmod ",
-    "kill -",
-    "cd /",
-    "man ",
-    "echo $PA",
-    "brew ",
-    "cargo ",
-    "rustup ",
-    "npm ",
-    "docker ",
-    "tmux ",
-    "ps -",
-    "du -",
-    "df -",
-    "date -",
-    "mkdir -",
-    "cp -",
-    "mv -",
-    "rm -",
-    "zsh -",
-    "jq -",
-    "unset ",
-    "typeset -",
-    "bindkey -",
-    "zstyle ",
-]
+# The case corpus now lives in parity_corpus.CASES (shared with
+# compsys_parity.py). `--corpus FILE` still overrides it.
 
 
 def resolve_dump(explicit):
@@ -201,6 +175,12 @@ def child_env():
     }
     if "HOME" in os.environ:
         env["HOME"] = os.environ["HOME"]
+    # Debug passthrough: the child env is built from scratch, so without this
+    # `ZSHRS_LOG=debug scripts/comptab_parity.py ...` silently produced no
+    # trace and a divergence could not be chased into the engine.
+    for k in ("ZSHRS_LOG", "RUST_LOG"):
+        if k in os.environ:
+            env[k] = os.environ[k]
     return env
 
 
@@ -400,6 +380,97 @@ def run_case(args, env, init_file, buf, keys):
     return status, detail, r, t, diffs
 
 
+def run_random_combos(args, env, dump, fpath_dirs):
+    """Fuzz RANDOM SUBSETS of the zstyle fixture.
+
+    Every `zstyle` line is independent, so any subset is a valid config — and
+    the bar is that any of them renders byte-identically, not just the curated
+    axes in scripts/parity_combos/. Each combo is reproducible from (seed,
+    index); a diverging combo is then SHRUNK to the minimal set of statements
+    that still diverges, because "these 97 styles disagree" is not actionable
+    and "these two do" is.
+    """
+    import random
+
+    statements = read_statements(args.zstyle)
+    cases = [c for c in cases_by_tag(args.tag)
+             if not (args.skip_optional and "optional" in c.tags)]
+    if args.combo_cases:
+        want = {c.strip() for c in args.combo_cases.split(",")}
+        cases = [c for c in cases if c.name in want or c.buffer in want]
+    seq = args.combo_sequence
+    keys = KEY_SEQUENCES[seq]
+
+    outdir = os.path.join(REPO, "target", f"parity-combos-{args.seed}")
+    os.makedirs(outdir, exist_ok=True)
+
+    print("# random-combo fuzz")
+    print("# fixture : %s (%d statements)" % (args.zstyle, len(statements)))
+    print("# combos  : %d   keep-prob=%.2f   seed=%d" %
+          (args.random_combos, args.combo_keep, args.seed))
+    print("# cases   : %d   sequence=%s (%s)" % (len(cases), seq, "+".join(keys)))
+    print("# outdir  : %s" % outdir)
+    print()
+
+    def init_for(subset):
+        path = os.path.join(outdir, "subset.zsh")
+        with open(path, "w") as f:
+            f.write("\n".join(subset) + "\n")
+        return build_init(dump, fpath_dirs, path)
+
+    def diverges(subset, only=None):
+        """True when ANY case (or just `only`) diverges under this subset."""
+        init = init_for(subset)
+        for case in (only or cases):
+            status, _detail, _r, _t, _d = run_case(args, env, init, case.buffer, keys)
+            if status != "PASS":
+                return case
+        return None
+
+    bad = 0
+    for n in range(args.random_combos):
+        rng = random.Random((args.seed << 20) ^ n)
+        subset = random_subset(statements, args.combo_keep, rng)
+        culprit = diverges(subset)
+        if culprit is None:
+            print("PASS combo %-4d (%3d statements)" % (n, len(subset)))
+            sys.stdout.flush()
+            continue
+
+        bad += 1
+        print("FAIL combo %-4d (%3d statements) on %r"
+              % (n, len(subset), culprit.buffer))
+        sys.stdout.flush()
+
+        # Does it still diverge with NO styles at all? If so the combo is
+        # irrelevant — the case diverges under compsys defaults — and shrinking
+        # would misleadingly name whichever statement survived last.
+        if diverges([], only=[culprit]) is not None:
+            print("     config-INDEPENDENT: diverges with zero zstyles set")
+            sys.stdout.flush()
+            continue
+
+        minimal = subset
+        if args.shrink:
+            minimal = shrink(
+                subset,
+                lambda sub: diverges(sub, only=[culprit]) is not None,
+                max_probes=args.shrink_probes,
+            )
+        path = os.path.join(outdir, "combo_%d_%d.zsh" % (args.seed, n))
+        with open(path, "w") as f:
+            f.write("# combo %d (seed %d) — diverges on %r with keys %s\n"
+                    % (n, args.seed, culprit.buffer, "+".join(keys)))
+            f.write("\n".join(minimal) + "\n")
+        print("     minimal set: %d statement(s) -> %s" % (len(minimal), path))
+        for s in minimal[:10]:
+            print("       %s" % s)
+        sys.stdout.flush()
+
+    print("\n# %d/%d combo(s) diverged" % (bad, args.random_combos))
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--zshrs", default=os.path.join(REPO, "target", "debug", "zshrs"))
@@ -412,7 +483,33 @@ def main():
     ap.add_argument("--zstyle", default=None, help="zstyle fixture sourced by both shells")
     ap.add_argument("--corpus", default=None, help="file of case buffers, one per line")
     ap.add_argument("--case", default=None, help="single ad-hoc case buffer")
-    ap.add_argument("--keys", default="tab", help="comma-separated keys per case")
+    ap.add_argument("--keys", default=None,
+                    help="comma-separated keys per case (overrides --sequences)")
+    ap.add_argument("--sequences", default=None,
+                    help="comma-separated names from parity_corpus.KEY_SEQUENCES, "
+                         "or 'default' / 'all'. Each case runs once per sequence.")
+    ap.add_argument("--tag", default=None,
+                    help="only run shared-corpus cases carrying this tag "
+                         "(cmd, path, opt, sub, param, builtin, glob, ...)")
+    ap.add_argument("--skip-optional", action="store_true",
+                    help="drop cases tagged `optional` (need a binary that may be absent)")
+    ap.add_argument("--random-combos", type=int, default=0, metavar="N",
+                    help="fuzz N random SUBSETS of --zstyle instead of running the "
+                         "fixture as-is. Any subset is a valid config, and the bar "
+                         "is that every one of them is byte-identical.")
+    ap.add_argument("--combo-keep", type=float, default=0.5,
+                    help="probability a statement survives into a random combo")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="RNG seed — (seed, combo index) reproduces a combo exactly")
+    ap.add_argument("--combo-cases", default=None,
+                    help="restrict random-combo runs to these case names/buffers")
+    ap.add_argument("--combo-sequence", default="tab1",
+                    help="which key sequence random combos are judged on")
+    ap.add_argument("--shrink", action="store_true", default=True,
+                    help="delta-debug a diverging combo to its minimal statement set")
+    ap.add_argument("--no-shrink", dest="shrink", action="store_false")
+    ap.add_argument("--shrink-probes", type=int, default=60,
+                    help="max shrink re-runs per failing combo")
     ap.add_argument("--rows", type=int, default=40)
     ap.add_argument("--cols", type=int, default=110)
     ap.add_argument("--settle", type=int, default=300)
@@ -428,10 +525,38 @@ def main():
                       else [args.zshrs, "--zsh", "-f", "-i"])
 
     dump = None if args.no_dump else resolve_dump(args.dump)
-    init_file = build_init(dump, user_fpath(), args.zstyle)
+    fpath_dirs = user_fpath()
     env = child_env()
-    keys = [k.strip() for k in args.keys.split(",") if k.strip()]
 
+    if args.random_combos > 0:
+        if not args.zstyle:
+            sys.exit("--random-combos needs --zstyle FIXTURE to draw subsets from")
+        if args.combo_sequence not in KEY_SEQUENCES:
+            sys.exit("unknown --combo-sequence: %s" % args.combo_sequence)
+        return run_random_combos(args, env, dump, fpath_dirs)
+
+    init_file = build_init(dump, fpath_dirs, args.zstyle)
+
+    # Which key sequences each case is replayed under. `--keys` pins one
+    # explicit sequence (the old single-shot behaviour); otherwise every case
+    # runs once per named sequence from the shared corpus.
+    if args.keys:
+        seq_names = ["adhoc"]
+        seq_keys = {"adhoc": [k.strip() for k in args.keys.split(",") if k.strip()]}
+    else:
+        sel = (args.sequences or "default").strip()
+        if sel == "all":
+            seq_names = list(KEY_SEQUENCES)
+        elif sel == "default":
+            seq_names = list(DEFAULT_SEQUENCES)
+        else:
+            seq_names = [s.strip() for s in sel.split(",") if s.strip()]
+            unknown = [s for s in seq_names if s not in KEY_SEQUENCES]
+            if unknown:
+                sys.exit("unknown sequence(s): %s" % ", ".join(unknown))
+        seq_keys = {n: KEY_SEQUENCES[n] for n in seq_names}
+
+    # Case buffers: ad-hoc, a corpus file, or the shared corpus.
     if args.case is not None:
         cases = [args.case]
     elif args.corpus:
@@ -439,21 +564,29 @@ def main():
             cases = [l.rstrip("\n") for l in f
                      if l.strip() and not l.lstrip().startswith("#")]
     else:
-        cases = BUILTIN_CORPUS
+        shared = cases_by_tag(args.tag)
+        if args.skip_optional:
+            shared = [c for c in shared if "optional" not in c.tags]
+        cases = [c.buffer for c in shared]
+
+    cells = [(buf, name) for buf in cases for name in seq_names]
 
     print("# mode   : %s (%s)" % (args.mode, " ".join(args.test_argv)))
     print("# dump   : %s" % (dump or "<none>"))
     print("# init   : %s" % init_file)
-    print("# geom   : %dx%d  settle=%dms  keys=%s" %
-          (args.rows, args.cols, args.settle, "+".join(keys)))
-    print("# cases  : %d" % len(cases))
+    print("# zstyle : %s" % (args.zstyle or "<none>"))
+    print("# geom   : %dx%d  settle=%dms" % (args.rows, args.cols, args.settle))
+    print("# cases  : %d x %d sequence(s) = %d cell(s)"
+          % (len(cases), len(seq_names), len(cells)))
+    print("# seqs   : %s" % ", ".join(seq_names))
     print()
 
     passed = 0
     failures = []
-    for buf in cases:
+    for buf, seq_name in cells:
+        keys = seq_keys[seq_name]
         status, detail, ref, test, diffs = run_case(args, env, init_file, buf, keys)
-        label = "%-6s %r" % (status, buf)
+        label = "%-6s %-18s %r" % (status, seq_name, buf)
         print(label + (("  (%s)" % detail) if detail else ""))
         sys.stdout.flush()
         if status == "PASS":
@@ -461,7 +594,7 @@ def main():
             if args.verbose:
                 print(render(test.grid))
             continue
-        failures.append((buf, status, detail, ref, test, diffs))
+        failures.append((buf, seq_name, status, detail, ref, test, diffs))
         print("  --- zsh (ref) ---")
         print(render(ref.grid or []))
         print("  --- zshrs ---")
@@ -473,9 +606,14 @@ def main():
                 print("          zshrs= %r" % (b,))
         print()
 
-    print("\n# %d passed, %d failed, %d total" % (passed, len(failures), len(cases)))
+    print("\n# %d passed, %d failed, %d cell(s)" % (passed, len(failures), len(cells)))
     if failures:
-        print("# failing cases: " + ", ".join(repr(f[0]) for f in failures))
+        # (sequence, buffer) so a failure is replayable verbatim:
+        #     comptab_parity.py --case '<buffer>' --keys <keys>
+        print("# failing cells:")
+        for buf, seq_name, _st, _dt, _r, _t, _d in failures:
+            print("#   --case %s --keys %s"
+                  % (shlex.quote(buf), ",".join(seq_keys[seq_name])))
     return 1 if failures else 0
 
 

@@ -18220,10 +18220,23 @@ mod tests {
     #[test]
     fn findcmd_absolute_path_skips_path_walk() {
         let _g = crate::test_util::global_state_lock();
+        // `PATH` is an exported special: writing it also rewrites the
+        // PROCESS environment, and `unsetparam` does not put the old
+        // value back. Leaving it empty broke every later test that
+        // spawns a helper by name (`Command::new("zsh")` → ENOENT), so
+        // snapshot and restore it here.
+        let saved_path = getsparam("PATH");
         // Empty $PATH to guarantee the walk would miss.
         setsparam("PATH", "");
         let resolved = findcmd("/bin/sh", 0, 0);
-        unsetparam("PATH");
+        match saved_path {
+            Some(p) => {
+                setsparam("PATH", &p);
+            }
+            None => {
+                unsetparam("PATH");
+            }
+        }
         assert_eq!(
             resolved.as_deref(),
             Some("/bin/sh"),
@@ -18248,11 +18261,20 @@ mod tests {
     #[test]
     fn findcmd_default_path_searches_hardcoded_dirs() {
         let _g = crate::test_util::global_state_lock();
+        // Snapshot/restore — see findcmd_absolute_path_skips_path_walk.
+        let saved_path = getsparam("PATH");
         // Poison $PATH so the normal path-walk would miss.
         setsparam("PATH", "/nonexistent/zshrs-test-poison");
         // `sh` exists in /bin on every POSIX system.
         let resolved = findcmd("sh", 0, 1);
-        unsetparam("PATH");
+        match saved_path {
+            Some(p) => {
+                setsparam("PATH", &p);
+            }
+            None => {
+                unsetparam("PATH");
+            }
+        }
         assert!(
             resolved.is_some(),
             "c:903-908 — default_path must search DEFAULT_PATH regardless of $PATH"
@@ -18388,6 +18410,14 @@ mod tests {
             argsalloc: 0,
         };
         let saved = emulation.load(Relaxed);
+        // `emulate` rewrites the WHOLE option table (installemulation,
+        // c:551-572), not just the emulation bits — `emulate csh` turns
+        // CPRECEDENCES on, `emulate sh` turns SHWORDSPLIT on, and so on.
+        // Restoring only `emulation` left those options set for every
+        // later test in the process (a leaked CPRECEDENCES made
+        // `4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2` evaluate to C's 259
+        // instead of zsh's 1591). Snapshot and restore the table too.
+        let saved_opts = crate::ported::options::opt_state_snapshot();
 
         // Each (name, expected_bits) — name covers the canonical
         // shell names AND their `r`-prefix / first-char variants.
@@ -18409,6 +18439,7 @@ mod tests {
             );
         }
         emulation.store(saved, Relaxed);
+        crate::ported::options::opt_state_restore(saved_opts);
     }
 
     /// c:7399 — `trap - SIGUSR1` (valid signal) MUST return 0, even

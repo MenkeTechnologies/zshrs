@@ -14633,10 +14633,15 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // C params.c:1750-1755 — reverse search starting at parsed-1 idx.
         // arr=(x y x y), beg=2 (parsed 3-1), reverse → walks 2,1,0; first
-        // exact 'x' is at idx 2 → 1-based "3".
+        // exact 'x' is at idx 2 → 1-based index 3.
         let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
-        let out = getarg("(b.3.eIR)x", Some(&arr), None, None).expect("Some");
+        // `I` reports that index...
+        let out = getarg("(b.3.eI)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "3");
+        // ...while `R` reports the matched VALUE, and wins when both are
+        // given (`${arr[(b:3:eIR)x]}` → `x` in zsh 5.9).
+        let out = getarg("(b.3.eIR)x", Some(&arr), None, None).expect("Some");
+        assert_eq!(val_str(out), "x");
     }
 
     #[test]
@@ -14886,6 +14891,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved_exec = opt_state_get("exec").unwrap_or(false);
         opt_state_set("exec", true);
+        // Start from a clean `compstate`: completion tests elsewhere in
+        // the binary leave one behind in the paramtab, and a stale
+        // non-assoc entry sends the write down the scalar-subscript path
+        // instead of the hash-backed one this test pins.
+        unsetparam("compstate");
         // Simulate the completion setup that populates $compstate before the
         // user completer widget runs (compcore::callcompfunc → set_compstate_str).
         paramtab_hashed_storage()

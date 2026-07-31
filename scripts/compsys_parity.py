@@ -59,18 +59,17 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROMPT_SENTINEL = "@ZP@"
 
 # ── keystroke vocabulary ──────────────────────────────────────────────────────
-KEYS = {
-    "tab": b"\t",
-    "btab": b"\x1b[Z",   # shift-tab / reverse menu
-    "up": b"\x1b[A",
-    "down": b"\x1b[B",
-    "right": b"\x1b[C",
-    "left": b"\x1b[D",
-    "cr": b"\r",
-    "esc": b"\x1b",
-    "ctrl-c": b"\x03",
-    "ctrl-g": b"\x07",
-}
+#
+# Keys, key SEQUENCES and the case corpus are shared with comptab_parity.py so
+# the two harnesses can never drift apart. See scripts/parity_corpus.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from parity_corpus import (  # noqa: E402
+    CASES as SHARED_CASES,
+    DEFAULT_SEQUENCES,
+    KEY_SEQUENCES,
+    KEYS,
+    cases_by_tag,
+)
 
 
 def resolve_dump(explicit: str | None) -> str | None:
@@ -375,6 +374,15 @@ def child_env() -> dict:
         # the compctl namespace dump for the duration of the comparison ONLY
         # — dispatch is untouched (`whence -w peach` still says builtin).
         "ZSHRS_HIDE_EXT_BUILTINS": "1",
+        # Autosuggestion / syntax-highlight ghost text has no zsh counterpart,
+        # so it lands in the grid as extra cells on the command-line row and
+        # every case with a history hit diffs on it — `echo $PATH` came back as
+        # `echo $PATH | head -c 30`, which reads like a completion bug and is
+        # not one. comptab_parity.py already suppressed this; the two harnesses
+        # must boot the children identically or their results are not
+        # comparable. Suppresses the fx LAYER only; the completion engine is
+        # untouched.
+        "ZSHRS_NATIVE_ZLE_FX": "0",
     }
     # Preserve HOME so the user's real `.zcompdump`/cache paths resolve.
     if "HOME" in os.environ:
@@ -424,16 +432,19 @@ def render_grid(rows):
     return "\n".join(f"  {i:2d}| {r}" for i, r in enumerate(rows)) or "  <empty>"
 
 
-BUILTIN_CASES = [
-    Case("cd_slash", "cd /", ["tab"], "top-level dir completion"),
-    Case("git_sub", "git ", ["tab"], "git subcommand list"),
-    Case("git_co", "git chec", ["tab"], "single-candidate unique completion"),
-    Case("ssh_dash", "ssh -", ["tab"], "option completion"),
-    Case("kill_sig", "kill -", ["tab"], "signal completion"),
-    Case("cd_menu_arrow", "cd /", ["tab", "down", "down"], "menu navigation via arrows"),
-    Case("empty_tab", "", ["tab"], "command-position completion (all commands)"),
-    Case("var_expand", "echo $PA", ["tab"], "parameter name completion"),
-]
+# The built-in case set is the SHARED corpus, one entry per (case, sequence)
+# pair so the existing `--only NAME` / `--list` UI still addresses a single
+# runnable unit. `--sequences` picks which sequences are expanded.
+def builtin_cases(sequences=None, tag=None, skip_optional=False):
+    seqs = sequences or DEFAULT_SEQUENCES
+    out = []
+    for c in cases_by_tag(tag):
+        if skip_optional and 'optional' in c.tags:
+            continue
+        for name in seqs:
+            out.append(Case(f'{c.name}.{name}', c.buffer,
+                            list(KEY_SEQUENCES[name]), c.note))
+    return out
 
 
 def parse_zstyle_statements(path):
@@ -697,11 +708,30 @@ def main():
     ap.add_argument("--keys", default="tab", help="comma keys for --case")
     ap.add_argument("--only", help="run one built-in case by name")
     ap.add_argument("--list", action="store_true", help="list built-in cases")
+    ap.add_argument("--sequences", default=None,
+                    help="comma-separated names from parity_corpus.KEY_SEQUENCES, "
+                         "or 'default' / 'all'. Each case is expanded once per sequence.")
+    ap.add_argument("--tag", default=None,
+                    help="only run shared-corpus cases carrying this tag")
+    ap.add_argument("--skip-optional", action="store_true",
+                    help="drop cases needing a binary that may be absent")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
+    sel = (args.sequences or "default").strip()
+    if sel == "all":
+        seq_names = list(KEY_SEQUENCES)
+    elif sel == "default":
+        seq_names = list(DEFAULT_SEQUENCES)
+    else:
+        seq_names = [x.strip() for x in sel.split(",") if x.strip()]
+        unknown = [x for x in seq_names if x not in KEY_SEQUENCES]
+        if unknown:
+            sys.exit("unknown sequence(s): " + ", ".join(unknown))
+    builtin = builtin_cases(seq_names, args.tag, args.skip_optional)
+
     if args.list:
-        for c in BUILTIN_CASES:
+        for c in builtin:
             print(f"{c.name:16s} {c.buffer!r:20s} {'+'.join(c.keys):20s} {c.note}")
         return 0
 
@@ -722,11 +752,12 @@ def main():
     if args.case is not None:
         cases = [Case("adhoc", args.case, [k.strip() for k in args.keys.split(",") if k.strip()])]
     elif args.only:
-        cases = [c for c in BUILTIN_CASES if c.name == args.only]
+        cases = [c for c in builtin if c.name == args.only
+                 or c.name.split('.')[0] == args.only]
         if not cases:
             sys.exit(f"no such case: {args.only}")
     else:
-        cases = BUILTIN_CASES
+        cases = builtin
 
     init_file = build_init_file(dump, fpath_dirs, zstyle_file)
     env = child_env()

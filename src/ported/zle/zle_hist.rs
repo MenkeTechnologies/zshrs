@@ -1037,10 +1037,24 @@ pub fn zle_setline() -> i32 {
         h.entries.get(h.cursor).map(|e| e.line.clone())
     };
     if let Some(line) = line {
-        let mut zl = ZLELINE.lock().unwrap();
-        zl.clear();
-        zl.extend(line.chars());
-        ZLECS.store(zl.len(), Ordering::SeqCst);
+        {
+            let mut zl = ZLELINE.lock().unwrap();
+            zl.clear();
+            zl.extend(line.chars());
+            ZLECS.store(zl.len(), Ordering::SeqCst);
+        }
+        // c:786 — `setlastline();`
+        crate::ported::zle::zle_utils::setlastline();
+        // c:787 — `clearlist = 1;`
+        //
+        // Replacing the line from history invalidates any completion list
+        // still on screen. Without this the listing stayed displayed after a
+        // history widget ran: `cd /<TAB>` then UP left the four `-<<directory>>-`
+        // rows under the prompt where zsh had cleared them, and the same
+        // showed on `git s<TAB>` + UP with the 30-row command list. `<DOWN>`
+        // did not show it because down-line-or-history from the last entry
+        // has nowhere to go and never reaches zle_setline.
+        CLEARLIST.store(1, Ordering::SeqCst);
         return 0;
     }
     1
@@ -1134,6 +1148,17 @@ pub fn zle_goto_hist(n: i32, skipdups: bool) -> bool {
         ZLECS.store(new_cs, Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
         LASTCOL.store(-1, Ordering::SeqCst);
+        // c:786-787 — C reaches the line replacement through
+        // `zle_setline()`, which ends with `setlastline(); clearlist = 1;`.
+        // This port inlines the replacement instead of calling it, so both
+        // side effects have to be reproduced here or a completion list stays
+        // on screen across history navigation: `cd /<TAB>` then UP left the
+        // four `-<<directory>>-` rows under the prompt (and `git s<TAB>` + UP
+        // left ~30) where zsh had cleared them. zrefresh only erases when
+        // CLEARLIST is set (zle_refresh.rs:1149) and nothing on this path set
+        // it — the flag read 0 with LISTSHOWN 1 at every refresh.
+        crate::ported::zle::zle_utils::setlastline();
+        CLEARLIST.store(1, Ordering::SeqCst);
     }
     true
 }

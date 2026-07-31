@@ -536,22 +536,38 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
             libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) // c:4741
         };
         if stream == -1 {
-            // c:4742 — `zwarn("%e: %s", errno, s);`
-            let errno = std::io::Error::last_os_error();
-            zerr(&format!("{}: {}", errno, s));
+            // c:4798 — `zwarn("%e: %s", errno, s);`
+            //
+            // `zwarn`, NOT `zerr`: `zerr` raises ERRFLAG_ERROR, which
+            // abandons the rest of the line, so `print -r -- "[$(<f)]"`
+            // against a missing `f` printed nothing and exited 1. zsh
+            // warns, substitutes empty, and runs the command — the
+            // observed output is `[]` with status 0.
+            //
+            // `%e` is zsh's errno formatter (`zsh_errno_msg`, utils.c:355),
+            // which lowercases strerror's first letter: "no such file or
+            // directory". Rust's `io::Error` Display renders "No such file
+            // or directory (os error 2)" instead.
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            zwarn(&format!(
+                "{}: {}",
+                crate::ported::utils::zsh_errno_msg(errno),
+                s
+            ));
             LASTVAL.store(1, Ordering::Relaxed);
             cmdoutval.store(1, Ordering::Relaxed);
-            return Vec::new(); // c:4744
+            return Vec::new(); // c:4800
         }
         // c:4746 — `retval = readoutput(stream, qt, &readerror);`
         let mut readerror: i32 = 0;
         let retval = readoutput(stream, qt, &mut readerror); // c:4746
         if readerror != 0 {
-            // c:4747
-            zerr(&format!(
-                "error when reading {}: {}", // c:4748
+            // c:4803-4805 — `zwarn("error when reading %s: %e", s, readerror);`
+            // Non-fatal for the same reason as the open failure above.
+            zwarn(&format!(
+                "error when reading {}: {}", // c:4804
                 s,
-                std::io::Error::from_raw_os_error(readerror)
+                crate::ported::utils::zsh_errno_msg(readerror)
             ));
             LASTVAL.store(1, Ordering::Relaxed);
             cmdoutval.store(1, Ordering::Relaxed);

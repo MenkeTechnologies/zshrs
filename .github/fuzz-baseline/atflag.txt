@@ -18,16 +18,13 @@
 # collapses a lone empty-string result to an empty array
 # (`${#${(A@)a[1,2]}}` is 0).
 #
-# One remaining known-gap class: a SEARCH subscript (`[(R)pat]`) on an EMPTY
-# array, observed through a length count. zsh returns a nular (a single
-# empty element) so `${#${(@)a[(R)*]}}` is 1 for `a=()`, where the port
-# returns 0. Unlike the range case (which flows through getarrvalue), the
-# search-subscript arm returns a SCALAR "" from the value-search path; making
-# it array-shaped nular requires seeding isarr/split_parts through that
-# scalar path — cross-cutting plumbing for a pathological case (a reverse
-# search of an EMPTY array, visible only via `${#}`). The bare/quoted splat
-# already matches (one empty word). Left as a known gap.
-a=(); print -rl -- "${#${(@)${(@)a[(R)*]}}}"
-a=(); print -rl -- "${#${(@)a[(R)*]}}"
-a=(); print -rl -- "${#${(@o)a[(R)*]}}"
-a=(); print -rl -- "${#${(o@)a[(R)*]}}"
+# ALSO FIXED (was the last known-gap class here): a SEARCH subscript
+# (`[(R)pat]`) on an EMPTY array, observed through a length count —
+# `${#${(@)a[(R)*]}}` is 1 for `a=()`. The root cause was not the search path
+# itself: a reverse miss resolves to subscript 0 (c:params.c:1760
+# `return !down`), and strict subscript 0 is not an element access at all —
+# c:2146-2171 flags it VALFLAG_EMPTY with `start = -1, com = 1`, so
+# `getarrvalue` resolves it as a RANGE and returns `arrdup_max(nular, 1)`
+# while the array is empty. Both the literal `a[0]` arm and the reverse-miss
+# arm now route through that (subst.rs), so this file carries NO allowlisted
+# signatures — any atflag divergence is a regression.
