@@ -538,7 +538,29 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
     let oldmenucmp_v = OLDMENUCMP.load(Ordering::Relaxed);
 
     // c:505 — `if (menucmp && !oldmenucmp) { ... }`.
-    if menucmp_v == 0 || oldmenucmp_v != 0 {
+    //
+    // `iforcemenu == -1` marks a completion driven from INSIDE
+    // `domenuselect`'s interactive filter loop (complist.rs:2776-2779 —
+    // C sets it at c:2773). C never reaches the restore below on that
+    // path because its `oldmenucmp` is still 1 from the outer menu:
+    // c:517's `runhookdef(MENUSTARTHOOK, …)` runs the whole interactive
+    // loop BEFORE c:520 clears `menucmp`, so every nested
+    // `before_complete` (c:462) snapshots a 1.
+    //
+    // In this port `menucmp` reads 0 at the nested `before_complete`
+    // (measured: menucmp=1 oldmenucmp=0 ifm=-1 at the gate) and
+    // `do_ambig_menu` only re-raises it later, so the gate opened and
+    // the `ret >= 2` arm below ran `foredel` + `inststr(origline)` —
+    // throwing away the match the same completion had just inserted.
+    // That is why `menu select interactive` reported the typed
+    // characters instead of the completion: the status line read the
+    // line AFTER it had been reverted (`interactive: /s[]` where zsh
+    // shows `interactive: /sbin[]`).
+    //
+    // The same `iforcemenu != -1` test is what C uses everywhere else to
+    // mean "not driven by the interactive menu-select widget" (c:763,
+    // c:832, c:1381, c:1437), so state it directly here.
+    if menucmp_v == 0 || oldmenucmp_v != 0 || iforcemenu.load(Ordering::Relaxed) == -1 {
         return 0; // c:535
     }
 
@@ -818,20 +840,64 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         .unwrap_or_default();
     set_compstate_str("list", &cl_value); // c:740
 
-    // c:768-785 — `$compstate[insert]` per (useline, usemenu).
+    // c:767-782 — `$compstate[insert]` per (useline, usemenu).
     let ul = useline.load(Ordering::Relaxed);
     let um = USEMENU.load(Ordering::Relaxed);
     let ins = if ul != 0 {
+        // c:768-776
         match um {
-            0 => "unambiguous",
+            // c:769-772 — `compinsert = (isset(AUTOMENU) ?
+            //                            "automenu-unambiguous" : "unambiguous");`
+            //
+            // AUTO_MENU is on in every emulation by default (options.c:90
+            // lists it as `OPT_ALL`), so this arm — the one taken by an
+            // ordinary first TAB — normally yields "automenu-unambiguous",
+            // NOT the bare "unambiguous" this port hardcoded.
+            //
+            // The distinction is not cosmetic: it is the only way the shell
+            // function layer learns that the next TAB is allowed to start
+            // menu completion. Completion/Base/Core/_main_complete:302 gates
+            // the whole MENUSELECT/MENUMODE block on
+            // `[[ "$compstate[insert]" = *menu* ]]`, which
+            // "automenu-unambiguous" satisfies and "unambiguous" does not
+            // (ported at _main_complete.rs:929-931), and
+            // Base/Completer/_match:53 tests for the value verbatim.
+            0 => {
+                if opt_isset("AUTOMENU") != 0 {
+                    "automenu-unambiguous"
+                } else {
+                    "unambiguous"
+                }
+            }
             1 => "menu",
             2 => "automenu",
             _ => "",
         }
     } else {
+        // c:777-780 — `compinsert = ""; kset &= ~CP_INSERT;`
         ""
     };
-    set_compstate_str("insert", ins); // c:770
+    // c:781 — `compinsert = (useline < 0 ? tricat("tab ", "", compinsert)
+    //                                    : ztrdup(compinsert));`
+    //
+    // `useline < 0` is set at c:310 from `wouldinstab`, i.e. TAB was
+    // pressed with nothing but blanks to its left AND a completion
+    // widget is installed (zle_tricky.c:192-196). The "tab " prefix is
+    // the ONLY signal `_main_complete` has for that case: sh:70-79 of
+    // Completion/Base/Core/_main_complete tests `compstate[insert] =
+    // tab*` and, with the default `insert-tab yes`, returns 0 before
+    // any completer runs, so the widget falls through to inserting a
+    // literal TAB. Dropping the prefix made zshrs run the full
+    // completer chain on an empty command line, which surfaced every
+    // diagnostic those completers emit (e.g. a user `_describe` over an
+    // unset array printing "compdescribe: invalid argument") onto a
+    // prompt where zsh prints nothing at all.
+    let ins = if ul < 0 {
+        format!("tab {}", ins) // c:781
+    } else {
+        ins.to_string()
+    };
+    set_compstate_str("insert", &ins); // c:781
 
     // c:790-794 — `$compstate[exact]` & `$compstate[exact_string]`.
     set_compstate_str(
@@ -1040,7 +1106,26 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     // menu_start hook → domenuselect) never started.
     let post_insert = get_compstate_str("insert").unwrap_or_default();
     if !post_insert.is_empty() {
-        if post_insert.contains("automenu") {
+        // c:861-864 — `else if (!strcmp(compinsert, "unambig") ||
+        //                       !strcmp(compinsert, "unambiguous") ||
+        //                       !strcmp(compinsert, "automenu-unambiguous"))
+        //                  useline = 1, usemenu = 0;`
+        //
+        // C compares these three EXACTLY, and does so *before* the
+        // `strpfx("menu", …)` / `strpfx("auto", …)` arms at c:885-888.
+        // The ordering became load-bearing once the entry value grew an
+        // "automenu" prefix (c:769-772 above): a bare substring test sees
+        // "automenu" inside "automenu-unambiguous" and would pick
+        // usemenu = 2, starting menu completion on the very FIRST TAB
+        // instead of inserting the unambiguous prefix and only arming the
+        // next TAB — the arming is already carried by `startauto`, set
+        // from AUTO_MENU at c:331 (line 193 in this file).
+        if post_insert == "unambig"
+            || post_insert == "unambiguous"
+            || post_insert == "automenu-unambiguous"
+        {
+            USEMENU.store(0, Ordering::Relaxed); // c:864 `usemenu = 0`
+        } else if post_insert.contains("automenu") {
             USEMENU.store(2, Ordering::Relaxed);
         } else if post_insert.contains("menu") {
             USEMENU.store(1, Ordering::Relaxed);
@@ -2560,27 +2645,33 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
         // c:2003 — `if ((arr = getaparam(nam)) || (arr = gethparam(nam)))
         //          arr = (incompfunc ? arrdup(arr) : arr);
         //          else if ((val = getsparam(nam))) { arr = {val, NULL}; }`
-        // Read directly from paramtab: arrays first, then hashed
-        // assoc-array values, then scalar wrapped in a 1-element array.
+        //
+        // Route through the canonical accessors, exactly the three C calls in
+        // that order. The previous port read `pm.u_arr` / `pm.u_str` straight
+        // out of the paramtab node, which is NOT where every parameter keeps
+        // its value:
+        //
+        //   * assoc arrays live in `paramtab_hashed_storage`, so `gethparam`
+        //     was effectively unimplemented here — the whole middle arm of the
+        //     C condition was missing;
+        //   * a plain array whose node carries its value anywhere other than a
+        //     populated `u_arr` (special/tied/magic params, and arrays
+        //     materialised by a Rust compsys port rather than by a shell
+        //     assignment) read back as None.
+        //
+        // A None here is reported by `cd_init` as `compdescribe: invalid
+        // argument: <name>` (computil.rs:1052, c:516) and aborts the whole
+        // description, so `_describe -t global-aliases 'global alias' ARR`
+        // printed that error onto the command line and then a second
+        // `compdescribe: no parsed state` from the following `-g` call.
+        // Only reachable when `list-grouped` is FALSE: the grouped path in
+        // `_describe` (sh:82) first copies each array into a local via
+        // `eval local _a_N=( "${ARR[@]}" )`, and those locals DO land in
+        // `u_arr`, which is why the same completion worked with the style on.
         queue_signals();
-        let result = {
-            let tab = match paramtab().read() {
-                Ok(t) => t,
-                Err(_) => {
-                    unqueue_signals();
-                    return None;
-                }
-            };
-            tab.get(nam).and_then(|pm| {
-                if let Some(arr) = pm.u_arr.as_ref() {
-                    Some(arr.clone()) // c:2004 getaparam
-                } else if let Some(s) = pm.u_str.as_ref() {
-                    Some(vec![s.clone()]) // c:2009 getsparam
-                } else {
-                    None
-                }
-            })
-        };
+        let result = crate::ported::params::getaparam(nam)
+            .or_else(|| crate::ported::params::gethparam(nam)) // c:2003
+            .or_else(|| crate::ported::params::getsparam(nam).map(|v| vec![v])); // c:2005-2008
         unqueue_signals(); // c:2022
         result
     }

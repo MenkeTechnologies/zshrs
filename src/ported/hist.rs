@@ -1440,7 +1440,17 @@ pub fn ihwbegin(offset: i32) {
         return;
     }
     let pos = chwordpos.load(SeqCst);
-    if pos % 2 != 0 {
+    // `pos > 0` is a RUST-ONLY floor on C's bare `if (chwordpos%2)`
+    // (c:1662). C is single-threaded, so `chwordpos` is an invariantly
+    // non-negative index into `chwords`; zshrs runs parallel lexers
+    // against the same atomic (see the race note in ihwend below), and
+    // an interleaving that drives it negative makes `-1 % 2 == -1`
+    // "odd", so this decrement walks it further down. Everything
+    // downstream then indexes `chwords[chwordpos]`, and a negative i32
+    // `as usize` wraps to ~2^64 — `words.resize(idx + 1, 0)` panicked
+    // with "attempt to add with overflow", poisoning `chwords` for the
+    // rest of the process. Under C's invariant the guard never fires.
+    if pos % 2 != 0 && pos > 0 {
         // c:1662 chwordpos%2
         chwordpos.fetch_sub(1, SeqCst); // c:1663
     }
@@ -1460,7 +1470,10 @@ pub fn ihwbegin(offset: i32) {
     // c:1666 — `if (pos < 0) pos = 0;`. The .max(0) clamp.
     let start = word_pos.max(0) as i16; // c:1658
     let mut words = chwords.lock().unwrap();
-    let idx = chwordpos.load(SeqCst) as usize;
+    // `.max(0)` before the cast — a negative i32 `as usize` wraps to a
+    // near-`usize::MAX` index and the `idx + 1` below then overflows.
+    // See the floor comment above.
+    let idx = chwordpos.load(SeqCst).max(0) as usize;
     if words.len() <= idx {
         words.resize(idx + 1, 0);
     }
@@ -2289,7 +2302,8 @@ pub fn ihwabort() {
         return;
     }
     let pos = chwordpos.load(SeqCst);
-    if pos % 2 != 0 {
+    // `pos > 0` floor — see the ihwbegin note (c:1662).
+    if pos % 2 != 0 && pos > 0 {
         chwordpos.fetch_sub(1, SeqCst);
     }
     hist_keep_comment.store(1, SeqCst);
@@ -2351,8 +2365,10 @@ pub fn ihwend() {
         }
         words[end_idx] = cur; // c:1694
         chwordpos.fetch_add(1, SeqCst);
-    } else {
+    } else if chwordpos.load(SeqCst) > 0 {
         // c:1700 — `chwordpos--;` "scrub that last word, doesn't exist".
+        // Guarded against a racing decrement having already reached 0 —
+        // see the ihwbegin note (c:1662).
         chwordpos.fetch_sub(1, SeqCst);
     }
 }

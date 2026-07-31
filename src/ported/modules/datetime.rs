@@ -675,16 +675,27 @@ mod tests {
             .and_then(|t| t.get(name).and_then(|p| p.u_str.clone()))
     }
 
+    /// Src/utils.c:3491-3496 — `%N` is nanoseconds, ALWAYS nine digits
+    /// (`sprintf(buf, "%09ld", nsec)`); there is no digit-count variant.
+    /// A `%<n>N` form is therefore not a zsh specifier: the digit falls
+    /// through to the literal copy and only the bare `N` follows, so
+    /// `%3N` renders as `3N` (verified byte-for-byte against zsh 5.9:
+    /// `strftime "[%N][%3N]" 1700000000 42` → `[000000042][3N]`).
     #[test]
     fn test_output_strftime_nanoseconds() {
         let _g = crate::test_util::global_state_lock();
         let ops = ops_for(&[b'n'], Some("OUT"));
-        let r = output_strftime("strftime", &["%9N", "1700000000", "123456789"], &ops, 0);
+        let r = output_strftime("strftime", &["%N", "1700000000", "123456789"], &ops, 0);
         assert_eq!(r, 0);
         assert_eq!(pt_get("OUT").as_deref(), Some("123456789"));
+        // Zero-padded to the full nine digits, never truncated.
+        let r = output_strftime("strftime", &["%N", "1700000000", "42"], &ops, 0);
+        assert_eq!(r, 0);
+        assert_eq!(pt_get("OUT").as_deref(), Some("000000042"));
+        // Digit prefix is not part of the specifier — passes through.
         let r = output_strftime("strftime", &["%3N", "1700000000", "123456789"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(pt_get("OUT").as_deref(), Some("123"));
+        assert_eq!(pt_get("OUT").as_deref(), Some("3N"));
     }
 
     #[test]

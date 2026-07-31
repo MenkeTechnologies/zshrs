@@ -7085,17 +7085,33 @@ mod tests {
         assert!(!table.is_loaded("nonexistent"));
     }
 
+    /// c:2812-2913 — `unload_module` clears the bound state (finish hook
+    /// runs, `u.linked` goes NULL, MOD_INIT_B/MOD_INIT_S drop) but only
+    /// *deletes* the record when the module has no deps (c:2910
+    /// `else if (!m->deps) delete_module(m)`). `zsh/complete` declares
+    /// `zsh/zle` as a dep (Src/Zle/complete.mdd, module.rs:1513), so its
+    /// record survives the unload with MOD_LINKED still set — which is
+    /// what `is_loaded()` reports. `is_bound()` is the predicate that
+    /// tracks C's "actually loaded" test (`m->u.handle && !MOD_UNLOAD`,
+    /// c:2637), so that is what flips here.
     #[test]
     fn test_load_unload() {
         let _g = crate::test_util::global_state_lock();
         let mut table = modulestab::new();
         assert!(table.is_loaded("zsh/complete"));
+        table.load_module("zsh/complete");
+        assert!(table.is_bound("zsh/complete"));
 
         table.unload_module("zsh/complete");
-        assert!(!table.is_loaded("zsh/complete"));
+        assert!(!table.is_bound("zsh/complete"));
+        assert!(
+            table.is_loaded("zsh/complete"),
+            "record must survive: zsh/complete has deps (c:2910)"
+        );
 
         table.load_module("zsh/complete");
         assert!(table.is_loaded("zsh/complete"));
+        assert!(table.is_bound("zsh/complete"));
     }
 
     #[test]
@@ -7813,11 +7829,16 @@ mod modname_tests {
         // Not present → 2 / 0 per FEAT_IGNORE.
         assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 2);
         assert_eq!(t.del_autocond("zshrs_test_cond_x", FEAT_IGNORE), 0);
-        // Seed and delete.
-        t.autoload_conditions
-            .insert("zshrs_test_cond_x".to_string(), "mymod".to_string());
+        // Seed through the C counterpart `add_autocond` (c:791) — it is
+        // what puts the conddef in CONDTAB. A bare `autoload_conditions`
+        // insert is NOT enough: `del_autocond` looks the name up with
+        // `getconddef` (c:820), which only ever walks CONDTAB, so a
+        // ledger-only entry still reports "no such" (2).
+        assert_eq!(t.add_autocond("zshrs_test_cond_x", "mymod", 0), 0);
         assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 0);
         assert!(!t.autoload_conditions.contains_key("zshrs_test_cond_x"));
+        // Removed from CONDTAB too → back to "no such".
+        assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 2);
     }
 
     /// `Src/module.c:1240-1255` — `del_autoparam` parallel contract.

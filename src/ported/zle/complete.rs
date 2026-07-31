@@ -882,6 +882,26 @@ pub fn bin_compadd(
         IN_COMPADD_OVERRIDE.with(|g| g.set(false));
         return rc;
     }
+    // sh:_approximate:57-69 — argv rewrite hook. Runs BEFORE the PREFIX
+    //   injection below because the shell function tests the UNINJECTED
+    //   `$PREFIX$SUFFIX` at sh:58 and prepends `$_correct_expl` at sh:69
+    //   before the real builtin ever sees the word.
+    let shadow_argv: Vec<String>;
+    let argv: &[String] = {
+        let hook = *COMPADD_ARGV_SHADOW.lock().unwrap();
+        match hook {
+            Some(f) => match f(argv) {
+                // sh:58 `[[ … ]] && return` — `return` with no argument
+                //   yields the status of the `[[ ]]` that guarded it, i.e. 0.
+                None => return 0,
+                Some(v) => {
+                    shadow_argv = v;
+                    &shadow_argv
+                }
+            },
+            None => argv,
+        }
+    };
     // sh:_approximate:57-72 — process-wide PREFIX-injection hook.
     //   When set, `(#a${_comp_correct})` (or another caller-supplied
     //   prefix) is prepended to `$PREFIX` for the duration of this
@@ -969,6 +989,24 @@ pub fn clear_compadd_prefix_injector() {
     *COMPADD_PREFIX_INJECTOR.lock().unwrap() = None;
 }
 
+/// sh:_approximate:54-70 — argv rewrite hook for the `compadd()` shell
+/// function `_approximate` installs over the builtin. Returning `None`
+/// means "swallow this call" (sh:57-58's bare `return`); returning
+/// `Some(v)` runs the real builtin with `v` as argv (sh:69's
+/// `compadd@_approximate "$_correct_expl[@]" "$@"`).
+///
+/// A plain fn pointer rather than a boxed closure: the hook reads all
+/// of its state (`_comp_correct`, `_correct_expl`, `_correct_group`)
+/// from shell parameters, exactly as the shell function does.
+pub type CompaddArgvShadow = fn(&[String]) -> Option<Vec<String>>;
+
+/// The installed argv shadow, if any. See [`CompaddArgvShadow`].
+/// Written directly by the installer (`_approximate`) — no setter pair,
+/// because a Rust-only accessor with no C counterpart cannot live under
+/// `src/ported/` (build.rs port gate).
+pub static COMPADD_ARGV_SHADOW: std::sync::Mutex<Option<CompaddArgvShadow>> =
+    std::sync::Mutex::new(None);
+
 /// Enable [`COMPADD_TRACE_ACTIVE`] — every subsequent `bin_compadd`
 /// call records its argv into `_complete_help_funcs` and returns 1.
 pub fn set_compadd_trace(active: bool) {
@@ -989,6 +1027,8 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
     // 5000+ commands instead of just those matching the typed prefix.
     dat.aflags = CAF_MATCH;
     dat.dummies = -1;
+    // c:614 — `char *mstr = NULL; /* argument of -M options, accumulated */`.
+    let mut mstr: Option<String> = None;
     let mut idx = 0usize;
     // c:632-820 — flag loop. C iterates EACH CHARACTER inside every `-…`
     // argv element (`for (p = *argv+1; *p; p++)`), so bundled flags like
@@ -1143,13 +1183,25 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                     }
                 }
                 'M' => {
-                    // c:676 -M
+                    // c:723-726 / c:826-834 — `-M` does NOT parse here. C
+                    // collects EVERY `-M` argument into `mstr`, space-joined
+                    // (`tricat(mstr, " ", m)`), and calls parse_cmatcher once
+                    // at c:842. The port parsed each `-M` on the spot and
+                    // overwrote `dat.match_`, so only the LAST spec survived.
+                    // `_path_files`' final add passes three (`-M "$_matcher"`
+                    // twice from $mopts, then `-M 'r:|/=* r:|=*'` from $Mopts,
+                    // sh:872): last-wins threw away the matcher-list spec, so
+                    // `cd /a<TAB>` had no spec left that could match
+                    // /Applications and reported "No Matches".
                     if let Some(s) = take(&mut p, &mut idx) {
-                        if let Some(m) = parse_cmatcher(name, &s) {
-                            dat.match_ = Some(m);
-                            dat.aflags |= CAF_MATCH;
-                        } else {
-                            return 1;
+                        match mstr {
+                            // c:829 — `tricat(mstr, " ", m)`.
+                            Some(ref mut acc) => {
+                                acc.push(' ');
+                                acc.push_str(&s);
+                            }
+                            // c:833 — `mstr = ztrdup(m)`.
+                            None => mstr = Some(s),
                         }
                     }
                 }
@@ -1196,6 +1248,18 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                 }
             }
             p += 1; // c:638 `p++`
+        }
+    }
+    // c:840-848 — `ca_args:` the accumulated `-M` specs are parsed ONCE,
+    // and only when CAF_MATCH is still set (`-U` turns matching off, so
+    // the spec is irrelevant then). parse_cmatcher returning pcm_err
+    // aborts the builtin with status 1.
+    if let Some(spec) = mstr {
+        if (dat.aflags & CAF_MATCH) != 0 {
+            match parse_cmatcher(name, &spec) {
+                Some(m) => dat.match_ = Some(m),
+                None => return 1, // c:844 pcm_err
+            }
         }
     }
     // c:830 — `args = argv` (residual words after flags).

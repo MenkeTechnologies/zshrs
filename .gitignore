@@ -24,3 +24,10 @@ scripts/update_reference_html.sh
 # recorder corpus tests use a corpus-dir as $HOME — the daemon side
 # writes its own toml + sqlite files into $HOME/.zshrs/.
 tests/recorder_corpus/*/.zshrs/
+
+# Raw `zstyle -L` capture of the daily-driver config, used as the SOURCE for
+# scripts/parity_zstyle.zsh. Untracked on purpose: a raw dump carries the real
+# `hosts` lists (internal addresses) and absolute home paths. Regenerate the
+# committed, sanitized fixture from it with:
+#     scripts/dump_live_zstyle.py scripts/parity_zstyle.zsh --from-file scripts/zstyle.zsh
+scripts/zstyle.zsh

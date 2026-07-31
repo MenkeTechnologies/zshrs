@@ -39,7 +39,10 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
-use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
+use crate::ported::zsh_h::{
+    PP_ALNUM, PP_ALPHA, PP_ASCII, PP_BLANK, PP_CNTRL, PP_DIGIT, PP_GRAPH, PP_IDENT, PP_IFS,
+    PP_IFSSPACE, PP_LOWER, PP_PRINT, PP_PUNCT, PP_RANGE, PP_SPACE, PP_UPPER, PP_WORD, PP_XDIGIT,
+};
 use std::sync::{Mutex, OnceLock};
 
 /// Port of `cpatterns_same(Cpattern a, Cpattern b)` from `Src/Zle/compmatch.c:42`.
@@ -4129,16 +4132,31 @@ pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 = std::sync::atomic::Atom
 /// File-scope `Cline matchlastsub` from `Src/Zle/compmatch.c:294`.
 pub static MATCHLASTSUB: OnceLock<Mutex<Option<Box<Cline>>>> = OnceLock::new(); // c:294
 
-/// Port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
-/// `Src/pattern.c`. Walks an encoded character-range descriptor in
-/// `str` (Cpattern.str byte sequence) and tests whether `c` falls
-/// inside. Encoding:
+/// Port of `patmatchrange(char *range, int ch, int *indptr, int *mtp)`
+/// from `Src/pattern.c:3865-3995` (reached through the
+/// `PATMATCHRANGE` macro). Walks an encoded character-range
+/// descriptor in `str` (Cpattern.str byte sequence) and tests
+/// whether `c` falls inside. Encoding written by
+/// `complete.rs::parse_class` (c:Src/Zle/complete.c:523/539):
 ///   0x80 + PP_RANGE (=0x95): next 2 bytes are lo,hi range
-///   0x80 + PP_* (POSIX class id): single-byte class marker; matched
-///     via the local case-class check for PP_LOWER / PP_UPPER (the
-///     two classes that drive case-folding); other classes still
-///     respond positively when the marker is consulted via mtp.
-///   plain byte: literal char (0x00-0x7F).
+///   0x80 + PP_* (POSIX class id): single-byte class marker
+///   plain byte: literal char (0x00-0x7F)
+/// The port's marker base is 0x80 where C uses `Meta` (0x83); every
+/// decoder in the port agrees on 0x80, so the offset is internal.
+///
+/// `indptr` is the position of `c` WITHIN the ranges seen so far, not
+/// an element counter: c:3969 adds `ch - r1` on a hit and c:3974 adds
+/// `r2 - r1` when stepping over a non-matching range, while literals
+/// and class markers contribute nothing. `pattern_match1` turns that
+/// into the equivalence-class index (`ind + 1`, c:1283) that
+/// `pattern_match` compares between the line and word side
+/// (c:1573 `if (ind != wind) return 0;`), and that
+/// `pattern_match_equivalence` feeds back through PATMATCHINDEX.
+/// The port previously incremented by 1 per element, so every char of
+/// a `{a-z}`-style class collapsed to index 0: `m:{a-z\-}={A-Z\_}`
+/// then matched `a` against EVERY uppercase name (`cd /a<TAB>`
+/// offered /Applications /Library /System /Users /Volumes, and the
+/// bogus ambiguity suppressed the insertion entirely).
 fn patmatchrange(
     s: Option<&[u8]>,
     c: u32,
@@ -4148,61 +4166,100 @@ fn patmatchrange(
     let Some(bytes) = s else {
         return false;
     };
-    let pp_range_marker = (0x80u8).wrapping_add(PP_RANGE as u8);
-    let pp_lower_marker = (0x80u8).wrapping_add(PP_LOWER as u8);
-    let pp_upper_marker = (0x80u8).wrapping_add(PP_UPPER as u8);
+    // c:3869 — `if (indptr) *indptr = 0;`
+    if let Some(out) = indp.as_deref_mut() {
+        *out = 0;
+    }
 
-    let mut idx: u32 = 0;
     let mut i = 0usize;
     let mut mtp_dest: Option<&mut i32> = mtp;
+    // c:3876 — `for (; *range; range++)`
     while i < bytes.len() {
         let b = bytes[i];
-        if b == pp_range_marker {
-            // c:4049 PP_RANGE
-            if i + 2 >= bytes.len() {
-                break;
+        if b >= 0x80 {
+            // c:3877-3878 — `imeta(*range)`; swtype = marker - base.
+            let swtype = (b as i32) - 0x80;
+            // c:3879-3880 — `if (mtp) *mtp = swtype;` runs for EVERY
+            // meta element, whether or not it goes on to match.
+            if let Some(out) = mtp_dest.as_deref_mut() {
+                *out = swtype;
             }
-            let r1 = bytes[i + 1] as u32;
-            let r2 = bytes[i + 2] as u32;
-            if c >= r1 && c <= r2 {
-                if let Some(out) = indp.as_deref_mut() {
-                    *out = idx;
+            if swtype == 0 {
+                // c:3882-3885 — metafied literal: next byte ^ 32.
+                if i + 1 >= bytes.len() {
+                    break;
                 }
-                return true;
+                if (bytes[i + 1] ^ 32) as u32 == c {
+                    return true;
+                }
+                i += 2;
+                continue;
             }
-            idx += 1;
-            i += 3;
-        } else if b >= 0x80 {
-            // c:4024-4047 — POSIX class marker.
-            let is_lower = b == pp_lower_marker;
-            let is_upper = b == pp_upper_marker;
-            let matched = if is_lower {
-                c < 256 && (c as u8).is_ascii_lowercase()
-            } else if is_upper {
-                c < 256 && (c as u8).is_ascii_uppercase()
-            } else {
-                false
+            if swtype == PP_RANGE {
+                // c:3961-3975
+                if i + 2 >= bytes.len() {
+                    break;
+                }
+                let r1 = bytes[i + 1] as u32;
+                let r2 = bytes[i + 2] as u32;
+                if r1 <= c && c <= r2 {
+                    // c:3967-3970
+                    if let Some(out) = indp.as_deref_mut() {
+                        *out += c - r1;
+                    }
+                    return true;
+                }
+                // c:3973-3974 — `if (indptr && r1 < r2) *indptr += r2 - r1;`
+                if r1 < r2 {
+                    if let Some(out) = indp.as_deref_mut() {
+                        *out += r2 - r1;
+                    }
+                }
+                i += 3;
+                continue;
+            }
+            // c:3886-3960 — POSIX classes. Single-byte locale
+            // (the C build only reaches this file without
+            // MULTIBYTE_SUPPORT), so `ch` outside 0-255 never matches.
+            let hit = c < 256 && {
+                let cb = c as u8;
+                match swtype {
+                    PP_ALPHA => cb.is_ascii_alphabetic(),   // c:3886
+                    PP_ALNUM => cb.is_ascii_alphanumeric(), // c:3890
+                    PP_ASCII => (c & !0x7f) == 0,           // c:3894
+                    PP_BLANK => cb == b' ' || cb == b'\t',  // c:3898
+                    PP_CNTRL => cb.is_ascii_control(),      // c:3907
+                    PP_DIGIT => cb.is_ascii_digit(),        // c:3911
+                    PP_GRAPH => cb.is_ascii_graphic(),      // c:3915
+                    PP_LOWER => cb.is_ascii_lowercase(),    // c:3919
+                    // c:3923 ZISPRINT — C isprint(): graphic or space.
+                    PP_PRINT => cb.is_ascii_graphic() || cb == b' ',
+                    PP_PUNCT => cb.is_ascii_punctuation(), // c:3927
+                    // c:3931 isspace(): " \t\n\v\f\r"
+                    PP_SPACE => matches!(cb, b' ' | 0x09..=0x0d),
+                    PP_UPPER => cb.is_ascii_uppercase(), // c:3935
+                    PP_XDIGIT => cb.is_ascii_hexdigit(), // c:3939
+                    PP_IDENT => crate::ported::ztype_h::iident(cb), // c:3943
+                    PP_IFS => crate::ported::ztype_h::isep(cb), // c:3947
+                    PP_IFSSPACE => crate::ported::ztype_h::iwsep(cb), // c:3951
+                    PP_WORD => crate::ported::ztype_h::iword(cb), // c:3955
+                    // c:3959-3961 PP_INCOMPLETE / PP_INVALID are never
+                    // true without MULTIBYTE_SUPPORT; PP_UNKWN / unknown
+                    // markers fall through as no-match.
+                    _ => false,
+                }
             };
-            if matched {
-                if let Some(out) = indp.as_deref_mut() {
-                    *out = idx;
-                }
-                if let Some(out) = mtp_dest.as_deref_mut() {
-                    *out = (b as i32) - 0x80;
-                }
+            if hit {
                 return true;
             }
-            idx += 1;
             i += 1;
-        } else {
-            // Literal char.
-            if c == b as u32 {
-                if let Some(out) = indp.as_deref_mut() {
-                    *out = idx;
-                }
-                return true;
+        } else if b as u32 == c {
+            // c:3984-3987 — plain literal match sets `*mtp = 0`.
+            if let Some(out) = mtp_dest.as_deref_mut() {
+                *out = 0;
             }
-            idx += 1;
+            return true;
+        } else {
             i += 1;
         }
     }
