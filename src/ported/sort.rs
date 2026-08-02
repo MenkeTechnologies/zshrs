@@ -124,14 +124,70 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     let numeric_signed = sortnumeric < 0;
     let no_backslash = (sortflags & (SORTIT_IGNORING_BACKSLASHES as u32)) != 0;
 
-    // Approximation of `sortnobslash` scanning (`sort.c:120-131`): C
-    // drops `\\` pairwise while comparing; stripping all backslashes
-    // matches zsh for typical glob names.
+    // c:120-131 — `sortnobslash`. C skips AT MOST ONE backslash on each side
+    // per aligned position, breaks at the first mismatch, and then collates the
+    // RAW remainders from the divergence point (c:134). It is NOT a strip-all:
+    //
+    //     while (*as && *bs) {
+    //         if (*as == '\\') as++;
+    //         if (*bs == '\\') bs++;
+    //         if (*as != *bs || !*as) break;
+    //         as++; bs++;
+    //     }
+    //
+    // The two agree on an escaped metacharacter (`\ `, `\(`) — both yield the
+    // bare character. They diverge on a DOUBLED `\\`, i.e. a filename holding a
+    // literal backslash: strip-all deletes both, while C consumes one and
+    // leaves a 0x5C standing, which collates after `Z` (0x5A) and before `d`
+    // (0x64). That is the whole `cd ~/` divergence — a directory named
+    // `\EurydiceCM\` sorted to index 11 (between `Downloads/` and `Exercism/`)
+    // where zsh puts it at 47 (between `Zotero/` and `dotTraceSnapshots/`).
+    // Both shells' full 59-entry orders were reproduced from these two
+    // algorithms, so the model is pinned rather than inferred.
+    //
+    // SCOPE: applied to the collation path only. C's numeric block (c:137-172)
+    // rewinds with `for (; as > ao && idigit(as[-1]); as--, bs--)` where `ao`
+    // is the ORIGINAL string start captured at c:49 — before this loop runs —
+    // so handing it these remainders without that bound would corrupt
+    // numeric-glob-sort. The numeric path therefore keeps its existing
+    // behaviour untouched; `SORTIT_NUMERICALLY | SORTIT_IGNORING_BACKSLASHES`
+    // together remain an approximation, and knowingly so.
     let mut a_str = a.to_string();
     let mut b_str = bs.to_string();
     if no_backslash {
-        a_str = a_str.chars().filter(|&c| c != '\\').collect();
-        b_str = b_str.chars().filter(|&c| c != '\\').collect();
+        let mut done = false;
+        if !numeric {
+            let (ab, bb) = (a.as_bytes(), bs.as_bytes());
+            let (mut i, mut j) = (0usize, 0usize);
+            while i < ab.len() && j < bb.len() {
+                if ab[i] == b'\\' {
+                    i += 1; // c:122-123
+                }
+                if bb[j] == b'\\' {
+                    j += 1; // c:124-125
+                }
+                // c:126-127 — `if (*as != *bs || !*as) break;`. A run off the
+                // end of either side is C reading its NUL terminator, which
+                // fails the equality test just the same.
+                if i >= ab.len() || j >= bb.len() || ab[i] != bb[j] {
+                    break;
+                }
+                i += 1; // c:128-129
+                j += 1;
+            }
+            // Byte indices only land off a char boundary if a multibyte
+            // sequence straddled the divergence; slicing there would panic, so
+            // fall through to the old whole-string form in that case.
+            if let (Some(ar), Some(br)) = (a.get(i..), bs.get(j..)) {
+                a_str = ar.to_string();
+                b_str = br.to_string();
+                done = true;
+            }
+        }
+        if !done {
+            a_str = a_str.chars().filter(|&c| c != '\\').collect();
+            b_str = b_str.chars().filter(|&c| c != '\\').collect();
+        }
     }
     // NOTE: c:Src/sort.c::zstrcmp does NOT honor SORTIT_IGNORING_CASE.
     // The case-fold happens in strmetasort's pre-pass at c:290-372
