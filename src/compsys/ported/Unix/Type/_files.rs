@@ -207,6 +207,7 @@ fn glob_subdirs() -> Vec<String> {
 
 /// `_files` — file/directory completion entry point.
 pub fn _files(argv: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_files");
     let curcontext = get_str("curcontext");
     let ctx = format!(":completion:{}:", curcontext);
     let mut ret = 1;

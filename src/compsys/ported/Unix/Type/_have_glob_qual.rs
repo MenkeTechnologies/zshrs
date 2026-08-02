@@ -111,6 +111,7 @@ fn set_match(m1: &str, m2: &str, m5: &str, open_len: usize) {
 /// `_have_glob_qual` — predicate: does `$1` carry glob qualifiers?
 /// Returns 0 when it does (and sets `$match`), 1 otherwise.
 pub fn _have_glob_qual(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_have_glob_qual");
     let s = args.first().cloned().unwrap_or_default();
     let complete = args.get(1).map(|x| x == "complete").unwrap_or(false);
 

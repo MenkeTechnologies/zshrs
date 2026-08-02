@@ -30,6 +30,7 @@ fn make_ops() -> options {
 
 /// `_parameter` — `${...}` parameter-expansion context completion.
 pub fn _parameter() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_parameter");
     // sh:3  if compset -P '*:'
     if bin_compset(
         "compset",

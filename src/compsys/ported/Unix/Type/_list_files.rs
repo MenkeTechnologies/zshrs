@@ -74,6 +74,7 @@ fn unquote(s: &str) -> String {
 /// `args[0]` names the array of matched files; `args[1]` (optional) is the
 /// directory prefix. Populates the `listfiles` / `listopts` params.
 pub fn _list_files(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_list_files");
     // sh:12
     setaparam("listfiles", Vec::new());
     setaparam("listopts", Vec::new());

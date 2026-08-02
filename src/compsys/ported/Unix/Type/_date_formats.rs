@@ -102,6 +102,7 @@ fn exclusion_class(flag: char) -> Option<&'static str> {
 
 /// `_date_formats [zsh]` — complete strftime-style format specifiers.
 pub fn _date_formats(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_date_formats");
     let is_zsh = args.first().map(|s| s.as_str()) == Some("zsh");
     let ostype = getsparam("OSTYPE").unwrap_or_default();
 

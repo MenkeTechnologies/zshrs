@@ -23,6 +23,7 @@ use crate::ported::params::{getsparam, setaparam};
 
 /// `_locales` — complete installed locale names.
 pub fn _locales(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_locales");
     // sh:5-6  $(_call_program locales locale -a) — REPLY carries stdout.
     let _ = _call_program(&[
         "locales".to_string(),

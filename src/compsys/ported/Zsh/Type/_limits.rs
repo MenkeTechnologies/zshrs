@@ -20,6 +20,7 @@ use crate::ported::builtins::rlimits::known_resources;
 /// `_limits` — `unlimit` command completion: list process-resource
 /// limit names.
 pub fn _limits(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_limits");
     // sh:5 — first column of `limit` output = resource name.
     let names: Vec<String> = known_resources.iter().map(|r| r.name.to_string()).collect();
 

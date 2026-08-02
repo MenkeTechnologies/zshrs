@@ -15,6 +15,7 @@ use crate::ported::exec::dispatch_function_call;
 /// `_gnu_generic` — fallback completer for GNU-style commands.
 /// Pure delegation to `_arguments` (not yet ported as an engine fn).
 pub fn _gnu_generic() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_gnu_generic");
     dispatch_function_call(
         "_arguments",
         &["*:arg: _default".to_string(), "--".to_string()],

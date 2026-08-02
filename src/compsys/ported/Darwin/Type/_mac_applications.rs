@@ -37,6 +37,7 @@ fn basenames_stripped_app(mac_apps: &[String]) -> Vec<String> {
 /// `_mac_applications` — offer macOS `.app` bundle names (basenames, with
 /// the `.app` suffix stripped) as completion candidates.
 pub fn _mac_applications(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_mac_applications");
     // sh:3  _retrieve_mac_apps (shell fallback: not yet ported to Rust;
     //   populates the `_mac_apps` global array param).
     let _ = dispatch_function_call("_retrieve_mac_apps", &[]);

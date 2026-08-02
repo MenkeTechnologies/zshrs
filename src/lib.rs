@@ -126,6 +126,10 @@ pub mod pat_cache;
 /// `script_cache` submodule.
 #[path = "extensions/script_cache.rs"]
 pub mod script_cache;
+/// `shout` submodule — buffered terminal-output stream for the ZLE display
+/// (the stdio buffering C gets from libc's `FILE *shout`).
+#[path = "extensions/shout.rs"]
+pub mod shout;
 /// `subexp_cleanup` submodule — RAII eviction of `__subexp_arr_*`
 /// paramtab scratch temps created during array sub-expression expansion.
 #[path = "extensions/subexp_cleanup.rs"]

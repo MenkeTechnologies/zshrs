@@ -46,6 +46,7 @@ fn pods_in(podpath: &str) -> Vec<String> {
 /// `_perl_basepods` — complete installed Perl base pod names
 /// (`perlfunc`, `perlfaq`, …). Result cached in `_perl_basepods`.
 pub fn _perl_basepods(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_perl_basepods");
     // sh:11  (( ! $+_perl_basepods ))
     if getaparam("_perl_basepods").is_none() {
         // sh:19  podpath=$(perl -MConfig -e 'print "$Config{installprivlib}/pod"')

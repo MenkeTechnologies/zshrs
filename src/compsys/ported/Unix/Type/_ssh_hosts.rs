@@ -87,6 +87,7 @@ fn parse_config_hosts(path: &str, home: &str, depth: u8, out: &mut Vec<String>) 
 
 /// `_ssh_hosts` — complete host names from user/host styles and ssh_config.
 pub fn _ssh_hosts(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ssh_hosts");
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
 
     // sh:7-11 — user@host combination first; if it completes, we're done.

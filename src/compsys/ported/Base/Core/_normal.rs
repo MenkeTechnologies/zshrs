@@ -50,6 +50,7 @@ fn make_ops() -> options {
 /// handles history-modifier completion, dispatches command-position
 /// vs arg-position completion.
 pub fn _normal(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_normal");
     // sh:3  local _comp_command1 _comp_command2 _comp_command precommand
     // sh:4  local -A opts
     // (`opts` is spelled `opts_flat` by this port's zparseopts call.)

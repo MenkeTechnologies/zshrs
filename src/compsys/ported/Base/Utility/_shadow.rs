@@ -178,6 +178,7 @@ fn parse_opts(args: &[String], default: String) -> (String, Vec<String>) {
 
 /// `_shadow [-s suffix] fname...` — sh:40-68.
 pub fn _shadow(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_shadow");
     // sh:42 — seed fsfx[-s] with the default before zparseopts may
     //   override it.
     let depth = getiparam(DEPTH_PARAM);

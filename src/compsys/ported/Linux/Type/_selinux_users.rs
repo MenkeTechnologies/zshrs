@@ -40,6 +40,7 @@ const DEFAULT_SEUSERS: &[&str] = &[
 /// `_selinux_users` — complete SELinux user identities via `seinfo --flat -u`,
 /// falling back to the well-known default identity set.
 pub fn _selinux_users(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_users");
     // sh:5  seusers=( ${(f)"$(_call_program selinux-users seinfo --flat -u)"} )
     let _ = _call_program(&["selinux-users".to_string(), "seinfo --flat -u".to_string()]);
     let out = getsparam("REPLY").unwrap_or_default();

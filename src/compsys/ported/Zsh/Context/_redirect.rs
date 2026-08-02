@@ -31,6 +31,7 @@ use crate::ported::zle::compcore::get_compstate_str;
 /// `_redirect` — completion within a `>`/`<`/`|` redirection: try
 /// per-command + per-redirect-target dispatch chain.
 pub fn _redirect() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_redirect");
     // sh:5
     let _ = _set_command();
 

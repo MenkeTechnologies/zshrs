@@ -16,6 +16,7 @@ use crate::ported::params::getsparam;
 
 /// `_pgids` — complete process-group IDs (`ps -A -o pgid=`).
 pub fn _pgids(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pgids");
     // sh:5  $(_call_program pgids ps -A -o pgid=)
     let _ = _call_program(&[
         "pgids".to_string(),

@@ -32,6 +32,7 @@ use crate::ported::zle::compcore::get_compstate_str;
 
 /// `_tilde` — complete `~user` / `~name` / `~+N` tilde expansions.
 pub fn _tilde(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_tilde");
     // sh:7
     if !get_compstate_str("quote").unwrap_or_default().is_empty() {
         return 1;

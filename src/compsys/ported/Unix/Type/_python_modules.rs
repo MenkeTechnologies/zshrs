@@ -37,6 +37,7 @@ const SCRIPT: &str =
 
 /// `_python_modules` — complete importable Python module names.
 pub fn _python_modules(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_python_modules");
     // sh:13 — pick the interpreter from the command word.
     let cmd = getaparam("words")
         .unwrap_or_default()

@@ -147,6 +147,7 @@ fn approximate_compadd_shadow(argv: &[String]) -> Option<Vec<String>> {
 
 /// `_approximate` — spell-correction completer.
 pub fn _approximate(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_approximate");
     // sh:14
     if getiparam("_matcher_num") > 1 {
         return 1;

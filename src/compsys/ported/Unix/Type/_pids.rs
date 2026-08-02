@@ -72,6 +72,7 @@ fn extract_pids(header: &str, rows: &[&str]) -> Vec<String> {
 
 /// `_pids` — complete process IDs from `ps`.
 pub fn _pids(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pids");
     let mut ret = 1;
     // sh:8  _tags processes || return 1
     if _tags(&["processes".to_string()]) != 0 {

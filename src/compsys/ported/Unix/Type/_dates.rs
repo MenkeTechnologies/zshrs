@@ -154,6 +154,7 @@ fn apply_max_matches(mut rows: i64, limits: &[String], lines: i64) -> i64 {
 /// `_dates` — complete a date, with an interactive calendar grid under
 /// menu-select.
 pub fn _dates(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dates");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let dctx = format!(":completion:{}:dates", curcontext);
 

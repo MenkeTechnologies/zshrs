@@ -88,6 +88,7 @@ fn scan_external_zsh_cwds() -> Vec<String> {
 /// `_external_pwds` — complete `cd` paths from other running zsh
 /// processes.
 pub fn _external_pwds() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_external_pwds");
     // sh:11-14  collapse IPREFIX/ISUFFIX
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
     let prefix = getsparam("PREFIX").unwrap_or_default();

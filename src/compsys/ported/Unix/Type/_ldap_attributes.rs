@@ -112,6 +112,7 @@ fn x_to_lower(v: &[String]) -> Vec<String> {
 
 /// `_ldap_attributes` — complete LDAP attribute names (non-exhaustive).
 pub fn _ldap_attributes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ldap_attributes");
     // sh:26
     let _ = _description(&[
         "ldap-attributes".to_string(),

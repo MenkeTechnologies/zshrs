@@ -79,6 +79,7 @@ fn second_field(line: &str) -> &str {
 /// `_be_name` — complete Solaris/illumos boot-environment names from
 /// `beadm list`, optionally including snapshot names too via `-t all`.
 pub fn _be_name(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_be_name");
     // sh:5
     let (ty, rest) = zparse_type(args);
 

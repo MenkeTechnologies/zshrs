@@ -69,6 +69,7 @@ fn pick_typearg(types: &[String]) -> Option<&'static str> {
 
 /// `_zones` — complete Solaris zone names via `zoneadm list`.
 pub fn _zones(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zones");
     // sh:5
     let (types, rest) = zparse_t(args);
     // sh:7-8

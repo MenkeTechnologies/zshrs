@@ -113,6 +113,7 @@ fn parse_known_hosts(body: &str, useip: bool) -> Vec<String> {
 /// `_hosts` — complete host names from `/etc/hosts` (or `getent`) and
 /// ssh `known_hosts` files, cached in `$_cache_hosts`.
 pub fn _hosts(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_hosts");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:hosts", curcontext);
 

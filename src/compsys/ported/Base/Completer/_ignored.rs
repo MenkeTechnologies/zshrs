@@ -47,6 +47,7 @@ fn make_ops() -> options {
 /// `_ignored` — re-run prior completer chain with ignored-pattern
 /// filter disabled, so previously-hidden matches reappear.
 pub fn _ignored() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ignored");
     // sh:5
     if getiparam("_matcher_num") > 1 {
         return 1;

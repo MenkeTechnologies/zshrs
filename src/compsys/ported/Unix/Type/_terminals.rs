@@ -43,6 +43,7 @@ fn glob_basenames(pat: &str) -> Vec<String> {
 
 /// `_terminals` — complete terminal names from the terminfo database.
 pub fn _terminals(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_terminals");
     // sh:5 — desc=( $TERMINFO ~/.terminfo $TERMINFO_DIRS
     //   /usr/{,share/}{,lib/}terminfo /{etc,lib}/terminfo )
     let home = getsparam("HOME").unwrap_or_default();

@@ -1206,10 +1206,14 @@ pub fn cd_init(
 }
 
 /// Direct port of `static char **cd_arrdup(char **a)` from
-/// `Src/Zle/computil.c:somewhere`. Duplicate a string array.
+/// `Src/Zle/computil.c:599-609`. Duplicates a string array leaving one
+/// slot free at the FRONT (`char **p = r + 1`), which every `cd_get`
+/// caller then overwrites with `-l` / `-E<n>` / `-2V-default-`. The Rust
+/// callers build that leading element with `iter::once(..).chain(..)`
+/// instead, so this helper is a plain duplicate with no reserved slot.
 pub fn cd_arrdup(a: &[String]) -> Vec<String> {
-    // c:cd_arrdup
-    a.to_vec()
+    // c:599
+    a.to_vec() // c:604-606
 }
 
 /// Direct port of `static int cd_get(char **params)` from
@@ -1423,10 +1427,17 @@ pub fn cd_get(params: &[String]) -> i32 {
             .unwrap_or_default();
         let mut new_opts: Vec<String> = head_opts.clone();
         let mut found_jv = false;
-        // c:736 — `for (dp = opts + 1; *dp; dp++)`. Skip slot 0 (the
-        // existing first element which we'll overwrite below) and look
-        // for the first -J/-V flag.
-        for i in 1..new_opts.len() {
+        // c:736 — `for (dp = opts + 1; *dp; dp++)`. `opts` came from
+        // `cd_arrdup` (c:599), which reserves an UNINITIALISED slot at
+        // index 0 and copies the real options into `r[1..]`, so `opts + 1`
+        // is the FIRST REAL option, not the second. `new_opts` here is the
+        // set's option array with no reserved slot, so the scan must start
+        // at index 0. Starting at 1 skipped a leading `-J`/`-V`, so a set
+        // whose opts begin with the group flag (the common
+        // `_describe`-generated `-J -default-` shape) fell into the
+        // `!found_jv` path and got `-2V-default-` prepended — losing the
+        // real group name and splitting matches into the wrong group.
+        for i in 0..new_opts.len() {
             if new_opts[i].starts_with("-J") || new_opts[i].starts_with("-V") {
                 let rest = new_opts[i][2..].to_string();
                 new_opts[i] = format!("-2V{}", rest);
@@ -1578,8 +1589,12 @@ pub fn bin_compdescribe(
         return 1;
     }
     let a0 = args[0].as_bytes();
-    // c:854 — `args[0]` must be exactly 2 chars starting with `-`.
-    if a0.len() != 2 || a0[0] != b'-' {
+    // c:854 — `if (!args[0][0] || !args[0][1] || args[0][2])`: C only
+    // requires a 2-character word here, it does NOT require a leading `-`
+    // (unlike `bin_comparguments` at c:2618, which does test `[0] != '-'`).
+    // The port had added the `-` test, which turned C's `bad option` arm
+    // at c:893 into an `invalid argument` for 2-char words like `xg`.
+    if a0.len() != 2 {
         zwarnnam(nam, &format!("invalid argument: {}", args[0]));
         return 1;
     }
@@ -1646,7 +1661,10 @@ pub fn bin_compdescribe(
             cd_get(&args[1..]) // c:887
         }
         _ => {
-            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            // c:893 — `zwarnnam(nam, "bad option: %s", args[0])`. zsh
+            // 54721 renamed this from "invalid option"; the port kept the
+            // pre-rename wording.
+            zwarnnam(nam, &format!("bad option: {}", args[0]));
             1
         }
     }
@@ -1731,6 +1749,10 @@ pub struct caarg {
 /// Port of `CDF_SEP` from `Src/Zle/computil.c:924`. `-S` flag — `--`
 /// terminates options.
 pub const CDF_SEP: i32 = 1; // c:924
+
+/// Port of `CDF_ZSEP` from `Src/Zle/computil.c:925`. `-S -S` (given
+/// twice) — a bare `-` also terminates options, zsh-style.
+pub const CDF_ZSEP: i32 = 2; // c:925
 
 // =====================================================================
 // CAO_* — Cadef option-argument attachment style — `computil.c:941-945`.
@@ -1928,7 +1950,7 @@ pub fn bslashcolon(s: &str) -> String {
     String::from_utf8(out).unwrap_or_default() // c:1079 return r
 }
 
-/// Port of `single_index(char pre, char opt)` from `Src/Zle/computil.c:1088`.
+/// Port of `single_index(char pre, char opt)` from `Src/Zle/computil.c:1112`.
 /// ```c
 /// static int
 /// single_index(char pre, char opt)
@@ -2180,11 +2202,47 @@ pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
             break;
         }
         let cluster = &bytes[1..];
+        // c:1245-1253 — C PRE-SCANS the cluster before applying anything:
+        //     for (q = ++p; *q; q++)
+        //         if (*q == 'M' || *q == 'A') { q = ""; break; }
+        //         else if (*q != 's' && *q != 'S') break;
+        //     if (*q) break;
+        // A cluster containing `M` or `A` is accepted wholesale (the rest
+        // of the word is that flag's value); otherwise every character
+        // must be `s` or `S`. If the scan stops on any other character the
+        // whole word is NOT a flag word and the flag loop exits with NO
+        // side effects. The port applied each character as it went, so
+        // `_arguments -sX ...` set `single = 1` before rejecting `X` —
+        // silently turning on single-letter-option mode for a spec that
+        // never asked for it.
+        let mut cluster_ok = false;
+        for &c in cluster.iter() {
+            if c == b'M' || c == b'A' {
+                cluster_ok = true;
+                break;
+            } else if c != b's' && c != b'S' {
+                cluster_ok = false;
+                break;
+            }
+            cluster_ok = true;
+        }
+        if !cluster_ok {
+            break; // c:1252 `if (*q) break;`
+        }
         let mut ok = true;
         for (i, &c) in cluster.iter().enumerate() {
             match c {
-                b's' => single = 1,       // c:1233
-                b'S' => flags |= CDF_SEP, // c:1235
+                b's' => single = 1, // c:1233
+                // c:1259 — `flags |= (flags & CDF_SEP) ? CDF_ZSEP : CDF_SEP`.
+                // A second `-S` upgrades to CDF_ZSEP so a bare `-` also
+                // terminates options (checked at c:2124).
+                b'S' => {
+                    flags |= if (flags & CDF_SEP) != 0 {
+                        CDF_ZSEP
+                    } else {
+                        CDF_SEP
+                    }
+                }
                 b'A' => {
                     // c:1237
                     if i + 1 < cluster.len() {
@@ -2745,14 +2803,25 @@ pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
                             if sidx >= 0 {
                                 if let Some(ref mut s) = cur.single {
                                     if (sidx as usize) < s.len() {
+                                        // c:1596 — `ret->single[sidx] = opt;`
+                                        // aliases the SAME Caopt, so the
+                                        // single-letter table entry carries
+                                        // the option's `args` and shares its
+                                        // `active` flag. The port stored a
+                                        // copy with `args: None, active: 0`,
+                                        // so `ca_get_sopt` (c:1780, which
+                                        // requires `p->active && p->args`)
+                                        // never matched a clumped flag that
+                                        // takes an argument: `tar -xzf <TAB>`
+                                        // completed nothing.
                                         s[sidx as usize] = Some(Box::new(caopt {
                                             next: None,
                                             name: opt_box.name.clone(),
                                             descr: opt_box.descr.clone(),
                                             xor: opt_box.xor.clone(),
                                             r#type: opt_box.r#type,
-                                            args: None,
-                                            active: 0,
+                                            args: opt_box.args.clone(),
+                                            active: 1,
                                             num: opt_box.num,
                                             gsname: opt_box.gsname.clone(),
                                             not: opt_box.not,
@@ -3144,12 +3213,28 @@ pub fn ca_get_sopt(
         let ch = line_bytes[idx];
         let sidx = single_index(pre, ch); // c:1756
 
-        // c:1756 — d->single[sidx] lookup (assigns to p if valid).
-        let lookup: Option<&caopt> = if sidx >= 0 && (sidx as usize) < single.len() {
-            single[sidx as usize].as_deref()
+        // c:1780 — `p = d->single[sidx]`. In C `single[]` holds ALIASES of
+        // the entries in `d->opts` (c:1596), so `p->active` tracks whatever
+        // `ca_parse_line`/`ca_inactive` last set and `p->args` is the live
+        // argument spec. The Rust `single[]` is a snapshot taken at parse
+        // time, so resolve back through `d.opts` by `num` to read the live
+        // node; without this, `p->active` was frozen and clumped options
+        // stayed matchable after being excluded.
+        let snap_num: Option<i32> = if sidx >= 0 && (sidx as usize) < single.len() {
+            single[sidx as usize].as_ref().map(|o| o.num)
         } else {
             None
         };
+        let lookup: Option<&caopt> = snap_num.and_then(|n| {
+            let mut c = d.opts.as_deref();
+            while let Some(o) = c {
+                if o.num == n {
+                    return Some(o);
+                }
+                c = o.next.as_deref();
+            }
+            None
+        });
         if lookup.is_some() {
             p_cur = lookup;
         }
@@ -3161,13 +3246,17 @@ pub fn ca_get_sopt(
                 // c:1758
                 let list = list_acc.get_or_insert_with(Vec::new);
                 list.push(Box::new(caopt {
-                    // c:1761 addlinknode
+                    // c:1784 — `addlinknode(l, p)` queues the LIVE Caopt;
+                    // `ca_parse_line` pops it at c:2153/c:2239 and reads
+                    // `->args` to drive the argument completion. Cloning
+                    // with `args: None` made every queued clumped option a
+                    // bare flag, so `tar -xzf <TAB>` never completed a file.
                     next: None,
                     name: p.name.clone(),
                     descr: p.descr.clone(),
                     xor: p.xor.clone(),
                     r#type: p.r#type,
-                    args: None,
+                    args: p.args.clone(),
                     active: p.active,
                     num: p.num,
                     gsname: p.gsname.clone(),
@@ -3210,13 +3299,15 @@ pub fn ca_get_sopt(
 
     pp_cur.map(|p| {
         Box::new(caopt {
-            // c:1780
+            // c:1803 — C returns the live `pp` pointer; the caller reads
+            // `->args` at c:2244. Preserve `args` for the same reason as
+            // the queued clones above.
             next: None,
             name: p.name.clone(),
             descr: p.descr.clone(),
             xor: p.xor.clone(),
             r#type: p.r#type,
-            args: None,
+            args: p.args.clone(),
             active: p.active,
             num: p.num,
             gsname: p.gsname.clone(),
@@ -3351,6 +3442,13 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
         let mut sep_pos = 0usize;
         loop {
             if sep_pos >= xb.len() {
+                // c:1870 — C's `while (*sep != '+' && ... && !idigit(*sep))`
+                // does NOT stop on the terminating NUL: it enters the body,
+                // `strchr(sep, '-')` returns NULL and it takes the
+                // `excludeall = 1` exit. The port broke out without setting
+                // excludeall, so an empty xor entry excluded nothing where C
+                // deactivates the whole set.
+                excludeall = 1; // c:1873
                 break;
             }
             sep_byte = xb[sep_pos];
@@ -3774,6 +3872,14 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             dopt = None;
             state.singles = 0;
             let mut arglast = 0;
+            // c:2147 / c:2162 — C's two `goto cont` jumps skip the whole
+            // option/argument detection block (c:2171-2381) and land on the
+            // `cont:` checkpoint at c:2384. The port fell through instead,
+            // so a word that terminated a `:*PATTERN:...` rest-arg (c:2142)
+            // was ALSO re-examined as an option/positional, and a word that
+            // consumed a queued clumped-option argument (c:2152) re-ran the
+            // end-pattern block.
+            let mut goto_cont = false;
 
             remnulargs(&mut line);
             line = untokenize(&line);
@@ -3783,8 +3889,16 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 ca_inactive(d, &xor, cur - 1, 0);
             }
 
-            // c:2099 — CDF_SEP `--` separator turns off option parsing.
-            if (d.flags & CDF_SEP) != 0 && cur != compcur && state.actopts != 0 && line == "--" {
+            // c:2122-2124 — an options terminator turns off option parsing:
+            // `--` when `-S` was given (CDF_SEP), or a bare `-` when `-S`
+            // was given twice (CDF_ZSEP). The port only handled the
+            // CDF_SEP/`--` half, so `_arguments -S -S` never stopped
+            // option parsing at a bare `-`.
+            if cur != compcur
+                && state.actopts != 0
+                && (((d.flags & CDF_SEP) != 0 && line == "--")
+                    || ((d.flags & CDF_ZSEP) != 0 && line == "-"))
+            {
                 ca_inactive(d, &[], cur, 1);
                 state.actopts = 0;
                 cur += 1;
@@ -3829,7 +3943,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         if let Ok(mut ls) = ca_laststate.lock() {
                             ls.argend = cur - 1;
                         }
-                        // c:2124 goto cont.
+                        goto_cont = true; // c:2147 goto cont
                     }
                 } else {
                     // c:2125 — advance to next arg slot.
@@ -3858,7 +3972,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                                 }
                             }
                         }
-                        // c:2138 goto cont.
+                        goto_cont = true; // c:2162 goto cont
                     } else {
                         state.curopt = None;
                         state.opt = 1;
@@ -3869,7 +3983,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 state.arg = 1;
                 state.curopt = None;
             }
-            if state.opt != 0 {
+            if !goto_cont && state.opt != 0 {
                 let lb = line.as_bytes();
                 state.opt = if lb.is_empty() {
                     0
@@ -3884,7 +3998,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             wasopt_idx = None;
 
             // c:2156 — option lookup.
-            let opt_match = if state.opt == 2 {
+            let opt_match = if !goto_cont && state.opt == 2 {
                 let lb = line.as_bytes();
                 if !lb.is_empty() && (lb[0] == b'-' || lb[0] == b'+') {
                     let mut end = 0usize;
@@ -3935,7 +4049,8 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             // `_arguments`' `*:: :->args` state never fired — so `_cargo`
             // listed its TOP-LEVEL options instead of descending into `build`.
             let mut sopt_end = 0usize;
-            let sopt_arm: Option<Box<caopt>> = if opt_match.is_none()
+            let sopt_arm: Option<Box<caopt>> = if !goto_cont
+                && opt_match.is_none()
                 && state.opt == 2
                 && d.single.is_some()
                 && line
@@ -3949,14 +4064,25 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 if let Some(queued) = tmp_sopts {
                     sopts.extend(queued);
                 }
-                s_match.or_else(|| {
-                    // c:2207 `(cur != compcurrent && sopts && nonempty(sopts))`
-                    if cur != compcur && !sopts.is_empty() {
-                        Some(sopts.remove(0)) // c:2215 uremnode(sopts, firstnode(sopts))
-                    } else {
-                        None
-                    }
-                })
+                // c:2230-2239 — the arm is entered when EITHER ca_get_sopt
+                // matched OR (cur != compcurrent && sopts non-empty); once
+                // inside, c:2238 UNCONDITIONALLY replaces curopt with the
+                // first queued sopt whenever `cur != compcurrent && sopts`:
+                //     if (cur != compcurrent && sopts && nonempty(sopts))
+                //         state.curopt = uremnode(sopts, firstnode(sopts));
+                // That is how `tar -xzf <TAB>` finds `-f`'s argument: the
+                // clump's CAO_NEXT options are queued and the FIRST one owns
+                // the following word. The port used `or_else`, so the queue
+                // was only consulted when ca_get_sopt failed and the queued
+                // option's argument was never completed.
+                let entered = s_match.is_some() || (cur != compcur && !sopts.is_empty());
+                if !entered {
+                    None
+                } else if cur != compcur && !sopts.is_empty() {
+                    Some(sopts.remove(0)) // c:2239 uremnode(sopts, firstnode(sopts))
+                } else {
+                    s_match
+                }
             } else {
                 None
             };
@@ -4010,7 +4136,16 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         let next = state.def.as_deref().and_then(|d| d.next.clone());
                         state.def = next;
                     }
-                    let arg_str = ca_opt_arg(&co_name, &oline, false);
+                    // c:2219 — `ca_opt_arg(state.curopt, oline)`; C reads
+                    // `opt->type` inside (c:2013) to decide whether to eat a
+                    // leading `\`/`=`. The port hard-coded `equal_kind =
+                    // false`, so `--opt=value` stored `=value` in
+                    // `$opt_args` instead of `value`.
+                    let arg_str = ca_opt_arg(
+                        &co_name,
+                        &oline,
+                        co_type == CAO_EQUAL || co_type == CAO_OEQUAL,
+                    );
                     if let Some(oargs) = state.oargs.as_mut() {
                         if cn < oargs.len() {
                             oargs[cn].get_or_insert_with(Vec::new).push(arg_str);
@@ -4104,7 +4239,13 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                             let next = state.def.as_deref().and_then(|d| d.next.clone());
                             state.def = next;
                         }
-                        let arg_str = ca_opt_arg(&co_name, &line, false);
+                        // c:2274 — same as c:2219 but for the clumped
+                        // single-letter path (C passes `line`, not `oline`).
+                        let arg_str = ca_opt_arg(
+                            &co_name,
+                            &line,
+                            co_type == CAO_EQUAL || co_type == CAO_OEQUAL,
+                        );
                         if let Some(oargs) = state.oargs.as_mut() {
                             if cn < oargs.len() {
                                 oargs[cn].get_or_insert_with(Vec::new).push(arg_str);
@@ -4117,7 +4258,8 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         state.curopt = None;
                     }
                 }
-            } else if multi != 0
+            } else if !goto_cont
+                && multi != 0
                 && line
                     .as_bytes()
                     .first()
@@ -4126,8 +4268,8 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 && cur != compcur
                 && ca_foreign_opt(d, all, &line) != 0
             {
-                return 1; // c:2258
-            } else if state.arg != 0 && cur <= compcur {
+                return 1; // c:2282
+            } else if !goto_cont && state.arg != 0 && cur <= compcur {
                 // c:2259
                 // c:2264 — napat -A pattern.
                 if let Some(np) = napat.as_ref() {
@@ -4179,16 +4321,20 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     state.optbeg = state.nargbeg;
                     state.argbeg = cur - 1;
                     state.argend = argend_init;
-                    // c:2311 — gather remaining words into state.args.
-                    while line_idx < compwords.len() {
+                    // c:2335 — `for (; line; line = compwords[cur++])
+                    //              zaddlinknode(state.args, ztrdup(line));`
+                    // pushes compwords[line_idx], [line_idx+1], … to the end.
+                    // The port advanced only `cur` and kept re-reading
+                    // `compwords[line_idx]`, so `$line` was filled with N
+                    // copies of the FIRST rest word instead of the rest words.
+                    let mut k = line_idx;
+                    while k < compwords.len() {
                         state
                             .args
                             .get_or_insert_with(Vec::new)
-                            .push(compwords[line_idx].clone());
+                            .push(compwords[k].clone());
+                        k += 1;
                         cur += 1;
-                        if (cur - 1) as usize >= compwords.len() {
-                            break;
-                        }
                     }
                     if let Ok(mut ls) = ca_laststate.lock() {
                         *ls = clone_castate(&state, d);
@@ -4221,8 +4367,9 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 state.def = None;
             }
 
-            // c:2338 — end-pattern compile for rest-args.
-            if state.def.is_some() && state.curopt.is_some() {
+            // c:2362 — end-pattern compile for rest-args (skipped by the
+            // `goto cont` jumps at c:2147/c:2162).
+            if !goto_cont && state.def.is_some() && state.curopt.is_some() {
                 let dt = state.def.as_deref().map_or(0, |d| d.r#type);
                 if dt == CAA_RREST || dt == CAA_RARGS {
                     let end_pat_str = state.def.as_deref().and_then(|d| d.end.clone());
@@ -4263,7 +4410,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         break;
                     }
                 }
-            } else if state.def.is_some() {
+            } else if !goto_cont && state.def.is_some() {
                 let eps = state.def.as_deref().and_then(|d| d.end.clone());
                 if let Some(eps) = eps {
                     endpat = patcompile(
@@ -4439,7 +4586,12 @@ pub fn ca_set_data(
     let mut restr = 0;
     let mut miss = 0;
     let mut oopt = 1i32;
-    let mut lopt;
+    // c:2501 — `int ... lopt = 0`. C declares `lopt` OUTSIDE the arg loop
+    // and outside the `rec:` label, so at c:2594 it holds the CAA_OPT-ness
+    // of the LAST arg the loop processed (0 if the loop never ran) and it
+    // survives the `goto rec`. The port recomputed it from the post-advance
+    // `arg` instead, which is a different (often None) node.
+    let mut lopt = false;
 
     'rec: loop {
         // c:2481 — addopt = (opt ? 0 : ca_laststate.oopt).
@@ -4598,10 +4750,9 @@ pub fn ca_set_data(
             }
         }
 
-        // c:2570 — retry as positional after the option args path.
+        // c:2594 — retry as positional after the option args path.
         let laststate_oopt = ca_laststate.lock().map(|s| s.oopt).unwrap_or(0);
-        let cur_lopt = arg.as_ref().map_or(false, |a| a.r#type == CAA_OPT);
-        if single == 0 && opt.is_some() && (cur_lopt || laststate_oopt != 0) {
+        if single == 0 && opt.is_some() && (lopt || laststate_oopt != 0) {
             opt = None;
             let nth = ca_laststate.lock().map(|s| s.nth).unwrap_or(0);
             // c:2572 — arg = ca_get_arg(ca_laststate.d, ca_laststate.nth).
@@ -4671,7 +4822,7 @@ pub fn bin_comparguments(
         b'W' => (3, 3),
         b'n' => (1, 1),
         _ => {
-            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            zwarnnam(nam, &format!("bad option: {}", args[0]));
             return 1;
         }
     };
@@ -4775,9 +4926,17 @@ pub fn bin_comparguments(
             // c:2666 — thread fallback chain into ca_laststate.snext.
             if !states.is_empty() {
                 if let Ok(mut ls) = ca_laststate.lock() {
-                    // Build a linked snext chain from oldest → newest.
+                    // c:2674 — C pushes each saved state on the FRONT
+                    // (`sp->snext = states; states = sp;`), so `states` runs
+                    // newest → oldest, and c:2690 hands that order straight
+                    // to `ca_laststate.snext`. `states` here is a Vec in
+                    // oldest → newest push order, so linking it FORWARD
+                    // (each new head pointing at the previous head) yields
+                    // C's newest-first chain. The port used `.rev()`, which
+                    // reversed the order every `comparguments -D/-O/-L` walk
+                    // sees.
                     let mut head: Option<Box<castate>> = None;
-                    for s in states.into_iter().rev() {
+                    for s in states.into_iter() {
                         let mut s = s;
                         s.snext = head;
                         head = Some(Box::new(s));
@@ -4884,11 +5043,21 @@ pub fn bin_comparguments(
                                 d.opt.is_some()
                                     && (d.r#type == CAA_OPT || (d.r#type >= CAA_RARGS && d.num < 0))
                             })));
-                let pos_ok = s.def.is_none()
-                    || s.def.as_deref().map_or(true, |d| d.r#type < CAA_RARGS)
-                    || (s.def.as_deref().map_or(false, |d| d.r#type == CAA_RARGS)
-                        && s.curpos == s.argbeg + 1)
-                    || COMPCURRENT.load(Ordering::Relaxed) == 1;
+                // c:2751-2754 —
+                //   (!def || def->type < CAA_RARGS ||
+                //    (def->type == CAA_RARGS ? (curpos == argbeg + 1)
+                //                            : (compcurrent == 1)))
+                // The `compcurrent == 1` arm is the ELSE of the ternary, so
+                // it only applies when def->type is CAA_RREST. The port had
+                // it as a flat fourth `||`, which let a CAA_RARGS state pass
+                // the gate at compcurrent == 1 even when
+                // `curpos != argbeg + 1`.
+                let pos_ok = match s.def.as_deref() {
+                    None => true,
+                    Some(dd) if dd.r#type < CAA_RARGS => true,
+                    Some(dd) if dd.r#type == CAA_RARGS => s.curpos == s.argbeg + 1,
+                    Some(_) => COMPCURRENT.load(Ordering::Relaxed) == 1,
+                };
                 if actopts_ok && pos_ok {
                     ret = 0;
                     if let Some(d) = s.d.as_ref() {
@@ -5092,8 +5261,10 @@ pub struct cvval {
     pub descr: Option<String>,    // c:2961 char *descr
     pub xor: Option<Vec<String>>, // c:2961 char **xor
     pub r#type: i32,              // c:2961 int type (CVV_*)
-    pub arg: Option<Box<caarg>>,  // c:2961 Caarg arg
-    pub active: i32,              // c:2961
+    pub arg: Option<Box<caarg>>,  // c:2969 Caarg arg
+    pub active: i32,              // c:2970 int active
+    /// c:2971 `int not` — don't complete this value (`!...` prefix).
+    pub not: i32, // c:2971
 }
 
 // =====================================================================
@@ -5293,10 +5464,20 @@ pub fn parse_cvdef(nam: &str, args: &[String]) -> Option<Box<cvdef>> {
         let bytes = spec.as_bytes();
         let mut p: usize = 0;
         let mut xnum: i32 = 0; // c:3032
-        let mut bs = 0; // c:3030
+        let mut bs = 0; // c:3055
         let mut xor: Option<Vec<String>> = None;
 
-        // c:3035-3068 — `(opt1 opt2)` xor list.
+        // c:3059 — `if ((not = (*p == '!'))) p++;`. A leading `!` marks a
+        // value that must be RECOGNISED on the line but never offered as a
+        // completion (`compvalues -V` filters on it at c:3601). The port
+        // skipped the prefix entirely, so `_values '!foo'` defined a value
+        // literally named `!foo` and the real `foo` went unrecognised.
+        let not_flag = p < bytes.len() && bytes[p] == b'!';
+        if not_flag {
+            p += 1;
+        }
+
+        // c:3062-3095 — `(opt1 opt2)` xor list.
         if p < bytes.len() && bytes[p] == b'(' {
             // c:3035
             let mut list: Vec<String> = Vec::new();
@@ -5325,12 +5506,16 @@ pub fn parse_cvdef(nam: &str, args: &[String]) -> Option<Box<cvdef>> {
                     bad = true;
                     break 'paren;
                 }
-                let word = String::from_utf8_lossy(&bytes[q..p]).into_owned();
+                // c:3079 — `addlinknode(list, rembslash(q))`: xor entries are
+                // un-escaped here (unlike parse_cadef's, which are not). The
+                // port stored the raw word, so `(a\:b)` never matched the
+                // value it names.
+                let word = rembslash(&String::from_utf8_lossy(&bytes[q..p]));
                 list.push(word);
                 xnum += 1;
             }
             if bad || p >= bytes.len() || bytes[p] != b')' {
-                // c:3056
+                // c:3083
                 zwarnnam(nam, &format!("invalid argument: {}", spec));
                 return None;
             }
@@ -5417,25 +5602,30 @@ pub fn parse_cvdef(nam: &str, args: &[String]) -> Option<Box<cvdef>> {
             // c:3126
         }
 
-        // c:3131-3137 — add own name to xor list when not multi.
+        // c:3158-3164 — add own name to xor list when not multi.
+        // c:3163 / c:3169 — both the xor entry AND `val->name` are stored
+        // `rembslash`ed; the port stored the raw (still-escaped) spec text,
+        // so an escaped value name never compared equal in `cv_get_val`.
+        let clean_name = rembslash(&name);
         if !multi {
-            // c:3131
+            // c:3158
             let xv = xor.get_or_insert_with(Vec::new);
             if xv.len() <= xnum as usize {
                 xv.resize(xnum as usize + 1, String::new());
             }
-            xv[xnum as usize] = name.clone(); // c:3136
+            xv[xnum as usize] = clean_name.clone(); // c:3163
         }
 
         let v = Box::new(cvval {
-            // c:3138
+            // c:3165
             next: None,
-            name: Some(name),   // c:3142
-            descr: value_descr, // c:3143
-            xor,                // c:3144
-            r#type: vtype,      // c:3145
-            arg,                // c:3146
+            name: Some(clean_name), // c:3169
+            descr: value_descr,     // c:3170
+            xor,                    // c:3171
+            r#type: vtype,          // c:3172
+            arg,                    // c:3173
             active: 0,
+            not: if not_flag { 1 } else { 0 }, // c:3174
         });
         vals_collected.push(v);
 
@@ -5534,6 +5724,7 @@ pub fn cv_get_val(d: &cvdef, name: &str) -> Option<Box<cvval>> {
                 r#type: v.r#type,
                 arg: v.arg.clone(),
                 active: v.active,
+                not: v.not, // c:2971
             }));
         }
         p = v.next.as_deref();
@@ -6006,7 +6197,7 @@ pub fn bin_compvalues(
         b'L' => (3, 4),
         b'v' => (1, 1),
         _ => {
-            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            zwarnnam(nam, &format!("bad option: {}", args[0]));
             return 1;
         }
     };
@@ -6082,20 +6273,46 @@ pub fn bin_compvalues(
                 if let Some(d) = ls.d.as_ref() {
                     let mut p = d.vals.as_deref();
                     while let Some(v) = p {
-                        if v.active != 0 {
-                            // c:3574
+                        // c:3601 — `if (p->active && !p->not)`. The port
+                        // dropped the `!p->not` half, so `!`-prefixed values
+                        // (declared purely so the parser recognises them)
+                        // were offered as completions.
+                        if v.active != 0 && v.not == 0 {
                             let bucket: &mut Vec<String> = match v.r#type {
                                 t if t == CVV_NOARG => &mut noarg,
                                 t if t == CVV_ARG => &mut arg_l,
                                 _ => &mut opt_l,
                             };
-                            let name = v.name.as_deref().unwrap_or("");
-                            let str_val = if let Some(d) = v.descr.as_deref() {
-                                format!("{}:{}", name, d)
-                            } else {
-                                name.to_string()
+                            // c:3609 / c:3617 — `bslashcolon2(p->name)`,
+                            // inlined (`bslashcolon2` is newer than the
+                            // build-gate's C-name snapshot at
+                            // tests/data/zsh_c_fn_names.txt). Body is
+                            // c:1087-1102: escape `:` AND `\`, unlike
+                            // `bslashcolon` (c:1066, `:` only) which
+                            // `comparguments -O` keeps using at c:2765.
+                            // Names were `rembslash`ed by parse_cvdef
+                            // (c:3169), so a literal `\` must be re-doubled.
+                            // The port emitted the raw name, so a value
+                            // containing `:` split into a bogus
+                            // name/description pair in _describe.
+                            let name = {
+                                let src = v.name.as_deref().unwrap_or("");
+                                let mut r = String::with_capacity(src.len() * 2); // c:1092
+                                for ch in src.chars() {
+                                    // c:1094
+                                    if ch == ':' || ch == '\\' {
+                                        r.push('\\'); // c:1096
+                                    }
+                                    r.push(ch); // c:1097
+                                }
+                                r // c:1101
                             };
-                            bucket.push(str_val); // c:3589
+                            let str_val = if let Some(d) = v.descr.as_deref() {
+                                format!("{}:{}", name, d) // c:3610-3615
+                            } else {
+                                name // c:3617
+                            };
+                            bucket.push(str_val); // c:3618
                         }
                         p = v.next.as_deref();
                     }
@@ -6115,7 +6332,18 @@ pub fn bin_compvalues(
                 .and_then(|ls| ls.d.as_ref().map(|d| (d.hassep, d.sep)))
                 .unwrap_or((0, 0));
             if hassep != 0 {
-                let tmp = (sep as u8 as char).to_string();
+                // c:3631-3635 — `char tmp[2]; tmp[0] = sep; tmp[1] = '\0';`
+                // A `char[2]` holding a 0 byte in tmp[0] IS the empty string —
+                // tmp[0] doubles as the terminator. `(sep as u8 as char)
+                // .to_string()` instead produced a one-character string holding
+                // U+0000, so a separator-less spec set the parameter to a
+                // literal NUL, which rendered as `^@` in the completion list
+                // (`ps -`, `tar -`).
+                let tmp = if sep == 0 {
+                    String::new()
+                } else {
+                    (sep as u8 as char).to_string()
+                };
                 setsparam(&args[1], &tmp);
                 0 // c:3608
             } else {
@@ -6130,7 +6358,13 @@ pub fn bin_compvalues(
                 .ok()
                 .and_then(|ls| ls.d.as_ref().map(|d| d.argsep))
                 .unwrap_or(0);
-            let tmp = (argsep as u8 as char).to_string();
+            // c:3643-3647 — same `char tmp[2]` idiom as the `-s` case above:
+            // an argsep of 0 is the empty string, not a NUL character.
+            let tmp = if argsep == 0 {
+                String::new()
+            } else {
+                (argsep as u8 as char).to_string()
+            };
             setsparam(&args[1], &tmp);
             0 // c:3620
         }
@@ -6497,7 +6731,7 @@ pub fn bin_comptags(
         b'S' => (1, 1),
         b'A' => (2, 3),
         _ => {
-            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            zwarnnam(nam, &format!("bad option: {}", args[0]));
             return 1;
         }
     };
@@ -8013,7 +8247,7 @@ pub fn bin_compfiles(
             // emits `-p-`/`-P-`. Bug #657.
             let noopt = a0.len() > 2;
             if a0.len() > 2 && (a0[2] != b'-' || a0.len() > 3) {
-                zwarnnam(nam, &format!("invalid option: {}", args[0]));
+                zwarnnam(nam, &format!("bad option: {}", args[0]));
                 return 1;
             }
             // c:5019-5022 — `-p` needs args[1]..args[7] (len >= 8);
@@ -8057,7 +8291,7 @@ pub fn bin_compfiles(
             // c:5010
             if a0.len() > 2 {
                 // c:5011
-                zwarnnam(nam, &format!("invalid option: {}", args[0]));
+                zwarnnam(nam, &format!("bad option: {}", args[0]));
                 return 1;
             }
             if args.len() < 5 {
@@ -8105,7 +8339,7 @@ pub fn bin_compfiles(
             ret // c:5065
         }
         _ => {
-            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            zwarnnam(nam, &format!("bad option: {}", args[0]));
             1
         }
     }

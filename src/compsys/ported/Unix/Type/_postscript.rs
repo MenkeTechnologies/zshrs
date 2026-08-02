@@ -18,6 +18,7 @@ use crate::ported::params::getaparam;
 
 /// `_postscript` — complete PostScript files (optionally compressed).
 pub fn _postscript(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_postscript");
     // sh:8-11 — leading `-z` allows a trailing compression suffix.
     let (ext, rest) = if args.first().map(|s| s.as_str()) == Some("-z") {
         ("(|.bz2|.gz|.Z)", &args[1..])

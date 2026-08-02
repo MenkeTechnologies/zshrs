@@ -108,6 +108,7 @@ fn run_gopt_message(args: &[String]) -> (Vec<String>, Vec<String>) {
 ///   * default — pull message format from `messages` zstyle and emit
 ///     via `compadd -x` (sh:27-45).
 pub fn _message(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_message");
     // sh:5  -e mode
     if args.first().map(|s| s == "-e").unwrap_or(false) {
         // sh:6

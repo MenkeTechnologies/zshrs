@@ -47,6 +47,7 @@ fn build_font_cache() -> Vec<String> {
 /// `_x_font` — complete X font names via `xlsfonts`, cached in the
 /// global `_font_cache` array.
 pub fn _x_font(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_font");
     // sh:5  _tags fonts || return 1
     if _tags(&["fonts".to_string()]) != 0 {
         return 1;

@@ -31,6 +31,7 @@ fn find_last_dash_x(args: &[String]) -> Option<usize> {
 /// with a trailing `-X FORMAT` pair, as `_arguments`' `x:` action does)
 /// or the generic `locales`/`locale` message.
 pub fn _x_locale(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_locale");
     // sh:3, sh:5
     match find_last_dash_x(args) {
         Some(i) => {

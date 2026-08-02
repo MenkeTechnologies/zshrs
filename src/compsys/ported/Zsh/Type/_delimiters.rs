@@ -29,6 +29,7 @@ use crate::ported::params::{getsparam, setaparam};
 /// qualifiers. Reads the `delimiters` style for the caller's tag
 /// (arg 0); falls back to `: + / - %`.
 pub fn _delimiters(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_delimiters");
     // sh:6-7  locals
     let tag = args.first().cloned().unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();

@@ -17,6 +17,7 @@ use crate::ported::exec::dispatch_function_call;
 /// (integer/float typed). Falls back to unfiltered `_parameters` if
 /// the filtered call yields nothing.
 pub fn _math_params() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_math_params");
     // sh:3  _parameters -g '(integer|float)*'
     let r = dispatch_function_call(
         "_parameters",

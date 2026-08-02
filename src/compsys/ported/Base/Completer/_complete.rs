@@ -55,6 +55,7 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
 /// `_complete` — primary `completer` entry: dispatches to per-context
 /// `$_comps` entries based on `$compstate[context]`.
 pub fn _complete() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete");
     // sh:7 `local comp name oldcontext ret=1 service`.
     //
     // `comp`/`name`/`oldcontext`/`ret` are Rust locals here, but `service`

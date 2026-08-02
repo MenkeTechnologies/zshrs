@@ -69,6 +69,7 @@ fn match1() -> String {
 
 /// `_urls` — complete URLs from a filesystem URL database and styles.
 pub fn _urls(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_urls");
     let curcontext = get("curcontext");
     let ctx = format!(":completion:{}:urls", curcontext);
     let mut ret = 1;

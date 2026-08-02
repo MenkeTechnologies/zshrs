@@ -70,6 +70,7 @@ fn slice_1based(v: &[String], first: i32, last: i32) -> Vec<String> {
 
 /// `_signals` — complete signal names (optionally `-`/`SIG` prefixed).
 pub fn _signals(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_signals");
     // sh:14  zparseopts -D -K -E 'p=minus' 'a=last' 's=pre'
     let has_p = args.iter().any(|a| a == "-p");
     let has_a = args.iter().any(|a| a == "-a");

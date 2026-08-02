@@ -86,6 +86,7 @@ fn dashdash_before_current(words: &[String], current: i64) -> bool {
 /// `__arguments` — completion for `_arguments`' own flags. Takes no arguments
 /// (sh:19); dispatches to `_arguments` with one of two hard-coded spec lists.
 pub fn __arguments(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("__arguments");
     let words = getaparam("words").unwrap_or_default();
     let current = getiparam("CURRENT");
 

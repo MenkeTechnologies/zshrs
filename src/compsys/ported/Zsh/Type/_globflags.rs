@@ -39,6 +39,7 @@ fn make_ops() -> options {
 /// `_globflags` — complete `(#x)` glob-flag characters inside a
 /// glob expression.
 pub fn _globflags() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_globflags");
     let preprefix_initial = getsparam("IPREFIX").unwrap_or_default();
     let mut ret: i32 = 1;
 

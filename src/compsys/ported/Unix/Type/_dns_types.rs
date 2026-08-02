@@ -75,6 +75,7 @@ const DNS_TYPES: &[&str] = &[
 
 /// `_dns_types` — complete DNS resource-record type names.
 pub fn _dns_types(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dns_types");
     // sh:4
     let _ = _description(&[
         "dns-types".to_string(),

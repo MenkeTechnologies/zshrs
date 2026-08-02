@@ -43,6 +43,7 @@ fn darwin_mount_helpers() -> Vec<String> {
 
 /// `_file_systems` — complete file-system type names for the running OS.
 pub fn _file_systems(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_systems");
     // sh:5 — dispatch on $OSTYPE (runtime, like the shell case).
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let fss: Vec<String> = if ostype.starts_with("aix") {

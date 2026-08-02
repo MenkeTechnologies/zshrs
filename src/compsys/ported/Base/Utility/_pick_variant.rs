@@ -95,6 +95,7 @@ fn opt(opts_flat: &[String], key: &str) -> Option<String> {
 /// by running it (cached in `$_cmd_variant`) and matching its output
 /// against caller-supplied `name=pattern` specs.
 pub fn _pick_variant(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pick_variant");
     // sh:7
     let (argv, opts_flat) = run_zparseopts_pick_variant(args);
 

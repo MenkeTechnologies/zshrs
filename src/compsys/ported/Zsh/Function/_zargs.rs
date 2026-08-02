@@ -160,6 +160,7 @@ fn scan_eofs(words: &[String], current: i64, eofstr: &str) -> (i64, i64) {
 /// wrapped command) based on how many `eofstr` separators precede the
 /// cursor.
 pub fn _zargs(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zargs");
     let mut ret = 1; // sh:3  ret=1
 
     // sh:3  pos=$((CURRENT)) (read here; the scan owns its own copy).

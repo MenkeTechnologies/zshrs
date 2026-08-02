@@ -73,6 +73,7 @@ fn run_zparseopts_widgets(
 /// `_widgets` — complete ZLE widget names. `-g <pat>` (default `*`)
 /// filters by widget value-string (e.g. `user:*` for user widgets).
 pub fn _widgets(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_widgets");
     // sh:5
     let seed = vec!["-g".to_string(), "*".to_string()];
     // sh:6

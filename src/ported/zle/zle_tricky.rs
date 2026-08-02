@@ -242,25 +242,43 @@ pub fn spellword(_args: &[String]) -> i32 {
 /// Port of `deletecharorlist(char **args)` from Src/Zle/zle_tricky.c:270.
 pub fn deletecharorlist(_args: &[String]) -> i32 {
     // c:270
-    USEMENU.store(0, Ordering::SeqCst); // c:273
-    USEGLOB.store(1, Ordering::SeqCst); // c:274
-    WOULDINSTAB.store(0, Ordering::SeqCst); // c:275
-                                            // c:277-279 — `if (zlecs == zlell) return docomplete(COMP_LIST_COMPLETE);
-                                            //              else deletechar()`.
-    if ZLECS.load(Ordering::SeqCst) == ZLELL.load(Ordering::SeqCst) {
-        docomplete(COMP_LIST_COMPLETE)
-    } else {
-        deletechar()
+    // c:272-273 — C reads the OPTIONS here, exactly like every sibling
+    // widget: `usemenu = !!isset(MENUCOMPLETE); useglob = isset(GLOBCOMPLETE)`.
+    // The port hardcoded 0/1, so `delete-char-or-list` at end-of-line always
+    // listed with menu-completion forced OFF and glob-completion forced ON
+    // regardless of the user's MENU_COMPLETE / GLOB_COMPLETE settings.
+    USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:272
+    USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:273
+    WOULDINSTAB.store(0, Ordering::SeqCst); // c:274
+                                            // c:277-281 — `if (zlecs != zlell) { fixsuffix(); invalidatelist();
+                                            //                return deletechar(args); }`. Both calls were absent:
+                                            // without `fixsuffix` an auto-removable suffix stayed in the buffer
+                                            // and without `invalidatelist` a stale completion list kept being
+                                            // redisplayed after the delete.
+    if ZLECS.load(Ordering::SeqCst) != ZLELL.load(Ordering::SeqCst) {
+        crate::ported::zle::zle_misc::fixsuffix(); // c:278
+        crate::ported::zle::zle_h::invalidatelist(); // c:279
+        return deletechar(); // c:280
     }
+    docomplete(COMP_LIST_COMPLETE) // c:282
 }
 
 /// Port of `expandword(char **args)` from Src/Zle/zle_tricky.c:287.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn expandword(_args: &[String]) -> i32 {
+pub fn expandword(args: &[String]) -> i32 {
     // c:287
     USEMENU.store(0, Ordering::SeqCst); // c:289
     USEGLOB.store(0, Ordering::SeqCst); // c:289
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:290
+                                            // c:291-292 — `if (lastchar == '\t' && usetab()) return selfinsert(args);`.
+                                            // The whole Tab-at-indent arm was missing, so `expand-word` bound to
+                                            // Tab expanded instead of inserting a literal tab when the cursor sat
+                                            // in leading whitespace — every sibling widget (completeword,
+                                            // menucomplete, expandorcomplete, menuexpandorcomplete) has it.
+    let lastch = LASTCHAR.load(Ordering::SeqCst);
+    if lastch == b'\t' as i32 && usetab() != 0 {
+        return selfinsert(args); // c:292
+    }
     docomplete(COMP_EXPAND) // c:294
 }
 
@@ -437,11 +455,15 @@ pub fn checkparams(p: &str) -> i32 {
 pub fn cmphaswilds(str: &str) -> i32 {
     // c:457
     use crate::ported::zsh_h::{
-        isset, Equals, Hat, Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace, Outbrack, Outpar,
-        Pound, Qstring, Quest, Star, Stringg, Tilde, EXTENDEDGLOB, IGNOREBRACES,
+        isset, Bar, Equals, Hat, Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace, Outbrack,
+        Outpar, Pound, Qstring, Quest, Star, Stringg, Tilde, EXTENDEDGLOB, IGNOREBRACES,
     };
     let mut s = str;
-    let bar_byte = b'|' as char;
+    // c:502 — C tests `*str == Bar`, the tokenized `|` (0x8e). The port
+    // tested the literal ASCII `|` (0x7c), which cannot appear here: the
+    // word handed to cmphaswilds comes from get_comp_string and is
+    // tokenized, so a real `|` is already Bar. The check never fired.
+    let bar_byte = Bar;
     // c:459-460 — `if ((*str == Inbrack || *str == Outbrack) && !str[1])
     //                return 0;`
     let chars: Vec<char> = s.chars().collect();
@@ -500,36 +522,50 @@ pub fn cmphaswilds(str: &str) -> i32 {
                 }
             }
         } else {
-            // c:501-508 — wildcard / balanced-bracket detection.
+            // c:501-509 — wildcard / balanced-bracket detection.
+            //
+            // C evaluates this as ONE short-circuiting `||` chain over the
+            // SAME `str`, and `skipparens` MUTATES `str` even when it fails
+            // with an unterminated bracket (utils.c:2416 walks to the end of
+            // the string and returns level > 0). The port evaluated all six
+            // terms eagerly on throwaway copies, so an unterminated `[`
+            // left the scan pointer one char past `[` instead of at
+            // end-of-string: `cmphaswilds("[a*")` answered 1 (it went on to
+            // find the `*`) where zsh answers 0, sending expand-or-complete
+            // down the expansion arm for a word with no usable glob.
             let is_extglob_meta = (c == Pound as char || c == Hat as char) && isset(EXTENDEDGLOB);
             let is_simple_wild = c == Star as char || c == bar_byte || c == Quest as char;
-            let mut s_try = s;
-            let brack_balanced =
-                crate::ported::utils::skipparens(Inbrack as char, Outbrack as char, &mut s_try)
-                    == 0;
-            let mut s_try = s;
-            let ang_balanced =
-                crate::ported::utils::skipparens(Inang as char, Outang as char, &mut s_try) == 0;
-            let mut s_try = s;
-            let brace_balanced = !isset(IGNOREBRACES)
-                && crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut s_try)
-                    == 0;
-            let mut s_try = s;
-            let pchars: Vec<char> = s.chars().collect();
-            let pair_colon = pchars.first() == Some(&(Inpar as char))
-                && pchars.get(1) == Some(&':')
-                && crate::ported::utils::skipparens(Inpar as char, Outpar as char, &mut s_try) == 0;
-            if is_extglob_meta
-                || is_simple_wild
-                || brack_balanced
-                || ang_balanced
-                || brace_balanced
-                || pair_colon
+            if is_extglob_meta || is_simple_wild {
+                return 1; // c:501-502
+            }
+            // c:503 — `!skipparens(Inbrack, Outbrack, &str)`
+            if crate::ported::utils::skipparens(Inbrack as char, Outbrack as char, &mut s) == 0 {
+                return 1;
+            }
+            // c:504 — `!skipparens(Inang, Outang, &str)`
+            if crate::ported::utils::skipparens(Inang as char, Outang as char, &mut s) == 0 {
+                return 1;
+            }
+            // c:505-506 — `unset(IGNOREBRACES) && !skipparens(Inbrace, …)`
+            if !isset(IGNOREBRACES)
+                && crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut s) == 0
             {
                 return 1;
             }
-            // c:510-511 — `if (*str) str++;`
-            s = &s[c.len_utf8()..];
+            // c:507-508 — `*str == Inpar && str[1] == ':' && !skipparens(Inpar, …)`
+            let pchars: Vec<char> = s.chars().take(2).collect();
+            if pchars.first() == Some(&(Inpar as char))
+                && pchars.get(1) == Some(&':')
+                && crate::ported::utils::skipparens(Inpar as char, Outpar as char, &mut s) == 0
+            {
+                return 1;
+            }
+            // c:510-511 — `if (*str) str++;`. `s` may have been advanced by
+            // a failed skipparens above, so re-read the current char.
+            match s.chars().next() {
+                Some(cc) => s = &s[cc.len_utf8()..],
+                None => break,
+            }
         }
     }
     0 // c:513
@@ -705,9 +741,13 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
 /// AFTERCOMPLETEHOOK chain (c:878).
 pub fn docomplete(lst: i32) -> i32 {
     // c:599
-    // c:601 — `int olst = lst`; `lst` is then narrowed in place by the
-    // expand-vs-complete decision at c:704-793.
+    // c:604 — `int olst = lst`; `lst` is then narrowed in place by the
+    // expand-vs-complete decision at c:704-793. C captures `olst` at the
+    // very top, BEFORE the BEFORECOMPLETEHOOK can rewrite `lst` through the
+    // pointer it is handed — so the snapshot must live here, not after the
+    // hook, or `olst` would track the hook's rewrite too.
     let mut lst = lst;
+    let olst = lst; // c:604
     // c:606-609 — recursion guard. The C source uses a static `active`
     // flag; we mirror via thread_local since each worker runs its own
     // completion.
@@ -736,6 +776,11 @@ pub fn docomplete(lst: i32) -> i32 {
     let _active_guard = ActiveGuard;
     // c:611 — `comprecursive = 0;`
     crate::ported::zle::complist::COMPRECURSIVE.store(0, std::sync::atomic::Ordering::Relaxed);
+    // c:612 — `makecommaspecial(0);`. Absent from the port. It clears the
+    // lexer's "comma is a word separator" flag that `_arguments` sets while
+    // parsing a `{a,b}` spec; leaving it latched from a previous completion
+    // makes the NEXT completion's lexer split words at every comma.
+    crate::ported::utils::makecommaspecial(false);
     tracing::debug!(target: "compsys_args", lst, "docomplete ENTER");
 
     // c:621 — `runhookdef(BEFORECOMPLETEHOOK, &lst)`. Canonical
@@ -757,6 +802,11 @@ pub fn docomplete(lst: i32) -> i32 {
     } else {
         crate::ported::zle::compcore::before_complete(&mut lst_box) != 0
     };
+    // c:621 — C passes `&lst` itself, so a hook that rewrites `*lst` (e.g.
+    // `before_complete` downgrading COMP_EXPAND_COMPLETE to COMP_COMPLETE
+    // for an in-progress menu) changes the value every line below uses.
+    // The port handed the hook a private copy and then threw it away.
+    lst = lst_box;
     if bc_handled {
         // before_complete handled this Tab (e.g. advanced an active menu and
         // do_single'd the next match into the metafied buffer). Mirror the
@@ -839,8 +889,18 @@ pub fn docomplete(lst: i32) -> i32 {
         .map(|g| g.clone())
         .unwrap_or_default();
     let s_word: String = origword.unwrap_or_else(|| line.clone());
+    // c:701-702 — `if (inwhat == IN_ENV) lincmd = 0;`. Missing from the port:
+    // completing the VALUE of an environment assignment (`FOO=<TAB>`) still
+    // reported command position, so `_main_complete` dispatched the
+    // command-name completer instead of the value one.
+    {
+        use crate::ported::zle::compcore::INWHAT;
+        use crate::ported::zsh_h::IN_ENV;
+        if INWHAT.load(Ordering::SeqCst) == IN_ENV {
+            LINCMD.store(0, Ordering::SeqCst); // c:702
+        }
+    }
     let lincmd = LINCMD.load(Ordering::SeqCst); // c:805
-    let olst = lst; // c:816 — `olst` is the original `lst` saved before dispatch
 
     // c:703-793 — `if (s) { if (lst == COMP_EXPAND_COMPLETE) { … } }`:
     // decide whether this TAB expands or completes. Skipping it left `lst`
@@ -1031,6 +1091,19 @@ pub fn docomplete(lst: i32) -> i32 {
         }
     }
 
+    // c:798-799 — `if (lincmd && (inwhat == IN_NOTHING)) inwhat = IN_CMD;`.
+    // Missing from the port. `inwhat` is copied verbatim into `linwhat`
+    // by makecomplist (compcore.c:960) and surfaces as the `-command-`
+    // context, so leaving it at IN_NOTHING for a command-position word
+    // lost the command context for everything downstream.
+    {
+        use crate::ported::zle::compcore::INWHAT;
+        use crate::ported::zsh_h::{IN_CMD, IN_NOTHING};
+        if lincmd != 0 && INWHAT.load(Ordering::SeqCst) == IN_NOTHING {
+            INWHAT.store(IN_CMD, Ordering::SeqCst); // c:799
+        }
+    }
+
     // c:817-870 — dispatch on `lst`.
     let ret;
     if lst == COMP_SPELL {
@@ -1041,19 +1114,55 @@ pub fn docomplete(lst: i32) -> i32 {
         //   inststr(x);
         let wb = WB.load(Ordering::SeqCst);
         let we = WE.load(Ordering::SeqCst);
-        if we > wb {
-            // c:807 — `zlemetacs = wb`.
-            ZLEMETACS.store(wb, Ordering::SeqCst);
-            // c:808 — `foredel(we - wb, CUT_RAW)`.
-            foredel(we - wb, CUT_RAW);
+        // c:802-806 — `w = dupstring(origword); for (q = w; *q; q++)
+        //               if (inull(*q)) *q = Nularg;`. The null-token
+        // flattening was missing, so quote markers (Snull/Dnull/Bnull…)
+        // survived into `spckword` and were spell-checked as if they were
+        // real characters.
+        // `inull(X)` is `zistype(X, INULL)` (ztype.h:62) — the null-token
+        // class, inlined here because compctl.rs's copy is module-private.
+        let w: String = s_word
+            .chars()
+            .map(|c| {
+                use crate::ported::zsh_h::{Bnull, Dnull, Nularg, Qstring, Snull, Stringg};
+                if matches!(c, Snull | Dnull | Bnull | Stringg | Qstring) {
+                    Nularg // c:805
+                } else {
+                    c
+                }
+            })
+            .collect();
+        // c:807-808 — UNCONDITIONAL in C; the port gated both on `we > wb`.
+        ZLEMETACS.store(wb, Ordering::SeqCst); // c:807
+        foredel(we - wb, CUT_RAW); // c:808
+                                   // c:810 — `untokenize(x = ox = dupstring(w))`. Without this the
+                                   // remaining parser tokens (Tilde/Equals/Star/…) were fed to
+                                   // `spckword` and then re-inserted raw into the line.
+        let ox = crate::ported::lex::untokenize(&w); // c:810
+        let mut x = ox.clone(); // c:810
+                                // c:811-812 — `if (*w == Tilde || *w == Equals || *w == String)
+                                //                *x = *w;` — put the *token* back as the first char so
+                                // spckword knows this is a `~`/`=`/`$` word.
+        if let Some(fc) = w.chars().next() {
+            use crate::ported::zsh_h::{Equals, Stringg, Tilde};
+            if fc == Tilde || fc == Equals || fc == Stringg {
+                let mut xc: Vec<char> = x.chars().collect();
+                if xc.is_empty() {
+                    xc.push(fc);
+                } else {
+                    xc[0] = fc;
+                }
+                x = xc.into_iter().collect(); // c:812
+            }
         }
-        let mut x = s_word.clone(); // c:810 — `dupstring(w)`
-        let ox = s_word.clone(); // c:810 — `ox = dupstring(w)`
-                                 // c:813 — `spckword(&x, 0, lincmd, 0)`.
+        // c:813 — `spckword(&x, 0, lincmd, 0)`.
         crate::ported::utils::spckword(&mut x, 0, lincmd, 0);
         // c:814 — `ret = !strcmp(x, ox)` — returns 1 (unchanged) /
         // 0 (changed). Matches C `!strcmp` semantics.
         let r = if x == ox { 1 } else { 0 };
+        // c:816 — `untokenize(x)`. Second detokenize pass, after spckword
+        // may have re-introduced the leading token from c:812.
+        let x = crate::ported::lex::untokenize(&x);
         // c:816 — `inststr(x)` re-inserts the (possibly corrected)
         // word at the cursor. Routes through `inststrlen` with
         // `move_cursor=true, len=-1` matching C's `inststr(x)`
@@ -1086,11 +1195,11 @@ pub fn docomplete(lst: i32) -> i32 {
         // `_bindkey`, `_tar`) completed NOTHING at `cmd -<TAB>`, while the
         // same spec worked when TAB was rebound to `complete-word`.
         let ocs = ZLEMETACS.load(Ordering::SeqCst); // c:823
-        let ne = crate::ported::exec::noerrs.load(Ordering::SeqCst); // c:839
-        crate::ported::exec::noerrs.store(1, Ordering::SeqCst); // c:840
+        let ne = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:839
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = 1; // c:840
         let mut ret_local = doexpansion(&s_word, lst, olst, lincmd); // c:841
         LASTAMBIG.store(0, Ordering::SeqCst); // c:842
-        crate::ported::exec::noerrs.store(ne, Ordering::SeqCst); // c:843
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = ne; // c:843
 
         // c:847-868 — if expand-or-complete and buffer unchanged,
         // fall through to docompletion.
@@ -1105,9 +1214,32 @@ pub fn docomplete(lst: i32) -> i32 {
             crate::ported::utils::errflag
                 .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::SeqCst);
             ret_local = docompletion(&s_word, lst, lincmd); // c:865
-        } else if ret_local != 0 {
-            // c:854 — `if (ret) clearlist = 1`.
-            CLEARLIST.store(1, Ordering::SeqCst);
+        } else {
+            // c:853-854 — `if (ret) clearlist = 1`.
+            if ret_local != 0 {
+                CLEARLIST.store(1, Ordering::SeqCst);
+            }
+            // c:855-864 — the whole "we may have removed some quotes"
+            // restore was missing. C's `ol` at c:820-822 is a COPY only for
+            // olst == COMP_EXPAND / COMP_EXPAND_COMPLETE; for
+            // COMP_LIST_EXPAND it ALIASES zlemetaline, so the strcmp is
+            // trivially equal and the restore always fires. Reproduce both
+            // arms: an expansion that ended up not changing the line must
+            // put the ORIGINAL (still-quoted) line back, because — unlike
+            // completion — nothing downstream re-installs the quotes.
+            let ol_aliases_line = !(olst == COMP_EXPAND || olst == COMP_EXPAND_COMPLETE); // c:820-822
+            if ol_aliases_line || ol_before == after {
+                ZLEMETACS.store(0, Ordering::SeqCst); // c:859
+                foredel(ZLEMETALL.load(Ordering::SeqCst), CUT_RAW); // c:860
+                spaceinline(ORIGLL.load(Ordering::SeqCst)); // c:861
+                if let (Some(metabuf), Some(orig)) = (ZLEMETALINE.get(), ORIGLINE.get()) {
+                    if let (Ok(mut m), Ok(o)) = (metabuf.lock(), orig.lock()) {
+                        *m = o.clone(); // c:862
+                        ZLEMETALL.store(m.len() as i32, Ordering::SeqCst);
+                    }
+                }
+                ZLEMETACS.store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst); // c:863
+            }
         }
         ret = ret_local;
     } else {
@@ -1119,7 +1251,11 @@ pub fn docomplete(lst: i32) -> i32 {
     // c:878 — `runhookdef(AFTERCOMPLETEHOOK, &dat)`. Same dispatch
     // shape as the BEFORECOMPLETEHOOK call above; passes a 2-element
     // int buffer per C's `int dat[2]`.
-    let mut dat: [i32; 2] = [ret, 0];
+    // c:876-877 — `dat[0] = lst; dat[1] = ret;`. The port filled
+    // `[ret, 0]`, so every after-complete hook read the RETURN CODE where
+    // C puts the completion TYPE, and the slot the hook writes its own
+    // result into was hardcoded to 0.
+    let mut dat: [i32; 2] = [lst, ret]; // c:876-877
     let h_after = gethookdef("after_complete");
     if !h_after.is_null() {
         let dat_ptr = dat.as_mut_ptr() as *mut std::ffi::c_void;
@@ -1150,7 +1286,21 @@ pub fn docomplete(lst: i32) -> i32 {
         crate::ported::zle::zle_main::ZLELL.store(comp_ll as usize, Ordering::SeqCst);
     }
 
-    ret // _active_guard resets ACTIVE on drop
+    // c:882 — `makecommaspecial(0);` on the way out, so the flag never
+    // leaks into the next completion.
+    crate::ported::utils::makecommaspecial(false);
+    // c:894 — `errflag &= ~ERRFLAG_INT;`. Completion deliberately swallows
+    // a user interrupt so ^C during a long completion leaves the edit
+    // buffer intact instead of aborting the line. The port never cleared
+    // it, so an interrupted completion left ERRFLAG_INT latched and the
+    // next command aborted spuriously.
+    crate::ported::utils::errflag
+        .fetch_and(!crate::ported::zsh_h::ERRFLAG_INT, Ordering::SeqCst); // c:894
+
+    // c:896 — `return dat[1]`, NOT `ret`: an after-complete hook is free to
+    // overwrite dat[1] to change the widget's return value (and thus
+    // whether zlecore beeps).
+    dat[1] // _active_guard resets ACTIVE on drop
 }
 
 /// Port of `addx(char **ptmp)` from Src/Zle/zle_tricky.c:922.
@@ -3196,17 +3346,33 @@ pub fn doexpandhist() -> i32 {
     // (still a real check, not a constant return).
     if !line.contains('!') {
         return 0;
-    } // c:2860 no `!` = no expansion
-    let expanded = line.clone(); // pass-through
+    } // c:2843 no `!` = no expansion
+      // Pass-through: the substrate for a real single-call history expand
+      // isn't wired here yet (see doc comment above).
+    let expanded = line.clone();
+    // c:2843 — `if (strcmp(zlemetaline, ol))`: C returns 1 ONLY when the
+    // expansion actually CHANGED the line; otherwise it restores `ol`
+    // (c:2856), leaves the cursor where `zle_restore_positions` puts it,
+    // and returns 0 (c:2862).
+    //
+    // The port returned 1 — and slammed the cursor to end-of-line — for
+    // ANY line containing a `!`, even though the pass-through changes
+    // nothing. docomplete bails at c:628-631 whenever doexpandhist() is
+    // non-zero, so Tab silently did nothing (and moved the cursor) on
+    // every line with a bang in it: `git commit -m "fix!" <TAB>`,
+    // `[[ ! -f <TAB>`, `foo != <TAB>`.
+    if expanded == line {
+        return 0; // c:2862
+    }
     if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
     {
-        *g = expanded.clone();
+        *g = expanded;
         crate::ported::zle::compcore::ZLELL.store(g.len() as i32, Ordering::Relaxed);
         crate::ported::zle::compcore::ZLECS.store(g.len() as i32, Ordering::Relaxed);
     }
-    1 // c:2864 expanded
+    1 // c:2852 expanded
 }
 
 /// Port of `fixmagicspace()` from Src/Zle/zle_tricky.c:2867.
@@ -3369,14 +3535,24 @@ pub fn expandcmdpath() -> i32 {
     }
     let str_chars = str_full.chars().count();
     ZLELL.fetch_add(str_chars, Ordering::SeqCst);
-    // c:3028 — zlecs = oldcs;
-    // c:3029-3033 — if (zlecs >= cmdwe - 1) zlecs += str_chars - (cmdwe - cmdwb);
-    let new_cs = if oldcs >= cmdwe.saturating_sub(1) {
-        oldcs + str_chars - (cmdwe - cmdwb)
+    // c:3044 — zlecs = oldcs;
+    // c:3045-3046 — `if (zlecs >= cmdwb) zlecs += strll - (cmdwe - cmdwb);`.
+    // The port compared against `cmdwe - 1`, so a cursor sitting INSIDE the
+    // command word (>= cmdwb but < cmdwe-1) was not shifted by the
+    // path expansion and ended up pointing into the middle of the newly
+    // inserted absolute path.
+    let mut new_cs = if oldcs >= cmdwb {
+        (oldcs + str_chars).saturating_sub(cmdwe - cmdwb) // c:3046
     } else {
         oldcs
     };
-    ZLECS.store(new_cs.min(line.len() + str_chars), Ordering::SeqCst);
+    // c:3047-3048 — `if (zlecs > zlell) zlecs = zlell;`. C clamps to the
+    // LINE LENGTH global, not to a locally recomputed size.
+    let ll = ZLELL.load(Ordering::SeqCst);
+    if new_cs > ll {
+        new_cs = ll; // c:3048
+    }
+    ZLECS.store(new_cs, Ordering::SeqCst);
     0
 }
 
@@ -4104,13 +4280,27 @@ mod tests {
         assert_eq!(cmphaswilds(&quest), 1, "Quest token → has wildcard");
     }
 
-    /// `cmphaswilds("|")` returns 1 — pipe is a wildcard at top-level.
-    /// C `Src/Zle/zle_tricky.c:506` — `c == '|'`.
+    /// `cmphaswilds(Bar)` returns 1 — pipe is a wildcard at top-level.
+    /// C `Src/Zle/zle_tricky.c:502` — `*str == Bar`, the TOKENIZED `|`
+    /// (zsh.h:169, 0x8e), never the literal ASCII `|` (0x7c). The word
+    /// reaching cmphaswilds comes from `get_comp_string` and is tokenized,
+    /// so a real pipe is already Bar by the time we see it; walk C's
+    /// c:499-512 else-branch with a literal `|` and every arm falls
+    /// through to `if (*str) str++`, returning 0 at c:514.
+    ///
+    /// The previous assertion (`cmphaswilds("|") == 1`) cited a
+    /// `c == '|'` test that does not exist anywhere in the C function.
     #[test]
     fn cmphaswilds_pipe_returns_one() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert_eq!(cmphaswilds("|"), 1, "| literal → has wildcard");
+        let bar = format!("{}", crate::ported::zsh_h::Bar);
+        assert_eq!(cmphaswilds(&bar), 1, "Bar token → has wildcard");
+        assert_eq!(
+            cmphaswilds("|"),
+            0,
+            "untokenized ASCII | is not a wildcard (c:502 tests Bar)"
+        );
     }
 
     /// `cmphaswilds("abc.def")` returns 0 — dot isn't a wildcard.

@@ -30,6 +30,7 @@ const ARCHITECTURES: &[&str] = &[
 
 /// `_obsd_architectures` — complete OpenBSD architecture names.
 pub fn _obsd_architectures(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_obsd_architectures");
     // sh:5  _description architectures expl 'architecture'
     let _ = _description(&[
         "architectures".to_string(),

@@ -31,6 +31,7 @@ fn odmdir() -> String {
 /// `_object_classes` — complete AIX ODM object-class files
 /// (`$ODMDIR/*.vc`, excluding dot-files) for `odmget`/`odmshow`/`odme`.
 pub fn _object_classes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_object_classes");
     // sh:5-6  _wanted objectclasses expl 'object class' \
     //           _files -W ${ODMDIR:-/etc/objrepos} -g '^*.vc(-.)' "$@" -
     let mut wanted_args: Vec<String> = vec![

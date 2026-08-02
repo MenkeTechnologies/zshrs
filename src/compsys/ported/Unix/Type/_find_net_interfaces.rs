@@ -50,6 +50,7 @@ fn dir_basenames(path: &str) -> Vec<String> {
 /// `_find_net_interfaces` — enumerate network interface names into
 /// `$net_intf_list`.
 pub fn _find_net_interfaces(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_find_net_interfaces");
     // sh:14 — dispatch on $OSTYPE.
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let list: Vec<String> = if ostype.starts_with("darwin")

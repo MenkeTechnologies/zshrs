@@ -26,6 +26,7 @@ use crate::ported::params::getsparam;
 /// `_bash_completions` — Bash-style keybinding completion router.
 /// Reads the last char of `$KEYS` to pick a completer.
 pub fn _bash_completions() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_bash_completions");
     let keys = getsparam("KEYS").unwrap_or_default();
     let key = keys.chars().last().unwrap_or(' ');
 

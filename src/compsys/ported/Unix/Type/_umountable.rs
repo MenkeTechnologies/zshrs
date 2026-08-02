@@ -141,6 +141,7 @@ fn run_mount() -> Option<String> {
 /// `_umountable` — complete unmountable device labels / paths / mount
 /// points, split from the platform mount table.
 pub fn _umountable(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_umountable");
     let (dev_raw, mp_raw) = collect_mounts();
 
     // sh:42-43 — decode octal escapes.

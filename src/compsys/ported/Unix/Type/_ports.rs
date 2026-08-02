@@ -47,6 +47,7 @@ fn parse_services() -> Vec<String> {
 /// `_ports` — complete TCP port numbers from the `ports` style or
 /// `/etc/services`.
 pub fn _ports(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ports");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     // sh:5  zstyle -a ":completion:${curcontext}:" ports ports
     let mut ports = lookupstyle(&format!(":completion:{}:", curcontext), "ports");

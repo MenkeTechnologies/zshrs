@@ -29,6 +29,7 @@ fn is_ident_char(c: char) -> bool {
 /// chars from PREFIX/SUFFIX into IPREFIX/ISUFFIX, then offer math
 /// param + math-fn alternatives.
 pub fn _math() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_math");
     // sh:3-6  PREFIX has non-ident → split off the trailing ident
     //         portion as the new PREFIX; the leading part joins
     //         IPREFIX.

@@ -1790,14 +1790,18 @@ pub fn comp_match(
             *out = mid_lc;
         }
 
-        // c:1245-1251 — exact-match test.
+        // c:1246-1249 — `*exact = (!strncmp(pfx, w, pl) && !strcmp(sfx, w + pl));`
+        // C's second test is `strcmp` — FULL equality of the word's tail with
+        // the suffix. The port used `ends_with`, which also accepts a tail
+        // that merely ENDS in `sfx` with extra characters in between, so
+        // candidates that are not exact matches were flagged exact and got
+        // REC_EXACT's immediate-accept treatment.
         let pl = pfx.len();
-        *exact =
-            if w_quoted.len() >= pl && w_quoted.starts_with(pfx) && w_quoted[pl..].ends_with(sfx) {
-                1
-            } else {
-                0
-            };
+        *exact = if w_quoted.len() >= pl && w_quoted.starts_with(pfx) && &w_quoted[pl..] == sfx {
+            1
+        } else {
+            0
+        };
     } else {
         // c:1233
         // c:1235-1239 — prefix-only path.
@@ -1886,15 +1890,20 @@ pub fn pattern_match1(
                 0 // c:1285
             }
         }
-        x if x == CPAT_ANY => 1, // c:1288-1289
+        x if x == CPAT_ANY => 1, // c:1285-1286
         x if x == CPAT_CHAR => {
-            if p.chr == c {
-                c
-            } else {
-                0
-            }
-        } // c:1291-1292
-        _ => 0,                  // c:1294
+            // c:1288-1289 — C is `return (p->u.chr == c);`, a BOOLEAN: 1 on
+            // hit, 0 on miss. The port returned the CHARACTER itself, which
+            // callers then compare as an equivalence INDEX:
+            // pattern_match c:1573 / pattern_match_restrict c:1447 both do
+            // `if (ind != wind) return 0;`. With the char returned instead
+            // of 1, any matcher pairing two DIFFERENT literals — `m:x=y` —
+            // produced ind='x' vs wind='y' and was rejected, and any
+            // CPAT_CHAR line pattern against a CPAT_ANY word pattern
+            // produced ind=c vs wind=1 and was likewise rejected.
+            (p.chr == c) as u32
+        }
+        _ => 0, // c:1292-1293
     }
 }
 
@@ -2091,36 +2100,69 @@ pub fn pattern_match_restrict(
         wp_cur = wpat.next.as_deref();
     }
 
-    // c:1505-1540 — tail loop: continue matching when wsc exhausted
-    // but prestrict still has more chars (deduced solely from p).
+    // c:1478-1509 — tail loop: continue matching when the word side is
+    // exhausted but prestrict still has more chars (deduced solely from p).
     while p_cur.is_some() && pr_cur.is_some() {
-        // c:1505
+        // c:1478
         let pat = p_cur.unwrap();
         let pre = pr_cur.unwrap();
-        let c: u32 = if pre.tp == CPAT_CHAR {
-            pre.chr
-        } else if pat.tp == CPAT_CHAR {
-            pat.chr
-        } else {
-            return 0; // c:1522 not enough info
-        };
         let mut mt: i32 = 0;
-        if pre.tp != CPAT_CHAR && pattern_match1(pre, c, &mut mt) == 0 {
+        let c: u32 = if pre.tp == CPAT_CHAR {
+            pre.chr // c:1485
+        } else {
+            let cc = if pat.tp == CPAT_CHAR {
+                pat.chr // c:1488
+            } else {
+                return 0; // c:1499 — not enough info to deduce a character
+            };
+            // c:1501-1502 — `if (!pattern_match1(prestrict, c, &mt)) return 0;`
+            if pattern_match1(pre, cc, &mut mt) == 0 {
+                return 0;
+            }
+            cc
+        };
+        // c:1504-1505 — `if (!pattern_match1(p, c, &mt)) return 0;`. This whole
+        // statement was ABSENT from the port. It is UNCONDITIONAL in C — it runs
+        // even on the `prestrict->tp == CPAT_CHAR` fast path — so a restriction
+        // that pinned an exact line character was accepted without ever checking
+        // that the line PATTERN admits that character.
+        if pattern_match1(pat, c, &mut mt) == 0 {
             return 0;
         }
+        p_cur = pat.next.as_deref(); // c:1506
         if let Some(ch) = char::from_u32(c) {
-            new_line.push(ch);
+            new_line.push(ch); // c:1507
         }
-        pr_cur = pre.next.as_deref();
-        p_cur = pat.next.as_deref();
+        pr_cur = pre.next.as_deref(); // c:1508
     }
 
-    // c:1542 — `p_cur.is_none() && pr_cur.is_none() && (wp_cur.is_none() || wsc empty)`.
-    if p_cur.is_none() && pr_cur.is_none() && (wp_cur.is_none() || wsc_idx >= wsc.len()) {
-        1 // c:1544 full match
-    } else {
-        0 // c:1545
+    // c:1511-1514 — `if (prestrict) { /* Restriction with nothing to match */
+    //                  return 0; }`. Note C does NOT require `p` to be
+    // exhausted here; the port's single combined condition demanded
+    // `p_cur.is_none()` and so rejected every match whose line pattern chain
+    // outran the restriction chain.
+    if pr_cur.is_some() {
+        return 0; // c:1513
     }
+
+    // c:1516-1523 — `while (wp && wsclen) { if (!pattern_match1(wp, *wsc,
+    //                  &wmt)) return 0; ... }`. The port had NO counterpart
+    // for this loop at all: it merely tested that one side was exhausted, so
+    // any leftover word characters went completely UNVALIDATED against their
+    // remaining word patterns and bogus candidates were accepted.
+    while let Some(wpat) = wp_cur {
+        if wsc_idx >= wsc.len() {
+            break; // c:1516 — `wsclen` exhausted
+        }
+        let mut wmt: i32 = 0;
+        if pattern_match1(wpat, wsc[wsc_idx], &mut wmt) == 0 {
+            return 0; // c:1519
+        }
+        wp_cur = wpat.next.as_deref(); // c:1520
+        wsc_idx += 1; // c:1521-1522
+    }
+
+    1 // c:1525
 }
 
 /// Port of `pattern_match(Cpattern p, char *s, Cpattern wp, char *ws)` from Src/Zle/compmatch.c:1548.
@@ -2735,11 +2777,17 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
         }
     }
 
-    if !out.is_empty() {
-        Some(out)
-    } else {
-        None
-    } // c:2100-2104
+    // c:2089-2090 — `if (la || lb || !rp) return NULL;`. C succeeds ONLY when
+    // BOTH inputs were fully consumed. The port returned the partial result
+    // whenever anything at all had been appended, so a join that hit the
+    // `if (!t) break` bail-out at c:2069-2070 with characters still
+    // outstanding was reported as a success — and cmp_anchors (c:2124-2131)
+    // then answered 2 ("compatible, and combined in o"), overwriting the
+    // anchor's word with a TRUNCATED string that matches neither input.
+    if la != 0 || lb != 0 || out.is_empty() {
+        return None; // c:2090
+    }
+    Some(out) // c:2094
 }
 
 // (cline_setlens / cline_sublen wrong-sig duplicates removed —
@@ -4144,10 +4192,15 @@ pub static MATCHLASTSUB: OnceLock<Mutex<Option<Box<Cline>>>> = OnceLock::new(); 
 /// The port's marker base is 0x80 where C uses `Meta` (0x83); every
 /// decoder in the port agrees on 0x80, so the offset is internal.
 ///
-/// `indptr` is the position of `c` WITHIN the ranges seen so far, not
-/// an element counter: c:3969 adds `ch - r1` on a hit and c:3974 adds
-/// `r2 - r1` when stepping over a non-matching range, while literals
-/// and class markers contribute nothing. `pattern_match1` turns that
+/// `indptr` is the position of `c` among the class MEMBERS seen so far:
+/// c:3970 adds `ch - r1` on a hit, c:3974 adds `r2 - r1` when stepping
+/// over a non-matching range, and c:3992-3993 adds a further 1 at the
+/// end of EVERY non-returning iteration — so a skipped range advances
+/// by its full `r2 - r1 + 1` member count and a skipped literal or
+/// POSIX-class marker advances by exactly 1. That is the same counting
+/// `pattern_match_equivalence`'s PATMATCHINDEX walk (c:1320,
+/// pattern.c:4013-4088) performs in reverse, so producer and consumer
+/// must agree element-for-element. `pattern_match1` turns that
 /// into the equivalence-class index (`ind + 1`, c:1283) that
 /// `pattern_match` compares between the line and word side
 /// (c:1573 `if (ind != wind) return 0;`), and that
@@ -4193,6 +4246,10 @@ fn patmatchrange(
                     return true;
                 }
                 i += 2;
+                // c:3992-3993 — fall through to the shared `(*indptr)++`.
+                if let Some(out) = indp.as_deref_mut() {
+                    *out += 1;
+                }
                 continue;
             }
             if swtype == PP_RANGE {
@@ -4203,7 +4260,7 @@ fn patmatchrange(
                 let r1 = bytes[i + 1] as u32;
                 let r2 = bytes[i + 2] as u32;
                 if r1 <= c && c <= r2 {
-                    // c:3967-3970
+                    // c:3968-3971
                     if let Some(out) = indp.as_deref_mut() {
                         *out += c - r1;
                     }
@@ -4216,6 +4273,14 @@ fn patmatchrange(
                     }
                 }
                 i += 3;
+                // c:3992-3993 — plus the per-iteration increment, so a skipped
+                // range advances the index by its full member count
+                // (r2 - r1 + 1). Omitting it made the producer disagree with
+                // pattern_match_equivalence's PATMATCHINDEX consumer, which
+                // does count every element.
+                if let Some(out) = indp.as_deref_mut() {
+                    *out += 1;
+                }
                 continue;
             }
             // c:3886-3960 — POSIX classes. Single-byte locale
@@ -4253,14 +4318,22 @@ fn patmatchrange(
                 return true;
             }
             i += 1;
+            // c:3992-3993 — a skipped POSIX-class marker is one class member.
+            if let Some(out) = indp.as_deref_mut() {
+                *out += 1;
+            }
         } else if b as u32 == c {
-            // c:3984-3987 — plain literal match sets `*mtp = 0`.
+            // c:3987-3990 — plain literal match sets `*mtp = 0`.
             if let Some(out) = mtp_dest.as_deref_mut() {
                 *out = 0;
             }
             return true;
         } else {
             i += 1;
+            // c:3992-3993 — and so is a skipped literal.
+            if let Some(out) = indp.as_deref_mut() {
+                *out += 1;
+            }
         }
     }
     false

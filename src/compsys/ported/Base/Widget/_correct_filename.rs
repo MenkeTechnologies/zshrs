@@ -42,6 +42,7 @@ fn make_ops() -> options {
 /// under the cursor (or print correction to stdout when called as
 /// a non-widget). Approximate-match fall-through left as a TODO.
 pub fn _correct_filename(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_correct_filename");
     let widget = getsparam("WIDGET").unwrap_or_default();
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();

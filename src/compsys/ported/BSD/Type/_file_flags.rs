@@ -135,6 +135,7 @@ fn build_flags(flag_descs: &[(&str, &str)]) -> Vec<String> {
 /// (`nodump`, `uchg`, `opaque`, …), mutually excluding the set/unset
 /// form of each flag from its counterpart.
 pub fn _file_flags(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_flags");
     // sh:5 — `local curcontext=$curcontext` is a self-assign purely to
     // shadow the caller's binding; the port has no local-param scope so
     // there is nothing to do here (curcontext is read as-is by `_values`).

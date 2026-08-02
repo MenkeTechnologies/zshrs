@@ -147,6 +147,7 @@ fn populate_cache_if_unset() {
 /// (in priority order) from a style-configured file, `showrgb`'s
 /// output, the system `rgb.txt`, or a 6-color hardcoded fallback.
 pub fn _x_color(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_color");
     // sh:13-34
     populate_cache_if_unset();
 

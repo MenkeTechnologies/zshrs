@@ -34,6 +34,7 @@ fn last_index_of_dash_x(args: &[String]) -> Option<usize> {
 /// `_message -r`; otherwise emit the generic `'resource'` message
 /// under the `resources` tag.
 pub fn _x_resource(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_resource");
     // sh:3
     let x = last_index_of_dash_x(args);
 

@@ -30,6 +30,7 @@ fn has_command(name: &str) -> bool {
 /// `_users_on` — complete the names of users currently logged on, from
 /// the output of the `users` command.
 pub fn _users_on(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_users_on");
     // sh:5
     if !has_command("users") {
         // sh:10

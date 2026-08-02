@@ -467,6 +467,7 @@ fn build_bpf_spec(t: &BpfTables) -> Vec<String> {
 
 /// `_bpf_filters` — complete a pcap/tcpdump filter expression.
 pub fn _bpf_filters(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_bpf_filters");
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let tables = bpf_tables(&ostype);
 

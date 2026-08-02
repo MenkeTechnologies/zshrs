@@ -61,6 +61,7 @@ fn make_ops() -> options {
 
 /// `_value` — `-value-` / `-array-value-` context entry.
 pub fn _value(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_value");
     let service = getsparam("service").unwrap_or_default();
 
     // sh:9 — outer service != -value-,* (top-level dispatch)

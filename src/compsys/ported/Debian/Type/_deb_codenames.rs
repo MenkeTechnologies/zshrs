@@ -104,6 +104,7 @@ fn tail_root(path: &str) -> String {
 /// `_deb_codenames` — complete Debian/Ubuntu-family release codenames
 /// from `/usr/share/distro-info/*.csv`.
 pub fn _deb_codenames(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_deb_codenames");
     let _ = args; // sh: the shell fn body never references "$@".
 
     // sh:3

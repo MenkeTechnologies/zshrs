@@ -36,6 +36,7 @@ fn make_ops() -> options {
 
 /// `_arch_archives` — complete arch/tla archive names via `$ARCHCMD archives`.
 pub fn _arch_archives(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_arch_archives");
     // sh:3-4  ARCHCMD="$1"; shift
     let Some(archcmd) = args.first().cloned() else {
         return 1;

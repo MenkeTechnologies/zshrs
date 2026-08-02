@@ -134,6 +134,7 @@ fn build_keysym_cache() -> Vec<String> {
 /// `_x_keysym` — complete an X keysym name (e.g. from `keysymdef.h`,
 /// cached in the global `_keysym_cache` array).
 pub fn _x_keysym(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_keysym");
     // sh:5  _tags keysyms || return 1
     if _tags(&["keysyms".to_string()]) != 0 {
         return 1;

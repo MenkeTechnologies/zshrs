@@ -66,6 +66,7 @@ fn run_zparseopts_p(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// `_completers` — complete completer-fn names (the dispatcher
 /// chain). `-p` flag prepends `_` to each name (autoload-style).
 pub fn _completers(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_completers");
     // sh:7-8
     let list: Vec<&str> = vec![
         "complete",

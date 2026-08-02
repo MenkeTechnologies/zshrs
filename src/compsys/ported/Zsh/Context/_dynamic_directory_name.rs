@@ -40,6 +40,7 @@ use crate::ported::utils::getshfunc;
 /// `_dynamic_directory_name` — `~[name]` lookup via user-defined
 /// `zsh_directory_name` function + `$zsh_directory_name_functions`.
 pub fn _dynamic_directory_name() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dynamic_directory_name");
     // sh:2-5  gather dispatch functions
     let mut dirfuncs: Vec<String> = Vec::new();
     if getshfunc("zsh_directory_name").is_some() {

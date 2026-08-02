@@ -21,6 +21,7 @@ use crate::ported::params::getsparam;
 /// (CURRENT == 2 in 1-based shell terms); emit a "no more arguments"
 /// message thereafter.
 pub fn _sub_commands(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sub_commands");
     // sh:5
     let current: i64 = getsparam("CURRENT")
         .and_then(|s| s.parse().ok())

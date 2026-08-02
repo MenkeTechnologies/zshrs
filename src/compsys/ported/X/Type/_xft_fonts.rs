@@ -200,6 +200,7 @@ fn compute_fonts() -> Vec<String> {
 /// for `fc-list`/`fc-match` (the `family[-size][:attr[=value]]*`
 /// grammar).
 pub fn _xft_fonts(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_xft_fonts");
     // sh:4
     let font = compute_font(&get("PREFIX"));
     let mut ret = 1;

@@ -540,8 +540,9 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
         out.push_str(c.chr.encode_utf8(&mut buf));
     }
     if !out.is_empty() {
-        let f = SHTTY.load(Ordering::Relaxed);
-        let _ = write_loop(if f >= 0 { f } else { 1 }, out.as_bytes());
+        // c:646-651 — the cell's bytes go to `shout`, so a frame reaches
+        // the terminal in one write instead of one per cell.
+        crate::shout::write(out.as_bytes());
     }
 }
 
@@ -2055,19 +2056,33 @@ pub fn zrefresh() {
                     }
                 }
             }
-            // c:1554 — `*rpms.s = zr_zr;` terminate the final status row.
-            {
-                let mut nbuf = NBUF.lock().unwrap();
-                if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
-                    if rpms.pos < row.len() {
-                        row[rpms.pos] = REFRESH_ELEMENT::default();
-                    }
-                }
-            }
             true
         } else {
             false
         };
+
+        // c:1554 — `*rpms.s = zr_zr;` — terminate the LAST-WRITTEN video row.
+        // In C this is unconditional: the `if (statusline)` block opens at
+        // c:1423 and closes at c:1553, so c:1554 runs on the ordinary
+        // no-status-line path too. This port had it nested inside the
+        // statusline branch, so without a `zle -M` message — i.e. almost
+        // always — the final row was never NUL-terminated.
+        //
+        // It only bites once a row is RECYCLED. `scrollwindow` rotates the row
+        // vector (rotate_left, port of c:803-806), so the row that lands last
+        // still holds the cells it had 40 lines ago. `refreshline` then sizes
+        // the row by NUL-scan (`ZR_strlen`), measures those stale cells as real
+        // content, and emits them instead of clear-to-EOL. On `ls **/` that put
+        // 15 junk characters past the right margin, costing one extra wrap and
+        // scroll, which shifted the whole 40-row grid against zsh's.
+        {
+            let mut nbuf = NBUF.lock().unwrap();
+            if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                if rpms.pos < row.len() {
+                    row[rpms.pos] = REFRESH_ELEMENT::default();
+                }
+            }
+        }
 
         // c:1751 — `nlnct = rpms.ln + 1`. NBUF is already populated (the build
         // wrote into it directly); trim any unused pre-allocated tail rows so
@@ -2230,6 +2245,21 @@ pub fn zrefresh() {
     // transient_rprompt) suppressed RPROMPT until the next keystroke.
     let reset_frame = RESETNEEDED.swap(0, Ordering::SeqCst) != 0;
     if reset_frame {
+        // c:1126 — `onumscrolls = 0;` a reset frame has no carried scroll
+        // history for nextline's bail heuristic (c:851) to read.
+        ONUMSCROLLS.store(0, Ordering::SeqCst);
+        // c:1127 — `zsetterm();` RE-ARM the tty for ZLE. This is the only
+        // place C restores raw mode after something cooked the terminal:
+        // `trashzle` (zle_main.c:2093-2094) ends with
+        // `settyinfo(&shttyinfo)` — ICANON|ECHO, the shell's baseline — and
+        // sets `resetneeded = 1` so the next refresh undoes it. Every
+        // trashzle caller depends on that pairing; the completion pager is
+        // the loudest one (`asklist` → `trashzle` → question → listing →
+        // recursive `zrefresh`). Without this call the tty stayed canonical
+        // after the "do you wish to see all N possibilities?" prompt, so
+        // `raw_getbyte`'s ICANON guard reported EOF, ZLE ended the line and
+        // the shell exited(0) the moment a long completion list was shown.
+        let _ = crate::ported::zle::zle_main::zsetterm();
         VCS.store(0, Ordering::SeqCst); // c:1157/1170 vcs = 0
         VLN.store(0, Ordering::SeqCst);
         OBUF.lock().unwrap().clear(); // c:1142 resetvideo — drop the stale frame
@@ -3522,9 +3552,7 @@ pub fn tcoutarg(cap: i32, arg: i32) {
     }
     let bytes = unsafe { CStr::from_ptr(result) }.to_bytes();
     // c:2416-2417 — `tputs(result, 1, putshout)` (padding dropped).
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, bytes);
+    crate::shout::write(bytes);
     // c:2419 — SELECT_ADD_COST(strlen(result)) cost accounting (no-op).
 }
 
@@ -3562,8 +3590,6 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
         (String::new(), 0)
     };
 
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
     let mult_ok = mult_len > 0;
     let cap_ok = cap_len > 0;
 
@@ -3576,7 +3602,7 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
     } else if cap_ok {
         // c:2226-2229 — `else if (tccan(cap)) { while(ct--) tcout(cap); return 1; }`
         for _ in 0..ct {
-            let _ = write_loop(out_fd, cap_str.as_bytes());
+            crate::shout::write(cap_str.as_bytes());
         }
         return 1;
     }
@@ -3885,9 +3911,9 @@ pub fn tcout(cap: i32) {
     if escape.is_empty() {
         return;
     }
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, escape.as_bytes());
+    // c:2345 — `tputs(tcstr[cap], 1, putshout)`: goes to the buffered
+    // `shout` stream, not straight to the fd.
+    crate::shout::write(escape.as_bytes());
     // c:2346 — `SELECT_ADD_COST(tclen[cap])` cost accounting dropped
     //          (no scheduling consumer reads it yet).
 }

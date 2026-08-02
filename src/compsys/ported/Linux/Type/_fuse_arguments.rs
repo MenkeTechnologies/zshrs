@@ -163,6 +163,7 @@ fn nmatches() -> i64 {
 /// `_fuse_arguments` — `_arguments` wrapper adding the standard FUSE
 /// option specs and an `-o mount-option` completion.
 pub fn _fuse_arguments(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_fuse_arguments");
     // sh:3 — nm=${compstate[nmatches]} captured up front.
     let nm = nmatches();
 

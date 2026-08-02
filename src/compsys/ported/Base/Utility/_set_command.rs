@@ -38,6 +38,7 @@ use crate::ported::params::{getaparam, getsparam, setsparam};
 /// `_comp_command`, `_comp_command1`, `_comp_command2`. Returns 0
 /// on success, 1 when `$words[1]` is empty.
 pub fn _set_command() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_set_command");
     let words = getaparam("words").unwrap_or_default();
     // sh:6
     let command = words.first().cloned().unwrap_or_default();

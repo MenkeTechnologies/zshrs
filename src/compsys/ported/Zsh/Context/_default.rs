@@ -46,6 +46,7 @@ fn make_ops() -> options {
 /// `_default` — `-default-` context: try compctl bridge, then
 /// `_files`, then `_value` (when MAGICEQUALSUBST + `=` in PREFIX).
 pub fn _default(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_default");
     // sh:5-13  use-compctl branch
     //
     // sh:5-6 is `{ zstyle -s … use-compctl ctl || zmodload -e

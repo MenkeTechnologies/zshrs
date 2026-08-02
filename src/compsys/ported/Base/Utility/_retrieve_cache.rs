@@ -46,6 +46,7 @@ use std::path::Path;
 /// is enabled, exists, and isn't invalid per `_cache_invalid`.
 /// Returns 0 on successful load, 1 otherwise.
 pub fn _retrieve_cache(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_retrieve_cache");
     let cache_ident = args.first().cloned().unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);

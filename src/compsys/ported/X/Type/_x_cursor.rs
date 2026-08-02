@@ -88,6 +88,7 @@ fn parse_cursor_names(content: &str) -> Vec<String> {
 /// `_x_cursor` — complete X cursor-font names (e.g. from
 /// `<X11/cursorfont.h>`'s `XC_*` `#define`s), cached in `$_cursor_cache`.
 pub fn _x_cursor(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_cursor");
     // sh:5 — cache presence check (approx: None == unset).
     if getaparam("_cursor_cache").is_none() {
         // sh:8

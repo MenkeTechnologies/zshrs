@@ -533,3 +533,53 @@ mod tests {
 pub fn call_compfn(name: &str, args: &[String], fallback: impl FnOnce() -> i32) -> i32 {
     crate::ported::exec::dispatch_function_call(name, args).unwrap_or_else(fallback)
 }
+
+// =====================================================================
+// `scriptname` for the duration of a port call.
+// =====================================================================
+//
+// `doshfunc` sets `scriptname` to the function's own name on entry
+// (`Src/exec.c:5963` — `scriptname = dupstring(name);`) and restores the
+// caller's on exit (`Src/exec.c:6124` — `scriptname = funcsave->scriptname;`).
+// That is what every diagnostic reads: `zwarning` prints it ahead of the
+// builtin name (`Src/utils.c:147-155`), so an error raised by a builtin
+// inside `_tags` reads `_tags:comptags:36: ...`.
+//
+// The Rust ports reach that same builtin without a `doshfunc` frame. Ports
+// call each other as plain Rust calls — `_describe` invokes `_tags` directly
+// (`Base/Utility/_describe.rs`) — and only
+// `crate::ported::exec::dispatch_function_call` goes through `doshfunc`. So
+// `scriptname` kept whatever shell function was last entered and every
+// diagnostic named the wrong function:
+//
+//     zsh    _tags:comptags:36: can only be called from completion function
+//     zshrs  _describe:comptags: can only be called from completion function
+//
+// `FnScope::enter` is the `scriptname` half of that prologue/epilogue, applied
+// at the entry of each port so a port called either way reports identically.
+// (The `lineno` half — C's `:36:`, driven from the wordcode line markers at
+// `Src/exec.c:1356` and `Src/exec.c:2057` — has no port-side source yet and is
+// still missing from these messages.)
+
+/// RAII guard publishing `scriptname` for the body of a Rust compsys port,
+/// mirroring `doshfunc`'s `scriptname` save/set/restore.
+pub struct FnScope {
+    saved: Option<String>,
+}
+
+impl FnScope {
+    /// `scriptname = dupstring(name)` (`Src/exec.c:5963`), remembering the
+    /// caller's value for [`Drop`].
+    pub fn enter(name: &str) -> Self {
+        let saved = crate::ported::utils::scriptname_get();
+        crate::ported::utils::set_scriptname(Some(name.to_string()));
+        FnScope { saved }
+    }
+}
+
+impl Drop for FnScope {
+    /// `scriptname = funcsave->scriptname` (`Src/exec.c:6124`).
+    fn drop(&mut self) {
+        crate::ported::utils::set_scriptname(self.saved.take());
+    }
+}

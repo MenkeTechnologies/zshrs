@@ -49,6 +49,7 @@ use std::process::Command;
 /// the shell pattern where `_call_program` runs in `$(...)` and
 /// stdout is captured into a var).
 pub fn _call_program(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_call_program");
     let mut argv: Vec<String> = args.to_vec();
     let mut use_locale = true;
 

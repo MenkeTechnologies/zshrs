@@ -24,6 +24,7 @@
 /// `_first` — `-first-` context hook. No-op by default; users override
 /// for per-context pre-completion behavior.
 pub fn _first() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_first");
     // sh:1-47 — every line is a `#` comment; nothing executes.
     // Return 1 (NOT the empty-shell-function 0): `_complete` runs
     // `eval "$_comps[-first-]" && ret=0` (Completion/Base/Completer/_complete

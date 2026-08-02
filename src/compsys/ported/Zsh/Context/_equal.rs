@@ -37,6 +37,7 @@ fn make_ops() -> options {
 /// expansion if `_have_glob_qual` matches, otherwise path-command
 /// completion.
 pub fn _equal() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_equal");
     let prefix = getsparam("PREFIX").unwrap_or_default();
 
     // sh:5  if _have_glob_qual $PREFIX

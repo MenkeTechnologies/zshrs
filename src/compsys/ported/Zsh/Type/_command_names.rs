@@ -53,6 +53,7 @@ use crate::ported::params::{getaparam, getsparam, setaparam};
 /// `_command_names` — complete a command name. `-e` (first arg)
 /// restricts to externals only.
 pub fn _command_names(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_command_names");
     // sh:7
     let mut ffilt = String::new();
     let curcontext = getsparam("curcontext").unwrap_or_default();

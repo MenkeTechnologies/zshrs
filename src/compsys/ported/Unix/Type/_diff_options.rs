@@ -112,6 +112,7 @@ pub fn _diff_palette(_args: &[String]) -> i32 {
 
 /// `_diff_options` — option completion for GNU / BSD / Solaris `diff`.
 pub fn _diff_options(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_diff_options");
     // sh:6 — first arg is the diff command name; the rest pass through.
     if args.is_empty() {
         return 1;

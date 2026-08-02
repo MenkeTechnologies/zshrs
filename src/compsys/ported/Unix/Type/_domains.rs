@@ -32,6 +32,7 @@ use crate::ported::params::{getaparam, getsparam, setaparam};
 /// `_domains` — complete DNS domain names from `/etc/resolv.conf`
 /// (`domain` / `search` lines), cached in `$_cache_domains`.
 pub fn _domains(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_domains");
     // sh:5
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:domains", curcontext);

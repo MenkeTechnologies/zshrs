@@ -245,6 +245,7 @@ fn zparse_files_opts(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// (via `Info.plist`'s `CFBundleTypeExtensions`/`CFBundleTypeOSTypes`, or
 /// all files if the app claims `"*"` or has no `Info.plist`) it can open.
 pub fn _mac_files_for_application(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_mac_files_for_application");
     // sh:37-38  local -a opts; zparseopts -D -a opts ...
     let (opts, rest) = zparse_files_opts(args);
 

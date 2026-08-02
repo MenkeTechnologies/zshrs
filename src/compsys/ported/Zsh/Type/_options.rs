@@ -19,6 +19,7 @@ use crate::compsys::ported::_wanted::_wanted;
 
 /// `_options` — complete all zsh option names.
 pub fn _options(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_options");
     // sh:7-8
     let mut wanted_argv: Vec<String> = vec![
         "zsh-options".to_string(),

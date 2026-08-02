@@ -58,6 +58,7 @@ fn is_position(s: &str) -> bool {
 
 /// `_arg_compile` — compile arg-specs into the caller-named array.
 pub fn _arg_compile(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_arg_compile");
     // sh:95 — `[[ -n "$1" ]] || return 1`.
     let reply = match args.first() {
         Some(r) if !r.is_empty() => r.clone(),

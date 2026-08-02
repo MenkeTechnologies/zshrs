@@ -61,6 +61,7 @@ fn compset(argv: &[&str]) -> bool {
 /// `$1` is the context (`h`=history, `q`=glob qualifier,
 /// `p`=parameter).
 pub fn _history_modifiers(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_history_modifiers");
     // sh: 8-11  locals. `type` is a Rust keyword → raw identifier
     //   keeps the source name verbatim.
     let mut list: Vec<String> = Vec::new();

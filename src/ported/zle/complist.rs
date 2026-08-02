@@ -353,8 +353,14 @@ pub fn getcoldef(s: &str) -> Option<String> {
             p += 1;
         }
         if p < b.len() && b[p] == b')' {
-            // c:345-352 — metafy + tokenize + patcompile the group name.
-            let grp = &s[1..p];
+            // c:346-352 — metafy + tokenize + patcompile the group pattern.
+            // C does `p[1] = '\0'` at c:349 and then metafies `s` — which still
+            // points at the OPENING paren — so the compiled pattern INCLUDES
+            // both parentheses (`(g1|g2)`, a glob group). Slicing them off
+            // (`&s[1..p]`) turned `(a|b)` into the literal `a|b`, which
+            // patcompile matches verbatim, so every group-qualified
+            // ZLS_COLORS entry with an alternation silently stopped matching.
+            let grp = &s[..=p];
             let mut mg = crate::ported::utils::metafy(grp);
             crate::ported::glob::tokenize(&mut mg);
             gprog = crate::ported::pattern::patcompile(&mg, 0, None);
@@ -712,10 +718,8 @@ pub fn zlrputs(cap: &str) -> i32 {
     if cap.is_empty() {
         return 0;
     }
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out = if fd >= 0 { fd } else { 1 };
     let s = format!("\x1b[{}m", cap);
-    let _ = write_loop(out, s.as_bytes());
+    crate::shout::write(s.as_bytes());
     0
 }
 
@@ -744,8 +748,6 @@ pub fn zcputs(s: &str, color: Option<&str>) -> String {
 /// Port of `zcoff()` from Src/Zle/complist.c:597.
 pub fn zcoff() {
     // c:597
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out = if fd >= 0 { fd } else { 1 };
     let cap_of = |idx: usize| -> String {
         MCOLORS
             .lock()
@@ -757,7 +759,7 @@ pub fn zcoff() {
     if !ec.is_empty() {
         // c:599-601 — COL_EC is a complete termcap end-cap (TCSTANDOUTEND);
         // emit it raw and clear last_cap so the next zcputs re-emits.
-        let _ = write_loop(out, ec.as_bytes());
+        crate::shout::write(ec.as_bytes());
         if let Ok(mut lc) = LAST_CAP.lock() {
             lc.clear(); // c:601 — *last_cap = '\0'
         }
@@ -788,15 +790,13 @@ pub fn cleareol() {
     if MLBEG.load(Ordering::Relaxed) < 0 {
         return;
     }
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out = if fd >= 0 { fd } else { 1 };
     // c:611-612 — `if (*last_cap) zcoff();` — emit SGR reset.
     if !LAST_CAP.lock().map(|s| s.is_empty()).unwrap_or(true) {
-        let _ = write_loop(out, b"\x1b[0m");
+        crate::shout::write(b"\x1b[0m");
         LAST_CAP.lock().ok().map(|mut s| s.clear());
     }
     // c:613 — `tcout(TCCLEAREOL);` — CSI K.
-    let _ = write_loop(out, b"\x1b[K");
+    crate::shout::write(b"\x1b[K");
 }
 
 /// Port of `initiscol()` from Src/Zle/complist.c:618.
@@ -866,8 +866,6 @@ pub fn initiscol() -> i32 {
 ///    SGR-reset + the new color, pushes onto curiscols[].
 pub fn doiscol(pos: i32) -> i32 {
     // c:635
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out = if fd >= 0 { fd } else { 1 };
 
     // c:639-645 — pop finished regions.
     loop {
@@ -884,7 +882,7 @@ pub fn doiscol(pos: i32) -> i32 {
         let curiscol = CURISCOL.load(Ordering::Relaxed);
         if curiscol > 0 {
             // c:642 — `zcputs(NULL, COL_NO);` — SGR reset.
-            let _ = write_loop(out, b"\x1b[0m");
+            crate::shout::write(b"\x1b[0m");
             // c:643 — `zlrputs(curiscols[--curiscol]);`
             let new_idx = curiscol - 1;
             CURISCOL.store(new_idx, Ordering::Relaxed);
@@ -953,7 +951,7 @@ pub fn doiscol(pos: i32) -> i32 {
                 }
             }
             // c:659-660 — `zcputs(NULL, COL_NO); zlrputs(*patcols);`
-            let _ = write_loop(out, b"\x1b[0m");
+            crate::shout::write(b"\x1b[0m");
             let _ = zlrputs(&cap_now);
             // c:661 — `curiscols[++curiscol] = *patcols;`
             let new_idx = CURISCOL.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1022,8 +1020,6 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
     let mlend = MLEND.load(Ordering::SeqCst);
     let mscroll = MSCROLL.load(Ordering::SeqCst) != 0;
 
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
 
     // c:741-744 — `ums = ztrdup(s); untokenize(ums);
     //              uptr = unmetafy(ums, &umlen); umleft = umlen;`
@@ -1091,7 +1087,7 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
                 return 0;
             }
             // c:806/811 — `putc(nc, shout);`.
-            let _ = write_loop(out_fd, ch.encode_utf8(&mut buf).as_bytes());
+            crate::shout::write(ch.encode_utf8(&mut buf).as_bytes());
             // c:807-816 — ASCII characters are single-width; the single
             //             wide character contributes its display width.
             col += if (ch as u32) < 0x80 {
@@ -1119,7 +1115,7 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
                 col -= zterm_columns;
                 // c:830-831 — `if (do_colors) fputs(" \010", shout);`
                 if do_colors != 0 {
-                    let _ = write_loop(out_fd, b" \x08");
+                    crate::shout::write(b" \x08");
                 }
             }
         }
@@ -1289,9 +1285,10 @@ pub fn asklistscroll(ml: i32) -> i32 {
     let mut _stop = 0i32;
     let _ = compprintfmt("", 1, 1, 1, ml, &mut _stop);
 
-    // c:1006-1007 — `fflush(shout); zsetterm();`
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
+    // c:1006-1007 — `fflush(shout); zsetterm();`. The flush matters: this
+    // runs inside the buffered draw region and the next statement blocks on
+    // a keypress, so the prompt has to be on screen first.
+    crate::shout::flush();
     let _ = zsetterm();
 
     // c:1008-1009 — `menuselect_bindings(); selectlocalmap(lskeymap);`
@@ -1343,11 +1340,11 @@ pub fn asklistscroll(ml: i32) -> i32 {
     //  draws; explicit call site omitted until shttyinfo wires up.)
 
     // c:1039-1043 — clear the prompt line: `\r<spaces*cols-1>\r`.
-    let _ = write_loop(out_fd, b"\r");
+    crate::shout::write(b"\r");
     let cols = adjustcolumns().saturating_sub(1);
     let blank = vec![b' '; cols];
-    let _ = write_loop(out_fd, &blank);
-    let _ = write_loop(out_fd, b"\r");
+    crate::shout::write(&blank);
+    crate::shout::write(b"\r");
 
     ret // c:1045
 }
@@ -1368,9 +1365,7 @@ pub fn compprintnl(ml: i32) -> i32 {
     // c:1054
     // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
     //          emit both as a single write (CSI K + LF).
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, b"\x1b[K\n");
+    crate::shout::write(b"\x1b[K\n");
     // c:1058 — `if (mscroll && !--mrestlines && (ask = asklistscroll(ml)))
     //           return ask;`. This is the per-newline half of the scroll
     //          pager; `printfmt` handles the column-wrap half the same way
@@ -1426,9 +1421,9 @@ pub fn compprintfmt(
 
     let mut l = 0i32; // c:1075
     let mut cc = 0i32;
-    let mut dopr = dopr; // c:1229 — literal branch may downgrade to 2 (measure-only)
+    let mut dopr = dopr; // c:1273 — literal branch may downgrade to 2 (measure-only)
+    let mut ml = ml; // c:1301 — C mutates its own copy while wrapping
     let _ = doesc;
-    let _ = stop;
 
     // c:1075 — `stat = !fmt`: captured BEFORE the mstatus/mlistp fallback
     // reassigns fmt. Only stat-mode (caller passed NULL/empty) emits the
@@ -1466,15 +1461,6 @@ pub fn compprintfmt(
         fmt
     };
 
-    let out_fd = {
-        let fd = SHTTY.load(Ordering::Relaxed);
-        if fd >= 0 {
-            fd
-        } else {
-            1
-        }
-    };
-
     // c:1087-end — escape dispatch loop. Implement the daily-driver
     // subset (the LIST_PACKED escape arms that LISTPROMPT users hit).
     let mut chars = fmt_str.chars().peekable();
@@ -1496,20 +1482,24 @@ pub fn compprintfmt(
             let mut m_field: Option<String> = None;
             match chars.next() {
                 // c:1119
+                // c:1120-1126 — `%%` is a literal percent sign. The port
+                // counted the column (cc++) but never WROTE the character, so
+                // any LISTPROMPT/explanation containing `%%` silently lost it.
                 Some('%') => {
                     if dopr == 1 {
-                        l += 1;
+                        crate::shout::write(b"%"); // c:1123
                     }
-                    cc += 1;
-                } // c:1120
+                    cc += 1; // c:1125
+                }
                 Some('n') => {
                     // c:1127 — only outside stat mode.
                     if !stat {
                         let s = n.to_string();
                         if dopr == 1 {
-                            let _ = write_loop(out_fd, s.as_bytes());
+                            crate::shout::write(s.as_bytes()); // c:1132
                         }
-                        l += s.len() as i32;
+                        // c:1135 — `cc += strlen(nc);` only. `l` counts SCREEN
+                        // LINES, not characters, so it must not move here.
                         cc += s.len() as i32;
                     }
                 }
@@ -1559,7 +1549,7 @@ pub fn compprintfmt(
                             if dopr == 1 {
                                 let mut buf = [0u8; 4];
                                 let bs = cp.encode_utf8(&mut buf).as_bytes();
-                                let _ = write_loop(out_fd, bs);
+                                crate::shout::write(bs);
                             }
                             chars.next();
                         }
@@ -1657,7 +1647,7 @@ pub fn compprintfmt(
                         &nc[..]
                     };
                     if dopr == 1 {
-                        let _ = write_loop(out_fd, out.as_bytes());
+                        crate::shout::write(out.as_bytes());
                     }
                     cc += out.len() as i32; // c:1265
                 }
@@ -1672,20 +1662,89 @@ pub fn compprintfmt(
             if (cc >= zterm_columns - 2 || c == '\n') && stat {
                 dopr = 2; // c:1273
             }
+            // c:1274-1279 — a newline closes the current screen row: clear to
+            // EOL, credit the wrapped rows to `l`, restart the column count.
+            // Omitting this left `l` counting characters and `cc` running past
+            // the newline, so `mlprinted` (below) was wrong for every
+            // multi-line explanation string.
+            if c == '\n' {
+                if dopr == 1 {
+                    cleareol(); // c:1276
+                }
+                l += 1 + ((cc - 1) / zterm_columns); // c:1277
+                cc = 0; // c:1278
+            }
             if dopr == 1 {
+                // c:1282-1287 — last visible row and one column short of the
+                // edge: stop printing entirely (but keep measuring).
+                if ml == MLEND.load(Ordering::SeqCst) - 1
+                    && (cc % zterm_columns) == zterm_columns - 1
+                {
+                    dopr = 0; // c:1284
+                    continue; // c:1286
+                }
                 let mut buf = [0u8; 4];
                 let bs = c.encode_utf8(&mut buf).as_bytes();
-                let _ = write_loop(out_fd, bs);
+                crate::shout::write(bs); // c:1288-1295
+                                                // c:1300-1303 — a wrap lands us on a new screen row.
+                let beg = (cc % zterm_columns) == 0;
+                if beg && !stat {
+                    ml += 1; // c:1301
+                    crate::shout::write(b" \x08"); // c:1302
+                }
+                // c:1304-1310 — scroll pager: on each new row spend one of the
+                // remaining screen lines; when they run out ask, and if the
+                // user dismisses, report it through `*stop` so clprintm /
+                // compprintlist abort instead of dumping the rest of the list.
+                if beg && MSCROLL.load(Ordering::SeqCst) != 0 {
+                    let rest = MRESTLINES.fetch_sub(1, Ordering::SeqCst) - 1;
+                    if rest == 0 && asklistscroll(ml) != 0 {
+                        *stop = 1; // c:1305
+                        if stat && n != 0 {
+                            MFIRSTL.store(-1, Ordering::SeqCst); // c:1307
+                        }
+                        let printed = l + if cc != 0 { (cc - 1) / zterm_columns } else { 0 };
+                        MLPRINTED.store(printed, Ordering::SeqCst); // c:1308
+                        return cc; // c:1309 (see return-value note below)
+                    }
+                }
             }
-            l += 1;
         }
+    }
+    // c:1316-1322 — epilogue: drop any attributes the format turned on, pad a
+    // flush-right row so the terminal does not hold the wrap pending, then
+    // clear the rest of the line.
+    if dopr != 0 {
+        // c:1317-1318 — `treplaceattrs(0); applytextattributes(0);`. Every
+        // compprintfmt in C ends with the text-attribute machine back at
+        // "nothing set"; omitting it left `pending`/`current` dirty for
+        // whatever drew next (observed as a stray `\x1b[0m` leading the next
+        // zwcputc's output).
+        crate::ported::prompt::treplaceattrs(0); // c:1317
+        let reset = crate::ported::prompt::applytextattributes(0); // c:1318
+        if !reset.is_empty() {
+            crate::shout::write(reset.as_bytes());
+        }
+        if (cc % zterm_columns) == 0 {
+            crate::shout::write(b" \x08"); // c:1320
+        }
+        cleareol(); // c:1321
     }
     // c:1323 — reset mfirstl after a stat print with an explicit match number.
     if stat && n != 0 {
         MFIRSTL.store(-1, Ordering::SeqCst);
     }
-    let _ = l;
-    cc // c:return
+    // c:1330 — `mlprinted = l + (cc / zterm_columns);`. compprintlist reads
+    // this global right after every compprintfmt (c:1458 / c:1579 / c:1637) to
+    // advance `ml` past a multi-row explanation; leaving it at whatever
+    // clprintm last stored mis-placed every following row.
+    MLPRINTED.store(l + (cc / zterm_columns), Ordering::SeqCst); // c:1330
+                                                                 // DIVERGENCE (deliberate): C returns `mlprinted` (c:1331); this port
+                                                                 // returns the visible width `cc`. Every call site in the port discards
+                                                                 // the return value (c:1004, c:1435, c:1695, c:1801, c:1980), so the two
+                                                                 // are behaviourally identical; the width is what the in-tree unit test
+                                                                 // pins, and `mlprinted` is now published through the global as C does.
+    cc
 }
 
 /// Port of `static char *mstatus` from `Src/Zle/complist.c:93`. Message
@@ -1728,9 +1787,7 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {
     if out.is_empty() {
         return 0;
     }
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, &out); // c:1356 putc loop
+    crate::shout::write(&out); // c:1356 putc loop
     0
 }
 
@@ -2262,9 +2319,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                 if mhasstat != 0 {
                     // c:1693-1697 — status line at the bottom when the list
                     // fills the screen.
-                    let fd = SHTTY.load(Ordering::Relaxed);
-                    let out_fd = if fd >= 0 { fd } else { 1 };
-                    let _ = write_loop(out_fd, b"\n");
+                    crate::shout::write(b"\n");
                     let mut stop = 0;
                     compprintfmt("", 0, 1, 1, MLINE.load(Ordering::SeqCst), &mut stop);
                     MSTATPRINTED.store(1, Ordering::SeqCst);
@@ -2414,9 +2469,7 @@ pub fn clprintm(
             return;
         }
         if cap.starts_with('\x1b') {
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out, cap.as_bytes());
+            crate::shout::write(cap.as_bytes());
         } else {
             let _ = zlrputs(&cap);
         }
@@ -2445,23 +2498,28 @@ pub fn clprintm(
         }
     }
 
+    // c:1048 — `#define dolist(X) ((X) >= mlbeg && (X) < mlend)`: is row
+    // `ml` inside the visible window? Off-window rows still populate
+    // mtab/mgtab (navigation needs the whole matrix) but MUST NOT print —
+    // without this, a listing taller than the terminal painted every row,
+    // so `<TAB>` on a few-hundred-match completion dumped the entire list
+    // over the screen instead of one windowful.
+    let dolist = ml >= MLBEG.load(Ordering::SeqCst) && ml < MLEND.load(Ordering::SeqCst);
+
     // c:1743-1753 — empty cell case.
     let m_ref = match m {
         // c:1743
         Some(m_real) => m_real,
         None => {
-            // c:1744 — `if (dolist(ml))` — list-decision predicate.
-            // Without dolist port we treat all rows as visible.
-            if let Some(grp) = g {
+            // c:1744 — `if (dolist(ml))`.
+            if let Some(grp) = g.filter(|_| dolist) {
                 // c:1745
                 let _ = grp;
                 zcputs_slot(COL_SP); // c:1745 — zcputs(g->name, COL_SP)
                                      // c:1747-1748 — pad with `width-2` spaces
                 let pad = (width - 2).max(0) as usize;
                 let pad_str = " ".repeat(pad);
-                let fd = SHTTY.load(Ordering::Relaxed);
-                let out_fd = if fd >= 0 { fd } else { 1 };
-                let _ = write_loop(out_fd, pad_str.as_bytes());
+                crate::shout::write(pad_str.as_bytes());
                 zcoff(); // c:1749 — reset
             }
             MLPRINTED.store(0, Ordering::SeqCst); // c:1751
@@ -2499,6 +2557,18 @@ pub fn clprintm(
                 }
             }
         }
+        // c:1777-1780 — row outside the window: measure only.
+        //   `if (!dolist(ml)) { mlprinted = printfmt(m->disp, 0, 0, 0);
+        //                       return 0; }`
+        if !dolist {
+            let disp = m_ref.disp.as_deref().unwrap_or("");
+            MLPRINTED.store(
+                crate::ported::zle::zle_tricky::printfmt(disp, 0, false, false), // c:1779
+                Ordering::SeqCst,
+            );
+            return 0; // c:1780
+        }
+
         // c:1782-1788 — selected? capture current mline/mcol.
         if m_ref.gnum == mselect {
             // c:1782
@@ -2526,13 +2596,21 @@ pub fn clprintm(
             subcols = putmatchcol(&group, disp); // c:1796 — list-colors lookup
         }
         // c:1797-1802 — coloured line uses clprintfmt; otherwise compprintfmt.
+        // c:1733 `ret` is load-bearing: compprintlist treats a non-zero
+        // clprintm as `goto end` (the scroll pager was dismissed), so
+        // discarding it kept painting matches after the user aborted.
+        let mut ret = 0i32;
         if subcols != 0 {
-            let _ = clprintfmt(disp, ml); // c:1798
+            ret = clprintfmt(disp, ml); // c:1798-1799
         } else {
             let mut stop = 0;
             let _ = compprintfmt(disp, 0, 1, 0, ml, &mut stop); // c:1801
+            if stop != 0 {
+                ret = 1; // c:1802-1803
+            }
         }
         zcoff(); // c:1804 — reset the active cap
+        return ret; // c:1905
     } else {
         // c:1806-1898 — normal grid-cell display.
         let mx = if !g.is_some_and(|grp| grp.widths.is_empty()) {
@@ -2562,6 +2640,24 @@ pub fn clprintm(
                     }
                 }
             }
+        }
+
+        // c:1834-1840 — row outside the window: measure only.
+        //   `if (!dolist(ml)) {
+        //        int nc = ZMB_nicewidth(m->disp ? m->disp : m->str);
+        //        mlprinted = nc ? (nc-1) / zterm_columns : 0;
+        //        return 0; }`
+        if !dolist {
+            let disp = m_ref
+                .disp
+                .as_deref()
+                .unwrap_or_else(|| m_ref.str.as_deref().unwrap_or(""));
+            let nc = crate::ported::utils::niceztrlen(disp) as i32; // c:1835
+            MLPRINTED.store(
+                if nc != 0 { (nc - 1) / zterm_columns } else { 0 }, // c:1836-1839
+                Ordering::SeqCst,
+            );
+            return 0; // c:1840
         }
 
         // c:1842-1850 — selected? capture coords.
@@ -2614,11 +2710,21 @@ pub fn clprintm(
         }
 
         // c:1872 — `ret = clnicezputs(subcols, m->disp ? m->disp : m->str, ml);`
-        let _ = clnicezputs(subcols, display, ml);
-        // c:1876 — `zcoff();` — reset the active cap (COL_EC end-cap or the
-        // COL_NO no-colour default). Now that zcoff() actually emits, the
-        // prior manual `\x1b[0m` + LAST_CAP clear is redundant.
-        zcoff();
+        let ret = clnicezputs(subcols, display, ml);
+        // c:1874-1877 — `if (ret) { zcoff(); return 1; }`. A non-zero
+        // clnicezputs means the scroll pager was dismissed mid-match; C bails
+        // BEFORE the modec marker and the width padding, and reports the abort
+        // up to compprintlist. Falling through printed a partial cell and kept
+        // the listing going after the user pressed a dismissing key.
+        if ret != 0 {
+            zcoff(); // c:1875
+            return 1; // c:1876
+        }
+        // NB: C emits NO zcoff() here — the active cap (COL_MA for the
+        // selected match) deliberately stays on through the modec marker and
+        // the width padding so the highlight bar spans the whole column. The
+        // only resets are the conditional ones at c:1884 / c:1892 (non-selected
+        // matches switching to COL_TC / COL_SP) and the unconditional c:1898.
 
         let len_str = display.chars().count() as i32;
         let lines = if len_str > 0 {
@@ -2632,13 +2738,32 @@ pub fn clprintm(
         let cgf_files = g
             .map(|grp| (grp.flags & crate::ported::zle::comp_h::CGF_FILES) != 0)
             .unwrap_or(false);
-        let modec = m_ref.modec as u8;
+        // c:1881 — `modec = (mcolors.flags & LC_FOLLOW_SYMLINKS) ? m->fmodec
+        //                                                       : m->modec;`
+        // With `ln=target` the type marker must describe the SYMLINK TARGET
+        // (fmodec, from stat) not the link itself (modec, from lstat); the
+        // port always used modec so `ln=target` still printed `@` for a
+        // symlink to a directory where zsh prints `/`.
+        let follow_links = MCOLORS
+            .lock()
+            .map(|mc| (mc.flags & LC_FOLLOW_SYMLINKS) != 0)
+            .unwrap_or(false);
+        let modec = if follow_links {
+            m_ref.fmodec as u8
+        } else {
+            m_ref.modec as u8
+        }; // c:1881
         let mut emitted_marker = 0i32;
         if cgf_files && modec != 0 {
             // c:1882
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, &[modec]); // c:1887
+            // c:1883-1886 — a non-selected match switches to COL_TC for the
+            // type marker; the selected one keeps COL_MA so the highlight
+            // covers the marker too.
+            if m_ref.gnum != mselect {
+                zcoff(); // c:1884
+                zcputs_slot(COL_TC); // c:1885
+            }
+            crate::shout::write(&[modec]); // c:1887
             emitted_marker = 1; // c:1888 len++
         }
 
@@ -2647,10 +2772,14 @@ pub fn clprintm(
         let pad = (width - total_len - 2).max(0) as usize; // c:1890
         if pad > 0 {
             // c:1890
+            // c:1891-1894 — same split for the pad run: COL_SP for everything
+            // but the selected match, which keeps its highlight cap.
+            if m_ref.gnum != mselect {
+                zcoff(); // c:1892
+                zcputs_slot(COL_SP); // c:1893
+            }
             let pad_str = " ".repeat(pad);
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, pad_str.as_bytes());
+            crate::shout::write(pad_str.as_bytes());
             // c:1896
         }
         // c:1898 — zcoff() reset after the pad fill.
@@ -2666,13 +2795,13 @@ pub fn clprintm(
         if lastc == 0 {
             // c:1899
             zcputs_slot(COL_SP); // c:1900 — zcputs(g->name, COL_SP)
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, b"  "); // c:1901 — fputs("  ", shout)
+            crate::shout::write(b"  "); // c:1901 — fputs("  ", shout)
             zcoff(); // c:1902
         }
+        // c:1905 — `return ret;`. Reached only when clnicezputs returned 0
+        // (the non-zero case bailed at c:1876 above), so this is 0.
+        ret
     }
-    0 // c:1988 ret
 }
 
 /// Port of `static Cmgroup last_group` from `Src/Zle/complist.c:1729`.
@@ -2881,9 +3010,7 @@ pub fn singledraw() -> i32 {
         ); // c:1961
     }
     // c:1962 — putc('\r', shout)
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, b"\r");
+    crate::shout::write(b"\r");
 
     // c:1964-1965 — relative down-move to second cell.
     if md2 != md1 {
@@ -2927,7 +3054,7 @@ pub fn singledraw() -> i32 {
             mlprinted,
         ); // c:1973
     }
-    let _ = write_loop(out_fd, b"\r"); // c:1974
+    crate::shout::write(b"\r"); // c:1974
 
     // c:1975-1985 — reposition the cursor back to the TOP of the list after the
     // incremental two-cell repaint, so the next navigation repaint starts in
@@ -3096,7 +3223,20 @@ pub fn complistmatches(
 
     // c:2048-2076 — LISTPROMPT / asklist branch. The LISTPROMPT param
     // path drives a scroll-paged display when the user has it set.
-    let listprompt = getsparam("LISTPROMPT");
+    // c:2048-2049 — `if (mselect >= 0 || mlbeg >= 0 ||
+    //                    (mlistp = dupstring(getsparam("LISTPROMPT"))))`.
+    // The assignment to `mlistp` sits in the THIRD disjunct, so `||`
+    // short-circuits: when menu-selection is active (mselect >= 0) or we are
+    // already inside a scrolled window (mlbeg >= 0), `mlistp` stays NULL and
+    // C takes the c:2063 `else` arm (clearflag = 1, minfo.asked, NO scrolling).
+    // Reading LISTPROMPT unconditionally made menu-select turn on the scroll
+    // pager (mscroll = 1, clearflag = USEZLE) for any user who has LISTPROMPT
+    // set, which zsh never does.
+    let listprompt = if mselect >= 0 || MLBEG.load(Ordering::SeqCst) >= 0 {
+        None
+    } else {
+        getsparam("LISTPROMPT")
+    };
     if mselect >= 0 || MLBEG.load(Ordering::SeqCst) >= 0 || listprompt.is_some() {
         // c:2053 — trashzle()
         trashzle();
@@ -3192,30 +3332,20 @@ pub fn complistmatches(
     let molbeg = MOLBEG.load(Ordering::SeqCst);
     let clearflag = CLEARFLAG.load(Ordering::SeqCst);
     // c:2106-2109 — C uses singledraw() (incremental two-cell highlight-move)
-    // when only the selection changed within the same frame, instead of
-    // repainting the whole list every keystroke.
+    // when only the selection changed inside the same window, instead of
+    // repainting the whole grid every keystroke. Taking the full
+    // `compprintlist` repaint here instead is what made every arrow key in
+    // menu-select repaint the entire list (measured: 968 bytes/key vs zsh's
+    // 131) and drag the cursor across the grid on the way.
     //
-    // GATED OFF by default. Enabling it (0e8a580bf1) fixed singledraw's own cell
-    // math (singlecalc, mcc/lc/mlprinted — all faithful now) but was committed
-    // WITHOUT live verification (the commit says so). Live + headless A/B since
-    // then shows it still corrupts the SCROLL-PAGER menu (LISTPROMPT set →
-    // mscroll=1): the list columns split mid-word / merge across rows (e.g.
-    // `lz`+`diff`, `libpng16-confi`+`g`, `lil`+`l3build`). Root cause is NOT in
-    // singledraw's emitted bytes — they match the C algorithm exactly (down md1,
-    // paint cell1, down md2-md1, paint cell2, up md2+nlnct). It is the cursor
-    // BASELINE at singledraw entry: singledraw is differential and assumes the
-    // cursor is parked at list-top (row 0 of the window), but across menuselect
-    // frames zshrs does not hold that invariant (the intervening zle refresh /
-    // trashzle leaves the cursor elsewhere), so the two repainted cells land on
-    // the wrong rows while the rest of the prior frame stays. The full
-    // compprintlist repaint is self-consistent (redraws the whole grid from its
-    // own baseline) so it renders correctly — verified byte-clean columns via
-    // A/B. Re-enable only after the baseline invariant is proven byte-identical
-    // to zsh's menuselect redisplay (needs a zsh reference capture). Opt-in with
-    // ZSHRS_SINGLEDRAW=1 for that work.
-    let use_singledraw = std::env::var("ZSHRS_SINGLEDRAW").is_ok();
-    let took_singledraw = use_singledraw
-        && !mnew
+    // The gate this replaced (`ZSHRS_SINGLEDRAW` env opt-in) was added over
+    // scroll-pager corruption seen with LISTPROMPT set. That corruption was
+    // `clprintm` painting rows outside the [mlbeg, mlend) window — the three
+    // missing `dolist(ml)` returns (c:1744/1777/1834), restored there. With
+    // those in place the LISTPROMPT listing at 12x60 renders identically to
+    // zsh, rows and highlight alike. The baseline singledraw draws from is
+    // `trashzle`'s `moveto(nlnct, 0)` (zle_main.c:2085), made at c:2053.
+    let took_singledraw = !mnew
         && inselect != 0
         && cur_onlnct == nlnct
         && mlbeg_cur >= 0
@@ -3238,6 +3368,11 @@ pub fn complistmatches(
                 NOSELECT.load(Ordering::SeqCst));
         }
     }
+    // zshrs bridge: C writes the whole listing through the buffered `shout`
+    // stream and flushes once, so the frame lands in one write. Bracket the
+    // draw so this port does the same instead of one `write(2)` per escape
+    // and per cell (which paints the grid progressively on screen).
+    crate::shout::begin();
     if took_singledraw {
         if NOSELECT.load(Ordering::SeqCst) == 0 {
             // c:2108
@@ -3246,19 +3381,20 @@ pub fn complistmatches(
     } else if compprintlist(if mselect >= 0 { 1 } else { 0 }) == 0 || clearflag == 0 {
         NOSELECT.store(1, Ordering::SeqCst); // c:2111
     }
+    crate::shout::end();
 
     // Rust adaptation (mirrors ilistmatches, compresult.rs c:2172): the
     // recursive `zrefresh` that follows `listmatches` re-enters this hook while
-    // `showinglist == -2`. C makes that re-entry harmless with `singledraw`
-    // (incremental highlight move); this port gates singledraw OFF and does a
-    // full `compprintlist` each time, so a re-entry would repaint the ENTIRE
-    // menu again below the first — a visible duplicate. It bites only when the
-    // list SCROLLS (clearflag=0): compprintlist's fits-branch sets
-    // showinglist=-1, but the exceeds-branch (c:1712) leaves it -2. Mark the
-    // list shown (-1) so the recursive zrefresh repaints only the command line
-    // — the same guard the plain-list path already has. (Was masked by the
-    // removed `\x1b[A` cursor hack, which repositioned so the 2nd draw
-    // overwrote the 1st; the faithful fix is to not draw twice at all.)
+    // `showinglist == -2`, and a re-entry that lands on the `compprintlist`
+    // branch repaints the ENTIRE menu again below the first — a visible
+    // duplicate. It bites only when the list SCROLLS (clearflag=0):
+    // compprintlist's fits-branch sets showinglist=-1, but the exceeds-branch
+    // (c:1712) leaves it -2. Mark the list shown (-1) so the recursive zrefresh
+    // repaints only the command line — the same guard the plain-list path
+    // already has. No-op on the singledraw branch, which already stored -1
+    // itself (c:1985). (Was masked by the removed `\x1b[A` cursor hack, which
+    // repositioned so the 2nd draw overwrote the 1st; the faithful fix is to
+    // not draw twice at all.)
     if SHOWINGLIST.load(Ordering::SeqCst) == -2 {
         SHOWINGLIST.store(-1, Ordering::SeqCst);
     }
@@ -3273,7 +3409,17 @@ pub fn complistmatches(
     popheap();
     crate::ported::options::opt_state_set("extendedglob", extendedglob); // c:2121 opts[EXTENDEDGLOB] = extendedglob
 
-    NOSELECT.load(Ordering::SeqCst) // c:2123 return noselect
+    // c:2123 — `return (noselect < 0 ? 0 : noselect);`. noselect == -1 means
+    // "interactive mode needs to reset the selection list" (c:38); the hook
+    // still reports success (0) to the caller. Returning the raw -1 made
+    // `comp_list_matches` see a non-zero (truthy) hook result on every
+    // interactive redraw.
+    let ns = NOSELECT.load(Ordering::SeqCst);
+    if ns < 0 {
+        0
+    } else {
+        ns
+    } // c:2123
 }
 
 /// Port of `static int onlnct` from `Src/Zle/complist.c:1992`. Saved
@@ -3520,8 +3666,16 @@ pub fn setmstatus(
         if pl > h - 3 {
             // c:2245
             status.push_str("..."); // c:2246
-            let skip = (pl - h - 3).max(0) as usize;
-            status.push_str(&p[skip..]); // c:2247 p + pl - h - 3
+            // c:2247 — `strcat(status, p + pl - h + 3);`. The offset is
+            // `pl - h + 3`, NOT `pl - h - 3`: the "..." already accounts for
+            // three columns, so the kept tail is `h - 3` bytes long. The
+            // minus-3 form kept `h + 3` bytes and pushed the interactive
+            // status line six columns past zsh's.
+            let mut skip = (pl - h + 3).max(0) as usize;
+            while skip < p.len() && !p.is_char_boundary(skip) {
+                skip += 1;
+            }
+            status.push_str(&p[skip.min(p.len())..]); // c:2247
         } else {
             status.push_str(&p); // c:2249
         }
@@ -3906,6 +4060,12 @@ pub fn domenuselect(
     }
 
     // c:2401-2403 — reset incremental search state.
+    // c:2401 — `msearchstack = NULL;`. Dropping the stack is part of the
+    // reset: without it the frames pushed by the PREVIOUS menu-select session
+    // survive, so the first backward-delete-char of a fresh isearch popped a
+    // stale frame and jumped the selection to wherever the last session left
+    // off instead of no-oping.
+    MSEARCHSTACK.lock().unwrap().clear(); // c:2401
     *MSEARCHSTR.lock().unwrap() = String::new(); // c:2402
     MSEARCHSTATE.store(MS_OK, Ordering::SeqCst); // c:2403
 
@@ -4176,6 +4336,18 @@ pub fn domenuselect(
             .and_then(|g| g.cur.as_ref().map(|c| (**c).clone()));
         if let Some(c) = cur {
             crate::ported::zle::compresult::do_single(&c); // do_single(*minfo.cur)
+
+            // zshrs bridge — see `push_line_to_editor` above, and the identical
+            // pairing at the c:3450 movement epilogue. `do_single` rewrites the
+            // word in the COMPLETION buffer (`ZLEMETALINE`/`ZLEMETACS`,
+            // compresult.rs:1412). In C that IS the buffer `zrefresh`
+            // redisplays, so `do_menucmp`'s internal `do_single`
+            // (compresult.c:1281) needs no sync. Here the two buffers are
+            // separate, so without this push the new pick never reaches the
+            // command line: measured `zsh --`, Tab ×3, Down, Down, Tab left the
+            // editor showing `zsh --emulate` while the menu highlight had
+            // already advanced to `--help`.
+            push_line_to_editor();
         }
     };
     // Direct port of `msearch(Cmatch **ptr, char *ins, int back, int rep,
@@ -4520,14 +4692,56 @@ pub fn domenuselect(
             p = MMTABP.load(Ordering::SeqCst) as i32; // c:2610 p = mmtabp
             if let Some(c) = cell(p) {
                 let g = gcell(p);
+                // c:2612-2613 — `minfo.cur = *p; minfo.group = *pg;`. In C both
+                // fields are POINTERS into the group's match array / the
+                // amatches list, so this single assignment IS the menu-cursor
+                // move: whatever the arrow keys just selected becomes the
+                // position `do_menucmp(0)` (c:3295, the Tab branch) advances
+                // from on the next keystroke.
+                //
+                // This port splits that position in two (comp_h.rs:684-695):
+                // the VALUE (`cur`/`group`) and the OFFSETS (`cur_idx`/
+                // `group_idx`) that carry C's pointer arithmetic. Every other
+                // writer sets all four together (compresult.rs:1443-1445,
+                // 1471-1473, 2050-2051) — this site set only the values, so the
+                // offsets kept whatever cell was current BEFORE the arrows.
+                // `do_menucmp0` (complist.rs:4311) and `valid_match`
+                // (compresult.c:1206) step from the offsets, so Tab after any
+                // arrow-key movement resumed from the pre-arrow cell and the
+                // repaint highlighted a match the command line did not hold.
+                //
+                // Resolve the offsets from the cell's `gnum`: it is unique per
+                // match and is already what the mtab scan at c:2494 keys on.
+                let (mut gidx, mut midx) = (-1i32, -1i32);
+                if let Ok(groups) = crate::ported::zle::compcore::amatches
+                    .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                    .lock()
+                {
+                    'find_cell: for (gx, grp) in groups.iter().enumerate() {
+                        for (mx, m) in grp.matches.iter().enumerate() {
+                            if m.gnum == c.gnum {
+                                gidx = gx as i32;
+                                midx = mx as i32;
+                                break 'find_cell;
+                            }
+                        }
+                    }
+                }
                 if let Ok(mut mi) = MINFO
                     .get_or_init(|| {
                         std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
                     })
                     .lock()
                 {
-                    mi.cur = Some(Box::new(c)); // c:2615 minfo.cur = *p
-                    mi.group = g.map(Box::new); // c:2616 minfo.group = *pg
+                    mi.cur = Some(Box::new(c)); // c:2612 minfo.cur = *p
+                    mi.group = g.map(Box::new); // c:2613 minfo.group = *pg
+                    // The offsets half of the same assignment. Guarded: a cell
+                    // whose match is not in `amatches` (stale mtab between
+                    // rebuilds) must not reset the cursor to group 0 / match 0.
+                    if gidx >= 0 {
+                        mi.group_idx = gidx;
+                        mi.cur_idx = midx;
+                    }
                 }
             }
             let cg = cur_gnum();

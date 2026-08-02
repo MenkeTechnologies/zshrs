@@ -74,6 +74,7 @@ fn types() -> Vec<String> {
 /// array. `args` is accepted (per the port ABI) but unused, matching the
 /// original's ignoring of its own positional parameters.
 pub fn _fbsd_device_types(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_fbsd_device_types");
     // sh:31  _values -s , 'device type' $types
     let mut call: Vec<String> = vec!["-s".to_string(), ",".to_string(), "device type".to_string()];
     call.extend(types());

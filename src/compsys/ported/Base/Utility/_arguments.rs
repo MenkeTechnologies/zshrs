@@ -740,6 +740,7 @@ fn subst_first(str_in: &str, pat: &str, repl: &str) -> String {
 /// `_arguments` — spec engine. `args` is the full argument vector the
 /// caller passed after the function name (flags then spec strings).
 pub fn _arguments(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_arguments");
     // sh:6-8 — locals mirroring the zsh source. `cmd="$words[1]"`.
     let words0 = getaparam("words").unwrap_or_default();
     let cmd = words0.first().cloned().unwrap_or_default(); // sh:6 cmd

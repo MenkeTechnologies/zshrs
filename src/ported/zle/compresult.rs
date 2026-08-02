@@ -31,7 +31,6 @@
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
 
-use crate::ported::exec::noerrs;
 use crate::ported::init::SHTTY;
 use crate::ported::lex::parsestr;
 use crate::ported::module::{gethookdef, runhookdef};
@@ -873,6 +872,13 @@ pub fn instmatch(
         let mut pcs = cs(); // c:610
         let mut bradd = m.pre.as_deref().map_or(0, |s| s.len() as i32); // c:613
         for (i, bs) in brbeg_v.iter().enumerate() {
+            // c:614-616 — `for (bp = brbeg, brpos = m->brpl; bp && brpos; …)`:
+            // a NULL `brpl` means ZERO iterations, so `lastprebr` below stays
+            // the empty a0..pcs slice. The port looped anyway with an implicit
+            // brpos of 0, re-inserting every brace-begin at the word start.
+            if m.brpl.is_empty() {
+                break;
+            }
             let brpos = *m.brpl.get(i).unwrap_or(&0); // c:614
             set_cs(a0 + brpos + bradd); // c:617
             pcs = cs(); // c:618
@@ -1103,30 +1109,89 @@ pub fn hasbrpsfx(m: &Cmatch, pre: Option<&str>, suf: Option<&str>) -> bool {
 /// WARNING: param names don't match C — Rust=(matches) vs C=()
 pub fn do_ambiguous(matches: &[String]) -> i32 {
     // c:744
-    // c:748 — `menucmp = menuacc = 0`.
+    // c:746 — `menucmp = menuacc = 0`.
     MENUCMP.store(0, Relaxed);
     crate::ported::zle::compcore::menuacc.store(0, Relaxed);
-    // c:763 — `lastambig = 1`.
+
+    // c:748-756 — "If we have to insert the first match, call do_single().
+    // This is how REC_EXACT takes effect. We effectively turn the ambiguous
+    // completion into an unambiguous one."
+    //   if (ainfo && ainfo->exact == 1 && !(fromcomp & FC_LINE)) {
+    //       minfo.cur = NULL; do_single(ainfo->exactm);
+    //       invalidatelist(); return ret;
+    //   }
+    // The whole block was absent, so REC_EXACT never fired: with
+    // `setopt recexact`, typing a word that exactly matches one candidate
+    // among several (`ls Make<TAB>` with Makefile + Makefile.in) fell into
+    // the common-prefix path instead of accepting the exact match outright.
+    // Guarded by FC_LINE so the *next* Tab (after c:818 marks the word as
+    // coming from a previous completion) does not re-accept it.
+    {
+        let ainfo_exact = crate::ported::zle::compcore::ainfo
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|a| (a.exact, a.exactm.clone())));
+        if let Some((exact, Some(exactm))) = ainfo_exact {
+            if exact == 1
+                && (crate::ported::zle::compcore::fromcomp.load(Relaxed)
+                    & crate::ported::zle::comp_h::FC_LINE)
+                    == 0
+            {
+                // c:752 — `minfo.cur = NULL;`
+                if let Ok(mut g) = MINFO
+                    .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+                    .lock()
+                {
+                    g.cur = None;
+                }
+                do_single(&exactm); // c:753
+                crate::ported::zle::zle_h::invalidatelist(); // c:754
+                return 0; // c:755
+            }
+        }
+    }
+
+    // c:757-761 — `lastambig = 1`. Deliberately AFTER the exact-match return
+    // above: an accepted exact match is no longer an ambiguous completion,
+    // so AUTO_MENU must not arm on the next Tab.
     LASTAMBIG.store(1, Relaxed);
 
-    // c:765-773 — menu branch. When menu completion is active (MENU_COMPLETE
+    // c:763-771 — menu branch. When menu completion is active (MENU_COMPLETE
     // → usemenu) and we are not being driven by the interactive menu-select
     // widget (iforcemenu != -1), insert the first/next match via
     // do_ambig_menu instead of the common-prefix insertion, then fall
     // through to the listing tail. Without this, `setopt menucomplete` never
     // inserted a match on an ambiguous Tab — the word just stayed put.
-    // (The C companion condition `haspattern && comppatinsert == "menu"`,
-    // used by GLOB_COMPLETE, is omitted: the glob/pattern path is not yet
-    // ported, so haspattern stays 0 and the term can never fire.)
+    // The `haspattern && comppatinsert == "menu"` companion term is C's
+    // GLOB_COMPLETE path; it was dropped on the grounds that haspattern was
+    // unported, but compcore.rs:262 sets it, so it is restored here.
     let iforcemenu_top = crate::ported::zle::compcore::iforcemenu.load(Relaxed);
     let usemenu_top = crate::ported::zle::zle_tricky::USEMENU.load(Relaxed);
-    if iforcemenu_top != -1 && usemenu_top != 0 {
+    let patmenu = crate::ported::zle::compcore::haspattern.load(Relaxed) != 0
+        && crate::ported::zle::compcore::get_compstate_str("pattern_insert")
+            .as_deref()
+            == Some("menu"); // c:764-765
+    if iforcemenu_top != -1 && (usemenu_top != 0 || patmenu) {
         // c:773 — insert the first/next match; fall through to the tail.
         let _ = do_ambig_menu();
     } else {
         // c:774 — else if (ainfo) — if `ainfo` is populated, walk ainfo->line
         // via cline_str (compresult.c:535 path); else fall back to the LCP
         // over the provided match strings.
+        // c:773 — `int atend = (zlemetacs == we)`, sampled BEFORE the line is
+        // rewritten; feeds the FC_INWORD decision at c:819.
+        let atend = crate::ported::zle::compcore::ZLEMETACS.load(Relaxed)
+            == crate::ported::zle::compcore::WE.load(Relaxed);
+        // c:776-777 — `minfo.cur = NULL; minfo.asked = 0;`
+        if let Ok(mut g) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            g.cur = None;
+            g.asked = 0;
+        }
+        crate::ported::zle::zle_misc::fixsuffix(); // c:779
         let ainfo_line = crate::ported::zle::compcore::ainfo
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()
@@ -1184,6 +1249,41 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
                 .min(metaline_s.len());
             origline_s.as_bytes()[..n] != metaline_s.as_bytes()[..n]
         };
+
+        // c:818-819 — "If REC_EXACT and AUTO_MENU are set and what we
+        // inserted is an exact match, we want menu completion the next time
+        // round so we set fromcomp, to ensure that the word on the line is
+        // not taken as an exact match. Also we remember if we just moved the
+        // cursor into the word."
+        //   fromcomp = ((isset(AUTOMENU) ? FC_LINE : 0) |
+        //               ((atend && zlemetacs != lastend) ? FC_INWORD : 0));
+        // The assignment was missing entirely, so `fromcomp` kept whatever a
+        // previous round left in it: FC_LINE never armed AUTO_MENU's
+        // "don't re-accept this word" guard (see the c:751 branch above), and
+        // FC_INWORD never told the next completion the cursor sits mid-word
+        // (compcore.rs:520 reads exactly this bit).
+        let lastend_v = crate::ported::zle::compcore::LASTEND.load(Relaxed);
+        let cs_now = crate::ported::zle::compcore::ZLEMETACS.load(Relaxed);
+        crate::ported::zle::compcore::fromcomp.store(
+            (if isset(crate::ported::zsh_h::AUTOMENU) {
+                crate::ported::zle::comp_h::FC_LINE
+            } else {
+                0
+            }) | (if atend && cs_now != lastend_v {
+                crate::ported::zle::comp_h::FC_INWORD
+            } else {
+                0
+            }),
+            Relaxed,
+        );
+
+        // c:821-823 — `if (movetoend == 3) zlemetacs = lastend;` — with
+        // `$compstate[to_end]=match` the cursor goes to the end of what was
+        // just inserted. Omitting it left the cursor wherever cline_str
+        // finished.
+        if movetoend.load(Relaxed) == 3 {
+            crate::ported::zle::compcore::ZLEMETACS.store(lastend_v, Relaxed);
+        }
         // c:832-842 — `if ((uselist == 3 || (!uselist && BASHAUTOLIST &&
         // LISTAMBIGUOUS)) && la && iforcemenu != -1) { invalidatelist();
         // lastambig = 0; clearlist = 1; return ret; }`. With LIST_AMBIGUOUS
@@ -1200,10 +1300,17 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
             && la
             && iforcemenu_v != -1
         {
-            crate::ported::zle::zle_h::invalidatelist();
-            crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Relaxed);
-            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Relaxed);
-            return 0;
+            // c:833-836 — `int fc = fromcomp; invalidatelist(); fromcomp = fc;`.
+            // invalidatelist() clears fromcomp, so C saves and restores it
+            // across the call; the FC_LINE/FC_INWORD state just computed at
+            // c:818 has to survive into the next completion round. Without
+            // the save/restore the LIST_AMBIGUOUS path silently discarded it.
+            let fc = crate::ported::zle::compcore::fromcomp.load(Relaxed); // c:833
+            crate::ported::zle::zle_h::invalidatelist(); // c:835
+            crate::ported::zle::compcore::fromcomp.store(fc, Relaxed); // c:836
+            crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Relaxed); // c:837
+            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Relaxed); // c:838
+            return 0; // c:839
         }
     }
 
@@ -1244,15 +1351,51 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(path, follow_symlink) vs C=(nam, buf, ls)
 pub fn ztat(path: &str, follow_symlink: bool) -> Option<std::fs::Metadata> {
     // c:869
-    if follow_symlink {
-        // c:869 if (ls)
-        // c:869 — `lstat(nam, buf)`. Don't follow symlinks.
-        std::fs::symlink_metadata(path).ok()
-    } else {
-        // c:869 else
-        // c:869 — `stat(nam, buf)`. Follow symlinks.
-        std::fs::metadata(path).ok()
+    let stat_once = |p: &str| -> Option<std::fs::Metadata> {
+        if follow_symlink {
+            // c:875 if (ls) — `lstat(nam, buf)`. Don't follow symlinks.
+            std::fs::symlink_metadata(p).ok()
+        } else {
+            // c:875 else — `stat(nam, buf)`. Follow symlinks.
+            std::fs::metadata(p).ok()
+        }
+    };
+    // c:875 — first attempt, on the name exactly as handed in.
+    if let Some(md) = stat_once(path) {
+        return Some(md);
     }
+    // c:875-886 — `if ((ret = ls ? lstat : stat)) { <strip backslashes>; retry }`.
+    // ztat is deliberately a QUOTING-TOLERANT stat: when the first call fails it
+    // rewrites the name in place, dropping each backslash that quotes a following
+    // character (c:878-883), and stats once more (c:885).
+    //
+    // This retry is load-bearing for the completion listing. `_path_files` runs
+    // `compquote tmp1 tmp2` before feeding that array to `compadd -Qf … -a tmp1`,
+    // so the words reaching `add_match_data` ARE backslash-escaped, and the
+    // file-type stat there (`Src/Zle/compcore.c:2957`, `prpre` + `orig`) is
+    // handed e.g. `…/with\ space`. C's first stat fails on that, the strip loop
+    // turns it into `…/with space`, and the retry succeeds — which is how zsh
+    // marks such a directory with a trailing `/` in the list. The port stopped at
+    // the first stat, so every match whose name needs quoting silently lost its
+    // type marker:
+    //     zsh    back\\slash/  file\ space   plaindir/  plainfile  with\ space/
+    //     zshrs  back\\slash   file\ space   plaindir/  plainfile  with\ space
+    let mut stripped = String::with_capacity(path.len());
+    let mut chars = path.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // c:879 — `*q == '\\' && q[1]`: only a backslash with a character
+            // AFTER it quotes; a trailing lone backslash fails the `q[1]` test
+            // and falls to the else at c:882, which copies it verbatim.
+            match chars.next() {
+                Some(next) => stripped.push(next), // c:880 `*p++ = *++q;`
+                None => stripped.push(c),          // c:882 `*p++ = *q;`
+            }
+        } else {
+            stripped.push(c); // c:882
+        }
+    }
+    stat_once(&stripped) // c:885
 }
 
 /// Direct port of `void do_allmatches(UNUSED(int end))` from
@@ -1631,12 +1774,12 @@ pub fn do_single(m: &Cmatch) {
                     }
                     if tryit {
                         // c:1090-1095 — parse + single-word substitute.
-                        let ne = noerrs.load(Relaxed);
-                        noerrs.store(1, Relaxed);
+                        let ne = *crate::ported::utils::noerrs_lock().lock().unwrap();
+                        *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
                         let parsed = parsestr(&pp).unwrap_or_else(|_| pp.clone());
                         pp = singsub(&parsed);
                         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:1094
-                        noerrs.store(ne, Relaxed);
+                        *crate::ported::utils::noerrs_lock().lock().unwrap() = ne;
                     }
                     p = pp;
                 } else {
@@ -1948,37 +2091,72 @@ pub fn valid_match(mut mi: i32, next: i32) -> Option<Cmatch> {
         .cloned() // c:1239 return m
 }
 
-/// Direct port of `void do_menucmp(int lst)` from `Src/Zle/compresult.c:1253`.
-/// Steps the menu cursor forward/backward, wrapping at ends. Per C:
-/// when `lst == COMP_LIST_COMPLETE`, just set `showinglist=-2` and
-/// return (caller refreshes the listing instead of inserting). The
-/// Rust port returns the next match index; caller drives instmatch.
-/// WARNING: param names don't match C — Rust=(matches, current, forward) vs C=(lst)
-pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) {
-    // c:1253
-    // c:1258 — `if (lst == COMP_LIST_COMPLETE) { showinglist = -2; return; }`.
-    // We don't have a `lst` param at this signature; the listing-mode
-    // call site (compresult.c via do_menucmp(lst==LIST_COMPLETE)) uses
-    // a separate caller path. If the host's menu loop wraps to the
-    // current entry (matches.len()==1), set showinglist=-2 so a
-    // re-list happens.
-    let _ = COMP_LIST_COMPLETE;
-    if matches.is_empty() {
-        return (0, "");
+/// Direct port of `mod_export void do_menucmp(int lst)` from
+/// `Src/Zle/compresult.c:1249`.
+///
+/// "Do completion, given that we are in the middle of a menu completion.
+/// We don't need to generate a list of matches, because that's already
+/// been done by previous commands. We will either list the completions,
+/// or insert the next completion."
+///
+/// The previous body was not a port at all: it took `(matches, current,
+/// forward)` and returned the next index, never touching `zmult`,
+/// `valid_match`, `minfo.cur` or `do_single` — i.e. none of the four
+/// things C's function does. It also had no callers, so the real menu
+/// stepping had to be open-coded elsewhere. Restored to the C shape now
+/// that valid_match / do_single / ZMULT / metafy_line all exist.
+pub fn do_menucmp(lst: i32) {
+    // c:1249
+    // c:1253-1257 — "Just list the matches if the list was requested."
+    if lst == COMP_LIST_COMPLETE {
+        SHOWINGLIST.store(-2, Relaxed); // c:1255
+        return; // c:1256
     }
-    if matches.len() == 1 {
-        SHOWINGLIST.store(-2, Relaxed);
+    // c:1259-1264 — already metafied when called from domenuselect.
+    let was_meta = ZLEMETALL.load(Relaxed) != 0;
+    if !was_meta {
+        metafy_line(); // c:1262
     }
-    let next = if forward {
-        (current + 1) % matches.len()
-    } else {
-        if current == 0 {
-            matches.len() - 1
-        } else {
-            current - 1
+    // c:1266-1270 — step `zmult` matches forward (or backward when
+    // negative); `zmult -= (0 < zmult) - (zmult < 0)` walks it to zero
+    // from either side.
+    loop {
+        let z = ZMULT.load(Relaxed);
+        if z == 0 {
+            break; // c:1267
         }
-    };
-    (next, &matches[next])
+        let mi = MINFO
+            .get()
+            .and_then(|g| g.lock().ok())
+            .map(|g| g.cur_idx)
+            .unwrap_or(0);
+        let nm = valid_match(mi, 1); // c:1268
+        if let Ok(mut g) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            g.cur = nm.clone().map(Box::new); // c:1268
+        }
+        ZMULT.store(
+            z - (i32::from(0 < z) - i32::from(z < 0)), // c:1269
+            Relaxed,
+        );
+        if nm.is_none() {
+            // No valid match anywhere: C would deref NULL at c:1272.
+            break;
+        }
+    }
+    // c:1271-1272 — "... and insert it into the command line."
+    let cur = MINFO
+        .get()
+        .and_then(|g| g.lock().ok())
+        .and_then(|g| g.cur.clone());
+    if let Some(m) = cur {
+        do_single(&m); // c:1272
+    }
+    if !was_meta {
+        unmetafy_line(); // c:1275
+    }
 }
 
 /// Direct port of `accept_last()` from `Src/Zle/compresult.c:1288`.
@@ -2287,19 +2465,55 @@ pub fn do_ambig_menu() -> i32 {
     0
 }
 
-/// Compute how many rows the list will take given a fixed column
-/// count.
-/// Port of `list_lines()` from Src/Zle/compresult.c — the listing
-/// path uses this to decide whether to invoke the more-prompt
-/// (`asklistscroll`).
-// Return the number of screen lines needed for the list.                   // c:1450
-/// WARNING: param names don't match C — Rust=(matches, columns) vs C=()
-pub fn list_lines(matches: &[String], columns: usize) -> usize {
-    // c:1450
-    if columns == 0 {
-        return matches.len();
+/// Direct port of `zlong list_lines(void)` from `Src/Zle/compresult.c:1446`.
+/// "Return the number of screen lines needed for the list."
+///
+/// ```c
+/// permmatches(0);
+/// oam = amatches; amatches = pmatches;
+/// listdat.valid = 0; calclist(0); listdat.valid = 0;
+/// amatches = oam;
+/// return listdat.nlines;
+/// ```
+///
+/// The previous body was `matches.len().div_ceil(columns)` — a rows-from-
+/// columns estimate that shares nothing with C beyond the name, and had no
+/// callers. The two `listdat.valid = 0` resets are the load-bearing part:
+/// calclist short-circuits on a valid listdat (c:1502), so without them
+/// `$compstate[list_lines]` reports a stale count, and the surrounding
+/// amatches/pmatches swap is what makes the count describe the PERMANENT
+/// match set rather than whatever transient group list is live.
+pub fn list_lines() -> i64 {
+    crate::ported::zle::compcore::permmatches(0); // c:1450
+
+    // c:1452-1453 — `oam = amatches; amatches = pmatches;`
+    let am = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let oam = am.lock().map(|g| g.clone()).unwrap_or_default(); // c:1452
+    let pm = crate::ported::zle::compcore::pmatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    if let Ok(mut g) = am.lock() {
+        *g = pm; // c:1453
     }
-    matches.len().div_ceil(columns)
+
+    let ld = crate::ported::zle::compcore::listdat
+        .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
+    if let Ok(mut g) = ld.lock() {
+        g.valid = 0; // c:1454
+    }
+    calclist(0); // c:1455
+    let nlines = if let Ok(mut g) = ld.lock() {
+        g.valid = 0; // c:1456
+        g.nlines as i64
+    } else {
+        0
+    };
+    if let Ok(mut g) = am.lock() {
+        *g = oam; // c:1457
+    }
+    nlines // c:1459
 }
 
 /// Port of `comp_list(char *v)` from `Src/Zle/compresult.c:1468`.
@@ -2692,10 +2906,21 @@ pub fn calclist(showall: i32) -> i32 {
                                 nth += 1;
                                 tcol += 1;
                             }
-                            width = w;
-                            tcols = t;
-                            tlines = tl;
+                            // c:1828-1830 — in C the loop VARIABLE is the result
+                            // (`for (tcols = …; tcols > g->cols; tcols--)`), so an exhausted search
+                            // necessarily leaves tcols == g->cols and the revert guard at c:1868
+                            // (`if (tcols <= g->cols) tlines = g->lins;`) fires, throwing the packed
+                            // layout away. This port splits the counter (`t`) from the result, so
+                            // these three must be committed ONLY on the accepting branch; assigning
+                            // them before the fit test left the last REJECTED candidate
+                            // (tcols == g.cols + 1) in place, the guard could not fire, and a
+                            // layout that did not fit was committed. `unset <TAB>` then rendered
+                            // 453 matches in 2 columns of width 68+66 = 134 on a 110-column
+                            // terminal — every second cell wrapped — where zsh uses 1 column.
                             if w < zterm_columns {
+                                width = w;
+                                tcols = t;
+                                tlines = tl;
                                 break;
                             } // c:1758-1759
                             t -= 1;
@@ -2733,10 +2958,21 @@ pub fn calclist(showall: i32) -> i32 {
                                 nth += 1;
                                 tline += 1;
                             }
-                            width = w;
-                            tcols = t;
-                            tlines = tl;
+                            // c:1828-1830 — in C the loop VARIABLE is the result
+                            // (`for (tcols = …; tcols > g->cols; tcols--)`), so an exhausted search
+                            // necessarily leaves tcols == g->cols and the revert guard at c:1868
+                            // (`if (tcols <= g->cols) tlines = g->lins;`) fires, throwing the packed
+                            // layout away. This port splits the counter (`t`) from the result, so
+                            // these three must be committed ONLY on the accepting branch; assigning
+                            // them before the fit test left the last REJECTED candidate
+                            // (tcols == g.cols + 1) in place, the guard could not fire, and a
+                            // layout that did not fit was committed. `unset <TAB>` then rendered
+                            // 453 matches in 2 columns of width 68+66 = 134 on a 110-column
+                            // terminal — every second cell wrapped — where zsh uses 1 column.
                             if w < zterm_columns {
+                                width = w;
+                                tcols = t;
+                                tlines = tl;
                                 break;
                             } // c:1794-1795
                             t -= 1;
@@ -2780,10 +3016,21 @@ pub fn calclist(showall: i32) -> i32 {
                             }
                             tcol += 1;
                         }
-                        width = w;
-                        tcols = t;
-                        tlines = tl;
+                        // c:1828-1830 — in C the loop VARIABLE is the result
+                        // (`for (tcols = …; tcols > g->cols; tcols--)`), so an exhausted search
+                        // necessarily leaves tcols == g->cols and the revert guard at c:1868
+                        // (`if (tcols <= g->cols) tlines = g->lins;`) fires, throwing the packed
+                        // layout away. This port splits the counter (`t`) from the result, so
+                        // these three must be committed ONLY on the accepting branch; assigning
+                        // them before the fit test left the last REJECTED candidate
+                        // (tcols == g.cols + 1) in place, the guard could not fire, and a
+                        // layout that did not fit was committed. `unset <TAB>` then rendered
+                        // 453 matches in 2 columns of width 68+66 = 134 on a 110-column
+                        // terminal — every second cell wrapped — where zsh uses 1 column.
                         if w < zterm_columns {
+                            width = w;
+                            tcols = t;
+                            tlines = tl;
                             break;
                         } // c:1828-1829
                         t -= 1;
@@ -2826,10 +3073,21 @@ pub fn calclist(showall: i32) -> i32 {
                             }
                             tline += 1;
                         }
-                        width = w;
-                        tcols = t;
-                        tlines = tl;
+                        // c:1828-1830 — in C the loop VARIABLE is the result
+                        // (`for (tcols = …; tcols > g->cols; tcols--)`), so an exhausted search
+                        // necessarily leaves tcols == g->cols and the revert guard at c:1868
+                        // (`if (tcols <= g->cols) tlines = g->lins;`) fires, throwing the packed
+                        // layout away. This port splits the counter (`t`) from the result, so
+                        // these three must be committed ONLY on the accepting branch; assigning
+                        // them before the fit test left the last REJECTED candidate
+                        // (tcols == g.cols + 1) in place, the guard could not fire, and a
+                        // layout that did not fit was committed. `unset <TAB>` then rendered
+                        // 453 matches in 2 columns of width 68+66 = 134 on a 110-column
+                        // terminal — every second cell wrapped — where zsh uses 1 column.
                         if w < zterm_columns {
+                            width = w;
+                            tcols = t;
+                            tlines = tl;
                             // c:1866-1869
                             // C: `if (++tcol < tcols) tcols = tcol;`
                             if tcol + 1 < tcols {
@@ -2906,7 +3164,6 @@ pub fn calclist(showall: i32) -> i32 {
 ///     `minfo.asked = 1 or 2`. Else return based on previous asked.
 pub fn asklist() -> i32 {
     // c:1925
-
     // c:1928 — `trashzle(); showinglist = listshown = 0; lastlistlen = 0`.
     trashzle(); // c:1928
     SHOWINGLIST.store(0, Relaxed);
@@ -2948,7 +3205,9 @@ pub fn asklist() -> i32 {
 
     // c:1939 — `if ((!minfo.cur || !minfo.asked) && over_threshold)`.
     if (!has_cur || already_asked == 0) && over_threshold {
-        // c:1947-1953 — write the "do you wish to see ...?" prompt.
+        let _ = crate::ported::zle::zle_main::zsetterm(); // c:1935
+        // c:1936-1940 — write the "do you wish to see ...?" prompt; `l` is
+        // the printed length, used to work out how many rows it wrapped over.
         let prompt = if listdat.nlist > 0 {
             format!(
                 "zsh: do you wish to see all {} possibilities ({} lines)? ",
@@ -2959,36 +3218,94 @@ pub fn asklist() -> i32 {
         };
         let fd = SHTTY.load(Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
+        let l = prompt.len() as i32;
         let _ = write_loop(out, prompt.as_bytes());
+        // c:1941 — `qup = ((l + zterm_columns - 1) / zterm_columns) - 1;`
+        let zterm_columns = adjustcolumns() as i32;
+        let qup = if zterm_columns > 0 {
+            (l + zterm_columns - 1) / zterm_columns - 1
+        } else {
+            0
+        };
 
-        // c:1955 — `getzlequery()`.
+        // c:1943 — `getzlequery()`.
         let said_yes = getzlequery() != 0;
 
+        // c:1944-1951 / c:1955-1961 — erase the question. Both branches do
+        // the SAME cleanup; only the "no" path additionally rewinds past the
+        // prompt (`tcmultout(TCUP, TCMULTUP, nlnct)`, c:1949). The port
+        // emitted a bare `\n` in both cases — C's `else` (non-clearflag)
+        // branch only — so with clearflag set the question line was left on
+        // screen above the listing and every subsequent row was off by one.
+        let erase_question = || {
+            if clearflag {
+                let _ = write_loop(out, b"\r"); // c:1945
+                crate::ported::zle::zle_refresh::tcmultout(
+                    crate::ported::zsh_h::TCUP,
+                    crate::ported::zsh_h::TCMULTUP,
+                    qup,
+                ); // c:1946
+                   // c:1947-1948 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
+                let can_cleareod = crate::ported::init::tclen
+                    .lock()
+                    .map(|t| t[crate::ported::zsh_h::TCCLEAREOD as usize] != 0)
+                    .unwrap_or(false);
+                if can_cleareod {
+                    crate::ported::zle::zle_refresh::tcout(crate::ported::zsh_h::TCCLEAREOD);
+                }
+            } else {
+                let _ = write_loop(out, b"\n"); // c:1951 / c:1961
+            }
+        };
+
         if !said_yes {
-            // c:1956
-            // c:1957-1964 — clean up the question line.
-            let _ = write_loop(out, b"\n");
-            // c:1965 — `minfo.asked = 2`.
+            erase_question(); // c:1944-1951
+            if clearflag {
+                // c:1949 — rewind over the prompt lines too.
+                crate::ported::zle::zle_refresh::tcmultout(
+                    crate::ported::zsh_h::TCUP,
+                    crate::ported::zsh_h::TCMULTUP,
+                    crate::ported::zle::zle_refresh::NLNCT.load(Relaxed),
+                );
+            }
+            // c:1952 — `minfo.asked = 2`.
             if let Ok(mut m) = MINFO
                 .get_or_init(|| std::sync::Mutex::new(Default::default()))
                 .lock()
             {
                 m.asked = 2;
             }
-            return 1; // c:1966
+            return 1; // c:1953
         }
-        // c:1968-1974 — clean up after a yes.
-        let _ = write_loop(out, b"\n");
-        // c:1975 — `minfo.asked = 1`.
+        erase_question(); // c:1955-1961
+                          // c:1962 — `settyinfo(&shttyinfo)`: the query left the tty in
+                          // single-key mode; restore the saved baseline before the listing.
+                          // Skipping it left the terminal in the query's mode.
+        if let Ok(ti) = crate::ported::utils::SHTTYINFO.lock() {
+            if let Some(ref t) = *ti {
+                crate::ported::utils::settyinfo(t);
+            }
+        }
+        // c:1963 — `minfo.asked = 1`.
         if let Ok(mut m) = MINFO
             .get_or_init(|| std::sync::Mutex::new(Default::default()))
             .lock()
         {
             m.asked = 1;
         }
+    } else if already_asked == 2 {
+        // c:1964-1965 — `else if (minfo.asked == 2)
+        //                    tcmultout(TCUP, TCMULTUP, nlnct);`
+        // A previously-declined list re-entering asklist must still rewind
+        // the cursor over the prompt that trashzle() just re-emitted. This
+        // whole arm was absent, so the second Tab after answering "n" left
+        // the cursor parked below the prompt.
+        crate::ported::zle::zle_refresh::tcmultout(
+            crate::ported::zsh_h::TCUP,
+            crate::ported::zsh_h::TCMULTUP,
+            crate::ported::zle::zle_refresh::NLNCT.load(Relaxed),
+        );
     }
-    // c:1978-1979 — second-pass entry: already-asked-no falls through
-    //                to the final return-1 to suppress the listing.
 
     // c:1981 — `return (minfo.asked ? minfo.asked - 1 : 0);`.
     let asked_now = MINFO
@@ -3338,13 +3655,22 @@ pub fn bld_all_str() -> String {
                 } else {
                     // c:2221
                     if len > add + 2 {
-                        // c:2222
+                        // c:2210
                         if add != 0 {
-                            buf.push(' ');
+                            buf.push(' '); // c:2212
                         }
-                        buf.push_str(&s[..((len - 2).max(0) as usize).min(s.len())]);
+                        // c:2213 — `strncat(buf, m->str, len)`: the copy limit
+                        // is the REMAINING budget `len`, not `len - 2` (the
+                        // `add + 2` in the guard above only reserves room for
+                        // the separator and the "..."). Truncating two chars
+                        // short clipped the last visible match in every
+                        // `compadd -C`/CMF_ALL "insert all matches" display.
+                        let take = (len.max(0) as usize).min(s.len());
+                        // Byte truncation must land on a char boundary.
+                        let take = (0..=take).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0);
+                        buf.push_str(&s[..take]);
                     }
-                    buf.push_str("..."); // c:2227
+                    buf.push_str("..."); // c:2215
                     break 'outer; // c:2228
                 }
             }
@@ -3500,9 +3826,13 @@ pub fn ilistmatches(
         .map(|g| g.nlines)
         .unwrap_or(0);
     if nlines == 0 {
+        // c:2283 — `showinglist = listshown = 0;`
         SHOWINGLIST.store(0, Relaxed);
         LISTSHOWN.store(0, Relaxed);
-        return 0;
+        // c:2284 — `return 1;` (NOT 0). The value propagates out through
+        // runhookdef → list_matches → zrefresh as "nothing was listed"; the
+        // port returned 0, reporting a successful listing for an empty list.
+        return 1;
     }
     // c:2292 — `if (asklist()) return 0;`. Gate long listings behind the
     // "do you wish to see all N possibilities?" query (LISTMAX). asklist
@@ -3648,9 +3978,25 @@ pub fn invalidate_list() -> i32 {
     if LISTSHOWN.load(Ordering::SeqCst) < 0 {
         LISTSHOWN.store(0, Ordering::SeqCst);
     }
-    // c:2349-2353 — `minfo.cur = NULL; minfo.asked = 0; …`. minfo not
-    // ported as a static struct yet.
-    // c:2354 — `compwidget = NULL`. The canonical `COMPWIDGET` static
+    // c:2343-2347 — `minfo.cur = NULL; minfo.asked = 0;
+    //                zsfree(minfo.prebr); zsfree(minfo.postbr);
+    //                minfo.postbr = minfo.prebr = NULL;`
+    // These five statements were skipped on the grounds that minfo wasn't
+    // ported; MINFO is ported and drives do_single / valid_match /
+    // accept_last throughout this file. Leaving them out meant an
+    // invalidated list kept a dangling menu cursor and, worse, kept
+    // prebr/postbr — so the next accept_last's `if (!menuacc)` snapshot
+    // (c:1295) compared new matches against the PREVIOUS brace expansion.
+    if let Ok(mut g) = MINFO
+        .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+        .lock()
+    {
+        g.cur = None; // c:2343
+        g.asked = 0; // c:2344
+        g.prebr = None; // c:2345-2347
+        g.postbr = None;
+    }
+    // c:2348 — `compwidget = NULL`. The canonical `COMPWIDGET` static
     // lives in zle_main.rs.
     nmatches_g.store(0, Ordering::SeqCst); // c:2355
     if let Ok(mut g) = amatches
@@ -3959,18 +4305,124 @@ mod tests {
         assert_eq!(len, 6);
     }
 
+    /// c:1253-1257 — `do_menucmp(COMP_LIST_COMPLETE)` only requests a
+    /// listing: it sets `showinglist = -2` and returns BEFORE metafying,
+    /// stepping `zmult`, or inserting anything. Pins that the line and the
+    /// menu cursor are untouched on that path.
     #[test]
-    fn test_do_menucmp() {
+    fn do_menucmp_list_complete_only_requests_listing() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let matches = vec!["commit".into(), "checkout".into(), "cherry-pick".into()];
-        let (next, word) = do_menucmp(&matches, 0, true);
-        assert_eq!(next, 1);
-        assert_eq!(word, "checkout");
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *g = "git co".to_string();
+        }
+        ZLEMETALL.store(6, Relaxed);
+        ZMULT.store(1, Relaxed);
+        SHOWINGLIST.store(0, Relaxed);
+        if let Ok(mut g) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *g = Menuinfo::default();
+        }
 
-        let (next, word) = do_menucmp(&matches, 2, true);
-        assert_eq!(next, 0);
-        assert_eq!(word, "commit");
+        do_menucmp(COMP_LIST_COMPLETE);
+
+        assert_eq!(SHOWINGLIST.load(Relaxed), -2, "c:1255 showinglist = -2");
+        assert_eq!(
+            ZLEMETALINE.get().unwrap().lock().unwrap().clone(),
+            "git co",
+            "c:1256 returns before touching the line"
+        );
+        assert_eq!(
+            ZMULT.load(Relaxed),
+            1,
+            "c:1256 returns before the zmult stepping loop"
+        );
+        assert!(
+            MINFO.get().unwrap().lock().unwrap().cur.is_none(),
+            "c:1256 returns before minfo.cur is advanced"
+        );
+    }
+
+    /// c:1267-1272 — the stepping path: `while (zmult) { minfo.cur =
+    /// valid_match(minfo.cur, 1); zmult -= sign(zmult); }` then
+    /// `do_single(*minfo.cur)`. With `zmult == 1` and a CMF_DUMMY match
+    /// first in the group, one step must land on the real match (valid_match
+    /// skips dummies), drain zmult to 0, and insert that match on the line.
+    #[test]
+    fn do_menucmp_steps_zmult_and_inserts() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        if let Some(mx) = BRBEG.get() {
+            *mx.lock().unwrap() = None;
+        }
+        if let Some(mx) = BREND.get() {
+            *mx.lock().unwrap() = None;
+        }
+        let mut dummy = Cmatch::default();
+        dummy.str = Some("dummy".to_string());
+        dummy.orig = Some("dummy".to_string());
+        dummy.flags = CMF_DUMMY;
+        let mut real = Cmatch::default();
+        real.str = Some("commit".to_string());
+        real.orig = Some("commit".to_string());
+        let mut g = Cmgroup::default();
+        g.matches = vec![dummy, real];
+        g.mcount = 2;
+        if let Ok(mut a) = amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *a = vec![g];
+        }
+        // Mid-menu state: a previous do_single already put `co` at column 4,
+        // so minfo.pos/len describe what this round must replace (c:984-987
+        // takes the `minfo.cur` branch, l = minfo.len + minfo.insc).
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *mi = Menuinfo::default();
+            mi.pos = 4;
+            mi.len = 2;
+            mi.insc = 0;
+            mi.we = 1;
+        }
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *g = "git co".to_string();
+        }
+        ZLEMETACS.store(6, Relaxed);
+        ZLEMETALL.store(6, Relaxed);
+        WB.store(4, Relaxed);
+        WE.store(6, Relaxed);
+        ZMULT.store(1, Relaxed);
+        MENUCMP.store(0, Relaxed);
+        menuacc.store(0, Relaxed);
+        movetoend.store(0, Relaxed);
+        USEMENU.store(0, Relaxed);
+        insspace.store(0, Relaxed);
+
+        do_menucmp(0);
+
+        assert_eq!(ZMULT.load(Relaxed), 0, "c:1269 zmult walked to zero");
+        let cur = MINFO.get().unwrap().lock().unwrap().cur.clone();
+        assert_eq!(
+            cur.and_then(|c| c.str),
+            Some("commit".to_string()),
+            "c:1268 valid_match skipped the CMF_DUMMY entry"
+        );
+        assert_eq!(
+            ZLEMETALINE.get().unwrap().lock().unwrap().clone(),
+            "git commit ",
+            "c:1272 do_single inserted the stepped-to match"
+        );
     }
 
     /// c:1206 — `valid_match` skips a leading `CMF_DUMMY` match and
@@ -4019,12 +4471,55 @@ mod tests {
         assert_eq!(build_pos_string(&[]), "");
     }
 
+    /// c:1446-1459 — `list_lines()` must leave `listdat.valid == 0` on the
+    /// way out (c:1456) so the NEXT `calclist` recomputes instead of taking
+    /// its `listdat.valid` short-circuit at c:1502, and it must restore
+    /// `amatches` after swapping in `pmatches` (c:1453/1457).
     #[test]
     fn test_list_lines() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        assert_eq!(list_lines(&vec!["a".into(); 10], 3), 4);
-        assert_eq!(list_lines(&vec!["a".into(); 6], 3), 2);
+        let mut marker = Cmgroup::default();
+        marker.mcount = 0;
+        marker.name = Some("sentinel-amatches".to_string());
+        if let Ok(mut a) = amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *a = vec![marker];
+        }
+        if let Ok(mut ld) = crate::ported::zle::compcore::listdat
+            .get_or_init(|| std::sync::Mutex::new(Cldata::default()))
+            .lock()
+        {
+            ld.valid = 1;
+            ld.nlines = 999;
+        }
+
+        let n = list_lines();
+
+        assert!(n >= 0, "c:1459 returns listdat.nlines");
+        assert_eq!(
+            crate::ported::zle::compcore::listdat
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .valid,
+            0,
+            "c:1456 listdat.valid cleared so the next calclist recomputes"
+        );
+        assert_eq!(
+            amatches
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .first()
+                .and_then(|g| g.name.clone()),
+            Some("sentinel-amatches".to_string()),
+            "c:1457 amatches restored after the pmatches swap"
+        );
     }
 
     #[test]
@@ -4737,16 +5232,32 @@ mod tests {
         let _: i32 = do_ambig_menu();
     }
 
-    /// c:639 — `list_lines(empty, 80)` returns 0 (no lines for empty matches).
+    /// c:1446-1459 — with no matches at all, `calclist` yields no lines, so
+    /// `list_lines()` reports 0.
     #[test]
     fn list_lines_empty_matches_returns_zero() {
-        assert_eq!(list_lines(&[], 80), 0, "0 matches → 0 lines");
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        if let Ok(mut a) = amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            a.clear();
+        }
+        if let Ok(mut p) = crate::ported::zle::compcore::pmatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            p.clear();
+        }
+        assert_eq!(list_lines(), 0, "0 matches → 0 lines");
     }
 
-    /// c:639 — `list_lines` returns usize (compile-time type pin).
+    /// c:1445 — `list_lines` returns `zlong` (compile-time type pin).
     #[test]
-    fn list_lines_returns_usize_type() {
-        let _: usize = list_lines(&[], 80);
+    fn list_lines_returns_zlong_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = list_lines();
     }
 
     /// c:729 — `calclist(0)` returns i32 (compile-time type pin).

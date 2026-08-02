@@ -27,6 +27,7 @@ use crate::ported::params::getsparam;
 /// doesn't already start with `_` or `.`, filter out functions
 /// starting with those chars.
 pub fn _functions(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_functions");
     let curcontext = getsparam("curcontext").unwrap_or_default();
 
     // sh:5-7

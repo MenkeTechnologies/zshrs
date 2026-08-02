@@ -165,6 +165,7 @@ fn dates_fmt(timespec: &str) -> String {
 
 /// `_globquals` — complete glob qualifiers inside `(...)`.
 pub fn _globquals() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_globquals");
     // sh:8  while [[ -n $PREFIX ]]; do
     loop {
         // sh:8 loop guard.

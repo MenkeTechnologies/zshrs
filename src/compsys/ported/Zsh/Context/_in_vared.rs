@@ -40,6 +40,7 @@ use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 /// being edited (scalar / array element / whole array) and dispatch
 /// the appropriate `-value-` / `-array-value-` context.
 pub fn _in_vared() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_in_vared");
     let vared = get_compstate_str("vared").unwrap_or_default();
     let also: String;
 

@@ -92,6 +92,7 @@ fn build_points(ostype: &str) -> Vec<String> {
 /// `_ktrace_points` — offer ktrace(1)/`-t` trace-point letters, BSD-flavor
 /// dependent (via `$OSTYPE`).
 pub fn _ktrace_points(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ktrace_points");
     // sh:12  case $OSTYPE in
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let points = build_points(&ostype);

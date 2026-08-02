@@ -16,6 +16,7 @@ use crate::ported::exec::dispatch_function_call;
 /// `_assign` — `-assign-parameter-` context completion: list
 /// writable (non-readonly) parameters with no suffix.
 pub fn _assign() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_assign");
     dispatch_function_call(
         "_parameters",
         &[

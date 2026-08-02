@@ -175,8 +175,21 @@ pub static this_noerrexit: std::sync::atomic::AtomicI32 = // c:109 (Src/exec.c)
 /// `jobs` builtin's pipe-list rendering.
 pub static LIST_PIPE_TEXT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new()); // c:463 (Src/exec.c)
 
-pub static noerrs: std::sync::atomic::AtomicI32 = // c:117 (Src/exec.c)
-    std::sync::atomic::AtomicI32::new(0);
+// c:117 (Src/exec.c) — `mod_export int noerrs;`
+//
+// C has exactly ONE `noerrs`. This port had TWO disjoint storages: an
+// `AtomicI32` here, and `utils::noerrs_lock()`'s `Mutex<i32>` (flagged in
+// utils.rs as "NOT IN UTILS.C"). The four diagnostic emitters — `zerr`,
+// `zwarn`, `zerrnam`, `zwarnnam` (utils.rs:221/244/262/279) — read the utils
+// one, while `docomplete`'s suppression window (`noerrs = 1` around
+// `doexpansion`, zle_tricky.c:825-828) wrote this one. So the suppression
+// never reached the printer and completion-time diagnostics leaked onto the
+// screen: `ls *(` printed `zsh: bad pattern: *(` where zsh prints nothing,
+// consuming a row and shifting the whole match grid.
+//
+// Unified onto the storage every emitter already consults; the accessor lives
+// at `crate::ported::utils::noerrs_lock()`. Do not reintroduce a second one.
+// The storage is `crate::ported::utils::noerrs_lock()`; read/write it directly.
 
 /// Port of `int nohistsave;` from `Src/exec.c:122`. When non-zero,
 /// `addhistnode` no-ops so trap firings / `eval` invocations don't
@@ -1733,7 +1746,7 @@ pub fn execsave() {
         trap_state: TRAP_STATE.load(Ordering::Relaxed),                      // c:6457
         trapisfunc: trapisfunc.load(Ordering::Relaxed),                      // c:6458
         traplocallevel: traplocallevel.load(Ordering::Relaxed),              // c:6459
-        noerrs: noerrs.load(Ordering::Relaxed),                              // c:6460
+        noerrs: *crate::ported::utils::noerrs_lock().lock().unwrap(), // c:6460
         this_noerrexit: this_noerrexit.load(Ordering::Relaxed),              // c:6461
         // c:6462 — `es->underscore = ztrdup(zunderscore);`
         underscore: Some(zunderscore.lock().unwrap().clone()),
@@ -1743,7 +1756,7 @@ pub fn execsave() {
     es.next = head.take();
     *head = Some(es);
     // c:6465 — `noerrs = cmdoutpid = 0;`
-    noerrs.store(0, Ordering::Relaxed);
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 0;
     cmdoutpid.store(0, Ordering::Relaxed);
 }
 
@@ -1827,7 +1840,7 @@ pub fn execrestore() {
     TRAP_STATE.store(en.trap_state, Ordering::Relaxed); // c:6493
     trapisfunc.store(en.trapisfunc, Ordering::Relaxed); // c:6494
     traplocallevel.store(en.traplocallevel, Ordering::Relaxed); // c:6495
-    noerrs.store(en.noerrs, Ordering::Relaxed); // c:6496
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = en.noerrs; // c:6496
     this_noerrexit.store(en.this_noerrexit, Ordering::Relaxed); // c:6497
                                                                 // c:6498-6499 — `setunderscore(en->underscore); zsfree(en->underscore);`
     if let Some(ref u) = en.underscore {

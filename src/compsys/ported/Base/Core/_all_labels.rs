@@ -164,6 +164,7 @@ fn dispatch_action(action_argv: &[String], prev_arr_vals: &[String], extras: &[S
 /// iteration succeeded (`__ret=0`), 1 otherwise (`__ret=1` initial,
 /// only flipped on action-success).
 pub fn _all_labels(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_all_labels");
     // sh:3  local __gopt __len __tmp __pre __suf __ret=1 __descr __spec __prev
     crate::compsys::ported::shared::declare_locals(
         &[

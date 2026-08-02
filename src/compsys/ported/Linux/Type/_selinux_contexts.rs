@@ -99,6 +99,7 @@ const PART_NAMES: [&str; 3] = ["users", "roles", "types"];
 /// `_selinux_types` in turn; once all three are consumed, offer the
 /// `selinux range` message instead (sh:17-21).
 pub fn _selinux_contexts(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_contexts");
     // sh:5
     let (mut types, mut users) = zparse_a_p(args);
     let mut roles: Vec<String> = Vec::new();

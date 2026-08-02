@@ -63,6 +63,7 @@ fn read_type_lines(files: &[String]) -> Vec<String> {
 
 /// `_mime_types` — complete MIME type / subtype names from mime.types files.
 pub fn _mime_types(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_mime_types");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
     let default_type_files = vec!["~/.mime.types".to_string(), "/etc/mime.types".to_string()];

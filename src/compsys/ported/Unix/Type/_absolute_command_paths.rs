@@ -136,6 +136,7 @@ pub fn _typed_in_absolute_command_paths(args: &[String]) -> i32 {
 /// `_absolute_command_paths` — entry point. Delegates to
 /// `_alternative` with the two helper specs.
 pub fn _absolute_command_paths() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_absolute_command_paths");
     dispatch_function_call(
         "_alternative",
         &[

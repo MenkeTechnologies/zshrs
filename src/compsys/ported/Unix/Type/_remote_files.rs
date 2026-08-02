@@ -143,6 +143,7 @@ fn escape_by_pattern(s: &str, esc: &str) -> String {
 
 /// `_remote_files` — complete files on a remote host via ssh/rsh.
 pub fn _remote_files(args_in: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_remote_files");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let files_ctx = format!(":completion:{}:files", curcontext);
 

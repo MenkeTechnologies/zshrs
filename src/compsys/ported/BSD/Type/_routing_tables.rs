@@ -38,6 +38,7 @@ fn strip_routing_tables_header(line: &str) -> Option<&str> {
 /// `_routing_tables` — offer the list of routing table names reported
 /// by `netstat -R` (BSD).
 pub fn _routing_tables(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_routing_tables");
     // sh:5  _description routing-tables expl 'routing table'
     let _ = _description(&[
         "routing-tables".to_string(),

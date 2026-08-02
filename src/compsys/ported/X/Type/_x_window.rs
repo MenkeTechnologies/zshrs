@@ -89,6 +89,7 @@ fn extract_id(line: &str) -> String {
 /// `_x_window` — complete X window IDs (default) or names (`-n`) via
 /// `xwininfo -root -tree`.
 pub fn _x_window(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_window");
     // sh:5  _tags windows || return 1
     if _tags(&["windows".to_string()]) != 0 {
         return 1;

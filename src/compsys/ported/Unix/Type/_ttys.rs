@@ -55,6 +55,7 @@ fn glob_n(pat: &str) -> Vec<String> {
 
 /// `_ttys` — complete terminal device names.
 pub fn _ttys(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ttys");
     // sh:11  zparseopts -D -K -E d=stripdev D=optdev o=open
     let stripdev = args.iter().any(|a| a == "-d");
     let optdev = args.iter().any(|a| a == "-D");

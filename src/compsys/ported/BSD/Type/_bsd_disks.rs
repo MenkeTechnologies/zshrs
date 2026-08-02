@@ -70,6 +70,7 @@ fn run_capture(cmd: &str, args: &[&str]) -> String {
 
 /// `_bsd_disks` — offer BSD-flavor-specific disk device names.
 pub fn _bsd_disks(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_bsd_disks");
     // sh:5-18  case $OSTYPE in ... esac
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let disks: Vec<String> = if ostype.starts_with("freebsd") {

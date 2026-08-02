@@ -56,6 +56,7 @@ fn parse_newsrc() -> Vec<String> {
 
 /// `_newsgroups` — complete newsgroup names from `~/.newsrc*`.
 pub fn _newsgroups(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_newsgroups");
     // sh:5-6 — populate/reuse the `_cache_newsgroups` param.
     if getaparam("_cache_newsgroups").is_none() {
         setaparam("_cache_newsgroups", parse_newsrc());

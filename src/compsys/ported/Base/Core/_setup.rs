@@ -35,6 +35,7 @@ use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 /// `_setup` — apply per-tag style settings to compstate. Args:
 ///   `[$tag, $group_name?]`. If group_name omitted, equals $1.
 pub fn _setup(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_setup");
     let tag = args.first().cloned().unwrap_or_default();
     let group = args.get(1).cloned().unwrap_or_else(|| tag.clone());
     let curcontext = getsparam("curcontext").unwrap_or_default();

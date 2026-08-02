@@ -33,6 +33,7 @@ const MAX_DIR: usize = 10;
 /// `_complete_tag` — complete a tag name from a TAGS / tags file in
 /// the current dir or an ancestor (up to 10 levels up).
 pub fn _complete_tag() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete_tag");
     let cap_tagsfile = getsparam("TAGSFILE").unwrap_or_else(|| "TAGS".to_string());
     let low_tagsfile = getsparam("tagsfile").unwrap_or_else(|| "tags".to_string());
 

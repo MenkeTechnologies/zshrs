@@ -58,6 +58,7 @@ fn make_ops() -> options {
 /// `old-matches=only|true|...` AND `$compstate[old_list]` is set;
 /// otherwise registers `_all_matches_end` as a post-hook + returns 1.
 pub fn _all_matches() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_all_matches");
     // sh:6
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);

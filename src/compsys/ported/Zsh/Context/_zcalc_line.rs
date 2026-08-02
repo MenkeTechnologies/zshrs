@@ -97,6 +97,7 @@ fn strip_leading_bang(w: &str) -> String {
 /// `_zcalc_line` — `-zcalc-line-` context: complete a `zcalc` command
 /// line read via `vared`.
 pub fn _zcalc_line() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zcalc_line");
     // sh:23  local expl (bound at call sites via `_wanted … expl …`).
     let words = getaparam("words").unwrap_or_default();
     let current = getiparam("CURRENT");

@@ -56,6 +56,7 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
 
 /// `_expand_alias` — expand alias under cursor + emit replacement.
 pub fn _expand_alias() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_expand_alias");
     // sh:6 — is `funcstack[2]` set (we're called by another fn)?
     let funcstack_depth = FUNCSTACK.lock().map(|s| s.len()).unwrap_or(0);
     let nested = funcstack_depth >= 2;

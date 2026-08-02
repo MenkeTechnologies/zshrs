@@ -105,6 +105,7 @@ fn run_zparseopts_sequence(
 /// `_sequence` — wrap a completer to run per-element of a
 /// separator-delimited list.
 pub fn _sequence(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sequence");
     // sh:11
     let (mut argv, opts, sep, num, mut pref, mut suf, uniq) = run_zparseopts_sequence(args);
 

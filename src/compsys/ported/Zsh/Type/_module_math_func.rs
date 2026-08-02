@@ -100,6 +100,7 @@ fn build_alts() -> Vec<String> {
 /// `_module_math_func` — complete math functions from
 /// `zsh/{example,mathfunc,system}` modules.
 pub fn _module_math_func() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_module_math_func");
     // sh:3-4 — local mod; local -a funcs alts (funcs/alts built below).
     let alts = build_alts();
     // sh:12 — _alternative $alts

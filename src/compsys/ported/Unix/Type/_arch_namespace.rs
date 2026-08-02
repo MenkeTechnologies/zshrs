@@ -96,6 +96,7 @@ fn strip_before_dashes(s: &str) -> &str {
 
 /// `_arch_namespace` — entry (sh:105 `_arch_namespace "$@"`).
 pub fn _arch_namespace(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_arch_namespace");
     let Some(archcmd) = args.first().cloned() else {
         return 1;
     };

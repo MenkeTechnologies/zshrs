@@ -37,6 +37,7 @@ fn zcalc_argv() -> Vec<String> {
 
 /// `_zcalc` — completion for the `zcalc` function.
 pub fn _zcalc(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zcalc");
     // sh:3-8 — the upstream function ignores its positional args and calls
     // `_arguments` with a fixed spec list.
     _arguments(&zcalc_argv())

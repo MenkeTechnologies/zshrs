@@ -92,6 +92,7 @@ fn pick_nth_recent(prefix: &str, suffix: &str, n: i64) -> Option<String> {
 /// `_most_recent_file` — `\C-xm` widget: insert the Nth most-recent
 /// file matching the glob on the current line.
 pub fn _most_recent_file() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_most_recent_file");
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
     let numeric = getiparam("NUMERIC");

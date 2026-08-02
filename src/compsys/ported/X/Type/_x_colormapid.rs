@@ -86,6 +86,7 @@ fn strip_after_first_space(s: &str) -> String {
 /// `_x_colormapid` — complete X11 colormap IDs discovered via the
 /// `RGB_COLOR_MAP`-typed root-window properties.
 pub fn _x_colormapid(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_colormapid");
     // sh:5
     if _tags(&["colormapids".to_string()]) != 0 {
         return 1;

@@ -19,6 +19,7 @@ use crate::compsys::ported::_tags::_tags;
 /// `_x_display` — complete an X `DISPLAY` value (`host:0`) via `_hosts`,
 /// gated on the `displays` tag being accepted by `_tags`.
 pub fn _x_display(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_display");
     let _ = args; // sh: the shell fn body never references "$@".
 
     // sh:3  _tags displays && _hosts -S ':0 ' -r :

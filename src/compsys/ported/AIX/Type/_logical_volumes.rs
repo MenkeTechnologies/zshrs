@@ -129,6 +129,7 @@ fn build_list() -> Vec<String> {
 /// `_logical_volumes` — complete AIX logical volume names (optionally with
 /// a mount-point display column when the `verbose` style is on).
 pub fn _logical_volumes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_logical_volumes");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let bctx = format!(":completion:{}:", curcontext);
 

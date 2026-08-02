@@ -990,7 +990,22 @@ pub fn zlecore() {
     // c:1110
     DONE.store(0, SeqCst);
 
-    while DONE.load(SeqCst) == 0 {
+    // c:1128 — `while (!done && !errflag && !exit_pending)`. All THREE gates,
+    // not just `done`. `errflag` is how every abort widget leaves the editor:
+    // `sendbreak` (^G, zle_misc.c:1144-1147) does nothing but
+    // `errflag |= ERRFLAG_ERROR|ERRFLAG_INT` and return, and the loop
+    // condition is the entire mechanism that turns that into an aborted line.
+    // Testing only `done` meant ^G set the flag and the editor kept reading:
+    // the line was never abandoned, so `zleread`'s epilogue (c:1379-1380
+    // `invalidatelist(); trashzle();`) never ran and a displayed completion
+    // list was never erased. That is every `tab_ctrl_g` cell in the compsys
+    // parity corpus — 46 of 81 failures — plus ^G being inert at a plain
+    // prompt with no completion pending at all.
+    // `exit_pending` is the same story for `exit` run from a widget.
+    while DONE.load(SeqCst) == 0
+        && errflag.load(Ordering::Relaxed) == 0
+        && crate::ported::builtin::EXIT_PENDING.load(SeqCst) == 0
+    {
         // EOF handling: empty line + Ctrl-D (eofchar) => terminate.
         // Mirrors zle_main.c:1139-1150 (lastchar == eofchar guard).
         // We can only check this *after* reading a char, so the
@@ -2231,8 +2246,11 @@ pub fn trashzle() {
             let out = if fd >= 0 { fd } else { 1 };
             let _ = write_loop(out, postedit.as_bytes());
         }
-        // c:2090 — `fflush(shout);`. write_loop calls libc::write
-        // directly (unbuffered), so no fflush analog is needed.
+        // c:2090 — `fflush(shout);`. Display output now goes through the
+        // buffered `shout` stream (crate::shout), so the flush is real:
+        // whatever the caller drew has to be on screen before the shell
+        // hands the terminal back.
+        crate::shout::flush();
 
         // c:2091 — `resetneeded = 1;`. Mark for full redraw on the
         // next zlecore iteration. Set the REAL refresh-owned RESETNEEDED
@@ -3273,6 +3291,30 @@ fn execute_widget(widget: &widget) -> i32 {
         // c:1437-1438 — `if (isrepeat) viinrepeat = 2;`
         crate::ported::zle::zle_vi::VIINREPEAT.store(2, SeqCst);
     }
+    // c:1468-1473 — the per-widget suffix/list teardown that runs BEFORE the
+    // widget body:
+    //     if (!(wflags & ZLE_KEEPSUFFIX)) removesuffix();
+    //     if (!(wflags & ZLE_MENUCMP)) { fixsuffix(); invalidatelist(); }
+    // This is what makes AUTO_REMOVE_SLASH observable. `do_single` registers
+    // the `/` it appended to a completed directory as a REMOVABLE suffix
+    // (compresult.c:1116-1119, ported at compresult.rs:1783-1786); the slash
+    // only disappears again because the next widget that is not flagged
+    // ZLE_KEEPSUFFIX calls `removesuffix()` here. With this block absent the
+    // registration had no consumer, so the slash was permanent: `ls /us<TAB>`
+    // then any other key left `ls /usr/` where zsh shows `ls /usr`. Same for
+    // `echo x > /tm<TAB>` and `git log -- <TAB><TAB>`.
+    //
+    // The `!ZLE_MENUCMP` arm is the other half: an ordinary (non-completion)
+    // widget also drops the completion list, which is why typing a normal
+    // character after a listing clears it in zsh.
+    if (widget.flags & crate::ported::zle::zle_h::ZLE_KEEPSUFFIX) == 0 {
+        let _ = crate::ported::zle::zle_h::removesuffix(); // c:1469
+    }
+    if (widget.flags & crate::ported::zle::zle_h::ZLE_MENUCMP) == 0 {
+        crate::ported::zle::zle_misc::fixsuffix(); // c:1471
+        crate::ported::zle::zle_h::invalidatelist(); // c:1472
+    }
+
     // Reset sticky column unless the widget keeps it.
     if (widget.flags & ZLE_LASTCOL) == 0 {
         LASTCOL.store(-1, SeqCst);

@@ -26,6 +26,7 @@ use crate::ported::params::getaparam;
 /// `_object_files` — complete object files (`.a/.o/.elf/.dylib/.so*`,
 /// `core*`).
 pub fn _object_files(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_object_files");
     // sh:5
     let _ = _description(&[
         "files".to_string(),

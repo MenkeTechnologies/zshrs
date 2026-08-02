@@ -52,6 +52,7 @@ fn extract_inet(line: &str) -> Option<String> {
 
 /// `_bind_addresses` — complete locally bound IP addresses.
 pub fn _bind_addresses(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_bind_addresses");
     // sh:16 — parse the flag set (no arguments); everything else passes through.
     let flags = ['0', '4', '6', 'b', 'h', 'L', 'K'];
     let mut opt: std::collections::HashSet<char> = std::collections::HashSet::new();

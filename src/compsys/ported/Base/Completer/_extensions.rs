@@ -50,6 +50,7 @@ fn make_ops() -> options {
 /// `_extensions` — complete file extensions when completing after
 /// `*.` or `^*.`. Pure heuristic per-directory file-extension scan.
 pub fn _extensions() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_extensions");
     // sh:7  compset -P '(#b)([~$][^/]#/|)(*/|)(\^|)\*.'
     //   When this matches, the captured prefix tells us where to
     //   scan. We dispatch to the real bin_compset; if it returns

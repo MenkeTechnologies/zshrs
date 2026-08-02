@@ -283,6 +283,18 @@ comp_string_global!(pub COMPREDIRECT,  "compredirect",  61);
 /// the command-line words being completed.
 pub static COMPWORDS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceLock::new();
 
+/// Port of the `pcm_err` sentinel from `Src/Zle/comp.h:229-232`:
+/// > This is a special return value for parse_cmatcher(), *
+/// > signalling an error.                                  *
+/// > `#define pcm_err ((Cmatcher) 1)`
+///
+/// Set by [`parse_cmatcher`] when — and only when — C would return
+/// `pcm_err`, so callers can tell a parse ERROR from a spec that simply
+/// produced no matcher. Cleared at every `parse_cmatcher` entry.
+thread_local! {
+    pub static PCM_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Direct port of `parse_cmatcher(char *name, char *s)` from `Src/Zle/complete.c:242`.
 /// 162-line parser for a `compadd -M` matcher specification string.
 /// The grammar is: comma-separated rules, each like `r:|=*` /
@@ -291,9 +303,22 @@ pub static COMPWORDS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceL
 /// via parse_pattern (line 420) + parse_class (line 480), both of
 /// which are real-bodied ports.
 /// WARNING: param names don't match C — Rust=() vs C=(name, s)
+///
+/// C has THREE outcomes, `Option<Box<Cmatcher>>` only two. On a parse
+/// error C returns the sentinel `pcm_err` (`Src/Zle/comp.h:232`,
+/// `(Cmatcher) 1`); for a spec that legitimately yields no matcher — an
+/// empty/all-blank string (c:248-249) or a leading `x:` stop-rule with
+/// nothing accumulated (c:290) — it returns plain `NULL`, which every
+/// caller (`compctl.c:317`, `computil.c:4558`, c:842) treats as SUCCESS.
+/// The port collapsed both onto `None`, so `bin_compadd` aborted with
+/// status 1 on `compadd -M ''` where zsh accepts it; the `-M` accumulation
+/// at c:827-834 widened that, since two empty specs now join into `" "`.
+/// The error case is therefore reported out-of-band in [`PCM_ERR`],
+/// cleared on entry and read by the caller right after the call.
 pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
+    PCM_ERR.with(|f| f.set(false));
     if s.is_empty() {
-        // c:249
+        // c:248-249 — `if (!*s) return NULL;` — NOT an error.
         return None;
     }
 
@@ -331,7 +356,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                         &format!("unknown match specification character `{}'", c),
                     );
                 }
-                return None; // c:283 pcm_err
+                { PCM_ERR.with(|f| f.set(true)); return None; } // c:283 pcm_err
             }
         };
 
@@ -342,7 +367,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             if !name.is_empty() {
                 zwarnnam(name, "missing `:'");
             }
-            return None;
+            { PCM_ERR.with(|f| f.set(true)); return None; }
         }
         chars.next(); // consume `:`
 
@@ -353,10 +378,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                     if !name.is_empty() {
                         zwarnnam(name, "unexpected pattern following x: specification");
                     }
-                    return None;
+                    { PCM_ERR.with(|f| f.set(true)); return None; }
                 }
             }
-            return ret;
+            return ret; // c:290 — `return ret;` (NULL is not an error)
         }
         rest = chars.as_str();
 
@@ -367,7 +392,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
         if (fl & CMF_LEFT) != 0 && fl2 == 0 {
             let (lt, r2, l, err) = parse_pattern(name, rest, '|'); // c:298
             if err {
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
             left = lt;
             lal = l;
@@ -393,7 +418,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                         },
                     );
                 }
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
             let mut adv = rest.chars();
             adv.next();
@@ -409,7 +434,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
         };
         let (mut line_pat, r2, mut ll, err) = parse_pattern(name, rest, line_end);
         if err {
-            return None;
+            { PCM_ERR.with(|f| f.set(true)); return None; }
         }
         rest = r2;
 
@@ -422,21 +447,39 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             ll = 0;
         }
 
-        // c:328-339 — anchor / `=` / `*` consume.
-        if (fl & CMF_RIGHT) != 0 && fl2 == 0 && rest.len() <= 1 {
-            if !name.is_empty() {
-                zwarnnam(name, "missing right anchor");
+        // c:329-340 — anchor / `=` consume. The two C branches are
+        // complementary on `(fl & CMF_RIGHT) && !fl2`:
+        //   if (A && (!*s || !*++s)) { "missing right anchor"; err }
+        //   else if (!A)            { if (!*s) { "missing word pattern"; err } s++; }
+        // NOTE the side effect in `!*++s`: when A holds and *s is non-NUL,
+        // `++s` ADVANCES past the line pattern's `|` terminator before the
+        // NUL test. The port omitted that advance, so `rest` still pointed
+        // AT the `|` when c:342 tested `*s == '|'` — every `r:LINE|ANCH=WORD`
+        // spec was misread as the two-anchor form `r:L||R=W`, moving the line
+        // pattern into `left` and letting the stray `|` be parsed as a literal
+        // character at the head of the right anchor (documented zsh idiom
+        // `r:[^A-Z0-9]||[A-Z0-9]=** r:|=*` got ralen 2 instead of 1). Only the
+        // anchor-less `r:|X=Y` forms coincided, which is why it went unnoticed.
+        if (fl & CMF_RIGHT) != 0 && fl2 == 0 {
+            if rest.len() <= 1 {
+                // c:329 `!*s || !*++s`
+                if !name.is_empty() {
+                    zwarnnam(name, "missing right anchor");
+                }
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
-            return None;
-        }
-        if (fl & CMF_RIGHT) == 0 || fl2 != 0 {
+            let mut adv = rest.chars(); // c:329 — the `++s` side effect
+            adv.next();
+            rest = adv.as_str();
+        } else {
+            // c:333 `else if (!(fl & CMF_RIGHT) || fl2)`
             if rest.is_empty() {
                 if !name.is_empty() {
                     zwarnnam(name, "missing word pattern");
                 }
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
-            let mut adv = rest.chars();
+            let mut adv = rest.chars(); // c:339 `s++`
             adv.next();
             rest = adv.as_str();
         }
@@ -453,7 +496,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             }
             let (rt, r3, r_len, err) = parse_pattern(name, rest, '=');
             if err {
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
             right = rt;
             ral = r_len;
@@ -462,7 +505,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                 if !name.is_empty() {
                     zwarnnam(name, "missing word pattern");
                 }
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
             let mut adv = rest.chars();
             adv.next();
@@ -476,7 +519,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                 if !name.is_empty() {
                     zwarnnam(name, "need anchor for `*'");
                 }
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
             let mut adv = rest.chars();
             adv.next();
@@ -494,13 +537,13 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
         } else {
             let (w, r4, w_len, err) = parse_pattern(name, rest, '\0');
             if err {
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
             if w.is_none() && line_pat.is_none() {
                 if !name.is_empty() {
                     zwarnnam(name, "need non-empty word or line pattern");
                 }
-                return None;
+                { PCM_ERR.with(|f| f.set(true)); return None; }
             }
             word_pat = w;
             wl = w_len;
@@ -530,7 +573,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             }
         }
     }
-    ret
+    ret // c:403
 }
 
 /// Direct port of `parse_class(Cpattern p, char *iptr)` from `Src/Zle/complete.c:480`.
@@ -1029,6 +1072,33 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
     dat.dummies = -1;
     // c:614 — `char *mstr = NULL; /* argument of -M options, accumulated */`.
     let mut mstr: Option<String> = None;
+    // c:615 — `char *oarg = NULL; /* argument of -o option */`. Only the
+    // FIRST `-o` spec is ever honoured (c:772 `order = oarg ? -1 : 1`).
+    let mut oarg: Option<String> = None;
+    // C's `atoi()` as used for `-E` at c:778/c:782: optional sign, then
+    // digits, stopping at the first non-digit (0 when none). `str::parse`
+    // is not a substitute — it rejects trailing garbage outright.
+    let c_atoi = |s: &str| -> i32 {
+        let b = s.as_bytes();
+        let mut i = 0;
+        while i < b.len() && (b[i] == b' ' || b[i] == b'\t') {
+            i += 1;
+        }
+        let neg = i < b.len() && b[i] == b'-';
+        if i < b.len() && (b[i] == b'-' || b[i] == b'+') {
+            i += 1;
+        }
+        let mut v: i64 = 0;
+        while i < b.len() && b[i].is_ascii_digit() {
+            v = (v * 10 + (b[i] - b'0') as i64).min(i32::MAX as i64);
+            i += 1;
+        }
+        if neg {
+            -v as i32
+        } else {
+            v as i32
+        }
+    };
     let mut idx = 0usize;
     // c:632-820 — flag loop. C iterates EACH CHARACTER inside every `-…`
     // argv element (`for (p = *argv+1; *p; p++)`), so bundled flags like
@@ -1082,104 +1152,182 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                     *idx += 1;
                     Some(v)
                 } else {
-                    None // c:823-828 — missing argument.
+                    None // c:820-826 — missing argument.
                 }
             };
+            // c:806-826 — the shared `if (sp)` tail. C routes nearly every
+            // argument-taking flag through one `char **sp` slot and applies
+            // `if (!*sp) *sp = …` — the argument is ALWAYS consumed, but only
+            // the FIRST occurrence of that flag is kept, and a MISSING
+            // argument is a hard error carrying the per-flag message `e`.
+            // The port had first-wins on -J/-V/-X only and silently ignored
+            // missing arguments everywhere, so a repeated -P/-S/-p/-s/-i/-I/
+            // -W/-F/-x/-d/-A/-O/-r/-R (routine when _description's `$expl[@]`
+            // is spliced next to a caller's own options) took the LAST value
+            // instead of C's first.
+            macro_rules! opt_arg {
+                ($slot:expr, $emsg:expr) => {{
+                    match take(&mut p, &mut idx) {
+                        Some(v) => {
+                            if $slot.is_none() {
+                                // c:809/816 `if (!*sp) *sp = …`
+                                $slot = Some(v);
+                            }
+                        }
+                        None => {
+                            // c:822 `zwarnnam(name, e, *p)`
+                            zwarnnam(name, &format!(concat!($emsg, " -{}"), c));
+                            return 1;
+                        }
+                    }
+                }};
+            }
             match c {
                 'a' => dat.aflags |= CAF_ARRAYS,            // c:658
                 'k' => dat.aflags |= CAF_ARRAYS | CAF_KEYS, // c:661
                 'l' => dat.flags |= CMF_DISPLINE as i32,    // c:766-767
                 'o' => {
-                    // c:701-706 + c:812-828 — `-o` takes an OPTIONAL ordering
-                    // spec (nosort/match/numeric/reverse, comma-joined) parsed
-                    // via parse_ordering into aflags. C: `order = oarg?-1:1;
-                    // sp = &oarg;`. The earlier port hard-set CAF_NOSORT and
-                    // left the spec word as a stray positional, so
-                    // `compadd -o nosort` — what _description emits for the
-                    // `sort false` style — both mis-sorted (always nosort) AND
-                    // offered "nosort"/"match,numeric" as a bogus match. A
-                    // following token that is NOT a valid ordering is left as a
-                    // real positional (parse_ordering defaults aflags to
-                    // CAF_MATSORT in that case).
-                    let mut fl: Option<i32> = Some(0);
+                    // c:769-775 — `-o` takes an OPTIONAL ordering spec
+                    // (nosort/match/numeric/reverse, comma-joined). C:
+                    // `order = oarg ? -1 : 1; sp = &oarg;` — "we honour just
+                    // the first -o option but need to skip over a valid
+                    // argument to subsequent -o options". Note C re-parses
+                    // `oarg` (the FIRST spec) each time, never the new word;
+                    // the port parsed each spec and OR-ed its flags in, so
+                    // `_path_files:171`'s prepended `-o nosort` in front of a
+                    // caller's own `-o match` merged both orderings instead of
+                    // keeping only `nosort`.
+                    let order: i32 = if oarg.is_some() { -1 } else { 1 }; // c:772
+                    // c:811/818 — `parse_ordering(oarg, order == 1 ? &dat.aflags : NULL)`.
+                    // On a bad name C ASSIGNS `*flags = CAF_MATSORT` (c:600),
+                    // clobbering aflags rather than OR-ing; reproduced verbatim.
+                    let mut run_ordering = |oarg: &Option<String>, aflags: &mut i32| -> i32 {
+                        let mut fl: Option<i32> = if order == 1 { Some(*aflags) } else { None };
+                        let rc = parse_ordering(oarg.as_deref().unwrap_or(""), &mut fl);
+                        if let Some(f) = fl {
+                            *aflags = f;
+                        }
+                        rc
+                    };
                     if p + 1 < bytes.len() {
-                        // pasted `-o<spec>`: the rest of this word is the spec.
-                        let cand = String::from_utf8_lossy(&bytes[p + 1..]).into_owned();
-                        let _ = parse_ordering(&cand, &mut fl);
-                        p = bytes.len(); // c: pasted arg consumed with the word
+                        // c:807-812 — pasted `-o<spec>`.
+                        if oarg.is_none() {
+                            oarg = Some(String::from_utf8_lossy(&bytes[p + 1..]).into_owned());
+                        }
+                        if run_ordering(&oarg, &mut dat.aflags) == 0 {
+                            p = bytes.len(); // c:812 `p += strlen(p+1)`
+                        }
                     } else if idx < argv.len() {
-                        // separate `-o <spec>`: consume the next word only when
-                        // it parses as a valid ordering (c:824-826 `--argv`).
+                        // c:813-819 — separate `-o <spec>`; the word is taken
+                        // first and given back only if it is not an ordering.
                         let cand = argv[idx].clone();
-                        if parse_ordering(&cand, &mut fl) == 0 {
-                            idx += 1;
+                        idx += 1; // c:815 `argv++`
+                        if oarg.is_none() {
+                            oarg = Some(cand); // c:816-817
+                        }
+                        if run_ordering(&oarg, &mut dat.aflags) != 0 {
+                            idx -= 1; // c:819 `--argv`
                         }
                     }
-                    if let Some(f) = fl {
-                        if f != 0 {
-                            dat.aflags |= f;
-                        }
+                    // c:820 — `else if (!order)`: `order` is never 0 for -o,
+                    // so a missing argument is NOT an error here.
+                }
+                'Q' => dat.aflags |= CAF_QUOTE, // c:650
+                // c:695-702 — `-1`/`-2` are mutually exclusive, FIRST wins:
+                // `-1` is a no-op once CAF_UNIQCON is set and vice versa. The
+                // port OR-ed both unconditionally, so `compadd -1 -2` asked
+                // addmatches for whole-list AND consecutive de-duplication
+                // instead of only the first-named one.
+                '1' => {
+                    if (dat.aflags & CAF_UNIQCON) == 0 {
+                        dat.aflags |= CAF_UNIQALL; // c:697
                     }
                 }
-                'Q' => dat.aflags |= CAF_QUOTE,            // c:648
-                '1' => dat.aflags |= CAF_UNIQALL,          // c:693
-                '2' => dat.aflags |= CAF_UNIQCON,          // c:697
-                'C' => dat.aflags |= CAF_ALL,              // c:651
-                'F' => dat.ign = take(&mut p, &mut idx),   // c:664 -F string
-                'f' => dat.flags |= CMF_FILE as i32,       // c:654
-                'P' => dat.pre = take(&mut p, &mut idx),   // c:709
-                'S' => dat.suf = take(&mut p, &mut idx),   // c:713
-                'p' => dat.ppre = take(&mut p, &mut idx),  // c:717
-                's' => dat.psuf = take(&mut p, &mut idx),  // c:721
-                'W' => dat.prpre = take(&mut p, &mut idx), // c:725
-                'i' => dat.ipre = take(&mut p, &mut idx),  // c:729
-                'I' => dat.isuf = take(&mut p, &mut idx),  // c:733
-                // c:800/808 — `if (!*sp) *sp = ...`: take FIRST option only.
-                // The argument is always consumed, but dat.group is assigned
-                // only when still empty. Last-wins here made `_files`/_path_files'
-                // inner `-J globbed-files`/`-J directories` overwrite _arguments'
-                // outer `-J argument-rest`, splitting one group into duplicates.
-                'J' => {
-                    let v = take(&mut p, &mut idx); // c:737 (arg always consumed)
-                    if dat.group.is_none() {
-                        dat.group = v;
+                '2' => {
+                    if (dat.aflags & CAF_UNIQALL) == 0 {
+                        dat.aflags |= CAF_UNIQCON; // c:701
                     }
                 }
+                'C' => dat.aflags |= CAF_ALL,                                   // c:653
+                'F' => opt_arg!(dat.ign, "string expected after"),              // c:667-669
+                'f' => dat.flags |= CMF_FILE as i32,                            // c:656
+                'P' => opt_arg!(dat.pre, "string expected after"),              // c:677-679
+                'S' => opt_arg!(dat.suf, "string expected after"),              // c:681-683
+                'p' => opt_arg!(dat.ppre, "string expected after"),             // c:711-713
+                's' => opt_arg!(dat.psuf, "string expected after"),             // c:715-717
+                'W' => opt_arg!(dat.prpre, "string expected after"),            // c:719-721
+                'i' => opt_arg!(dat.ipre, "string expected after"),             // c:703-705
+                'I' => opt_arg!(dat.isuf, "string expected after"),             // c:707-709
+                // c:685-687 — first-wins via the shared `sp`. Last-wins here
+                // made `_files`/_path_files' inner `-J globbed-files`/
+                // `-J directories` overwrite _arguments' outer
+                // `-J argument-rest`, splitting one group into duplicates.
+                'J' => opt_arg!(dat.group, "group name expected after"),
                 'V' => {
-                    // c:741 -V — unsorted group; first-wins like -J.
-                    let v = take(&mut p, &mut idx); // c:744 (arg always consumed)
+                    // c:689-693 — `-V` is `-J` plus CAF_NOSORT, but the
+                    // NOSORT is set at the case label, i.e. gated on whether a
+                    // group name has been seen BEFORE this flag's argument.
                     if dat.group.is_none() {
-                        dat.aflags |= CAF_NOSORT; // c:742-743
-                        dat.group = v;
+                        dat.aflags |= CAF_NOSORT; // c:690-691
                     }
+                    opt_arg!(dat.group, "group name expected after"); // c:692
                 }
-                'X' => {
-                    // c:800/808 — `if (!*sp) *sp = ...`: take FIRST -X only
-                    // (same shared-`sp` first-wins as -J/-V above). The arg is
-                    // always consumed, but dat.exp is assigned only when empty,
-                    // so an outer _arguments/_description `-X <label>` wrapping
-                    // an inner completer's `-X <label>` keeps the OUTER label
-                    // (curl: 'URL' over 'URL prefix'; scp: 'remote host name'
-                    // over 'host'). Last-wins here over-reported the inner one.
-                    let v = take(&mut p, &mut idx); // c:757 (arg always consumed)
-                    if dat.exp.is_none() {
-                        dat.exp = v;
-                    }
-                }
-                'x' => dat.mesg = take(&mut p, &mut idx), // c:761
-                'd' => dat.disp = take(&mut p, &mut idx), // c:765
-                'O' => dat.opar = take(&mut p, &mut idx), // c:749
-                'A' => dat.apar = take(&mut p, &mut idx), // c:753
+                // c:727-729 — first-wins, so an outer _arguments/_description
+                // `-X <label>` wrapping an inner completer's `-X <label>` keeps
+                // the OUTER label (curl: 'URL' over 'URL prefix'; scp: 'remote
+                // host name' over 'host').
+                'X' => opt_arg!(dat.exp, "string expected after"),
+                'x' => opt_arg!(dat.mesg, "string expected after"), // c:731-733
+                'd' => opt_arg!(dat.disp, "parameter name expected after"), // c:762-764
+                'O' => opt_arg!(dat.opar, "parameter name expected after"), // c:749-751
+                'A' => opt_arg!(dat.apar, "parameter name expected after"), // c:745-747
                 'D' => {
-                    // c:772 -D
-                    if let Some(s) = take(&mut p, &mut idx) {
-                        dat.dpar.push(s);
+                    // c:753-761 — `-D` appends: `sp = dat.dpar + dparlen++`
+                    // points at a freshly NULLed slot, so `if (!*sp)` is always
+                    // true and every occurrence accumulates.
+                    match take(&mut p, &mut idx) {
+                        Some(s) => dat.dpar.push(s),
+                        None => {
+                            zwarnnam(name, &format!("parameter name expected after -{}", c));
+                            return 1; // c:822
+                        }
                     }
                 }
                 'E' => {
-                    // c:777 -E <number of dummies>
-                    if let Some(s) = take(&mut p, &mut idx) {
-                        dat.dummies = s.parse::<i32>().unwrap_or(-1).max(0);
+                    // c:776-795 — `-E <n>`: dummy-match count. Does NOT go
+                    // through the shared `sp` path; C errors out on a missing
+                    // argument (c:783-788) AND on a negative count
+                    // (c:789-794). The port silently ignored a missing
+                    // argument and clamped a negative one to 0, so
+                    // `compadd -E -1` quietly added zero dummies where zsh
+                    // rejects the whole call.
+                    let v = if p + 1 < bytes.len() {
+                        // c:777-779 — pasted `-E<n>`.
+                        let v = String::from_utf8_lossy(&bytes[p + 1..]).into_owned();
+                        p = bytes.len();
+                        Some(v)
+                    } else if idx < argv.len() {
+                        // c:780-782 — `-E <n>` in the next word.
+                        let v = argv[idx].clone();
+                        idx += 1;
+                        Some(v)
+                    } else {
+                        None
+                    };
+                    match v {
+                        Some(s) => {
+                            dat.dummies = c_atoi(&s); // c:778/782 `atoi()`
+                            if dat.dummies < 0 {
+                                // c:789-794
+                                zwarnnam(name, &format!("invalid number: {}", dat.dummies));
+                                return 1;
+                            }
+                        }
+                        None => {
+                            // c:783-787
+                            zwarnnam(name, &format!("number expected after -{}", c));
+                            return 1;
+                        }
                     }
                 }
                 'M' => {
@@ -1193,8 +1341,11 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                     // sh:872): last-wins threw away the matcher-list spec, so
                     // `cd /a<TAB>` had no spec left that could match
                     // /Applications and reported "No Matches".
-                    if let Some(s) = take(&mut p, &mut idx) {
-                        match mstr {
+                    // c:640 — `char *m = NULL;` is re-declared per inner-loop
+                    // iteration, so `if (!*sp)` is always true for -M: every
+                    // occurrence's argument reaches the mstr accumulator.
+                    match take(&mut p, &mut idx) {
+                        Some(s) => match mstr {
                             // c:829 — `tricat(mstr, " ", m)`.
                             Some(ref mut acc) => {
                                 acc.push(' ');
@@ -1202,10 +1353,18 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                             }
                             // c:833 — `mstr = ztrdup(m)`.
                             None => mstr = Some(s),
+                        },
+                        None => {
+                            // c:822 with e from c:725.
+                            zwarnnam(
+                                name,
+                                &format!("matching specification expected after -{}", c),
+                            );
+                            return 1;
                         }
                     }
                 }
-                'q' => dat.flags |= CMF_REMOVE as i32, // c:645
+                'q' => dat.flags |= CMF_REMOVE as i32, // c:646
                 // c:735-738 / c:740-743 — `-r`/`-R` set CMF_REMOVE *and* take
                 // the removal spec (rems=chars / remf=widget). The port set only
                 // the spec, leaving CMF_REMOVE clear, so the auto-remove-suffix
@@ -1213,12 +1372,12 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                 // never fired for `compadd -r`/`-R` — the suffix wasn't removed
                 // when a following char was typed.
                 'r' => {
-                    dat.flags |= CMF_REMOVE as i32; // c:735
-                    dat.rems = take(&mut p, &mut idx); // c:737
+                    dat.flags |= CMF_REMOVE as i32; // c:736
+                    opt_arg!(dat.rems, "string expected after"); // c:737
                 }
                 'R' => {
-                    dat.flags |= CMF_REMOVE as i32; // c:740
-                    dat.remf = take(&mut p, &mut idx); // c:742
+                    dat.flags |= CMF_REMOVE as i32; // c:741
+                    opt_arg!(dat.remf, "function name expected after"); // c:742
                 }
                 'n' => dat.flags |= CMF_NOLIST as i32, // c:671
                 // c:674 — `-U`: clear CAF_MATCH so the added matches DON'T have
@@ -1250,21 +1409,38 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
             p += 1; // c:638 `p++`
         }
     }
-    // c:840-848 — `ca_args:` the accumulated `-M` specs are parsed ONCE,
+    // c:839-848 — `ca_args:` the accumulated `-M` specs are parsed ONCE,
     // and only when CAF_MATCH is still set (`-U` turns matching off, so
-    // the spec is irrelevant then). parse_cmatcher returning pcm_err
-    // aborts the builtin with status 1.
+    // the spec is irrelevant then). Only the `pcm_err` sentinel aborts the
+    // builtin — a plain NULL (empty / all-blank spec, or a leading `x:`)
+    // is success with no matcher, which the old `Option`-collapsing call
+    // turned into status 1.
+    let mut matcher: Option<Box<Cmatcher>> = None; // c:617
     if let Some(spec) = mstr {
         if (dat.aflags & CAF_MATCH) != 0 {
-            match parse_cmatcher(name, &spec) {
-                Some(m) => dat.match_ = Some(m),
-                None => return 1, // c:844 pcm_err
+            matcher = parse_cmatcher(name, &spec); // c:842
+            if PCM_ERR.with(|f| f.get()) {
+                return 1; // c:842 `== pcm_err`
             }
         }
     }
-    // c:830 — `args = argv` (residual words after flags).
+    // c:849 — `args = argv` (residual words after flags).
     let matches = &argv[idx..];
-    compcore::addmatches(&mut dat, matches) // c:828
+    // c:850-854 — with nothing to add, compadd fails outright UNLESS the
+    // call still carries something meaningful on its own: a group name
+    // (`-J`/`-V` creating an empty group), a `-x` message, or one of
+    // CAF_NOSORT / CAF_UNIQALL / CAF_UNIQCON / CAF_ALL. This whole guard
+    // was absent, so an empty `compadd` returned addmatches' status and
+    // registered a group/dpar side effect that zsh never performs.
+    if matches.is_empty()
+        && dat.group.is_none()
+        && dat.mesg.is_none()
+        && (dat.aflags & (CAF_NOSORT | CAF_UNIQALL | CAF_UNIQCON | CAF_ALL)) == 0
+    {
+        return 1;
+    }
+    dat.match_ = matcher; // c:856 `dat.match = match = cpcmatcher(match)`
+    compcore::addmatches(&mut dat, matches) // c:857
 }
 
 // =====================================================================
@@ -1446,6 +1622,7 @@ pub fn do_comp_vars(
                 &{
                     let mut __pat_tok = (sa).to_string();
                     crate::ported::glob::tokenize(&mut __pat_tok);
+                    crate::ported::glob::remnulargs(&mut __pat_tok); // c:1196/1199/1214
                     __pat_tok
                 },
                 PAT_HEAPDUP,
@@ -1472,6 +1649,7 @@ pub fn do_comp_vars(
                     &{
                         let mut __pat_tok = (sb).to_string();
                         crate::ported::glob::tokenize(&mut __pat_tok);
+                        crate::ported::glob::remnulargs(&mut __pat_tok); // c:1196/1199/1214
                         __pat_tok
                     },
                     PAT_HEAPDUP,
@@ -1524,15 +1702,39 @@ pub fn do_comp_vars(
                         .map(|s| s.clone())
                         .unwrap_or_default()
                 };
-                if (target_str.chars().count() as i32) < na {
-                    // c:1033
+                let cnt = target_str.chars().count() as i32;
+                // c:1026-1027 / c:1034-1035 — ran off the end of the string
+                // before consuming `na` characters (and the non-multibyte
+                // c:1040 length guard).
+                if cnt < na {
                     return 0;
                 }
-                if test == CVT_PRENUM {
-                    // c:1035
-                    ignore_prefix(na); // c:1036
+                // c:1028 `na = sum;` / c:1036 `na = end - ptr;` — the C
+                // multibyte arms convert the CHARACTER count `na` into a BYTE
+                // count before handing it to ignore_prefix/ignore_suffix,
+                // which index compprefix/compsuffix by byte
+                // (`compprefix[l] = '\0'`, c:884). The port passed the raw
+                // character count, so any multibyte PREFIX/SUFFIX ignored the
+                // wrong amount — and could slice mid-codepoint.
+                let na_bytes = if test == CVT_PRENUM {
+                    target_str
+                        .char_indices()
+                        .nth(na as usize)
+                        .map(|(o, _)| o)
+                        .unwrap_or(target_str.len()) as i32
                 } else {
-                    ignore_suffix(na); // c:1038
+                    let off = target_str
+                        .char_indices()
+                        .nth((cnt - na) as usize)
+                        .map(|(o, _)| o)
+                        .unwrap_or(target_str.len());
+                    (target_str.len() - off) as i32
+                };
+                if test == CVT_PRENUM {
+                    // c:1042
+                    ignore_prefix(na_bytes); // c:1043
+                } else {
+                    ignore_suffix(na_bytes); // c:1045
                 }
             }
             1 // c:1041
@@ -1546,6 +1748,7 @@ pub fn do_comp_vars(
                 &{
                     let mut __pat_tok = (sa).to_string();
                     crate::ported::glob::tokenize(&mut __pat_tok);
+                    crate::ported::glob::remnulargs(&mut __pat_tok); // c:1196/1199/1214
                     __pat_tok
                 },
                 PAT_HEAPDUP,
@@ -1598,8 +1801,14 @@ pub fn do_comp_vars(
                     } // c:1080
                 }
                 if mod_ != 0 {
-                    ignore_prefix(p);
-                } // c:1086
+                    // c:1098 `ignore_prefix(p - compprefix)` — a BYTE offset.
+                    // `p` is a character index here, so convert.
+                    let p_bytes: i32 = chars[..p.max(0).min(l) as usize]
+                        .iter()
+                        .map(|ch| ch.len_utf8() as i32)
+                        .sum();
+                    ignore_prefix(p_bytes);
+                }
             } else {
                 let suffix = lock_str(&COMPSUFFIX)
                     .lock()
@@ -1641,8 +1850,14 @@ pub fn do_comp_vars(
                     }
                 }
                 if mod_ != 0 {
-                    ignore_suffix(l - p);
-                } // c:1126
+                    // c:1136 `ignore_suffix(ol - (p - compsuffix))` — the BYTE
+                    // count from `p` to the end, not the character count.
+                    let n_bytes: i32 = chars[p.max(0).min(l) as usize..]
+                        .iter()
+                        .map(|ch| ch.len_utf8() as i32)
+                        .sum();
+                    ignore_suffix(n_bytes);
+                }
             }
             1 // c:1130
         }
@@ -1686,7 +1901,7 @@ pub fn bin_compset(
         b'q' => return compcore::set_comp_sep() as i32, // c:1160
         _ => {
             // c:1161
-            zwarnnam(name, &format!("bad option -{}", opt as char)); // c:1162
+            zwarnnam(name, &format!("bad option: -{}", opt as char)); // c:1169
             return 1; // c:1163
         }
     }
@@ -1731,19 +1946,12 @@ pub fn bin_compset(
         }
         CVT_RANGEPAT => {
             // c:1191
-            // c:1192-1196 — `tokenize(sa); remnulargs(sa)` plus same on
-            // sb. Drives the glob-tokenizer infrastructure so the
-            // pattern fields hold real `Star`/`Quest`/etc. markers
-            // before the downstream pattern_match.
-            let mut sa_buf = sa_ref.to_string();
-            tokenize(&mut sa_buf);
-            remnulargs(&mut sa_buf);
-            if let Some(sb_inner) = sb_ref {
-                let mut sb_buf = sb_inner.to_string();
-                tokenize(&mut sb_buf);
-                remnulargs(&mut sb_buf);
-            }
-            let _ = sa_buf;
+            // c:1195-1200 — `tokenize(sa); remnulargs(sa);` plus the same on
+            // sb. C mutates the argv strings IN PLACE here so the already-
+            // tokenized text reaches patcompile inside do_comp_vars. This
+            // port instead tokenizes at the patcompile sites in do_comp_vars
+            // (c:977 / c:990 / c:1057), which is where `remnulargs` now runs
+            // too — doing it here as well would tokenize twice.
             nb = 0;
         }
         CVT_PRENUM | CVT_SUFNUM => {
@@ -1968,12 +2176,12 @@ pub fn get_nmatches(pm: *mut param) -> i64 {
 /// COMPLISTLINES atomic when listdat isn't initialized.
 #[allow(unused_variables)]
 pub fn get_listlines(pm: *mut param) -> i64 {
-    // c:1408
-    let _ = compresult::calclist(0); // c:1410 list_lines
-    compcore::listdat
-        .get()
-        .and_then(|m| m.lock().ok().map(|g| g.nlines as i64))
-        .unwrap_or_else(|| COMPLISTLINES.load(Ordering::Relaxed))
+    // c:1418 — `return list_lines();`. The port inlined only calclist(0),
+    // dropping list_lines' `permmatches(0)`, the amatches↔pmatches swap and
+    // BOTH `listdat.valid = 0` resets — so calclist short-circuited on a
+    // still-valid listdat (compresult.c:1502) and `$compstate[list_lines]`
+    // reported the previous round's line count.
+    compresult::list_lines() // c:1420
 }
 
 /// Direct port of `set_complist(UNUSED(Param pm), char *v)` from `Src/Zle/complete.c:1415`.
@@ -2487,17 +2695,23 @@ pub fn compunsetfn(pm: *mut param, exp: i32) {
             }
         }
     }
-    // c:1517 — `for (p = comprpms, ...) if (*p == pm) *p = NULL`.
+    // c:1524-1533 — `if (!exp) { for (p = comprpms, …) if (*p == pm) { *p = NULL; break; } }`.
     // Drive via name match: if the unset target matches a comprparams
-    // entry, mark that slot in paramtab as PM_UNSET.
-    for entry in COMPRPARAMS {
-        if entry.name == name {
-            if let Ok(mut tab) = paramtab().write() {
-                if let Some(p) = tab.get_mut(entry.name) {
-                    p.node.flags |= PM_UNSET as i32;
+    // entry, mark that slot in paramtab as PM_UNSET. The `if (!exp)` gate
+    // was missing, so an EXPLICIT `unset PREFIX` inside a completion
+    // function marked the parameter unset on top of C's clear-to-empty
+    // (c:1503-1505) — C only detaches the comprpms slot on the implicit
+    // scope-exit path, leaving an explicitly-unset PREFIX readable as "".
+    if exp == 0 {
+        for entry in COMPRPARAMS {
+            if entry.name == name {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(p) = tab.get_mut(entry.name) {
+                        p.node.flags |= PM_UNSET as i32;
+                    }
                 }
+                break;
             }
-            break;
         }
     }
 }
@@ -2594,40 +2808,53 @@ pub fn comp_wrapper(
             *s = v;
         }
     };
-    let opre = snap(&COMPPREFIX); // c:1578
-    let osuf = snap(&COMPSUFFIX); // c:1579
-    let oipre = snap(&COMPIPREFIX); // c:1580
-    let oisuf = snap(&COMPISUFFIX); // c:1581
-    let oqipre = snap(&COMPQIPREFIX); // c:1582
-    let oqisuf = snap(&COMPQISUFFIX); // c:1583
-    let oq = snap(&COMPQUOTE); // c:1584
-    let oqs = snap(&COMPQSTACK); // c:1586
+    // c:1585-1586 — `orest = comprestore; comprestore = ztrdup("auto");`.
+    // The default is SEEDED here, before the function runs, and the caller's
+    // value put back at c:1652-1653. The port only read `$comprestore`
+    // afterwards and defaulted to "auto" when absent, so a stale value left
+    // behind by a previous wrapper (or set by an inner completion function)
+    // leaked into this call and suppressed the restore below.
+    let orest = getsparam("comprestore"); // c:1585
+    let _ = crate::ported::params::setsparam("comprestore", "auto"); // c:1586
+    let ocur = COMPCURRENT.load(Ordering::Relaxed); // c:1587
+    let opre = snap(&COMPPREFIX); // c:1588
+    let osuf = snap(&COMPSUFFIX); // c:1589
+    let oipre = snap(&COMPIPREFIX); // c:1590
+    let oisuf = snap(&COMPISUFFIX); // c:1591
+    let oqipre = snap(&COMPQIPREFIX); // c:1592
+    let oqisuf = snap(&COMPQISUFFIX); // c:1593
+    let oq = snap(&COMPQUOTE); // c:1594
+    let oqi = snap(&COMPQUOTING); // c:1595
+    let oqs = snap(&COMPQSTACK); // c:1596
     let owords = COMPWORDS
         .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
         .map(|v| v.clone())
-        .unwrap_or_default(); // c:1588
+        .unwrap_or_default(); // c:1598
 
-    // c:1591 — runshfunc(prog, w, name).
+    // c:1601 — runshfunc(prog, w, name).
     let _ = compcore::shfunc_call(name);
 
-    // c:1593 — if comprestore == "auto", restore. Default is "auto" per
-    // c:1576 (set in comp_wrapper itself before runshfunc).
-    let comprestore_val = getsparam("comprestore").unwrap_or_else(|| "auto".to_string());
+    // c:1603 — `if (comprestore && !strcmp(comprestore, "auto"))`.
+    let comprestore_val = getsparam("comprestore").unwrap_or_default();
     if comprestore_val == "auto" {
-        restore(&COMPPREFIX, opre);
-        restore(&COMPSUFFIX, osuf);
-        restore(&COMPIPREFIX, oipre);
-        restore(&COMPISUFFIX, oisuf);
-        restore(&COMPQIPREFIX, oqipre);
-        restore(&COMPQISUFFIX, oqisuf);
-        restore(&COMPQUOTE, oq);
-        restore(&COMPQSTACK, oqs);
+        COMPCURRENT.store(ocur, Ordering::Relaxed); // c:1604
+        restore(&COMPPREFIX, opre); // c:1606
+        restore(&COMPSUFFIX, osuf); // c:1608
+        restore(&COMPIPREFIX, oipre); // c:1610
+        restore(&COMPISUFFIX, oisuf); // c:1612
+        restore(&COMPQIPREFIX, oqipre); // c:1614
+        restore(&COMPQISUFFIX, oqisuf); // c:1616
+        restore(&COMPQUOTE, oq); // c:1618
+        restore(&COMPQUOTING, oqi); // c:1620
+        restore(&COMPQSTACK, oqs); // c:1622
         if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            *g = owords;
+            *g = owords; // c:1627
         }
     }
-    0 // c:1647
+    // c:1652-1653 — `zsfree(comprestore); comprestore = orest;`.
+    let _ = crate::ported::params::setsparam("comprestore", orest.as_deref().unwrap_or(""));
+    0 // c:1655
 }
 
 /// Direct port of `comp_check()` from `Src/Zle/complete.c:1651`.
@@ -2682,15 +2909,17 @@ pub fn cond_psfix(a: &[String], id: i32) -> i32 {
 /// CVT_RANGEPAT and the two args as start/end patterns.
 pub fn cond_range(a: &[String], id: i32) -> i32 {
     // c:1676
-    let sa = a.first().map(|s| s.as_str()).unwrap_or(""); // c:1678
+    // c:1688-1689 — both operands go through `cond_str(a, n, 1)`, which
+    // expands and unmetafies the condition argument exactly as `cond_psfix`
+    // does one function up. The port read `a[n]` raw, so `[[ -after $pat ]]`
+    // matched against the unexpanded text.
+    let sa = crate::ported::cond::cond_str(a, 0, true); // c:1688
     let sb = if id != 0 {
-        a.get(1).map(|s| s.as_str()).unwrap_or("")
-    }
-    // c:1679
-    else {
-        ""
+        crate::ported::cond::cond_str(a, 1, true) // c:1689
+    } else {
+        String::new()
     };
-    do_comp_vars(CVT_RANGEPAT, 0, sa, 0, sb, 0) // c:1680
+    do_comp_vars(CVT_RANGEPAT, 0, &sa, 0, &sb, 0) // c:1688
 }
 
 /// Direct port of `int setup_(UNUSED(Module m))` from `Src/Zle/complete.c:1720`.
@@ -3032,22 +3261,56 @@ mod tests {
         assert!(cm.right.is_none());
     }
 
+    /// c:318-357 — the single-`|` `r:` grammar is
+    /// `r:`var(word-pat)`|`var(anchor)`=`var(match-pat)
+    /// (Doc/Zsh/compwid.yo:1091), i.e. the part BEFORE the `|` is the line
+    /// pattern, NOT a left anchor. C reaches the `left = line` promotion at
+    /// c:342 only when a SECOND `|` follows, because `!*++s` at c:329 has
+    /// already stepped past the first one. This test previously asserted
+    /// `lalen == 3` for `r:abc|xy=def` — the shape produced when that `++s`
+    /// side effect is dropped.
     #[test]
     fn cmatcher_r_rule_emits_anchored_cmatcher() {
         let _g = crate::test_util::global_state_lock();
-        // c:265 — `r:left|right=word` with both anchors. The first
-        //          pattern becomes the left anchor (promoted at
-        //          c:341-346), the second the right anchor.
         let _g = zle_test_setup();
         let r = parse_cmatcher("", "r:abc|xy=def");
         assert!(r.is_some(), "r: rule should produce a Cmatcher");
         let cm = r.unwrap();
         assert_eq!(cm.flags, CMF_RIGHT);
-        assert_eq!(cm.lalen, 3); // left = "abc"
-        assert_eq!(cm.ralen, 2); // right = "xy"
-        assert_eq!(cm.wlen, 3); // word = "def"
-        assert!(cm.left.is_some());
+        assert_eq!(cm.lalen, 0, "single `|`: no left anchor"); // c:342 not taken
+        assert!(cm.left.is_none());
+        assert_eq!(cm.llen, 3, "`abc` is the line/word pattern"); // c:318
+        assert!(cm.line.is_some());
+        assert_eq!(cm.ralen, 2, "`xy` is the right anchor"); // c:349
         assert!(cm.right.is_some());
+        assert_eq!(cm.wlen, 3); // word = "def"
+    }
+
+    /// c:341-348 — the DOUBLE-`|` `r:` grammar
+    /// `r:`var(coanchor)`||`var(anchor)`=`var(match-pat)
+    /// (Doc/Zsh/compwid.yo:1126) is what promotes the leading pattern to
+    /// `left`. Covers the documented zsh idiom
+    /// `r:[^A-Z0-9]||[A-Z0-9]=** r:|=*`, which the missing `++s` at c:329
+    /// mis-parsed: the stray `|` was consumed as a literal CPAT_CHAR at the
+    /// head of the right anchor, giving `ralen == 2` instead of 1.
+    #[test]
+    fn cmatcher_r_rule_double_bar_promotes_left_anchor() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let cm = parse_cmatcher("", "r:abc||xy=def").expect("r: two-anchor rule parses");
+        assert_eq!(cm.flags, CMF_RIGHT);
+        assert_eq!(cm.lalen, 3, "`abc` promoted to the left coanchor"); // c:343-344
+        assert!(cm.left.is_some());
+        assert_eq!(cm.llen, 0, "line pattern cleared by the promotion"); // c:345-346
+        assert!(cm.line.is_none());
+        assert_eq!(cm.ralen, 2, "`xy` is the right anchor, no stray `|`"); // c:349
+        assert_eq!(cm.wlen, 3);
+
+        // The manual's own example: one class each side, `**` word pattern.
+        let cm = parse_cmatcher("", "r:[^A-Z0-9]||[A-Z0-9]=**").expect("documented idiom parses");
+        assert_eq!(cm.lalen, 1);
+        assert_eq!(cm.ralen, 1, "a leaked `|` would make this 2"); // c:349
+        assert_eq!(cm.wlen, -2, "`**` sentinel"); // c:369
     }
 
     #[test]

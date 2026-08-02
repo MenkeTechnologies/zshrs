@@ -153,6 +153,7 @@ const CLASSES: &[&str] = &[
 
 /// `_ldap_filters` — complete RFC4515 LDAP search filter expressions.
 pub fn _ldap_filters(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ldap_filters");
     // sh:6  [[ -prefix - ]] && return 1  — an option prefix is not a filter.
     if getsparam("PREFIX").unwrap_or_default().starts_with('-') {
         return 1;

@@ -11,6 +11,7 @@ use crate::ported::exec::dispatch_function_call;
 
 /// `_other_accounts` — complete user@host pairs from the `other-accounts` tag.
 pub fn _other_accounts(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_other_accounts");
     // sh:3  _user_at_host -t other-accounts "$@"
     let mut a: Vec<String> = vec!["-t".to_string(), "other-accounts".to_string()];
     a.extend(args.iter().cloned());

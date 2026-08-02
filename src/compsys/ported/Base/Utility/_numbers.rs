@@ -36,6 +36,7 @@ fn make_ops() -> options {
 /// `_numbers` — numeric input completion with optional unit
 /// suffixes.
 pub fn _numbers(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_numbers");
     // sh:43  zparseopts
     let src = "__compsys_argv";
     setaparam(src, args.to_vec());
