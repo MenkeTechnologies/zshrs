@@ -1976,3 +1976,112 @@ print -r -- $#args"#,
         "5\n",
     );
 }
+
+/// A NAME-ONLY arg to a typeset-family builtin expands like any other
+/// command word: an array splats into one arg per name, and a scalar
+/// splits only under SH_WORD_SPLIT. Only the `NAME=value` form is an
+/// assignment (PREFORK_SINGLE|PREFORK_ASSIGN, no split, no glob).
+///
+/// c:Src/exec.c:4127-4147 — the WC_ASSIGN_SCALAR + WC_ASSIGN_INC
+/// (name-only) arm preforks with PREFORK_TYPESET alone, then
+/// `globlist(&svl, 0)`, and pushes every resulting word as its own
+/// assignment. C's comment at c:4130-4139: "this is a name only, so it's
+/// not required to be a single expansion … it may expand into scalar
+/// assignments: ass=(one=two three=four); typeset a=b $ass". The value
+/// arm at c:4184-4192 is the one that takes PREFORK_SINGLE and skips
+/// globbing ("No globassign for typeset arguments, thank you").
+///
+/// The compiler bumped its assignment-arg depth for EVERY word after a
+/// typeset-family head, so a name list arrived space-joined as ONE arg
+/// and `bin_typeset`'s isident gate rejected it. Live break:
+/// zsh-more-completions' `_git`, whose `_git_commands` opens with
+///     local -a cmdtypes
+///     cmdtypes=( main_porcelain_commands user_commands … )
+///     local -a $cmdtypes
+/// died with `_git_commands:local:10: not valid in this context:
+/// main_porcelain_commands user_commands …`, so `git <TAB>` produced an
+/// error instead of zsh's 163 completions.
+#[test]
+fn typeset_family_name_only_arg_splats_the_array_of_names() {
+    // THE `_git` SHAPE: names come from an unquoted array expansion.
+    ok(
+        r#"f() { local -a t; t=(alpha beta gamma); local -a $t; alpha=(1 2); print -r -- "${#alpha} ${(t)beta} ${(t)gamma}" }; f"#,
+        "2 array-local array-local\n",
+    );
+    // Same for the other BINF_ASSIGN heads.
+    ok(
+        r#"f() { local -a t; t=(d1 d2); declare $t; print -r -- "${(t)d1}/${(t)d2}" }; f"#,
+        "scalar-local/scalar-local\n",
+    );
+    ok(
+        r#"f() { local -a t; t=(i1 i2); integer $t; print -r -- "${(t)i1}/${(t)i2}" }; f"#,
+        "integer-local/integer-local\n",
+    );
+    ok(
+        r#"f() { local -a t; t=(f1 f2); float $t; print -r -- "${(t)f1}" }; f"#,
+        "float-local\n",
+    );
+    ok(
+        r#"f() { local -a t; t=(R1 R2); readonly $t; print -r -- "${(t)R1}/${(t)R2}" }; f"#,
+        "scalar-local-readonly/scalar-local-readonly\n",
+    );
+    ok(
+        r#"f() { local -a t; t=(E1 E2); E1=v1; E2=v2; export $t; print -r -- "${(t)E1}/${(t)E2}" }; f"#,
+        "scalar-export/scalar-export\n",
+    );
+    // c:4136-4138 verbatim — a name-only arg may carry `name=value`.
+    ok(
+        r#"f() { local ass; ass=(one=two three=four); typeset a=b $ass; print -r -- "$a/$one/$three" }; f"#,
+        "b/two/four\n",
+    );
+    // A SCALAR name arg splits only under SH_WORD_SPLIT (plain word
+    // rules) — without the option zsh rejects the joined string, which
+    // is why the gate can't simply always split.
+    ok(
+        r#"f() { setopt localoptions shwordsplit; local s; s="q1 q2"; typeset $s; print -r -- "${(t)q1}/${(t)q2}" }; f"#,
+        "scalar-local/scalar-local\n",
+    );
+}
+
+/// The counterpart pin: the `NAME=value` arg form keeps assignment
+/// semantics (c:Src/exec.c:4184-4192 — PREFORK_SINGLE|PREFORK_ASSIGN,
+/// no globassign). Widening the split to every typeset arg would break
+/// each of these.
+#[test]
+fn typeset_family_name_equals_value_arg_keeps_assignment_semantics() {
+    // Unquoted scalar RHS does NOT word-split, even with shwordsplit.
+    ok(
+        r#"f() { local s; s="a b"; local y=$s; print -r -- "[$y]" }; f"#,
+        "[a b]\n",
+    );
+    ok(
+        r#"f() { setopt localoptions shwordsplit; local s; s="a b"; local y=$s; print -r -- "[$y]" }; f"#,
+        "[a b]\n",
+    );
+    // An ARRAY RHS joins into the scalar (${IFS[1]}), never splats.
+    ok(
+        r#"f() { local -a a; a=(x y); local w=$a; print -r -- "[$w]" }; f"#,
+        "[x y]\n",
+    );
+    // Quoted value, paren-init array, `$PATH:/x`-style append.
+    ok(r#"f() { local x="a b c"; print -r -- "[$x]" }; f"#, "[a b c]\n");
+    ok(r#"f() { typeset "n=a b"; print -r -- "[$n]" }; f"#, "[a b]\n");
+    ok(
+        r#"f() { typeset -a v=(1 2 3); print -r -- "${#v}/${v[2]}" }; f"#,
+        "3/2\n",
+    );
+    ok(
+        r#"f() { local p; p=/bin:/sbin; export p=$p:/x; print -r -- "[$p]" }; f"#,
+        "[/bin:/sbin:/x]\n",
+    );
+    // "No globassign for typeset arguments" (c:4190-4192): the value is
+    // not filename-generated even when it grows a metachar.
+    ok(
+        r#"f() { local i; i=3; typeset -i n=$i*2; print -r -- "$n" }; f"#,
+        "6\n",
+    );
+    ok(
+        r#"f() { local x; typeset y=${x:-*}; print -r -- "$y" }; f"#,
+        "*\n",
+    );
+}
