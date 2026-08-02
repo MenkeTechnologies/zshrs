@@ -11755,7 +11755,9 @@ pub fn zexit(val: i32, from_where: i32) {
             crate::ported::init::sourcehome(".zlogout"); // c:6022
             if isset(RCS) && isset(GLOBALRCS) {
                 // c:6024
-                let _ = crate::ported::init::source(crate::ported::config_h::GLOBAL_ZLOGOUT);
+                let _ = crate::ported::init::source(&crate::extensions::global_rc::global_rc_path(
+                    crate::ported::config_h::GLOBAL_ZLOGOUT,
+                ));
                 // c:6025
             }
         }

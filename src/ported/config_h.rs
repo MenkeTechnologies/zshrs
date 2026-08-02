@@ -119,6 +119,12 @@ pub const GLOBAL_ZSHENV: &str = "/etc/zshenv";
 /// The global file to source whenever zsh is run; if undefined, don't source
 /// anything
 pub const GLOBAL_ZSHRC: &str = "/etc/zshrc";
+// These five are autoconf's `${sysconfdir}` substitutions, so they name
+// upstream's `--sysconfdir=/etc` layout. Debian/Ubuntu/Arch build zsh with
+// `--sysconfdir=/etc/zsh` and put the same files in `/etc/zsh/`; since one
+// zshrs binary serves every layout, callers must resolve them through
+// `crate::extensions::global_rc::global_rc_path` rather than opening the
+// literal below.
 
 // Define if TIOCGWINSZ is defined in sys/ioctl.h but not in termios.h.
 // /* #undef GWINSZ_IN_SYS_IOCTL */

@@ -2515,14 +2515,14 @@ fn run_doctor() {
     let zdotdir = std::env::var("ZDOTDIR")
         .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()));
     let startup_files = [
-        ("/etc/zshenv", true),
-        (&format!("{}/.zshenv", zdotdir), false),
-        ("/etc/zprofile", false),
-        (&format!("{}/.zprofile", zdotdir), false),
-        ("/etc/zshrc", false),
-        (&format!("{}/.zshrc", zdotdir), false),
-        ("/etc/zlogin", false),
-        (&format!("{}/.zlogin", zdotdir), false),
+        (zsh::global_rc::global_rc_path("/etc/zshenv"), true),
+        (format!("{}/.zshenv", zdotdir), false),
+        (zsh::global_rc::global_rc_path("/etc/zprofile"), false),
+        (format!("{}/.zprofile", zdotdir), false),
+        (zsh::global_rc::global_rc_path("/etc/zshrc"), false),
+        (format!("{}/.zshrc", zdotdir), false),
+        (zsh::global_rc::global_rc_path("/etc/zlogin"), false),
+        (format!("{}/.zlogin", zdotdir), false),
     ];
     for (path, _always) in &startup_files {
         let p = std::path::Path::new(path);
@@ -2686,11 +2686,22 @@ fn get_zdotdir() -> PathBuf {
         .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
 }
 
+/// The system-wide startup file for `name`, resolved through
+/// [`zsh::global_rc::global_rc_path`] so the Debian/Ubuntu
+/// `/etc/zsh/…` layout is picked up on those platforms.
+fn global_rc(name: &str) -> PathBuf {
+    PathBuf::from(zsh::global_rc::global_rc_path(&format!("/etc/{name}")))
+}
+
 /// Source zsh startup files in correct order per zshall(1) STARTUP/SHUTDOWN FILES
 ///
 /// Behavior is controlled by RCS and GLOBAL_RCS options:
 /// - RCS (default: on) - if unset, no startup files are read
-/// - GLOBAL_RCS (default: on) - if unset, /etc/* files are skipped
+/// - GLOBAL_RCS (default: on) - if unset, the system-wide files are skipped
+///
+/// The system-wide paths below are written `/etc/…` for brevity; they are
+/// resolved through [`global_rc`], which picks the Debian `/etc/zsh/…`
+/// layout when that is what the platform uses.
 ///
 /// Order for login shell:
 ///   1. /etc/zshenv (always, cannot be overridden - even with -f)
@@ -2720,7 +2731,7 @@ fn source_startup_files(
     let mut candidates: Vec<PathBuf> = Vec::with_capacity(8);
 
     // Phase 0: /etc/zshenv — always read
-    candidates.push(PathBuf::from("/etc/zshenv"));
+    candidates.push(global_rc("zshenv"));
 
     if !no_rcs {
         // Phase 1: user .zshenv
@@ -2728,19 +2739,19 @@ fn source_startup_files(
 
         // Phase 2: login profile files
         if is_login {
-            candidates.push(PathBuf::from("/etc/zprofile"));
+            candidates.push(global_rc("zprofile"));
             candidates.push(zdotdir.join(".zprofile"));
         }
 
         // Phase 3: interactive rc files
         if is_interactive {
-            candidates.push(PathBuf::from("/etc/zshrc"));
+            candidates.push(global_rc("zshrc"));
             candidates.push(zdotdir.join(".zshrc"));
         }
 
         // Phase 4: login files (after zshrc)
         if is_login {
-            candidates.push(PathBuf::from("/etc/zlogin"));
+            candidates.push(global_rc("zlogin"));
             candidates.push(zdotdir.join(".zlogin"));
         }
     }
@@ -3091,7 +3102,7 @@ fn source_logout_files(executor: &mut ShellExecutor, is_login: bool) {
 
     // /etc/zlogout (only if GLOBAL_RCS is set)
     if zsh::ported::options::opt_state_get("globalrcs").unwrap_or(true) {
-        source_file_with_zwc(executor, &PathBuf::from("/etc/zlogout"));
+        source_file_with_zwc(executor, &global_rc("zlogout"));
     }
 }
 

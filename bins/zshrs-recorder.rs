@@ -174,13 +174,13 @@ fn zdotdir() -> PathBuf {
 fn login_chain() -> [PathBuf; 8] {
     let zd = zdotdir();
     [
-        PathBuf::from("/etc/zshenv"),
+        PathBuf::from(zsh::global_rc::global_rc_path("/etc/zshenv")),
         zd.join(".zshenv"),
-        PathBuf::from("/etc/zprofile"),
+        PathBuf::from(zsh::global_rc::global_rc_path("/etc/zprofile")),
         zd.join(".zprofile"),
-        PathBuf::from("/etc/zshrc"),
+        PathBuf::from(zsh::global_rc::global_rc_path("/etc/zshrc")),
         zd.join(".zshrc"),
-        PathBuf::from("/etc/zlogin"),
+        PathBuf::from(zsh::global_rc::global_rc_path("/etc/zlogin")),
         zd.join(".zlogin"),
     ]
 }

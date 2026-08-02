@@ -40,6 +40,7 @@ pub use crate::dash_mode;
 pub use crate::ext_builtins;
 pub use crate::fds;
 pub use crate::fish_features;
+pub use crate::global_rc;
 pub use crate::heredoc_ast;
 pub use crate::history;
 pub use crate::log;
