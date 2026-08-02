@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 description = "The first compiled Unix shell — bytecode VM, worker pool, AOP intercept, Rkyv caching"
 license = "MIT"
-authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
+authors = ["MenkeTechnologies"]
 repository = "https://github.com/MenkeTechnologies/zshrs"
 homepage = "https://menketechnologies.github.io/zshrs/"
 documentation = "https://docs.rs/zshrs"
@@ -48,7 +48,7 @@ exclude = [
 version = "0.12.28"
 edition = "2021"
 license = "MIT"
-authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
+authors = ["MenkeTechnologies"]
 
 
 [lib]
