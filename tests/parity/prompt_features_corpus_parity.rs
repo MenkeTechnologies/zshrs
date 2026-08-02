@@ -624,8 +624,8 @@ print -r -- "${(%):-%3<..<abcdefghij}""###,
     #[test]
     fn pwd_home_abbrev() {
         assert_parity(
-            r###"HOME=/home/jacob
-PWD=/home/jacob/projects/zshrs
+            r###"HOME=/home/placeholder
+PWD=/home/placeholder/projects/zshrs
 print -r -- "${PWD/#$HOME/~}"
 print -r -- "${PWD/#$HOME/\~}""###,
         );
@@ -760,8 +760,8 @@ print -rl -- pre-${^v}-post"###,
     #[test]
     fn D_dir_abbrev() {
         assert_parity(
-            r###"HOME=/home/jacob
-p=/home/jacob/src/proj
+            r###"HOME=/home/placeholder
+p=/home/placeholder/src/proj
 print -r -- "${(D)p}"
 q=/usr/local
 print -r -- "${(D)q}""###,
