@@ -49,8 +49,38 @@
 </style>
 </head>
 <body>
+  <header class="tutorial-header">
+    <div class="tutorial-header-inner">
+      <div>
+        <h1 class="tutorial-brand">// ZSHRS-DAEMON &mdash; DAEMON.md COVERAGE MATRIX</h1>
+        <nav class="tutorial-crumbs" aria-label="Breadcrumb">
+          <span class="current">Daemon Impl Map</span>
+          <span class="sep">/</span>
+          <a href="index.html">zshrs Docs</a>
+          <span class="sep">/</span>
+          <a href="reference.html">Reference</a>
+          <span class="sep">/</span>
+          <a href="report.html">Coverage Report</a>
+          <span class="sep">/</span>
+          <a href="port_report.html">Port Report</a>
+          <span class="sep">/</span>
+          <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+        <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.8;">
+          Every verb in <code>docs/DAEMON.md</code> mapped to its implementation in <code>daemon/**/*.rs</code>, with a
+          <code>file:line</code> citation per row and an explicit FULL / PARTIAL / GAP / DESIGN status.
+        </p>
+      </div>
+      <div class="tutorial-toolbar">
+        <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
+        <button type="button" class="btn btn-secondary active" id="btnCrt" title="CRT scanline overlay">CRT</button>
+        <button type="button" class="btn btn-secondary active" id="btnNeon" title="Neon border pulse">Neon</button>
+        <a class="btn btn-secondary" href="index.html">Hub</a>
+        <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </header>
 <main class="tutorial-main">
-<h1>zshrs-daemon — DAEMON.md coverage matrix</h1>
 <p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-05-27 &middot; 24,244 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
 
 <div class="summary-box honest">

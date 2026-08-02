@@ -402,7 +402,7 @@ These features absorb the best of other shells. None ship before Phase G is done
 ## Today actions
 
 1. **G0 audit + lint** — sweep stops the friendly-output regression class permanently. 2 hours.
-2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.14.0** (`fusevm` in root `Cargo.toml`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
+2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.17.0** (`fusevm` in root `Cargo.toml`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
 3. **Decide priority of Phase H1 dogfood** — can be started in parallel with remaining assoc / `BUILTIN_EXPAND_WORD_RUNTIME` tail work by using a stripped-down `.zshrc` that avoids the long tail of zpwr-only constructs. Surfaces more bugs sooner.
 
 ---
