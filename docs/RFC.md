@@ -340,7 +340,7 @@ programs.zshrs = {
 users.defaultUserShell = pkgs.zshrs;
 ```
 
-Distribution installers offer zshrs as option. Enterprise support contracts available.
+Distribution installers offer zshrs as an option.
 
 ### Phase 3: Container & Cloud Native (Year 3-5)
 
@@ -411,7 +411,8 @@ All legacy shells remain available in package repositories.
 
 ### CVE Response Process
 
-- Security issues: security@menketechnologies.com
+- Security issues: report privately via GitHub security advisories
+  (<https://github.com/MenkeTechnologies/zshrs/security/advisories/new>)
 - Response time: 24 hours acknowledgment, 7 days patch for critical
 - Disclosure: Coordinated disclosure with 90-day deadline
 - Updates: Pushed to all package repositories simultaneously
@@ -467,28 +468,12 @@ All legacy shells remain available in package repositories.
 
 ### Maintainers
 
-- **Lead:** MenkeTechnologies (Jake Zimmerman)
+- **Lead:** MenkeTechnologies
 - **Core team:** [Actively recruiting — contributors welcome]
-- **Corporate sponsors:** [Discussions with Amazon, Red Hat, Canonical in progress]
 - **Advisory board:** [Seeking participation from distro maintainers, SREs, security experts]
 
-### Organizational Structure Target
-
-```
-zshrs Foundation (non-profit, 501(c)(6) or equivalent)
-├── Technical Steering Committee
-│   ├── Core maintainers
-│   ├── Distro representatives
-│   └── Security advisors
-├── Corporate Advisory Board
-│   ├── Cloud providers (AWS, Azure, GCP)
-│   ├── Enterprise Linux (Red Hat, SUSE, Canonical)
-│   └── Container ecosystem (Docker, Kubernetes SIG)
-└── Community
-    ├── Contributors
-    ├── Packagers
-    └── Documentation team
-```
+See [MAINTAINERS.md](../MAINTAINERS.md) for the governance and contribution
+flow, and [CREATORS.md](../CREATORS.md) for the historical record.
 
 ### Release Cadence
 
@@ -506,16 +491,6 @@ zshrs Foundation (non-profit, 501(c)(6) or equivalent)
 5. Distro maintainer signoff for major releases
 6. Merge to main, tag release
 7. Coordinated release to all package repositories
-
-### Funding Model
-
-| Source | Status |
-|--------|--------|
-| GitHub Sponsors | Active |
-| Corporate sponsorship | Seeking |
-| Foundation grants (Linux Foundation, etc.) | Planned |
-| Enterprise support contracts | Planned |
-| Training & certification | Planned |
 
 ---
 
@@ -589,28 +564,26 @@ chsh -s ~/.cargo/bin/zshrs
 - Package zshrs for your distribution
 - Test POSIX compliance with your test suites
 - Join the packaging working group
-- Contact: packaging@menketechnologies.com
+- Open a thread: <https://github.com/MenkeTechnologies/zshrs/discussions>
 
 ### For Enterprise IT
 
 - Evaluate for your CI/CD pipelines
 - Measure performance improvements in your environment
-- Discuss support contracts
-- Contact: enterprise@menketechnologies.com
+- Report what breaks: <https://github.com/MenkeTechnologies/zshrs/issues>
 
 ### For Cloud Providers
 
 - Integrate into cloud shell offerings
 - Benchmark against current shell performance
-- Discuss partnership
-- Contact: cloud@menketechnologies.com
+- Open a thread: <https://github.com/MenkeTechnologies/zshrs/discussions>
 
 ### For Security Researchers
 
 - Audit the codebase
-- Report vulnerabilities responsibly
+- Report vulnerabilities responsibly via GitHub security advisories
+  (<https://github.com/MenkeTechnologies/zshrs/security/advisories/new>)
 - Help develop security certifications
-- Contact: security@menketechnologies.com
 
 ---
 
