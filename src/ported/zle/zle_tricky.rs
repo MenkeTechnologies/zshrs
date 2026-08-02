@@ -3002,10 +3002,23 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
         // c:2007/2080). The earlier port appended a trailing `\n` here,
         // double-spacing every CMF_DISPLINE description row and adding a
         // blank line after each `format` explanation header.
-        use std::sync::atomic::Ordering;
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        let out_fd = if fd >= 0 { fd } else { 1 };
-        let _ = write_loop(out_fd, &out);
+        // Emit through the buffered `shout` stream, NOT a raw fd write.
+        // `compprintlist` brackets its whole draw in a shout frame
+        // (complist.rs:3423 `begin()` / :3432 `end()`), and inside that frame
+        // every OTHER part of a row — the colour prefix, the padding, the
+        // trailing reset + clear-to-EOL, the inter-row newline from
+        // `compprintnl` — is queued. A direct `write_loop` here jumped that
+        // queue, so a coloured match's TEXT hit the terminal immediately while
+        // its escapes and newline stayed buffered: every row's text arrived
+        // first as one unseparated run, then `end()` flushed N text-less rows
+        // (`\x1b[0m\x1b[K\r\n` each) that scrolled the run off the screen. That
+        // is why `ls -` under a `list-colors` + `list-grouped false` +
+        // `list-prompt` config rendered ONE garbage row and 37 blanks where zsh
+        // renders 39 options.
+        // Outside a frame `shout::write` resolves SHTTY the same way this code
+        // did (shout.rs:75-76) and writes straight through, so the non-complist
+        // callers in compresult.rs are unaffected.
+        crate::shout::write(&out);
     }
     // c:2595 — `return l + (cc / zterm_columns);`. printfmt returns the number
     // of DISPLAY LINES the format occupies (beyond the first) — NOT the

@@ -577,15 +577,6 @@ pub fn parsehighlight(spec: &str) -> zattr {
 /// matching C site.
 pub fn parsecolorchar(bv: &mut buf_vars, arg: zattr, is_fg: bool) -> zattr {
     // c:318
-    use crate::ported::zsh_h::{
-        TXTBGCOLOUR, TXTFGCOLOUR, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
-    };
-    let on_bit = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
-    let shift = if is_fg {
-        TXT_ATTR_FG_COL_SHIFT
-    } else {
-        TXT_ATTR_BG_COL_SHIFT
-    };
     // c:320 — `if (bv->fm[1] == '{')`.
     if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'{') {
         // c:322 — `bv->fm += 2; /* skip over F{ */`.
@@ -597,36 +588,51 @@ pub fn parsecolorchar(bv: &mut buf_vars, arg: zattr, is_fg: bool) -> zattr {
             ep += 1;
         }
         if ep < bytes.len() {
-            // c:325-340 — extract name, promptexpand-wrap, match_colour.
-            // The promptexpand round-trip lets `%F{%vCOLOR}` resolve
-            // dynamic color names; collapsed here to a direct name
-            // lookup since the brace-content is consumed verbatim
-            // (promptexpand-as-input-of-color-name is rare and the
-            // Rust port's color_from_name already handles `bg=` /
-            // `fg=` / numeric / named forms).
-            let name: String = bv.fm[bv.fm_pos..ep].to_string();
-            // c:337 — `bv->fm = ep;` — consume up through the `}`.
+            // c:331-337 — the brace content is handed to `match_colour`,
+            // which reads a colour *prefix* and deliberately ignores the
+            // rest (c:1952). That tolerance matters: p10k emits
+            // `%K{000\}%F{003\}` because the escapes live inside `${...}`
+            // defaults, so the content reaching here is `000\` / `003\`.
+            // Parsing the whole brace body as one name (the previous
+            // port) rejected those and fell back to the caller's `arg`,
+            // which is the *previous* segment's colour — the observed
+            // colour bleed across p10k segments.
+            //
+            // C additionally runs `promptexpand()` over the content
+            // (c:334) so `%F{%vNAME}` can resolve; that round-trip is
+            // still unported — a `%` inside the braces is passed through
+            // to `match_colour` verbatim and fails the same way C would
+            // fail on an unexpandable name.
+            let atr = {
+                let content = &bv.fm[bv.fm_pos..ep];
+                let mut cursor = 0usize;
+                match_colour(Some(&mut cursor), content, is_fg, 0)
+            };
+            // c:338 — `bv->fm = ep;` — leave the cursor on the `}`; the
+            // caller's `fm++` steps past it.
             bv.fm_pos = ep;
-            if let Some(color) = color_from_name(&name) {
-                return on_bit | ((color as zattr) << shift);
-            }
-            // C falls back to default arg on lookup miss.
-            on_bit | (arg << shift)
+            atr
         } else {
-            // c:343-346 — no close-brace; match_colour walks bv->fm
-            // and returns. Without the close-brace path, the rest of
-            // the prompt would be consumed as the color name — which
-            // is wrong. Back up to before `{` and treat as no color.
-            if bv.fm_pos > 0 {
-                bv.fm_pos -= 1;
+            // c:343-346 — no close brace: `match_colour` walks bv->fm
+            // directly, then `if (*bv->fm != '}') bv->fm--;` so the
+            // caller's `fm++` lands on the first unconsumed byte.
+            let (atr, cursor) = {
+                let s: &str = &bv.fm;
+                let mut cursor = bv.fm_pos;
+                let atr = match_colour(Some(&mut cursor), s, is_fg, 0);
+                (atr, cursor)
+            };
+            bv.fm_pos = cursor;
+            if bv.fm.as_bytes().get(bv.fm_pos).copied() != Some(b'}') && bv.fm_pos > 0 {
+                bv.fm_pos -= 1; // c:346
             }
-            arg
+            atr
         }
     } else {
         // c:349 — `arg = match_colour(NULL, is_fg, arg)` — with NULL
         // name and pre-supplied arg, returns the color-bits version
         // of arg (no parsing).
-        on_bit | (arg << shift)
+        match_colour(None, "", is_fg, arg as i32)
     }
 }
 
@@ -1366,83 +1372,23 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         }
                     }
                 }
-                // c:621-644 — `%F` (fg color, fall through to `%f` if invalid).
-                // C: `atr = parsecolorchar(arg, 1)` (c:318) reads bv->fm
-                // for `{NAME}` brace-arg, else calls
-                // `match_colour(NULL, is_fg, arg)`. For bare `%F`
-                // (no `{`, default arg=0), match_colour returns
-                // `TXTFGCOLOUR | 0` — truthy, color 0 (black) →
-                // `\e[30m`. Same for `%K` → `\e[40m`. Rust
-                // parsecolorchar diverged (takes name string only) so
-                // inline the brace-parse + match_colour(NULL,_,arg)
-                // semantics here.
+                // c:621-644 — `%F` (fg colour) / `%K` (bg colour). Both
+                // delegate the argument parse to `parsecolorchar`
+                // (c:318) and fall through to the `%f`/`%k` reset when
+                // it yields 0 (`%F{default}`) or TXT_ERROR (malformed
+                // spec) — c:623/635 `if (atr && atr != TXT_ERROR)`.
                 b'F' | b'K' => {
                     let is_fg = xc == b'F';
-                    // c:589-595 — `if (bv->fm[1] == '{') { ... }`. Parse
-                    // optional `{NAME}` arg.
-                    // Color spec: Default = COL_DEFAULT sentinel
-                    // (`%F{default}` → SGR 39/49 reset, NOT palette 8);
-                    // Rgb = `%F{#rrggbb}` 24-bit (must NOT truncate to a
-                    // palette index); Palette = 0-255 index.
-                    enum ColSpec {
-                        Default,
-                        Rgb(u8, u8, u8),
-                        Palette(u8),
-                    }
-                    let mut spec: Option<ColSpec> = None;
-                    if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'{') {
-                        let start = bv.fm_pos + 2;
-                        let mut end = start;
-                        while end < bv.fm.len() && bv.fm.as_bytes()[end] != b'}' {
-                            end += 1;
-                        }
-                        if end < bv.fm.len() {
-                            let name = &bv.fm[start..end];
-                            // c:Src/prompt.c:1909 / match_colour — "default"
-                            // is the COL_DEFAULT sentinel (clears to the
-                            // terminal default, SGR 39/49), distinct from
-                            // numeric 8; `#rrggbb` is the 24-bit branch.
-                            if name == "default" {
-                                spec = Some(ColSpec::Default);
-                            } else if let Some(rest) = name.strip_prefix('#') {
-                                if rest.len() == 6 {
-                                    if let (Ok(r), Ok(g), Ok(b)) = (
-                                        u8::from_str_radix(&rest[0..2], 16),
-                                        u8::from_str_radix(&rest[2..4], 16),
-                                        u8::from_str_radix(&rest[4..6], 16),
-                                    ) {
-                                        spec = Some(ColSpec::Rgb(r, g, b));
-                                    }
-                                }
-                                if spec.is_none() {
-                                    spec = match_named_colour(name).map(ColSpec::Palette);
-                                }
-                            } else {
-                                spec = match_named_colour(name).map(ColSpec::Palette);
-                            }
-                            bv.fm_pos = end; // leave on `}`; outer +=1 advances past
-                        }
-                    } else if arg >= 0 {
-                        // c:Src/prompt.c:349 — `match_colour(NULL, is_fg,
-                        // arg)` returns `on | (arg << shft)`; bare `%F`
-                        // has arg=0 → color 0 (black) → SGR 30.
-                        spec = Some(ColSpec::Palette(arg as u8));
-                    }
-                    // `default` → unset path below (SGR 39/49), same as
-                    // an invalid name.
-                    let color = match spec {
-                        Some(ColSpec::Default) | None => None,
-                        Some(s) => Some(s),
+                    // c:622/634 — `atr = parsecolorchar(arg, is_fg)`.
+                    // Bare `%F` (no brace, arg=0) yields `TXTFGCOLOUR | 0`
+                    // — truthy, colour 0 (black) → `\e[30m`; `%K` → `\e[40m`.
+                    let attr = if arg >= 0 || bv.fm.as_bytes().get(bv.fm_pos + 1) == Some(&b'{') {
+                        parsecolorchar(bv, arg as zattr, is_fg)
+                    } else {
+                        TXT_ERROR
                     };
-                    if let Some(c) = color {
-                        // c:596-599 — `tsetattrs(atr); applytextattributes(TSC_PROMPT);`
-                        let attr = match (is_fg, c) {
-                            (true, ColSpec::Rgb(r, g, b)) => zattr_set_fg_rgb(0, r, g, b),
-                            (false, ColSpec::Rgb(r, g, b)) => zattr_set_bg_rgb(0, r, g, b),
-                            (true, ColSpec::Palette(i)) => zattr_set_fg_palette(0, i),
-                            (false, ColSpec::Palette(i)) => zattr_set_bg_palette(0, i),
-                            (_, ColSpec::Default) => unreachable!(),
-                        };
+                    if attr != 0 && attr != TXT_ERROR {
+                        // c:624-625 — `tsetattrs(atr); applytextattributes(TSC_PROMPT);`
                         let _ = tsetattrs(attr);
                         let sgr = applytextattributes(TSC_PROMPT);
                         if !sgr.is_empty() {
@@ -3697,18 +3643,19 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
                 None => return TXT_ERROR, // c:2004-2005
             }
         } else {
-            // c:2008-2010 — numeric.
-            let end = rest
-                .find(|c: char| !c.is_ascii_digit())
-                .unwrap_or(rest.len());
-            let digits = &rest[..end];
-            match digits.parse::<i32>() {
-                Ok(n) if (0..256).contains(&n) => {
-                    *cursor += end;
-                    colour = n;
-                }
-                _ => return TXT_ERROR, // c:2009-2010
+            // c:2008 — `colour = (int)zstrtol(*teststrp, (char **)teststrp, 10)`.
+            // zstrtol consumes an optional sign plus the digit prefix and
+            // stops at the first non-digit, so a trailing `\` (p10k writes
+            // `%F{003\}` inside `${...}` defaults) or any other junk is
+            // ignored — c:1952 "Does not check the character following the
+            // colour specification." An empty digit run yields 0 (black),
+            // which is why bare `%F{}` is black in C.
+            let (n, tail) = crate::ported::utils::zstrtol(rest, 10);
+            if !(0..256).contains(&n) {
+                return TXT_ERROR; // c:2009-2010
             }
+            *cursor += rest.len() - tail.len();
+            colour = n as i32;
         }
     }
     // c:2014-2018 — out-of-range termcap-colour check + pack.
@@ -4649,7 +4596,19 @@ pub fn expand_prompt(s: &str) -> String {
             crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
         let saved_lastval =
             crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
-        s_owned = crate::ported::subst::singsub(s);
+        // c:197-198 — `if (!parsestr(&s)) singsub(&s);`. The `parsestr`
+        // step is what turns quotes and backslashes into lexer tokens
+        // (Dnull/Bnull/...) so `singsub`'s prefork can strip them. Without
+        // it, a quoted default word survived verbatim: powerlevel10k's
+        // `${_p9k__4-"%K{000\}...seg"}` came back with the quotes intact
+        // — and when the escaped brace confused the brace scan, the whole
+        // `${...}` printed literally into the prompt.
+        s_owned = match crate::ported::lex::parsestr(s) {
+            Ok(parsed) => crate::ported::subst::singsub(&parsed),
+            // c:1699 — parsestr untokenizes in place on a parse error and
+            // C then uses that string as-is (no singsub).
+            Err(_) => crate::ported::lex::untokenize(s),
+        };
         let cur = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
         crate::ported::utils::errflag.store(
             saved_errflag | (cur & crate::ported::zsh_h::ERRFLAG_INT),
@@ -5143,17 +5102,26 @@ mod tests {
         assert_eq!(pixel, 0xff_88_aa, "got pixel 0x{:06x}", pixel);
     }
 
-    /// `match_colour` malformed `#` (no hex digits) returns TXT_ERROR.
+    /// `match_colour` with a malformed `#` spec (no hex digits) falls to
+    /// the numeric branch, which is `zstrtol` — it consumes nothing and
+    /// yields colour 0 (black), NOT TXT_ERROR.
+    ///
+    /// c:1972 gates the hex branch on `isxdigit((unsigned char)(*teststrp)[1])`
+    /// and c:2000 gates the named branch on `ialpha(**teststrp)`; `#x`
+    /// fails both, so c:2008 `zstrtol("#x", &t, 10)` runs and returns 0
+    /// with the tail unconsumed. Verified against zsh 5.9:
+    /// `zsh -f -c 'p="%F{#x}y"; print -rn -- ${(V)${(%)p}}'` → `^[[30my`
+    /// (SGR 30 = fg colour 0). The previous assertion here expected
+    /// TXT_ERROR — its own comment flagged the doubt — and only passed
+    /// because the old numeric branch used `str::parse` on an empty digit
+    /// run instead of `zstrtol`.
     #[test]
-    fn match_colour_hash_without_hex_errors() {
+    fn match_colour_hash_without_hex_is_colour_zero() {
         let _g = crate::test_util::global_state_lock();
         let mut cur = 0usize;
-        // No hex after #, so the first branch returns TXT_ERROR... wait,
-        // the C path requires `isxdigit((unsigned char)teststrp[1])` to
-        // enter the hex branch. If false, we fall to the named-colour
-        // branch (which would also fail). For input "#x" we expect error.
         let attr = match_colour(Some(&mut cur), "#x", true, 0);
-        assert_eq!(attr, TXT_ERROR);
+        assert_eq!(attr, TXTFGCOLOUR, "#x → fg colour 0, cursor unmoved");
+        assert_eq!(cur, 0, "zstrtol consumed nothing");
     }
 
     /// `match_colour` cursor MUST NOT advance on TXT_ERROR — the C
@@ -6615,6 +6583,60 @@ mod tests {
     // Ported from Src/prompt.c:558-570 (job/hist) + 703-770 (time
     // dispatch via ztrftime).
     // ═══════════════════════════════════════════════════════════════════
+
+    /// Strip the `Inpar`/`Outpar` non-printing markers `putpromptchar`
+    /// wraps around emitted SGR so a test can compare raw escape bytes.
+    fn strip_np_markers(s: &str) -> String {
+        s.chars()
+            .filter(|&c| c != Inpar && c != Outpar)
+            .collect::<String>()
+    }
+
+    /// `%F{N\}` / `%K{N\}` — a colour spec whose closing brace is
+    /// backslash-escaped — MUST still resolve to colour N.
+    ///
+    /// This is the exact form powerlevel10k writes: its `PS1` builds
+    /// segments inside `${...}` defaults, so the literal reaching prompt
+    /// expansion is `%K{000\}%F{003\}`. C tolerates the trailing `\`
+    /// because `match_colour` reads only a colour *prefix* and
+    /// explicitly "does not check the character following the colour
+    /// specification" (c:1952); `strchr(bv->fm, '}')` at c:323 finds the
+    /// brace regardless of the backslash before it.
+    ///
+    /// The regression this pins: parsing the whole brace body as one
+    /// name rejected `000\`, fell back to the caller's `arg` (the
+    /// *previous* segment's colour index), and emitted the wrong SGR —
+    /// so p10k segment colours bled into their neighbours instead of
+    /// being set from the spec.
+    ///
+    /// Reference bytes verified against zsh 5.9:
+    /// `zsh -f -c 'p="%K{000\}%F{003\}seg%f%k"; print -rn -- ${(V)${(%)p}}'`
+    /// → `^[[40m^[[33mseg^[[39m^[[49m`.
+    #[test]
+    fn promptexpand_colour_spec_tolerates_escaped_close_brace() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%K{000\\}%F{003\\}seg%f%k", 0, None);
+        assert_eq!(
+            strip_np_markers(&got),
+            "\x1b[40m\x1b[33mseg\x1b[39m\x1b[49m",
+            "escaped close brace must not defeat the colour parse"
+        );
+    }
+
+    /// `%F{NNNjunk}` — trailing junk after a valid colour prefix is
+    /// ignored (c:1952), and `%F{#RGB}` — the 3-digit hex form at
+    /// c:1976-1981 — expands each nibble to a byte.
+    ///
+    /// Reference bytes verified against zsh 5.9:
+    /// `%F{003junk}x` → `^[[33mx`, `%F{#f00}x` → `^[[38;2;255;0;0mx`.
+    #[test]
+    fn promptexpand_colour_prefix_parse_and_short_hex() {
+        let _g = crate::test_util::global_state_lock();
+        let (junk, _, _) = promptexpand("%F{003junk}x", 0, None);
+        assert_eq!(strip_np_markers(&junk), "\x1b[33mx");
+        let (short_hex, _, _) = promptexpand("%F{#f00}x", 0, None);
+        assert_eq!(strip_np_markers(&short_hex), "\x1b[38;2;255;0;0mx");
+    }
 
     /// c:Src/prompt.c:563-570 — `%j` (job count). With no live jobs
     /// in the unit-test paramtab, jobtab is empty so the count is 0.

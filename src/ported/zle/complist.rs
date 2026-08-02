@@ -708,18 +708,53 @@ pub fn getcols(_unused: &str) -> i32 {
 }
 
 /// Direct port of `void zlrputs(char *cap)` from
-/// `Src/Zle/complist.c:564`. Emits an LS_COLORS escape
-/// `\033[<cap>m` to the shell-output fd. C body c:566-595 also
-/// stores the cap into `last_cap` for the bleed-prevention path
-/// downstream (used by `zcoff` in `cleareol`); that file-static
-/// `last_cap` isn't yet ported, so we only emit the SGR escape.
+/// `Src/Zle/complist.c:564`:
+/// ```c
+/// if (!*last_cap || strcmp(last_cap, cap)) {
+///     VARARR(char, buf, lr_caplen + max_caplen + 1);
+///     strcpy(buf, mcolors.files[COL_LC]->col);
+///     strcat(buf, cap);
+///     strcat(buf, mcolors.files[COL_RC]->col);
+///     tputs(buf, 1, putshout);
+///     strcpy(last_cap, cap);
+/// }
+/// ```
+///
+/// `last_cap` is load-bearing, not an optimisation: `cleareol`
+/// (c:611) emits an SGR reset before `TCCLEAREOL` *only* when a cap is
+/// recorded as active, so that the clear-to-EOL doesn't paint the
+/// active LS_COLORS background across the rest of the line. The
+/// previous port never wrote `last_cap`, so that guard could never
+/// fire and the `ma=` menu-selection colour bled to the right margin.
+///
+/// The `cap.is_empty()` early return the previous port had is also not
+/// in C — an empty cap emits `LC + RC` (`\e[m`, a full reset), which is
+/// how a match with an empty colour spec gets cleared back to default.
+/// Returning without writing left the previous match's colour in force.
+///
+/// COL_LC / COL_RC are hardcoded to their defaults (`\e[` / `m`,
+/// c:206) rather than read from `mcolors`: every caller
+/// (`putmatchcol`, `putfilecol`, `clprintm`'s `zcputs_slot`) already
+/// holds the `MCOLORS` lock when it calls in, and `std::sync::Mutex`
+/// is not reentrant. A config that overrides `lc=`/`rc=` is therefore
+/// not honoured here yet.
 pub fn zlrputs(cap: &str) -> i32 {
     // c:564
-    if cap.is_empty() {
+    let mut last = match LAST_CAP.lock() {
+        Ok(l) => l,
+        Err(_) => return 0,
+    };
+    // c:566 — `if (!*last_cap || strcmp(last_cap, cap))`: skip the write
+    // when this exact cap is already the active one.
+    if !last.is_empty() && last.as_str() == cap {
         return 0;
     }
+    // c:569-573 — LC + cap + RC.
     let s = format!("\x1b[{}m", cap);
     crate::shout::write(s.as_bytes());
+    // c:575 — `strcpy(last_cap, cap);`
+    last.clear();
+    last.push_str(cap);
     0
 }
 
@@ -791,9 +826,11 @@ pub fn cleareol() {
         return;
     }
     // c:611-612 — `if (*last_cap) zcoff();` — emit SGR reset.
-    if !LAST_CAP.lock().map(|s| s.is_empty()).unwrap_or(true) {
-        crate::shout::write(b"\x1b[0m");
-        LAST_CAP.lock().ok().map(|mut s| s.clear());
+    // The LAST_CAP lock is released before `zcoff` because `zcoff` ->
+    // `zlrputs` takes it again (std Mutex is not reentrant).
+    let cap_active = !LAST_CAP.lock().map(|s| s.is_empty()).unwrap_or(true);
+    if cap_active {
+        zcoff();
     }
     // c:613 — `tcout(TCCLEAREOL);` — CSI K.
     crate::shout::write(b"\x1b[K");
@@ -969,12 +1006,145 @@ pub fn doiscol(pos: i32) -> i32 {
 }
 
 /// Port of `clprintfmt(char *p, int ml)` from Src/Zle/complist.c:671.
+///
+/// c:668 calls it a "Stripped-down version of printfmt(). But can do
+/// in-string colouring." — *stripped-down* is literal: it shares no code
+/// path with [`printfmt`]. There is NO `%`-escape processing, no `%n`
+/// substitution, no trailing padding. It is a raw per-character emitter
+/// whose reason to exist is driving the in-string colour state machine
+/// ([`initiscol`] c:675 / [`doiscol`] c:680) across a `CMF_DISPLINE`
+/// match while keeping the row and scroll accounting the menu pager needs.
+///
+/// The only caller is `clprintm` at c:1799, taken when `putmatchcol`
+/// returned 1 — i.e. the matching `list-colors` rule carries a SECOND
+/// colour (`=(#b)(pat)=col0=col1`). c:890-893 shows `putmatchcol` returns
+/// 1 *without emitting anything*, so for those rules every colour byte of
+/// the row is produced here. The previous body delegated to `printfmt`,
+/// which emitted no colour at all, ate `%` from the display string
+/// (`doesc = true`) and substituted the row index for `%n` (`printfmt`'s
+/// second parameter is the match COUNT, not a row index).
+///
+/// Returns 0 normally, or the non-zero `asklistscroll` answer when the
+/// user dismissed the scroll pager; `clprintm` propagates it unchanged
+/// (c:1799 -> c:1905) and `compprintlist` treats it as `goto end`
+/// (c:1577-1578). `printfmt`'s display-LINE-COUNT return was wrong here.
+///
+/// `mlprinted` is deliberately NOT written: C's `clprintfmt` never sets
+/// it and neither does the `subcols` branch of `clprintm` (only the
+/// measure-only path at c:1779 does), so the stale value is the C
+/// behaviour — copy the quirk, do not "fix" it.
 pub fn clprintfmt(p: &str, ml: i32) -> i32 {
     // c:671
-    // C body c:673-712 — colored variant of printfmt that uses mcolors
-    //                    for %F/%B etc. Without the mcolors substrate
-    //                    we delegate to the plain printfmt.
-    printfmt(p, ml, true, true)
+    // c:673 — `int cc = 0, i = 0, ask;`
+    let mut cc: i32 = 0;
+    let mut i: i32 = 0;
+    // c:671 — `ml` is a ROW INDEX and is mutated locally at c:700.
+    let mut ml = ml;
+
+    // Same width source as the sibling emitters in this file
+    // (`clnicezputs` :1056, `compprintfmt` :2984). `.max(1)` guards the
+    // `%` below the way `printfmt` does (zle_tricky.rs:2916-2918).
+    let zterm_columns = (adjustcolumns() as i32).max(1);
+    // `asklistscroll` (c:1009-1052) rewrites `mrestlines` but never
+    // `mscroll` or `mlend`, so these two are safe to read once.
+    let mlend = MLEND.load(Ordering::SeqCst);
+    let mscroll = MSCROLL.load(Ordering::SeqCst) != 0;
+
+    // c:675 — `initiscol();`
+    initiscol();
+
+    // c:677 — `while (*p)`.
+    let mut idx = 0usize;
+    let mut buf = [0u8; 4];
+    while idx < p.len() {
+        // c:678-679 — `convchar_t chr; int chrlen = MB_METACHARLENCONV(p, &chr);`
+        // C walks the METAFIED string: a `Meta` byte plus the byte after
+        // it are ONE input character. zshrs keeps metafied text inside a
+        // `&str`, where `Meta` is the char U+0083 and the escaped byte is
+        // a char in 0x80..=0xFF — the encoding `unmetafy_str` decodes
+        // (utils.rs:15487-15495). (`metacharlenconv`'s `bytes[0] == Meta`
+        // test at utils.rs:7451 can never fire on a valid `&str`.) So one
+        // C "character" is a Meta pair or a single `char`; `chr` itself is
+        // unused by the C body beyond the length.
+        let ch = match p[idx..].chars().next() {
+            Some(c) => c,
+            None => break,
+        };
+        let after = idx + ch.len_utf8();
+        let meta_next = if ch == '\u{83}' {
+            p[after..]
+                .chars()
+                .next()
+                .filter(|n| (0x80..=0xff).contains(&(*n as u32)))
+        } else {
+            None
+        };
+
+        // c:680 — `doiscol(i++);`
+        doiscol(i);
+        i += 1;
+        // c:681 — `cc++;`
+        cc += 1;
+        // c:682-685 — `if (*p == '\n') { cleareol(); cc = 0; }`. The test
+        //              is on the FIRST byte of the character and runs
+        //              BEFORE the emit loop; the '\n' is still written.
+        if ch == '\n' {
+            cleareol(); // c:683
+            cc = 0; // c:684
+        }
+        // c:686-687 — bottom row of the window, one column short of the
+        //             wrap: stop WITHOUT emitting and WITHOUT the
+        //             trailing cleareol at c:705.
+        if ml == mlend - 1 && (cc % zterm_columns) == zterm_columns - 1 {
+            return 0;
+        }
+
+        // c:689-698 — emit the character's bytes, un-Meta-ing as we go:
+        //   `if (*p == Meta) { p++; chrlen--; putc(*p ^ 32, shout); }
+        //    else putc(*p, shout);`
+        // `crate::shout::write`, NOT `write_loop`: `compprintlist` brackets
+        // the whole draw in a buffered shout frame (:3423 `begin()` /
+        // :3432 `end()`), and a raw fd write would jump that queue and
+        // land ahead of this row's own colour escapes — the failure mode
+        // `printfmt` was just fixed for.
+        match meta_next {
+            Some(n) => {
+                crate::shout::write(&[(n as u32 as u8) ^ 32]); // c:693
+                idx = after + n.len_utf8(); // c:691/c:697
+            }
+            None => {
+                crate::shout::write(ch.encode_utf8(&mut buf).as_bytes()); // c:695
+                idx = after; // c:697
+            }
+        }
+
+        // c:699-700 — `if (!(cc % zterm_columns)) ml++;`. Also true right
+        //              after a '\n' reset `cc` to 0, which is how an
+        //              embedded newline advances the row.
+        if cc % zterm_columns == 0 {
+            ml += 1;
+        }
+        // c:701-703 — `if (mscroll && !(cc % zterm_columns) &&
+        //               !--mrestlines && (ask = asklistscroll(ml)))
+        //                  return ask;`
+        // `--mrestlines` sits inside the short circuit: decrement only
+        // when scrolling is active AND this character closed a row. Same
+        // fetch_sub idiom as `compprintnl` (:1413) and `clnicezputs`
+        // (:1141).
+        if mscroll && cc % zterm_columns == 0 {
+            let rest = MRESTLINES.fetch_sub(1, Ordering::SeqCst) - 1;
+            if rest == 0 {
+                let ask = asklistscroll(ml);
+                if ask != 0 {
+                    return ask; // c:703
+                }
+            }
+        }
+    }
+    // c:705 — `cleareol();`
+    cleareol();
+    // c:706 — `return 0;`
+    0
 }
 
 /// Port of `int clnicezputs(int do_colors, char *s, int ml)` from
@@ -1423,7 +1593,6 @@ pub fn compprintfmt(
     let mut cc = 0i32;
     let mut dopr = dopr; // c:1273 — literal branch may downgrade to 2 (measure-only)
     let mut ml = ml; // c:1301 — C mutates its own copy while wrapping
-    let _ = doesc;
 
     // c:1075 — `stat = !fmt`: captured BEFORE the mstatus/mlistp fallback
     // reassigns fmt. Only stat-mode (caller passed NULL/empty) emits the
@@ -1465,8 +1634,20 @@ pub fn compprintfmt(
     // subset (the LIST_PACKED escape arms that LISTPROMPT users hit).
     let mut chars = fmt_str.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '%' {
-            // c:1102
+        // c:1102 — `if (doesc && cchar == ZWC('%'))`. The %-escape parser is
+        // GATED on doesc; the port discarded the parameter (`let _ = doesc;`)
+        // and always entered it. `clprintm` prints a CMF_DISPLINE match's
+        // DISPLAY string with doesc=0 (c:1801 `compprintfmt(m->disp, 0, 1, 0,
+        // ml, &stop)`) precisely so a `%` in it stays literal. Ungated, a
+        // display string beginning `%` lost BOTH the `%` and the character
+        // after it (the catch-all escape arm consumes and emits nothing), so
+        // `ls *(` listed ` -- device files` where zsh lists
+        // `%  -- device files`. With the gate restored the `%` falls to the
+        // literal branch at c:1269 below and is counted once toward `cc`.
+        //
+        // Invisible without zsh/complist loaded: the bare listing path never
+        // reaches compprintfmt, which is why no zstyle-free run ever saw it.
+        if doesc != 0 && c == '%' {
             // c:1108 — optional digit arg
             let mut arg = 0i32;
             while let Some(&d) = chars.peek() {
@@ -5019,12 +5200,52 @@ pub fn domenuselect(
                 } else {
                     None // c:2793
                 };
-                SHOWINGLIST.store(-2, Ordering::SeqCst); // c:2796
-                zrefresh(); // c:2797
-                NOSELECT.store(-1, Ordering::SeqCst); // c:2798
-                *STATUSLINE.lock().unwrap() = None; // c:2810
+                // c:2798-2814 — TWO arms, and this port only ever ran the first.
+                // With messages pending the list is simply repainted; with NONE,
+                // C tells the user the filter matched nothing:
+                //     trashzle(); zsetterm(); tcout(TCCLEAREOD);
+                //     fputs("no matches\r", shout); fflush(shout);
+                //     tcmultout(TCUP, TCMULTUP, nlnct);
+                //     showinglist = clearlist = 0; clearflag = 1; zrefresh();
+                // Running the nmessages arm unconditionally meant interactive
+                // menu-select silently swallowed the notice: typing a filter that
+                // matches nothing left the status line alone where zsh prints
+                // `no matches` (`pr` + Tab Tab s).
+                if crate::ported::zle::compcore::nmessages.load(Ordering::SeqCst) != 0 {
+                    SHOWINGLIST.store(-2, Ordering::SeqCst); // c:2799
+                    zrefresh(); // c:2800
+                    NOSELECT.store(-1, Ordering::SeqCst); // c:2801
+                } else {
+                    trashzle(); // c:2803
+                    let _ = crate::ported::zle::zle_main::zsetterm(); // c:2804
+                    // c:2805-2806 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
+                    let can_cleareod = crate::ported::init::tclen
+                        .lock()
+                        .map(|t| t[TCCLEAREOD as usize] != 0)
+                        .unwrap_or(false);
+                    if can_cleareod {
+                        tcout(TCCLEAREOD);
+                    }
+                    // c:2807-2808 — `fputs("no matches\r", shout); fflush(shout);`
+                    let fd = SHTTY.load(Ordering::Relaxed);
+                    let out = if fd >= 0 { fd } else { 1 };
+                    let _ = crate::ported::utils::write_loop(out, b"no matches\r");
+                    // c:2809 — `tcmultout(TCUP, TCMULTUP, nlnct);`
+                    crate::ported::zle::zle_refresh::tcmultout(
+                        crate::ported::zsh_h::TCUP,
+                        crate::ported::zsh_h::TCMULTUP,
+                        NLNCT.load(Ordering::SeqCst),
+                    );
+                    SHOWINGLIST.store(0, Ordering::SeqCst); // c:2810
+                    CLEARLIST.store(0, Ordering::SeqCst);
+                    CLEARFLAG.store(1, Ordering::SeqCst); // c:2811
+                    zrefresh(); // c:2812
+                    SHOWINGLIST.store(0, Ordering::SeqCst); // c:2813
+                    CLEARLIST.store(0, Ordering::SeqCst);
+                }
+                *STATUSLINE.lock().unwrap() = None; // c:2815
                 goto_getk = true;
-                continue; // c:2811 goto getk
+                continue; // c:2817 goto getk
             }
 
             // c:2812-2818 — adopt the filtered match set.

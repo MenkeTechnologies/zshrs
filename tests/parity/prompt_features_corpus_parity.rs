@@ -620,6 +620,48 @@ print -r -- "${(%):-%3<..<abcdefghij}""###,
         );
     }
 
+    /// powerlevel10k — colour specs whose closing brace is escaped.
+    ///
+    /// p10k assembles segments inside `${...}` default words, so the
+    /// text that reaches prompt expansion is `%K{000\}%F{003\}`, not
+    /// `%K{000}%F{003}`. zsh's `match_colour` reads only a colour
+    /// prefix and ignores the trailing `\` (Src/prompt.c:1952), so the
+    /// colour still applies. zshrs used to reject the whole brace body
+    /// and fall back to the caller's `arg` — i.e. the previous
+    /// segment's colour — so p10k segment colours bled into each other.
+    ///
+    /// Also covers the neighbouring gaps found with it: trailing junk
+    /// after a valid prefix, and the 3-digit `%F{#RGB}` hex form
+    /// (Src/prompt.c:1976-1981).
+    #[test]
+    fn p10k_escaped_close_brace_colour() {
+        assert_parity(
+            r###"print -P '%K{000\}%F{003\}seg%f%k' | cat -v
+print -P '%F{red\}name%f' | cat -v
+print -P '%F{003junk}x%f' | cat -v
+print -P '%F{#f00}rgb%f' | cat -v"###,
+        );
+    }
+
+    /// powerlevel10k — PROMPT_SUBST over a quoted `${name-word}` default.
+    ///
+    /// `promptexpand` runs `parsestr` before `singsub` (Src/prompt.c:197)
+    /// so the lexer turns the quotes and backslashes into tokens that
+    /// `prefork` then strips. zshrs called `singsub` alone, so the quotes
+    /// survived and a `\}` inside the quoted word defeated the brace
+    /// scan — the entire `${...}` printed literally into the prompt.
+    #[test]
+    fn p10k_prompt_subst_quoted_default() {
+        assert_parity(
+            r###"setopt prompt_subst
+unset _p9k__4 F
+print -P '${_p9k__4-"%K{000\}%F{003\}seg"}' | cat -v
+print -P '${F-"abc"}' | cat -v
+print -P '${F-abc}' | cat -v
+F=set; print -P '${F-"unused"}' | cat -v"###,
+        );
+    }
+
     /// ${PWD/#$HOME/~} anchored-prefix vs literal \~.
     #[test]
     fn pwd_home_abbrev() {
