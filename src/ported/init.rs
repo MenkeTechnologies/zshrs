@@ -1482,7 +1482,9 @@ pub fn run_init_scripts() {
         }
     } else {
         // c:1473 — source(GLOBAL_ZSHENV);
-        let _ = source(crate::ported::config_h::GLOBAL_ZSHENV);
+        let _ = source(&crate::extensions::global_rc::global_rc_path(
+            crate::ported::config_h::GLOBAL_ZSHENV,
+        ));
 
         // c:1476-1490 — if (isset(RCS) && unset(PRIVILEGED))
         //                  { newuser-probe; sourcehome(".zshenv"); }
@@ -1492,7 +1494,9 @@ pub fn run_init_scripts() {
         // c:1491-1498 — if (islogin) { GLOBAL_ZPROFILE? + .zprofile }
         if is_login {
             if isset(RCS) && isset(GLOBALRCS) {
-                let _ = source(crate::ported::config_h::GLOBAL_ZPROFILE);
+                let _ = source(&crate::extensions::global_rc::global_rc_path(
+                    crate::ported::config_h::GLOBAL_ZPROFILE,
+                ));
             }
             if isset(RCS) && !privileged {
                 sourcehome(".zprofile");
@@ -1501,7 +1505,9 @@ pub fn run_init_scripts() {
         // c:1499-1506 — if (interact) { GLOBAL_ZSHRC? + .zshrc }
         if interact {
             if isset(RCS) && isset(GLOBALRCS) {
-                let _ = source(crate::ported::config_h::GLOBAL_ZSHRC);
+                let _ = source(&crate::extensions::global_rc::global_rc_path(
+                    crate::ported::config_h::GLOBAL_ZSHRC,
+                ));
             }
             if isset(RCS) && !privileged {
                 sourcehome(".zshrc");
@@ -1510,7 +1516,9 @@ pub fn run_init_scripts() {
         // c:1507-1514 — if (islogin) { GLOBAL_ZLOGIN? + .zlogin }
         if is_login {
             if isset(RCS) && isset(GLOBALRCS) {
-                let _ = source(crate::ported::config_h::GLOBAL_ZLOGIN);
+                let _ = source(&crate::extensions::global_rc::global_rc_path(
+                    crate::ported::config_h::GLOBAL_ZLOGIN,
+                ));
             }
             if isset(RCS) && !privileged {
                 sourcehome(".zlogin");

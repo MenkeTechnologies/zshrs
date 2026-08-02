@@ -536,13 +536,13 @@ pub fn recording_staleness() -> Option<String> {
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_default();
     let rc_set = [
-        "/etc/zshenv".to_string(),
+        crate::extensions::global_rc::global_rc_path("/etc/zshenv"),
         format!("{}/.zshenv", zdotdir),
-        "/etc/zprofile".to_string(),
+        crate::extensions::global_rc::global_rc_path("/etc/zprofile"),
         format!("{}/.zprofile", zdotdir),
-        "/etc/zshrc".to_string(),
+        crate::extensions::global_rc::global_rc_path("/etc/zshrc"),
         format!("{}/.zshrc", zdotdir),
-        "/etc/zlogin".to_string(),
+        crate::extensions::global_rc::global_rc_path("/etc/zlogin"),
         format!("{}/.zlogin", zdotdir),
     ];
     let mut newest_rc: Option<(SystemTime, String)> = None;

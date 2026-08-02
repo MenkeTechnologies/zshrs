@@ -2277,6 +2277,30 @@ impl ShellExecutor {
                 }
             }
         }
+        // bash startup delta: bash defines TERM itself when the
+        // environment does not carry one, and exports it. zsh leaves
+        // TERM unset in that case, so `zshrs --bash` inherited zsh's
+        // behavior and diverged from the reference shell:
+        //
+        //   $ env -u TERM /bin/bash -c 'printf "%s\n" "${TERM+set}"'
+        //   set
+        //   $ env -u TERM /bin/bash -c 'echo "$TERM"'
+        //   dumb
+        //   $ env -u TERM /bin/zsh -f -c 'printf "%s\n" "${TERM+set}"'
+        //                                  (empty — zsh leaves it unset)
+        //
+        // Same on bash 3.2.57 (macOS /bin/bash) and 5.3.15, so it is
+        // not a version artifact. Only the bare `--bash` drop-in takes
+        // it: `--bash --zsh` asks for zsh-STYLE emulation, where zsh's
+        // leave-it-unset behavior is the correct answer. Guarded on the
+        // environment so an inherited TERM always wins.
+        if crate::extensions::dash_mode::bash_mode() && std::env::var_os("TERM").is_none() {
+            crate::ported::params::setsparam("TERM", "dumb");
+            // bash exports it (`declare -x TERM` shows up in `export -p`);
+            // addenv stamps PM_EXPORTED and pushes it into the child env.
+            crate::ported::params::addenv("TERM", "dumb");
+        }
+
         // c:Src/init.c:479 — `-c` mode: scriptname = scriptfilename
         // = ztrdup("zsh"). Both globals start as the literal "zsh"
         // (not the binary path) so PS4's %x / %N print "zsh" not

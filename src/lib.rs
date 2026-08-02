@@ -200,6 +200,11 @@ pub mod fmt;
 /// `func_body_fmt` submodule.
 #[path = "extensions/func_body_fmt.rs"]
 pub mod func_body_fmt;
+/// `global_rc` submodule — runtime sysconfdir resolution for the
+/// system-wide startup files (Rust-only; zsh bakes the path in at build
+/// time).
+#[path = "extensions/global_rc.rs"]
+pub mod global_rc;
 /// `lsp` submodule.
 #[path = "extensions/lsp.rs"]
 pub mod lsp;
