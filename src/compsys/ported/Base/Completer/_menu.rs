@@ -42,6 +42,7 @@ use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 /// `_menu` — menu-completion completer. Returns the shell's `return 1`
 /// to defer match emission to the next completer in the chain.
 pub fn _menu() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_menu");
     // sh:3  [[ _matcher_num -gt 1 ]] && return 1
     //   `$_matcher_num` is a top-level shell variable (NOT a
     //   `$compstate` sub-key); > 1 means we're not the first matcher

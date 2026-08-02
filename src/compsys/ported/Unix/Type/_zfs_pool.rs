@@ -21,6 +21,7 @@ fn make_ops() -> options {
 
 /// `_zfs_pool` — complete ZFS pool names from `zpool list -H -o name`.
 pub fn _zfs_pool(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zfs_pool");
     // sh:3  $(zpool list -H -o name)
     let names: Vec<String> = std::process::Command::new("zpool")
         .args(["list", "-H", "-o", "name"])

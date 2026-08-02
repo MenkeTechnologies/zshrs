@@ -68,6 +68,7 @@ fn login_conf_d_basenames(dir: &str) -> Vec<String> {
 /// `_login_classes` — complete BSD `login.conf` login class names, plus
 /// (on OpenBSD) the extra classes defined under `/etc/login.conf.d/`.
 pub fn _login_classes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_login_classes");
     // sh:5
     let mut login_classes = std::fs::read_to_string("/etc/login.conf")
         .map(|s| parse_login_classes(&s))

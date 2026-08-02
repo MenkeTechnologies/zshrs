@@ -74,6 +74,7 @@ fn walk_classes(dir: &Path, base: &str, out: &mut Vec<String>) {
 
 /// `_java_class` — complete fully-qualified Java class names from a classpath.
 pub fn _java_class(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_java_class");
     // sh:9-11 — classpath = -cp value, else $CLASSPATH, else `.`; `\:` → `:`.
     let (cpval, rest) = parse_opts(args);
     let classpath = cpval

@@ -19,6 +19,7 @@ use crate::ported::params::setaparam;
 
 /// `_ctags_tags` — complete tag names from a ctags `tags` file in $PWD.
 pub fn _ctags_tags(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ctags_tags");
     // sh:5  [[ -r tags ]] && tags=( ${${${(f)"$(< tags)"}:#!*}%%[[:blank:]]*} )
     let tags: Vec<String> = std::fs::read_to_string("tags")
         .map(|body| {

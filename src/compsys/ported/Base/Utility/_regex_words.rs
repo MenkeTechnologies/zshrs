@@ -27,6 +27,7 @@ use crate::ported::params::{getsparam, setaparam};
 /// `_regex_words` — emit `(  /word$term/ … /[]/ matches )` into
 /// `$reply` for `_regex_arguments` consumption.
 pub fn _regex_words(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_regex_words");
     let mut term = "\0".to_string();
     let mut idx = 0usize;
 

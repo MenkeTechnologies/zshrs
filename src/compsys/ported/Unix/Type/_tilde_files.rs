@@ -66,6 +66,7 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
 /// expansion. Dispatches `_files` (sibling) for the underlying path
 /// emission.
 pub fn _tilde_files(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_tilde_files");
     // sh:3
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
     let has_w = args.iter().any(|a| a.starts_with("-W"));

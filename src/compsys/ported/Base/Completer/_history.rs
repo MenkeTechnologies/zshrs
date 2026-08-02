@@ -28,6 +28,7 @@ use crate::ported::zle::compcore::get_compstate_str;
 
 /// `_history` — complete from `$historywords` array.
 pub fn _history() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_history");
     let historywords = getaparam("historywords").unwrap_or_default();
     let hmax = historywords.len();
     let mut beg = 2usize;

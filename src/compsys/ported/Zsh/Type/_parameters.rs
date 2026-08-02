@@ -100,6 +100,7 @@ pub fn call_parameters(args: &[String]) -> i32 {
 /// Callers inside other ported completers must use [`call_parameters`], not
 /// this fn, so an `$fpath` override still wins.
 pub fn _parameters(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_parameters");
     // sh:11
     let mut pattern_seed: Vec<String> = vec!["-g".to_string(), "*".to_string()];
 

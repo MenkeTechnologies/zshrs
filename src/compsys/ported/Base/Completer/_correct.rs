@@ -29,6 +29,7 @@ use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 /// `_correct` — spelling-correction completer: wraps `_approximate`
 /// with `compstate[pattern_match]` swapped to `-` for the duration.
 pub fn _correct() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_correct");
     // sh:11
     let mut ret: i32 = 1;
     let opm = get_compstate_str("pattern_match").unwrap_or_default();

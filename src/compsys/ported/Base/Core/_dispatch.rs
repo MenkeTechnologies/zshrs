@@ -89,6 +89,7 @@ fn assoc_flat(name: &str) -> Vec<String> {
 /// `_compskip` reset; first non-flag arg becomes the curcontext
 /// field; remaining args are tried in order against `$_comps`.
 pub fn _dispatch(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dispatch");
     // sh:3  local comp pat val name i ret=1 _compskip="$_compskip"
     // sh:4  local curcontext="$curcontext" service str noskip
     // sh:5  local -a match mbegin mend

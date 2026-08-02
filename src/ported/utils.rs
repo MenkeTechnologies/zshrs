@@ -4412,10 +4412,10 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
             }
             // c:3210-3214 — `noerrs=2; singsub(&guess); noerrs = ne;`
             let saved_noerrs =
-                crate::ported::exec::noerrs.load(std::sync::atomic::Ordering::Relaxed);
-            crate::ported::exec::noerrs.store(2, std::sync::atomic::Ordering::Relaxed); // c:3212
+                *crate::ported::utils::noerrs_lock().lock().unwrap();
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = 2; // c:3212
             guess = crate::ported::subst::singsub(&guess); // c:3213
-            crate::ported::exec::noerrs.store(saved_noerrs, std::sync::atomic::Ordering::Relaxed);
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
             if guess.is_empty() {
                 return; // c:3216 `if (!guess) return;`
             }

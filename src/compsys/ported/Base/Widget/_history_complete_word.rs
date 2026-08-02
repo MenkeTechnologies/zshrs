@@ -39,6 +39,7 @@ fn gen_matches() -> i32 {
 
 /// `_history_complete_word` — history-word navigation widget.
 pub fn _history_complete_word() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_history_complete_word");
     let saved_ctx = getsparam("curcontext").unwrap_or_default();
     let new_ctx = if saved_ctx.is_empty() {
         "history-words:::".to_string()

@@ -123,6 +123,7 @@ fn has(vals: &[String], needle: &str) -> bool {
 /// `_zfs_dataset` — complete ZFS dataset names (filesystems, volumes,
 /// snapshots, …).
 pub fn _zfs_dataset(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zfs_dataset");
     let opts = parse_opts(args);
     let implementation = getsparam("implementation").unwrap_or_default();
     let prefix = getsparam("PREFIX").unwrap_or_default();

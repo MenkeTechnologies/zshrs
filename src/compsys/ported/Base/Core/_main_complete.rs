@@ -334,6 +334,7 @@ fn run_compprefuncs() {
 /// (when non-empty) override the configured `completer` style with
 /// the supplied chain.
 pub fn _main_complete(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_main_complete");
     tracing::debug!(target: "compsys_args", ?args, "_main_complete ENTER");
     // sh:11 `local IFS=$' \t\n\0'`, sh:27-52 the big `local` block,
     // sh:54 `typeset -U _lastdescr _comp_ignore _comp_colors`,

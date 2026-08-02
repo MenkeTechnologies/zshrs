@@ -19,6 +19,7 @@ use crate::compsys::ported::_wanted::_wanted;
 /// `_arrays` — `shift` command completion: list array-typed
 /// parameters via `_parameters -g '*array*'`.
 pub fn _arrays(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_arrays");
     // sh:5
     let mut wanted_argv: Vec<String> = vec![
         "arrays".to_string(),

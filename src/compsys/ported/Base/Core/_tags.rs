@@ -97,6 +97,7 @@ fn make_ops() -> options {
 ///     least one tag set should be tried").
 ///   * without args (next-set mode): `comptags -N$prev`.
 pub fn _tags(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_tags");
     // sh:3  local prev
     // sh:19 local curcontext="$curcontext" order tag nodef tmp
     //   (upstream declares the second group only inside the `(( $# ))`

@@ -29,6 +29,7 @@ use crate::ported::params::{getsparam, setsparam};
 /// `_complete_help_generic` — ZLE widget that arms the trace-widget
 /// hook and reads the next zle command. Returns 0.
 pub fn _complete_help_generic() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete_help_generic");
     let widget = getsparam("WIDGET").unwrap_or_default();
 
     // sh:9-13

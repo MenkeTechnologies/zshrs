@@ -76,6 +76,7 @@ fn run_gopt(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// completion context. Returns 0 when requested (after dispatching
 /// to `_all_labels` or `_description` as appropriate), 1 otherwise.
 pub fn _requested(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_requested");
     // sh:3  local __gopt
     crate::compsys::ported::shared::declare_locals(&["__gopt"], 0);
     // sh:5-6

@@ -42,6 +42,7 @@ fn glob_dir(pat: &str) -> Vec<String> {
 
 /// `_time_zone` — complete zoneinfo time-zone names for `$TZ`.
 pub fn _time_zone(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_time_zone");
     // sh:5-7 — populate `_zoneinfo_dirs` once (cached across calls).
     if getaparam("_zoneinfo_dirs").is_none() {
         // sh:6 — brace expansion of

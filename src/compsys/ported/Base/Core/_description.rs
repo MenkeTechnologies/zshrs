@@ -220,6 +220,7 @@ fn run_zparseopts(
 /// description `$3` and optional extra match-specs `$4..`.
 /// Returns 0 (sh:123).
 pub fn _description(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_description");
     // sh:3  local name nopt xopt format gname hidden hide match opts tag
     // sh:4  local -a ign gropt sort
     // sh:5  local -a match mbegin mend

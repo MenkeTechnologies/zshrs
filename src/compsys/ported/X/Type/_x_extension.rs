@@ -108,6 +108,7 @@ fn run_capture(cmd: &str, args: &[&str]) -> String {
 /// alternative alongside the cached names; otherwise the cache array is
 /// completed by name via `compadd -a`.
 pub fn _x_extension(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_extension");
     // sh:5  _tags extensions || return 1
     if _tags(&["extensions".to_string()]) != 0 {
         return 1;

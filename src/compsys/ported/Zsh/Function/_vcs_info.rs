@@ -67,6 +67,7 @@ fn build_call(service: &str) -> Vec<String> {
 
 /// `_vcs_info` — completion for `vcs_info_hookadd` / `vcs_info_hookdel`.
 pub fn _vcs_info(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_vcs_info");
     // $service selects the dispatched compdef name (sh:21).
     let service = getsparam("service").unwrap_or_default();
     let call = build_call(&service);

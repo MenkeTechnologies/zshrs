@@ -27,6 +27,7 @@ fn make_ops() -> options {
 /// `_selinux_roles` — offer the list of SELinux roles reported by
 /// `seinfo --flat -r`.
 pub fn _selinux_roles(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_roles");
     // sh:5  seroles=( ${(f)"$(_call_program selinux-roles seinfo --flat -r)"} )
     let _ = _call_program(&[
         "selinux-roles".to_string(),

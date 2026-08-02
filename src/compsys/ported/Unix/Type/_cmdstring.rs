@@ -27,6 +27,7 @@ fn make_ops() -> options {
 /// Calls real `bin_compset -q` (unquote the current word into its
 /// own context), then dispatches `_normal` (sibling shell fn).
 pub fn _cmdstring() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_cmdstring");
     // sh:5  compset -q
     let _ = bin_compset("compset", &["-q".to_string()], &make_ops(), 0);
     // sh:6  _normal

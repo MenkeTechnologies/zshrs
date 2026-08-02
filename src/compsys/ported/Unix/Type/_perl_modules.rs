@@ -205,6 +205,7 @@ pub fn _perl_modules_caching_policy(args: &[String]) -> i32 {
 
 /// `_perl_modules` — complete installed Perl module names (`Foo::Bar`).
 pub fn _perl_modules(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_perl_modules");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let base_ctx = format!(":completion:{}:", curcontext);
 

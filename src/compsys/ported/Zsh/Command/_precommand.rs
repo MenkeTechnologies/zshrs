@@ -21,6 +21,7 @@ use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 /// `_precommand` — prefix-command completion: strip the prefix from
 /// `$words` + `$CURRENT`, then run `_normal -p $service`.
 pub fn _precommand() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_precommand");
     // sh:3  shift words
     if let Some(mut words) = getaparam("words") {
         if !words.is_empty() {

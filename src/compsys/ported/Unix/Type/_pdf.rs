@@ -18,6 +18,7 @@ use crate::ported::params::getaparam;
 
 /// `_pdf` — complete PDF files (optionally compressed, with `-z`).
 pub fn _pdf(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pdf");
     // sh:14-17 — a leading `-z` allows a trailing compression suffix.
     let (ext, rest) = if args.first().map(|s| s.as_str()) == Some("-z") {
         ("(|.bz2|.gz|.Z)", &args[1..])

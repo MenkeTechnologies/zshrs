@@ -116,6 +116,7 @@ fn compute_exts(has_c: bool, has_d: bool) -> Vec<String> {
 /// `_deb_files` — complete Debian package files (.deb/.ddeb/.udeb, plus
 /// .changes/.dsc under `-c`/`-D`).
 pub fn _deb_files(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_deb_files");
     // sh:12-13
     let (fopts, c, d) = run_zparseopts_deb(args);
 

@@ -33,6 +33,7 @@ fn strip_dash_b(args: &[String]) -> (bool, Vec<String>) {
 /// `_x_visual` — complete X visual-class names (`TrueColor`,
 /// `PseudoColor`, …), optionally including `Best` when `-b` is given.
 pub fn _x_visual(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_visual");
     // sh:6-7
     let (best, rest) = strip_dash_b(args);
 

@@ -347,6 +347,7 @@ pub fn _debs_caching_policy(args: &[String]) -> i32 {
 /// `_deb_packages` — offer Debian package names for one of several
 /// `dpkg`/`apt` package sets (installed, held, avail, source, ...).
 pub fn _deb_packages(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_deb_packages");
     // sh:99  local command="$argv[$#]" — last positional argument.
     let command = args.last().cloned().unwrap_or_default();
 

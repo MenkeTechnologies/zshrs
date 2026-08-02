@@ -174,6 +174,7 @@ pub fn _smf_caching_policy(args: &[String]) -> i32 {
 /// style: `-i` unique instance FMRIs, `-c` full FMRIs, `-m` milestone
 /// FMRIs, `-r` restarter FMRIs).
 pub fn _svcs_fmri(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_svcs_fmri");
     // sh:4  local type="$argv[$#]"
     let type_ = args.last().cloned().unwrap_or_default();
 

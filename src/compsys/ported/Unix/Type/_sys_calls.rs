@@ -58,6 +58,7 @@ fn parse_syscall_line(line: &str) -> Option<String> {
 
 /// `_sys_calls` — complete system-call names from `<sys/syscall.h>`.
 pub fn _sys_calls(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sys_calls");
     // sh:13  zparseopts -D -K -E a=all n=none
     let all = args.iter().any(|a| a == "-a");
     let none = args.iter().any(|a| a == "-n");

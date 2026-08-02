@@ -203,6 +203,7 @@ fn zformat_align(sep: &str, specs: &[String]) -> Vec<String> {
 /// `_complete_help` — diagnostic widget. Optional `$1` selects the
 /// inner completer (default `_main_complete`).
 pub fn _complete_help(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete_help");
     // sh:5 — eval "$_comp_setup". The `$_comp_setup` snapshot is
     //   installed and evaluated by the completion entry harness (as the
     //   sibling `_complete_debug` widget also relies on); nothing to do

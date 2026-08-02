@@ -15,6 +15,7 @@ use crate::ported::exec::dispatch_function_call;
 /// `_jobs_bg` — `bg` command completion: stopped jobs only via
 /// `_jobs -s`. Exit code = `_jobs` exit (1 when uncallable).
 pub fn _jobs_bg(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_jobs_bg");
     let mut argv: Vec<String> = vec!["-s".to_string()];
     argv.extend(args.iter().cloned());
     dispatch_function_call("_jobs", &argv).unwrap_or(1)

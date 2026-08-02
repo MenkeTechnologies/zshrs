@@ -30,6 +30,7 @@ use std::env;
 /// `_comp_locale` — reset all LC_* vars to C except LC_CTYPE
 /// (preserved from the current process env), and set LANG=C.
 pub fn _comp_locale() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_comp_locale");
     // sh:12 — derive LC_CTYPE preference (process-level env, since
     //   `$(locale)` would just dump our own env).
     let ctype = env::var("LC_ALL")

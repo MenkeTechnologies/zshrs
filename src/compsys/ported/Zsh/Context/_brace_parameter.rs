@@ -74,6 +74,7 @@ fn describe_format(specs: &[&str]) -> i32 {
 
 /// `_brace_parameter` — complete inside `${…}`.
 pub fn _brace_parameter() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_brace_parameter");
     let prefix = getsparam("PREFIX").unwrap_or_default();
 
     // sh:7  if [[ $PREFIX = *'${('[^\)]# ]]  — inside an unterminated

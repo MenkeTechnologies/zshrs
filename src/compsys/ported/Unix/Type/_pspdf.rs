@@ -18,6 +18,7 @@ use crate::ported::params::getaparam;
 
 /// `_pspdf` — complete PostScript or PDF files (optionally compressed).
 pub fn _pspdf(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pspdf");
     // sh:8-11 — leading `-z` allows a trailing compression suffix.
     let (ext, rest) = if args.first().map(|s| s.as_str()) == Some("-z") {
         ("(|.gz|.Z)", &args[1..])

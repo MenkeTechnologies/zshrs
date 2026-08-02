@@ -65,6 +65,7 @@ fn bugnumbers_in(dir: &str) -> Vec<String> {
 /// `_debbugs_bugnumber` — complete a Debian BTS bug number from the
 /// locally cached `bts` bug HTML/mbox files (`devscripts`' cache).
 pub fn _debbugs_bugnumber(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_debbugs_bugnumber");
     // sh:6
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();

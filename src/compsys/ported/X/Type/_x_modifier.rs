@@ -19,6 +19,7 @@ const MODIFIERS: &[&str] = &[
 /// `_x_modifier` — complete X keyboard modifier names (`Shift`, `Lock`,
 /// `Control`, `Mod1`..`Mod5`), matched case-insensitively (`m:{a-z}={A-Z}`).
 pub fn _x_modifier(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_modifier");
     // sh:5-7  _wanted modifiers expl modifier \
     //             compadd "$@" -M 'm:{a-z}={A-Z}' - Shift Lock Control Mod1 Mod2 Mod3 Mod4 Mod5
     let mut wanted_argv: Vec<String> = vec![

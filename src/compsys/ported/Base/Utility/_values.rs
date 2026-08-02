@@ -116,6 +116,7 @@ fn prefix_is_arg(prefix: &str, argsep: &str, restricted: bool, sep_char: &str) -
 /// specs into the `compvalues` engine and completes either the value
 /// names (for a list) or the argument of one named value.
 pub fn _values(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_values");
     let r = values_impl(args);
     // sh: the locals `noargs args opts descr action expl sep argsep subc
     // test ws val_args` are function-scoped in zsh and vanish on return.

@@ -81,6 +81,7 @@ fn zparse_a(args: &[String]) -> (Option<String>, Vec<String>) {
 
 /// `_deb_architectures` — complete Debian architecture names.
 pub fn _deb_architectures(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_deb_architectures");
     // sh:4
     let (extra2, rest) = zparse_a(args);
 

@@ -33,6 +33,7 @@ use crate::ported::zle::compcore::set_compstate_str;
 /// `_list` — request "list before insert" behavior. Returns 1
 /// always (defers to next completer in the chain).
 pub fn _list() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_list");
     // sh:5
     if getiparam("_matcher_num") > 1 {
         return 1;

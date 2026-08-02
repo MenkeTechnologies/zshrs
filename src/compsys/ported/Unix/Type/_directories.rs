@@ -17,6 +17,7 @@ use crate::compsys::ported::_wanted::_wanted;
 
 /// `_directories` — directory-only completion via `_files -/`.
 pub fn _directories(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_directories");
     // sh:5
     let mut wanted_argv: Vec<String> = vec![
         "directories".to_string(),

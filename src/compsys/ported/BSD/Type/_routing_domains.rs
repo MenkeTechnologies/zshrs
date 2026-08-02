@@ -35,6 +35,7 @@ fn rdomain_lines(out: &str) -> Vec<String> {
 /// `_routing_domains` — complete routing domain numbers from
 /// `netstat -R` output (BSD `Rdomain` column).
 pub fn _routing_domains(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_routing_domains");
     // sh:5  _description routing-domains expl 'routing domain'
     let _ = _description(&[
         "routing-domains".to_string(),

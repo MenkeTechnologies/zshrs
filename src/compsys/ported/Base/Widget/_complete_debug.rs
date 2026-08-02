@@ -74,6 +74,7 @@ fn make_ops() -> options {
 /// `_complete_debug` — run a completion with diagnostic context.
 /// Optional `$1` overrides the default `_main_complete` target.
 pub fn _complete_debug(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete_debug");
     // sh:5-6  bump $_debug_count + derive tmp filename
     let n = getiparam("_debug_count") + 1;
     setiparam("_debug_count", n);

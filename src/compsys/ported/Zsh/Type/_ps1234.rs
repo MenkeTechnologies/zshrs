@@ -93,6 +93,7 @@ fn terminfo_colors() -> Option<i64> {
 
 /// `_ps1234` — complete a `%X` prompt-escape spec.
 pub fn _ps1234() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ps1234");
     // sh: 3-5  locals (`expl`, `grp`, `cols` are scalars in the
     //   source; `_description` fills `expl` as an array).
     let mut specs: Vec<String>;

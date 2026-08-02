@@ -38,6 +38,7 @@ fn make_ops() -> options {
 /// `_combination` — multi-key zstyle-driven completer. See upstream
 /// docstring for the spec language (e.g. `users-hosts-ports`).
 pub fn _combination(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_combination");
     let mut idx = 0usize;
 
     // sh:30 — `-s SEP` flag

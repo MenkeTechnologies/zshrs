@@ -44,6 +44,7 @@ fn make_ops() -> options {
 /// the current glob-qualifier region; return 0 if fully matched, 1
 /// if still inside.
 pub fn _globqual_delims() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_globqual_delims");
     // sh:8
     set_compstate_str("restore", "no");
 

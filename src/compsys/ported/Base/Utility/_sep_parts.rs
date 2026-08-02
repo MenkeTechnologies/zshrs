@@ -187,6 +187,7 @@ fn resolve_array_name(arr: &str) -> String {
 /// `_sep_parts` — complete each part of a separator-delimited string
 /// from the paired (array, separator) arguments.
 pub fn _sep_parts(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sep_parts");
     // sh:24  nm=$compstate[nmatches]
     let nm: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse().ok())

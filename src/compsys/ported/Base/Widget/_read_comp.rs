@@ -36,6 +36,7 @@ fn make_ops() -> options {
 /// `_read_comp` — re-run the last-used `_read_comp` string. Without
 /// an interactive read loop, returns 1 when `$_read_comp` is empty.
 pub fn _read_comp() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_read_comp");
     let cached = getsparam("_read_comp").unwrap_or_default();
     if cached.is_empty() {
         return 1;

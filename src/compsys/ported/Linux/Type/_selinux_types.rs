@@ -67,6 +67,7 @@ fn strip_leading_blank(line: &str) -> &str {
 /// `_selinux_types` — offer SELinux type names reported by `seinfo`,
 /// optionally filtered by attribute via repeated `-a ATTR` options.
 pub fn _selinux_types(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_types");
     // sh:10
     let (extra, rest) = parse_a_opt(args);
 

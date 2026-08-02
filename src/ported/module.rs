@@ -1223,12 +1223,11 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
 /// "undefined NAME" instead of the usual type prefix.
 pub fn add_autoparam(module: &str, pnam: &str, flags: i32) -> i32 {
     // c:1197
-    use crate::ported::exec::noerrs;
     use crate::ported::signals::queue_signals;
     use std::sync::atomic::Ordering;
 
     // c:1202 — int ne = noerrs;
-    let ne = noerrs.load(Ordering::Relaxed);
+    let ne = *crate::ported::utils::noerrs_lock().lock().unwrap();
 
     // c:1204 — queue_signals();
     queue_signals();
@@ -1243,7 +1242,7 @@ pub fn add_autoparam(module: &str, pnam: &str, flags: i32) -> i32 {
     }
 
     // c:1217 — noerrs = 2;
-    noerrs.store(2, Ordering::Relaxed);
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 2;
 
     // c:1218 — if ((pm = setsparam(dupstring(pnam), ztrdup(module))))
     let pm_opt = crate::ported::params::setsparam(pnam, module);
@@ -1268,7 +1267,7 @@ pub fn add_autoparam(module: &str, pnam: &str, flags: i32) -> i32 {
     };
 
     // c:1225 — noerrs = ne;
-    noerrs.store(ne, Ordering::Relaxed);
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = ne;
     // c:1226 — unqueue_signals();
     unqueue_signals();
     // c:1228 — return ret;

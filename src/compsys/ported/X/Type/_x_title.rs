@@ -30,6 +30,7 @@ fn find_dash_x_index(args: &[String]) -> Option<usize> {
 /// passed in `$@`, emit `MSG` verbatim as the completion message;
 /// otherwise fall back to the generic "title" values message.
 pub fn _x_title(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_title");
     // sh:3
     let x = find_dash_x_index(args);
 

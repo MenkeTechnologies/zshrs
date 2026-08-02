@@ -42,6 +42,7 @@ fn make_ops() -> options {
 /// `_vars` — `getopts`/`unset` completion handling assoc-array key
 /// subscripts (`vared foo[<TAB>` etc.).
 pub fn _vars(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_vars");
     let mut ret: i32 = 1;
     let prefix = getsparam("PREFIX").unwrap_or_default();
 

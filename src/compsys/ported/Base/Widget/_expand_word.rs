@@ -23,6 +23,7 @@ use crate::ported::params::{getsparam, setsparam};
 /// `_expand_word` — front-end widget: set context to `expand-word`
 /// and dispatch `_main_complete _expand`.
 pub fn _expand_word() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_expand_word");
     // sh:5 snapshot for shell-local restore
     let saved = getsparam("curcontext").unwrap_or_default();
 

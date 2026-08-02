@@ -80,6 +80,7 @@ const CAPLIST: &[&str] = &[
 /// Accepts arbitrary `compadd` options (e.g. `-p cap_`, `-o nosort`)
 /// which are forwarded verbatim (sh:65's `"$@"`).
 pub fn _capabilities(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_capabilities");
     // sh:19-61 — publish the literal array under the name `caplist` so
     // `compadd -a … caplist` (sh:65) can expand it by reference.
     let caplist: Vec<String> = CAPLIST.iter().map(|s| s.to_string()).collect();

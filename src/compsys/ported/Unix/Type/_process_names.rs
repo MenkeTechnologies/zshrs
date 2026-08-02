@@ -33,6 +33,7 @@ fn basename(s: &str) -> String {
 
 /// `_process_names` — complete names of running processes.
 pub fn _process_names(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_process_names");
     let tagname = "processes-names";
     // sh:14  zparseopts -E -D 'a=all' 't=truncate'
     let all = args.iter().any(|a| a == "-a");

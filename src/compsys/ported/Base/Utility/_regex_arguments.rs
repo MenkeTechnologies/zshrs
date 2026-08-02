@@ -91,6 +91,7 @@ pub fn _ra_comp(args: &[String]) -> i32 {
 /// `funcname`. The generated function body lives in
 /// [`dispatch_registered`].
 pub fn _regex_arguments(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_regex_arguments");
     // sh:58 — `local regex funcname="$1"; shift`.
     let funcname = match args.first() {
         Some(f) => f.clone(),

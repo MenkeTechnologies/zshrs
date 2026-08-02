@@ -44,6 +44,7 @@ fn assoc_chunks(name: &str) -> Vec<(String, String)> {
 /// `-r` running only; `-s` suspended only; `-t` enables
 /// prefix-needed check (returns 1 if not starting with `%`).
 pub fn _jobs(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_jobs");
     let mut argv = args.to_vec();
     let curcontext = getsparam("curcontext").unwrap_or_default();
 

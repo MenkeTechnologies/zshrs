@@ -2121,16 +2121,16 @@ pub(crate) fn addmatch(s: &str, t: Option<&str>) {
         .unwrap_or_default();
     let isuf_v = ISUF.lock().map(|g| g.clone()).unwrap_or_default();
     let prpre_v = PRPRE.with(|r| r.borrow().clone()).unwrap_or_default();
-    let (pre_v, suf_v) = CURCC.with(|r| {
+    // c:2052/2056 — C passes `curcc->prefix` / `curcc->suffix` STRAIGHT through,
+    // NULL and all; add_match_data stores them unconditionally (compcore.c:2943-
+    // 2944) so "no prefix" stays distinct from "empty prefix". Flattening the
+    // Options here with unwrap_or_default() erased that distinction before it
+    // could reach the match.
+    let (pre_v, suf_v): (Option<String>, Option<String>) = CURCC.with(|r| {
         r.borrow()
             .as_ref()
-            .map(|cc| {
-                (
-                    cc.prefix.clone().unwrap_or_default(),
-                    cc.suffix.clone().unwrap_or_default(),
-                )
-            })
-            .unwrap_or_default()
+            .map(|cc| (cc.prefix.clone(), cc.suffix.clone()))
+            .unwrap_or((None, None))
     });
     // c:2054-2055 — path prefix/suffix only travel with real filenames.
     let lppre_v = if isfile != 0 {
@@ -2153,13 +2153,13 @@ pub(crate) fn addmatch(s: &str, t: Option<&str>) {
         &ipre_v,           // ipre
         &ripre_v,          // ripre
         &isuf_v,           // isuf
-        &pre_v,            // pre  — curcc->prefix
+        pre_v.as_deref(),  // pre  — curcc->prefix (NULL-able, c:2052)
         &prpre_v,          // prpre
         &lppre_v,          // ppre — path prefix (files only)
         None,              // pline
         &lpsuf_v,          // psuf — path suffix (files only)
         None,              // sline
-        &suf_v,            // suf  — curcc->suffix
+        suf_v.as_deref(),  // suf  — curcc->suffix (NULL-able, c:2056)
         mflags_v | isfile, // c:2057 flags
         isexact,
     );

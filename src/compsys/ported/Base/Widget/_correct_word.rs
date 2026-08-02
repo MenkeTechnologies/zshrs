@@ -25,6 +25,7 @@ use crate::ported::params::{getsparam, setsparam};
 /// `_correct_word` — front-end widget for spell-correction
 /// completion via `_main_complete _correct`.
 pub fn _correct_word() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_correct_word");
     let saved = getsparam("curcontext").unwrap_or_default();
     let new_ctx = if saved.is_empty() {
         "correct-word:::".to_string()

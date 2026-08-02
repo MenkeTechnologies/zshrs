@@ -52,6 +52,7 @@ const LINUX: &[&str] = &[
 
 /// `_ld_debug` — complete `LD_DEBUG` capability keywords (comma-separated).
 pub fn _ld_debug(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ld_debug");
     // sh:5-37 — build the value list, OSTYPE-dependent.
     let mut vals: Vec<String> = BASE.iter().map(|s| s.to_string()).collect();
     let ostype = getsparam("OSTYPE").unwrap_or_default();

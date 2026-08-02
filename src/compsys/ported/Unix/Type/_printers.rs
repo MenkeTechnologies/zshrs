@@ -186,6 +186,7 @@ fn add_ypcat_names(cache: &mut Vec<String>) {
 
 /// `_printers` — complete printer / print-queue names.
 pub fn _printers(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_printers");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let pctx = format!(":completion:{}:printers", curcontext);
 

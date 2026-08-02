@@ -37,6 +37,7 @@ fn make_ops() -> options {
 
 /// `_expand` — substitution/glob expansion completer.
 pub fn _expand() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_expand");
     if getiparam("_matcher_num") > 1 {
         return 1;
     }

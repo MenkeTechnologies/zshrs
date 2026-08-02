@@ -11,6 +11,7 @@ use crate::compsys::ported::_message::_message;
 
 /// `_nothing` — emit a message that the command takes no args.
 pub fn _nothing() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_nothing");
     _message(&["no argument or option".to_string()])
 }
 

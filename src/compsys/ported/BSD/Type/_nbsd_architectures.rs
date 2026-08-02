@@ -90,6 +90,7 @@ const ARCHITECTURES: &[&str] = &[
 
 /// `_nbsd_architectures` — offer the list of NetBSD MACHINE_ARCH values.
 pub fn _nbsd_architectures(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_nbsd_architectures");
     // sh:5  _description architectures expl 'architecture'
     let _ = _description(&[
         "architectures".to_string(),

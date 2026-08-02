@@ -85,6 +85,7 @@ fn is_file_test_op(prev: &str) -> bool {
 /// previous word to decide between options, files, fds, params,
 /// and the test-operator catalogs.
 pub fn _condition() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_condition");
     let words = getaparam("words").unwrap_or_default();
     let current = getiparam("CURRENT") as usize;
     let prev = if current >= 2 && current - 1 <= words.len() {

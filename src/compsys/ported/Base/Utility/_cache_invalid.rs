@@ -27,6 +27,7 @@ use crate::ported::params::getsparam;
 /// `_cache_invalid` — query the cache-policy hook for tag `$1`.
 /// Returns 0 (cache stale) or 1 (cache fresh / disabled / no policy).
 pub fn _cache_invalid(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_cache_invalid");
     // sh:6
     let cache_ident = args.first().cloned().unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();

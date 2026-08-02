@@ -38,6 +38,7 @@ fn lsdev_physical_volumes() -> Vec<String> {
 
 /// `_physical_volumes` — complete AIX physical volume (disk) device names.
 pub fn _physical_volumes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_physical_volumes");
     // sh:5-6  _wanted physicalvolumes expl 'physical volume' \
     //           compadd "$@" - $(lsdev -C -c disk -S a -F name)
     let mut w = vec![

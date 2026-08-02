@@ -31,6 +31,7 @@ fn find_dash_x_index(args: &[String]) -> Option<usize> {
 /// message; otherwise fall back to the generic "selection timeout"
 /// values message.
 pub fn _x_selection_timeout(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_selection_timeout");
     // sh:3
     let x = find_dash_x_index(args);
 

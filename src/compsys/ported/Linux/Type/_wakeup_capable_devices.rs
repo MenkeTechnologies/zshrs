@@ -69,6 +69,7 @@ fn parse_devline(devline: &str) -> Option<String> {
 /// `_wakeup_capable_devices` — offer devices reported by `acpitool -w` as
 /// wakeup-capable, annotated with their current wakeup status.
 pub fn _wakeup_capable_devices(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_wakeup_capable_devices");
     let mut ret = 1; // sh:3
 
     // sh:6  _call_program wakeup-capable-devices acpitool -w 2> /dev/null

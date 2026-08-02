@@ -31,6 +31,7 @@ const ARCHITECTURES: &[&str] = &[
 
 /// `_fbsd_architectures` — offer the fixed list of FreeBSD machine architectures.
 pub fn _fbsd_architectures(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_fbsd_architectures");
     // sh:5  _description architectures expl 'architecture'
     let _ = _description(&[
         "architectures".to_string(),

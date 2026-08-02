@@ -20,6 +20,7 @@ use crate::ported::params::getaparam;
 
 /// `_net_interfaces` — complete network interface names (ifup/ifdown).
 pub fn _net_interfaces(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_net_interfaces");
     // sh:6  _find_net_interfaces
     let _ = dispatch_function_call("_find_net_interfaces", &[]);
     let disp = getaparam("net_intf_disp").unwrap_or_default();

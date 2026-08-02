@@ -24,6 +24,7 @@ use crate::compsys::ported::_wanted::_wanted;
 /// `_options_set` — complete names of zsh options that are currently
 /// set. Returns `_wanted`'s exit code.
 pub fn _options_set(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_options_set");
     // sh:9-10
     let mut wanted_argv: Vec<String> = vec![
         "zsh-options".to_string(),

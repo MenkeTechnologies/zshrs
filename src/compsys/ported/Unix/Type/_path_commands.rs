@@ -27,6 +27,7 @@ use crate::compsys::ported::_wanted::_wanted;
 /// `_path_commands` — complete names of external commands from
 /// `$commands` (zsh's PATH cache).
 pub fn _path_commands(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_path_commands");
     // sh:92 (skip extra-verbose branch)
     let mut wanted_argv: Vec<String> = vec![
         "commands".to_string(),

@@ -1429,7 +1429,7 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
     // Suppressed when noerrs is set (e.g. inside `eval` error-
     // checking blocks).
     // c:507 — `noerrs` from exec.c:117 (Rust: exec.rs:122 pub static).
-    let noerrs = crate::ported::exec::noerrs.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    let noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap() != 0;
     let badcshglob = crate::ported::glob::BADCSHGLOB.load(std::sync::atomic::Ordering::Relaxed);
     if noerrs {
         crate::ported::glob::BADCSHGLOB.store(0, std::sync::atomic::Ordering::Relaxed);

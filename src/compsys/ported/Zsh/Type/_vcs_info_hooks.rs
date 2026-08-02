@@ -26,6 +26,7 @@ use crate::ported::zsh_h::{options, MAX_OPS};
 /// the `+vi-` prefix. Returns the `bin_compadd` exit code (0 = matches
 /// added, 1 = not in completion fn or no matches).
 pub fn _vcs_info_hooks(function_names: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_vcs_info_hooks");
     // sh:2  compadd - ${functions[(I)+vi-*]#+vi-}
     //
     // Build argv exactly as the shell would: `-` (the literal positional

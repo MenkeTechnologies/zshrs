@@ -44,6 +44,7 @@ fn compset(argv: Vec<String>) -> i32 {
 /// `_user_at_host` — complete `user@host` combinations, from the
 /// `users-hosts` style for the `accounts` tag (or a `-t tag` override).
 pub fn _user_at_host(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_user_at_host");
     // sh:8  tag=accounts
     let mut tag = "accounts".to_string();
     let mut rest: Vec<String> = args.to_vec();

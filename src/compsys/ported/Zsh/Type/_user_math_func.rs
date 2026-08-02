@@ -27,6 +27,7 @@ use crate::ported::zsh_h::MFF_USERFUNC;
 /// `_user_math_func` — complete user-defined math function names
 /// (those added via `functions -M`).
 pub fn _user_math_func(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_user_math_func");
     // sh:6 — collect names of user-flagged math functions.
     let funcs: Vec<String> = MATHFUNCS
         .lock()

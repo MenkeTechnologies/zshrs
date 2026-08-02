@@ -103,6 +103,7 @@ fn dir_abbrev(val: &str) -> String {
 
 /// `_subscript` — `-subscript-` context: complete inside `${var[…]}`.
 pub fn _subscript(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_subscript");
     // sh:5  [[ $ISUFFIX = *\]* ]] || osuf=\]
     let isuffix = getsparam("ISUFFIX").unwrap_or_default();
     let mut osuf: String = if isuffix.contains(']') {

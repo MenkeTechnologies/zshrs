@@ -62,6 +62,7 @@ fn make_ops() -> options {
 /// `compstate[pattern_match]` set so the user's input can include
 /// glob patterns.
 pub fn _match() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_match");
     let opm = get_compstate_str("pattern_match").unwrap_or_default();
     let oms = getsparam("_old_match_string").unwrap_or_default();
     let _ocsi = get_compstate_str("insert").unwrap_or_default();

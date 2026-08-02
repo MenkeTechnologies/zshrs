@@ -417,6 +417,7 @@ fn call_email_plugin(
 /// backends. `-c` = bare `user@host`; `-n plugin` = that plugin's
 /// aliases; `-s sep` = a separator-delimited list.
 pub fn _email_addresses(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_email_addresses");
     // sh:96-118 — RFC-822 pattern language, built verbatim.
     let __specialx = "][()<>@,;:\\\".";
     let __spacex = " \t"; // Space, tab

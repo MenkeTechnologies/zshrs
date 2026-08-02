@@ -48,6 +48,7 @@ fn compset(argv: &[&str]) -> i32 {
 /// `_file_modes` — complete symbolic / numeric file mode specs
 /// (`chmod`-style: `u+rwx`, `0755`, …).
 pub fn _file_modes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_modes");
     // sh:8-17 — privilege letters.
     let mut privs: Vec<String> = [
         "r[read]",

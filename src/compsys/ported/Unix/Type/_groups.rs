@@ -40,6 +40,7 @@ fn parse_dscacheutil(out: &str) -> Vec<String> {
 /// `_groups` — complete user group names (getent / dscacheutil /
 /// `/etc/group`), cached in `$_cache_groups`.
 pub fn _groups(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_groups");
     // sh:5
     if _tags(&["groups".to_string()]) != 0 {
         return 1;

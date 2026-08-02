@@ -44,6 +44,7 @@ use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 /// `_prefix` — try the next completer chain after ignoring the
 /// current `$SUFFIX`. Returns 0 on first successful completer.
 pub fn _prefix() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_prefix");
     // sh:5
     let suffix = getsparam("SUFFIX").unwrap_or_default();
     if getiparam("_matcher_num") > 1 || suffix.is_empty() {

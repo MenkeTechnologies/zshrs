@@ -97,6 +97,7 @@ fn strip_after_last_colon(s: &str) -> String {
 
 /// `_jails` — complete FreeBSD jail identifiers via `jls`.
 pub fn _jails(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_jails");
     // sh:11
     let (addhost, param_opt, rest) = zparse_0_o(args);
     // sh:12 — ${param[2]:-name}: default when unset OR empty.

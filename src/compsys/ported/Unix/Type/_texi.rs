@@ -16,6 +16,7 @@ use crate::ported::params::getaparam;
 
 /// `_texi` — complete texinfo source files (`*.texinfo` / `*.texi`).
 pub fn _texi(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_texi");
     // sh:5
     let _ = _description(&[
         "files".to_string(),

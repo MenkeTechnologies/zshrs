@@ -30,6 +30,7 @@ use crate::ported::zle::compcore::get_compstate_str;
 /// `_cmdambivalent` — choose between cmdstring/command-names/normal
 /// completion based on cursor position and quoting state.
 pub fn _cmdambivalent() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_cmdambivalent");
     let current: usize = getsparam("CURRENT")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);

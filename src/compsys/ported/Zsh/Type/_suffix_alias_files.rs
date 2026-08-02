@@ -30,6 +30,7 @@ use crate::ported::zsh_h::{isset, AUTOCD};
 /// `_suffix_alias_files` — complete file paths that match a
 /// suffix-alias suffix.
 pub fn _suffix_alias_files(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_suffix_alias_files");
     // saliases is stored as a flat array of key/value pairs in our
     //   port. Extract every other element (the keys).
     let saliases = getaparam("saliases").unwrap_or_default();

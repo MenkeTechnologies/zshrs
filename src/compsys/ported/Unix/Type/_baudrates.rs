@@ -78,6 +78,7 @@ fn zparse_ulf(args: &[String]) -> (Option<String>, Option<String>, Option<String
 /// `_baudrates` — offer a (style-configurable, range/predicate-filtered)
 /// list of serial baud rates.
 pub fn _baudrates(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_baudrates");
     let curcontext = crate::ported::params::getsparam("curcontext").unwrap_or_default();
     let base = format!(":completion:{}:", curcontext);
     let bctx = format!(":completion:{}:baud-rates", curcontext);

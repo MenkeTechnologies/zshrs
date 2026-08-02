@@ -31,6 +31,7 @@ fn find_dash_x_index(args: &[String]) -> Option<usize> {
 /// message; otherwise fall back to the generic "geometry" values
 /// message.
 pub fn _x_geometry(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_geometry");
     // sh:3
     let x = find_dash_x_index(args);
 

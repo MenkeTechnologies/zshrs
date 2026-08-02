@@ -45,6 +45,7 @@ fn make_ops() -> options {
 /// `_file_descriptors` — complete numeric file-descriptor names
 /// (always 0/1/2 + any fd ≥ 3 currently open for this process).
 pub fn _file_descriptors(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_descriptors");
     // sh:6-7 — scan /dev/fd for fds ≥ 3
     let mut extra: Vec<i64> = Vec::new();
     if let Ok(entries) = fs::read_dir("/dev/fd") {

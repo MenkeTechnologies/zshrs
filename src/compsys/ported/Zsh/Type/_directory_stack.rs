@@ -41,6 +41,7 @@ use crate::ported::zsh_h::{isset, PUSHDMINUS};
 /// `_directory_stack` — `popd` argument completion: numbers
 /// indexing into `$dirstack`.
 pub fn _directory_stack(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_directory_stack");
     // sh:14
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let first_char = prefix.chars().next().unwrap_or(' ');

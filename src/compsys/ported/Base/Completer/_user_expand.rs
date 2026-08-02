@@ -37,6 +37,7 @@ fn make_ops() -> options {
 
 /// `_user_expand` — completer that applies user-defined expansions.
 pub fn _user_expand() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_user_expand");
     if getiparam("_matcher_num") > 1 {
         return 1;
     }

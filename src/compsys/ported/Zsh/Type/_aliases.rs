@@ -72,6 +72,7 @@ fn run_zparseopts_aliases(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// categories per `-s` flag (`r`=regular, `g`=global, `s`=suffix,
 /// upper variants for disabled).
 pub fn _aliases(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_aliases");
     // sh:5-7
     let (opts, sel_arr) = run_zparseopts_aliases(args);
     // `sel_arr` is `[-s, <value>]` when -s given; the value is at index 1.

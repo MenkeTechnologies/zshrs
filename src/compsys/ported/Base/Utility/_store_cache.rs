@@ -49,6 +49,7 @@ use std::path::Path;
 
 /// `_store_cache` — write the named vars to disk under cache path.
 pub fn _store_cache(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_store_cache");
     let cache_ident = args.first().cloned().unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);

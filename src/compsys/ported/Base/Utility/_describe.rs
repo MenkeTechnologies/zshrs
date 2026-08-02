@@ -136,6 +136,7 @@ fn resolve_array_arg(arg: &str) -> Vec<String> {
 ///
 /// Signature preserved for callers (`_arguments`, `_alternative`).
 pub fn _describe(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_describe");
     // sh:12-17 — `local _opt _expl _tmpm _tmpd _mlen _noprefix`,
     // `local _type=values _descr _ret=1 _showd _nm _hide _args _grp
     // _sep`, `local csl=… csl2`, `local _oargv _argv _new _strs _mats

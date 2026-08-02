@@ -395,6 +395,7 @@ pub fn zparse_pathfiles(args: &[String]) -> Parsed {
 
 /// `_path_files` — file/directory completion entry point.
 pub fn _path_files(argv: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_path_files");
     // sh:3 — match/mbegin/mend are populated by _have_glob_qual.
     let curcontext = get_str("curcontext");
     let ctx = format!(":completion:{}:", curcontext);

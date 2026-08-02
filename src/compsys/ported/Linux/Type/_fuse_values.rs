@@ -109,6 +109,7 @@ fn parse_opts_and_cvals(args: &[String]) -> (Vec<String>, Vec<String>, Option<St
 /// `_fuse_values` — complete FUSE mount options as a comma-separated value
 /// list (`_values -s , -S = …`).
 pub fn _fuse_values(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_fuse_values");
     // sh:6-23
     let (opts, mut rest, cvalsvar) = parse_opts_and_cvals(args);
 

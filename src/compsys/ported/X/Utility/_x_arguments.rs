@@ -121,6 +121,7 @@ fn nmatches() -> i64 {
 /// `_x_arguments` — `_arguments` wrapper adding the standard X toolkit
 /// `-display` / `-geometry` option specs.
 pub fn _x_arguments(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_arguments");
     // sh:3 — nm=$compstate[nmatches] captured up front.
     let nm = nmatches();
 

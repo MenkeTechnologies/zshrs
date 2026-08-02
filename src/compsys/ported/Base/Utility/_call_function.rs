@@ -32,6 +32,7 @@ use crate::ported::zle::compcore::set_compstate_str;
 /// of the args, storing its exit status under the param named by
 /// `$1`. Returns 0 if invoked, 1 if the named fn doesn't exist.
 pub fn _call_function(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_call_function");
     // sh:17  $1 is the return-storage param name (or `-`/empty = no store)
     let result_name = args.first().cloned().unwrap_or_default();
     let store_into: Option<String> = if result_name.is_empty() || result_name == "-" {

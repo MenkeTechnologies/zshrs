@@ -69,6 +69,7 @@ fn lastcomp_get(key: &str) -> Option<String> {
 
 /// `_oldlist` — reuse the previous completion list when possible.
 pub fn _oldlist() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_oldlist");
     // sh:3
     if getiparam("_matcher_num") > 1 {
         return 1;

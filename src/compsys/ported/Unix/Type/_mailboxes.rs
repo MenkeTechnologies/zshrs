@@ -430,6 +430,7 @@ fn mua_mailboxes(args: &[String]) -> i32 {
 
 /// `_mailboxes` — complete mailbox specifications / files for mail clients.
 pub fn _mailboxes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_mailboxes");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let mut ret = 1;
 

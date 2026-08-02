@@ -79,6 +79,7 @@ fn dict_client_args() -> Vec<String> {
 
 /// `_dict_words` — complete words via a running `dict` server (`dict -m`).
 pub fn _dict_words(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dict_words");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let wctx = format!(":completion:{}:words", curcontext);
 

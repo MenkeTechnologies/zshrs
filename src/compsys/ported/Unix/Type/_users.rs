@@ -21,6 +21,7 @@ use crate::ported::params::{getsparam, setaparam};
 /// `_users` — complete user names, from the `users` style if set, else
 /// from the keys of the `userdirs` association.
 pub fn _users(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_users");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:users", curcontext);
 

@@ -259,6 +259,7 @@ fn _canonical_paths_add_paths(
 /// `_canonical_paths` — complete file paths, also offering
 /// same-file completions (relative↔absolute, symlink-resolved).
 pub fn _canonical_paths(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_canonical_paths");
     // sh:63  zparseopts -D -a __gopts M+: J+: V+: o+: 1 2 n F: x+: X+: A:=__opts N=__opts
     let src = "__compsys_argv";
     setaparam(src, args.to_vec());

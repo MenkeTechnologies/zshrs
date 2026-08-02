@@ -32,6 +32,7 @@ use crate::ported::params::{getsparam, setsparam, unsetparam};
 /// `_generic` — generic completion-widget front-end that derives
 /// `$curcontext` from `$WIDGET` and runs `_main_complete`.
 pub fn _generic(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_generic");
     // sh:3-8  trace-widget hook
     let trace_widget = getsparam("ZSH_TRACE_GENERIC_WIDGET").unwrap_or_default();
     if !trace_widget.is_empty() {

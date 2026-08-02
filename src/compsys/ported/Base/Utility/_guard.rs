@@ -75,6 +75,7 @@ fn run_zparseopts_guard(args: &[String]) -> Vec<String> {
 /// `_guard` — accept completion iff `$PREFIX$SUFFIX` matches the
 /// supplied pattern; returns 0 only when something is typed.
 pub fn _guard(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_guard");
     // sh:5
     let mut argv = run_zparseopts_guard(args);
 

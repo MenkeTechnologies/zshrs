@@ -14,6 +14,7 @@ use crate::ported::params::{getsparam, setaparam};
 
 /// `_global_tags` — complete GNU GLOBAL tags via `global --completion`.
 pub fn _global_tags(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_global_tags");
     // sh:5 — run the helper, split its stdout into words.
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let _ = _call_program(&[

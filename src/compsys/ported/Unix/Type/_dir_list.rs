@@ -46,6 +46,7 @@ fn make_ops() -> options {
 /// list (e.g. `$PATH`). `-s <sep>` sets the separator (default `:`);
 /// `-S` makes the separator a suffix.
 pub fn _dir_list(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dir_list");
     let mut sep = ":".to_string();
     let mut dosuf = false;
     let mut argv: Vec<String> = args.to_vec();

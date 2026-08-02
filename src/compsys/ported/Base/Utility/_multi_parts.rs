@@ -217,6 +217,7 @@ fn resolve_array(spec: &str) -> Vec<String> {
 /// `_multi_parts` — complete each `sep`-delimited segment of a
 /// path-like string from a shared array of complete strings.
 pub fn _multi_parts(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_multi_parts");
     let comp_correct = getsparam("_comp_correct").unwrap_or_default();
 
     // sh:16-18  zparseopts

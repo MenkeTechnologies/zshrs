@@ -88,6 +88,7 @@ fn lastcomp_val(key: &str) -> String {
 
 /// `_next_tags` — bind `\C-xn` to "show me the next tag set".
 pub fn _next_tags() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_next_tags");
     // sh:8  local ins ops="$PREFIX$SUFFIX"
     let mut prefix = getsparam("PREFIX").unwrap_or_default();
     let mut suffix = getsparam("SUFFIX").unwrap_or_default();

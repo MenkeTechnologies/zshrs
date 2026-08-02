@@ -19,6 +19,7 @@ use crate::ported::zsh_h::{isset, AUTOCD};
 /// `_autocd` — `-command-` context completion: command names + `_cd`
 /// when the `autocd` option is set.
 pub fn _autocd() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_autocd");
     // sh:3 — `_command_names`. Route through the router (NOT a direct
     // `_command_names(&[])` call) so an override — a plugin-registered one
     // (ABI v4, `zmodload -R`) or the user's own `$fpath` copy — wins over

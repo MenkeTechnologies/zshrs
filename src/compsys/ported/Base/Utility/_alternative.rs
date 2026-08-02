@@ -63,6 +63,7 @@ fn make_ops() -> options {
 /// `_alternative` — try each `tag:descr:action` spec until one
 /// produces matches. Returns 0 on first success, 1 if none match.
 pub fn _alternative(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_alternative");
     // sh:5
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
     let mut subopts: Vec<String> = Vec::new();

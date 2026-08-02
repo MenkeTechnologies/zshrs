@@ -16,6 +16,7 @@ use crate::ported::exec::dispatch_function_call;
 /// `_command` — `command` builtin completion: pure `_arguments`
 /// dispatch (sibling shell fn). Returns 1 without an executor.
 pub fn _command() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_command");
     dispatch_function_call(
         "_arguments",
         &[

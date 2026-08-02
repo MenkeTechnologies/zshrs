@@ -19,6 +19,7 @@ use crate::compsys::ported::_wanted::_wanted;
 /// `_options_unset` — complete names of zsh options currently unset.
 /// Returns `_wanted`'s exit code.
 pub fn _options_unset(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_options_unset");
     // sh:9-10
     let mut wanted_argv: Vec<String> = vec![
         "zsh-options".to_string(),

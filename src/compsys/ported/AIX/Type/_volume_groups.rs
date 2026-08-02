@@ -13,6 +13,7 @@ use crate::compsys::ported::_wanted::_wanted;
 
 /// `_volume_groups` — complete AIX LVM volume-group names (`lsvg`).
 pub fn _volume_groups(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_volume_groups");
     // sh:5  $(lsvg)
     let groups: Vec<String> = std::process::Command::new("lsvg")
         .output()

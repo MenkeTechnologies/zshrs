@@ -208,6 +208,14 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     hasunmatched.store(0, Ordering::Relaxed); // c:334
     minmlen.store(1_000_000, Ordering::Relaxed); // c:335
     maxmlen.store(-1, Ordering::Relaxed); // c:336
+                                          // c:337 — `compignored = 0`. This line was absent, so the counter
+                                          // behind `$compstate[ignored]` (complete.c:41, exported through the
+                                          // compstate table at complete.c:1300) accumulated across every
+                                          // completion of the session instead of counting only THIS round's
+                                          // ignored-pattern rejections. `_ignored` gates its whole body on
+                                          // `[[ … || $compstate[ignored] -eq 0 ]] && return 1`, so a stale
+                                          // non-zero made it run on rounds that ignored nothing.
+    crate::ported::zle::complete::COMPIGNORED.store(0, Ordering::Relaxed); // c:337
     nmessages.store(0, Ordering::Relaxed); // c:338
     hasallmatch.store(0, Ordering::Relaxed); // c:339
 
@@ -493,13 +501,43 @@ pub fn before_complete(lst: &mut i32) -> i32 {
         return 1; // c:478
     }
 
-    // c:489-490 — `if ((fromcomp & FC_INWORD) && (zlecs = lastend) > zlell)
+    // c:488-489 — `if ((fromcomp & FC_INWORD) && (zlecs = lastend) > zlell)
     //              zlecs = zlell;` — re-entering an in-word completion
-    //              restores cursor to lastend (clamped to zlell).
+    //              restores the cursor to `lastend` (clamped to `zlell`).
+    //
+    // KNOWN DIVERGENCE, deliberately not made literal — see below.
+    //
+    // C names `zlecs`/`zlell` here, i.e. the INTERACTIVE editor buffer, and
+    // its comment at c:483-487 says why ("Currently this hook runs before
+    // metafication. This is the only hook of the three defined here of which
+    // that is true."). It can do that because C has ONE line buffer: the
+    // `lastend` that `do_single` records (`lastend = zlemetacs`,
+    // compresult.c:479/672) indexes the same characters `zlecs` does.
+    //
+    // This port splits that buffer — `zle_main::ZLELINE`/`ZLECS` is the
+    // editor's, `compcore::ZLELINE` + `ZLEMETALINE`/`ZLEMETACS` are
+    // completion's — and `lastend` is written in the COMPLETION buffer's
+    // coordinates. Storing it into `zle_main::ZLECS` was measured to break
+    // the second TAB of a menu-select round outright: with the store
+    // enabled, `docomplete` bailed before `do_completion` ever ran (no
+    // `callcompfunc` reached on TAB 2), and `cd /<TAB><TAB>s` lost the whole
+    // interactive menu. `lastend` is simply not a valid editor-cursor value
+    // here.
+    //
+    // So the store stays on `ZLEMETACS`, which is where the port has always
+    // put it. That is not what C writes, but it is inert (docomplete's
+    // `metafy_line()` at zle_tricky.rs:815 recomputes it from the editor
+    // buffer straight afterwards) rather than actively wrong.
+    //
+    // Honouring c:488 literally requires `lastend` to be maintained in
+    // editor-buffer coordinates — i.e. `compresult`'s two `lastend =
+    // zlemetacs` assignments need an editor-space counterpart, or the port
+    // needs to stop splitting the line buffer. Neither is a compcore.rs
+    // change; until one lands, this line cannot be ported faithfully.
     if (fromcomp.load(Ordering::Relaxed) & crate::ported::zle::comp_h::FC_INWORD) != 0 {
-        let le = lastend.load(Ordering::Relaxed);
+        let le = lastend.load(Ordering::Relaxed); // c:488 `zlecs = lastend`
         let ll = ZLEMETALL.load(Ordering::Relaxed);
-        let new_cs = if le > ll { ll } else { le };
+        let new_cs = if le > ll { ll } else { le }; // c:489 `zlecs = zlell`
         ZLEMETACS.store(new_cs, Ordering::Relaxed);
     }
 
@@ -832,13 +870,37 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         },
     );
 
-    // c:740-749 — `$compstate[list]` — set from `complist` global.
-    let cl_value = COMPLIST
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    set_compstate_str("list", &cl_value); // c:740
+    // c:753-765 — `$compstate[list]` is REBUILT here from `uselist`, it is
+    // not the value do_completion left in `complist` at c:327-330:
+    //
+    //     switch (uselist) { case 0: ""; 1: "list"; 2: "autolist";
+    //                        3: "ambiguous"; }
+    //     if (isset(LISTPACKED))   complist = dyncat(complist, " packed");
+    //     if (isset(LISTROWSFIRST)) complist = dyncat(complist, " rows");
+    //
+    // The port published only the do_completion half ("packed"/"rows"), so
+    // the leading state word was never there: `_main_complete` and friends
+    // test `$compstate[list]` for `list`/`autolist`/`ambiguous` and always
+    // read them as absent. Write the rebuilt value to BOTH the param and the
+    // `complist` global, which is one storage in C (gsu-bound) and is what
+    // `addmatch` reads at c:2048-2050 for CMF_PACKED/CMF_ROWS.
+    let mut cl_value = match uselist.load(Ordering::Relaxed) {
+        0 => String::new(),      // c:755
+        1 => "list".to_string(), // c:756
+        2 => "autolist".to_string(), // c:757
+        3 => "ambiguous".to_string(), // c:758
+        _ => String::new(),
+    };
+    if opt_isset("LISTPACKED") != 0 {
+        cl_value.push_str(" packed"); // c:761
+    }
+    if opt_isset("LISTROWSFIRST") != 0 {
+        cl_value.push_str(" rows"); // c:763
+    }
+    if let Ok(mut g) = COMPLIST.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = cl_value.clone(); // c:765
+    }
+    set_compstate_str("list", &cl_value); // c:765
 
     // c:767-782 — `$compstate[insert]` per (useline, usemenu).
     let ul = useline.load(Ordering::Relaxed);
@@ -909,7 +971,7 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         },
     );
 
-    // c:800-803 — `$compstate[to_end]` per movetoend.
+    // c:791-794 — `$compstate[to_end]` per movetoend.
     set_compstate_str(
         "to_end",
         if movetoend.load(Ordering::Relaxed) == 1 {
@@ -918,6 +980,47 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             "match"
         },
     );
+
+    // c:797-812 — `$compstate[old_list]` / `$compstate[old_insert]`:
+    //
+    //     if (hasoldlist && lastpermmnum) {
+    //         compoldlist = listshown ? "shown" : "yes";
+    //         if (minfo.cur) { sprintf(buf,"%d",(*minfo.cur)->gnum);
+    //                          compoldins = buf; }
+    //         else compoldins = "";
+    //     } else compoldlist = compoldins = "";
+    //
+    // Both publishes were missing, so a completer could never tell that a
+    // previous list is still around. `_menu` and `_history_complete_word`
+    // read `$compstate[old_list]` and write back "keep" to reuse it; with
+    // the entry value absent (and the c:923-925 readback below equally
+    // absent) the keep round-trip could not work at all.
+    let hasoldlist_v = hasoldlist.load(Ordering::Relaxed);
+    let lastpermmnum_v = lastpermmnum.load(Ordering::Relaxed);
+    if hasoldlist_v != 0 && lastpermmnum_v != 0 {
+        // c:797
+        set_compstate_str(
+            "old_list",
+            if LISTSHOWN.load(Ordering::Relaxed) != 0 {
+                "shown" // c:799
+            } else {
+                "yes" // c:801
+            },
+        );
+        // c:803-808 — `compoldins = minfo.cur ? (*minfo.cur)->gnum : ""`.
+        let cur_gnum: Option<i32> = MINFO
+            .get()
+            .and_then(|m| m.lock().ok())
+            .and_then(|m| m.cur.as_ref().map(|c| c.gnum));
+        match cur_gnum {
+            Some(g) => set_compstate_str("old_insert", &g.to_string()), // c:804-805
+            None => set_compstate_str("old_insert", ""),                // c:808
+        }
+    } else {
+        // c:810
+        set_compstate_str("old_list", "");
+        set_compstate_str("old_insert", "");
+    }
 
     // c:838 — `incompfunc = 1` before invoking the user fn.
     INCOMPFUNC.store(1, Ordering::Relaxed); // c:838
@@ -955,19 +1058,51 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     //     prologue/epilogue runs exactly once around the body.
     let largs_for_body = largs.clone();
     let fn_name_owned = fn_name.to_string();
+
+    // c:843-925 reads `complist`/`compinsert`/`compexact`/`comptoend`/
+    // `compoldlist`/`compoldins` AFTER `endparamscope()` (c:838). It can do
+    // that because in C those are plain globals (complete.c:36-44) and the
+    // `$compstate` entries are only gsu VIEWS onto them (complete.c:1280-1300
+    // `VAL(compinsert)` …) — tearing down the parameter cannot touch the
+    // value.
+    //
+    // This port has no gsu binding: the values live in the `compstate`
+    // parameter itself, which `callcompfunc` stamps PM_SPECIAL|PM_REMOVABLE
+    // at `locallevel + 1` (the c:816-817 block above), so `doshfunc`'s
+    // `endparamscope()` DELETES it. Measured with a tracing probe on the
+    // `cd /<TAB>` round: every key read back `None` after the call — `list`,
+    // `insert`, `exact` and `to_end` alike.
+    //
+    // So snapshot the hash at the END OF THE BODY — still inside the
+    // function scope, and after the completion function's last write, which
+    // is exactly the state C's globals hold when it reads them at c:843.
+    let compstate_end: std::sync::Arc<Mutex<Option<indexmap::IndexMap<String, String>>>> =
+        std::sync::Arc::new(Mutex::new(None));
+    let compstate_end_body = std::sync::Arc::clone(&compstate_end);
+
     let body_runner = move || -> i32 {
         // c:6042 — `runshfunc(prog, wrappers, name)`. zshrs runs the
         // body via either the Rust compsys port (direct fn call) or
         // the fusevm Chunk dispatch (via exec accessors).
-        if let Some(rc) =
+        let rc = if let Some(rc) =
             crate::compsys::router::dispatch_compsys(&fn_name_owned, &largs_for_body[1..])
         {
             // Plugin override (ABI v4) wins over the built-in Rust port.
             // C convention: largs[0] = fn name, [1..] = real argv.
-            return rc;
+            rc
+        } else {
+            crate::ported::exec::dispatch_function_call(&fn_name_owned, &largs_for_body[1..])
+                .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
+        };
+        // Capture `$compstate` before the enclosing doshfunc scope ends.
+        if let Ok(tab) = paramtab_hashed_storage().lock() {
+            if let Some(h) = tab.get("compstate") {
+                if let Ok(mut g) = compstate_end_body.lock() {
+                    *g = Some(h.clone());
+                }
+            }
         }
-        crate::ported::exec::dispatch_function_call(&fn_name_owned, &largs_for_body[1..])
-            .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
+        rc
     };
 
     // Look up the real shfunc; if missing we still want doshfunc's
@@ -1094,45 +1229,237 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         oxt != 0,
     );
 
-    // c:909-912 — unwind: read `$compstate[insert]` etc. back into
-    // the compcore globals so do_completion sees the user fn's
-    // mutations.
-    // Read `$compstate[insert]` via the compstate hash (the canonical
-    // home), NOT the flat `compstate[insert]` bracketed param: the latter
-    // reads empty here because the completion fn's `compstate[insert]=menu`
-    // write lands in the hash storage while the flat param is scoped to the
-    // fn. Reading the flat param missed the menu decision entirely, so
-    // USEMENU never became 1 and menu-completion (→ menucmp → the
-    // menu_start hook → domenuselect) never started.
-    let post_insert = get_compstate_str("insert").unwrap_or_default();
-    if !post_insert.is_empty() {
-        // c:861-864 — `else if (!strcmp(compinsert, "unambig") ||
-        //                       !strcmp(compinsert, "unambiguous") ||
-        //                       !strcmp(compinsert, "automenu-unambiguous"))
-        //                  useline = 1, usemenu = 0;`
-        //
-        // C compares these three EXACTLY, and does so *before* the
-        // `strpfx("menu", …)` / `strpfx("auto", …)` arms at c:885-888.
-        // The ordering became load-bearing once the entry value grew an
-        // "automenu" prefix (c:769-772 above): a bare substring test sees
-        // "automenu" inside "automenu-unambiguous" and would pick
-        // usemenu = 2, starting menu completion on the very FIRST TAB
-        // instead of inserting the unambiguous prefix and only arming the
-        // next TAB — the arming is already carried by `startauto`, set
-        // from AUTO_MENU at c:331 (line 193 in this file).
-        if post_insert == "unambig"
-            || post_insert == "unambiguous"
-            || post_insert == "automenu-unambiguous"
+    // c:839-841 — `lastcmd = 0; incompfunc = icf; startauto = 0;`.
+    // `startauto` is cleared BEFORE the c:908 recompute below; without the
+    // clear the AUTO_MENU value do_completion stored at c:331 survived any
+    // completer that emptied `$compstate[insert]`.
+    startauto.store(0, Ordering::Relaxed); // c:841
+
+    // c:843-925 — unwind: read the compstate values the completion function
+    // may have rewritten back into the compcore globals. In C these ARE the
+    // globals (the compstate entries are gsu-bound to `complist`,
+    // `compinsert`, `compexact`, `comptoend`, `compoldlist`, `compoldins`),
+    // so this is a plain read of a mutated variable; here it is a read of
+    // `$compstate[…]`.
+    //
+    // Only the `usemenu` third of the c:857-907 arm existed before. Every
+    // other assignment in the block — `uselist`, `forcelist`, `onlyexpl`,
+    // `useline`, `insmnum`, `insspace`, `startauto`, `useexact`,
+    // `movetoend`, `oldlist`, `oldins` — was simply absent, so a completion
+    // function could not influence any of them: `compstate[list]=...force`
+    // never forced a list, `_menu`'s `compstate[old_list]=keep` never kept
+    // one, `compstate[insert]=2` never selected the 2nd match, and
+    // `compstate[insert]=''` never suppressed insertion.
+    //
+    // Read `$compstate[…]` via the compstate hash (the canonical home), NOT
+    // the flat `compstate[KEY]` bracketed param: the latter reads empty here
+    // because the completion fn's write lands in the hash storage while the
+    // flat param is scoped to the fn.
+
+    // Read one `$compstate` entry as C reads its backing global at c:843+:
+    // the end-of-body snapshot first, then whatever is still live.
+    //
+    // `None` means the port HAS NO VALUE for this entry — a state C cannot
+    // be in, because `callcompfunc` itself assigned every one of these
+    // globals before the call (c:753-812). Applying C's "NULL" arm to it
+    // would be a mistranslation of "absent" as "empty", and that is exactly
+    // what regressed `menu select`: the `insert`/`list` entries read back
+    // absent, so `useline` and `uselist` were both driven to 0 and
+    // `do_completion` took its c:425 else-branch (revert the line, show
+    // nothing) instead of listing. On `None` the globals keep the values
+    // this function published, which is the round-trip C would have seen.
+    let post = |key: &str| -> Option<String> {
+        if let Some(v) = compstate_end
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|h| h.get(key).cloned()))
         {
-            USEMENU.store(0, Ordering::Relaxed); // c:864 `usemenu = 0`
-        } else if post_insert.contains("automenu") {
-            USEMENU.store(2, Ordering::Relaxed);
-        } else if post_insert.contains("menu") {
-            USEMENU.store(1, Ordering::Relaxed);
+            return Some(v);
+        }
+        get_compstate_str(key)
+    };
+
+    // c:843-855 — uselist / forcelist / onlyexpl from `complist`.
+    if let Some(post_list) = post("list") {
+        uselist.store(
+            if post_list.starts_with("list") {
+                1 // c:846
+            } else if post_list.starts_with("auto") {
+                2 // c:848
+            } else if post_list.starts_with("ambig") {
+                3 // c:850
+            } else {
+                0 // c:844 / c:852
+            },
+            Ordering::Relaxed,
+        );
+        forcelist.store(
+            if post_list.contains("force") { 1 } else { 0 }, // c:853
+            Ordering::Relaxed,
+        );
+        onlyexpl.store(
+            (if post_list.contains("expl") { 1 } else { 0 })      // c:854
+                | (if post_list.contains("messages") { 2 } else { 0 }), // c:855
+            Ordering::Relaxed,
+        );
+        // Keep the `complist` global in step with the param — one storage in C.
+        if let Ok(mut g) = COMPLIST.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = post_list.clone();
         }
     }
 
-    // c:914 — incompfunc = icf. Restore.
+    // c:857-907 — useline / usemenu / insmnum / insspace from `compinsert`.
+    let post_insert = match post("insert") {
+        Some(v) => v,
+        // Absent: leave useline/usemenu/insmnum/insspace as published.
+        None => String::new(),
+    };
+    let have_insert = post("insert").is_some();
+    if !have_insert {
+        // no-op: keep the c:767-782 values
+    } else if post_insert.is_empty() {
+        useline.store(0, Ordering::Relaxed); // c:858
+    } else if post_insert.contains("tab") {
+        useline.store(-1, Ordering::Relaxed); // c:860
+    } else if post_insert == "unambig"
+        || post_insert == "unambiguous"
+        || post_insert == "automenu-unambiguous"
+    {
+        // c:861-864 — C compares these three EXACTLY, and does so *before*
+        // the `strpfx("menu", …)` / `strpfx("auto", …)` arms at c:885-888.
+        // The ordering is load-bearing now that the entry value grew an
+        // "automenu" prefix (c:770): a prefix test would see "auto" and pick
+        // usemenu = 2, starting menu completion on the very FIRST TAB
+        // instead of inserting the unambiguous prefix and only arming the
+        // next TAB — the arming is carried by `startauto` (c:908 below).
+        useline.store(1, Ordering::Relaxed); // c:864
+        USEMENU.store(0, Ordering::Relaxed); // c:864
+    } else if post_insert == "all" {
+        useline.store(2, Ordering::Relaxed); // c:866
+        USEMENU.store(0, Ordering::Relaxed); // c:866
+    } else if post_insert.as_bytes()[0].is_ascii_digit() {
+        // c:867 — `idigit(*compinsert)`: insert the Nth match directly.
+        useline.store(1, Ordering::Relaxed); // c:872
+        USEMENU.store(3, Ordering::Relaxed); // c:872
+        // c:873 — `insmnum = atoi(compinsert)`; inlined (leading digits).
+        insmnum.store(
+            post_insert
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<i32>()
+                .unwrap_or(0),
+            Ordering::Relaxed,
+        ); // c:873
+        insspace.store(
+            if post_insert.ends_with(' ') { 1 } else { 0 }, // c:881
+            Ordering::Relaxed,
+        );
+    } else {
+        if post_insert.starts_with("menu") {
+            // c:885
+            useline.store(1, Ordering::Relaxed); // c:886
+            USEMENU.store(1, Ordering::Relaxed); // c:886
+        } else if post_insert.starts_with("auto") {
+            // c:887
+            useline.store(1, Ordering::Relaxed); // c:888
+            USEMENU.store(2, Ordering::Relaxed); // c:888
+        } else {
+            useline.store(0, Ordering::Relaxed); // c:890
+            USEMENU.store(0, Ordering::Relaxed); // c:890
+            // c:891-894 — "if compstate[insert] was emptied, no unambiguous
+            // prefix ever gets inserted so allow the next tab to already
+            // start menu completion".
+            let am = opt_isset("AUTOMENU");
+            startauto.store(am, Ordering::Relaxed); // c:894
+            LASTAMBIG.store(am, Ordering::Relaxed); // c:894
+        }
+        // c:897-898 — `if (useline && (p = strchr(compinsert, ':')))
+        //               insmnum = atoi(++p);`
+        if useline.load(Ordering::Relaxed) != 0 {
+            if let Some(colon) = post_insert.find(':') {
+                // c:898 — `insmnum = atoi(++p)`; inlined (leading digits).
+                insmnum.store(
+                    post_insert[colon + 1..]
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect::<String>()
+                        .parse::<i32>()
+                        .unwrap_or(0),
+                    Ordering::Relaxed,
+                ); // c:898
+            }
+        }
+    }
+    // c:908-911 — `startauto = startauto ||
+    //     compinsert == "automenu-unambiguous" ||
+    //     (bashlistfirst && isset(AUTOMENU) && !*compinsert);`
+    if have_insert
+        && startauto.load(Ordering::Relaxed) == 0
+        && (post_insert == "automenu-unambiguous"
+            || (crate::ported::zle::zle_tricky::BASHLISTFIRST.load(Ordering::Relaxed) != 0
+                && opt_isset("AUTOMENU") != 0
+                && post_insert.is_empty()))
+    {
+        startauto.store(1, Ordering::Relaxed); // c:908
+    }
+
+    // c:912 — `useexact = (compexact && !strcmp(compexact, "accept"));`
+    if let Some(post_exact) = post("exact") {
+        useexact.store(
+            if post_exact == "accept" { 1 } else { 0 },
+            Ordering::Relaxed,
+        );
+    }
+
+    // c:914-921 — movetoend from `comptoend`.
+    if let Some(post_toend) = post("to_end") {
+        movetoend.store(
+            if post_toend.is_empty() {
+                0 // c:915
+            } else if post_toend == "single" {
+                1 // c:917
+            } else if post_toend == "always" {
+                3 // c:919
+            } else {
+                2 // c:921
+            },
+            Ordering::Relaxed,
+        );
+    }
+
+    // c:923-925 — `oldlist = (hasoldlist && compoldlist &&
+    //                         !strcmp(compoldlist, "keep"));
+    //              oldins  = (hasoldlist && minfo.cur &&
+    //                         compoldins && !strcmp(compoldins, "keep"));`
+    let hasoldlist_v = hasoldlist.load(Ordering::Relaxed);
+    oldlist.store(
+        if hasoldlist_v != 0 && post("old_list").as_deref() == Some("keep") {
+            1
+        } else {
+            0
+        },
+        Ordering::Relaxed,
+    ); // c:923
+    let has_cur = MINFO
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|m| m.cur.is_some())
+        .unwrap_or(false);
+    oldins.store(
+        if hasoldlist_v != 0 && has_cur && post("old_insert").as_deref() == Some("keep") {
+            1
+        } else {
+            0
+        },
+        Ordering::Relaxed,
+    ); // c:924-925
+
+    // c:932 — `lastval = lv`: the completion function's exit status must not
+    // leak into the interactive shell's `$?`.
+    crate::ported::builtin::LASTVAL.store(_lv, Ordering::Relaxed); // c:932
+
+    // c:840 — incompfunc = icf. Restore.
     INCOMPFUNC.store(_icf, Ordering::Relaxed);
 }
 
@@ -1154,9 +1481,18 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
     let mut s_owned = s.to_string();
     if compfunc_active() {
         if let Some(p) = check_param(&s_owned, false, false) {
-            // c:952
-            s_owned = s_owned[p..].to_string(); // c:953 s = p
-            PARWB.store(owb, Ordering::Relaxed); // c:954
+            // c:951
+            // c:952 — `s = p`, where C's `p` points at the parameter NAME and
+            // check_param has already NUL-terminated it at the end of the
+            // name (`b[we-wb] = '\0'`, c:1297). Taking `s[p..]` alone kept
+            // everything that followed the name (the `}` of a `${…}`, any
+            // `:modifiers`, the ignored suffix), so `callcompfunc` received
+            // e.g. `PA}` instead of `PA` and published that as `$PREFIX`.
+            // `we - wb` is exactly `e - b`, set by check_param at c:1294-1295.
+            let namelen = (WE.load(Ordering::Relaxed) - WB.load(Ordering::Relaxed)).max(0) as usize;
+            let tail = &s_owned[p..];
+            s_owned = tail[..namelen.min(tail.len())].to_string(); // c:952 + c:1297
+            PARWB.store(owb, Ordering::Relaxed); // c:953
             PARWE.store(owe, Ordering::Relaxed); // c:955
             PAROFFS.store(ooffs, Ordering::Relaxed); // c:956
         } else {
@@ -1650,12 +1986,45 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
                 e += 1;
             }
         } else {
-            // c:1235-1245 — itype_end(INAMESPC) walk.
-            let walked = walk_namespace(&bytes[e..]);
-            if walked > 0 {
-                e += walked;
-            } else if c == '.' {
-                // c:1255
+            // c:1232-1241 — the `itype_end(e, INAMESPC, 0)` do/while:
+            //
+            //     do { e = ie;
+            //          if (comppatmatch && *comppatmatch &&
+            //              (*e == Star || *e == Quest))  ie = e + 1;
+            //          else                              ie = itype_end(e, …);
+            //     } while (ie != e);
+            //
+            // The loop, not just its first iteration, is what lets a glob
+            // metacharacter sit INSIDE the parameter name when
+            // `$compstate[pattern_match]` is on: `$fo*ba<TAB>` must treat
+            // `fo*ba` as one name. The port ran a single `walk_namespace`
+            // and stopped at the `*`, so pattern parameter-name completion
+            // saw the name end early and completed the wrong span.
+            let patmatch_on = comppatmatch
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .map(|v| !v.is_empty())
+                .unwrap_or(false); // c:1235
+            let mut ie = e + walk_namespace(&bytes[e..]); // c:1232
+            loop {
+                e = ie; // c:1234
+                if e >= bytes.len() {
+                    break;
+                }
+                let ec = char_at(bytes, e);
+                if patmatch_on && (ec == Star || ec == Quest) {
+                    ie = e + ec.len_utf8(); // c:1237
+                } else {
+                    ie = e + walk_namespace(&bytes[e..]); // c:1239
+                }
+                if ie == e {
+                    break; // c:1240
+                }
+            }
+            if e == b && c == '.' {
+                // c:1242-1250 — a lone `.` counts as an incomplete name.
                 e += 1;
             }
         }
@@ -1829,7 +2198,17 @@ pub fn remsquote(s: &mut String) -> i32 {
 /// `Outbrace`. Backslash-escaped variants become `Bnull`.
 pub fn ctokenize(p: &str) -> String {
     // c:1366
-    let bytes = p.as_bytes(); // c:1366
+    // c:1370 — `tokenize(p);` ran FIRST in C and was missing here entirely,
+    // so the glob metacharacters (`*`, `?`, `[`, `]`, `~`, `^`, `#`, …) that
+    // `tokenize` turns into their high-bit token chars stayed literal. Every
+    // consumer of `comp_str(untok=0)` (c:1411-1414) therefore received a
+    // string that `haswilds`/`patcompile` read as plain text, so a typed
+    // pattern in $PREFIX/$SUFFIX was never seen as a pattern. The loop below
+    // is only the extra `$`/`{`/`}` pass C runs after tokenize.
+    let mut tokenized = p.to_string();
+    crate::ported::glob::tokenize(&mut tokenized); // c:1370
+    let p: &str = &tokenized;
+    let bytes = p.as_bytes(); // c:1372
     let mut out = Vec::<u8>::with_capacity(bytes.len());
     let mut bslash = false; // c:1369
     let mut prev_idx: Option<usize> = None;
@@ -2045,7 +2424,7 @@ pub fn set_comp_sep() -> i32 {
     let mut swe: i32 = 0;
     let scs: i32; // cursor (fixed once set below)
     let mut soffs: i32 = 0;
-    let ne = crate::ported::exec::noerrs.load(Ordering::Relaxed); // c:1479
+    let ne = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:1479
     let mut got = false;
     let mut i: i32 = 0;
     let mut cur: i32 = -1;
@@ -2077,7 +2456,7 @@ pub fn set_comp_sep() -> i32 {
     zle_save_positions();
     let ol = snap(&ZLEMETALINE);
     ADDEDX.store(1, Ordering::Relaxed);
-    crate::ported::exec::noerrs.store(1, Ordering::Relaxed);
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
     let lex_saved = lexsave(); // zcontext_save()
     LEX_LEXFLAGS.set(LEXFLAGS_ZLE);
 
@@ -2272,7 +2651,7 @@ pub fn set_comp_sep() -> i32 {
     crate::ported::input::inpop();
     crate::ported::utils::errflag
         .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::Relaxed);
-    crate::ported::exec::noerrs.store(ne, Ordering::Relaxed);
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = ne;
     lexrestore(lex_saved); // zcontext_restore()
     WB.store(owb, Ordering::Relaxed);
     WE.store(owe, Ordering::Relaxed);
@@ -2628,8 +3007,17 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
                 buf.clear(); // c:1981
                 notempty = false;
             } else {
-                notempty = true; // c:1984
+                notempty = true; // c:1983
                 buf.push(b);
+                // c:1984-1985 — `if (*ptr == Meta) ptr++;`. The byte AFTER a
+                // Meta escape is the real character XOR 0x20 and must never
+                // be examined as a delimiter: a metafied `)` is `Meta 0x09`,
+                // whose second byte is TAB, so without this skip `inblank`
+                // split the list in the middle of a quoted element.
+                if b == crate::ported::zsh_h::Meta as u8 && i + 1 < bytes.len() {
+                    i += 1;
+                    buf.push(bytes[i]);
+                }
             }
             i += 1;
             if brk {
@@ -2759,9 +3147,20 @@ pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {
         cm.disp = Some(String::new()); // c:2058
         cm.flags |= CMF_DISPLINE; // c:2059
     }
-    mnum.fetch_add(1, Ordering::Relaxed); // c:2061
+    mnum.fetch_add(1, Ordering::Relaxed); // c:2060
+                                          // c:2061 — `ainfo->count++`. Missing here while the sibling
+                                          // increment in `add_match_data` (c:3006) was present, so every
+                                          // match added through THIS path (`compadd -x`/`-X` dummies, the
+                                          // CAF_ALL `<all>` placeholder) was invisible to `ainfo.count` —
+                                          // the counter `do_ambiguous`/`permmatches` use to decide whether
+                                          // any match exists in the group.
+    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(a) = g.as_mut() {
+            a.count += 1; // c:2061
+        }
+    }
     {
-        let cell = curexpl.get_or_init(|| Mutex::new(None)); // c:2063
+        let cell = curexpl.get_or_init(|| Mutex::new(None)); // c:2062
         if let Ok(mut g) = cell.lock() {
             if let Some(e) = g.as_mut() {
                 e.count += 1;
@@ -2807,7 +3206,18 @@ pub fn addmatches(
     dat: &mut Cadata, // c:2080
     argv: &[String],
 ) -> i32 {
-    let _nm = mnum.load(Ordering::Relaxed); // c:2095 nm
+    let _nm = mnum.load(Ordering::Relaxed); // c:2089 nm
+                                            // c:2089-2090 — `ohp = haspattern`, `ois = instring`, `oib = inbackt`,
+                                            // and c:2084 `oaq = autoq`. All four are restored at c:2624-2633; the
+                                            // port saved none of them.
+    let ohp = haspattern.load(Ordering::Relaxed); // c:2089
+    let ois = INSTRING.load(Ordering::Relaxed); // c:2090
+    let oib = INBACKT.load(Ordering::Relaxed); // c:2090
+    let oaq = AUTOQ
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default(); // c:2084
 
     // c:2093 — `Cmlist oms = mstack;`, restored at c:2622 `mstack = oms;`.
     // The `-M` matcher a compadd carries is pushed onto `mstack` (c:2212) for
@@ -2922,8 +3332,25 @@ pub fn addmatches(
         return 1; // c:2139
     }
 
-    // c:2143-2147 — snapshot brbeg/brend curpos per CAF_QUOTE.
-    let _quote_mode = (dat.aflags & CAF_QUOTE) != 0; // c:2144
+    // c:2132-2135 — `for (bp = brbeg; bp; bp = bp->next)
+    //                    bp->curpos = ((dat->aflags & CAF_QUOTE) ? bp->pos
+    //                                                            : bp->qpos);`
+    // and the same for `brend`. Only the CAF_QUOTE test existed here (as an
+    // unused local); the snapshot itself was never performed, so `curpos`
+    // stayed 0 for every brace and `add_match_data`'s brpl/brsl (c:2979) had
+    // nothing to read.
+    {
+        let quote_mode = (dat.aflags & CAF_QUOTE) != 0; // c:2133
+        for chain in [&BRBEG, &BREND] {
+            if let Ok(mut g) = chain.get_or_init(|| Mutex::new(None)).lock() {
+                let mut cur = g.as_deref_mut();
+                while let Some(n) = cur {
+                    n.curpos = if quote_mode { n.pos } else { n.qpos }; // c:2133/2135
+                    cur = n.next.as_deref_mut();
+                }
+            }
+        }
+    }
 
     if (dat.flags & 0x0008/*CMF_ISPAR*/) != 0 {
         // c:2148
@@ -2950,12 +3377,14 @@ pub fn addmatches(
         autoq_set(""); // c:2179
     }
 
-    // c:2182 — `useexact = (compexact && !strcmp(compexact, "accept"))`.
-    //          C reads the `compexact` element of `$compstate`. Route
-    //          through paramtab via getsparam — `$compstate[exact]`
-    //          is the hashed-store equivalent. Was reading the OS env
-    //          which never carries compstate values.
-    let exact_str = getsparam("compexact").unwrap_or_default();
+    // c:2173 — `useexact = (compexact && !strcmp(compexact, "accept"))`.
+    //
+    // C's `compexact` global IS `$compstate[exact]` (gsu-bound at
+    // complete.c:1281). The port read `getsparam("compexact")` — a shell
+    // parameter of that literal name, which nothing ever sets — so this line
+    // unconditionally CLEARED `useexact` on every compadd, defeating
+    // REC_EXACT and any completer that set `compstate[exact]=accept`.
+    let exact_str = get_compstate_str("exact").unwrap_or_default();
     useexact.store(if exact_str == "accept" { 1 } else { 0 }, Ordering::Relaxed);
 
     // c:2210-2222 — push dat.match onto mstack (the matcher chain
@@ -3116,7 +3545,12 @@ pub fn addmatches(
     let lipre = compiprefix_s.clone();
     let lisuf = compisuffix_s.clone();
     let mut lpre = compprefix_s.clone();
-    let lsuf = compsuffix_s.clone();
+    let mut lsuf = compsuffix_s.clone();
+
+    // c:2084 — `char *oppre = dat->ppre`: the UNQUOTED path prefix as it
+    // arrived, captured before the c:2288 quoting rewrites `dat.ppre`. Used
+    // as the `prpre` default at c:2436.
+    let oppre: Option<String> = dat.ppre.clone(); // c:2084
 
     // c:2314-2340 — strip the path-prefix (`compadd -p PPRE`) from `lpre`
     // before matching each candidate. PPRE is already on the command line
@@ -3254,7 +3688,46 @@ pub fn addmatches(
     let ppl = dat.ppre.as_deref().map(|s| s.len()).unwrap_or(0);
     let psl = dat.psuf.as_deref().map(|s| s.len()).unwrap_or(0);
 
-    // c:2179-2184 — `doadd = !apar && !opar && !dpar`.
+    // c:2431-2455 — the whole `if (*argv) { … }` block was missing.
+    if !argv.is_empty() {
+        // c:2436-2440 — `if (!dat->prpre && (dat->prpre = dupstring(oppre)))
+        //                    { singsub(&(dat->prpre)); untokenize(dat->prpre); }`
+        // `oppre` is the UNQUOTED `dat->ppre` saved at c:2084, before the
+        // c:2288 quoting above. `prpre` is the path used for the real
+        // filesystem probes (ztat/opendir in add_match_data c:2735+), so it
+        // has to be the substituted, untokenized form — not the quoted one.
+        // Without this default, `compadd -p <dir>/` with no explicit `-W`
+        // left `prpre` empty and every file test ran against the bare match
+        // name in the CWD.
+        if dat.prpre.is_none() {
+            if let Some(op) = oppre.clone() {
+                let subbed = crate::ported::subst::singsub(&op); // c:2437
+                dat.prpre = Some(crate::ported::lex::untokenize(&subbed).to_string());
+                // c:2438
+            }
+        }
+        // c:2443-2447 — `-r`/`-R` are mutually exclusive: a remove-func
+        // (`remf`) wins and CLEARS `rems`. The port passed both through to
+        // the match, so a compadd carrying both applied the char-based
+        // suffix removal as well as the widget.
+        if dat.remf.is_some() {
+            dat.rems = None; // c:2445
+        }
+        // c:2449-2454 — quote the line prefix/suffix used for matching with
+        // the OUTER quoting level (`ign = 1`), so comp_match compares the
+        // candidate against text quoted the same way the line is.
+        lpre = if (dat.aflags & CAF_QUOTE) == 0
+            && dat.ppre.is_none()
+            && (dat.flags & 0x0001/*CMF_FILE*/) != 0
+        {
+            tildequote(&lpre, 1) // c:2452
+        } else {
+            multiquote(&lpre, 1) // c:2452
+        };
+        lsuf = multiquote(&lsuf, 1); // c:2454
+    }
+
+    // c:2178-2183 — `doadd = !apar && !opar && !dpar`.
     let doadd = dat.apar.is_none() && dat.opar.is_none() && dat.dpar.is_empty();
     tracing::debug!(
         target: "compsys_args",
@@ -3357,17 +3830,28 @@ pub fn addmatches(
                 word,
                 dat.psuf.as_deref().unwrap_or("")
             );
-            // c:2509-2511 — literal-suffix check.
+            // c:2508-2510 — literal-suffix check. C requires the ignored
+            // suffix to be STRICTLY shorter than the whole string
+            // (`filell < il`), so an fignore entry equal to the candidate
+            // does NOT ignore it; the port's `>=` dropped those candidates.
             for suf in &aign {
-                if full.len() >= suf.len() && full.ends_with(suf.as_str()) {
+                if full.len() > suf.len() && full.ends_with(suf.as_str()) {
+                    // c:2519 — `compignored++` on the GLOBAL, which is
+                    // `$compstate[ignored]` (complete.c:1300). The port
+                    // counted into a local that was discarded at the end of
+                    // the function, so `_ignored` (which returns 1 unless
+                    // `$compstate[ignored]` is non-zero) could never fire and
+                    // ignored-patterns had no fallback completer.
+                    crate::ported::zle::complete::COMPIGNORED.fetch_add(1, Ordering::Relaxed);
                     compignored_local += 1;
                     dpar_skip_word!(); // c:2520
                     continue 'cand;
                 }
             }
-            // c:2513-2518 — Patprog check.
+            // c:2512-2517 — Patprog check.
             for prog in &pign {
                 if crate::ported::pattern::pattry(prog, &full) {
+                    crate::ported::zle::complete::COMPIGNORED.fetch_add(1, Ordering::Relaxed); // c:2519
                     compignored_local += 1;
                     dpar_skip_word!(); // c:2520
                     continue 'cand;
@@ -3442,13 +3926,13 @@ pub fn addmatches(
                 dat.ipre.as_deref().unwrap_or(""),
                 "", // ripre
                 dat.isuf.as_deref().unwrap_or(""),
-                dat.pre.as_deref().unwrap_or(""),
+                dat.pre.as_deref(),
                 dat.prpre.as_deref().unwrap_or(""),
                 dat.ppre.as_deref().unwrap_or(""),
                 None, // pline (path-prefix Cline; unused on this path)
                 dat.psuf.as_deref().unwrap_or(""),
                 None, // sline (path-suffix Cline; unused on this path)
-                dat.suf.as_deref().unwrap_or(""),
+                dat.suf.as_deref(),
                 dat.flags,
                 isexact,
             );
@@ -3567,7 +4051,26 @@ pub fn addmatches(
         "addmatches candidate-loop done"
     );
     let _ = (ppl, psl, compignored_local, added);
-    // c:2636 — `return (mnum == nm)`: non-zero (1) when NO new matches were
+
+    // c:2624-2626 — `instring = ois; inbackt = oib; autoq = oaq;`. The
+    // c:2139-2168 block above rewrites all three from `$compstate[quote]`
+    // for the duration of THIS compadd only; the port set them and never
+    // put them back, so a single `compadd` inside a quoted word left
+    // `instring`/`inbackt` clobbered for the rest of the completion (and for
+    // `get_comp_string`'s next round, which reads them).
+    instring_set(ois); // c:2624
+    inbackt_set(oib); // c:2625
+    autoq_set(&oaq); // c:2626
+
+    // c:2632-2633 — `if (mnum == nm) haspattern = ohp;`. A compadd that
+    // added NOTHING must not leave `haspattern` raised by its own pattern
+    // compile at c:2387/c:2428 — `do_ambiguous` keys menu-vs-insert
+    // behaviour off it (compresult.c:764).
+    if mnum.load(Ordering::Relaxed) == _nm {
+        haspattern.store(ohp, Ordering::Relaxed); // c:2633
+    }
+
+    // c:2635 — `return (mnum == nm)`: non-zero (1) when NO new matches were
     // added this call, 0 when at least one landed. Was hardcoded `0`, so
     // every `compadd` reported success even against zero matches — the
     // `completer` chain (_main_complete) then stopped after `_complete`
@@ -3604,20 +4107,27 @@ pub fn add_match_data(
     ipre_: &str,
     ripre_: &str,
     isuf_: &str,
-    pre: &str,
+    pre: Option<&str>,
     prpre: &str,
     ppre: &str,
     mut pline: Option<Box<Cline>>,
     psuf: &str,
     mut sline: Option<Box<Cline>>,
-    suf: &str,
+    suf: Option<&str>,
     flags: i32,
     exact: i32,
 ) -> Cmatch {
     // c:2663 — DPUTS(!line, "BUG: add_match_data() without cline")
     DPUTS!(line.is_none(), "BUG: add_match_data() without cline"); // c:2663
-                                                                   // c:2657 — pick the active aminfo by `alt` (alternative path = fignore).
-    let _ai_ref = if alt != 0 { &fainfo } else { &ainfo }; // c:2657
+                                                                   // c:2656 — `Aminfo ai = (alt ? fainfo : ainfo);` — EVERY `ai->…` below
+    // (c:3002 join_clines, c:3005 count++, c:3023 firstm, c:3036-3063 exact)
+    // goes through this selection. The port bound it and then used the plain
+    // `ainfo` at all five sites, so every alternate-set match (`alt != 0` —
+    // the fignore/ignored-suffix path) accumulated into the MAIN aminfo:
+    // `ainfo.count` counted matches that were never offered, and the
+    // unambiguous cline built from `ainfo.line` was polluted by strings the
+    // user asked to ignore.
+    let ai_ref: &OnceLock<Mutex<Option<Aminfo>>> = if alt != 0 { &fainfo } else { &ainfo }; // c:2656
                                                            // c:2666-2671 — cline_matched(line); pline; sline.
     cline_matched(&mut line);
     if pline.is_some() {
@@ -3635,15 +4145,22 @@ pub fn add_match_data(
     let _salen = (if sline.is_none() { psl } else { 0 }) + isl + qisl; // c:2675-2683
 
     let ipl = ipre_.len();
+    // c:2769-2770 — `if (pre) palen += (pl = strlen(pre));`: C leaves `pl` at 0
+    // for a NULL `pre`, so every later use (bld_parts at c:2809, the memcpy at
+    // c:2837) copies nothing. A zero-length &str is exactly that behaviour, so
+    // the arithmetic below keeps using a &str view; only the STORED cm.pre /
+    // cm.suf keep the Option, which is the distinction c:2943-2944 preserves.
+    let pre_s: &str = pre.unwrap_or("");
+    let suf_s: &str = suf.unwrap_or("");
     let _ppl = ppre.len();
-    let _pl = pre.len();
+    let _pl = pre_s.len();
     let qipre_v = qipre_get(); // c:2686
     let qipl_v = qipre_v.clone();
     let _qipl = qipl_v.len();
 
     let _stl = str.len();
     let _lpl = ripre_.len();
-    let _lsl = suf.len();
+    let _lsl = suf_s.len();
     let _ml = ipl;
 
     // c:2671-2762 — path-suffix Cline splicing. salen accumulates psl
@@ -3721,7 +4238,7 @@ pub fn add_match_data(
     // bld_parts Cline prepended to `line`.
     let qipl_local = qipre_v.len() as i32;
     let ipl_local = ipre_.len() as i32;
-    let pl_local = pre.len() as i32;
+    let pl_local = pre_s.len() as i32;
     let ppl_local = if pline.is_none() && !ppre.is_empty() {
         ppre.len() as i32
     } else {
@@ -3748,7 +4265,7 @@ pub fn add_match_data(
                 line = p_chain;
             }
         }
-        let p = bld_parts(pre, pl_local, pl_local, None, None);
+        let p = bld_parts(pre_s, pl_local, pl_local, None, None);
         if let Some(mut head) = p {
             let mut t: *mut Option<Box<Cline>> = &mut head.next;
             unsafe {
@@ -3808,7 +4325,7 @@ pub fn add_match_data(
             "{}{}{}{}",
             qipre_v.as_str(),
             ipre_,
-            pre,
+            pre_s,
             if pline.is_none() { ppre } else { "" }
         );
         let apre_len = apre.len() as i32;
@@ -3891,16 +4408,15 @@ pub fn add_match_data(
         None
     };
 
-    cm.pre = if pre.is_empty() {
-        None
-    } else {
-        Some(pre.into())
-    }; // c:2944
-    cm.suf = if suf.is_empty() {
-        None
-    } else {
-        Some(suf.into())
-    }; // c:2945
+    // c:2943-2944 — `cm->pre = pre; cm->suf = suf;` are UNCONDITIONAL. The six
+    // neighbours above them (ppre/psuf/prpre/ipre/ripre/isuf, c:2931-2942) each
+    // collapse empty-to-NULL with `x && *x ? x : NULL`, and C pointedly does NOT
+    // do that for these two: an explicit `compadd -S ''` is a REAL empty suffix
+    // and must stay distinguishable from "no -S given" (`dat.suf` starts NULL at
+    // complete.c:625). This port collapsed both, so `-S ''` was indistinguishable
+    // from omitting -S.
+    cm.pre = pre.map(|s| s.to_string()); // c:2943
+    cm.suf = suf.map(|s| s.to_string()); // c:2944
 
     // c:2946 — flags + CMF_PACKED/CMF_ROWS from complist.
     let complist_s = COMPLIST
@@ -3949,11 +4465,38 @@ pub fn add_match_data(
         }
     }
 
-    // c:2974-2993 — brpl/brsl brace position arrays. Walk BRBEG/BREND
+    // c:2970-2972 — `if ((*compqstack == QT_BACKSLASH && compqstack[1]) ||
+    //                    (autoq && *compqstack && compqstack[1] == QT_BACKSLASH))
+    //                    cm->flags |= CMF_NOSPACE;`
+    //
+    // Missing entirely. A match produced inside a nested quoting context
+    // whose outer level is backslash-quoting must not get the automatic
+    // trailing space (it would be swallowed by the enclosing quotes);
+    // without the flag every such completion inserted a stray space.
+    {
+        let qstack = COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let qb = qstack.as_bytes();
+        let autoq_set_now = AUTOQ
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| !g.is_empty()))
+            .unwrap_or(false);
+        let q0_bslash = !qb.is_empty() && qb[0] as i32 == QT_BACKSLASH;
+        let q1_bslash = qb.len() > 1 && qb[1] as i32 == QT_BACKSLASH;
+        if (q0_bslash && qb.len() > 1) || (autoq_set_now && !qb.is_empty() && q1_bslash) {
+            cm.flags |= crate::ported::zle::comp_h::CMF_NOSPACE; // c:2972
+        }
+    }
+
+    // c:2973-2992 — brpl/brsl brace position arrays. Walk BRBEG/BREND
     // (the global Brinfo chains from `Src/Zle/zle_tricky.c`), reading
-    // `qpos` for each entry to derive the position offset within the
-    // match string. With no brace chain populated (zero-brace common
-    // case) brpl/brsl stay empty.
+    // `curpos` for each entry — the per-match position addmatches snapshots
+    // at c:2132-2135 from `pos`/`qpos` according to CAF_QUOTE. The port read
+    // the raw `qpos`, which is the UNQUOTED-case value only, so a
+    // `compadd -Q` brace expansion got the wrong insertion offsets.
     cm.brpl = BRBEG
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -3963,7 +4506,7 @@ pub fn add_match_data(
                 let mut out: Vec<i32> = Vec::new();
                 let mut cur = Some(head.as_ref());
                 while let Some(n) = cur {
-                    out.push(n.qpos);
+                    out.push(n.curpos);
                     cur = n.next.as_deref();
                 }
                 out
@@ -3979,7 +4522,7 @@ pub fn add_match_data(
                 let mut out: Vec<i32> = Vec::new();
                 let mut cur = Some(head.as_ref());
                 while let Some(n) = cur {
-                    out.push(n.qpos);
+                    out.push(n.curpos);
                     cur = n.next.as_deref();
                 }
                 out
@@ -4006,19 +4549,19 @@ pub fn add_match_data(
     cm.remf = None;
     cm.disp = None; // c:2997
 
-    // c:3003 — ai->line = join_clines(ai->line, line).
-    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+    // c:3002 — ai->line = join_clines(ai->line, line).
+    if let Ok(mut g) = ai_ref.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(a) = g.as_mut() {
             let old_line = a.line.take();
             a.line = crate::ported::zle::compmatch::join_clines(old_line, line);
         }
     }
 
-    // c:3005 — mnum++.
+    // c:3004 — mnum++.
     mnum.fetch_add(1, Ordering::Relaxed);
 
-    // c:3006 — ai->count++.
-    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+    // c:3005 — ai->count++.
+    if let Ok(mut g) = ai_ref.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(a) = g.as_mut() {
             a.count += 1;
         }
@@ -4027,10 +4570,18 @@ pub fn add_match_data(
     // c:3008 — addlinknode((alt ? fmatches : matches), cm). Already
     // wired below via matches Vec push.
 
-    // c:3010-3011 — newmatches = 1; mgroup->new = 1.
-    newmatches.store(1, Ordering::Relaxed);
+    // c:3009-3010 — newmatches = 1; mgroup->new = 1. Only the first half was
+    // ported; without `mgroup->new` the group holding this match was not
+    // marked dirty, so `permmatches` could serve its cached permanent copy
+    // and the match never appeared (the sibling `addmatch` at c:2068 sets it).
+    newmatches.store(1, Ordering::Relaxed); // c:3009
+    if let Ok(mut mg) = mgroup.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(grp) = mg.as_mut() {
+            grp.new_ = 1; // c:3010
+        }
+    }
 
-    // c:3012-3013 — compignored++ when alt.
+    // c:3011-3012 — compignored++ when alt.
     if alt != 0 {
         crate::ported::zle::complete::COMPIGNORED.fetch_add(1, Ordering::Relaxed);
     }
@@ -4058,8 +4609,8 @@ pub fn add_match_data(
         }
     }
 
-    // c:3024-3025 — ai->firstm = cm.
-    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+    // c:3023-3024 — ai->firstm = cm.
+    if let Ok(mut g) = ai_ref.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(a) = g.as_mut() {
             if a.firstm.is_none() {
                 a.firstm = Some(Box::new(cm.clone()));
@@ -4080,22 +4631,54 @@ pub fn add_match_data(
         maxmlen.store(ml, Ordering::Relaxed);
     }
 
-    // c:3037-3064 — exact-match tracking on ai.
+    // c:3036-3064 — exact-match tracking on ai.
     if exact != 0 {
-        // c:3037
-        if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+        // c:3036
+        // c:3039-3056 — `if (incompfunc && !*compexactstr) compexactstr =
+        // ppre + str + psuf;` — publishing `$compstate[exact_string]`, which
+        // `_main_complete` reads to decide whether to accept the exact match
+        // outright. The publish was missing, so the parameter stayed at the
+        // "" that do_completion writes at c:312 and the exact match was never
+        // recognisable to the shell-function layer. Computed BEFORE taking
+        // the ai lock (set_compstate_str takes the paramtab lock).
+        let publish_exact = INCOMPFUNC.load(Ordering::Relaxed) != 0
+            && get_compstate_str("exact_string")
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
+        let exact_str = format!(
+            "{}{}{}",
+            cm.ppre.as_deref().unwrap_or(""), // c:3047-3049
+            str,                              // c:3051
+            cm.psuf.as_deref().unwrap_or("")  // c:3053
+        );
+        let mut do_publish = false;
+        if let Ok(mut g) = ai_ref.get_or_init(|| Mutex::new(None)).lock() {
             if let Some(a) = g.as_mut() {
                 if a.exact == 0 {
-                    // c:3038
-                    a.exact = useexact.load(Ordering::Relaxed);
-                    a.exactm = Some(Box::new(cm.clone())); // c:3058
-                } else if useexact.load(Ordering::Relaxed) != 0 {
-                    // c:3059
-                    // c:3060-3061 — ambiguous exact: set to 2, clear exactm.
+                    // c:3037
+                    a.exact = useexact.load(Ordering::Relaxed); // c:3038
+                    do_publish = publish_exact;
+                    a.exactm = Some(Box::new(cm.clone())); // c:3057
+                } else if useexact.load(Ordering::Relaxed) != 0
+                    // c:3058 — C also requires that this exact match DIFFERS
+                    // from the one already recorded (`!ai->exactm ||
+                    // !matcheq(cm, ai->exactm)`). The port dropped that half,
+                    // so a second compadd of the SAME string (routine when
+                    // several completers offer it) escalated `exact` to 2 —
+                    // "ambiguous exact" — and the accept-exact path was lost.
+                    && a.exactm
+                        .as_deref()
+                        .map(|em| !matcheq(&cm, em))
+                        .unwrap_or(true)
+                {
+                    // c:3059-3060 — ambiguous exact: set to 2, clear exactm.
                     a.exact = 2;
                     a.exactm = None;
                 }
             }
+        }
+        if do_publish {
+            set_compstate_str("exact_string", &exact_str); // c:3046-3055
         }
     }
 
@@ -4333,29 +4916,26 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
             b.str.clone().unwrap_or_default(),
         ) // c:3182
     } else {
+        // c:3183-3184 / c:3186-3188 — C returns these two orderings RAW
+        // (`return cmp;`); `sortdir` is applied only to the final `zstrcmp`
+        // at c:3194. The port multiplied both early returns by `sortdir`, so
+        // under CGF_REVSORT (`compadd -R`/reverse sort) the structural
+        // groupings inverted too: matches WITHOUT display strings sorted
+        // ahead of matches with them, and one-per-line display strings sank
+        // to the bottom of the list instead of heading it.
         if cmp != 0 {
-            // c:3184
-            let raw = (cmp as i32) * sortdir;
-            return if raw < 0 {
-                std::cmp::Ordering::Less
-            }
-            // c:3185
-            else if raw > 0 {
-                std::cmp::Ordering::Greater
+            return if cmp < 0 {
+                std::cmp::Ordering::Less // c:3184
             } else {
-                std::cmp::Ordering::Equal
+                std::cmp::Ordering::Greater
             };
         }
-        let displine_cmp = (b.flags & CMF_DISPLINE) - (a.flags & CMF_DISPLINE); // c:3187
+        let displine_cmp = (b.flags & CMF_DISPLINE) - (a.flags & CMF_DISPLINE); // c:3186
         if displine_cmp != 0 {
-            // c:3188
-            let raw = displine_cmp * sortdir;
-            return if raw < 0 {
-                std::cmp::Ordering::Less
-            } else if raw > 0 {
-                std::cmp::Ordering::Greater
+            return if displine_cmp < 0 {
+                std::cmp::Ordering::Less // c:3188
             } else {
-                std::cmp::Ordering::Equal
+                std::cmp::Ordering::Greater
             };
         }
         (
@@ -4443,34 +5023,50 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                     // rp[bp+1].str` compared the wrong element and same-string
                     // duplicates (e.g. `libpng-config` from several $path dirs)
                     // were never collapsed.
+                    // c:3271 — collapse the run of matcheq duplicates.
                     let mut bp = ap;
                     while bp + 1 < rp.len() && matcheq(&rp[ap], &rp[bp + 1]) {
                         bp += 1;
-                        n -= 1; // c:3277 bp[1] && matcheq
+                        n -= 1; // c:3271 bp[1] && matcheq
                     }
-                    let mut dup = 0i32; // c:3281
-                    while bp + 1 < rp.len()
-                        && rp[ap].disp.is_none()
-                        && rp[bp + 1].disp.is_none()                         // c:3282 !disp
-                        && rp[ap].str == rp[bp + 1].str
+                    // c:3272 — `ap = bp`: from here C compares against the
+                    // LAST element of the collapsed run.
+                    let run_end = bp;
+                    // c:3274-3278 — mark (do NOT remove) the following
+                    // elements that are not matcheq but would DISPLAY the
+                    // same string. C advances only `bp` here; `n` is not
+                    // decremented and the outer loop resumes at `run_end + 1`,
+                    // so every CMF_MULT element stays in the array and in
+                    // `mcount` — it is excluded from the *listing* later via
+                    // `nl` (c:3287-3288 → `lcount = nn - nl`). The port
+                    // decremented `n` and skipped past them, deleting them
+                    // outright: `mcount` under-counted, so a word with two
+                    // same-string matches from different path prefixes looked
+                    // like a single unambiguous match and was inserted
+                    // without ever offering the choice.
+                    let mut mark = run_end;
+                    let mut dup = 0i32; // c:3274
+                    while mark + 1 < rp.len()
+                        && rp[run_end].disp.is_none()
+                        && rp[mark + 1].disp.is_none()                       // c:3274 !disp
+                        && rp[run_end].str == rp[mark + 1].str
                     {
-                        rp[bp + 1].flags |= CMF_MULT; // c:3284
-                        dup = 1; // c:3285
-                        bp += 1;
-                        n -= 1; // same-string duplicate is dropped too
+                        rp[mark + 1].flags |= CMF_MULT; // c:3276
+                        dup = 1; // c:3277
+                        mark += 1;
                     }
                     if dup != 0 {
-                        // c:3287
-                        rp[ap].flags |= CMF_FMULT; // c:3288
+                        // c:3279
+                        rp[run_end].flags |= CMF_FMULT; // c:3280
                     }
-                    // c:3275 `*cp++ = *ap` — keep the first of the run at `cp`.
+                    // c:3270 `*cp++ = *ap` — keep the first of the run at `cp`.
                     if ap != cp {
                         rp.swap(ap, cp);
                     }
                     cp += 1;
-                    ap = bp + 1; // c:3279 ap = bp; ap++
+                    ap = run_end + 1; // c:3272 ap = bp; then outer ap++
                 }
-                rp.truncate(cp); // c:3291 *cp = NULL
+                rp.truncate(cp); // c:3282 *cp = NULL
             }
             for m in rp.iter() {
                 // c:3293
@@ -4533,32 +5129,44 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                 let mut cp = 0usize;
                 let mut ap = 0usize;
                 while ap < rp.len() {
-                    // c:3346
-                    if ap != cp {
-                        rp.swap(ap, cp);
-                    }
-                    cp += 1;
+                    // c:3334
+                    // Scan the runs BEFORE the compaction swap: once an
+                    // earlier removal makes `cp < ap`, `rp.swap(ap, cp)`
+                    // overwrites `rp[ap]` with a stale slot and every
+                    // comparison below reads the wrong element. C copies
+                    // (`*cp++ = *ap`), it does not swap. Same fix as the
+                    // sorted branch above.
                     let mut bp = ap;
                     while bp + 1 < rp.len() && matcheq(&rp[ap], &rp[bp + 1]) {
                         bp += 1;
-                        n -= 1; // c:3348
+                        n -= 1; // c:3336
                     }
+                    let run_end = bp; // c:3337 `ap = bp`
+                    // c:3338-3342 — mark, do NOT remove: `n` is untouched and
+                    // the outer loop resumes at `run_end + 1`, so CMF_MULT
+                    // elements stay in the array (they are dropped from the
+                    // LISTING via `nl` at c:3351-3352, not from `mcount`).
+                    let mut mark = run_end;
                     let mut dup = 0i32;
-                    while bp + 1 < rp.len()
-                        && rp[ap].disp.is_none()
-                        && rp[bp + 1].disp.is_none()
-                        && rp[ap].str == rp[bp + 1].str
+                    while mark + 1 < rp.len()
+                        && rp[run_end].disp.is_none()
+                        && rp[mark + 1].disp.is_none()
+                        && rp[run_end].str == rp[mark + 1].str
                     {
-                        rp[bp + 1].flags |= CMF_MULT; // c:3352
-                        dup = 1; // c:3353
-                        bp += 1;
+                        rp[mark + 1].flags |= CMF_MULT; // c:3340
+                        dup = 1; // c:3341
+                        mark += 1;
                     }
                     if dup != 0 {
-                        rp[ap].flags |= CMF_FMULT; // c:3356
+                        rp[run_end].flags |= CMF_FMULT; // c:3344
                     }
-                    ap = bp + 1;
+                    if ap != cp {
+                        rp.swap(ap, cp); // c:3335 `*cp++ = *ap`
+                    }
+                    cp += 1;
+                    ap = run_end + 1;
                 }
-                rp.truncate(cp); // c:3359
+                rp.truncate(cp); // c:3346
             }
             for m in rp.iter() {
                 // c:3361
@@ -4708,6 +5316,20 @@ pub fn permmatches(last: i32) -> i32 {
             .unwrap_or_default()
     };
     let mut new_pmatches: Vec<Cmgroup> = Vec::with_capacity(groups_snapshot.len());
+    // c:3488 `g->perm = n`, c:3460-3467 `g->mcount/lcount/llcount`, c:3471
+    // `g->ccount = 0`, c:3542 `g->num = gn++` and c:3544 `g->new = 0` are all
+    // writes to the LIVE group in `amatches`. The port mutated a detached
+    // clone and threw it away, so `g->new` never cleared and `g->perm` was
+    // never recorded: the c:3452 cache test (`!g->perm || g->new`) could
+    // never take its reuse branch and every `permmatches` call rebuilt and
+    // re-`dupmatch`ed every group from scratch. Collect the mutated groups
+    // and store them back after the loop.
+    let mut updated_groups: Vec<Cmgroup> = Vec::with_capacity(new_pmatches.capacity());
+    // c:3490-3491 / c:3528-3529 — `if (!lmatches) lmatches = n;` (resp.
+    // `g->perm`). `lmatches` is the head C keeps for `makecomplist`'s
+    // old-list reuse (c:1006 `lmatches = lastlmatches`); the port never
+    // assigned it, so `compstate[old_list]=keep` had no list to restore.
+    let mut lmatches_head: Option<Cmgroup> = None;
 
     for g_orig in groups_snapshot.into_iter() {
         // c:3449 while (g)
@@ -4802,8 +5424,11 @@ pub fn permmatches(last: i32) -> i32 {
             n_grp.widths = Vec::new(); // c:3531
                                        // Stitch perm chain (prev/next handled implicitly by Vec).
             g.matches = arr; // mirror C: g->matches = makearray result
-            g.perm = Some(Box::new(n_grp.clone())); // c:3490 g->perm = n
-            new_pmatches.push(n_grp); // c:3492-3496
+            g.perm = Some(Box::new(n_grp.clone())); // c:3488 g->perm = n
+            if lmatches_head.is_none() {
+                lmatches_head = Some(n_grp.clone()); // c:3490-3491
+            }
+            new_pmatches.push(n_grp); // c:3492-3495
         } else {
             // reuse existing g->perm                                        // c:3534
             nmatches.fetch_add(g.mcount, Ordering::Relaxed); // c:3540
@@ -4812,12 +5437,24 @@ pub fn permmatches(last: i32) -> i32 {
                 diffmatches.store(1, Ordering::Relaxed); // c:3543
             }
             g.num = gn;
-            gn += 1; // c:3546
+            gn += 1; // c:3542
             if let Some(p) = g.perm.as_deref() {
-                new_pmatches.push(p.clone()); // c:3537 pmatches = g->perm
+                if lmatches_head.is_none() {
+                    lmatches_head = Some(p.clone()); // c:3528-3529
+                }
+                new_pmatches.push(p.clone()); // c:3533 pmatches = g->perm
             }
         }
-        g.new_ = 0; // c:3548
+        g.new_ = 0; // c:3544
+        updated_groups.push(g);
+    }
+    // c:3488/3542/3544 write-back — see the note above the loop.
+    if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        *g = updated_groups;
+    }
+    // c:3490 — `lmatches` is the head of the permanent chain.
+    if let Ok(mut g) = lmatches.get_or_init(|| Mutex::new(None)).lock() {
+        *g = lmatches_head;
     }
 
     // c:3490-3538 — C threads each group onto `pmatches` via
@@ -6538,13 +7175,13 @@ mod tests {
             "ipre",
             "ripre",
             "isuf",
-            "pre",
+            Some("pre"),
             "prpre",
             "ppre",
             None,
             "psuf",
             None,
-            "suf",
+            Some("suf"),
             0,
             0,
         );
@@ -6569,7 +7206,7 @@ mod tests {
             *g = Some(Aminfo::default());
         }
         let _ = add_match_data(
-            0, "x", "x", None, "", "", "", "", "", "", None, "", None, "", 0, 1,
+            0, "x", "x", None, "", "", "", Some(""), "", "", None, "", None, Some(""), 0, 1,
         );
         let a = ainfo.get().unwrap().lock().unwrap().clone().unwrap();
         useexact.store(saved_useexact, Ordering::Relaxed);

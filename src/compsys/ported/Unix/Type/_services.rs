@@ -58,6 +58,7 @@ fn exec_basenames(dir: &str) -> Vec<String> {
 
 /// `_services` — complete system service (init/rc) names.
 pub fn _services(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_services");
     let ostype = getsparam("OSTYPE").unwrap_or_default();
 
     // sh:6-11 — FreeBSD `service -l`.

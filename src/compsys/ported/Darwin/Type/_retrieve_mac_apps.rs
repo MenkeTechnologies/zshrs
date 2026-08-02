@@ -531,6 +531,7 @@ fn mdutil_root_indexed() -> bool {
 /// installed applications) used by `_mac_applications` /
 /// `_mac_files_for_application`, honoring the completion cache.
 pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_retrieve_mac_apps");
     let service = getsparam("service").unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();
 

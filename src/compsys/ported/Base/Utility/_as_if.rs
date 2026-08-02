@@ -26,6 +26,7 @@ use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 /// different command (e.g. when `sudo` should defer to its first
 /// non-option arg).
 pub fn _as_if(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_as_if");
     // sh:2  snapshot words / CURRENT (we restore at end to mirror
     //   the shell's `local` scoping).
     let saved_words = getaparam("words").unwrap_or_default();
