@@ -181,7 +181,14 @@ pub fn _zargs(_args: &[String]) -> i32 {
             // sh:19-34  zargs option specs.
             let mut call = vec!["-S".to_string(), "-s".to_string()];
             call.extend(build_arguments());
-            if _arguments(&call) == 0 {
+            // By NAME (matching the `_files` call below) so `_arguments` gets
+            // its own `comp_wrapper` frame (c:1556); that frame contains its
+            // `compstate[restore]=''` (`_arguments.rs:1130`), which would
+            // otherwise cancel the restore owed to `_zargs`' caller.
+            if crate::compsys::ported::shared::call_compfn("_arguments", &call, || {
+                _arguments(&call)
+            }) == 0
+            {
                 ret = 0; // sh:34  && ret=0
             }
         }

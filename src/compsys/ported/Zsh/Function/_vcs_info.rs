@@ -71,7 +71,10 @@ pub fn _vcs_info(_args: &[String]) -> i32 {
     // $service selects the dispatched compdef name (sh:21).
     let service = getsparam("service").unwrap_or_default();
     let call = build_call(&service);
-    _arguments(&call) // sh:28-31
+    // sh:28-31 — by NAME so `_arguments` runs under its own `comp_wrapper`
+    // frame (c:1556); that frame contains its `compstate[restore]=''`
+    // (`_arguments.rs:1130`).
+    crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call))
 }
 
 #[cfg(test)]

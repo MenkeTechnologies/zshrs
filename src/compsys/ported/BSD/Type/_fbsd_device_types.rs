@@ -78,7 +78,13 @@ pub fn _fbsd_device_types(_args: &[String]) -> i32 {
     // sh:31  _values -s , 'device type' $types
     let mut call: Vec<String> = vec!["-s".to_string(), ",".to_string(), "device type".to_string()];
     call.extend(types());
-    _values(&call)
+    // By NAME, not as a direct Rust call: `_values` is a shell function in
+    // zsh, so `comp_wrapper` (`Src/Zle/complete.c:1556`) brackets it with its
+    // own frame. That frame is what contains `_values`' `compstate[restore]=''`
+    // (`_values.rs:388`, sh:97) — c:1642 puts the CALLER's `restore` back on
+    // the way out. A direct Rust call has no frame, so the `''` leaks up and
+    // cancels THIS function's own restore.
+    crate::compsys::ported::shared::call_compfn("_values", &call, || _values(&call))
 }
 
 #[cfg(test)]

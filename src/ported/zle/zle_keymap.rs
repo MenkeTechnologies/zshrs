@@ -940,13 +940,42 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {
     let oldname = std::mem::replace(&mut *curkeymapname(), resolved.clone()); // c:513
                                                                               // c:518 — `curkeymap = km`.
     *curkeymap.lock().unwrap() = km;
-    // Keep the `$KEYMAP` zle parameter in sync so the zle-keymap-select
-    // hook (and any widget) reads the CURRENT keymap. zsh backs `$KEYMAP`
-    // with a live getfn (get_keymap → curkeymapname); zshrs's makezleparams
-    // snapshots the zle params via setsparam and had no KEYMAP entry, so
-    // `$KEYMAP` was empty inside the hook. Gate on `zleactive` to mirror
-    // zsh's "KEYMAP exists only during line editing". Bug #654.
-    if crate::ported::builtins::sched::zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+    // c:495-527 — C's `selectkeymap` NEVER touches the parameter table.
+    // `$KEYMAP` is a PM_SPECIAL|PM_LOCAL|PM_READONLY scalar backed by a
+    // LIVE getfn (`zle_params.c:151` `{ "KEYMAP", PM_SCALAR|PM_READONLY,
+    // GSU(keymap_gsu) }` → `zle_params.c:456 get_keymap` →
+    // `dupstring(curkeymapname)`); `makezleparams` creates it per widget
+    // call (`zle_params.c:200-206`, `pm->level = locallevel + 1`) and
+    // `endparamscope` destroys it (`zle_main.c:1540`, `:2117`,
+    // `compcore.c:839`).
+    //
+    // zshrs has no live-GSU param, so `makezleparams` SNAPSHOTS the value
+    // inside the widget scope (`zle_params.rs:139`, via `get_keymap()`),
+    // which already covers every widget read — including the
+    // `zle-keymap-select` hook fired below, since `curkeymapname` is
+    // updated at c:513 (line above) BEFORE `execzlefunc`.
+    //
+    // The only thing left for selectkeymap is REFRESHING that snapshot
+    // when the keymap changes DURING a widget (`zle -K vicmd`, the
+    // vi-cmd-mode widget), which C gets for free from the live getfn.
+    // Writing unconditionally created a GLOBAL level-0 `KEYMAP`: at an
+    // interactive prompt selectkeymap runs from the zle read loop, OUTSIDE
+    // any param scope, so `endparamscope` could never remove it —
+    // `typeset -p KEYMAP` printed `typeset KEYMAP=main` where zsh prints
+    // `typeset: no such variable: KEYMAP`, and `$#parameters` ran one over
+    // zsh's. So: refresh only the entry makezleparams already published,
+    // never create one. Bug #654.
+    //
+    // `zle_param_sync::active()` is exactly that predicate: it is armed by
+    // `makezleparams(0)` (the widget call site, zle_main.c:1534) and
+    // cleared when the widget scope drops (zle_main.rs:1650), so it is
+    // true only where C's per-widget `$KEYMAP` param exists. A `pm.level`
+    // test would NOT work: zshrs's `createparam` leaves level 0 for
+    // everything but PM_LOCAL (params.rs:2393-2397), while C's
+    // makezleparams stamps `pm->level = locallevel + 1` (zle_params.c:206).
+    if crate::ported::builtins::sched::zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0
+        && crate::zle_param_sync::active()
+    {
         let _ = crate::ported::params::setsparam("KEYMAP", &resolved);
     }
     if !oldname.is_empty()

@@ -596,7 +596,14 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     //   c:4758 child_block — no-op (no fork)
     //   c:4760 zfork       — replaced by in-process exec
     //   c:4768-4776 parent — equivalent to executor return
-    //   c:4778-4789 child  — entersubsh+execode+_realexit collapse
+    //   c:4778-4789 child  — entersubsh+execode+_realexit collapse.
+    //     The `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL)` at c:4781 is NOT
+    //     dropped by that collapse: `run_command_substitution` below enters
+    //     `SubshStateGuard`, which applies the deltas that are correct
+    //     without a fork (opts[MONITOR], shout, opts[USEZLE], zleactive) and
+    //     restores them on return. See SubshStateGuard for what is skipped
+    //     and why. `_realexit()` has no in-process counterpart — the
+    //     executor simply returns the captured buffer.
     cmdoutval.store(0, Ordering::Relaxed); // c:4759
     let buf = crate::ported::exec::run_command_substitution(cmd);
     LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed); // c:4775
@@ -1746,7 +1753,7 @@ pub fn execsave() {
         trap_state: TRAP_STATE.load(Ordering::Relaxed),                      // c:6457
         trapisfunc: trapisfunc.load(Ordering::Relaxed),                      // c:6458
         traplocallevel: traplocallevel.load(Ordering::Relaxed),              // c:6459
-        noerrs: *crate::ported::utils::noerrs_lock().lock().unwrap(), // c:6460
+        noerrs: *crate::ported::utils::noerrs_lock().lock().unwrap(),        // c:6460
         this_noerrexit: this_noerrexit.load(Ordering::Relaxed),              // c:6461
         // c:6462 — `es->underscore = ztrdup(zunderscore);`
         underscore: Some(zunderscore.lock().unwrap().clone()),
@@ -1901,13 +1908,74 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
     popheap(); // c:1240
 }
 
-/// Port of `void runshfunc(Eprog prog, FuncWrap wrap, char *name)` from
-/// `Src/exec.c:6166`. The inner shell-function executor — fires
-/// module-registered wrapper handlers around the function body, with
-/// `$_` (zunderscore) save/restore and a paramscope push/pop around
-/// the wordcode walk.
+// =====================================================================
+// Function-wrapper chain — `Src/module.c:570` `FuncWrap wrappers`, as
+// walked by `runshfunc` (`Src/exec.c:6166`).
+// =====================================================================
+
+/// Which module-registered wrapper a [`BodyWrap`] node stands for.
 ///
-/// C control flow:
+/// C reaches the handler through a fn pointer stored in the node
+/// (`WrapFunc handler` — `Src/zsh.h:1365`); this port dispatches on the
+/// discriminant instead, because the two handlers take a body DELEGATE
+/// that a `WrapFunc` pointer cannot carry (see [`BodyWrap`]).
+#[derive(Clone, Copy)]
+enum WrapKind {
+    /// `WRAPDEF(comp_wrapper)` — `Src/Zle/complete.c:1694-1695`.
+    Comp,
+    /// `WRAPDEF(wrap_private)` — `Src/Modules/param_private.c:541-542`.
+    Private,
+}
+
+/// One node of the `wrappers` linked list C keeps at `Src/module.c:570`,
+/// tail-appended by `addwrapper` (`Src/module.c:592-597`) from a module's
+/// `boot_`.
+///
+/// Why the live chain is this table and not `module::WRAPPERS`: C's
+/// `struct funcwrap` (`Src/zsh.h:1362-1367`) stores an
+/// `int (*handler)(Eprog prog, FuncWrap w, char *name)`, and each handler
+/// re-enters the chain on its own with `runshfunc(prog, w->next, name)`
+/// (`Src/Zle/complete.c:1591`, `Src/Modules/param_private.c:556`) because
+/// in C the function body is an `Eprog` anyone can walk. A zshrs function
+/// body is not — it is `doshfunc`'s caller-supplied `body_runner` closure
+/// (fusevm chunk runner, Rust compsys port, or plugin override), so the
+/// port's handlers take the continuation as an explicit delegate that a
+/// plain fn pointer has nowhere to hold. `zsh_h::funcwrap` and
+/// `module::WRAPPERS` keep C's pointer shape so the `addwrapper` /
+/// `deletewrapper` ports stay 1:1; this table is the same list expressed
+/// in the shape `runshfunc` can actually call.
+struct BodyWrap {
+    /// The module whose `boot_` calls `addwrapper(m, wrapper)`. C reads it
+    /// back through `wrap->module` for the refcount at c:6178/6180 and the
+    /// deferred `unload_module` at c:6184.
+    module: &'static str,
+    /// Which handler this node holds.
+    kind: WrapKind,
+}
+
+/// The chain in `addwrapper` tail-append order — module boot order, so
+/// the wrapper of the module booted first ends up OUTERMOST.
+static BODY_WRAPPERS: &[BodyWrap] = &[
+    // `Src/Zle/complete.c:1694-1695` — `static struct funcwrap wrapper[] =
+    // { WRAPDEF(comp_wrapper) };` — installed by c:1767
+    // `return addwrapper(m, wrapper);` in `zsh/complete`'s `boot_`.
+    BodyWrap {
+        module: "zsh/complete",
+        kind: WrapKind::Comp,
+    },
+    // `Src/Modules/param_private.c:541-542` — `static struct funcwrap
+    // wrapper[] = { WRAPDEF(wrap_private) };` — installed by c:712
+    // `return addwrapper(m, wrapper);` in `zsh/param/private`'s `boot_`.
+    BodyWrap {
+        module: "zsh/param/private",
+        kind: WrapKind::Private,
+    },
+];
+
+/// Port of `void runshfunc(Eprog prog, FuncWrap wrap, char *name)` from
+/// `Src/exec.c:6166` — the wrapper-chain walk that stands between
+/// `doshfunc` and a function body. C:
+///
 /// ```c
 /// queue_signals();
 /// ou = zalloc(ouu = underscoreused);
@@ -1932,149 +2000,143 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
 /// unqueue_signals();
 /// ```
 ///
-/// (a) `wrap->module->wrapper++/--` (c:6178/6180) wired against
-///     `module::MODULESTAB.modules[name].wrapper` (i32), looked up
-///     by `wrap.module.node.nam`. Recursive unload during handler
-///     defers correctly.
-/// (b) `unload_module(wrap->module)` (c:6184) wired via
-///     `modulestab.unload_module(name)` when wrapper hits 0 AND
-///     MOD_UNLOAD flag is set on the module's hashnode.
-/// (c) `execode(prog, 1, 0, "shfunc")` (c:6195) ported at
-///     exec.rs:6047. Body uses execode for the no-source
-///     (compiled-wordcode) branch and fusevm for the
-///     source-preserving (autoloaded) branch per cache coherence.
-/// (d) `startparamscope/endparamscope` Rust signatures take
-///     `&mut HashTable` (params.rs:7425/7435). We pass the global
-///     paramtab handle via the params crate.
-pub fn runshfunc(prog: &eprog, mut wrap: Option<&funcwrap>, name: &str) {
+/// **RUST-ONLY ADAPTATION — what this port does and does NOT own.** When
+/// zshrs replaced C's wordcode walk with a body delegate, everything in
+/// the listing above except the chain walk moved into `doshfunc`, which is
+/// the only caller:
+///
+/// | C line | Where it lives in zshrs |
+/// |---|---|
+/// | c:6171 / c:6202 `queue_signals` / `unqueue_signals` | `doshfunc`'s own outer pair (c:5835 / c:6128) already brackets this window; C's inner pair is a nested refcount bump inside it |
+/// | c:6173-6175 / c:6196-6198 `$_` save / `setunderscore` | `doshfunc`, around this call (`saved_zunderscore`) |
+/// | c:6194 `startparamscope()` | `doshfunc` — `inc_locallevel()` before the funcstack push |
+/// | c:6200 `endparamscope()` | `doshfunc`'s epilogue |
+/// | c:6195 `execode(prog, 1, 0, "shfunc")` | the `body` delegate |
+///
+/// Duplicating any of them here would double-apply it, so the body below
+/// is c:6177-6193 plus the c:6195 body call, and nothing else.
+///
+/// WARNING: param names don't match C — Rust=(_prog, wrap, name, body) vs
+/// C=(prog, wrap, name). `wrap` is an INDEX into [`BODY_WRAPPERS`] rather
+/// than a `FuncWrap` pointer (a `Vec`-shaped chain has no `->next` to
+/// hand out); `wrap = 0` is C's `wrappers` head and `wrap = i + 1` is the
+/// `wrap->next` a handler re-enters with. `_prog` is unused because the
+/// body arrives as `body`, and the return value is the body's exit status
+/// (C returns void and communicates through `lastval`).
+pub fn runshfunc(
+    _prog: Option<&eprog>, // c:6166
+    wrap: usize,           // c:6166 (FuncWrap wrap — see WARNING)
+    name: &str,            // c:6166
+    body: &mut dyn FnMut() -> i32,
+) -> i32 {
     // c:6166
-    queue_signals(); // c:6171
-                     // c:6173-6175 — snapshot zunderscore into `ou`.
-    let ouu = underscoreused.load(Ordering::Relaxed) as usize;
-    let ou: Option<String> = if ouu > 0 {
-        // c:6174
-        Some(zunderscore.lock().unwrap().clone()) // c:6175
-    } else {
-        None
-    };
-    // c:6177-6193 — wrapper chain walk.
-    while let Some(w) = wrap {
-        // c:6177
-        // c:6178 — wrap->module->wrapper++ (WARNING a).
-        // c:6178 — `wrap->module->wrapper++;` — bump refcount so a
+    let mut w_idx = wrap;
+    while w_idx < BODY_WRAPPERS.len() {
+        // c:6177 — `while (wrap)`
+        let w = &BODY_WRAPPERS[w_idx];
+
+        // Chain membership. C asks nothing here because a wrapper is in
+        // the list only while its module has it registered; this port
+        // evaluates the equivalent condition per node.
+        let armed = match w.kind {
+            // zshrs statically links the completion system — `compadd` /
+            // `compset` are always present and `zsh/complete` is never
+            // dlopen'd — so there is no boot event to key on. The
+            // wrapper's own first statement is the gate that matters and
+            // it is exact: `if (incompfunc != 1) return 1;`
+            // (`Src/Zle/complete.c:1558-1559`). `incompfunc` is 1 only
+            // between `Src/Zle/compcore.c:815` and c:841, i.e. strictly
+            // inside `callcompfunc`, which is the only thing that can run
+            // a completion function at all. Hoisting the test here keeps
+            // an ordinary function call at one relaxed load with no chain
+            // node entered.
+            WrapKind::Comp => crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) == 1,
+            // Module BOOT STATE (`MOD_INIT_B` — the bit `zmodload -e`
+            // reads and `load_module` sets after `do_boot_module`,
+            // `Src/module.c:2317`), which is exactly C's condition for
+            // `wrap_private` being in the list: the `private` dispatch
+            // runs `require_module` via the `Src/exec.c:2710` autofeature
+            // path, which boots the module. Deliberately NOT
+            // `is_loaded()` — default-registered static modules carry
+            // `MOD_LINKED` from startup, which would arm the wrapper
+            // before any `private` was ever used.
+            WrapKind::Private => crate::ported::module::MODULESTAB
+                .lock()
+                .map(|t| {
+                    t.modules
+                        .get(w.module)
+                        .map(|m| (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0)
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false),
+        };
+        if !armed {
+            // Not in C's `wrappers` list right now — no node to step over.
+            w_idx += 1;
+            continue;
+        }
+
+        // c:6178 — `wrap->module->wrapper++;` — hold the module open so a
         // recursive unload during the handler defers until we return.
-        let mod_name: Option<String> = w.module.as_ref().map(|m| m.node.nam.clone());
-        if let Some(ref n) = mod_name {
-            if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
-                if let Some(m) = tab.modules.get_mut(n) {
-                    m.wrapper += 1;
-                }
+        if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+            if let Some(m) = tab.modules.get_mut(w.module) {
+                m.wrapper += 1;
             }
         }
-        let cont = if let Some(h) = w.handler {
-            // c:6179 — WrapFunc takes Eprog by value + next FuncWrap by value.
-            // We pass an empty next sentinel (wrapper-chain walks are
-            // single-step in zshrs — see chain-walk comment below).
-            let next_sentinel = Box::new(funcwrap {
-                next: None,
-                flags: 0,
-                handler: None,
-                module: None,
-            });
-            h(Box::new(prog.clone()), next_sentinel, name)
-        } else {
-            1
+
+        // c:6179 — `cont = wrap->handler(prog, wrap->next, name);`. The
+        // closure IS `wrap->next` made callable: the rest of the chain,
+        // then the body — which is what each handler's own
+        // `runshfunc(prog, w, name)` reaches in C.
+        let mut status = 0;
+        let cont = {
+            let mut run_next = || runshfunc(_prog, w_idx + 1, name, &mut *body);
+            match w.kind {
+                WrapKind::Comp => crate::ported::zle::complete::comp_wrapper(
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    name,
+                    || status = run_next(), // complete.c:1591
+                ),
+                WrapKind::Private => crate::ported::modules::param_private::wrap_private(
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    || status = run_next(), // param_private.c:556
+                ),
+            }
         };
+
         // c:6180 — `wrap->module->wrapper--;`
-        // c:6182-6184 — `if (!wrap->module->wrapper && (flags & MOD_UNLOAD)) unload_module(wrap->module);`
-        if let Some(ref n) = mod_name {
-            let should_unload = {
-                if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
-                    if let Some(m) = tab.modules.get_mut(n) {
-                        m.wrapper -= 1;
-                        m.wrapper == 0 && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) != 0
-                    } else {
-                        false
-                    }
+        // c:6182-6184 — `if (!wrap->module->wrapper && (flags & MOD_UNLOAD))
+        //                    unload_module(wrap->module);`
+        let should_unload = {
+            if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+                if let Some(m) = tab.modules.get_mut(w.module) {
+                    m.wrapper -= 1;
+                    m.wrapper == 0 && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) != 0
                 } else {
                     false
                 }
-            };
-            if should_unload {
-                if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
-                    let _ = tab.unload_module(n); // c:6184
-                }
+            } else {
+                false
+            }
+        };
+        if should_unload {
+            if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+                let _ = tab.unload_module(w.module); // c:6184
             }
         }
+
         if cont == 0 {
-            // c:6186 — wrapper claimed the call.
-            unqueue_signals(); // c:6189
-            return; // c:6190
+            // c:6186 — the wrapper claimed the call and has already run
+            // the body through the delegate.
+            return status; // c:6190
         }
-        // c:6192 — wrap = wrap->next; the linked-list step requires
-        // owning the next ref; the borrowed iteration breaks here.
-        // Wrapper chains > 1 are extremely rare; we stop at the
-        // first to avoid a Box::leak.
-        wrap = None;
+        w_idx += 1; // c:6192
     }
-    // c:6194 — startparamscope (just inc_locallevel internally).
-    inc_locallevel();
-    // c:6195 — `execode(prog, 1, 0, "shfunc");` — run the function
-    // body. Prefer the canonical execode (exec.rs:6047) which walks
-    // execlist on a fresh estate over the prog. If prog.strs carries
-    // the original source (autoloaded ported that the lazy-compile path
-    // populated), route through the fusevm pipeline for cache
-    // coherence with execstring.
-    if let Some(ref src) = prog.strs {
-        let _ = crate::ported::exec::execute_script_zsh_pipeline(src);
-    } else {
-        // Pure wordcode body — drive via the canonical execode.
-        execode_wordcode(Box::new(prog.clone()), 1, 0, "shfunc");
-        let _ = name;
-    }
-    if let Some(ou_str) = ou {
-        // c:6196
-        setunderscore(&ou_str); // c:6197
-                                // c:6198 — zfree(ou, ouu) — Rust drops on scope exit.
-    }
-    endparamscope(); // c:6200
-                     // c:6141 — deferred-exit gate. After endparamscope() unwinds the
-                     // function's local scope (locallevel--), check whether an exit
-                     // queued inside the function has reached its target scope:
-                     //   if (exit_pending && exit_level >= locallevel+1 && !in_exit_trap)
-                     // The `+1` accounts for endparamscope having already happened
-                     // here (locallevel is already one less than when exit_level was
-                     // captured at c:5890). When the gate fires:
-                     //   - locallevel > forklevel: still in a nested function — force
-                     //     the outer frame to return too (retflag=1, breaks=loops).
-                     //   - locallevel <= forklevel: out of all functions — actually
-                     //     exit the shell now via zexit(exit_val, ZEXIT_NORMAL).
-                     // `in_exit_trap` (c:Src/signals.c:63 — `int in_exit_trap;`) is the
-                     // EXIT-trap reentry counter. dotrap at signals.c:1272/1277 wraps
-                     // SIGEXIT handler dispatch with ++/--, so an exit issued FROM an
-                     // EXIT trap shouldn't re-trigger the gate (or the trap would
-                     // recurse). zshrs's signals::in_exit_trap is the canonical port
-                     // surface — read it directly here.
-    let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
-    let exit_level = crate::ported::builtin::EXIT_LEVEL.load(Ordering::Relaxed);
-    let cur_locallevel = locallevel.load(Ordering::Relaxed) as i32;
-    let cur_forklevel = FORKLEVEL.load(Ordering::Relaxed);
-    let in_exit_trap = crate::ported::signals::in_exit_trap.load(Ordering::Relaxed); // c:Src/signals.c:63
-    if exit_pending != 0 && exit_level >= cur_locallevel + 1 && in_exit_trap == 0 {
-        // c:6141
-        if cur_locallevel > cur_forklevel {
-            // c:6143 — still inside a nested function: keep unwinding.
-            RETFLAG.store(1, Ordering::Relaxed); // c:6144
-            BREAKS.store(LOOPS.load(Ordering::Relaxed), Ordering::Relaxed); // c:6145
-        } else {
-            // c:6151 — out of all functions: exit for real.
-            crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
-            let val = EXIT_VAL.load(Ordering::Relaxed);
-            crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL);
-            // c:6152
-        }
-    }
-    unqueue_signals(); // c:6202
+    // c:6195 — `execode(prog, 1, 0, "shfunc");`
+    body()
 }
 
 /// Port of `Emulation_options sticky_emulation_dup(Emulation_options src,
@@ -4011,8 +4073,10 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
 ///     so the temp file gets cleaned at job exit.
 /// (b) `waitforpid` Rust takes 1 arg `pid`, C takes `(pid, full)`.
 ///     Behavior matches the `full=0` case anyway.
-/// (c) `entersubsh` is ported at exec.rs:3934 — wire it here when
-///     re-routing the fork path away from setsid-only fallback.
+/// (c) This is a REAL fork (`zfork` below), not a collapsed one, so the
+///     child gets the full `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL)`
+///     (c:4986) via the canonical port at exec.rs:4329 — no in-process
+///     `SubshStateGuard` substitute is needed or wanted here.
 /// (d) `execode` is now ported (exec.rs:6047) — the body still
 ///     re-feeds through fusevm for cache coherence with execstring.
 /// (e) `_realexit` flushes stdio + jobs + history. We use bare
@@ -4163,8 +4227,9 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 ///     the current job (c:5141-5142).
 /// (c) `addfilelist(NULL, fd)` wired via `JOBTAB[thisjob]` at
 ///     c:5087.
-/// (d) `entersubsh` is ported at exec.rs:3934 — wired below at
-///     c:5063 (`entersubsh(ESUB_ASYNC|ESUB_PGRP, NULL)`).
+/// (d) `entersubsh` is ported at exec.rs:4329 — wired below at
+///     c:5095 (`entersubsh(ESUB_ASYNC|ESUB_PGRP, NULL)`) in the real
+///     forked child.
 /// (e) `execode` is ported at exec.rs:6047. Body still re-feeds
 ///     through fusevm for cache coherence.
 /// (f) `_realexit` flushes stdio + jobs + history. We use bare
@@ -4558,6 +4623,121 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     );
 }
 
+/// RAII guard applying the fork-safe subset of
+/// `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL)` (`Src/exec.c:1083`) around a
+/// command substitution that zshrs runs **in-process**, restoring every
+/// touched global on drop.
+///
+/// C's `getoutput()` forks, and only the child runs `entersubsh`:
+///
+/// ```c
+///     /* pid == 0 */
+///     child_unblock();
+///     zclose(pipes[0]);
+///     redup(pipes[1], 1);
+///     entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL);   /* c:4781 */
+///     cmdpush(CS_CMDSUBST);
+///     execode(prog, 0, 1, "cmdsubst");
+/// ```
+///
+/// so every state delta dies with the child and the parent is untouched.
+/// zshrs collapses that fork (`getoutput` below → `run_command_substitution`),
+/// which means the deltas were previously never applied **at all**: inside
+/// `$( )` the shell kept the caller's `zleactive` / `opts[USEZLE]`, so every
+/// reader of them took the "we are inside the line editor" branch. Observed
+/// failure: `lt=( ${(f)"$(fc -l -200)"} )` bound to a ZLE widget died with
+/// `no interactive history within ZLE` — `bin_fc`'s guard
+/// (`builtin.rs:2757`, a correct port of `Src/builtin.c:1523-1527`) firing on
+/// a stale `zleactive`. Same class of bug for every other reader:
+/// `jobs.rs:1114` (time-report suppression), `utils.rs:1785` (screen
+/// ownership), `signals.rs:2050` (refresh-on-signal).
+///
+/// APPLIED (pure restorable scalar state; correct without a fork):
+///   * c:1097 / c:1207 — `opts[MONITOR] = 0`. ESUB_NOMONITOR is set and
+///     `job_control_ok` is 0 (no ESUB_JOB_CONTROL), so both C branches
+///     agree. A substitution body must not do job control.
+///   * c:1164 — `shout = NULL`. Its readers already handle the NULL case
+///     the way the C child does (`putshout` falls back to stderr,
+///     `checkrmall` returns 1 at `utils.rs:3565` per c:2871, `mailcheck`
+///     stays silent per c:1670).
+///   * c:1208 — `opts[USEZLE] = 0`.
+///   * c:1209 — `zleactive = 0`.
+///
+/// DELIBERATELY SKIPPED — each would be wrong, or is already handled
+/// elsewhere on the in-process path:
+///   * c:1088-1092 `unsettrap(sig)` — the trap table is not scalar state
+///     (trap bodies/dispositions), and with no fork there is no child exit
+///     for an EXIT trap to fire at. Restoring it is not a swap.
+///   * c:1095 `exit_val = 0` — ALREADY DONE on this path:
+///     `vm_helper.rs:3893` swaps `EXIT_VAL` to 0 before the nested VM runs
+///     and restores it at `vm_helper.rs:4004`.
+///   * c:1110-1151 `setpgrp`/`attachtty`/gleader bookkeeping — process-group
+///     and tty surgery. With no fork this moves the interactive shell's own
+///     process group and hands the terminal away.
+///   * c:1154 `subsh = 1` — `init.rs:2289` does `if subsh != 0 { realexit() }`.
+///     With no fork, an `exit` inside `$( )` would then hard-kill the
+///     interactive shell instead of ending the substitution.
+///   * c:1161 `zsh_subshell++` — ALREADY DONE on this path by
+///     `CmdSubstSubshellBump` (`fusevm_bridge.rs:232`, entered at
+///     `vm_helper.rs:3734`). Bumping again would make `$ZSH_SUBSHELL` read 2
+///     inside `$( )` instead of 1.
+///   * c:1165-1193 `signal_ignore`/`signal_default` — per-process signal
+///     dispositions. Defaulting SIGINT/SIGQUIT/SIGTSTP in the live
+///     interactive shell would let ^C kill and ^Z stop the shell itself.
+///   * c:1202-1205 `signal_unblock` — the process signal mask is owned by
+///     the trap dispatcher's block/unblock pairing; unblocking here breaks
+///     that pairing.
+///   * c:1214-1217 close FDT_SAVED_MASK fds — fd surgery. These are the
+///     parent's saved descriptors for redirection restore; closing them is
+///     unrecoverable.
+///   * c:1219 `clearjobtab(monitor)` — would destroy the parent's job table.
+///   * c:1220 `get_usage()` — overwrites the parent's `times` baseline with
+///     no fork to discard it, and nothing inside the substitution reads it.
+///   * c:1221 `forklevel = locallevel` — FORKLEVEL gates local-scope
+///     unwinding; the in-process body pushes and pops its own locals
+///     normally, so moving the fork boundary would strand them.
+///
+/// Nesting is safe: each guard saves what it observed on entry and restores
+/// exactly that on drop, so LIFO nesting (`$( … $( … ) … )`) unwinds
+/// correctly.
+pub struct SubshStateGuard {
+    saved_monitor: bool,
+    saved_shout: usize,
+    saved_usezle: bool,
+    saved_zleactive: i32,
+}
+
+impl SubshStateGuard {
+    /// Apply the deltas listed above and capture the values to restore.
+    pub fn enter() -> Self {
+        let g = SubshStateGuard {
+            saved_monitor: isset(MONITOR),
+            saved_shout: *shout.lock().unwrap(),
+            saved_usezle: isset(USEZLE),
+            saved_zleactive: zleactive.load(Ordering::Relaxed),
+        };
+        // `force = 1`: C assigns the `opts[]` slots directly, so the
+        // dosetopt gatekeeping (c:743-861, which only guards turning
+        // options ON) must not apply in either direction.
+        dosetopt(MONITOR, 0, 1); // c:1097 / c:1207
+        *shout.lock().unwrap() = 0; // c:1164
+        dosetopt(USEZLE, 0, 1); // c:1208
+        zleactive.store(0, Ordering::Relaxed); // c:1209
+        g
+    }
+}
+
+impl Drop for SubshStateGuard {
+    fn drop(&mut self) {
+        // Reverse order of `enter`; the C child never restores because it
+        // `_realexit()`s, so this half has no C counterpart to cite.
+        zleactive.store(self.saved_zleactive, Ordering::Relaxed);
+        dosetopt(USEZLE, self.saved_usezle as i32, 1);
+        *shout.lock().unwrap() = self.saved_shout;
+        dosetopt(MONITOR, self.saved_monitor as i32, 1);
+    }
+}
+
 /// Port of `static int getpipe(char *cmd, int nullexec)` from
 /// `Src/exec.c:5119`.
 ///
@@ -4594,10 +4774,10 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
 /// (a) `addproc` is now 7-arg (jobs.rs:1516) — wired at the
 ///     procsubst pid recording site (c:5141-5142) earlier this
 ///     session; the child IS now recorded in `JOBTAB[thisjob]`.
-/// (b) `entersubsh` IS now ported (exec.rs:3934) including the
-///     ESUB_PGRP pipeline group-leadership path — wired this
-///     session for getpipe's `entersubsh(ESUB_ASYNC|ESUB_PGRP|
-///     ESUB_NOMONITOR, NULL)` call.
+/// (b) `entersubsh` IS ported (exec.rs:4329) including the
+///     ESUB_PGRP pipeline group-leadership path, and is called from
+///     the real forked child below for getpipe's
+///     `entersubsh(ESUB_ASYNC|ESUB_PGRP|ESUB_NOMONITOR, NULL)`.
 /// (c) `execode(prog, ...)` IS now ported (exec.rs:6047) — getpipe
 ///     can route through execode for the parsed eprog. Currently
 ///     this caller still uses the fusevm pipeline for cache
@@ -6052,48 +6232,12 @@ pub fn doshfunc(
     // instead of the call's arg. Bug surfaced via
     // test_dollar_underscore_after_function_call.
     let saved_zunderscore = crate::ported::params::getsparam("_").unwrap_or_default();
-    // c:6042 — `runshfunc(prog, wrappers, name)`: the FuncWrap chain.
-    // zsh/param/private installs `wrap_private` via addwrapper at
-    // module boot (param_private.c:712); C's runshfunc invokes it
-    // around every function body so `private_wraplevel` tracks the
-    // callee's locallevel and outer-scope privates get
-    // scopeprivate-hidden for the duration. The gate here is module
-    // BOOT STATE (MOD_INIT_B — the bit `zmodload -e` reads and
-    // load_module sets after do_boot_module, module.c:2317) —
-    // exactly C's condition for the wrapper being in the chain: the
-    // `private` dispatch runs require_module per the exec.c:2710
-    // autofeature path, which boots the module. NOT is_loaded():
-    // default-registered static modules carry MOD_LINKED from
-    // startup, which would arm the wrapper before any `private`
-    // use. The dispatch is a named special-case rather than a
-    // WRAPPERS walk because the Rust wrap_private carries a
-    // body-delegate closure (fusevm chunk runner) that can't live
-    // in funcwrap's WrapFunc fn-pointer slot. The pwl < locallevel
-    // pre-check mirrors wrap_private's own c:552 gate so the
-    // closure is guaranteed to run when routed through it.
-    let run_wrap_private = crate::ported::module::MODULESTAB
-        .lock()
-        .map(|t| {
-            t.modules
-                .get("zsh/param/private")
-                .map(|m| (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0)
-                .unwrap_or(false)
-        })
-        .unwrap_or(false)
-        && crate::ported::modules::param_private::private_wraplevel.load(Ordering::Relaxed)
-            < crate::ported::params::locallevel.load(Ordering::Relaxed);
-    let body_status = if run_wrap_private {
-        let mut st = 0;
-        let _ = crate::ported::modules::param_private::wrap_private(
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            || st = body_runner(), // c:556 runshfunc(prog, w, name)
-        );
-        st
-    } else {
-        body_runner()
-    };
+    // c:6042 — `runshfunc(prog, wrappers, funcsave->fstack.name);` — run
+    // the body through the module-registered wrapper chain, starting at
+    // its head (`wrappers` == [`BODY_WRAPPERS`] index 0). `prog` is `None`
+    // because the body arrives as `body_runner`; see [`runshfunc`] for the
+    // split of C's c:6166-6202 between it and this function.
+    let body_status = runshfunc(None, 0, &name, &mut body_runner);
     crate::ported::params::set_zunderscore(std::slice::from_ref(&saved_zunderscore));
     crate::ported::lex::set_lineno(saved_lineno);
     LASTVAL.store(body_status, Ordering::Relaxed);
@@ -7817,7 +7961,19 @@ pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
 
 /// Run a `$(...)` command substitution on the live executor, returning
 /// captured stdout. Empty string when no executor is in scope.
+///
+/// The body runs IN-PROCESS (no fork), so the subshell state that
+/// `Src/exec.c:4781`'s `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL)` would
+/// have installed in the forked child is applied here by `SubshStateGuard`
+/// and unwound when the substitution returns. Every caller of this funnel —
+/// `getoutput` above and the p10k custom-segment renderer
+/// (`extensions/p10k/segments_core.rs:917`, which is `content="$(eval
+/// $command)"`) — is a genuine command substitution and wants it.
 pub fn run_command_substitution(cmd: &str) -> String {
+    // c:4781 — `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL);` in the child
+    // arm of getoutput. Fork-safe subset only; see SubshStateGuard for the
+    // applied/skipped breakdown.
+    let _subsh_state = SubshStateGuard::enter();
     if let Some(r) =
         crate::fusevm_bridge::try_with_executor(|exec| exec.run_command_substitution(cmd))
     {

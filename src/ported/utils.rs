@@ -2296,9 +2296,13 @@ pub fn adjustlines() -> usize {
             }
         }
     }
-    // c:1844 fallback — paramtab `$LINES`, not OS env.
+    // c:1841-1845 fallback — `if (zterm_lines <= 0) zterm_lines =
+    //                    tclines > 0 ? tclines : 24`. paramtab `$LINES`,
+    //                    not OS env. See adjustcolumns for why the `> 0`
+    //                    filter is load-bearing.
     getsparam("LINES")
         .and_then(|s| s.parse().ok())
+        .filter(|&n: &usize| n > 0)
         .unwrap_or(24)
 }
 
@@ -2320,11 +2324,15 @@ pub fn adjustcolumns() -> usize {
             }
         }
     }
-    // c:1820 fallback — `if (zterm_columns <= 0) zterm_columns =
+    // c:1866-1870 fallback — `if (zterm_columns <= 0) zterm_columns =
     //                    tccolumns > 0 ? tccolumns : 80`. C consults
     //                    `getsparam("COLUMNS")` (paramtab), not OS env.
+    // The `> 0` filter is C's `<= 0` clamp: a literal `COLUMNS=0` (what a
+    // TERM=dumb pty leaves behind) parses fine, so without it callers that
+    // divide by the column count panic instead of falling back to 80.
     getsparam("COLUMNS")
         .and_then(|s| s.parse().ok())
+        .filter(|&n: &usize| n > 0)
         .unwrap_or(80)
 }
 
@@ -4411,8 +4419,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
                 return; // c:3209
             }
             // c:3210-3214 — `noerrs=2; singsub(&guess); noerrs = ne;`
-            let saved_noerrs =
-                *crate::ported::utils::noerrs_lock().lock().unwrap();
+            let saved_noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap();
             *crate::ported::utils::noerrs_lock().lock().unwrap() = 2; // c:3212
             guess = crate::ported::subst::singsub(&guess); // c:3213
             *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;

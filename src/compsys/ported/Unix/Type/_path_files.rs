@@ -109,9 +109,23 @@ fn cs_s(key: &str) -> String {
     get_compstate_str(key).unwrap_or_default()
 }
 
-/// zstyle -s: first value (None when style unset).
+/// `zstyle -s ctx style name [sep]` — Src/Modules/zutil.c:643-658:
+///   `if ((vals = lookupstyle(args[1], args[2])) && vals[0]) {`
+///   `    ret = sepjoin(vals, (args[4] ? args[4] : " "), 0); val = 0; }`
+///   `else { ret = ztrdup(""); val = 1; }`
+/// so ALL values are joined with `sep` (default a single space), not
+/// just the first one; `None` mirrors the `val = 1` (style unset) arm.
+/// A style set to one empty string is still a hit (`vals[0]` is a valid
+/// pointer), which `Some(String::new())` reproduces.
+/// No `_path_files` call site passes the optional `sep` argument, so the
+/// separator is fixed at the C default `" "`.
 fn zstyle_s(ctx: &str, style: &str) -> Option<String> {
-    lookupstyle(ctx, style).into_iter().next()
+    let vals = lookupstyle(ctx, style);
+    if vals.is_empty() {
+        None
+    } else {
+        Some(crate::ported::utils::sepjoin(&vals, Some(" ")))
+    }
 }
 /// zstyle -a: all values.
 fn zstyle_a(ctx: &str, style: &str) -> Vec<String> {
@@ -123,6 +137,17 @@ fn zstyle_t(ctx: &str, style: &str) -> bool {
         Some(w) => matches!(w.as_str(), "yes" | "true" | "on" | "1"),
         None => false,
     }
+}
+/// `zstyle -t ctx style word...` — Src/Modules/zutil.c:707-717:
+///   `if (args[3]) { … while (*p) if (!strcmp(*ap, *p++)) return 0; … return 1; }`
+/// With value words given, the boolean spelling is NOT consulted at all:
+/// the test is "does any listed word appear among the style's values".
+/// `_path_files` uses this for `expand suffix` (sh:681) and
+/// `expand prefix` (sh:887) — reading those as a plain boolean made the
+/// documented `prefix`/`suffix` values of `expand` inert.
+fn zstyle_t_word(ctx: &str, style: &str, words: &[&str]) -> bool {
+    let vals = lookupstyle(ctx, style);
+    words.iter().any(|w| vals.iter().any(|v| v == w))
 }
 /// zstyle -T: default-true (true unless explicitly false-ish).
 fn zstyle_t_default(ctx: &str, style: &str) -> bool {
@@ -723,7 +748,9 @@ pub fn _path_files(argv: &[String]) -> i32 {
     }
     let accex = zstyle_a(&paths_ctx, "accept-exact");
     let fake = zstyle_a(&ctx, "fake-files");
-    let ignpar = zstyle_s(&paths_ctx, "ignore-parents").unwrap_or_default();
+    // sh:207 reads the *unsuffixed* context, not the `:paths` one:
+    //   `zstyle -s ":completion:${curcontext}:" ignore-parents ignpar`
+    let ignpar = zstyle_s(&ctx, "ignore-parents").unwrap_or_default();
     let accept_exact_dirs = zstyle_t(&paths_ctx, "accept-exact-dirs");
     let path_completion = zstyle_t_default(&paths_ctx, "path-completion");
 
@@ -1264,7 +1291,8 @@ pub fn _path_files(argv: &[String]) -> i32 {
                 let isx = get_str("ISUFFIX");
                 let anchor2 = format!("{}{}{}", prepath, realpath, testpath);
                 let listing = cs_s("insert").is_empty()
-                    || (!zstyle_t(&paths_ctx, "expand")
+                    // sh:681 `! zstyle -t "…:paths" expand suffix`
+                    || (!zstyle_t_word(&paths_ctx, "expand", &["suffix"])
                         && !listsfx
                         && (!comp_correct.is_empty()
                             || pattern_match.is_empty()
@@ -1648,7 +1676,8 @@ pub fn _path_files(argv: &[String]) -> i32 {
         .unwrap_or(0);
     let matchers = get_arr("_matchers").len() as i64;
     if matcher_num == matchers
-        && zstyle_t(&paths_ctx, "expand")
+        // sh:887 `zstyle -t "…:paths" expand prefix`
+        && zstyle_t_word(&paths_ctx, "expand", &["prefix"])
         && nm == cs_i("nmatches")
         && !exppaths.is_empty()
         && format!("{}{}", linepath, exppaths.join(" ")) != eorig

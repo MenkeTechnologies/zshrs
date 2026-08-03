@@ -104,7 +104,9 @@ pub fn _ktrace_points(args: &[String]) -> i32 {
     // with a fixed argv, not `"${argv[@]}"`) — `args` is accepted per the
     // port convention but faithfully unused here, matching the shell.
     let _ = args;
-    _values(&vargs)
+    // By NAME so `_values` runs under its own `comp_wrapper` frame (c:1556) —
+    // that frame is what contains its `compstate[restore]=''` (`_values.rs:388`).
+    crate::compsys::ported::shared::call_compfn("_values", &vargs, || _values(&vargs))
 }
 
 #[cfg(test)]

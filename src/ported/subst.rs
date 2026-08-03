@@ -554,21 +554,32 @@ fn stringsubst(
     // throughout the function and chars[pos] indexes by char. With
     // multi-byte UTF-8 (zsh-meta tokens 0x83-0x9f each take 2 bytes
     // in UTF-8 encoding), `pos < str3.len()` looped past the end of
-    // `chars` and `chars[pos]` panicked. str3 may be mutated within
-    // the loop body so `chars` is re-collected each iteration.
-    let mut p1_iter = 0u32; // c:237
+    // `chars` and `chars[pos]` panicked.
+    //
+    // `chars` mirrors `str3` and is rebuilt ONLY where `str3` is
+    // reassigned. C walks a raw `char *str` cursor over `str3`
+    // (c:243 `while (!errflag && (c = *str))`) so the scan is O(n);
+    // re-collecting per character made it O(n^2) and a 106K-char
+    // line (one `$(<file)` splice) took >45s instead of ~18ms.
+    let mut chars: Vec<char> = str3.chars().collect(); // c:237
+                                                       // No-progress guard. C has no iteration cap at all; the only
+                                                       // pathology a cap can catch is a branch that neither advances
+                                                       // `pos` nor changes the buffer, so detect exactly that instead
+                                                       // of bailing out after a fixed count (a fixed count silently
+                                                       // truncated legitimate long lines).
+    let mut last_state: Option<(usize, usize)> = None; // c:237
     loop {
         // c:237
         if errflag_set() {
             // c:237
             break; // c:237
         } // c:237
-        p1_iter += 1; // c:237
-        if p1_iter > 100_000 {
+        let state = (pos, chars.len()); // c:237
+        if last_state == Some(state) {
             // c:237
             return None; // c:237
         } // c:237
-        let chars: Vec<char> = str3.chars().collect(); // c:237
+        last_state = Some(state); // c:237
         if pos >= chars.len() {
             // c:237
             break; // c:237
@@ -614,11 +625,8 @@ fn stringsubst(
               // Excise the entire span (was producing junk output
               // for `cat <(echo a) <(echo b)` because the half-skipped
               // `(echo a)` parsed as cmd-subst).
-            let str_chars: Vec<char> = str3.chars().collect(); // c:237
-            let mut new_str = String::with_capacity(str_chars.len());
-            new_str.extend(str_chars[..start].iter()); // c:237
-            new_str.extend(str_chars[pos..].iter()); // c:237
-            str3 = new_str; // c:237
+            chars.drain(start..pos); // c:237
+            str3 = chars.iter().collect(); // c:237
             list.setdata(node_idx, str3.clone()); // c:237
             pos = start; // c:237
             continue; // c:237
@@ -632,19 +640,27 @@ fn stringsubst(
     // and `chars[pos]` are char-indexed. Multi-byte UTF-8 (zsh-
     // meta tokens 0x83-0x9f) tripped the panic.
     pos = 0; // c:237
-    let mut iter_count = 0u32; // c:237
+             // c:278 `str = str3;` — restart the cursor at the head of the
+             // (possibly rewritten) buffer. `chars` mirrors `str3` and is
+             // rebuilt only where `str3` is reassigned; see the first-pass
+             // comment for why re-collecting per character was O(n^2).
+    chars = str3.chars().collect(); // c:278
+    let mut last_state: Option<(usize, usize, usize)> = None; // c:237
     loop {
         // c:237
         if errflag_set() {
             // c:237
             break; // c:237
         } // c:237
-        iter_count += 1; // c:237
-        if iter_count > 100_000 {
+          // No-progress guard, same rationale as the first pass: an
+          // iteration that leaves the node, the cursor and the buffer
+          // length all untouched will repeat forever.
+        let state = (node_idx, pos, chars.len()); // c:237
+        if last_state == Some(state) {
             // c:237
             return None; // c:237
         } // c:237
-        let chars: Vec<char> = str3.chars().collect(); // c:237
+        last_state = Some(state); // c:237
         if pos >= chars.len() {
             // c:237
             break; // c:237
@@ -677,6 +693,7 @@ fn stringsubst(
                 String::new() // c:237
             }; // c:237
             str3 = format!("{}{}{}", prefix, body, suffix); // c:237
+            chars = str3.chars().collect(); // c:237
             pos += body.chars().count(); // c:237
             list.setdata(node_idx, str3.clone()); // c:237
             continue; // c:237
@@ -696,6 +713,7 @@ fn stringsubst(
                 String::new() // c:237
             }; // c:237
             str3 = format!("{}{}", prefix, suffix); // c:237
+            chars = str3.chars().collect(); // c:237
             list.setdata(node_idx, str3.clone()); // c:237
             continue; // c:237
         } // c:237
@@ -714,6 +732,7 @@ fn stringsubst(
                 String::new() // c:237
             }; // c:237
             str3 = format!("{}{}{}", prefix, kept, suffix); // c:237
+            chars = str3.chars().collect(); // c:237
             pos += 1; // c:237
             list.setdata(node_idx, str3.clone()); // c:237
             continue; // c:237
@@ -864,6 +883,7 @@ fn stringsubst(
                     };
                     let result_only = arithsubst(&expr, "", "");
                     str3 = format!("{}{}{}", prefix, result_only, suffix);
+                    chars = str3.chars().collect();
                     list.setdata(node_idx, str3.clone());
                     pos = prefix.chars().count() + result_only.chars().count();
                     continue;
@@ -883,7 +903,7 @@ fn stringsubst(
                   // outside SubstState; bridged via fusevm_bridge::
                   // with_executor).
                 let cmd_open = pos + 1; // c:237 (s after $)
-                let chars: Vec<char> = str3.chars().collect(); // c:237
+                                        // `chars` already mirrors `str3` — no re-collect.
                 let mut depth = 0_i32; // c:237
                 let mut end = cmd_open; // c:237
                 while end < chars.len() {
@@ -924,6 +944,7 @@ fn stringsubst(
                         String::new() // c:237
                     }; // c:237
                     str3 = format!("{}{}{}", prefix, output.trim_end_matches('\n'), suffix); // c:237
+                    chars = str3.chars().collect(); // c:237
                     pos = prefix.chars().count() + output.trim_end_matches('\n').chars().count(); // c:237
                     list.setdata(node_idx, str3.clone()); // c:237
                 } else {
@@ -946,7 +967,7 @@ fn stringsubst(
                     '['
                 }; // c:237
                 let close = if open == Inbrack { Outbrack } else { ']' }; // c:237
-                let chars: Vec<char> = str3.chars().collect(); // c:237
+                                                                          // `chars` already mirrors `str3` — no re-collect.
                 let mut end_off: Option<usize> = None; // c:237
                 let tail_only_tokenized = open == Inbrack
                     && chars[start.saturating_sub(1)..]
@@ -999,6 +1020,7 @@ fn stringsubst(
                     // $[…] alias.
                     let result_only = arithsubst(&expr, "", ""); // c:237
                     str3 = format!("{}{}{}", prefix, result_only, suffix); // c:237
+                    chars = str3.chars().collect(); // c:237
                     list.setdata(node_idx, str3.clone()); // c:237
                     pos = prefix.chars().count() + result_only.chars().count(); // c:237
                     continue; // c:237
@@ -1027,6 +1049,7 @@ fn stringsubst(
                 // C path instead of decoding.
                 let (new_str, new_pos) = stringsubstquote(&str3, pos); // c:237
                 str3 = new_str; // c:237
+                chars = str3.chars().collect(); // c:237
                 pos = new_pos; // c:237
                 list.setdata(node_idx, str3.clone()); // c:237
                 continue; // c:237
@@ -1116,6 +1139,7 @@ fn stringsubst(
                 }
 
                 str3 = list.getdata(node_idx)?.to_string(); // c:237
+                chars = str3.chars().collect(); // c:237
                 pos = new_pos; // c:237
                 continue; // c:237
             } // c:237
@@ -1134,7 +1158,7 @@ fn stringsubst(
                 // c:237
                 list.flags |= LF_ARRAY; // c:237
             } // c:237
-            let chars: Vec<char> = str3.chars().collect(); // c:237
+              // `chars` already mirrors `str3` — no re-collect.
             let cmd_start = pos + 1; // c:237
             let mut end = cmd_start; // c:237
                                      // c:Src/subst.c — walk body looking for closing
@@ -1201,6 +1225,7 @@ fn stringsubst(
                     String::new() // c:237
                 }; // c:237
                 str3 = format!("{}{}{}", prefix, output.trim_end_matches('\n'), suffix); // c:237
+                chars = str3.chars().collect(); // c:237
                 pos = prefix.chars().count() + output.trim_end_matches('\n').chars().count(); // c:237
                 list.setdata(node_idx, str3.clone()); // c:237
             } else {
@@ -3884,6 +3909,19 @@ pub fn paramsubst(
         // param name (value of the (P) operand) whenever the inner is
         // `(P)NAME` and NAME's value names a defined parameter.
         let mut subexp_aspar_name: Option<String> = None;
+        // c:Src/subst.c:2745-2757 — companion to `subexp_aspar_name`: true when
+        // the referenced parameter is an array or an association. C's inner
+        // `${(P)name}` never returns a VALUE at all — it sets
+        // `*ret_flags |= MULTSUB_PARAM_NAME` (c:2757) and the outer instance
+        // splices the dereferenced NAME back into the parameter expression
+        // (`s = dyncat(val, s); subexp = 0;`, c:2707-2709), so the outer
+        // fetchvalue/getarrvalue sees the parameter's own array shape. The Rust
+        // port instead evaluates the inner through multsub and carries the
+        // result, which loses the shape whenever the DQ scalar collapse
+        // (c:3032) fires on the INNER — `"${${(P)k}[2]}"` then char-indexed
+        // the joined string. Record the arrayness so the subexp return path
+        // can rebuild it.
+        let mut subexp_aspar_is_array = false;
         // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
         // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
         // `${(flag)name}` in DQ context and in the new bridge passthru
@@ -5140,6 +5178,11 @@ pub fn paramsubst(
                                         || arrays_contains(&refname)
                                         || assoc_contains(&refname))
                                 {
+                                    // c:2745-2757 — the outer re-fetches on this
+                                    // name, so an array/assoc target keeps its
+                                    // element shape (see `subexp_aspar_is_array`).
+                                    subexp_aspar_is_array =
+                                        arrays_contains(&refname) || assoc_contains(&refname);
                                     subexp_aspar_name = Some(refname);
                                 }
                             }
@@ -5306,6 +5349,28 @@ pub fn paramsubst(
                     } else {
                         (joined, arr_parts, isarr)
                     };
+                // c:Src/subst.c:2745-2757 + 2703-2709 — the `${(P)name}` inner.
+                // C never evaluates it to a value: the inner sets
+                // MULTSUB_PARAM_NAME and the outer splices the dereferenced
+                // NAME into the parameter expression, so the outer's own
+                // fetchvalue/getarrvalue supplies the shape. That is why the
+                // DQ collapse at c:3032 (which fired on the INNER here) must
+                // not flatten it: `"${${(P)k}[2]}"` picks ELEMENT 2 of the
+                // referenced array, while the bare `"${${b}[2]}"` — a real
+                // inner expansion, no (P) — stays a joined scalar and picks
+                // CHARACTER 2. Rebuild the referenced array's element list so
+                // the temp-array branch below runs for both.
+                let aspar_arr: Option<Vec<String>> = if subexp_aspar_is_array {
+                    subexp_aspar_name.as_ref().and_then(|n| {
+                        arrays_get(n).or_else(|| {
+                            assoc_get(n).map(|m| m.values().cloned().collect::<Vec<String>>())
+                        })
+                    })
+                } else {
+                    None
+                };
+                let isarr = isarr || aspar_arr.is_some();
+                let arr_parts = aspar_arr.unwrap_or(arr_parts);
                 if isarr {
                     // c:Src/subst.c:2681 — an inner expansion that is
                     // ARRAY-shaped (isarr) stays an array through the nesting
@@ -10263,8 +10328,26 @@ pub fn paramsubst(
             // the c:3032 sepjoin. `$*` clears SCANPM_ISVAR_AT (it
             // joins-via-IFS in DQ per the documented `"$*"` = IFS-
             // joined-scalar semantics). Bug #428.
-            let is_strict_at_var = matches!(var_name.as_str(), "@");
-            let is_star_var = matches!(var_name.as_str(), "*");
+            //
+            // c:Src/subst.c:2698-2718 — like the `horrible_offset_hack`
+            // test at c:2968-2973, the `@`-vs-`*` shape
+            // decision is made on the RESOLVED parameter, not the
+            // spelling. For `${${(P)i}…}` C splices the dereferenced name
+            // into the outer expression (`s = dyncat(val, s)`) and then
+            // fetches it, so `i="@"` reaches `fetchvalue` as a literal `@`
+            // and picks up SCANPM_ISVAR_AT. zshrs carries that spliced
+            // name in `subexp_aspar_name` while `var_name` holds only the
+            // `__subexp_arr_N` scratch handle, so the spelling test made
+            // every `(P)`-routed `@` join inside `"…"`. Verified against
+            // zsh 5.9.2 (`set -- one two`, rcexpandparam):
+            //   i=@    → K@:zsh / K@:one / K@:two   (three words)
+            //   i=*    → K*:zsh one two             (one word)
+            //   i=argv → Kargv:zsh one two          (one word)
+            let resolved_name = subexp_aspar_name
+                .as_deref() // c:2698-2718 (name-splice)
+                .unwrap_or(var_name.as_str()); // c:2730-2745 / direct
+            let is_strict_at_var = matches!(resolved_name, "@");
+            let is_star_var = matches!(resolved_name, "*");
             if (arrays_contains(&var_name) || assoc_contains(&var_name))
                 && (subscript.is_none() || is_at_subscript)
             {
@@ -14316,15 +14399,65 @@ pub fn paramsubst(
                     };
                     let array_applied = array_source.is_some();
                     if let Some(mut arr) = array_source {
-                        // Positional-param slice (`@`/`*`/`argv`) — zsh
-                        // counts offset 0 as $0 (script/function name),
-                        // not $1. Prepend $0 so `${@:0:2}` returns
-                        // [$0, $1] instead of [$1, $2]. Direct port of
-                        // subst.c's @/* offset arm which routes through
-                        // dohist offset = 0 (includes argzero).
-                        if var_name == "@" || var_name == "*" || var_name == "argv" {
-                            let s0 = vars_get("0").unwrap_or_default();
-                            arr.insert(0, s0); // c:715
+                        // c:Src/subst.c:2968-2973 (`horrible_offset_hack`)
+                        // + c:3660-3673 (its application). A ksh/bash/POSIX
+                        // style positional-parameter slice counts offset 0
+                        // as $0 (`argzero`), not $1, so `${@:0:2}` yields
+                        // [$0, $1] and `${@:1:2}` yields [$1, $2].
+                        //
+                        // C sets the flag from the RESOLVED parameter's
+                        // identity (gsu table + data pointer == &pparams),
+                        // NOT from the spelling in the expression. The
+                        // spelling test that used to live here happened to
+                        // agree for the three direct forms — `*`, `@` and
+                        // `argv` are the IPDEF9 aliases of `&pparams`
+                        // (c:Src/params.c:385,386,423) — but it silently
+                        // dropped every other route to the same array. The
+                        // one that bit us is `(P)` indirection: in
+                        // `${${(P)i}:0:100}` (with i=`*`) the outer
+                        // substitution's spelling is `i`, so real zsh
+                        // printed `$0 $1 …` where zshrs printed `$1 …`.
+                        // That is the `*` row of the user's `_parameters`
+                        // override (`ary+=($i:"${${(P)i}:0:100}")`).
+                        //
+                        // Resolved identity in zshrs = the name the array
+                        // was actually fetched under. For `(P)` — direct
+                        // (`${(P)i:0:2}`) — `var_name` was already rewritten
+                        // to the dereferenced name up at the `aspar` arm
+                        // (c:2730-2745), so it is the resolved name. For the
+                        // nested form C splices the dereferenced name into
+                        // the outer parameter expression via
+                        // `MULTSUB_PARAM_NAME` (c:2698-2718, `s = dyncat(val,
+                        // s)`), and zshrs carries that spliced name in
+                        // `subexp_aspar_name`; `var_name` there is only the
+                        // `__subexp_arr_N` scratch handle. So prefer the
+                        // spliced name when present.
+                        //
+                        // Deliberately NOT gated on the array source being
+                        // untransformed: C latches the flag at c:2968 from
+                        // `v` and applies it at c:3660 after every flag has
+                        // run, so a transformed positional array keeps the
+                        // hack. Verified against zsh 5.9.2:
+                        //   `set -- one two three; ${(o)*:0:2}` → `zsh one`.
+                        // A non-`(P)` nested expansion is correctly excluded:
+                        // it leaves `subexp_aspar_name` None and C leaves
+                        // `v` NULL (the c:2763 `if (!subexp || aspar)` gate),
+                        // so `${${@}:0:2}` → `one two`, no $0.
+                        let resolved_name = subexp_aspar_name
+                            .as_deref() // c:2698-2718 (name-splice)
+                            .unwrap_or(var_name.as_str()); // c:2730-2745 / direct
+                                                           // c:2969-2970 — `v->pm->gsu.a == &vararray_gsu &&
+                                                           // (char ***)v->pm->u.data == &pparams`: C compares
+                                                           // the resolved Param's getter table and data pointer,
+                                                           // so the test is on the OBJECT, not the spelling.
+                                                           // zshrs has no Param node for the positionals —
+                                                           // `arrays_get` routes these three names straight to
+                                                           // `exec::pparams()` — so the names that resolve to the
+                                                           // pparams vector are exactly the three IPDEF9 rows
+                                                           // that share `&pparams` (`Src/params.c:385,386,423`).
+                        if matches!(resolved_name, "@" | "*" | "argv") {
+                            let s0 = vars_get("0").unwrap_or_default(); // c:3702 argzero
+                            arr.insert(0, s0); // c:3668-3669,3681-3682,3701-3703
                         }
                         let n = arr.len() as i64; // c:715
                                                   // bash empties the slice when a negative offset underflows
@@ -16548,13 +16681,46 @@ pub fn paramsubst(
             }
             out
         };
+        // c:Src/subst.c:3885-3887 —
+        //     if (isarr > 0 && !plan9 && (!aval || !aval[0])) {
+        //         val = dupstring("");
+        //         isarr = 0;
+        //     }
+        // A ZERO-element array becomes the empty SCALAR before every
+        // remaining transformation, so the quoting flags below operate on a
+        // scalar and emit ONE word: `co=(); set -- HEAD ${(q)co}` is two
+        // words in zsh (`HEAD` and `''`), and the same holds for (qq)/(qqq)/
+        // (qqqq)/(q-)/(q+). The negative arm (Q, quotemod < 0) leaves the
+        // empty scalar empty, so that word is still elided — `${(Q)co}` and
+        // the bare `${co}` both stay at one word, matching zsh.
+        //
+        // Two gates carried verbatim from C: `!plan9`, so RC_EXPAND_PARAM
+        // still reaches the whole-word deletion at c:4362; and `isarr > 0`
+        // (not `!= 0`), so the `[@]`/`[*]` splat shape (isarr == -1, c:2916
+        // SCANPM_ISVAR_AT) keeps its zero-word result.
+        let mut empty_arr_scalarized = false; // c:3885
+        if isarr > 0 && !plan9 {
+            // c:3885
+            let is_empty_arr = match split_parts {
+                Some(ref sp) => sp.is_empty(),
+                None => arrays_get(&var_name).is_some_and(|a| a.is_empty()),
+            };
+            if is_empty_arr {
+                value = String::new(); // c:3886
+                split_parts = None; // c:3886 (aval no longer consulted)
+                isarr = 0; // c:3887
+                empty_arr_scalarized = true;
+            }
+        }
         if quotemod > 0 && quotetype == QT_BACKSLASH_PATTERN {
             // c:4034 (b)
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| b_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
+            } else if let Some(arr) = arrays_get(&var_name).filter(|_| !empty_arr_scalarized)
+            // c:3886 — aval was replaced by the empty scalar
+            {
                 let new_arr: Vec<String> = arr.iter().map(|s| b_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -16683,7 +16849,9 @@ pub fn paramsubst(
                 // resolved the element into `value` above; the
                 // arrays_get re-fetch by NAME here discarded that
                 // selection and dequoted+joined the WHOLE array.
-                if let Some(arr) = arrays_get(&var_name) {
+                // c:3886 — the empty-array collapse already replaced aval with
+                // the empty scalar; re-fetching by name would undo it.
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !empty_arr_scalarized) {
                     let new_arr: Vec<String> = arr.iter().map(|s| unquote_one(s)).collect();
                     value = new_arr.join(" ");
                     split_parts = Some(new_arr);
@@ -16953,6 +17121,9 @@ pub fn paramsubst(
                     }
                 })
                 .filter(|_| subscript.is_none() || is_at_subscript_splat)
+                // c:3886 — the empty-array collapse already replaced aval with
+                // the empty scalar; re-fetching by name would undo it.
+                .filter(|_| !empty_arr_scalarized)
             {
                 // c:Src/subst.c — re-fetch the WHOLE array by name only
                 // for the no-subscript and `[@]`/`[*]` splat forms. A
@@ -17308,6 +17479,13 @@ pub fn paramsubst(
             }
         }
         let auto_splat = !wantt
+            // c:3885-3887 — the zero-element array already became the empty
+            // SCALAR, so `if (isarr)` at c:4245 is false and the emit takes the
+            // scalar branch at c:4437 (one word, elided later if it is still
+            // empty). Without this the `arrays_contains` disjunct below
+            // re-derived array shape from the NAME and emitted zero words,
+            // swallowing the `''` that `${(q)emptyarray}` must produce.
+            && !empty_arr_scalarized
             && (isarr != 0                  // c:4245
             || force_splat_from_eq                           // c:2566
             || (!(nojoin == 2)                                     // c:3950
@@ -20532,7 +20710,11 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
             return arrays_get(&t);
         }
     }
-    if name == "@" || name == "*" || name == "argv" {
+    // c:Src/params.c:385,386,423 — the three `IPDEF9(..., &pparams, ...)`
+    // rows (`*`, `@`, `argv`) are the only parameters that alias the
+    // positional vector, which is what makes the `Src/subst.c:2968-2973`
+    // pointer-identity test equivalent to this name test in zshrs.
+    if matches!(name, "@" | "*" | "argv") {
         // c:Src/params.c:3262 IPDEF9 — pparams. Read the LIVE
         // executor positionals via the exec accessors bridge: inside a
         // function `$@` is the FUNCTION's args (doshfunc swaps
@@ -20681,7 +20863,8 @@ fn arrays_contains(name: &str) -> bool {
         }
     }
     // c:Src/params.c:3262 IPDEF9 — pparams is the @/argv array.
-    if name == "@" || name == "*" || name == "argv" {
+    // c:Src/params.c:385,386,423 — the three rows that share `&pparams`.
+    if matches!(name, "@" | "*" | "argv") {
         return true;
     }
     // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset

@@ -2135,12 +2135,18 @@ impl ShellExecutor {
         // `$ZSH_VERSION` both still match; zshrs does not evaluate that
         // condition and rescans instead — the same thing a real zsh does
         // whenever the dump is stale.
+        // sh:497-498/516-517 — sourcing the dump sets `_i_done=yes`, and
+        // sh:523 (`if [[ -z "$_i_done" ]]`) then skips the whole $fpath scan.
+        // So on the dump path the dump is the SOLE source of names; anything
+        // else that contributes is a zshrs-only divergence.
+        let mut dump_sourced = false;
         if use_cache {
             if let Some(dump) = crate::ported::params::getsparam("_comp_dumpfile") {
                 let dump = std::path::PathBuf::from(dump);
                 if dump.is_file() {
                     let names = crate::compsys::ported::compinit::dump_autoload_names(&dump);
                     let added = crate::compsys::ported::compinit::register_autoload_stubs(&names);
+                    dump_sourced = true;
                     tracing::info!(
                         added,
                         total = names.len(),
@@ -2222,16 +2228,32 @@ impl ShellExecutor {
                         // sub-command list from `${(M)${(k)functions}:#_tmux-*}`
                         // (_tmux sh:1967), which silently lost the `_tmux-*`
                         // helpers in $fpath while this table stayed empty.
-                        let stub_t0 = std::time::Instant::now();
-                        if let Ok(names) = cache.list_autoload_names() {
-                            let added =
-                                crate::compsys::ported::compinit::register_autoload_stubs(&names);
-                            tracing::info!(
-                                added,
-                                total = names.len(),
-                                ms = stub_t0.elapsed().as_millis() as u64,
-                                "compinit: autoload stubs"
-                            );
+                        //
+                        // …but ONLY when no dump was sourced above. sh:523's
+                        // `[[ -z "$_i_done" ]]` makes the dump authoritative on
+                        // the `-C` path: a real zsh ends up with exactly the
+                        // names the dump lists, no more. zshrs's SQLite cache is
+                        // refreshed independently of the shared `.zcompdump`, so
+                        // running both sources added every completer the cache
+                        // had seen since the dump was last written (`_john` from
+                        // site-functions, on this host) — functions reference zsh
+                        // does not define. Keep the cache as the name source only
+                        // for the no-dump case, where sh:523-550 would have
+                        // scanned $fpath.
+                        if !dump_sourced {
+                            let stub_t0 = std::time::Instant::now();
+                            if let Ok(names) = cache.list_autoload_names() {
+                                let added =
+                                    crate::compsys::ported::compinit::register_autoload_stubs(
+                                        &names,
+                                    );
+                                tracing::info!(
+                                    added,
+                                    total = names.len(),
+                                    ms = stub_t0.elapsed().as_millis() as u64,
+                                    "compinit: autoload stubs"
+                                );
+                            }
                         }
 
                         self.set_assoc("_comps".to_string(), result.comps.into_iter().collect());
@@ -2367,12 +2389,39 @@ impl ShellExecutor {
             if let Some(parent) = cache_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            // Remove old DB to start fresh
-            let _ = std::fs::remove_file(&cache_path);
-            let _ = std::fs::remove_file(format!("{}-shm", cache_path.display()));
-            let _ = std::fs::remove_file(format!("{}-wal", cache_path.display()));
+            // Build into a private file and move it into place when it is
+            // finished, the same crash-safe shape `compdump` already uses
+            // for the dump (compdump.rs:175-188, sh:21-23).
+            //
+            // The old code deleted the live db (plus its -shm/-wal) FIRST
+            // and then spent seconds refilling it. Up to 16 of the user's
+            // shells share this one file, so every shell that started
+            // inside that window found either no cache at all or one with
+            // a handful of rows — and `cache_is_valid`'s old `count > 0`
+            // accepted the partial — leaving `_comps` with a fraction of
+            // its registrations and `_dispatch` with no completer for any
+            // command. `rename(2)` is atomic within a filesystem, so a
+            // concurrent reader now opens either the whole previous cache
+            // or the whole new one, never a half-written file.
+            let build_path = cache_path.with_file_name(format!(
+                "{}.building.{}",
+                cache_path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "compsys.db".to_string()),
+                std::process::id()
+            ));
+            // Leftovers from a build this pid was killed during. The path
+            // is pid-private, so nothing else can be reading them.
+            for stale in [
+                build_path.display().to_string(),
+                format!("{}-shm", build_path.display()),
+                format!("{}-wal", build_path.display()),
+            ] {
+                let _ = std::fs::remove_file(stale);
+            }
 
-            let mut cache = match crate::compsys::cache::CompsysCache::open(&cache_path) {
+            let mut cache = match crate::compsys::cache::CompsysCache::open(&build_path) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::error!("compinit: failed to create cache: {}", e);
@@ -2483,6 +2532,41 @@ impl ShellExecutor {
                 "compinit: bytecode blobs cached"
             );
 
+            // Stamp completeness LAST, so `cache_is_valid` can tell a
+            // finished cache from one that is still filling, then close the
+            // connection: SQLite checkpoints the WAL into the db and removes
+            // the -wal/-shm side files on the last close, which is what makes
+            // the single-file rename below carry the whole cache.
+            if !crate::compsys::ported::compinit::stamp_cache_complete(&cache) {
+                tracing::error!("compinit: could not stamp cache as complete; not installing it");
+                return;
+            }
+            drop(cache);
+
+            // The outgoing file's side files must go before the rename: they
+            // are named after `cache_path`, so leaving them would pair a WAL
+            // from the OLD database with the NEW one. The freshly built cache
+            // has none of its own after the clean close above.
+            for stale in [
+                format!("{}-shm", cache_path.display()),
+                format!("{}-wal", cache_path.display()),
+            ] {
+                let _ = std::fs::remove_file(stale);
+            }
+            if let Err(e) = std::fs::rename(&build_path, &cache_path) {
+                tracing::error!(error = %e, "compinit: could not install rebuilt cache");
+                let _ = std::fs::remove_file(&build_path);
+                return;
+            }
+
+            let cache = match crate::compsys::cache::CompsysCache::open(&cache_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("compinit: failed to reopen installed cache: {}", e);
+                    return;
+                }
+            };
+
             let _ = tx.send(CompInitBgResult { result, cache });
         });
 
@@ -2508,6 +2592,21 @@ impl ShellExecutor {
                 self.set_assoc(
                     "_patcomps".to_string(),
                     bg.result.patcomps.into_iter().collect(),
+                );
+                // sh:116/121 — `typeset -gHA` declares all five, and the
+                // scan fills all five (compdump.rs writes all five). The
+                // cache-hit branch above already published the other two;
+                // this branch stopped at three, so a fresh-scan shell had
+                // `_postpatcomps` unset and `_dispatch`'s post pass nothing
+                // to walk — every `#compdef -P` completer (`_dir_list`,
+                // `_urls`, `_locales`, `_gcc`, `_python`, …) dead.
+                self.set_assoc(
+                    "_postpatcomps".to_string(),
+                    bg.result.postpatcomps.into_iter().collect(),
+                );
+                self.set_assoc(
+                    "_compautos".to_string(),
+                    bg.result.compautos.into_iter().collect(),
                 );
                 self.compsys_cache = Some(bg.cache);
                 tracing::info!(
@@ -2536,9 +2635,16 @@ impl ShellExecutor {
         let deferred = std::mem::take(&mut self.deferred_compdefs);
         let count = deferred.len();
 
-        for compdef_args in deferred {
-            crate::compsys::ported::compinit::compdef(&compdef_args);
-        }
+        // One publish for the whole replay. Each `compdef` otherwise
+        // read-modify-writes the entire `_comps` hash (there is no
+        // single-key assoc setter in `params.rs`), which a turbo-mode
+        // replay of hundreds of registrations would pay hundreds of times
+        // over ~50k entries. The resulting `_comps` is identical.
+        crate::compsys::ported::compinit::compdef_batch(|| {
+            for compdef_args in deferred {
+                crate::compsys::ported::compinit::compdef(&compdef_args);
+            }
+        });
 
         if !quiet {
             eprintln!("cdreplay: replayed {} compdef calls", count);

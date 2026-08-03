@@ -15,6 +15,8 @@
 //! sh: 16  zparseopts -D -a sopts 'J+:=group' 'V+:=group' 'x+:=expl' \
 //! sh: 17      'X+:=expl' 'P:=opts' 'F:=opts' S: r: R: q 1 2 o+: n \
 //! sh: 18      'f=opts' 'M+:=matcher' 'i=imm'
+//!            # `-D` deletes the `--` / lone `-` terminator, so the
+//!            # `-` that `_all_labels` passes through never reaches `$1`
 //! sh: 20  sopts=( "$sopts[@]" "$opts[@]" )
 //! sh: 21  (( $#matcher )) && matcher="${matcher[2]}" || matcher=
 //! sh: 32  sep="$1"; tmp1=( literal-or-${(@P)2} )
@@ -115,6 +117,7 @@ fn zstyle_t(style: &str, value: &str) -> bool {
 }
 
 /// Parsed result of the upstream `zparseopts` (sh:16-18).
+#[derive(Default)]
 struct ParsedOpts {
     sopts: Vec<String>,
     group: Vec<String>,
@@ -125,93 +128,167 @@ struct ParsedOpts {
     rest: Vec<String>,
 }
 
-/// Mirror of `zparseopts -D -a sopts …` (sh:16-18). `=name` specs
-/// route to their named array only (verified against zsh 5.9):
-/// J/V→group, x/X→expl, P/F/f→opts, M→matcher, i→imm, and the
-/// remaining recognized options (S r R q 1 2 o n) → the default
-/// `sopts`. Parsing stops at the first non-option.
-fn zparse(args: &[String]) -> ParsedOpts {
-    let mut sopts = Vec::new();
-    let mut group = Vec::new();
-    let mut expl = Vec::new();
-    let mut opts = Vec::new();
-    let mut matcher = Vec::new();
-    let mut imm = Vec::new();
-    let mut i = 0usize;
-    while i < args.len() {
-        let a = &args[i];
-        if a == "--" {
-            i += 1;
-            break;
+/// The array a spec's `=name` suffix routes its option into. Specs
+/// without `=name` land in the `-a sopts` default.
+#[derive(Clone, Copy)]
+enum Dest {
+    Sopts,
+    Group,
+    Expl,
+    Opts,
+    Matcher,
+    Imm,
+}
+
+impl ParsedOpts {
+    fn dest(&mut self, d: Dest) -> &mut Vec<String> {
+        match d {
+            Dest::Sopts => &mut self.sopts,
+            Dest::Group => &mut self.group,
+            Dest::Expl => &mut self.expl,
+            Dest::Opts => &mut self.opts,
+            Dest::Matcher => &mut self.matcher,
+            Dest::Imm => &mut self.imm,
         }
-        if !(a.starts_with('-') && a.len() >= 2) {
-            break;
-        }
-        let flag = a.as_bytes()[1] as char;
-        let attached: Option<String> = if a.len() > 2 {
-            Some(a[2..].to_string())
-        } else {
-            None
-        };
-        match flag {
-            // Arg-taking specs.
-            'J' | 'V' | 'x' | 'X' | 'P' | 'F' | 'S' | 'r' | 'R' | 'o' | 'M' => {
-                let dest = match flag {
-                    'J' | 'V' => &mut group,
-                    'x' | 'X' => &mut expl,
-                    'P' | 'F' => &mut opts,
-                    'M' => &mut matcher,
-                    _ => &mut sopts, // S r R o
-                };
-                dest.push(format!("-{}", flag));
-                if let Some(v) = attached {
-                    dest.push(v);
-                    i += 1;
-                } else if i + 1 < args.len() {
-                    dest.push(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            // Boolean specs.
-            'f' => {
-                opts.push("-f".into());
-                i += 1;
-            }
-            'i' => {
-                imm.push("-i".into());
-                i += 1;
-            }
-            'q' | '1' | '2' | 'n' => {
-                sopts.push(format!("-{}", flag));
-                i += 1;
-            }
-            _ => break,
-        }
-    }
-    ParsedOpts {
-        sopts,
-        group,
-        expl,
-        opts,
-        matcher,
-        imm,
-        rest: args[i..].to_vec(),
     }
 }
 
-/// Resolve `$2` (sh:33-36): literal `(a b c)` splits on whitespace,
-/// otherwise it is the name of an array parameter (`${(@P)2}`).
-fn resolve_array(spec: &str) -> Vec<String> {
-    if spec.starts_with('(') && spec.ends_with(')') && spec.len() >= 2 {
-        spec[1..spec.len() - 1]
-            .split_whitespace()
-            .map(|w| w.to_string())
-            .collect()
-    } else {
-        getaparam(spec).unwrap_or_default()
+/// One `zparseopts` spec from sh:16-18, in declaration order.
+struct Spec {
+    /// Option letter as written on the command line.
+    flag: char,
+    /// The spec's `:` — the option takes a value.
+    takes_arg: bool,
+    /// The spec's `+` — repeated occurrences append rather than
+    /// replacing the earlier one's value in place.
+    plus: bool,
+    /// The spec's `=name` target (or the `-a sopts` default).
+    dest: Dest,
+}
+
+/// `'J+:=group' 'V+:=group' 'x+:=expl' 'X+:=expl' 'P:=opts' 'F:=opts'`
+/// `S: r: R: q 1 2 o+: n 'f=opts' 'M+:=matcher' 'i=imm'` (sh:16-18).
+#[rustfmt::skip]
+const SPECS: &[Spec] = &[
+    Spec { flag: 'J', takes_arg: true,  plus: true,  dest: Dest::Group },
+    Spec { flag: 'V', takes_arg: true,  plus: true,  dest: Dest::Group },
+    Spec { flag: 'x', takes_arg: true,  plus: true,  dest: Dest::Expl },
+    Spec { flag: 'X', takes_arg: true,  plus: true,  dest: Dest::Expl },
+    Spec { flag: 'P', takes_arg: true,  plus: false, dest: Dest::Opts },
+    Spec { flag: 'F', takes_arg: true,  plus: false, dest: Dest::Opts },
+    Spec { flag: 'S', takes_arg: true,  plus: false, dest: Dest::Sopts },
+    Spec { flag: 'r', takes_arg: true,  plus: false, dest: Dest::Sopts },
+    Spec { flag: 'R', takes_arg: true,  plus: false, dest: Dest::Sopts },
+    Spec { flag: 'q', takes_arg: false, plus: false, dest: Dest::Sopts },
+    Spec { flag: '1', takes_arg: false, plus: false, dest: Dest::Sopts },
+    Spec { flag: '2', takes_arg: false, plus: false, dest: Dest::Sopts },
+    Spec { flag: 'o', takes_arg: true,  plus: true,  dest: Dest::Sopts },
+    Spec { flag: 'n', takes_arg: false, plus: false, dest: Dest::Sopts },
+    Spec { flag: 'f', takes_arg: false, plus: false, dest: Dest::Opts },
+    Spec { flag: 'M', takes_arg: true,  plus: true,  dest: Dest::Matcher },
+    Spec { flag: 'i', takes_arg: false, plus: false, dest: Dest::Imm },
+];
+
+/// Mirror of `zparseopts -D -a sopts …` (sh:16-18), matching zsh 5.9
+/// behaviour observed directly:
+///
+/// * Parsing stops at the first word that is not a described option,
+///   and at `--` or a lone `-`; `-D` deletes the latter two from the
+///   argument list. The lone `-` is `compadd`'s end-of-options marker
+///   and `_all_labels` routinely passes it through (`_git`:7385
+///   `_multi_parts -f $compadd_opts - / files`), so leaving it in the
+///   operand list makes `$1` the `-` and `$2` the separator.
+/// * Single-letter options cluster: `-qfS xyz` == `-q -f -S xyz`.
+/// * A value may be attached (`-Sxyz`) or the following word (`-S xyz`);
+///   an attached value swallows the rest of the cluster word.
+/// * A repeated non-`+` option replaces the value at its *first*
+///   occurrence's position; `+` options append.
+/// * A missing value makes `zparseopts` fail: no array is assigned and
+///   the argument list is left untouched.
+/// * An unrecognized letter stops parsing with the whole word left in
+///   the argument list, while letters already parsed from that word
+///   keep their array entries.
+fn zparse(args: &[String]) -> ParsedOpts {
+    let mut out = ParsedOpts::default();
+    // Flag -> index of that flag's `-x` token inside its destination
+    // array, used to replace a non-`+` option's value in place.
+    let mut slot: std::collections::HashMap<char, usize> = std::collections::HashMap::new();
+    let mut i = 0usize;
+    'words: while i < args.len() {
+        let word = &args[i];
+        if word == "--" || word == "-" {
+            i += 1;
+            break;
+        }
+        if !word.starts_with('-') || word.chars().count() < 2 {
+            break;
+        }
+        let chars: Vec<char> = word.chars().collect();
+        // Words this option word consumes: itself, plus a detached value.
+        let mut eaten = 1usize;
+        let mut c = 1usize;
+        while c < chars.len() {
+            let flag = chars[c];
+            let Some(spec) = SPECS.iter().find(|s| s.flag == flag) else {
+                break 'words;
+            };
+            if spec.takes_arg {
+                let attached: String = chars[c + 1..].iter().collect();
+                let value = if !attached.is_empty() {
+                    attached
+                } else if i + 1 < args.len() {
+                    eaten = 2;
+                    args[i + 1].clone()
+                } else {
+                    // zparseopts: "missing argument for option".
+                    return ParsedOpts {
+                        rest: args.to_vec(),
+                        ..Default::default()
+                    };
+                };
+                let dest = out.dest(spec.dest);
+                match slot.get(&flag) {
+                    Some(&at) if !spec.plus => dest[at + 1] = value,
+                    _ => {
+                        slot.entry(flag).or_insert(dest.len());
+                        dest.push(format!("-{}", flag));
+                        dest.push(value);
+                    }
+                }
+                // The value consumed the remainder of the cluster word.
+                break;
+            }
+            let dest = out.dest(spec.dest);
+            if spec.plus || !slot.contains_key(&flag) {
+                slot.entry(flag).or_insert(dest.len());
+                dest.push(format!("-{}", flag));
+            }
+            c += 1;
+        }
+        i += eaten;
     }
+    out.rest = args[i..].to_vec();
+    out
+}
+
+/// Resolve `$2` (sh:33-36): `if [[ "${2[1]}" = '(' ]]` then
+/// `tmp1=( ${=2[2,-2]} )` — only the leading `(` is tested, and the
+/// first and last characters are stripped unconditionally — otherwise
+/// `$2` is the name of an array parameter (`${(@P)2}`).
+fn resolve_array(spec: &str) -> Vec<String> {
+    if !spec.starts_with('(') {
+        return getaparam(spec).unwrap_or_default();
+    }
+    let chars: Vec<char> = spec.chars().collect();
+    if chars.len() < 2 {
+        return Vec::new();
+    }
+    chars[1..chars.len() - 1]
+        .iter()
+        .collect::<String>()
+        .split_whitespace()
+        .map(|w| w.to_string())
+        .collect()
 }
 
 /// `_multi_parts` — complete each `sep`-delimited segment of a
@@ -810,6 +887,101 @@ mod tests {
         assert_eq!(p.imm, vec!["-i"]);
         assert_eq!(p.sopts, vec!["-S", "sf"]);
         assert_eq!(p.rest, vec!["/", "(a/b c/d)"]);
+    }
+
+    /// `compadd`'s end-of-options `-` terminates option parsing and is
+    /// deleted by `-D`, leaving the separator as `$1` (verified:
+    /// `zparseopts -D -a o f` on `-f - / arr` gives `1=[/] 2=[arr]`).
+    /// `_all_labels` splices `$expl` in ahead of it, so every
+    /// `_wanted … _multi_parts … - / files` caller hits this.
+    #[test]
+    fn zparse_consumes_end_of_options_dash() {
+        let p = zparse(&[
+            "-f".into(),
+            "-J".into(),
+            "files".into(),
+            "-".into(),
+            "/".into(),
+            "arr".into(),
+        ]);
+        assert_eq!(p.opts, vec!["-f"]);
+        assert_eq!(p.group, vec!["-J", "files"]);
+        assert_eq!(p.rest, vec!["/", "arr"]);
+    }
+
+    /// `--` behaves the same as `-` (`_git`:7506 uses it).
+    #[test]
+    fn zparse_consumes_double_dash() {
+        let p = zparse(&["-f".into(), "--".into(), "/".into(), "arr".into()]);
+        assert_eq!(p.opts, vec!["-f"]);
+        assert_eq!(p.rest, vec!["/", "arr"]);
+    }
+
+    /// `-qfi12` == `-q -f -i -1 -2`; `-Sxyz` attaches its value
+    /// (verified against zsh 5.9).
+    #[test]
+    fn zparse_clusters_and_attached_values() {
+        let p = zparse(&["-qfi12".into(), "-Sxyz".into(), "/".into(), "arr".into()]);
+        assert_eq!(p.sopts, vec!["-q", "-1", "-2", "-S", "xyz"]);
+        assert_eq!(p.opts, vec!["-f"]);
+        assert_eq!(p.imm, vec!["-i"]);
+        assert_eq!(p.rest, vec!["/", "arr"]);
+    }
+
+    /// A repeated non-`+` option keeps its first slot and takes the last
+    /// value; a `+` option appends. zsh 5.9 on
+    /// `-R z -S a -r b -S c -R y` gives `(-R y -S c -r b)`.
+    #[test]
+    fn zparse_replace_vs_append() {
+        let p = zparse(&[
+            "-R".into(),
+            "z".into(),
+            "-S".into(),
+            "a".into(),
+            "-r".into(),
+            "b".into(),
+            "-S".into(),
+            "c".into(),
+            "-R".into(),
+            "y".into(),
+            "/".into(),
+            "arr".into(),
+        ]);
+        assert_eq!(p.sopts, vec!["-R", "y", "-S", "c", "-r", "b"]);
+
+        let p = zparse(&[
+            "-o".into(),
+            "1".into(),
+            "-S".into(),
+            "a".into(),
+            "-o".into(),
+            "2".into(),
+            "-S".into(),
+            "b".into(),
+            "/".into(),
+            "arr".into(),
+        ]);
+        assert_eq!(p.sopts, vec!["-o", "1", "-S", "b", "-o", "2"]);
+    }
+
+    /// Unrecognized letter: parsing stops with the whole word left as an
+    /// operand, but `-f` from the same word is kept (zsh 5.9 on `-fz`
+    /// gives `o=(-f)` with `1=[-fz]`).
+    #[test]
+    fn zparse_unknown_letter_leaves_whole_word() {
+        let p = zparse(&["-fz".into(), "/".into(), "arr".into()]);
+        assert_eq!(p.opts, vec!["-f"]);
+        assert_eq!(p.rest, vec!["-fz", "/", "arr"]);
+    }
+
+    /// `${2[1]} = '('` is the only test upstream makes, and `${=2[2,-2]}`
+    /// strips the first and last characters regardless.
+    #[test]
+    fn literal_array_tests_only_the_leading_paren() {
+        assert_eq!(resolve_array("(a b c)"), vec!["a", "b", "c"]);
+        assert_eq!(resolve_array("(a b c"), vec!["a", "b"]);
+        assert!(resolve_array("(").is_empty());
+        assert!(resolve_array("()").is_empty());
     }
 
     #[test]

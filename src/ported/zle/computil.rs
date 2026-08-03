@@ -3753,6 +3753,14 @@ pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {
 ///   `patcompile`.
 /// - The `sopts` (clumped single-letter remainders) LinkList is
 ///   represented as a `Vec<Box<caopt>>` queue.
+/// - C's `memcpy(&ca_laststate, &state, sizeof(state))` checkpoints
+///   (c:2056, 2314, 2346, 2363) copy the `LinkList args` / `LinkList
+///   *oargs` POINTERS, so `ca_laststate.args` ALIASES the live
+///   `state.args` and words pushed after a checkpoint (c:2312, 2319,
+///   2349) stay visible to `comparguments -W` (c:2865-2873, which walks
+///   `lstate->args` to build `$line`). The Rust `castate` owns
+///   `args`/`oargs` by value, so each exit path below re-publishes them
+///   into `ca_laststate` to restore that aliasing.
 pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 {
     // c:2004
 
@@ -4268,6 +4276,15 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 && cur != compcur
                 && ca_foreign_opt(d, all, &line) != 0
             {
+                // c:2282 — the `memcpy(&ca_laststate, &state, sizeof(state))`
+                // checkpoints (c:2056/2314/2346/2363) copy the `LinkList args`
+                // POINTER, so `ca_laststate.args` ALIASES `state.args` and keeps
+                // every word pushed after the checkpoint. The Rust `castate` owns
+                // its `args`/`oargs` by value, so re-publish them on the way out.
+                if let Ok(mut ls) = ca_laststate.lock() {
+                    ls.args = state.args.clone();
+                    ls.oargs = state.oargs.clone();
+                }
                 return 1; // c:2282
             } else if !goto_cont && state.arg != 0 && cur <= compcur {
                 // c:2259
@@ -4296,6 +4313,15 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 if d.args.is_none() && d.rest.is_none() && non_flag {
                     if multi == 0 && cur > compcur {
                         break;
+                    }
+                    // c:2282 — the `memcpy(&ca_laststate, &state, sizeof(state))`
+                    // checkpoints (c:2056/2314/2346/2363) copy the `LinkList args`
+                    // POINTER, so `ca_laststate.args` ALIASES `state.args` and keeps
+                    // every word pushed after the checkpoint. The Rust `castate` owns
+                    // its `args`/`oargs` by value, so re-publish them on the way out.
+                    if let Ok(mut ls) = ca_laststate.lock() {
+                        ls.args = state.args.clone();
+                        ls.oargs = state.oargs.clone();
                     }
                     return 1;
                 }
@@ -4498,6 +4524,23 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             cur += 1;
         }
         let _ = (endpat, ddef, dopt, adef);
+    }
+
+    // c:2395 end: — `ca_laststate.args`/`.oargs` alias `state.args`/
+    // `state.oargs` in C (every `memcpy(&ca_laststate, &state,
+    // sizeof(state))` at c:2056/2314/2346/2363 copies the `LinkList`
+    // POINTERS), so they carry every word pushed after the last
+    // checkpoint at c:2312/2319/2349 and stay visible to
+    // `comparguments -W` (c:2865-2873). The Rust `castate` owns its
+    // `args`/`oargs` by value, so re-publish them here; without this a
+    // checkpoint froze `$line` at the word being examined. Concretely,
+    // for `zstyle ':completion:*' <TAB>` (compwords = `zstyle`,
+    // `':completion:*'`, ``) zsh checkpoints at `cur + 1 == compcurrent`
+    // while parsing word 1 and then pushes word 2 (the empty word under
+    // the cursor), giving `$#line == 2`; this port reported `1`.
+    if let Ok(mut ls) = ca_laststate.lock() {
+        ls.args = state.args.clone();
+        ls.oargs = state.oargs.clone();
     }
 
     // c:2397-2400 — count active opts.
@@ -7516,7 +7559,7 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
                         break;
                     }
                     let slice = &add_owned[*byte_idx..];
-                    if pattern_match(m.line.as_deref(), slice, None, "") != 0 {
+                    if pattern_match(m.line.as_deref(), slice.as_bytes(), None, b"") != 0 {
                         // c:4551 — `if (*mp)` collision: truncate add.
                         if ms[i].is_some() {
                             add_owned.truncate(*byte_idx); // c:4553
@@ -7540,7 +7583,7 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
                         break;
                     }
                     let slice = &add_owned[*byte_idx..];
-                    if pattern_match(m.right.as_deref(), slice, None, "") != 0 {
+                    if pattern_match(m.right.as_deref(), slice.as_bytes(), None, b"") != 0 {
                         // c:4572 — collision OR leading-dot guard.
                         let leading_dot = *byte_idx == 0 && slice.starts_with('.');
                         if ms[i].is_some() || leading_dot {
@@ -7578,7 +7621,7 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
                     break;
                 }
                 let slice = &add_owned[*byte_idx..];
-                if pattern_match(Some(sp), slice, None, "") != 0 {
+                if pattern_match(Some(sp), slice.as_bytes(), None, b"") != 0 {
                     add_owned.truncate(*byte_idx); // c:4601
                     break;
                 }
@@ -8066,8 +8109,13 @@ pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &st
                 }
             }
         }
-        if tpar && pl > 0 && n.starts_with(path) {
-            // c:4879
+        // c:4879 `if (tpar && !strncmp((c = dupstring(n)), path, pl)) {`
+        // `strncmp(_, _, 0)` is 0, so an EMPTY `path` matches every name.
+        // A `pl > 0` conjunct here (not in C) disabled the whole `parent`
+        // branch in the normal flow, where `path` is
+        // `"$prepath$realpath$donepath"` == "" (accept-exact-dirs off /
+        // path-completion on) — `foo/../<TAB>` still offered `foo`.
+        if tpar && n.starts_with(path) {
             let mut c = n.clone();
             let mut found = false;
             // c:4881 — walk up via strrchr('/') while above path-prefix.
@@ -10033,6 +10081,121 @@ mod tests {
             ign,
             vec!["x".to_string()],
             "no style match must leave ign untouched"
+        );
+    }
+
+    /// Unique, existing scratch directory for the cf_ignore tests. The
+    /// path is canonicalised because cf_ignore compares dev/ino, and on
+    /// macOS `std::env::temp_dir()` can hand back a symlinked prefix.
+    fn cf_ignore_scratch(tag: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "zshrs_cf_ignore_{}_{}_{}",
+            tag,
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        std::fs::canonicalize(&dir)
+            .expect("canonicalize scratch dir")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// c:4867/4875 — the `pwd` value of `ignore-parents`: a candidate
+    /// directory whose dev/ino equal `$PWD`'s is added to `ign`. This is
+    /// what suppresses `${PWD:t}` from `ls ../<TAB>`. Regression guard:
+    /// the style value never reached here because `_path_files`'
+    /// `zstyle -s` helper returned only the FIRST value, so
+    /// `ignore-parents parent pwd` arrived as bare "parent".
+    #[test]
+    fn cf_ignore_pwd_ignores_the_current_directory() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let base = cf_ignore_scratch("pwd");
+        let here = format!("{}/here", base);
+        let other = format!("{}/other", base);
+        std::fs::create_dir_all(&here).expect("here");
+        std::fs::create_dir_all(&other).expect("other");
+
+        let saved_pwd = crate::ported::params::getsparam("PWD");
+        setsparam("PWD", &here);
+        let mut ign: Vec<String> = Vec::new();
+        cf_ignore(&[here.clone(), other.clone()], &mut ign, "pwd", "");
+        match saved_pwd.as_deref() {
+            Some(p) => {
+                setsparam("PWD", p);
+            }
+            None => {
+                crate::ported::params::unsetparam("PWD");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(
+            ign,
+            vec![quotestring(&here, QT_BACKSLASH)],
+            "only the directory that IS $PWD may be ignored"
+        );
+    }
+
+    /// c:4879-4892 — the `parent` value of `ignore-parents` with an
+    /// EMPTY `path` (`"$prepath$realpath$donepath"` is empty in the
+    /// normal `path-completion` flow). C's guard is
+    /// `!strncmp(c, path, pl)`, which is 0 — i.e. a match — for `pl == 0`,
+    /// so every name is considered. The port had an extra `pl > 0`
+    /// conjunct that skipped the whole branch, leaving `d/../<TAB>`
+    /// offering `d` back.
+    #[test]
+    fn cf_ignore_parent_with_empty_path_ignores_dir_reached_through_dotdot() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let base = cf_ignore_scratch("parent");
+        let d = format!("{}/d", base);
+        let e = format!("{}/e", base);
+        std::fs::create_dir_all(&d).expect("d");
+        std::fs::create_dir_all(&e).expect("e");
+
+        // What `d/../<TAB>` generates: both siblings, reached through
+        // `d/..`. Only `d` itself is an ancestor of the word on the line.
+        let names = vec![format!("{}/d/../d", base), format!("{}/d/../e", base)];
+        let mut ign: Vec<String> = Vec::new();
+        cf_ignore(&names, &mut ign, "parent", "");
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(
+            ign,
+            vec![quotestring(&names[0], QT_BACKSLASH)],
+            "`parent` must ignore `d/../d` (and only it) when path is empty"
+        );
+    }
+
+    /// c:4879 — a non-empty `path` still gates on the name having it as a
+    /// prefix (`strncmp(c, path, pl)`), so an unrelated name is kept.
+    #[test]
+    fn cf_ignore_parent_skips_names_outside_path_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let base = cf_ignore_scratch("prefix");
+        let d = format!("{}/d", base);
+        std::fs::create_dir_all(&d).expect("d");
+
+        let name = format!("{}/d/../d", base);
+        let mut ign: Vec<String> = Vec::new();
+        // path is a sibling prefix the name does not start with.
+        cf_ignore(&[name], &mut ign, "parent", "/nowhere-zshrs/");
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert!(
+            ign.is_empty(),
+            "names not prefixed by `path` must not be ignored, got {:?}",
+            ign
         );
     }
 

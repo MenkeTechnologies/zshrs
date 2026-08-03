@@ -12,17 +12,58 @@
 //! sh:12  zstyle -s ":completion:${curcontext}:" cache-path _cache_dir
 //! sh:13  : ${_cache_dir:=${ZDOTDIR:-$HOME}/.zcompcache}
 //! sh:14  _cache_path="$_cache_dir/$_cache_ident"
-//! sh:17  zstyle -s ":completion:${curcontext}:" cache-policy _cache_policy
-//! sh:18  [[ -n "$_cache_policy" ]] && "$_cache_policy" "$_cache_path" && return 0
-//! sh:20  return 1
+//! sh:18  zstyle -s ":completion:${curcontext}:" cache-policy _cache_policy
+//! sh:19  [[ -n "$_cache_policy" ]] && "$_cache_policy" "$_cache_path" && return 0
+//! sh:21  return 1
 //! ```
 //!
 //! Returns 0 when the cache needs rebuilding (per the user-supplied
 //! `cache-policy` hook); 1 otherwise (cache disabled or no policy).
 
-use crate::ported::exec::dispatch_function_call;
+use crate::ported::exec::{dispatch_function_call, execute_script_zsh_pipeline};
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::getsparam;
+use crate::ported::utils::quotestring;
+use crate::ported::zsh_h::QT_SINGLE;
+
+/// sh:19 — the policy hook is a COMMAND WORD (`"$_cache_policy" "$_cache_path"`),
+/// so zsh resolves it function → builtin → `$PATH` and, when nothing matches,
+/// prints `command not found` and yields status 127.
+///
+/// `dispatch_function_call` only covers the first of those three steps, so a
+/// policy naming a builtin or an external program silently "failed" and an
+/// undefined policy produced no diagnostic at all (reference zsh prints
+/// `_cache_invalid:19: command not found: <policy>`).
+///
+/// Functions keep the direct dispatch — it is the same resolution zsh performs
+/// first, and it avoids re-entering the parser on the completion hot path.
+/// Everything else is handed to the canonical string-execution entry
+/// (`execute_script_zsh_pipeline`, the same one `execstring` and `zstyle -e`'s
+/// `evalstyle` use), which performs the remaining builtin/`$PATH` steps and
+/// emits the diagnostic.
+///
+/// Both words are single-quoted, reproducing sh:19's `"…"` expansions: the
+/// policy name and cache path are passed through verbatim, never split or
+/// globbed.
+fn call_cache_policy(policy: &str, cache_path: &str) -> i32 {
+    if let Some(rc) = dispatch_function_call(policy, &[cache_path.to_string()]) {
+        return rc;
+    }
+    // The `command not found` diagnostic carries the line the command word sits
+    // on in `_cache_invalid`'s source. A freshly parsed string always starts at
+    // line 1, so pad the source with the 18 lines that precede sh:19 upstream —
+    // that makes the parsed line number 19 and the whole diagnostic
+    // byte-identical to zsh's. `scriptname` is already `_cache_invalid` — the
+    // `FnScope` guard in `_cache_invalid` sets it — which supplies the other
+    // half of the prefix.
+    let src = format!(
+        "{}{} {}",
+        "\n".repeat(18),
+        quotestring(policy, QT_SINGLE),
+        quotestring(cache_path, QT_SINGLE)
+    );
+    execute_script_zsh_pipeline(&src).unwrap_or(1)
+}
 
 /// `_cache_invalid` — query the cache-policy hook for tag `$1`.
 /// Returns 0 (cache stale) or 1 (cache fresh / disabled / no policy).
@@ -51,16 +92,16 @@ pub fn _cache_invalid(args: &[String]) -> i32 {
         });
     let cache_path = format!("{}/{}", cache_dir, cache_ident);
 
-    // sh:17-18
+    // sh:18-19
     let policy = lookupstyle(&ctx, "cache-policy")
         .first()
         .cloned()
         .unwrap_or_default();
-    if !policy.is_empty() && dispatch_function_call(&policy, &[cache_path]).unwrap_or(1) == 0 {
+    if !policy.is_empty() && call_cache_policy(&policy, &cache_path) == 0 {
         return 0;
     }
 
-    // sh:20
+    // sh:21
     1
 }
 

@@ -148,7 +148,16 @@ pub fn _fuse_values(args: &[String]) -> i32 {
     // sh:60 — `_values $opts "$@" && ret=0`.
     let mut cadd = opts;
     cadd.extend(positional);
-    let ret = if _values(&cadd) == 0 { 0 } else { 1 };
+    // By NAME so `_values` runs under its own `comp_wrapper` frame (c:1556);
+    // that frame is what keeps its `compstate[restore]=''` (`_values.rs:388`)
+    // from cancelling this function's restore. The sh:63 `compstate[restore]=`
+    // below is this function's OWN opt-out and is unaffected.
+    let ret =
+        if crate::compsys::ported::shared::call_compfn("_values", &cadd, || _values(&cadd)) == 0 {
+            0
+        } else {
+            1
+        };
 
     // sh:62-68 — restore state plumbing.
     if !getsparam("state").unwrap_or_default().is_empty() {

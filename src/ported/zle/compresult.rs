@@ -37,7 +37,7 @@ use crate::ported::module::{gethookdef, runhookdef};
 use crate::ported::params::paramtab;
 use crate::ported::subst::singsub;
 use crate::ported::utils::errflag;
-use crate::ported::utils::{adjustcolumns, adjustlines, niceztrlen, write_loop, zputs};
+use crate::ported::utils::{niceztrlen, write_loop, zputs};
 use crate::ported::zle::comp_h::{
     Aminfo, Chdata, Cldata, Cline, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES,
     CGF_PACKED, CGF_ROWS, CLF_DIFF, CLF_JOIN, CLF_LINE, CLF_MATCHED, CLF_MID, CLF_MISS, CLF_NEW,
@@ -1169,8 +1169,7 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
     let iforcemenu_top = crate::ported::zle::compcore::iforcemenu.load(Relaxed);
     let usemenu_top = crate::ported::zle::zle_tricky::USEMENU.load(Relaxed);
     let patmenu = crate::ported::zle::compcore::haspattern.load(Relaxed) != 0
-        && crate::ported::zle::compcore::get_compstate_str("pattern_insert")
-            .as_deref()
+        && crate::ported::zle::compcore::get_compstate_str("pattern_insert").as_deref()
             == Some("menu"); // c:764-765
     if iforcemenu_top != -1 && (usemenu_top != 0 || patmenu) {
         // c:773 — insert the first/next match; fall through to the tail.
@@ -2610,8 +2609,13 @@ pub fn calclist(showall: i32) -> i32 {
         .and_then(|g| g.lock().ok())
         .map(|g| (g.prebr.clone(), g.postbr.clone()))
         .unwrap_or((None, None));
-    let zterm_columns = adjustcolumns() as i32; // c:zterm_columns
-    let zterm_lines = adjustlines() as i32; // c:zterm_lines
+    // c:zterm_columns / c:zterm_lines — the clamped-positive globals. Every
+    // division below (c:1554/1558/1650/1687/1705/1709) assumes C's invariant
+    // that `zterm_columns` is never 0; reading `adjustcolumns()` raw broke it
+    // on a pty reporting `ws_col == 0` and panicked with "attempt to divide by
+    // zero" at the c:1707 match-height division.
+    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let zterm_lines = crate::ported::utils::adjustlines() as i32;
 
     // c:1506-1511 — early-exit when nothing has changed.
     {
@@ -3184,7 +3188,7 @@ pub fn asklist() -> i32 {
         .ok()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let zterm_lines = adjustlines() as i32;
+    let zterm_lines = crate::ported::utils::adjustlines() as i32;
     let cmax = COMPLISTMAX.load(Relaxed) as i32;
 
     let has_cur = MINFO
@@ -3206,8 +3210,8 @@ pub fn asklist() -> i32 {
     // c:1939 — `if ((!minfo.cur || !minfo.asked) && over_threshold)`.
     if (!has_cur || already_asked == 0) && over_threshold {
         let _ = crate::ported::zle::zle_main::zsetterm(); // c:1935
-        // c:1936-1940 — write the "do you wish to see ...?" prompt; `l` is
-        // the printed length, used to work out how many rows it wrapped over.
+                                                          // c:1936-1940 — write the "do you wish to see ...?" prompt; `l` is
+                                                          // the printed length, used to work out how many rows it wrapped over.
         let prompt = if listdat.nlist > 0 {
             format!(
                 "zsh: do you wish to see all {} possibilities ({} lines)? ",
@@ -3221,12 +3225,12 @@ pub fn asklist() -> i32 {
         let l = prompt.len() as i32;
         let _ = write_loop(out, prompt.as_bytes());
         // c:1941 — `qup = ((l + zterm_columns - 1) / zterm_columns) - 1;`
-        let zterm_columns = adjustcolumns() as i32;
-        let qup = if zterm_columns > 0 {
-            (l + zterm_columns - 1) / zterm_columns - 1
-        } else {
-            0
-        };
+        //          `zterm_columns` is C's clamped-positive global, so the
+        //          division always has C's defined result (the previous
+        //          `> 0` guard substituted qup = 0, a row count C never
+        //          produces).
+        let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+        let qup = (l + zterm_columns - 1) / zterm_columns - 1;
 
         // c:1943 — `getzlequery()`.
         let said_yes = getzlequery() != 0;
@@ -3570,7 +3574,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         .and_then(|m| m.lock().ok())
         .map(|g| g.nlines)
         .unwrap_or(0);
-    let ep_zterm = adjustlines() as i32;
+    let ep_zterm = crate::ported::utils::adjustlines() as i32;
     if ep_clearflag != 0 {
         // c:2161
         let up = ep_nlines + ep_nlnct - 1; // c:2164
@@ -3622,12 +3626,11 @@ pub fn bld_all_str() -> String {
         .map(|g| g.clone())
         .unwrap_or_default();
 
-    // c:2191 — `cols = zterm_columns`. C reads the live tty width
-    //          via the cached `zterm_columns` global. Rust port uses
-    //          `adjustcolumns` which probes via TIOCGWINSZ and falls
-    //          back to $COLUMNS. Was reading raw `std::env::var(
-    //          "COLUMNS")` only — wrong: missed the live width.
-    let cols: i32 = adjustcolumns() as i32;
+    // c:2191 — `cols = zterm_columns`. C reads the live tty width via the
+    //          cached `zterm_columns` global, which `adjustcolumns` keeps
+    //          strictly positive (Src/utils.c:1866-1870). Was reading raw
+    //          `std::env::var("COLUMNS")` only — wrong: missed the live width.
+    let cols: i32 = crate::ported::utils::adjustcolumns() as i32;
     let mut len: i32 = cols - 5; // c:2192
     let mut add: i32 = 0;
     let mut buf = String::new(); // c:2196
@@ -3667,7 +3670,10 @@ pub fn bld_all_str() -> String {
                         // `compadd -C`/CMF_ALL "insert all matches" display.
                         let take = (len.max(0) as usize).min(s.len());
                         // Byte truncation must land on a char boundary.
-                        let take = (0..=take).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0);
+                        let take = (0..=take)
+                            .rev()
+                            .find(|&i| s.is_char_boundary(i))
+                            .unwrap_or(0);
                         buf.push_str(&s[..take]);
                     }
                     buf.push_str("..."); // c:2215

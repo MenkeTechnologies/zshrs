@@ -52,6 +52,19 @@ fn make_ops() -> options {
     }
 }
 
+/// `$_comps[key]` — one key of the completer registry (sh:104).
+///
+/// `_comps` is a PM_HASHED assoc, and `getaparam` returns `None` for a hash
+/// (params.c:3108 tests `PM_TYPE(...) == PM_ARRAY`), so it has to be read out
+/// of the hashed backing store — the same route `_dispatch`/`_complete` take.
+fn comps_entry(key: &str) -> String {
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .ok()
+        .and_then(|t| t.get("_comps").and_then(|h| h.get(key).cloned()))
+        .unwrap_or_default()
+}
+
 /// sh:25 — `eval "$_comp_setup"`, the option half. Upstream's
 /// `_comp_setup` (compinit sh:180-190) runs `setopt localoptions
 /// localtraps localpatterns ${_comp_options[@]}` so every completion
@@ -566,10 +579,39 @@ pub fn _main_complete(args: &[String]) -> i32 {
         }
     }
 
-    // sh:91-106  Special-context dispatch: `=`, `~[`, `~user`.
+    // sh:93-110  Special completion contexts after `~' and `='.
+    //
+    //     if [[ -z "$compstate[quote]" ]]; then
+    //       if [[ -o equals ]] && compset -P 1 '='; then
+    //         compstate[context]=equal
+    //       elif [[ "$PREFIX" != */* && "$PREFIX[1]" = '~' ]]; then
+    //         if [[ "$PREFIX" = '~['[^\]]# ]]; then
+    //           compset -p 2
+    //           compset -S '\]*'
+    //           compstate[context]=subscript
+    //           [[ -n $_comps[-subscript-] ]] && $_comps[-subscript-] && return
+    //         else
+    //           compset -p 1
+    //           compstate[context]=tilde
+    //         fi
+    //       fi
+    //     fi
     let quote = get_compstate_str("quote").unwrap_or_default();
     if quote.is_empty() {
         let prefix = getsparam("PREFIX").unwrap_or_default();
+        // Instrumentation for the sh:96 guard. It is a byte test on the LIVE
+        // `$PREFIX`, so it fails silently if the published value carries
+        // anything ahead of the `~` that the shell's own `${(qq)PREFIX}`
+        // rendering hides (a quote/Meta marker, a stray backslash from a
+        // requote upstream). `?prefix` prints the value ESCAPED, which is the
+        // only way to tell "`~ro`" from "`\~ro`" or "`\x84~ro`" in the log.
+        tracing::debug!(
+            target: "compsys_args",
+            ?prefix,
+            ?quote,
+            equals = isset(EQUALSOPT),
+            "_main_complete special-context test (sh:93-109)"
+        );
         // sh:94 — `equals` option + leading `=`
         if isset(EQUALSOPT)
             && bin_compset(
@@ -580,30 +622,57 @@ pub fn _main_complete(args: &[String]) -> i32 {
             ) == 0
         {
             set_compstate_str("context", "equal");
-        } else if prefix.starts_with("~[") {
-            // sh:96  Inside ~[...] → subscript context.
-            let _ = bin_compset(
-                "compset",
-                &["-p".to_string(), "2".to_string()],
-                &make_ops(),
-                0,
-            );
-            let _ = bin_compset(
-                "compset",
-                &["-S".to_string(), "\\]*".to_string()],
-                &make_ops(),
-                0,
-            );
-            set_compstate_str("context", "subscript");
         } else if prefix.starts_with('~') && !prefix.contains('/') {
-            // sh:102  ~user
-            let _ = bin_compset(
-                "compset",
-                &["-p".to_string(), "1".to_string()],
-                &make_ops(),
-                0,
-            );
-            set_compstate_str("context", "tilde");
+            // sh:96 — BOTH halves of this guard gate the `~[` arm too: it is
+            // the `elif`'s body in the shell source, not a sibling branch.
+            // The port had the `~[` test as its own `else if` ahead of this
+            // one, so `~[/usr/lo` — which zsh leaves alone, `$PREFIX`
+            // containing a `/` — took the subscript path and got its first
+            // two characters eaten by `compset -p 2`.
+            if prefix.starts_with("~[") && !prefix[2..].contains(']') {
+                // sh:97 — `[[ "$PREFIX" = '~['[^\]]# ]]`: `~[` followed by a
+                // run of NON-`]` characters and nothing else, i.e. the
+                // subscript is still OPEN. `starts_with("~[")` alone also
+                // matched the CLOSED `~[foo]bar`, where zsh takes the tilde
+                // arm instead.
+                //
+                // sh:99  Inside ~[...] → subscript context.
+                let _ = bin_compset(
+                    "compset",
+                    &["-p".to_string(), "2".to_string()],
+                    &make_ops(),
+                    0,
+                );
+                // sh:102 — ignore everything from the `]` on.
+                let _ = bin_compset(
+                    "compset",
+                    &["-S".to_string(), "\\]*".to_string()],
+                    &make_ops(),
+                    0,
+                );
+                set_compstate_str("context", "subscript");
+                // sh:104 — `[[ -n $_comps[-subscript-] ]] &&
+                //            $_comps[-subscript-] && return`. Dispatch the
+                // registered `-subscript-` completer directly and, when it
+                // succeeds, return WITHOUT running the completer chain. This
+                // line was missing, so `~[<TAB>` fell through to the chain and
+                // reached `_subscript` only via `_complete`'s context lookup —
+                // which re-derives the context and applies the whole
+                // completer/tag machinery zsh deliberately skips here.
+                let sub = comps_entry("-subscript-");
+                if !sub.is_empty() && dispatch_function_call(&sub, &[]) == Some(0) {
+                    return 0;
+                }
+            } else {
+                // sh:106  ~user
+                let _ = bin_compset(
+                    "compset",
+                    &["-p".to_string(), "1".to_string()],
+                    &make_ops(),
+                    0,
+                );
+                set_compstate_str("context", "tilde");
+            }
         }
     }
 

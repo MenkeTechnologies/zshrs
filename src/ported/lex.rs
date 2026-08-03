@@ -6568,9 +6568,36 @@ mod tests {
 ///     like `(j.$'\n'.)` must render as the literal text `$'\n'`
 ///     (zsh 5.9 `print -r ${(j.$'\n'.)a}` → `x$'\n'y`), not decode
 ///     to a bare newline. Bug #626 in docs/BUGS.md.
+///   - `$words` / `$compwords` (c:Src/Zle/compcore.c:642-643
+///     `for (p = clwords + aadd; *p; p++, q++) untokenize(*q = ztrdup(*p));`)
+///     — completion functions read the word text and branch on its QUOTING.
+///     `_zstyle` (Completion/Zsh/Command/_zstyle:325-333) tests whether the
+///     context argument still carries its literal quotes to pick the style
+///     table: a bare `:completion:*` selects `ctop=c` (114 names) while the
+///     quoted `':completion:*'` selects `ctop=a-z` (176 names). Stripping
+///     Snull/Dnull here silently truncated that completion by 62 names.
 pub fn untokenize_ztokens(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // Meta-pair passthrough — identical guard to `untokenize`
+        // (lex.rs:5003-5008), and needed for the same reason. C is safe
+        // here without a guard because C metafies BYTES: every imeta byte
+        // (0x83..=0xa2) is stored as `Meta, byte ^ 0x20`, and that xor maps
+        // 0x83..=0x9f -> 0xa3..=0xbf and 0xa0..=0xa2 -> 0x80..=0x82, so a C
+        // continuation byte can never land in ITOK (0x84..=0xa1). zshrs
+        // metafies at the CHARACTER level, so a raw high char C would leave
+        // alone (0x81 is not imeta) is stored as the pair (U+0083, U+00A1)
+        // — and U+00A1 is Nularg, which the loop below would silently drop.
+        // Copy the pair verbatim and never untokenize the continuation.
+        if c as u32 == 0x83 && i + 1 < chars.len() {
+            result.push(c);
+            result.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
         let cu = c as u32;
         // c:Src/ztype.h:52 ITOK — Pound (0x84) ..= Nularg (0xa1).
         if (0x84..=0xa1).contains(&cu) {
@@ -6582,6 +6609,7 @@ pub fn untokenize_ztokens(s: &str) -> String {
         } else {
             result.push(c);
         }
+        i += 1;
     }
     result
 }

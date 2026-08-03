@@ -38,7 +38,7 @@ use crate::subst::prefork;
 use std::collections::HashSet;
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -330,12 +330,31 @@ pub struct complist {
 /// Add path component (from glob.c addpath lines 263-274)
 /// Append a path component to a glob path buffer.
 /// Port of `addpath(char *s, int l)` from Src/glob.c:265.
+///
+/// C body (c:270-273):
+/// ```c
+///     while (l--)
+///         pathbuf[pathpos++] = *s++;
+///     pathbuf[pathpos++] = '/';
+///     pathbuf[pathpos] = '\0';
+/// ```
+/// The `/` is appended UNCONDITIONALLY. That is load-bearing for EMPTY
+/// path components: `patcompile(..., PAT_FILET)` cuts a pure section at
+/// the first `/` (pattern.rs:891), so `//usr//b*` parses into the
+/// component chain `"" , "usr", "", "b*"` and each empty component must
+/// still contribute one `/` to `pathbuf` for the glob results to carry
+/// the literal `//` the user typed. A previous `if !s.ends_with('/')`
+/// guard here squeezed those empty components away (`//usr//bin` →
+/// `/usr/bin`), which broke `_path_files`: it anchors matches on the
+/// on-line path text (`${(@)tmp1#$prepath$realpath$testpath}`), so a
+/// squeezed result no longer shares the `//usr//` prefix and EVERY match
+/// was discarded — completion after `ls //usr//` produced nothing at all.
+/// A non-empty component can never end in `/` (patcompile cut it there),
+/// so removing the guard changes behaviour ONLY in the empty case.
 pub fn addpath(s: &mut String, l: &str) {
     // c:265
-    s.push_str(l);
-    if !s.ends_with('/') {
-        s.push('/');
-    }
+    s.push_str(l); // c:270-271
+    s.push('/'); // c:272 — unconditional, see doc above
 }
 
 /// PARTIAL port of `statfullpath(const char *s, struct stat *st, int l)` from
@@ -5894,29 +5913,36 @@ pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
     (pattern, None)
 }
 
-/// Strip redundant `.` / `CurDir` segments from relative match paths for
-/// output. Rust's `read_dir(".")` yields `entry.path()` like `./foo` while
+/// Strip the `./` prefix that `read_dir(".")` introduces on relative match
+/// paths. Rust's `read_dir(".")` yields `entry.path()` like `./foo` while
 /// `read_dir("foo")` yields `foo/bar` — zsh prints the latter shape for both.
+/// `scanner` uses base `"."` only for the top-level relative scan (the
+/// `from_cwd.is_empty()` arm), so that prefix is the ONLY text this port adds
+/// to a match; a USER-typed leading `./` / `../` is re-prepended from the
+/// pattern by `globdata_glob`.
+///
+/// Everything else is emitted VERBATIM. zsh preserves the literal path text
+/// the user typed, including empty (`//`) and `.` components:
+/// ```text
+/// $ zsh -f -c 'print -r -- sub//f*(N) sub/./f*(N) ./sub//f*(N)'
+/// sub//foo sub/./foo ./sub//foo
+/// ```
+/// This used to rebuild the string via `Path::components()`, which drops
+/// `CurDir` and never yields empty components — so `sub//foo` came back as
+/// `sub/foo` and `sub/./foo` as `sub/foo`. That is the same class of bug as
+/// the `addpath` slash-squeeze (glob.rs:354): `_path_files` anchors its
+/// matches on the on-line path text, so a rewritten path drops every match
+/// and completion after `ls sub//` produces nothing at all.
 fn glob_emit_path(path: &Path) -> String {
-    match path.components().next() {
-        Some(Component::Prefix(_) | Component::RootDir) => path.to_string_lossy().to_string(),
-        None => ".".to_string(),
-        _ => {
-            let mut out = PathBuf::new();
-            for c in path.components() {
-                match c {
-                    Component::CurDir => {}
-                    Component::ParentDir => out.push(".."),
-                    Component::Normal(s) => out.push(s),
-                    Component::Prefix(_) | Component::RootDir => {}
-                }
-            }
-            if out.as_os_str().is_empty() {
-                ".".to_string()
-            } else {
-                out.to_string_lossy().to_string()
-            }
-        }
+    let s = path.to_string_lossy();
+    let mut rest: &str = &s;
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped;
+    }
+    if rest.is_empty() {
+        ".".to_string()
+    } else {
+        rest.to_string()
     }
 }
 
@@ -6183,6 +6209,122 @@ mod tests {
         assert_eq!(glob_emit_path(Path::new("sub/deeper")), "sub/deeper");
         assert_eq!(glob_emit_path(Path::new("././x")), "x");
         assert_eq!(glob_emit_path(Path::new("../up")), "../up");
+        // Empty path (`Path::new("")`) → "." as before.
+        assert_eq!(glob_emit_path(Path::new("")), ".");
+        assert_eq!(glob_emit_path(Path::new("./")), ".");
+    }
+
+    /// Beyond the leading `read_dir(".")` prefix, `glob_emit_path` must emit
+    /// the path VERBATIM — it must not re-normalize it through
+    /// `Path::components()`, which silently drops empty (`//`) and `.`
+    /// components. zsh keeps the literal text the user typed:
+    /// ```text
+    /// $ zsh -f -c 'print -r -- sub//f*(N) sub/./f*(N) ./sub//f*(N)'
+    /// sub//foo sub/./foo ./sub//foo
+    /// ```
+    /// `_path_files` anchors its matches on that text, so any rewrite drops
+    /// every match and completion after `ls sub//` yields nothing at all.
+    #[test]
+    fn test_glob_emit_path_keeps_empty_and_dot_components_verbatim() {
+        let _g = crate::test_util::global_state_lock();
+        // Empty components survive (`//`), relative and absolute.
+        assert_eq!(glob_emit_path(Path::new("sub//foo")), "sub//foo");
+        assert_eq!(glob_emit_path(Path::new("//usr//bin")), "//usr//bin");
+        // Interior `.` / `..` survive.
+        assert_eq!(glob_emit_path(Path::new("sub/./foo")), "sub/./foo");
+        assert_eq!(glob_emit_path(Path::new("/usr/./bin")), "/usr/./bin");
+        assert_eq!(glob_emit_path(Path::new("a/..//a/b")), "a/..//a/b");
+        // Only the engine-introduced leading `./` is removed; what follows
+        // it is untouched (globdata_glob re-prepends a user-typed `./`).
+        assert_eq!(glob_emit_path(Path::new("./sub//foo")), "sub//foo");
+        // Trailing separator is preserved (previously dropped).
+        assert_eq!(glob_emit_path(Path::new("sub/")), "sub/");
+    }
+
+    /// `Src/glob.c:270-273` — `addpath` appends the component then a `/`
+    /// UNCONDITIONALLY. An empty component (`l == 0`, which is exactly
+    /// what a `//` in the pattern produces, since `patcompile` with
+    /// `PAT_FILET` cuts a pure section at the first `/`) must therefore
+    /// still push one `/`. A `if !s.ends_with('/')` guard used to live
+    /// here and silently collapsed `//` → `/`.
+    #[test]
+    fn addpath_appends_slash_unconditionally() {
+        // Empty component after an existing separator: C writes nothing
+        // from `s`, then writes '/', so `/` becomes `//`.
+        let mut p = String::from("/");
+        addpath(&mut p, "");
+        assert_eq!(p, "//");
+
+        // Two empty components in a row (pattern `///x`).
+        addpath(&mut p, "");
+        assert_eq!(p, "///");
+
+        // Ordinary components are unaffected — a non-empty component can
+        // never itself end in `/` (patcompile cut the section there).
+        let mut q = String::from("/");
+        addpath(&mut q, "usr");
+        assert_eq!(q, "/usr/");
+        addpath(&mut q, "");
+        assert_eq!(q, "/usr//");
+        addpath(&mut q, "local");
+        assert_eq!(q, "/usr//local/");
+
+        // Relative start (`pathbuf` empty per c:818).
+        let mut r = String::new();
+        addpath(&mut r, "a");
+        assert_eq!(r, "a/");
+        addpath(&mut r, ".");
+        assert_eq!(r, "a/./");
+        addpath(&mut r, "..");
+        assert_eq!(r, "a/./../");
+    }
+
+    /// End-to-end: the globber must reproduce the literal path text the
+    /// user typed, including empty (`//`) and `.` / `..` components.
+    /// `_path_files` anchors its completion matches on that exact text
+    /// (`${(@)tmp1#$prepath$realpath$testpath}`), so any squeezing of the
+    /// path discards every match and completion after `ls //usr//`
+    /// produces nothing at all.
+    ///
+    /// zsh reference:
+    /// ```text
+    /// $ zsh -f -c 'print -r -- //usr//b*(N) /usr/./b*(N)'
+    /// //usr//bin /usr/./bin
+    /// ```
+    #[test]
+    fn glob_preserves_empty_and_dot_path_components() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = setup_test_dir();
+        let base = dir.path().display().to_string();
+
+        // `//` between the directory and the wildcard component.
+        let mut state = globdata::new();
+        let results = globdata_glob(&mut state, &format!("{}//file1.tx?", base));
+        assert_eq!(results, vec![format!("{}//file1.txt", base)]);
+
+        // `/./` — a non-empty component, already preserved; pinned so a
+        // future "normalize the path" change can't quietly drop it.
+        let mut state = globdata::new();
+        let results = globdata_glob(&mut state, &format!("{}/./file1.tx?", base));
+        assert_eq!(results, vec![format!("{}/./file1.txt", base)]);
+
+        // `/..//` — `..` followed by an empty component, round-tripped
+        // verbatim even though it resolves back to the same directory.
+        let mut state = globdata::new();
+        let results = globdata_glob(
+            &mut state,
+            &format!("{}/subdir/..//subdir/nested.tx?", base),
+        );
+        assert_eq!(
+            results,
+            vec![format!("{}/subdir/..//subdir/nested.txt", base)]
+        );
+
+        // Leading `//` on an absolute pattern (`parsepat` c:813-816 strips
+        // exactly ONE leading `/`; the second becomes an empty component).
+        let mut state = globdata::new();
+        let results = globdata_glob(&mut state, &format!("/{}//file2.tx?", base));
+        assert_eq!(results, vec![format!("/{}//file2.txt", base)]);
     }
 
     #[test]

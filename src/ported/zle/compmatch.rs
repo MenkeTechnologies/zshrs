@@ -622,6 +622,63 @@ pub fn abort_match() {
     ); // c:314
 }
 
+// ---------------------------------------------------------------------------
+// Byte cursors.
+//
+// `compmatch.c` works on `char *` throughout: `int ll = strlen(l)`
+// (c:505), `l += add` advancing one byte per step (c:575), `l + aoff`
+// (c:720), `l[n] = '\0'` (c:1094). Every length and offset in the
+// matcher engine is therefore a BYTE count. Multibyte awareness sits one
+// level down, in `unmeta_one()` (Src/utils.c:5058) via
+// `mb_metacharlenconv_r()` (Src/utils.c:5104), which decodes a single
+// character and — on an invalid or incomplete sequence — consumes
+// exactly one byte and yields `WEOF`.
+//
+// The port therefore keeps C's byte cursors and passes `&[u8]` where C
+// passes `char *`: a Rust `&str` cannot be indexed at a non-character
+// boundary (`&s[n..]` panics, which took the whole interactive shell
+// down the moment a candidate or description held a non-ASCII
+// character — `ls -<TAB>`, whose descriptions contain U+2014), and
+// substituting `""` instead made `pattern_match` report a spurious
+// match at every such position. C's pointer arithmetic is written out
+// at each call site as `b.get(off..).unwrap_or(&[])` (`b + off`,
+// stopping at the end the way a C string stops at its NUL) and
+// `tail.get(..n).unwrap_or(tail)` (`ztrduppfx(p, n)`).
+// ---------------------------------------------------------------------------
+
+/// C's `WEOF`: the value `unmeta_one()` returns for a byte that cannot
+/// start a character. `pattern_match1` treats it exactly as C does — it
+/// satisfies `CPAT_ANY` / `CPAT_NCLASS` and fails `CPAT_CHAR`,
+/// `CPAT_CCLASS` and `CPAT_EQUIV`.
+const CHR_WEOF: u32 = u32::MAX;
+
+/// Port of `unmeta_one(const char *in, int *sz)` from
+/// `Src/utils.c:5058`, which delegates to `mb_metacharlenconv_r()`
+/// (`Src/utils.c:5104`). Decodes one character from `b`, returning its
+/// value and the number of bytes consumed. An invalid or incomplete
+/// sequence consumes exactly one byte and returns [`CHR_WEOF`],
+/// mirroring C's `*wcp = WEOF; return 1 + (*s == Meta);`. An empty
+/// buffer returns `(0, 0)`, matching C's `if (!in || !*in) return 0;`.
+fn unmeta_one(b: &[u8]) -> (u32, usize) {
+    let Some(&first) = b.first() else {
+        return (0, 0); // c:5069 — empty string
+    };
+    if first < 0x80 {
+        return (first as u32, 1); // c:5110 — ASCII fast path
+    }
+    // Decode a UTF-8 sequence; anything malformed is one WEOF byte.
+    let seq_len = match first {
+        0xC2..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF4 => 4,
+        _ => return (CHR_WEOF, 1),
+    };
+    match b.get(..seq_len).and_then(|s| std::str::from_utf8(s).ok()) {
+        Some(s) => (s.chars().next().unwrap() as u32, seq_len),
+        None => (CHR_WEOF, 1),
+    }
+}
+
 /// Direct port of `static void add_match_str(Cmatcher m, char *l,
 ///                                          char *w, int wl, int sfx)`
 /// from `Src/Zle/compmatch.c:327`. Pushes the string `w` (or
@@ -654,8 +711,12 @@ pub fn add_match_str(
     // grow path; we still mirror the matchbufadded counter for parity
     // with `MATCHBUFLEN`-checking C call sites.
     if let Ok(mut buf) = MATCHBUF.get_or_init(|| Mutex::new(String::new())).lock() {
-        let take_n = wl as usize;
-        let new_chunk: String = eff_w.chars().take(take_n).collect();
+        // c:356/358 — `memcpy(matchbuf + ..., w, wl)` copies `wl` BYTES.
+        // `chars().take(wl)` copied `wl` CHARACTERS, so a candidate with
+        // any multibyte character pulled in more of the word than the
+        // matcher had consumed.
+        let wb = eff_w.as_bytes();
+        let new_chunk = String::from_utf8_lossy(wb.get(..wl as usize).unwrap_or(wb)).into_owned();
         if sfx != 0 {
             // c:354 prefix-mode
             *buf = format!("{}{}", new_chunk, *buf); // c:356
@@ -690,9 +751,18 @@ pub fn add_match_part(
     sfx: i32,
 ) {
     // c:382 — `if (l && !strncmp(l, w, wl)) l = NULL` — drop redundant anchor.
+    // `strncmp` compares BYTES and stops at the first NUL, so a shorter
+    // string only compares equal when the other ends at the same point;
+    // clamped byte spans reproduce that. The previous `&lstr[..wl]`
+    // panicked both on a `wl` past the end of `w` and on a `wl` landing
+    // inside a multibyte character.
     let l_eff: Option<String> = match l {
         Some(lstr)
-            if lstr.len() >= wl as usize && wl > 0 && &lstr[..wl as usize] == &w[..wl as usize] =>
+            if wl > 0 && {
+                let (lb, wb) = (lstr.as_bytes(), w.as_bytes());
+                let n = wl as usize;
+                lb.get(..n).unwrap_or(lb) == wb.get(..n).unwrap_or(wb)
+            } =>
         {
             None
         }
@@ -893,10 +963,19 @@ pub fn add_match_sub(
 /// *-pattern matcher loop in prefix mode (c:603-867) and suffix
 /// mode (c:735-776 with bounded recursive call), exact-rewind
 /// retry (c:1020-1034), test/part-mode returns (c:1046-1084).
+///
+/// `l`/`w` are `char *` in C and every cursor in the engine (`ll`, `lw`,
+/// `il`, `iw`, `l + aoff`) is a byte offset — see `int ll = strlen(l)`
+/// at `Src/Zle/compmatch.c:505`. The port takes `&[u8]` for the same
+/// reason: recursive calls and [`match_parts`] slice these buffers at
+/// byte offsets that C reaches with pointer arithmetic and a temporary
+/// `'\0'`, and an offset landing inside a multibyte character cannot be
+/// expressed as a `&str` at all.
+#[allow(clippy::too_many_arguments)]
 pub fn match_str(
     // c:500
-    l_in: &str,
-    w_in: &str,
+    l_bytes: &[u8],
+    w_bytes: &[u8],
     _bpp: Option<&mut Option<Box<brinfo>>>,
     bc: i32,
     rwlp: Option<&mut i32>,
@@ -904,8 +983,6 @@ pub fn match_str(
     test: i32,
     part: i32,
 ) -> i32 {
-    let l_bytes = l_in.as_bytes();
-    let w_bytes = w_in.as_bytes();
     let mut ll = l_bytes.len() as i32;
     let mut lw = w_bytes.len() as i32;
     // c:517 — `const int original_ll = ll, original_lw = lw;` used by the
@@ -1079,36 +1156,32 @@ pub fn match_str(
                 if l_off_idx >= l_bytes.len() {
                     continue;
                 }
-                let line_slice = std::str::from_utf8(&l_bytes[l_off_idx..]).unwrap_or("");
-                if pattern_match(mp.line.as_deref(), line_slice, None, "") == 0 {
+                let line_slice = l_bytes.get(l_off_idx..).unwrap_or(&[]);
+                if pattern_match(mp.line.as_deref(), line_slice, None, b"") == 0 {
                     continue;
                 }
                 // c:719-731 — anchor test.
                 if let Some(ap_pat) = ap {
-                    let l_anchor_idx = (l_pos + aoff).max(0) as usize;
-                    let l_anchor = std::str::from_utf8(&l_bytes[l_anchor_idx..]).unwrap_or("");
-                    if pattern_match(Some(ap_pat), l_anchor, None, "") == 0 {
+                    let l_anchor = l_bytes.get((l_pos + aoff).max(0) as usize..).unwrap_or(&[]);
+                    if pattern_match(Some(ap_pat), l_anchor, None, b"") == 0 {
                         continue;
                     }
                     if both != 0 {
                         // c:721
-                        let w_anchor_idx = (w_pos + aoff).max(0) as usize;
-                        let w_anchor = std::str::from_utf8(&w_bytes[w_anchor_idx..]).unwrap_or("");
-                        if pattern_match(Some(ap_pat), w_anchor, None, "") == 0 {
+                        let w_anchor = w_bytes.get((w_pos + aoff).max(0) as usize..).unwrap_or(&[]);
+                        if pattern_match(Some(ap_pat), w_anchor, None, b"") == 0 {
                             continue;
                         }
                         if aol > 0 && aol <= aoff + iw {
-                            let w_op_idx = (w_pos + aoff - aol).max(0) as usize;
-                            let w_op = std::str::from_utf8(&w_bytes[w_op_idx..]).unwrap_or("");
-                            if pattern_match(aop, w_op, None, "") == 0 {
+                            let w_op = w_bytes
+                                .get((w_pos + aoff - aol).max(0) as usize..)
+                                .unwrap_or(&[]);
+                            if pattern_match(aop, w_op, None, b"") == 0 {
                                 continue;
                             }
                         }
                         // c:726 — match_parts to confirm anchor span.
-                        let mp_l = std::str::from_utf8(&l_bytes[l_anchor_idx..]).unwrap_or("");
-                        let mp_w = std::str::from_utf8(&w_bytes[(w_pos + aoff).max(0) as usize..])
-                            .unwrap_or("");
-                        if match_parts(mp_l, mp_w, alen, part) == 0 {
+                        if match_parts(l_anchor, w_anchor, alen, part) == 0 {
                             continue;
                         }
                     }
@@ -1146,11 +1219,10 @@ pub fn match_str(
                         // matching at the current tp (the `*` consumed
                         // characters before reaching the anchor).
                         let ap_fails = ap.is_none() || test == 0 || {
-                            let tp_anchor_idx = (tp_pos + aoff).max(0) as usize;
-                            let tp_slice =
-                                std::str::from_utf8(&w_bytes.get(tp_anchor_idx..).unwrap_or(&[]))
-                                    .unwrap_or("");
-                            pattern_match(ap, tp_slice, None, "") == 0
+                            let tp_slice = w_bytes
+                                .get((tp_pos + aoff).max(0) as usize..)
+                                .unwrap_or(&[]);
+                            pattern_match(ap, tp_slice, None, b"") == 0
                         };
                         if ap_fails {
                             accept = true;
@@ -1158,23 +1230,20 @@ pub fn match_str(
                     } else {
                         // c:746-753 — non-both: succeed when ap matches at
                         // tp - moff and aop matches at tp - moff - aol.
-                        let tp_anchor_idx = (tp_pos - moff).max(0) as usize;
-                        let tp_slice =
-                            std::str::from_utf8(&w_bytes.get(tp_anchor_idx..).unwrap_or(&[]))
-                                .unwrap_or("");
-                        if pattern_match(ap, tp_slice, None, "") != 0 {
+                        let tp_slice = w_bytes
+                            .get((tp_pos - moff).max(0) as usize..)
+                            .unwrap_or(&[]);
+                        if pattern_match(ap, tp_slice, None, b"") != 0 {
                             let aol_ok = aol == 0
                                 || (aol <= iw + ct - moff && {
-                                    let aop_idx = (tp_pos - moff - aol).max(0) as usize;
-                                    let aop_slice =
-                                        std::str::from_utf8(&w_bytes.get(aop_idx..).unwrap_or(&[]))
-                                            .unwrap_or("");
-                                    pattern_match(aop, aop_slice, None, "") != 0
+                                    let aop_slice = w_bytes
+                                        .get((tp_pos - moff - aol).max(0) as usize..)
+                                        .unwrap_or(&[]);
+                                    pattern_match(aop, aop_slice, None, b"") != 0
                                 });
                             if aol_ok {
-                                let l_aoff_idx = (l_pos + aoff).max(0) as usize;
                                 let l_aoff_slice =
-                                    std::str::from_utf8(&l_bytes[l_aoff_idx..]).unwrap_or("");
+                                    l_bytes.get((l_pos + aoff).max(0) as usize..).unwrap_or(&[]);
                                 let mp_ok = mp.wlen == -1
                                     || match_parts(l_aoff_slice, tp_slice, alen, part) != 0;
                                 if mp_ok {
@@ -1191,13 +1260,11 @@ pub fn match_str(
                     // "-") recursed match_str→match_str forever → stack-overflow
                     // SIGBUS on `zsh -<TAB>`.
                     if accept && both == 0 && mp.wlen == -1 {
-                        let l_aoff_idx = (l_pos + aoff).max(0) as usize;
                         let l_aoff_slice =
-                            std::str::from_utf8(&l_bytes[l_aoff_idx..]).unwrap_or("");
-                        let tp_anchor_idx = (tp_pos - moff).max(0) as usize;
-                        let tp_slice =
-                            std::str::from_utf8(&w_bytes.get(tp_anchor_idx..).unwrap_or(&[]))
-                                .unwrap_or("");
+                            l_bytes.get((l_pos + aoff).max(0) as usize..).unwrap_or(&[]);
+                        let tp_slice = w_bytes
+                            .get((tp_pos - moff).max(0) as usize..)
+                            .unwrap_or(&[]);
                         if match_parts(l_aoff_slice, tp_slice, alen, part) == 0 {
                             break;
                         }
@@ -1214,23 +1281,17 @@ pub fn match_str(
                             // boundary).
                             let l_bound = (l_pos - llen_p - alen).max(0) as usize;
                             let w_bound = (tp_pos - alen).max(0) as usize;
-                            let l_rest =
-                                std::str::from_utf8(&l_bytes[..l_bound.min(l_bytes.len())])
-                                    .unwrap_or("");
-                            let w_rest =
-                                std::str::from_utf8(&w_bytes[..w_bound.min(w_bytes.len())])
-                                    .unwrap_or("");
+                            let l_rest = &l_bytes[..l_bound.min(l_bytes.len())];
+                            let w_rest = &w_bytes[..w_bound.min(w_bytes.len())];
                             t = match_str(l_rest, w_rest, None, 0, None, sfx, 2, part);
                         } else {
                             // c:768 — l + llen + moff, tp + moff.
-                            let l_rest_start = (l_pos + llen_p + moff) as usize;
-                            let l_rest =
-                                std::str::from_utf8(&l_bytes.get(l_rest_start..).unwrap_or(&[]))
-                                    .unwrap_or("");
-                            let w_rest_start = (tp_pos + moff) as usize;
-                            let w_rest =
-                                std::str::from_utf8(&w_bytes.get(w_rest_start..).unwrap_or(&[]))
-                                    .unwrap_or("");
+                            let l_rest = l_bytes
+                                .get((l_pos + llen_p + moff).max(0) as usize..)
+                                .unwrap_or(&[]);
+                            let w_rest = w_bytes
+                                .get((tp_pos + moff).max(0) as usize..)
+                                .unwrap_or(&[]);
                             t = match_str(l_rest, w_rest, None, 0, None, sfx, 1, part);
                         }
                         if t != 0 || (mp.wlen == -1 && both == 0) {
@@ -1283,15 +1344,30 @@ pub fn match_str(
                         }
                     }
 
+                    // Every span below is a C `ztrduppfx(ptr, len)` on a
+                    // `char *`: the start is a byte cursor and the length a
+                    // byte count, and C simply stops at the terminating NUL
+                    // when the span overruns. `get(start..)` / `get(..len)`
+                    // with an `unwrap_or` fallback clamp both ends the same
+                    // way (several of these previously indexed `start + len`
+                    // unchecked and could panic outright), and
+                    // `String::from_utf8_lossy` keeps whatever the span holds
+                    // instead of discarding the entire candidate on the first
+                    // non-ASCII byte.
                     if (mp.flags & CMF_LINE) != 0 {
                         // c:810
-                        let op_str =
-                            std::str::from_utf8(&w_bytes[op_start..op_start + ol as usize])
-                                .unwrap_or("");
-                        let lp_str = std::str::from_utf8(
-                            &l_bytes[lp_start..lp_start + (llen_p + alen) as usize],
-                        )
-                        .unwrap_or("");
+                        let op_tail = w_bytes.get(op_start..).unwrap_or(&[]);
+                        let op_cow = String::from_utf8_lossy(
+                            op_tail.get(..ol.max(0) as usize).unwrap_or(op_tail),
+                        );
+                        let lp_tail = l_bytes.get(lp_start..).unwrap_or(&[]);
+                        let lp_cow = String::from_utf8_lossy(
+                            lp_tail
+                                .get(..(llen_p + alen).max(0) as usize)
+                                .unwrap_or(lp_tail),
+                        );
+                        let op_str: &str = &op_cow;
+                        let lp_str: &str = &lp_cow;
                         add_match_str(None, "", op_str, ol, sfx);
                         add_match_str(None, "", lp_str, llen_p + alen, sfx);
                         add_match_sub(None, None, ol, Some(op_str), ol);
@@ -1299,50 +1375,55 @@ pub fn match_str(
                     } else {
                         // c:822
                         let map_len = ct + ol + alen;
-                        let map_str = std::str::from_utf8(
-                            &w_bytes[map_start
-                                ..(map_start + map_len.max(0) as usize).min(w_bytes.len())],
-                        )
-                        .unwrap_or("");
-                        add_match_str(None, "", map_str, map_len, sfx);
+                        let map_tail = w_bytes.get(map_start..).unwrap_or(&[]);
+                        let map_cow = String::from_utf8_lossy(
+                            map_tail.get(..map_len.max(0) as usize).unwrap_or(map_tail),
+                        );
+                        add_match_str(None, "", &map_cow, map_len, sfx);
                         let ol_eff = if both != 0 {
-                            let op_str =
-                                std::str::from_utf8(&w_bytes[op_start..op_start + ol as usize])
-                                    .unwrap_or("");
+                            let op_tail = w_bytes.get(op_start..).unwrap_or(&[]);
+                            let op_cow = String::from_utf8_lossy(
+                                op_tail.get(..ol.max(0) as usize).unwrap_or(op_tail),
+                            );
+                            let op_str: &str = &op_cow;
                             add_match_sub(None, None, ol, Some(op_str), ol);
                             -1
                         } else {
                             ct + ol
                         };
-                        let l_aoff_idx = (l_pos + aoff).max(0) as usize;
-                        let l_loff_idx = (l_pos + loff).max(0) as usize;
-                        let l_aoff_str = std::str::from_utf8(
-                            &l_bytes[l_aoff_idx..l_aoff_idx + alen.max(0) as usize],
-                        )
-                        .unwrap_or("");
-                        let l_loff_str = std::str::from_utf8(
-                            &l_bytes[l_loff_idx..l_loff_idx + llen_p.max(0) as usize],
-                        )
-                        .unwrap_or("");
-                        let wap_str = std::str::from_utf8(
-                            &w_bytes
-                                [wap_start..(wap_start + alen.max(0) as usize).min(w_bytes.len())],
-                        )
-                        .unwrap_or("");
-                        let wmp_str = std::str::from_utf8(
-                            &w_bytes[wmp_start
-                                ..(wmp_start + ol_eff.max(0) as usize).min(w_bytes.len())],
-                        )
-                        .unwrap_or("");
+                        let l_aoff_tail =
+                            l_bytes.get((l_pos + aoff).max(0) as usize..).unwrap_or(&[]);
+                        let l_aoff_cow = String::from_utf8_lossy(
+                            l_aoff_tail
+                                .get(..alen.max(0) as usize)
+                                .unwrap_or(l_aoff_tail),
+                        );
+                        let l_loff_tail =
+                            l_bytes.get((l_pos + loff).max(0) as usize..).unwrap_or(&[]);
+                        let l_loff_cow = String::from_utf8_lossy(
+                            l_loff_tail
+                                .get(..llen_p.max(0) as usize)
+                                .unwrap_or(l_loff_tail),
+                        );
+                        let wap_tail = w_bytes.get(wap_start..).unwrap_or(&[]);
+                        let wap_cow = String::from_utf8_lossy(
+                            wap_tail.get(..alen.max(0) as usize).unwrap_or(wap_tail),
+                        );
+                        let wmp_tail = w_bytes.get(wmp_start..).unwrap_or(&[]);
+                        let wmp_cow = String::from_utf8_lossy(
+                            wmp_tail.get(..ol_eff.max(0) as usize).unwrap_or(wmp_tail),
+                        );
+                        let l_aoff_str: &str = &l_aoff_cow;
+                        let l_loff_str: &str = &l_loff_cow;
                         add_match_part(
                             Some(mp),
                             Some(l_aoff_str),
                             alen,
-                            wap_str,
+                            &wap_cow,
                             alen,
                             Some(l_loff_str),
                             llen_p,
-                            wmp_str,
+                            &wmp_cow,
                             ol_eff,
                             ol_eff,
                             sfx,
@@ -1397,12 +1478,17 @@ pub fn match_str(
             // (the exact-char skip above already handled trivial overlap).
             if (mp.flags & (CMF_LEFT | CMF_RIGHT)) == 0 && mp.llen == mp.wlen {
                 let (l_start, w_start) = if sfx != 0 {
-                    ((l_pos - mp.llen) as usize, (w_pos - mp.wlen) as usize)
+                    (
+                        (l_pos - mp.llen).max(0) as usize,
+                        (w_pos - mp.wlen).max(0) as usize,
+                    )
                 } else {
-                    (l_pos as usize, w_pos as usize)
+                    (l_pos.max(0) as usize, w_pos.max(0) as usize)
                 };
-                let l_chunk = &l_bytes[l_start..l_start + mp.llen as usize];
-                let w_chunk = &w_bytes[w_start..w_start + mp.wlen as usize];
+                let l_tail = l_bytes.get(l_start..).unwrap_or(&[]);
+                let l_chunk = l_tail.get(..mp.llen.max(0) as usize).unwrap_or(l_tail);
+                let w_tail = w_bytes.get(w_start..).unwrap_or(&[]);
+                let w_chunk = w_tail.get(..mp.wlen.max(0) as usize).unwrap_or(w_tail);
                 if l_chunk == w_chunk {
                     continue;
                 }
@@ -1429,17 +1515,20 @@ pub fn match_str(
                     continue;
                 }
                 if let Some(ref left_pat) = mp.left {
-                    let l_anchor_start = (tl_pos - mp.lalen) as usize;
-                    let w_anchor_start = (tw_pos - mp.lalen) as usize;
-                    let l_slice = std::str::from_utf8(&l_bytes[l_anchor_start..]).unwrap_or("");
-                    let w_slice = std::str::from_utf8(&w_bytes[w_anchor_start..]).unwrap_or("");
-                    let lm_ok = pattern_match(Some(left_pat), l_slice, None, "") != 0;
-                    let wm_ok = pattern_match(Some(left_pat), w_slice, None, "") != 0;
+                    let l_slice = l_bytes
+                        .get((tl_pos - mp.lalen).max(0) as usize..)
+                        .unwrap_or(&[]);
+                    let w_slice = w_bytes
+                        .get((tw_pos - mp.lalen).max(0) as usize..)
+                        .unwrap_or(&[]);
+                    let lm_ok = pattern_match(Some(left_pat), l_slice, None, b"") != 0;
+                    let wm_ok = pattern_match(Some(left_pat), w_slice, None, b"") != 0;
                     let r_ok = mp.ralen == 0 || {
-                        let r_anchor_start = (tw_pos - mp.lalen - mp.ralen) as usize;
-                        let r_slice = std::str::from_utf8(&w_bytes[r_anchor_start..]).unwrap_or("");
+                        let r_slice = w_bytes
+                            .get((tw_pos - mp.lalen - mp.ralen).max(0) as usize..)
+                            .unwrap_or(&[]);
                         let right_pat = mp.right.as_deref();
-                        pattern_match(right_pat, r_slice, None, "") != 0
+                        pattern_match(right_pat, r_slice, None, b"") != 0
                     };
                     t = if lm_ok && wm_ok && r_ok { 1 } else { 0 };
                 } else {
@@ -1461,17 +1550,20 @@ pub fn match_str(
                     continue;
                 }
                 if let Some(ref right_pat) = mp.right {
-                    let l_anchor_start = (tl_pos + mp.llen) as usize;
-                    let w_anchor_start = (tw_pos + mp.wlen) as usize;
-                    let l_slice = std::str::from_utf8(&l_bytes[l_anchor_start..]).unwrap_or("");
-                    let w_slice = std::str::from_utf8(&w_bytes[w_anchor_start..]).unwrap_or("");
-                    let lm_ok = pattern_match(Some(right_pat), l_slice, None, "") != 0;
-                    let wm_ok = pattern_match(Some(right_pat), w_slice, None, "") != 0;
+                    let l_slice = l_bytes
+                        .get((tl_pos + mp.llen).max(0) as usize..)
+                        .unwrap_or(&[]);
+                    let w_slice = w_bytes
+                        .get((tw_pos + mp.wlen).max(0) as usize..)
+                        .unwrap_or(&[]);
+                    let lm_ok = pattern_match(Some(right_pat), l_slice, None, b"") != 0;
+                    let wm_ok = pattern_match(Some(right_pat), w_slice, None, b"") != 0;
                     let l_ok = mp.lalen == 0 || {
-                        let l_anchor_2 = (tw_pos + mp.wlen - mp.ralen - mp.lalen) as usize;
-                        let l_slice_2 = std::str::from_utf8(&w_bytes[l_anchor_2..]).unwrap_or("");
+                        let l_slice_2 = w_bytes
+                            .get((tw_pos + mp.wlen - mp.ralen - mp.lalen).max(0) as usize..)
+                            .unwrap_or(&[]);
                         let left_pat = mp.left.as_deref();
-                        pattern_match(left_pat, l_slice_2, None, "") != 0
+                        pattern_match(left_pat, l_slice_2, None, b"") != 0
                     };
                     t = if lm_ok && wm_ok && l_ok { 1 } else { 0 };
                 } else {
@@ -1494,8 +1586,8 @@ pub fn match_str(
             }
             let line_pat = mp.line.as_deref();
             let word_pat = mp.word.as_deref();
-            let tl_slice = std::str::from_utf8(&l_bytes[tl_pos as usize..]).unwrap_or("");
-            let tw_slice = std::str::from_utf8(&w_bytes[tw_pos as usize..]).unwrap_or("");
+            let tl_slice = l_bytes.get(tl_pos.max(0) as usize..).unwrap_or(&[]);
+            let tw_slice = w_bytes.get(tw_pos.max(0) as usize..).unwrap_or(&[]);
             if pattern_match(line_pat, tl_slice, word_pat, tw_slice) == 0 {
                 continue;
             }
@@ -1521,18 +1613,24 @@ pub fn match_str(
                     (w_pos - ow_pos).max(0)
                 };
                 if carry_len > 0 {
-                    let carry_slice =
-                        std::str::from_utf8(&w_bytes[carry_l..carry_l + carry_len as usize])
-                            .unwrap_or("");
+                    let carry_tail = w_bytes.get(carry_l..).unwrap_or(&[]);
+                    let carry_cow = String::from_utf8_lossy(
+                        carry_tail.get(..carry_len as usize).unwrap_or(carry_tail),
+                    );
+                    let carry_slice: &str = &carry_cow;
                     add_match_str(None, "", carry_slice, carry_len, sfx);
                     add_match_sub(None, None, 0, Some(carry_slice), carry_len);
                 }
                 // c:955 — main matcher str.
-                let tw_str =
-                    std::str::from_utf8(&w_bytes[tw_pos as usize..(tw_pos + mp.wlen) as usize])
-                        .unwrap_or("");
-                add_match_str(Some(mp), tl_slice, tw_str, mp.wlen, sfx);
-                add_match_sub(Some(mp), Some(tl_slice), mp.llen, Some(tw_str), mp.wlen);
+                let tl_cow = String::from_utf8_lossy(tl_slice);
+                let tw_tail = w_bytes.get(tw_pos.max(0) as usize..).unwrap_or(&[]);
+                let tw_cow = String::from_utf8_lossy(
+                    tw_tail.get(..mp.wlen.max(0) as usize).unwrap_or(tw_tail),
+                );
+                let tl_str: &str = &tl_cow;
+                let tw_str: &str = &tw_cow;
+                add_match_str(Some(mp), tl_str, tw_str, mp.wlen, sfx);
+                add_match_sub(Some(mp), Some(tl_str), mp.llen, Some(tw_str), mp.wlen);
             }
 
             // c:968-988 — advance pointers.
@@ -1659,16 +1757,23 @@ pub fn match_str(
 ///                                          int part)` from
 /// `Src/Zle/compmatch.c:1092-1108`. Tests whether the first `n` bytes
 /// of `l` match the first `n` bytes of `w` using the active mstack
-/// matcher chain. C truncates both strings to length n with `'\0'`
-/// (saving/restoring the boundary bytes); Rust takes slices.
-pub fn match_parts(l: &str, w: &str, n: i32, part: i32) -> i32 {
+/// matcher chain.
+///
+/// C truncates with `char lsav = l[n]; if (lsav) l[n] = '\0';`
+/// (c:1094-1100) — a raw BYTE index, with no regard for character
+/// boundaries, on strings whose `n` comes from a Cmatcher anchor
+/// length. Slicing a `&str` at that index panicked ("byte index 1 is
+/// not a char boundary; it is inside '\u{2014}'") and killed the
+/// interactive shell whenever a candidate or description held a
+/// non-ASCII character, so the port takes `&[u8]` as C takes `char *`.
+/// A resulting partial sequence decodes to `WEOF` inside
+/// [`pattern_match`], exactly as C's `unmeta_one` reports it.
+pub fn match_parts(l: &[u8], w: &[u8], n: i32, part: i32) -> i32 {
     // c:1092
     let ln = (n as usize).min(l.len());
     let wn = (n as usize).min(w.len());
-    let l_slice = &l[..ln];
-    let w_slice = &w[..wn];
     // c:1101 — match_str(l, w, NULL, 0, NULL, 0, 1, part).
-    match_str(l_slice, w_slice, None, 0, None, 0, 1, part)
+    match_str(&l[..ln], &w[..wn], None, 0, None, 0, 1, part)
 }
 
 /// Direct port of `mod_export char *comp_match(char *pfx, char *sfx,
@@ -1758,7 +1863,16 @@ pub fn comp_match(
     useqbr.store(qu, Ordering::Relaxed);
 
     let mut rpl: i32 = 0;
-    let mpl = match_str(pfx, &w_quoted, None, bcp, Some(&mut rpl), 0, 0, 0); // c:1178
+    let mpl = match_str(
+        pfx.as_bytes(),
+        w_quoted.as_bytes(),
+        None,
+        bcp,
+        Some(&mut rpl),
+        0,
+        0,
+        0,
+    ); // c:1178
     if mpl < 0 {
         return None;
     }
@@ -1766,21 +1880,40 @@ pub fn comp_match(
     if !sfx.is_empty() {
         // c:1181
         // c:1182-1232 — also match suffix; combine prefix+suffix Cline.
+        // c:1189 — `match_str(sfx, w + mpl, ...)`. `mpl` is a byte count
+        // returned by match_str, so it can land inside a multibyte
+        // character; index the bytes rather than the `&str`.
         let mut rsl: i32 = 0;
-        let suffix_start = (mpl as usize).min(w_quoted.len());
-        let suffix_part = &w_quoted[suffix_start..];
-        let msl = match_str(sfx, suffix_part, None, bcs, Some(&mut rsl), 1, 0, 0);
+        let suffix_part = w_quoted
+            .as_bytes()
+            .get(mpl.max(0) as usize..)
+            .unwrap_or(&[]);
+        let msl = match_str(
+            sfx.as_bytes(),
+            suffix_part,
+            None,
+            bcs,
+            Some(&mut rsl),
+            1,
+            0,
+            0,
+        );
         if msl < 0 {
             return None; // c:1204
         }
         // c:1220 — add_match_str for the middle and saved prefix.
-        let middle_len = (wl - rpl - rsl).max(0) as usize;
-        let middle_start = (rpl as usize).min(w_quoted.len());
-        let middle =
-            &w_quoted[middle_start..middle_start + middle_len.min(w_quoted.len() - middle_start)];
+        let mid_tail = w_quoted
+            .as_bytes()
+            .get(rpl.max(0) as usize..)
+            .unwrap_or(&[]);
+        let middle = String::from_utf8_lossy(
+            mid_tail
+                .get(..(wl - rpl - rsl).max(0) as usize)
+                .unwrap_or(mid_tail),
+        );
         // c:1223 — bld_parts on the middle portion.
         let mid_lc = bld_parts(
-            middle,
+            &middle,
             (wl - rpl - rsl).max(0),
             (mpl - rpl) + (msl - rsl),
             None,
@@ -1805,18 +1938,25 @@ pub fn comp_match(
     } else {
         // c:1233
         // c:1235-1239 — prefix-only path.
-        let after_pfx_start = (rpl as usize).min(w_quoted.len());
-        let after_pfx = &w_quoted[after_pfx_start..];
+        // c:1235 — `w + rpl`: `rpl` is a byte count from match_str and may
+        // land inside a multibyte character, so offset the bytes.
+        let after_pfx = String::from_utf8_lossy(
+            w_quoted
+                .as_bytes()
+                .get(rpl.max(0) as usize..)
+                .unwrap_or(&[]),
+        );
         // c:1235 — append the unmatched word remainder onto MATCHBUF so `r`
         // (below) reconstructs the full word, not just the matcher's own
         // contribution.
-        add_match_str(None, "", after_pfx, (wl - rpl).max(0), 0); // c:1235
-                                                                  // c:1237-1238 — `add_match_part(NULL, NULL, NULL, 0, NULL, 0,
-                                                                  //                w + rpl, wl - rpl, mpl - rpl, 0); pli = matchparts;`
-                                                                  // This APPENDS to the matchparts chain already populated by
-                                                                  // match_str (matcher subs + exact runs live in matchsubs and are
-                                                                  // folded in here) — a bare bld_parts() would discard those and
-                                                                  // drop exactly-matched interior chars from the reconstruction.
+        add_match_str(None, "", &after_pfx, (wl - rpl).max(0), 0); // c:1235
+
+        // c:1237-1238 — `add_match_part(NULL, NULL, NULL, 0, NULL, 0,
+        //                w + rpl, wl - rpl, mpl - rpl, 0); pli = matchparts;`
+        // This APPENDS to the matchparts chain already populated by
+        // match_str (matcher subs + exact runs live in matchsubs and are
+        // folded in here) — a bare bld_parts() would discard those and
+        // drop exactly-matched interior chars from the reconstruction.
         add_match_part(
             None,
             None,
@@ -1825,7 +1965,7 @@ pub fn comp_match(
             0,
             None,
             0,
-            after_pfx,
+            &after_pfx,
             (wl - rpl).max(0),
             mpl - rpl,
             0,
@@ -2171,30 +2311,43 @@ pub fn pattern_match_restrict(
 /// from `Src/Zle/compmatch.c:1548`. Walks two parallel pattern +
 /// string pairs (line `p`/`s` vs word `wp`/`ws`) verifying that each
 /// position matches and that paired pattern-class indices line up.
-/// WARNING: param names don't match C — Rust=(p, wp, ws) vs C=(p, s, wp, ws)
+///
+/// C receives raw `char *` for `s`/`ws` and decodes with `unmeta_one()`
+/// (`Src/Zle/compmatch.c:1556`, `:1561`), so a pointer that lands inside
+/// a multibyte character decodes to `WEOF` and fails every concrete
+/// pattern class. Callers in the matcher engine hold byte cursors and
+/// must be able to pass such an offset, so the port takes `&[u8]`:
+/// converting through `&str` first meant either a panic or — as the port
+/// did — substituting `""`, which made the trailing `while (p && *s)`
+/// loops (c:1601, c:1609) exit immediately and report a spurious MATCH
+/// for every anchor tested at a non-ASCII position.
 pub fn pattern_match(
     p: Option<&Cpattern>, // c:1548
-    s: &str,
+    s: &[u8],
     wp: Option<&Cpattern>,
-    ws: &str,
+    ws: &[u8],
 ) -> i32 {
     let (mut p_cur, mut wp_cur) = (p, wp); // c:1551 walking p / wp
-    let mut s_bytes = s.chars().peekable();
-    let mut ws_bytes = ws.chars().peekable();
+    let mut s_pos = 0usize;
+    let mut ws_pos = 0usize;
 
     while p_cur.is_some() && wp_cur.is_some()                                // c:1553
-        && s_bytes.peek().is_some() && ws_bytes.peek().is_some()
+        && s_pos < s.len() && ws_pos < ws.len()
     {
         let pat = p_cur.unwrap();
         let wpat = wp_cur.unwrap();
-        let wc = ws_bytes.next().unwrap() as u32; // c:1555
+        // c:1555 — `wc = unmeta_one(ws, &wlen)`.
+        let (wc, wlen) = unmeta_one(&ws[ws_pos..]);
+        ws_pos += wlen.max(1);
         let mut wmt: i32 = 0;
         let wind = pattern_match1(wpat, wc, &mut wmt); // c:1556
         if wind == 0 {
             return 0;
         } // c:1557
 
-        let c = s_bytes.next().unwrap() as u32; // c:1561
+        // c:1561 — `c = unmeta_one(s, &len)`.
+        let (c, len) = unmeta_one(&s[s_pos..]);
+        s_pos += len.max(1);
         if pat.tp != CPAT_ANY || wpat.tp != CPAT_ANY {
             // c:1567
             let mut mt: i32 = 0;
@@ -2226,23 +2379,29 @@ pub fn pattern_match(
     }
     // c:1601-1607 — consume remaining LINE pattern chars (stop when EITHER
     // the pattern OR the string is exhausted).
-    while let (Some(pat), Some(&c_ch)) = (p_cur, s_bytes.peek()) {
-        let c = c_ch as u32;
+    while let Some(pat) = p_cur {
+        if s_pos >= s.len() {
+            break;
+        }
+        let (c, len) = unmeta_one(&s[s_pos..]); // c:1603
         let mut mt: i32 = 0;
         if pattern_match1(pat, c, &mut mt) == 0 {
             return 0; // c:1604
         }
-        s_bytes.next();
+        s_pos += len.max(1); // c:1606
         p_cur = pat.next.as_deref(); // c:1605
     }
     // c:1609-1615 — remaining WORD pattern chars, symmetrically.
-    while let (Some(wpat), Some(&wc_ch)) = (wp_cur, ws_bytes.peek()) {
-        let wc = wc_ch as u32;
+    while let Some(wpat) = wp_cur {
+        if ws_pos >= ws.len() {
+            break;
+        }
+        let (wc, wlen) = unmeta_one(&ws[ws_pos..]);
         let mut wmt: i32 = 0;
         if pattern_match1(wpat, wc, &mut wmt) == 0 {
             return 0; // c:1611
         }
-        ws_bytes.next();
+        ws_pos += wlen.max(1);
         wp_cur = wpat.next.as_deref(); // c:1613
     }
     // c:1617 — the port previously required BOTH strings fully consumed;
@@ -2303,8 +2462,8 @@ pub fn bld_parts(
                 cur = ms.next.as_deref();
                 continue;
             }
-            let str_at = std::str::from_utf8(&bytes[str_pos..]).unwrap_or("");
-            if pattern_match(mp.right.as_deref(), str_at, None, "") == 0 {
+            let str_at = bytes.get(str_pos..).unwrap_or(&[]);
+            if pattern_match(mp.right.as_deref(), str_at, None, b"") == 0 {
                 cur = ms.next.as_deref();
                 continue;
             }
@@ -2313,8 +2472,8 @@ pub fn bld_parts(
                 if off < 0 {
                     false
                 } else {
-                    let l_slice = std::str::from_utf8(&bytes[off as usize..]).unwrap_or("");
-                    pattern_match(mp.left.as_deref(), l_slice, None, "") != 0
+                    let l_slice = bytes.get(off.max(0) as usize..).unwrap_or(&[]);
+                    pattern_match(mp.left.as_deref(), l_slice, None, b"") != 0
                 }
             };
             if !l_anchor_ok {
@@ -2325,10 +2484,15 @@ pub fn bld_parts(
             // c:1655-1672 — emit anchor cline; optional prefix run.
             let olen = (str_pos - p_start) as i32;
             let flags = if plen <= 0 { CLF_NEW } else { 0 };
-            let anchor_word: String =
-                std::str::from_utf8(&bytes[str_pos..str_pos + mp.ralen as usize])
-                    .unwrap_or("")
-                    .into();
+            // c:1660 — `get_cline(NULL, mp->ralen, str, mp->ralen, ...)`
+            // duplicates `ralen` BYTES straight off the candidate.
+            let anchor_tail = bytes.get(str_pos..).unwrap_or(&[]);
+            let anchor_word: String = String::from_utf8_lossy(
+                anchor_tail
+                    .get(..mp.ralen.max(0) as usize)
+                    .unwrap_or(anchor_tail),
+            )
+            .into_owned();
             let mut node = Box::new(Cline {
                 llen: mp.ralen,
                 word: Some(anchor_word.clone()),
@@ -2341,10 +2505,13 @@ pub fn bld_parts(
                 if llen > olen {
                     llen = olen;
                 }
-                let prefix_word: String =
-                    std::str::from_utf8(&bytes[p_start..p_start + olen as usize])
-                        .unwrap_or("")
-                        .into();
+                let prefix_tail = bytes.get(p_start..).unwrap_or(&[]);
+                let prefix_word: String = String::from_utf8_lossy(
+                    prefix_tail
+                        .get(..olen.max(0) as usize)
+                        .unwrap_or(prefix_tail),
+                )
+                .into_owned();
                 node.prefix = Some(Box::new(Cline {
                     llen,
                     word: Some(prefix_word),
@@ -2386,9 +2553,13 @@ pub fn bld_parts(
             flags,
             ..Default::default()
         });
-        let prefix_word: String = std::str::from_utf8(&bytes[p_start..p_start + olen as usize])
-            .unwrap_or("")
-            .into();
+        let prefix_tail = bytes.get(p_start..).unwrap_or(&[]);
+        let prefix_word: String = String::from_utf8_lossy(
+            prefix_tail
+                .get(..olen.max(0) as usize)
+                .unwrap_or(prefix_tail),
+        )
+        .into_owned();
         node.prefix = Some(Box::new(Cline {
             llen,
             word: Some(prefix_word.clone()),
@@ -2689,7 +2860,11 @@ pub fn bld_line(
 /// Returns the merged string on success, None when no match advances
 /// either input.
 pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String> {
-    let mut out = String::new();
+    // c:2050 — C accumulates into a `char *` buffer one BYTE at a time.
+    // Collecting into a `String` via `byte as char` re-encoded every
+    // continuation byte of a multibyte character as its own Latin-1
+    // code point, so a joined anchor containing one came back mangled.
+    let mut out: Vec<u8> = Vec::new();
     let mut a_idx = 0usize;
     let mut b_idx = 0usize;
     let a_bytes = sa.as_bytes();
@@ -2699,7 +2874,7 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
         if a_bytes[a_idx] == b_bytes[b_idx] {
             // c:2085 equal-char path
             // c:2092 — append + advance both.
-            out.push(a_bytes[a_idx] as char);
+            out.push(a_bytes[a_idx]);
             a_idx += 1;
             b_idx += 1;
             la -= 1;
@@ -2725,11 +2900,15 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
                 if ok {
                     // c:2025-2027 — try the word pattern against either side.
                     let mp_word = mp.word.as_deref();
-                    let a_slice = &sa[a_idx..];
-                    let b_slice = &sb[b_idx..];
-                    let t = if pattern_match(mp_word, a_slice, None, "") != 0 {
+                    // c:2025-2027 — `sa`/`sb` are advanced with byte
+                    // cursors above, so index the byte buffers; `&sa[..]`
+                    // panicked on any multibyte candidate.
+                    let a_cow = String::from_utf8_lossy(a_bytes.get(a_idx..).unwrap_or(&[]));
+                    let b_cow = String::from_utf8_lossy(b_bytes.get(b_idx..).unwrap_or(&[]));
+                    let (a_slice, b_slice): (&str, &str) = (&a_cow, &b_cow);
+                    let t = if pattern_match(mp_word, a_slice.as_bytes(), None, b"") != 0 {
                         1
-                    } else if pattern_match(mp_word, b_slice, None, "") != 0 {
+                    } else if pattern_match(mp_word, b_slice.as_bytes(), None, b"") != 0 {
                         2
                     } else {
                         0
@@ -2750,7 +2929,8 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
                         if bl > 0 {
                             // c:2068
                             for ch in &line {
-                                out.push(*ch);
+                                let mut buf = [0u8; 4];
+                                out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
                             }
                             // Advance per t-direction:
                             if t == 1 {
@@ -2787,7 +2967,7 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
     if la != 0 || lb != 0 || out.is_empty() {
         return None; // c:2090
     }
-    Some(out) // c:2094
+    Some(String::from_utf8_lossy(&out).into_owned()) // c:2094
 }
 
 // (cline_setlens / cline_sublen wrong-sig duplicates removed —
@@ -2896,9 +3076,13 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
         md.line = 0;
         md.len = next.wlen; // c:2168
         md.olen = next.wlen; // c:2168
+                             // c:2170-2172 — `md->str += md->len`, which upstream marks
+                             // `/* HERE: multibyte */`: a raw byte bump that can land inside a
+                             // character and can run past the string. Offset the bytes.
         if let Some(ref w) = next.word {
             md.str = if sfx != 0 {
-                w[md.len as usize..].to_string()
+                String::from_utf8_lossy(w.as_bytes().get(md.len.max(0) as usize..).unwrap_or(&[]))
+                    .into_owned()
             }
             // c:2171
             else {
@@ -2906,9 +3090,11 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
             };
         }
         md.alen = next.llen; // c:2173
+                             // c:2174-2176 — same `/* HERE: multibyte */` bump for `astr`.
         if let Some(ref l) = next.line {
             md.astr = if sfx != 0 {
-                l[md.alen as usize..].to_string()
+                String::from_utf8_lossy(l.as_bytes().get(md.alen.max(0) as usize..).unwrap_or(&[]))
+                    .into_owned()
             }
             // c:2176
             else {
@@ -3003,13 +3189,20 @@ pub fn join_sub(
                 // c:2236
                 let ow_off = if sfx != 0 { ol - mp.llen } else { 0 };
                 let nw_off = if sfx != 0 { nl - mp.wlen } else { 0 };
-                let line_slice = &ow[ow_off as usize..];
-                let word_slice = &nw[nw_off as usize..];
+                // c:2236 — `ow + ol - mp->llen` / `nw + nl - mp->wlen`:
+                // byte-offset pointer arithmetic on `char *`.
+                let line_cow = String::from_utf8_lossy(
+                    ow.as_bytes().get(ow_off.max(0) as usize..).unwrap_or(&[]),
+                );
+                let word_cow = String::from_utf8_lossy(
+                    nw.as_bytes().get(nw_off.max(0) as usize..).unwrap_or(&[]),
+                );
+                let (line_slice, word_slice): (&str, &str) = (&line_cow, &word_cow);
                 if pattern_match(
                     mp.line.as_deref(),
-                    line_slice,
+                    line_slice.as_bytes(),
                     mp.word.as_deref(),
-                    word_slice,
+                    word_slice.as_bytes(),
                 ) != 0
                 {
                     // c:2241-2243 — update md.str.
@@ -3028,7 +3221,12 @@ pub fn join_sub(
                         // c:2249
                         None,
                         0,
-                        Some(line_slice[..mp.llen as usize].to_string()),
+                        // c:2249 — `ztrduppfx(ow, mp->llen)`: `llen` BYTES.
+                        Some({
+                            let lb = line_slice.as_bytes();
+                            String::from_utf8_lossy(lb.get(..mp.llen.max(0) as usize).unwrap_or(lb))
+                                .into_owned()
+                        }),
                         mp.llen,
                         None,
                         0,
@@ -3044,12 +3242,18 @@ pub fn join_sub(
                 let ow_off = if sfx != 0 { ol - mp.wlen } else { 0 };
                 let nw_off = if sfx != 0 { nl - mp.wlen } else { 0 };
                 let mp_word = mp.word.as_deref();
-                let ow_slice = &ow[ow_off as usize..];
-                let nw_slice = &nw[nw_off as usize..];
+                // c:2255 — byte-offset pointer arithmetic, as above.
+                let ow_cow = String::from_utf8_lossy(
+                    ow.as_bytes().get(ow_off.max(0) as usize..).unwrap_or(&[]),
+                );
+                let nw_cow = String::from_utf8_lossy(
+                    nw.as_bytes().get(nw_off.max(0) as usize..).unwrap_or(&[]),
+                );
+                let (ow_slice, nw_slice): (&str, &str) = (&ow_cow, &nw_cow);
 
-                let t = if pattern_match(mp_word, ow_slice, None, "") != 0 {
+                let t = if pattern_match(mp_word, ow_slice.as_bytes(), None, b"") != 0 {
                     1
-                } else if pattern_match(mp_word, nw_slice, None, "") != 0 {
+                } else if pattern_match(mp_word, nw_slice.as_bytes(), None, b"") != 0 {
                     2
                 } else {
                     0
@@ -4835,7 +5039,7 @@ mod tests {
     fn match_str_exact_char_skip_full_match() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let r = match_str("abc", "abc", None, 0, None, 0, 0, 0);
+        let r = match_str("abc".as_bytes(), "abc".as_bytes(), None, 0, None, 0, 0, 0);
         assert_eq!(r, 3, "full literal match returns iw=3");
     }
 
@@ -4849,7 +5053,7 @@ mod tests {
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
-        let r = match_parts("abcXYZ", "abcdef", 3, 0);
+        let r = match_parts("abcXYZ".as_bytes(), "abcdef".as_bytes(), 3, 0);
         assert_eq!(r, 1, "first 3 chars match exactly (test=1 → 1)");
     }
 
@@ -5044,7 +5248,7 @@ mod tests {
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
-        let r = match_str("abc", "xyz", None, 0, None, 0, 0, 0);
+        let r = match_str("abc".as_bytes(), "xyz".as_bytes(), None, 0, None, 0, 0, 0);
         assert_eq!(r, -1, "no matcher can bridge `a` vs `x`");
     }
 
@@ -5444,13 +5648,13 @@ mod tests {
     /// c:1605 — `match_parts` returns i32 (compile-time type pin).
     #[test]
     fn match_parts_returns_i32_type() {
-        let _: i32 = match_parts("", "", 0, 0);
+        let _: i32 = match_parts(b"", b"", 0, 0);
     }
 
-    /// c:1605 — `match_parts("", "", 0, 0)` returns 0/1 boolean.
+    /// c:1605 — `match_parts(b"", b"", 0, 0)` returns 0/1 boolean.
     #[test]
     fn match_parts_empty_inputs_boolean_result() {
-        let r = match_parts("", "", 0, 0);
+        let r = match_parts(b"", b"", 0, 0);
         assert!(
             r == 0 || r == 1,
             "match_parts must return 0 or 1, got {}",
@@ -5462,10 +5666,10 @@ mod tests {
     #[test]
     fn match_parts_is_deterministic() {
         for (l, w) in [("a", "a"), ("abc", "abc"), ("", "")] {
-            let first = match_parts(l, w, 0, 0);
+            let first = match_parts(l.as_bytes(), w.as_bytes(), 0, 0);
             for _ in 0..3 {
                 assert_eq!(
-                    match_parts(l, w, 0, 0),
+                    match_parts(l.as_bytes(), w.as_bytes(), 0, 0),
                     first,
                     "match_parts({:?}, {:?}) must be deterministic",
                     l,
@@ -5588,7 +5792,7 @@ mod tests {
     /// c:1605 — `match_parts("","",0,0)` returns boolean i32 (0 or 1).
     #[test]
     fn match_parts_empty_zero_args_returns_boolean() {
-        let r = match_parts("", "", 0, 0);
+        let r = match_parts(b"", b"", 0, 0);
         assert!(r == 0 || r == 1, "result must be 0 or 1, got {}", r);
     }
 
@@ -5601,10 +5805,10 @@ mod tests {
             ("abc", "abc", 1, 0),
             ("x", "y", 0, 1),
         ] {
-            let first = match_parts(l, w, n, p);
+            let first = match_parts(l.as_bytes(), w.as_bytes(), n, p);
             for _ in 0..3 {
                 assert_eq!(
-                    match_parts(l, w, n, p),
+                    match_parts(l.as_bytes(), w.as_bytes(), n, p),
                     first,
                     "match_parts({:?},{:?},{},{}) must be pure",
                     l,

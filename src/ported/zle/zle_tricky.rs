@@ -748,9 +748,9 @@ pub fn docomplete(lst: i32) -> i32 {
     // hook, or `olst` would track the hook's rewrite too.
     let mut lst = lst;
     let olst = lst; // c:604
-    // c:606-609 — recursion guard. The C source uses a static `active`
-    // flag; we mirror via thread_local since each worker runs its own
-    // completion.
+                    // c:606-609 — recursion guard. The C source uses a static `active`
+                    // flag; we mirror via thread_local since each worker runs its own
+                    // completion.
     thread_local! { static ACTIVE: std::cell::Cell<bool> =
     const { std::cell::Cell::new(false) }; }
     // c:606 — `if (active && !comprecursive)`. `comprecursive` (set by the
@@ -1238,7 +1238,8 @@ pub fn docomplete(lst: i32) -> i32 {
                         ZLEMETALL.store(m.len() as i32, Ordering::SeqCst);
                     }
                 }
-                ZLEMETACS.store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst); // c:863
+                ZLEMETACS.store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst);
+                // c:863
             }
         }
         ret = ret_local;
@@ -1294,8 +1295,7 @@ pub fn docomplete(lst: i32) -> i32 {
     // buffer intact instead of aborting the line. The port never cleared
     // it, so an interrupted completion left ERRFLAG_INT latched and the
     // next command aborted spuriously.
-    crate::ported::utils::errflag
-        .fetch_and(!crate::ported::zsh_h::ERRFLAG_INT, Ordering::SeqCst); // c:894
+    crate::ported::utils::errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_INT, Ordering::SeqCst); // c:894
 
     // c:896 — `return dat[1]`, NOT `ret`: an after-complete hook is free to
     // overwrite dat[1] to change the widget's return value (and thus
@@ -2498,7 +2498,31 @@ pub fn get_comp_string() -> Option<String> {
         // `$words=()` / `$CURRENT=0` and can't tell the command from its
         // arguments — it falls back to command completion for everything.
         {
-            let ws: Vec<String> = clwords.iter().map(|w| untokenize(w)).collect();
+            // c:Src/Zle/compcore.c:642-643 —
+            //     `for (p = clwords + aadd; *p; p++, q++)`
+            //         `untokenize(*q = ztrdup(*p));`
+            // C's `untokenize` (Src/exec.c:2077-2099) maps EVERY itok byte
+            // through `ztokens` (Src/lex.c:38), so the quote markers come
+            // back as LITERAL characters: Snull -> `'`, Dnull -> `"`,
+            // Bnull/Bnullkeep -> `\`, Qstring -> `$`. `$words` therefore
+            // KEEPS the user's quoting.
+            //
+            // This must NOT use `lex::untokenize`: that variant deliberately
+            // STRIPS Snull/Dnull (documented at lex.rs:5072-5100) because it
+            // runs on the SUBSTITUTION stream, where the lexer's quote-pair
+            // markers must not reappear as literal quotes in a value. Using
+            // it here made `zstyle ':completion:*' <TAB>` publish
+            // `words=(zstyle :completion:*)` instead of zsh's
+            // `words=(zstyle "':completion:*'")`, and `_zstyle`
+            // (Completion/Zsh/Command/_zstyle:325-333) branches on exactly
+            // that text — the unquoted form picks `ctop=c` (114 style names)
+            // where zsh picks `ctop=a-z` (176), a silent 62-name shortfall.
+            // `untokenize_ztokens` (lex.rs) is the ztokens-EXACT variant
+            // c:643 needs.
+            let ws: Vec<String> = clwords
+                .iter()
+                .map(|w| crate::ported::lex::untokenize_ztokens(w))
+                .collect();
             let n = ws.len() as i32;
             // c:82 — `mod_export char **clwords`. Stash the parsed word
             // array where `callcompfunc` can rebuild `compwords` from it
