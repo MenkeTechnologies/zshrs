@@ -164,7 +164,11 @@ pub fn _file_flags(args: &[String]) -> i32 {
         "file flags".to_string(),
     ];
     v.extend(flags);
-    _values(&v)
+    // By NAME so `_values` gets its own `comp_wrapper` frame (c:1556); without
+    // one its `compstate[restore]=''` (`_values.rs:388`) leaks into this
+    // function's frame and suppresses the caller's restore. `copts` is a plain
+    // global param, so the extra function scope doesn't hide it from `-O`.
+    crate::compsys::ported::shared::call_compfn("_values", &v, || _values(&v))
 }
 
 #[cfg(test)]

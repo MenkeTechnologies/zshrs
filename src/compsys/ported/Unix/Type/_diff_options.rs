@@ -55,7 +55,12 @@ fn bx(prefix: &str, alts: &[&str], suffix: &str) -> Vec<String> {
 pub fn _diff_palette(_args: &[String]) -> i32 {
     let mut ret = 1;
     // sh:11-17
-    let r = _values(&[
+    // By NAME so `_values` gets its own `comp_wrapper` frame (c:1556) —
+    // without one its `compstate[restore]=''` (`_values.rs:388`) leaks past
+    // this function and cancels the caller's restore. `$state` (read at sh:18
+    // just below) is a plain global write inside `_values`, unaffected by the
+    // extra param scope.
+    let vargs: Vec<String> = vec![
         "-s".to_string(),
         ":".to_string(),
         "attribute".to_string(),
@@ -64,7 +69,8 @@ pub fn _diff_palette(_args: &[String]) -> i32 {
         "hd[header]:attribute [1]:->attrs".to_string(),
         "ln[line numbers]:attribute [36]:->attrs".to_string(),
         "rs[rest - other text]:attribute [0]:->attrs".to_string(),
-    ]);
+    ];
+    let r = crate::compsys::ported::shared::call_compfn("_values", &vargs, || _values(&vargs));
     if r == 0 {
         ret = 0;
     }
@@ -418,7 +424,10 @@ fn gnu_arguments(ostype: &str, passthru: &[String]) -> i32 {
     };
     spec.extend(shared);
     spec.extend(passthru.iter().cloned());
-    _arguments(&spec)
+    // By NAME so `_arguments` runs under its own `comp_wrapper` frame
+    // (c:1556); that frame is what bounds its `compstate[restore]=''`
+    // (`_arguments.rs:1130`) to the action it dispatched.
+    crate::compsys::ported::shared::call_compfn("_arguments", &spec, || _arguments(&spec))
 }
 
 /// sh:189-241 — the BSD / Solaris `diff` `_arguments` spec.
@@ -502,7 +511,8 @@ fn bsd_arguments(ostype: &str, passthru: &[String]) -> i32 {
     spec.push("-b[skip trailing white spaces]".to_string());
     spec.push("-r[recursively compare subdirectories]".to_string());
     spec.extend(passthru.iter().cloned());
-    _arguments(&spec)
+    // By NAME — same `comp_wrapper` frame reasoning as `gnu_arguments` above.
+    crate::compsys::ported::shared::call_compfn("_arguments", &spec, || _arguments(&spec))
 }
 
 #[cfg(test)]

@@ -1300,7 +1300,14 @@ pub fn scanparamvals(
             })
             .map_or(false, |prog| pattry(&prog, &s));
         if matched {
-            paramvals_lock().lock().unwrap().push(s);
+            // c:672-674 — `numparamvals += ((flags & SCANPM_WANTVALS) ? 1 :
+            // !(flags & SCANPM_WANTKEYS));`. C wrote the value into
+            // `paramvals[numparamvals]` BEFORE this test (c:670), so an
+            // increment of 0 means the slot is reused by the next node and
+            // the value is discarded. The Rust store is a Vec whose length
+            // IS `numparamvals`, so a 0-increment must simply not push —
+            // otherwise `-k h[(R)pat]` (WANTKEYS + MATCHVAL, inc 0)
+            // interleaved every matching VALUE with its key.
             let inc = if (f & SCANPM_WANTVALS) != 0 {
                 1
             } else if (f & SCANPM_WANTKEYS) == 0 {
@@ -1308,9 +1315,12 @@ pub fn scanparamvals(
             } else {
                 0
             };
-            NUMPARAMVALS.fetch_add(inc, Ordering::Relaxed);
+            if inc != 0 {
+                paramvals_lock().lock().unwrap().push(s);
+                NUMPARAMVALS.fetch_add(inc, Ordering::Relaxed);
+            }
         } else if (f & SCANPM_WANTKEYS) != 0 {
-            // Discard previously-pushed key.
+            // c:675-676 — `--numparamvals; /* Value didn't match, discard key */`
             paramvals_lock().lock().unwrap().pop();
             NUMPARAMVALS.fetch_sub(1, Ordering::Relaxed);
         }
@@ -1338,54 +1348,72 @@ pub fn scanparamvals(
 /// subscript); SCANPM_WANTKEYS / SCANPM_WANTVALS / SCANPM_WANTINDEX
 /// control which fields land in the output array.
 ///
-/// The Rust port takes a `&Mutex<HashMap>` (paramtab handle) so
-/// callers don't need to thread the HashTable wrapper through.
+/// zshrs port note on the `ht` argument: C's assoc backing is a
+/// `HashTable` whose nodes are `PM_SCALAR` child Params created by
+/// `arrhashsetfn` (`createparam(k, PM_SCALAR|PM_UNSET)` + `assignstrvalue`,
+/// c:4156-4166). zshrs's `arrhashsetfn` (params.rs, same C line) writes the
+/// pairs into `paramtab_hashed_storage` instead and leaves `pm->u_hash`
+/// empty, so the `IndexMap<String, String>` IS this port's assoc hash
+/// table. Each entry is materialised back into the `PM_SCALAR` node C's
+/// scan callbacks expect, so `scancountparams`/`scanparamvals` are the
+/// unmodified C callbacks working over the same node shape.
+///
+/// Previously this scanned the GLOBAL `paramtab` and reimplemented the
+/// per-node emit inline (never calling `scanparamvals`), so it could not
+/// be pointed at a named assoc at all — `${h[(R)pat]}`-shaped scans and
+/// `compadd -k 'h[(R)pat]'` had no backend.
 /// Port of `paramvalarr(HashTable ht, int flags)` from `Src/params.c:689`.
-#[allow(unused_variables)]
-pub fn paramvalarr(ht: &HashTable, flags: i32) -> Vec<String> {
+pub fn paramvalarr(ht: &IndexMap<String, String>, flags: i32) -> Vec<String> {
     // c:689
     // c:691-692 — DPUTS((flags & (SCANPM_MATCHKEY|SCANPM_MATCHVAL)) && !scanprog,
     //                 "BUG: scanning hash without scanprog set");
-    let scanprog_set = scanprog_lock().lock().unwrap().is_some(); // c:691 !scanprog test
     DPUTS!(
         // c:691
-        (flags as u32 & (SCANPM_MATCHKEY | SCANPM_MATCHVAL)) != 0 && !scanprog_set, // c:691
-        "BUG: scanning hash without scanprog set"                                   // c:692
+        (flags as u32 & (SCANPM_MATCHKEY | SCANPM_MATCHVAL)) != 0
+            && scanprog_lock().lock().unwrap().is_none(), // c:691 !scanprog test
+        "BUG: scanning hash without scanprog set" // c:692
     );
-    let flags_u = flags as u32;
-    let want_keys = (flags_u & SCANPM_WANTKEYS) != 0;
-    let want_vals = (flags_u & SCANPM_WANTVALS) != 0;
-    let want_index = (flags_u & SCANPM_WANTINDEX) != 0;
 
-    let tab = paramtab().read().unwrap();
-    let mut out: Vec<String> = Vec::with_capacity(tab.len() * 2);
-    let mut idx: i64 = 0;
-    // c:695-696, c:699-700 — scanhashtable filters out PM_UNSET and
-    // PM_HASHELEM nodes; scanparamvals emits each visible entry's
-    // key / value / index per flags.
-    for (k, pm) in tab.iter() {
-        let pflags = pm.node.flags;
-        idx += 1; // c:scanparamvals
-        if pflags & PM_UNSET as i32 != 0 {
-            continue;
-        }
-        if pflags & PM_HASHELEM as i32 != 0 {
-            continue;
-        }
-        if want_index {
-            out.push(idx.to_string());
-        }
-        if want_keys {
-            out.push(k.clone());
-        }
-        if want_vals || (!want_keys && !want_index) {
-            // c:scanparamvals — emits getstrvalue(pm) when WANTVALS
-            // (or by default when nothing else is requested).
-            let v = pm.u_str.clone().unwrap_or_default();
-            out.push(v);
-        }
+    // c:Src/params.c:4156-4166 — an assoc entry is a `PM_SCALAR` Param
+    // whose `node.nam` is the key and whose value is the element string.
+    let as_node = |k: &String, val: &String| -> param {
+        let mut pm = param::default();
+        pm.node.nam = k.clone();
+        pm.node.flags = PM_SCALAR as i32;
+        pm.u_str = Some(val.clone());
+        pm
+    };
+
+    // c:693-695 — first pass sizes the result:
+    //   numparamvals = 0;
+    //   if (ht) scanhashtable(ht, 0, 0, PM_UNSET, scancountparams, flags);
+    NUMPARAMVALS.store(0, Ordering::Relaxed); // c:693
+    let mut count: u32 = 0;
+    for (k, val) in ht.iter() {
+        // c:695
+        scancountparams(&as_node(k, val), flags, &mut count);
     }
-    out
+
+    // c:696 — `paramvals = zhalloc((numparamvals + 1) * sizeof(char *));`
+    {
+        let mut pv = paramvals_lock().lock().unwrap();
+        pv.clear();
+        pv.reserve(count as usize + 1);
+    }
+
+    // c:698-700 — second pass fills it:
+    //   numparamvals = 0;
+    //   scanhashtable(ht, 0, 0, PM_UNSET, scanparamvals, flags);
+    NUMPARAMVALS.store(0, Ordering::Relaxed); // c:698
+    for (k, val) in ht.iter() {
+        // c:700
+        scanparamvals(&mut as_node(k, val), flags);
+    }
+
+    // c:701-702 — `paramvals[numparamvals] = 0; return paramvals;`. The
+    // Rust store is a Vec whose length is `numparamvals`, so there is no
+    // NULL terminator to write.
+    paramvals_lock().lock().unwrap().clone() // c:702
 }
 
 /// Port of `getvaluearr(Value v)` from `Src/params.c:710`. C body:
@@ -1405,23 +1433,53 @@ pub fn getvaluearr(v: Option<&mut value>) -> Vec<String> {
     if !v.arr.is_empty() {
         return v.arr.clone();
     }
-    let pm = match v.pm.as_mut() {
-        Some(p) => p,
+    let (t, nam) = match v.pm.as_ref() {
+        Some(p) => (PM_TYPE(p.node.flags as u32), p.node.nam.clone()),
         None => return Vec::new(),
     };
-    let t = PM_TYPE(pm.node.flags as u32);
     if t == PM_ARRAY {
-        v.arr = arrgetfn(pm);
+        // c:713 — `return v->arr = v->pm->gsu.a->getfn(v->pm);`. That is a
+        // VTABLE dispatch: `arrgetfn` (c:4054 `return pm->u.arr;`) is only
+        // the `stdarray_gsu` getfn. The zsh/parameter magic arrays
+        // (`reswords`, `funcstack`, `dirstack`, …) carry a MODULE getfn and
+        // have no `u.arr` at all, and this port keeps those rows outside the
+        // pm, so `getaparam` (c:3101) is where the dispatch is spelled out —
+        // exactly the split it documents at its own `u_arr` branch.
+        let has_u_arr = v.pm.as_ref().map_or(false, |p| p.u_arr.is_some());
+        let arr = if has_u_arr {
+            arrgetfn(v.pm.as_ref().expect("pm checked above")) // c:4054
+        } else {
+            getaparam(&nam).unwrap_or_default() // c:3107
+        };
+        v.arr = arr;
         return v.arr.clone();
     }
     if t == PM_HASHED {
-        // paramvalarr(hashgetfn(pm), v.scanflags) — backend pending.
-        v.arr = Vec::new();
-        v.start = 0;
-        v.end = 1; // numparamvals + 1
+        // c:715 — `v->arr = paramvalarr(v->pm->gsu.h->getfn(v->pm),
+        //                               v->scanflags);`
+        //
+        // `hashgetfn` (c:4084 `return pm->u.hash;`) is not the assoc
+        // backing in this port: `arrhashsetfn` (c:4113) stores the pairs in
+        // `paramtab_hashed_storage` and leaves `u_hash` empty. The
+        // equivalent of `gsu.h->getfn(pm)` is therefore
+        // `subst::assoc_get`, which resolves namerefs (c:570-575), imposes
+        // the `local NAME` shadow over a magic special (c:1090-1115), and
+        // returns the entries in zsh HASH-BUCKET order — the visit order
+        // C's `scanhashtable` (Src/hashtable.c:426) produces, which is the
+        // order the scan emits matches in.
+        let ht = crate::ported::subst::assoc_get(&nam).unwrap_or_default();
+        v.arr = paramvalarr(&ht, v.scanflags); // c:715
+                                               // c:716-718 — `/* Can't take numeric slices of associative
+                                               // arrays */ v->start = 0; v->end = numparamvals + 1;`.
+                                               // zshrs's `getarrvalue` takes a 1-BASED start (this port's
+                                               // `getindex` never applies C's `start -= startprevlen`,
+                                               // params.rs `getindex` c:2125 note), so the whole-array pair is
+                                               // (1, n+1) here rather than C's (0, n+1).
+        v.start = 1; // c:716
+        v.end = (v.arr.len() + 1) as i32; // c:717
         return v.arr.clone();
     }
-    Vec::new()
+    Vec::new() // c:719
 }
 
 /// ```c
@@ -1711,14 +1769,7 @@ pub fn createparamtable() {
 
     // c:858-860 — standard non-special params (must precede env import).
     setiparam("MAILCHECK", 60); // c:858
-                                // c:Src/params.c:858 lists `KEYTIMEOUT = 40` but zsh 5.9.1
-                                // observably reports 10 (verified on Homebrew arm-darwin
-                                // build). The original C source comment + the docs describe
-                                // KEYTIMEOUT in "hundredths of a second"; the upstream init
-                                // value was lowered between 5.9 and 5.9.1 (and most distro
-                                // packages ship a 10 default) so vi-mode / multi-key
-                                // bindings feel responsive. Bug #321 in docs/BUGS.md.
-    setiparam("KEYTIMEOUT", 10); // c:859 (zsh 5.9.1 observed default)
+    setiparam("KEYTIMEOUT", 40); // c:859
     setiparam("LISTMAX", 100); // c:860
 
     // c:870-871 — TMPPREFIX / TIMEFMT defaults. C wraps each string
@@ -1972,13 +2023,20 @@ pub fn createparamtable() {
                                                                  // `-test` suffix on `$ZSH_VERSION`. See `patchlevel::ZSHRS_VERSION`
                                                                  // for the value and bug #73 in docs/BUGS.md for the rationale.
                                                                  //
-                                                                 // In `--zsh` parity mode, suppress this so `${(k)parameters}`
-                                                                 // matches reference zsh's name set (PM_HIDE doesn't filter from
-                                                                 // the (k) listing path — C's scanpmparameters only skips PM_UNSET,
-                                                                 // not PM_HIDE; outright skipping the setsparam call is the only
-                                                                 // way to keep the name out of the listing). Direct access falls
-                                                                 // back to an empty value, same as any other unset name.
-    if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                                                                 // Suppressed whenever the zsh-compatible namespace must not
+                                                                 // carry zshrs-original names, so `${(k)parameters}` matches
+                                                                 // reference zsh's name set (PM_HIDE doesn't filter from the (k)
+                                                                 // listing path — C's scanpmparameters only skips PM_UNSET, not
+                                                                 // PM_HIDE; outright skipping the setsparam call is the only way
+                                                                 // to keep the name out of the listing). Direct access falls back
+                                                                 // to an empty value, same as any other unset name.
+                                                                 //
+                                                                 // `hide_ext_builtins()` is that predicate: `--zsh` OR the
+                                                                 // `ZSHRS_HIDE_EXT_BUILTINS` measurement knob the parity
+                                                                 // harnesses already set (extensions/ext_builtins.rs:48). Gating
+                                                                 // on `--zsh` ALONE left ZSHRS_VERSION in `${(ko)parameters}` for
+                                                                 // the native binary, which is what the harnesses actually run.
+    if !crate::ext_builtins::hide_ext_builtins() {
         setsparam(
             "ZSHRS_VERSION",
             &ztrdup_metafy(crate::ported::patchlevel::ZSHRS_VERSION),
@@ -3486,43 +3544,272 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     // flags (r/R/k/K) still fall through to the substitution
     // pipeline's getarg.
     // c:1597-1615 — hash subscript resolution. For a PM_HASHED param
-    // the subscript names a key (or a flag search over keys/values).
-    // C resolves it to the element's own pm (`ht->getnode` / a fresh
-    // PM_SCALAR|PM_UNSET on a miss) so issetvar's PM_UNSET check
-    // (c:765) reports the *element's* set-ness, not the hash's. zshrs
-    // keeps assoc values in `paramtab_hashed_storage` keyed by name;
-    // resolve existence here and shape `v` so issetvar returns the
-    // right answer: found → leave the (set) hash pm with no slice
-    // (c:765 `!slice && !PM_UNSET` → 1); missing → clear `v.pm` so
-    // issetvar's `getvalue` NULL-pm guard (c:761) returns 0.
-    if let Some(p) = v.pm.as_ref() {
+    // the subscript is either an exact KEY (c:1575-1595) or a flag
+    // SEARCH over the keys/values (c:1686-1735).
+    // Resolve the PM_HASHED test into an owned name so the `v.pm` borrow is
+    // released before the arm below mutates `v`.
+    let hashed_name = v.pm.as_ref().and_then(|p| {
         if PM_TYPE(p.node.flags as u32) == PM_HASHED {
-            let name = p.node.nam.clone();
-            let map: IndexMap<String, String> = paramtab_hashed_storage()
-                .lock()
-                .unwrap()
-                .get(&name)
-                .cloned()
-                .unwrap_or_default();
-            let exists = if body.starts_with('(') {
-                // Flag search (i/I over keys, etc.) — getarg returns the
-                // matched key/value, empty when nothing matched.
-                match getarg(body, None, Some(&map), None) {
-                    Some(getarg_out::Value(val)) => !val.to_str().is_empty(),
-                    _ => false,
+            Some(p.node.nam.clone())
+        } else {
+            None
+        }
+    });
+    {
+        if let Some(name) = hashed_name {
+            let past_bracket = &after_lbrack[close_pos + 1..];
+
+            // ---------------------------------------------------------
+            // c:1391-1483 — the subscript flag block. C parses it inside
+            // `getarg`, but this port's `getarg` has no `Value` parameter
+            // (params.rs `getarg`: `(idx, arr, assoc, scalar)`) so it can
+            // neither read nor set `v->scanflags`, which is what selects
+            // KEYS-vs-VALUES output for the scan. Parse it here, where the
+            // Value is in hand, exactly as C's switch does: the switch is
+            // SEQUENTIAL and every direction arm RESETS the others, so only
+            // the LAST direction letter survives (`(ir)` matches values,
+            // `(ri)` matches keys).
+            // ---------------------------------------------------------
+            let mut rev = false; // c:1394 — any search flag seen
+            let mut ind = false; // c:1412/1416 — i/I: match the KEY
+            let mut down = false; // c:1397 — R/I/K: every match, not the first
+            let mut keymatch = false; // c:1400/1405 — k/K: the stored KEY is the pattern
+            let mut quote_arg = false; // c:1449 — (e): literal compare, no glob
+            let mut num: i64 = 1; // c:1430 — (n<D>NUM<D>): Nth match
+            let mut flag_err = false; // c:1477 — unknown flag
+            let mut pat: &str = body;
+
+            if body.starts_with('(') {
+                let bytes = body.as_bytes();
+                let mut i = 1usize;
+                while i < bytes.len() && bytes[i] != b')' {
+                    match bytes[i] as char {
+                        'r' => {
+                            // c:1394-1396
+                            rev = true;
+                            keymatch = false;
+                            down = false;
+                            ind = false;
+                        }
+                        'R' => {
+                            // c:1397-1399
+                            rev = true;
+                            down = true;
+                            keymatch = false;
+                            ind = false;
+                        }
+                        'k' => {
+                            // c:1400-1404 — `keymatch = ishash` (always true here)
+                            keymatch = true;
+                            rev = true;
+                            down = false;
+                            ind = false;
+                        }
+                        'K' => {
+                            // c:1405-1410
+                            keymatch = true;
+                            rev = true;
+                            down = true;
+                            ind = false;
+                        }
+                        'i' => {
+                            // c:1411-1414
+                            rev = true;
+                            ind = true;
+                            down = false;
+                            keymatch = false;
+                        }
+                        'I' => {
+                            // c:1415-1418
+                            rev = true;
+                            ind = true;
+                            down = true;
+                            keymatch = false;
+                        }
+                        'e' => quote_arg = true, // c:1449-1451
+                        'w' | 'f' | 'p' => {
+                            // c:1419-1428/1448 — `word`/`sep`/`escapes`. Word
+                            // mode only applies to a SCALAR value (c:1601
+                            // `if (word && !v->scanflags)`), which a PM_HASHED
+                            // Value never is, so accept and ignore rather than
+                            // taking C's `flagerr` path.
+                        }
+                        'n' | 'b' | 's' => {
+                            // c:1429-1447/1471 — `get_strarg`'s balanced
+                            // `<DELIM>ARG<DELIM>` pair, used by `n` (Nth
+                            // match), `b` (begin offset) and `s` (word
+                            // separator). `b`/`s` only steer the NON-scan
+                            // array/scalar walks (c:1601-1760), which a hash
+                            // scan never reaches. `n`'s SIGN does matter
+                            // (c:1487-1490 flips `down`), so parse that one.
+                            let is_n = bytes[i] == b'n';
+                            if i + 1 >= bytes.len() {
+                                flag_err = true;
+                                break;
+                            }
+                            let delim = bytes[i + 1];
+                            let arg_start = i + 2;
+                            let mut arg_end = arg_start;
+                            while arg_end < bytes.len() && bytes[arg_end] != delim {
+                                arg_end += 1;
+                            }
+                            if arg_end >= bytes.len() {
+                                flag_err = true;
+                                break;
+                            }
+                            if is_n {
+                                // c:1459 — `num = mathevalarg(...); if (!num) num = 1;`
+                                num = body[arg_start..arg_end].trim().parse().unwrap_or(1);
+                                if num == 0 {
+                                    num = 1;
+                                }
+                            }
+                            i = arg_end;
+                        }
+                        _ => {
+                            // c:1476-1483 — `flagerr:` resets every flag and
+                            // rewinds, so the whole subscript is re-read as
+                            // plain key text.
+                            flag_err = true;
+                            break;
+                        }
+                    }
+                    i += 1;
                 }
-            } else {
-                map.contains_key(body)
-            };
-            *pptr = &after_lbrack[close_pos + 1..];
-            if exists {
-                v.scanflags = 0;
-                v.start = 0;
-                v.end = -1;
-            } else {
-                v.pm = None;
+                if !flag_err && i < bytes.len() && bytes[i] == b')' {
+                    pat = &body[i + 1..]; // c:1485 `if (s != *str) s++;`
+                } else {
+                    flag_err = true;
+                }
             }
-            return 0;
+            if flag_err {
+                // c:1478-1482 — `num = 1; word = rev = ind = down = keymatch = 0;`
+                rev = false;
+                ind = false;
+                down = false;
+                keymatch = false;
+                quote_arg = false;
+                num = 1;
+                pat = body;
+            }
+            // c:1487-1490 — `if (num < 0) { down = !down; num = -num; }`
+            if num < 0 {
+                down = !down;
+            }
+
+            if !rev {
+                // c:1575-1595 — no search flag: the subscript is an exact KEY.
+                // C rebinds `v->pm` to the ELEMENT's own Param
+                // (`ht->getnode(ht, s)`), or on a miss to a fresh
+                // `PM_SCALAR|PM_UNSET` one, then leaves the whole-value
+                // bounds. That element type is what makes the read collapse:
+                // `getvaluearr` has no arm for PM_SCALAR (c:719) and
+                // `getarrvalue`'s `v->start == 0 && v->end == -1` early-out
+                // (c:2565) hands the empty result straight back, while
+                // `IS_UNSET_VALUE` (c:472-474) catches the miss. Materialise
+                // the same element node here — this port keeps assoc values as
+                // plain strings, so build the `PM_SCALAR` node C's hash
+                // carries (c:4156-4166).
+                let entry =
+                    crate::ported::subst::assoc_get(&name).and_then(|m| m.get(pat).cloned());
+                let mut elem = param::default();
+                elem.node.nam = pat.to_string();
+                elem.node.flags = PM_SCALAR as i32;
+                match entry {
+                    Some(val) => elem.u_str = Some(val),        // c:1585
+                    None => elem.node.flags |= PM_UNSET as i32, // c:1588
+                }
+                v.pm = Some(Box::new(elem));
+                v.scanflags = 0; // c:1591 (`*inv` is 0 on this path)
+                v.start = 0; // c:1592
+                v.end = -1; // c:1594
+                *pptr = past_bracket; // c:2164
+                return 0; // c:2166
+            }
+
+            // ---------------------------------------------------------
+            // c:1493-1512 — resolve which SIDE of each entry is emitted.
+            // The caller's WANTKEYS/WANTVALS win when present (that is how
+            // `compadd -k 'h[(R)pat]'` asks for the KEYS of VALUE-matching
+            // entries, Src/Zle/compcore.c:2030-2033); otherwise the
+            // direction flag picks.
+            // ---------------------------------------------------------
+            let sf = v.scanflags as u32;
+            if (sf & SCANPM_WANTKEYS) == 0 && (sf & SCANPM_WANTVALS) == 0 && v.scanflags != 0 {
+                if ind {
+                    // c:1503-1505
+                    v.scanflags |= SCANPM_WANTKEYS as i32;
+                    v.scanflags &= !(SCANPM_WANTVALS as i32);
+                } else if rev {
+                    // c:1506
+                    v.scanflags |= SCANPM_WANTVALS as i32;
+                }
+                if !down && keymatch {
+                    // c:1511 — `if (!down && keymatch && ishash)`
+                    v.scanflags &= !(SCANPM_MATCHMANY as i32);
+                }
+            }
+
+            // c:1564-1572 — `parsestr(&s); singsub(&s)` on the subscript
+            // body, so a `$var` inside the pattern is expanded before it is
+            // compiled.
+            let mut s: String = pat.to_string();
+            if s.contains('$') || s.contains('`') {
+                s = crate::ported::subst::singsub(&s); // c:1571
+            }
+
+            // c:1686-1708 — build the pattern program once, before the scan.
+            // `k`/`K` leave it NULL (c:1707-1708): SCANPM_KEYMATCH compiles
+            // the STORED KEY per node instead (c:653-659).
+            let pprog = if keymatch {
+                None // c:1708
+            } else {
+                let mut p = s.clone();
+                if !quote_arg {
+                    crate::ported::glob::tokenize(&mut p); // c:1704
+                }
+                crate::ported::glob::remnulargs(&mut p); // c:1705
+                patcompile(&p, PAT_HEAPDUP as i32, None) // c:1706
+            };
+
+            // c:1710-1735 — the hash scan. `v->scanflags` is always non-zero
+            // for a PM_HASHED value (fetchvalue c:2274-2280 promotes 0 to
+            // SCANPM_ARRONLY), so C's `else` array-walk arm is unreachable
+            // from here.
+            if !keymatch && pprog.is_none() {
+                // c:1717-1718 — `if (!pprog) return 1;` aborts before the
+                // scan, leaving `v->arr` NULL. An uncompilable pattern can
+                // match nothing; report it the way the exact-key miss above
+                // does so no consumer re-derives a full-table scan.
+                *pptr = past_bracket;
+                v.pm = None;
+                return 0;
+            }
+            // c:1712-1713 — `scanprog = pprog; scanstr = s;`. This port's
+            // statics hold the pattern TEXT (`scanparamvals` compiles it),
+            // so store `s` and leave SCANPROG unset for the keymatch case
+            // exactly as C leaves `pprog` NULL there.
+            *scanprog_lock().lock().unwrap() = if keymatch { None } else { Some(s.clone()) };
+            *scanstr_lock().lock().unwrap() = Some(s);
+            if keymatch {
+                v.scanflags |= SCANPM_KEYMATCH as i32; // c:1715
+            } else if ind {
+                v.scanflags |= SCANPM_MATCHKEY as i32; // c:1720
+            } else {
+                v.scanflags |= SCANPM_MATCHVAL as i32; // c:1722
+            }
+            if down {
+                v.scanflags |= SCANPM_MATCHMANY as i32; // c:1725
+            }
+            // c:1726 — `ta = getvaluearr(v)` runs the scan and leaves the
+            // result in `v->arr` with `v->start`/`v->end` covering all of it
+            // (c:716-717), which is what C's getindex tail (c:2151-2153)
+            // then re-derives from getarg's `r`/`*w`.
+            let _ = getvaluearr(Some(&mut *v)); // c:1726
+            *scanprog_lock().lock().unwrap() = None; // c:1732
+            *scanstr_lock().lock().unwrap() = None;
+            *pptr = past_bracket; // c:2164
+            return 0; // c:2166
         }
     }
     if body.starts_with('(') {
@@ -3544,6 +3831,43 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                         *pptr = &after_lbrack[close_pos + 1..];
                         return 0;
                     }
+                }
+            } else if flag_part.contains('r')
+                || flag_part.contains('R')
+                || flag_part.contains('k')
+                || flag_part.contains('K')
+            {
+                // c:1736-1760 — the ARRAY search arm (`ishash` false, so
+                // c:1711's hash scan is skipped and `ta = getarrvalue(v)` is
+                // walked directly). C's `getarg` returns the 1-based INDEX
+                // `r` of the match and getindex's tail (c:2151-2153) turns it
+                // into `start`/`end`; this port's `getarg` has no Value
+                // out-param and hands back the matched ELEMENT(S) instead, so
+                // put them in `v->arr` — the same cache `getvaluearr` reads
+                // first (c:711-712) — and set the bounds to cover exactly
+                // them. `k`/`K` degrade to `r`/`R` here because C gates
+                // `keymatch = ishash` (c:1401/1406).
+                let arr: Vec<String> = v.pm.as_ref().map(|p| arrgetfn(p)).unwrap_or_default();
+                if let Some(getarg_out::Value(val)) = getarg(body, Some(&arr), None, None) {
+                    let hits: Vec<String> = match val {
+                        // c:1724-1734 — the MATCHMANY forms are array-shaped.
+                        Value::Array(parts) => parts.iter().map(|p| p.to_str()).collect(),
+                        other => {
+                            // c:1758 — a miss returns index 0, i.e. no
+                            // element; this port signals it with "".
+                            let s = other.to_str();
+                            if s.is_empty() {
+                                Vec::new()
+                            } else {
+                                vec![s]
+                            }
+                        }
+                    };
+                    v.start = 1; // c:2151 (1-based; see the c:2125 note below)
+                    v.end = hits.len() as i32; // c:2152
+                    v.arr = hits;
+                    *pptr = &after_lbrack[close_pos + 1..]; // c:2164
+                    return 0; // c:2166
                 }
             }
         }
@@ -4854,6 +5178,16 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
 /// returns 0 on missing or unparseable, matching getintvalue's
 /// failure-returns-0 convention (params.c:2601).
 pub fn getiparam(s: &str) -> i64 {
+    // c:Src/params.c:348 + c:4202 — `IPDEF4("HISTCMD", &curhist)` binds
+    // `intvargetfn` (`return *pm->u.valptr;`) to `&curhist`
+    // (`Src/hist.c:88`), so the value is the LIVE history counter, never
+    // stored on the node. zshrs's `createparamtable` inserts HISTCMD as a
+    // plain PM_INTEGER whose `u_val` nothing writes, so this must precede
+    // the `u_val` fast path below — otherwise every read reports the 0 the
+    // node was created with.
+    if s == "HISTCMD" {
+        return crate::ported::hist::curhist.load(Ordering::SeqCst); // c:348 + c:4202
+    }
     // C also honours PM_INTEGER's `pm->u.val` payload directly when
     // the param is typed numeric; check paramtab first for that case.
     if let Ok(tab) = paramtab().read() {
@@ -4875,6 +5209,14 @@ pub fn getiparam(s: &str) -> i64 {
 /// returns `(0, 0.0, false)`, matching the MN_INTEGER zero
 /// fallback in the C source's not-found branch.
 pub fn getnparam(s: &str) -> (i64, f64, bool) {
+    // c:Src/params.c:348 + c:4202 — same valptr-bound special as in
+    // `getiparam` above: IPDEF4 binds `intvargetfn` to `&curhist`
+    // (`Src/hist.c:88`), so read the live counter rather than the
+    // never-written `u_val` on the paramtab node.
+    if s == "HISTCMD" {
+        let v = crate::ported::hist::curhist.load(Ordering::SeqCst); // c:348 + c:4202
+        return (v, v as f64, false);
+    }
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(s) {
             let fl = pm.node.flags as u32;
@@ -5260,6 +5602,27 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
     }
     // c:3107-3109 — `getvalue(&vbuf, &s, 0)` resolves the name to a
     // paramtab entry. Then PM_TYPE check + `pm->u.arr` return.
+    //
+    // c:3107 is `v->pm->gsu.a->getfn(v->pm)` — a VTABLE dispatch, not a
+    // raw `u.arr` read. For an ordinary array `gsu.a` is `stdarray_gsu`
+    // whose getfn is `arrgetfn` (c:4054 `return pm->u.arr`), which is
+    // what the `u_arr` branch below models. But the zsh/parameter magic
+    // arrays (`reswords`, `dis_reswords`, `patchars`, `dis_patchars`,
+    // `funcstack`, `dirstack`, `historywords`, …) carry a MODULE getfn
+    // instead (`reswordsgetfn` at Src/Modules/parameter.c:878) and have
+    // no `u.arr` at all — their value is computed on demand. zshrs keeps
+    // those rows in the separate `PARTAB_ARRAY` table
+    // (modules/parameter.rs:4644) rather than in a gsu slot on the pm,
+    // so the dispatch has to be spelled out. `partab_array_get`
+    // (vm_helper.rs:4998) is the single existing entry point for it —
+    // it applies the same `magic_special_shadowed` filter + module gate
+    // the parameter-expansion path uses (subst.rs:20646, :20749).
+    //
+    // Without this, `getaparam("reswords")` returned None because the
+    // seeded PM_SPECIAL stub has `u_arr: None` (vm_helper.rs:5139), so
+    // `compadd -k reswords` produced ZERO matches and `which <TAB>` lost
+    // the entire reserved-words group.
+    let mut needs_partab_dispatch = false;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             // c:Src/Modules/param_private.c:678 — the getnode hook
@@ -5275,11 +5638,22 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
             if PM_TYPE(pm.node.flags as u32) == PM_ARRAY {
                 // c:3108
                 if let Some(arr) = pm.u_arr.as_ref() {
-                    // c:3109
+                    // c:3109 — gsu.a == stdarray_gsu → arrgetfn (c:4054).
                     return Some(arr.clone());
                 }
+                // c:3107 — non-stdarray gsu.a: the value lives behind
+                // the module getfn. Dispatch AFTER dropping the read
+                // guard: `partab_array_get` re-locks `paramtab` for the
+                // shadow check, and the getfns themselves read the
+                // shell's tables.
+                needs_partab_dispatch = crate::ported::modules::parameter::PARTAB_ARRAY
+                    .iter()
+                    .any(|e| e.name == name);
             }
         }
+    }
+    if needs_partab_dispatch {
+        return crate::vm_helper::partab_array_get(name); // c:3107
     }
     None // c:3110
 }
@@ -12849,22 +13223,22 @@ fn keyboardhack_lock() -> &'static Mutex<u8> {
     KEYBOARDHACK_VAR.get_or_init(|| Mutex::new(0))
 }
 
+/// Port of `zlong histsiz` (`Src/hist.c:108`), seeded by
+/// `Src/init.c:1094` — `histsiz = DEFAULT_HISTSIZE;`.
+/// `DEFAULT_HISTSIZE` is 30 (`configure.ac:2978`).
 fn histsiz_lock() -> &'static Mutex<i64> {
     static HISTSIZ_VAR: OnceLock<Mutex<i64>> = OnceLock::new();
-    // Match observed `zsh -fc 'echo $HISTSIZE'` output on zsh 5.9+
-    // (Homebrew). Upstream's `configure.ac` defines DEFAULT_HISTSIZE
-    // as 30 but distributed binaries seed the cap at 999999999 — the
-    // parity goal here is "match the binary the user actually runs",
-    // not "match the source-code default".
-    HISTSIZ_VAR.get_or_init(|| Mutex::new(999_999_999))
+    HISTSIZ_VAR.get_or_init(|| Mutex::new(crate::ported::config_h::DEFAULT_HISTSIZE as i64))
+    // c:Src/init.c:1094
 }
 
+/// Port of `zlong savehistsiz` (`Src/hist.c:113`). Nothing seeds it —
+/// C zeroes the BSS global and `SAVEHIST` (`IPDEF1` at
+/// `Src/params.c:303`) reads it through `savehistsizegetfn`
+/// (`c:4985 return savehistsiz;`), so a shell with no rc file reports 0.
 fn savehistsiz_lock() -> &'static Mutex<i64> {
     static SAVEHISTSIZ_VAR: OnceLock<Mutex<i64>> = OnceLock::new();
-    // Same rationale as `histsiz_lock` — observed `zsh -fc
-    // 'echo $SAVEHIST'` returns 99999999 on zsh 5.9+. Source has
-    // savehistsiz default to 0 but distributed binaries cap at 99M.
-    SAVEHISTSIZ_VAR.get_or_init(|| Mutex::new(99_999_999))
+    SAVEHISTSIZ_VAR.get_or_init(|| Mutex::new(0)) // c:Src/hist.c:113
 }
 
 fn zsh_terminfo_lock() -> &'static Mutex<String> {
@@ -13147,6 +13521,18 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // populates the paramtab slot from getppid(2), so $PPID
         // always read 0. Route through the libc syscall directly.
         "PPID" => Some((unsafe { libc::getppid() } as i64).to_string()),
+        // c:Src/params.c:348 + c:4202 — `IPDEF4("HISTCMD", &curhist)`
+        // binds `intvargetfn` (`return *pm->u.valptr;`) to `&curhist`
+        // (`Src/hist.c:88`). Same valptr-bound shape as PPID above: the
+        // value is a live global, never stored on the pm. `curhist` is
+        // bumped by `linkcurline()` (`Src/hist.c:1093`) from `hbegin()`
+        // (c:1166) BEFORE the line is parsed, so during event N the
+        // parameter reads N and at the next prompt N+1.
+        "HISTCMD" => Some(
+            crate::ported::hist::curhist
+                .load(Ordering::SeqCst)
+                .to_string(),
+        ), // c:348 + c:4202
         // libc syscall callbacks.
         "RANDOM" => Some(randomgetfn().to_string()),
         "TTYIDLE" => Some(ttyidlegetfn().to_string()),

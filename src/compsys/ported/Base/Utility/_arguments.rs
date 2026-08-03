@@ -40,7 +40,8 @@ use crate::ported::exec::{dispatch_function_call, execute_script};
 use crate::ported::glob::matchpat;
 use crate::ported::modules::zutil::zstyletab;
 use crate::ported::params::{
-    getaparam, getiparam, getsparam, setaparam, setiparam, setsparam, unsetparam,
+    getaparam, gethkparam, gethparam, getiparam, getsparam, setaparam, sethparam, setiparam,
+    setsparam, unsetparam,
 };
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
@@ -61,6 +62,59 @@ fn make_ops() -> options {
 fn comparguments(argv: &[&str]) -> i32 {
     let v: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     bin_comparguments("comparguments", &v, &make_ops(), 0)
+}
+
+/// Read an associative array as the flat `key value key value …` list
+/// `sethparam` takes, so a hash can be saved and put back verbatim.
+/// `None` when no hash of that name exists.
+fn flat_hash(name: &str) -> Option<Vec<String>> {
+    let keys = gethkparam(name)?;
+    let vals = gethparam(name)?;
+    let mut kv = Vec::with_capacity(keys.len() * 2);
+    for (k, v) in keys.into_iter().zip(vals) {
+        kv.push(k);
+        kv.push(v);
+    }
+    Some(kv)
+}
+
+/// What a parameter looked like before the emulated shell `local`
+/// shadowed it, so the epilogue can put back the same VALUE **and type**.
+///
+/// `local line` (sh:406) restores on return whatever the caller had —
+/// including the common `local curcontext=$curcontext state line` shape,
+/// where `line` is a declared-but-empty SCALAR. Unsetting it instead of
+/// restoring it drops the caller's declaration (`${+line}` 1 → 0).
+enum SavedParam {
+    Array(Vec<String>),
+    Scalar(String),
+    Unset,
+}
+
+/// Snapshot `name` ahead of an emulated `local name`.
+fn save_param(name: &str) -> SavedParam {
+    match getaparam(name) {
+        Some(v) => SavedParam::Array(v),
+        None => match getsparam(name) {
+            Some(s) => SavedParam::Scalar(s),
+            None => SavedParam::Unset,
+        },
+    }
+}
+
+/// Put back what `save_param` captured.
+fn restore_param(name: &str, saved: SavedParam) {
+    match saved {
+        SavedParam::Array(v) => {
+            setaparam(name, v);
+        }
+        SavedParam::Scalar(s) => {
+            let _ = setsparam(name, &s);
+        }
+        SavedParam::Unset => {
+            unsetparam(name);
+        }
+    }
 }
 
 /// `${(@)arr%%:*}` — strip a trailing `:description` from every element.
@@ -917,6 +971,14 @@ pub fn _arguments(args: &[String]) -> i32 {
     let mut mesg = false;
     let mut opts = false;
     let mut local_set = false; // shell `local` sentinel (sh:405 `$local`)
+                               // sh:406-407 — `local line; typeset -A opt_args` shadow the CALLER's
+                               // `line`/`opt_args` for the rest of `_arguments`, and zsh restores the
+                               // caller's values on return. The port runs in the caller's parameter
+                               // scope, so the outer values are saved at the declaration point and put
+                               // back in the epilogue. `SavedParam::Unset` / `None` = the name did not
+                               // exist, so the epilogue unsets it.
+    let mut saved_line = SavedParam::Unset;
+    let mut saved_opt_args: Option<Vec<String>> = None;
     let origpre = getsparam("PREFIX").unwrap_or_default();
     let origipre = getsparam("IPREFIX").unwrap_or_default();
     let nm = nmatches(); // sh:331 nm="$compstate[nmatches]"
@@ -1072,8 +1134,21 @@ pub fn _arguments(args: &[String]) -> i32 {
                     }
 
                     // sh:405-409 — first real action: declare line/opt_args.
+                    //     if [[ -z "$local" ]]; then
+                    //       local line
+                    //       typeset -A opt_args
+                    //       local=yes
+                    //     fi
+                    // Only THIS branch declares them; the `->state` branch above
+                    // (sh:393) deliberately does not, so there `comparguments -W`
+                    // writes straight into the caller's `line`/`opt_args` and they
+                    // must survive the return.
                     if !local_set {
-                        // `local line; typeset -A opt_args; local=yes`
+                        saved_line = save_param("line");
+                        saved_opt_args = flat_hash("opt_args");
+                        // `local line` + `typeset -A opt_args`: fresh, empty.
+                        setaparam("line", Vec::new());
+                        sethparam("opt_args", Vec::new());
                         local_set = true;
                     }
 
@@ -1563,11 +1638,30 @@ pub fn _arguments(args: &[String]) -> i32 {
     // Tear down the shell-`local` scratch params (the port has no local
     // scope). NORMARG / state / state_descr / context are NOT local in
     // the source — they persist to the caller — so they are left intact.
+    //
+    // `line` / `opt_args` are NOT in this list: they are only ever local when
+    // sh:406-407 ran (`local=yes`), and on the `->state` path (sh:393) they are
+    // the CALLER's parameters that `comparguments -W` just filled in — the whole
+    // point of the `->state` protocol (`_zstyle` reads `$line[2]`, etc.).
+    // Unsetting them unconditionally deleted exactly that result.
     for p in [
         "descrs", "actions", "subcs", "next", "direct", "odirect", "equal", "matcher", "single",
-        "line", "opt_args", "tmp1", "tmp2", "tmp3", "ws", "expl",
+        "tmp1", "tmp2", "tmp3", "ws", "expl",
     ] {
         unsetparam(p);
+    }
+    // sh:406-407 — restore what the emulated `local line` / `typeset -A opt_args`
+    // shadowed. Only when the declaration actually ran.
+    if local_set {
+        restore_param("line", saved_line);
+        match saved_opt_args {
+            Some(kv) => {
+                sethparam("opt_args", kv);
+            }
+            None => {
+                unsetparam("opt_args");
+            }
+        }
     }
 
     final_rc

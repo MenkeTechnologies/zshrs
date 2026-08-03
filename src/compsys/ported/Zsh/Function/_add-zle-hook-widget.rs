@@ -196,7 +196,10 @@ pub fn _add_zle_hook_widget(args: &[String]) -> i32 {
     // sh:39 — `_add-zle-hook-widget "$@"`: any extra invocation args are
     // forwarded to _arguments after the spec set (normally empty).
     call.extend_from_slice(args);
-    _arguments(&call)
+    // By NAME so `_arguments` gets its own `comp_wrapper` frame (c:1556);
+    // that frame is what bounds its `compstate[restore]=''`
+    // (`_arguments.rs:1130`) instead of letting it cancel the caller's restore.
+    crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call))
 }
 
 #[cfg(test)]

@@ -914,8 +914,14 @@ pub fn boot_(m: *const module) -> i32 {
         if crate::ported::params::getsparam("WATCHFMT").is_none() {
             crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT); // c:757
         }
+        // c:758-759 — `if (!paramtab->getnode(paramtab, "LOGCHECK"))
+        //   setiparam("LOGCHECK", 60);`. setiparam, NOT setsparam: C
+        // creates LOGCHECK as PM_INTEGER, so `typeset -p LOGCHECK` prints
+        // `typeset -i LOGCHECK=60` and `$parameters[LOGCHECK]` reads
+        // `integer`. The old setsparam made it a plain scalar.
+        // WATCHFMT above stays scalar — c:757 really is `setsparam`.
         if crate::ported::params::getsparam("LOGCHECK").is_none() {
-            crate::ported::params::setsparam("LOGCHECK", "60"); // c:759
+            crate::ported::params::setiparam("LOGCHECK", 60); // c:759
         }
     }
     // c:Src/Modules/watch.c:697-699 — register `watch` (PM_ARRAY |

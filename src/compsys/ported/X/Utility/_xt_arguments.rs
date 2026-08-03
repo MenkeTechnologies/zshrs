@@ -150,7 +150,12 @@ pub fn _xt_arguments(args: &[String]) -> i32 {
     call.push("-R".to_string());
     call.extend(opts);
     call.extend(remaining);
-    let mut ret = _arguments(&call);
+    // By NAME — same `comp_wrapper` (c:1556) reasoning as `_x_arguments`: the
+    // frame is what bounds `_arguments`' `compstate[restore]=''`
+    // (`_arguments.rs:1130`) so it cannot cancel this function's caller's
+    // restore. The sh:67 opt-out below is this function's own.
+    let mut ret =
+        crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call));
 
     // sh:64-69
     if ret == 300 {

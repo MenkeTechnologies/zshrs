@@ -300,7 +300,7 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
             Some(|_: &[String]| _dynamic_directory_name::_dynamic_directory_name())
         }
         "_equal" => Some(|_: &[String]| _equal::_equal()),
-        "_expand" => Some(|_: &[String]| _expand::_expand()),
+        "_expand" => Some(|args: &[String]| _expand::_expand_with(args)),
         "_expand_alias" => Some(|_: &[String]| _expand_alias::_expand_alias()),
         "_expand_word" => Some(|_: &[String]| _expand_word::_expand_word()),
         "_extensions" => Some(|_: &[String]| _extensions::_extensions()),

@@ -82,9 +82,23 @@ fn zstyle_t_default_false(ctx: &str, style: &str) -> bool {
     !v.is_empty() && style_is_true(&v)
 }
 
-/// `zstyle -s ctx style var` — return the first value, or `None`.
+/// `zstyle -s ctx style name [sep]` — Src/Modules/zutil.c:643-658:
+///   `if ((vals = lookupstyle(args[1], args[2])) && vals[0]) {`
+///   `    ret = sepjoin(vals, (args[4] ? args[4] : " "), 0); val = 0; }`
+///   `else { ret = ztrdup(""); val = 1; }`
+/// ALL values are joined with `sep` (default a single space) — returning
+/// only the first value silently truncated multi-word styles. `None` is
+/// the `val = 1` (style unset) arm; a style set to one empty string is
+/// still a hit in C (`vals[0]` is a valid pointer) → `Some("")`.
+/// No `_describe` call site passes the optional `sep`, so it is fixed at
+/// the C default `" "`.
 fn zstyle_s(ctx: &str, style: &str) -> Option<String> {
-    lookupstyle(ctx, style).into_iter().next()
+    let vals = lookupstyle(ctx, style);
+    if vals.is_empty() {
+        None
+    } else {
+        Some(crate::ported::utils::sepjoin(&vals, Some(" ")))
+    }
 }
 
 /// Extract the value ("match") half of a `value:description` entry and

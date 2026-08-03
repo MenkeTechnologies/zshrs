@@ -99,7 +99,11 @@ pub fn _file_modes(args: &[String]) -> i32 {
             "privilege".to_string(),
         ];
         v.extend(privs);
-        if _values(&v) == 0 {
+        // By NAME so `_values` gets its own `comp_wrapper` frame (c:1556):
+        // it rewrites PREFIX/SUFFIX/IPREFIX (`_values.rs:235-283`) and sets
+        // `compstate[restore]=''` (`_values.rs:388`), both of which must be
+        // undone when it returns rather than leaking through this function.
+        if crate::compsys::ported::shared::call_compfn("_values", &v, || _values(&v)) == 0 {
             return 0;
         }
     } else {

@@ -1,28 +1,38 @@
 //! Port of `_complete` from `Completion/Base/Completer/_complete`.
 //!
-//! Full upstream body (144 lines, abridged):
+//! Full upstream body (145 lines, abridged — line numbers are the
+//! vendored `Base/Completer/_complete` next to this file, byte-identical
+//! to the installed `/opt/homebrew/share/zsh/functions/_complete`):
 //! ```text
 //! sh:  1  #autoload
 //! sh:  7  local comp name oldcontext ret=1 service
-//! sh: 12  if [[ -n "$compcontext" ]]; then  # custom context dispatch
-//! sh: 14    type-of-compcontext (array | assoc | tag:descr:action | scalar)
-//! sh: 92    return
-//! sh: 95  fi
+//! sh:  8  typeset -T curcontext="$curcontext" ccarray
+//! sh: 10  oldcontext="$curcontext"
+//! sh: 14  if [[ -n "$compcontext" ]]; then  # custom context dispatch
+//! sh: 16    type-of-compcontext (array | assoc | tag:descr:action | scalar)
+//! sh: 85    ccarray[3]="$compcontext"
+//! sh: 87    comp="$_comps[$compcontext]"
+//! sh: 91    return
+//! sh: 92  fi
 //! sh: 96  comp="$_comps[-first-]"
-//! sh: 97  if [[ -n "$comp" ]]; then … run -first-, exit if _compskip == all …
-//! sh:108  [[ -n $compstate[vared] ]] && compstate[context]=vared
-//! sh:111  if [[ "$compstate[context]" = command ]]; then
-//! sh:112    _normal -s && ret=0
-//! sh:113  else
-//! sh:115    local cname="-${compstate[context]:s/_/-/}-"
-//! sh:117    comp="$_comps[$cname]"
-//! sh:122    if [[ -z "$comp" ]]; then
-//! sh:127      comp="$_comps[-default-]"
-//! sh:130    fi
-//! sh:131    [[ -n "$comp" ]] && eval "$comp" && ret=0
-//! sh:132  fi
-//! sh:134  _compskip=
-//! sh:136  return ret
+//! sh: 97  if [[ -n "$comp" ]]; then
+//! sh: 99    ccarray[3]=-first-
+//! sh:100    … run -first-, exit if _compskip == all …
+//! sh:110  [[ -n $compstate[vared] ]] && compstate[context]=vared
+//! sh:115  if [[ "$compstate[context]" = command ]]; then
+//! sh:116    curcontext="$oldcontext"
+//! sh:117    _normal -s && ret=0
+//! sh:118  else
+//! sh:122    local cname="-${compstate[context]:s/_/-/}-"
+//! sh:124    ccarray[3]="$cname"
+//! sh:126    comp="$_comps[$cname]"
+//! sh:131    if [[ -z "$comp" ]]; then
+//! sh:136      comp="$_comps[-default-]"
+//! sh:138    fi
+//! sh:139    [[ -n "$comp" ]] && eval "$comp" && ret=0
+//! sh:140  fi
+//! sh:142  _compskip=
+//! sh:144  return ret
 //! ```
 //!
 //! Top-level completer dispatching to context-specific `$_comps`
@@ -52,6 +62,33 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
         .cloned()
 }
 
+/// `ccarray[n]=value` under sh:8's `typeset -T curcontext="$curcontext"
+/// ccarray` — the array half of the tie, written back through the scalar.
+///
+/// A `-T` tie with no explicit separator uses `:`, so `ccarray` is just
+/// `$curcontext` split on colons and `ccarray[3]` (1-based, hence
+/// `n - 1` here) is the COMMAND field of
+/// `<function>:<completer>:<command>:<argument>`. Assigning past the end
+/// of a zsh array pads the gap with empty elements, then the tie rejoins
+/// with `:` — so `curcontext=foo` + `ccarray[3]=bar` yields `foo::bar`,
+/// which is what the pad loop below reproduces. An empty `curcontext`
+/// splits to one empty field and pads to `::value`, matching zsh.
+///
+/// The write goes back into the PARAMETER, not a Rust local: every
+/// `$_comps` entry dispatched below (and everything it calls —
+/// `_tags`/`_description`/`lookupstyle`) reads `$curcontext` to build
+/// the style context, which is the whole point of the field.
+fn set_ccarray_field(n: usize, value: &str) {
+    debug_assert!(n >= 1, "ccarray is 1-based");
+    let cur = getsparam("curcontext").unwrap_or_default();
+    let mut parts: Vec<&str> = cur.split(':').collect();
+    while parts.len() < n {
+        parts.push("");
+    }
+    parts[n - 1] = value;
+    let _ = setsparam("curcontext", &parts.join(":"));
+}
+
 /// `_complete` — primary `completer` entry: dispatches to per-context
 /// `$_comps` entries based on `$compstate[context]`.
 pub fn _complete() -> i32 {
@@ -73,10 +110,28 @@ pub fn _complete() -> i32 {
         use crate::compsys::ported::shared::declare_locals;
         declare_locals(&["comp", "name", "oldcontext", "ret", "service"], 0);
     }
+    // sh:8 `typeset -T curcontext="$curcontext" ccarray` — a `typeset`
+    // inside a function, so `curcontext` is LOCAL to `_complete` and
+    // seeded from the enclosing scope's value (the completer-patched one
+    // `_main_complete` built at `_main_complete.rs:736`). Every
+    // `ccarray[3]=` below therefore has to be visible to the `$_comps`
+    // entry it dispatches and unwound on return, exactly like
+    // `_main_complete:31`'s own `curcontext="$curcontext"`
+    // (`_main_complete.rs:432`).
+    //
+    // `LocalScope` rather than a bare `declare_locals_keeping_value`:
+    // the value restore then holds on EVERY exit path (the four early
+    // `return`s in the `compcontext` branch included) without depending
+    // on `doshfunc`'s `endparamscope` firing, so a `-subscript-` written
+    // here can never leak into the next completer in the chain.
+    let mut _cc_scope = crate::compsys::ported::shared::LocalScope::declare(&[], 0);
+    _cc_scope.also_keeping_value(&["curcontext"]);
+
     let mut ret: i32 = 1;
+    // sh:10 `oldcontext="$curcontext"`.
     let oldcontext = getsparam("curcontext").unwrap_or_default();
 
-    // sh:12  compcontext custom dispatch
+    // sh:14  compcontext custom dispatch
     let compcontext = getsparam("compcontext").unwrap_or_default();
     tracing::debug!(
         target: "compsys_args",
@@ -86,7 +141,7 @@ pub fn _complete() -> i32 {
         "_complete ENTER"
     );
     if !compcontext.is_empty() {
-        // sh:30  tag:descr:action form
+        // sh:32  tag:descr:action form
         if compcontext.matches(':').count() >= 2 {
             let mut parts = compcontext.splitn(3, ':');
             let tag = parts
@@ -112,7 +167,10 @@ pub fn _complete() -> i32 {
             }
             return 1;
         }
-        // sh:86  scalar compcontext — look up $_comps[$compcontext]
+        // sh:85  `ccarray[3]="$compcontext"` — a user-supplied context
+        //   name becomes the command field before its `$_comps` entry runs.
+        set_ccarray_field(3, &compcontext);
+        // sh:87  scalar compcontext — look up $_comps[$compcontext]
         let comp = assoc_get("_comps", &compcontext).unwrap_or_default();
         if !comp.is_empty() {
             return dispatch_function_call(&comp, &[]).unwrap_or(1);
@@ -120,11 +178,14 @@ pub fn _complete() -> i32 {
         return 1;
     }
 
-    // sh:96-107  -first- entry
+    // sh:96-105  -first- entry
     let first_comp = assoc_get("_comps", "-first-").unwrap_or_default();
     if !first_comp.is_empty() {
+        // sh:98  `service="${_services[-first-]:--first-}"`.
         let service = assoc_get("_services", "-first-").unwrap_or_else(|| "-first-".to_string());
         let _ = setsparam("service", &service);
+        // sh:99  `ccarray[3]=-first-`.
+        set_ccarray_field(3, "-first-");
         if dispatch_function_call(&first_comp, &[]).unwrap_or(1) == 0 {
             ret = 0;
         }
@@ -134,15 +195,18 @@ pub fn _complete() -> i32 {
         }
     }
 
-    // sh:108  vared override
+    // sh:110  vared override
     let vared = get_compstate_str("vared").unwrap_or_default();
     if !vared.is_empty() {
         set_compstate_str("context", "vared");
     }
 
-    // sh:111-132
+    // sh:114-140
     let context = get_compstate_str("context").unwrap_or_default();
     if context == "command" {
+        // sh:116 `curcontext="$oldcontext"` — undo any `ccarray[3]`
+        //   written by the `-first-` branch before handing off to
+        //   `_normal`, which builds its own command field.
         let _ = setsparam("curcontext", &oldcontext);
         // Direct Rust call, not a shell-function dispatch: `_normal`
         // therefore contributes no `$funcstack` entry and no
@@ -161,12 +225,32 @@ pub fn _complete() -> i32 {
             ret = 0;
         }
     } else {
-        // sh:115 — `-${context//_/-}-`
-        let cname = format!("-{}-", context.replace('_', "-"));
+        // sh:122 — `local cname="-${compstate[context]:s/_/-/}-"`. The
+        //   `:s` modifier substitutes the FIRST match only (`:gs` would
+        //   be global), and no `compstate[context]` value carries more
+        //   than one underscore (`brace_parameter`, `array_value`), so
+        //   the two spellings agree on every live value.
+        let cname = format!("-{}-", context.replacen('_', "-", 1));
+        // sh:124 `ccarray[3]="$cname"` — THE fix: without this the
+        //   command field of `curcontext` stays empty for every
+        //   non-`command` context, so `:completion:*:*:-subscript-:*`,
+        //   `-parameter-`, `-brace-parameter-`, `-math-`, `-condition-`,
+        //   `-value-`, `-redirect-`, `-default-` styles are unreachable.
+        //   Measured: `echo $path[<TAB>` reported context
+        //   `:completion::megacomplete:::` instead of
+        //   `:completion::megacomplete:-subscript-::`, so
+        //   `zstyle ':completion:*:*:-subscript-:*' tag-order indexes
+        //   parameters` never matched and `_subscript`'s two tags
+        //   collapsed into a single pass.
+        //
+        //   (`-command-` was unaffected because `_normal` writes its own
+        //   command field — sh:115's branch above restores `oldcontext`
+        //   and hands off.)
+        set_ccarray_field(3, &cname);
         let mut comp = assoc_get("_comps", &cname).unwrap_or_default();
         let service = assoc_get("_services", &cname).unwrap_or_else(|| cname.clone());
         let _ = setsparam("service", &service);
-        // sh:122
+        // sh:131  `if [[ -z "$comp" ]]` — fall back to `-default-`.
         if comp.is_empty() {
             let cs = getsparam("_compskip").unwrap_or_default();
             if cs.contains("default") {
@@ -199,5 +283,48 @@ mod tests {
         set_compstate_str("context", "command");
         crate::ported::params::setaparam("_comps", Vec::new());
         let _r = _complete();
+    }
+
+    /// sh:124 `ccarray[3]="$cname"` on the shape `_main_complete` hands
+    /// `_complete`: `:<completer>::` → `:<completer>:-subscript-:`, which
+    /// is what makes `:completion:*:*:-subscript-:*` styles match.
+    #[test]
+    fn ccarray_field_three_is_the_command_field() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("curcontext", ":megacomplete::");
+        set_ccarray_field(3, "-subscript-");
+        assert_eq!(
+            getsparam("curcontext").as_deref(),
+            Some(":megacomplete:-subscript-:")
+        );
+    }
+
+    /// zsh pads a tied array assignment past its end with empty elements
+    /// before rejoining on `:` — `curcontext=foo` + `ccarray[3]=bar` is
+    /// `foo::bar`, and an empty scalar becomes `::bar`.
+    #[test]
+    fn ccarray_field_pads_short_context() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("curcontext", "foo");
+        set_ccarray_field(3, "bar");
+        assert_eq!(getsparam("curcontext").as_deref(), Some("foo::bar"));
+
+        let _ = setsparam("curcontext", "");
+        set_ccarray_field(3, "bar");
+        assert_eq!(getsparam("curcontext").as_deref(), Some("::bar"));
+    }
+
+    /// Fields past the third survive untouched — the argument field
+    /// `_main_complete`/`_normal` may already have filled in must not be
+    /// truncated by the command-field write.
+    #[test]
+    fn ccarray_field_preserves_trailing_fields() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("curcontext", ":complete:oldcmd:argfield");
+        set_ccarray_field(3, "-parameter-");
+        assert_eq!(
+            getsparam("curcontext").as_deref(),
+            Some(":complete:-parameter-:argfield")
+        );
     }
 }

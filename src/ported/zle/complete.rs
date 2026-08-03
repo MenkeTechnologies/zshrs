@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Mutex;
 
 use crate::ported::glob::{remnulargs, tokenize};
-use crate::ported::params::{createparam, getsparam, paramtab};
+use crate::ported::params::{createparam, paramtab};
 use crate::ported::pattern::{patcompile, pattry, range_type};
 use crate::ported::utils::{zerr, zwarnnam};
 use crate::ported::zle::comp_h::{
@@ -356,7 +356,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                         &format!("unknown match specification character `{}'", c),
                     );
                 }
-                { PCM_ERR.with(|f| f.set(true)); return None; } // c:283 pcm_err
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                } // c:283 pcm_err
             }
         };
 
@@ -367,7 +370,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             if !name.is_empty() {
                 zwarnnam(name, "missing `:'");
             }
-            { PCM_ERR.with(|f| f.set(true)); return None; }
+            {
+                PCM_ERR.with(|f| f.set(true));
+                return None;
+            }
         }
         chars.next(); // consume `:`
 
@@ -378,7 +384,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                     if !name.is_empty() {
                         zwarnnam(name, "unexpected pattern following x: specification");
                     }
-                    { PCM_ERR.with(|f| f.set(true)); return None; }
+                    {
+                        PCM_ERR.with(|f| f.set(true));
+                        return None;
+                    }
                 }
             }
             return ret; // c:290 — `return ret;` (NULL is not an error)
@@ -392,7 +401,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
         if (fl & CMF_LEFT) != 0 && fl2 == 0 {
             let (lt, r2, l, err) = parse_pattern(name, rest, '|'); // c:298
             if err {
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             left = lt;
             lal = l;
@@ -418,7 +430,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                         },
                     );
                 }
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             let mut adv = rest.chars();
             adv.next();
@@ -434,7 +449,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
         };
         let (mut line_pat, r2, mut ll, err) = parse_pattern(name, rest, line_end);
         if err {
-            { PCM_ERR.with(|f| f.set(true)); return None; }
+            {
+                PCM_ERR.with(|f| f.set(true));
+                return None;
+            }
         }
         rest = r2;
 
@@ -466,7 +484,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                 if !name.is_empty() {
                     zwarnnam(name, "missing right anchor");
                 }
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             let mut adv = rest.chars(); // c:329 — the `++s` side effect
             adv.next();
@@ -477,7 +498,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                 if !name.is_empty() {
                     zwarnnam(name, "missing word pattern");
                 }
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             let mut adv = rest.chars(); // c:339 `s++`
             adv.next();
@@ -496,7 +520,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             }
             let (rt, r3, r_len, err) = parse_pattern(name, rest, '=');
             if err {
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             right = rt;
             ral = r_len;
@@ -505,7 +532,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                 if !name.is_empty() {
                     zwarnnam(name, "missing word pattern");
                 }
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             let mut adv = rest.chars();
             adv.next();
@@ -519,7 +549,10 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
                 if !name.is_empty() {
                     zwarnnam(name, "need anchor for `*'");
                 }
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             let mut adv = rest.chars();
             adv.next();
@@ -537,13 +570,19 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
         } else {
             let (w, r4, w_len, err) = parse_pattern(name, rest, '\0');
             if err {
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             if w.is_none() && line_pat.is_none() {
                 if !name.is_empty() {
                     zwarnnam(name, "need non-empty word or line pattern");
                 }
-                { PCM_ERR.with(|f| f.set(true)); return None; }
+                {
+                    PCM_ERR.with(|f| f.set(true));
+                    return None;
+                }
             }
             word_pat = w;
             wl = w_len;
@@ -1198,9 +1237,9 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                     // caller's own `-o match` merged both orderings instead of
                     // keeping only `nosort`.
                     let order: i32 = if oarg.is_some() { -1 } else { 1 }; // c:772
-                    // c:811/818 — `parse_ordering(oarg, order == 1 ? &dat.aflags : NULL)`.
-                    // On a bad name C ASSIGNS `*flags = CAF_MATSORT` (c:600),
-                    // clobbering aflags rather than OR-ing; reproduced verbatim.
+                                                                          // c:811/818 — `parse_ordering(oarg, order == 1 ? &dat.aflags : NULL)`.
+                                                                          // On a bad name C ASSIGNS `*flags = CAF_MATSORT` (c:600),
+                                                                          // clobbering aflags rather than OR-ing; reproduced verbatim.
                     let mut run_ordering = |oarg: &Option<String>, aflags: &mut i32| -> i32 {
                         let mut fl: Option<i32> = if order == 1 { Some(*aflags) } else { None };
                         let rc = parse_ordering(oarg.as_deref().unwrap_or(""), &mut fl);
@@ -1248,16 +1287,16 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                         dat.aflags |= CAF_UNIQCON; // c:701
                     }
                 }
-                'C' => dat.aflags |= CAF_ALL,                                   // c:653
-                'F' => opt_arg!(dat.ign, "string expected after"),              // c:667-669
-                'f' => dat.flags |= CMF_FILE as i32,                            // c:656
-                'P' => opt_arg!(dat.pre, "string expected after"),              // c:677-679
-                'S' => opt_arg!(dat.suf, "string expected after"),              // c:681-683
-                'p' => opt_arg!(dat.ppre, "string expected after"),             // c:711-713
-                's' => opt_arg!(dat.psuf, "string expected after"),             // c:715-717
-                'W' => opt_arg!(dat.prpre, "string expected after"),            // c:719-721
-                'i' => opt_arg!(dat.ipre, "string expected after"),             // c:703-705
-                'I' => opt_arg!(dat.isuf, "string expected after"),             // c:707-709
+                'C' => dat.aflags |= CAF_ALL, // c:653
+                'F' => opt_arg!(dat.ign, "string expected after"), // c:667-669
+                'f' => dat.flags |= CMF_FILE as i32, // c:656
+                'P' => opt_arg!(dat.pre, "string expected after"), // c:677-679
+                'S' => opt_arg!(dat.suf, "string expected after"), // c:681-683
+                'p' => opt_arg!(dat.ppre, "string expected after"), // c:711-713
+                's' => opt_arg!(dat.psuf, "string expected after"), // c:715-717
+                'W' => opt_arg!(dat.prpre, "string expected after"), // c:719-721
+                'i' => opt_arg!(dat.ipre, "string expected after"), // c:703-705
+                'I' => opt_arg!(dat.isuf, "string expected after"), // c:707-709
                 // c:685-687 — first-wins via the shared `sp`. Last-wins here
                 // made `_files`/_path_files' inner `-J globbed-files`/
                 // `-J directories` overwrite _arguments' outer
@@ -1865,6 +1904,44 @@ pub fn do_comp_vars(
     }
 }
 
+/// C `atoi(3)` semantics, as used by `bin_compset` at c:1188/1189/1200/1209.
+///
+/// `atoi` skips leading whitespace, takes an optional sign, consumes the
+/// leading digit run and IGNORES whatever follows; a string with no leading
+/// digits yields 0. Rust's `str::parse::<i32>()` is far stricter — it rejects
+/// ` 1`, `1 `, `1x` and any trailing NUL/marker byte outright — and every
+/// callsite here funnels the `Err` into `unwrap_or(0)`. A `0` count is not a
+/// harmless default in `do_comp_vars`: `CVT_PRENUM` skips its
+/// `if (na > 0 && mod)` body and still returns 1, so `compset -p <n>` reports
+/// SUCCESS (`bin_compset` returns `!1` = 0) while moving nothing from
+/// `$PREFIX` to `$IPREFIX`, and `CVT_PREPAT` bails at its `if (!na) return 0`.
+/// Parsing exactly what C parses removes that silent-no-op class.
+fn atoi(s: &str) -> i32 {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() && (b[i] as char).is_whitespace() {
+        i += 1;
+    }
+    let neg = match b.get(i) {
+        Some(b'-') => {
+            i += 1;
+            true
+        }
+        Some(b'+') => {
+            i += 1;
+            false
+        }
+        _ => false,
+    };
+    let mut n: i64 = 0;
+    while i < b.len() && b[i].is_ascii_digit() {
+        n = n.saturating_mul(10).saturating_add((b[i] - b'0') as i64);
+        i += 1;
+    }
+    let n = if neg { -n } else { n };
+    n.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+}
+
 /// Direct port of `bin_compset(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/complete.c:1137`.
 /// Top-level `compset` builtin entry. The C body is 72 lines and
 /// dispatches on `argv[0][1]` (`-n`/`-N`/`-p`/`-P`/`-s`/`-S`/`-q`)
@@ -1901,7 +1978,9 @@ pub fn bin_compset(
         b'q' => return compcore::set_comp_sep() as i32, // c:1160
         _ => {
             // c:1161
-            zwarnnam(name, &format!("bad option: -{}", opt as char)); // c:1169
+            // c:1159 `zwarnnam(name, "bad option -%c", argv[0][1])` — no
+            // colon here, unlike `bin_compadd`'s "bad option: -%c" (c:792).
+            zwarnnam(name, &format!("bad option -{}", opt as char)); // c:1159
             return 1; // c:1163
         }
     }
@@ -1941,8 +2020,8 @@ pub fn bin_compset(
     match test {
         CVT_RANGENUM => {
             // c:1187
-            na = sa_ref.parse::<i32>().unwrap_or(0); // c:1188
-            nb = sb_ref.and_then(|s| s.parse::<i32>().ok()).unwrap_or(-1); // c:1189
+            na = atoi(sa_ref); // c:1188
+            nb = sb_ref.map(atoi).unwrap_or(-1); // c:1189
         }
         CVT_RANGEPAT => {
             // c:1191
@@ -1956,7 +2035,7 @@ pub fn bin_compset(
         }
         CVT_PRENUM | CVT_SUFNUM => {
             // c:1199
-            na = sa_ref.parse::<i32>().unwrap_or(0); // c:1200
+            na = atoi(sa_ref); // c:1200
             nb = 0;
         }
         CVT_PREPAT | CVT_SUFPAT => {
@@ -1972,7 +2051,7 @@ pub fn bin_compset(
             // `$PREFIX`. Result: `tar -<TAB>` (`compset -P -; _values …`) and
             // any `compset -P/-S <pat>` completer produced an empty list.
             if sb_ref.is_some() {
-                na = sa_ref.parse::<i32>().unwrap_or(0); // c:1209
+                na = atoi(sa_ref); // c:1209
             } else {
                 na = -1; // c:1212
             }
@@ -2781,22 +2860,73 @@ pub fn comp_setunset(
 }
 
 /// Direct port of `int comp_wrapper(Eprog prog, FuncWrap w, char *name)`
-/// from `Src/Zle/complete.c:1556`. Wraps a function being called as a
-/// completion entry — saves the comp* string globals (PREFIX/SUFFIX/
-/// IPREFIX/ISUFFIX/QIPREFIX/QISUFFIX/QUOTE/QUOTING/QSTACK/WORDS) before
-/// `runshfunc`, restores them after when `comprestore=="auto"` (the
-/// default at c:1593).
-/// WARNING: param names don't match C — Rust=(_prog, _w, name) vs C=(prog, w, name)
+/// from `Src/Zle/complete.c:1556`.
+///
+/// `zsh/complete`'s `boot_` installs it into the global function-wrapper
+/// chain — `static struct funcwrap wrapper[] = { WRAPDEF(comp_wrapper) };`
+/// (c:1694-1695) then `return addwrapper(m, wrapper);` (c:1767) — and
+/// `runshfunc` fires the chain around EVERY shell function body:
+/// `runshfunc(prog, wrappers, funcsave->fstack.name);` (`Src/exec.c:6042`).
+/// So while `incompfunc == 1` this brackets each individual completion
+/// function call.
+///
+/// What it brackets: `compstate[restore]` is seeded to `"auto"` BEFORE the
+/// body runs (c:1576) and, unless the body changed it, `$words`,
+/// `$CURRENT`, `$PREFIX`, `$SUFFIX`, `$IPREFIX`, `$ISUFFIX`, `$QIPREFIX`,
+/// `$QISUFFIX`, `$compstate[quote]` / `[quoting]` / `[all_quotes]`,
+/// `redirections` and `autoq` are all put back on the way out
+/// (c:1593-1625). `_arguments` depends on both halves: `comparguments -W`
+/// (`_arguments` sh:393) calls [`restrict_range`] to narrow
+/// `$words`/`$CURRENT` down to the rest-argument slice, then sh:401 sets
+/// `compstate[restore]=''` so the narrowing deliberately survives into the
+/// action it dispatches — and is undone again as soon as that action's own
+/// wrapper frame pops. Without the wrapper the narrowing has no bound at
+/// all and leaks back up the completer chain (measured: `man <TAB>` came
+/// back from `_complete` with `CURRENT=1 words=()` instead of
+/// `CURRENT=2 words=(man '')`, so `_main_complete` fell through to
+/// `_complete_hist`).
+///
+/// zshrs difference (load-bearing): in C `$words`/`$CURRENT`/`$PREFIX`/…
+/// are gsu VIEWS onto the `compwords`/`compcurrent`/`compprefix`/… globals
+/// — `{ "words", PM_ARRAY, VAL(compwords), NULL, NULL }` (c:1249) — so
+/// restoring the global restores the shell-visible parameter for free.
+/// This port has no gsu binding: the parameters own their own copies
+/// (`compcore.rs:2989-3010`, and `restrict_range` at complete.rs:1546).
+/// The restore below therefore has to write BOTH halves — restoring only
+/// the globals would leave a completer's `$words` narrowed for the rest of
+/// the completion. Each half is snapshotted and restored SEPARATELY,
+/// because the two are not in lockstep: shell-level assignments inside a
+/// completion function move only the parameter, so mid-function the global
+/// and the parameter can legitimately disagree. See the note at the
+/// parameter-side snapshot below for the `ls /us<TAB>` measurement that
+/// pins this down.
+///
+/// WARNING: param names don't match C — Rust=(_prog, _w, name, runshfunc)
+/// vs C=(prog, w, name). The trailing closure IS c:1591's
+/// `runshfunc(prog, w, name)`: a zshrs function body is a caller-supplied
+/// delegate (`doshfunc`'s `body_runner`), not an `Eprog` this function
+/// could re-enter by itself. Identical shape to
+/// `param_private::wrap_private`, the other wrapper in the chain.
 pub fn comp_wrapper(
     _prog: *const eprog, // c:1556
     _w: *const funcwrap,
     name: &str,
+    runshfunc: impl FnOnce(),
 ) -> i32 {
+    use crate::ported::zle::comp_h::{
+        CP_ALLKEYS, CP_ALLREALS, CP_COMPSTATE, CP_CURRENT, CP_IPREFIX, CP_ISUFFIX, CP_PREFIX,
+        CP_QIPREFIX, CP_QISUFFIX, CP_REDIRS, CP_RESTORE, CP_SUFFIX, CP_WORDS,
+    };
     use std::sync::atomic::Ordering;
+    // c:1558-1559 — `if (incompfunc != 1) return 1;`. 1 is the chain's
+    // "not handled, keep walking" answer (`Src/exec.c:6186` short-circuits
+    // only on 0), so an ordinary non-completion function call pays one
+    // relaxed load and then runs completely unwrapped.
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
-        // c:1559
-        return 1; // c:1560
+        // c:1558
+        return 1; // c:1559
     }
+    let _ = name; // c:1591 passes it to runshfunc; the delegate already has it
     let snap = |g: &'static std::sync::OnceLock<Mutex<String>>| -> String {
         g.get_or_init(|| Mutex::new(String::new()))
             .lock()
@@ -2808,53 +2938,202 @@ pub fn comp_wrapper(
             *s = v;
         }
     };
-    // c:1585-1586 — `orest = comprestore; comprestore = ztrdup("auto");`.
-    // The default is SEEDED here, before the function runs, and the caller's
-    // value put back at c:1652-1653. The port only read `$comprestore`
-    // afterwards and defaulted to "auto" when absent, so a stale value left
-    // behind by a previous wrapper (or set by an inner completion function)
-    // leaked into this call and suppressed the restore below.
-    let orest = getsparam("comprestore"); // c:1585
-    let _ = crate::ported::params::setsparam("comprestore", "auto"); // c:1586
-    let ocur = COMPCURRENT.load(Ordering::Relaxed); // c:1587
-    let opre = snap(&COMPPREFIX); // c:1588
-    let osuf = snap(&COMPSUFFIX); // c:1589
-    let oipre = snap(&COMPIPREFIX); // c:1590
-    let oisuf = snap(&COMPISUFFIX); // c:1591
-    let oqipre = snap(&COMPQIPREFIX); // c:1592
-    let oqisuf = snap(&COMPQISUFFIX); // c:1593
-    let oq = snap(&COMPQUOTE); // c:1594
-    let oqi = snap(&COMPQUOTING); // c:1595
-    let oqs = snap(&COMPQSTACK); // c:1596
-    let owords = COMPWORDS
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .map(|v| v.clone())
-        .unwrap_or_default(); // c:1598
 
-    // c:1601 — runshfunc(prog, w, name).
-    let _ = compcore::shfunc_call(name);
-
-    // c:1603 — `if (comprestore && !strcmp(comprestore, "auto"))`.
-    let comprestore_val = getsparam("comprestore").unwrap_or_default();
-    if comprestore_val == "auto" {
-        COMPCURRENT.store(ocur, Ordering::Relaxed); // c:1604
-        restore(&COMPPREFIX, opre); // c:1606
-        restore(&COMPSUFFIX, osuf); // c:1608
-        restore(&COMPIPREFIX, oipre); // c:1610
-        restore(&COMPISUFFIX, oisuf); // c:1612
-        restore(&COMPQIPREFIX, oqipre); // c:1614
-        restore(&COMPQISUFFIX, oqisuf); // c:1616
-        restore(&COMPQUOTE, oq); // c:1618
-        restore(&COMPQUOTING, oqi); // c:1620
-        restore(&COMPQSTACK, oqs); // c:1622
-        if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            *g = owords; // c:1627
+    // c:1567-1572 — record which real params are ALREADY PM_UNSET so the
+    // c:1619 `comp_setunset` can put each one back to the state it had
+    // rather than blanket-marking the whole set as "set".
+    //   m = CP_WORDS | CP_REDIRS | CP_CURRENT | CP_PREFIX | CP_SUFFIX |
+    //       CP_IPREFIX | CP_ISUFFIX | CP_QIPREFIX | CP_QISUFFIX;
+    //   for (pp = comprpms, sm = 1; m; pp++, m >>= 1, sm <<= 1)
+    //       if ((m & 1) && ((*pp)->node.flags & PM_UNSET)) runset |= sm;
+    let mut runset: u32 = 0; // c:1564
+    {
+        let mut m = CP_WORDS
+            | CP_REDIRS
+            | CP_CURRENT
+            | CP_PREFIX
+            | CP_SUFFIX
+            | CP_IPREFIX
+            | CP_ISUFFIX
+            | CP_QIPREFIX
+            | CP_QISUFFIX; // c:1567-1568
+        let mut sm: u32 = 1;
+        if let Ok(tab) = paramtab().read() {
+            for cp in COMPRPARAMS {
+                // c:1569
+                if m == 0 {
+                    break;
+                }
+                if (m & 1) != 0 {
+                    // c:1570 — C always has the node and only the flag
+                    // varies; a name this port never created is the same
+                    // observable state, so count it as unset.
+                    let is_unset = tab
+                        .get(cp.name)
+                        .map(|p| (p.node.flags & PM_UNSET as i32) != 0)
+                        .unwrap_or(true);
+                    if is_unset {
+                        runset |= sm; // c:1571
+                    }
+                }
+                m >>= 1;
+                sm <<= 1;
+            }
         }
     }
-    // c:1652-1653 — `zsfree(comprestore); comprestore = orest;`.
-    let _ = crate::ported::params::setsparam("comprestore", orest.as_deref().unwrap_or(""));
-    0 // c:1655
+    // c:1573-1574 — `if (compkpms[CPN_RESTORE]->node.flags & PM_UNSET)
+    // kunset = CP_RESTORE;`. `$compstate` keys are hash entries here, not
+    // Params carrying their own flag word, so "absent from the hash" is
+    // this port's PM_UNSET.
+    let kunset: u32 = if compcore::get_compstate_str("restore").is_none() {
+        CP_RESTORE // c:1574
+    } else {
+        0 // c:1564
+    };
+
+    // c:1575-1576 — `orest = comprestore; comprestore = ztrdup("auto");`.
+    // The default is SEEDED here, before the function runs, and the
+    // caller's value put back at c:1642-1643.
+    // `comprestore` is NOT a parameter of its own: complete.c:1268 lists it
+    // in `compkparams` as `{ "restore", PM_SCALAR, VAL(comprestore) }`,
+    // i.e. the C global is gsu-bound to the `$compstate[restore]` KEY.
+    let orest = compcore::get_compstate_str("restore"); // c:1575
+    compcore::set_compstate_str("restore", "auto"); // c:1576
+    let ocur = COMPCURRENT.load(Ordering::Relaxed); // c:1577
+    let opre = snap(&COMPPREFIX); // c:1578
+    let osuf = snap(&COMPSUFFIX); // c:1579
+    let oipre = snap(&COMPIPREFIX); // c:1580
+    let oisuf = snap(&COMPISUFFIX); // c:1581
+    let oqipre = snap(&COMPQIPREFIX); // c:1582
+    let oqisuf = snap(&COMPQISUFFIX); // c:1583
+    let oq = snap(&COMPQUOTE); // c:1584
+    let oqi = snap(&COMPQUOTING); // c:1585
+    let oqs = snap(&COMPQSTACK); // c:1586
+    let oaq = snap(&AUTOQ); // c:1587
+    let owords = lock_vec(&COMPWORDS)
+        .lock()
+        .map(|v| v.clone())
+        .unwrap_or_default(); // c:1588
+                              // c:1589 — `oredirs = zarrdup(compredirs);`. There is no `compredirs`
+                              // global in this port; the `redirections` parameter (COMPRPARAMS[1]) is
+                              // the only storage, so snapshot it from paramtab. `None` = the name was
+                              // never created, which is the `runset` bit already recorded above.
+    let oredirs = crate::ported::params::getaparam("redirections"); // c:1589
+
+    // PARAMETER-SIDE snapshot of the same c:1577-1589 set.
+    //
+    // C needs only the globals above because every one of these names is a
+    // gsu VIEW onto them (`{ "PREFIX", PM_SCALAR, VAL(compprefix), ... }`,
+    // c:1249): one storage, so restoring `compprefix` restores `$PREFIX`.
+    // This port has two storages and they are NOT in lockstep — a
+    // shell-level `PREFIX=...` assignment inside a completion function
+    // (`_path_files` does it at sh:436/439/567/639/643/673/808/845/848/890)
+    // lands in the parameter, while the globals only move when the engine
+    // writes them (`compset`, `restrict_range`, `callcompfunc`). So the two
+    // legitimately hold DIFFERENT values mid-function: measured under
+    // `ls /us<TAB>`, at the `_list_files` call the global was "us" while
+    // `$PREFIX` was "/us" — and "/us" is what real zsh reports there.
+    //
+    // Each storage therefore has to go back to ITS OWN entry value.
+    // Restoring the parameter from the GLOBAL's snapshot instead is what
+    // broke file completion: it published the stale global into `$PREFIX`,
+    // so `_path_files` resumed after `_list_files` with a truncated prefix,
+    // its match generation collapsed, and `_main_complete` fell through the
+    // completer list to `_fasd_zsh_word_complete_trigger`.
+    //
+    // `None` means the name was never created — this port's PM_UNSET,
+    // already recorded in `runset`, so it must NOT be recreated here.
+    let opre_p = crate::ported::params::getsparam("PREFIX"); // c:1578
+    let osuf_p = crate::ported::params::getsparam("SUFFIX"); // c:1579
+    let oipre_p = crate::ported::params::getsparam("IPREFIX"); // c:1580
+    let oisuf_p = crate::ported::params::getsparam("ISUFFIX"); // c:1581
+    let oqipre_p = crate::ported::params::getsparam("QIPREFIX"); // c:1582
+    let oqisuf_p = crate::ported::params::getsparam("QISUFFIX"); // c:1583
+    let oq_p = crate::ported::params::getsparam("QUOTE"); // c:1584
+    let oqi_p = crate::ported::params::getsparam("QUOTING"); // c:1585
+    let ocur_p = crate::ported::params::getiparam("CURRENT"); // c:1577
+    let owords_p = crate::ported::params::getaparam("words"); // c:1588
+
+    // c:1591 — `runshfunc(prog, w, name);`
+    runshfunc();
+
+    // c:1593 — `if (comprestore && !strcmp(comprestore, "auto"))`.
+    let comprestore_val = compcore::get_compstate_str("restore").unwrap_or_default();
+    if comprestore_val == "auto" {
+        COMPCURRENT.store(ocur, Ordering::Relaxed); // c:1594
+        restore(&COMPPREFIX, opre); // c:1596
+        restore(&COMPSUFFIX, osuf); // c:1598
+        restore(&COMPIPREFIX, oipre); // c:1600
+        restore(&COMPISUFFIX, oisuf); // c:1602
+        restore(&COMPQIPREFIX, oqipre); // c:1604
+        restore(&COMPQISUFFIX, oqisuf); // c:1606
+        restore(&COMPQUOTE, oq); // c:1608
+        restore(&COMPQUOTING, oqi); // c:1610
+        restore(&COMPQSTACK, oqs); // c:1612
+        restore(&AUTOQ, oaq); // c:1614
+        if let Ok(mut g) = lock_vec(&COMPWORDS).lock() {
+            *g = owords; // c:1617
+        }
+
+        // No-gsu mirror (see the note beside the parameter-side snapshot
+        // above): c:1617's `compwords = owords` restores the shell-visible
+        // `$words` for free in C. Here the parameters are separate storage,
+        // so each goes back to the value IT held on entry — not to the
+        // corresponding global's, which can legitimately differ.
+        if let Some(w) = owords_p {
+            crate::ported::params::setaparam("words", w); // c:1617 ($words view)
+        }
+        let _ = crate::ported::params::setiparam("CURRENT", ocur_p); // c:1594 ($CURRENT view)
+        for (param, val) in [
+            ("PREFIX", opre_p),     // c:1596
+            ("SUFFIX", osuf_p),     // c:1598
+            ("IPREFIX", oipre_p),   // c:1600
+            ("ISUFFIX", oisuf_p),   // c:1602
+            ("QIPREFIX", oqipre_p), // c:1604
+            ("QISUFFIX", oqisuf_p), // c:1606
+            ("QUOTE", oq_p),        // c:1608
+            ("QUOTING", oqi_p),     // c:1610
+        ] {
+            if let Some(v) = val {
+                let _ = crate::ported::params::setsparam(param, &v);
+            }
+        }
+        if let Some(r) = oredirs {
+            crate::ported::params::setaparam("redirections", r); // c:1618
+        }
+
+        // c:1619-1625 — `comp_setunset(CP_COMPSTATE | (~runset & (…)),
+        //                (runset & CP_ALLREALS),
+        //                (~kunset & CP_RESTORE), (kunset & CP_ALLKEYS));`
+        let realmask = CP_WORDS
+            | CP_REDIRS
+            | CP_CURRENT
+            | CP_PREFIX
+            | CP_SUFFIX
+            | CP_IPREFIX
+            | CP_ISUFFIX
+            | CP_QIPREFIX
+            | CP_QISUFFIX; // c:1620-1623
+        comp_setunset(
+            (CP_COMPSTATE | (!runset & realmask)) as i32, // c:1619-1623
+            (runset & CP_ALLREALS) as i32,                // c:1624
+            (!kunset & CP_RESTORE) as i32,                // c:1625
+            (kunset & CP_ALLKEYS) as i32,                 // c:1625
+        );
+    } else {
+        // c:1627-1628 — the callee opted out of the restore; only the
+        // `$compstate` / `restore` set-state bookkeeping still runs. The
+        // C `zsfree`/`freearray` calls at c:1629-1640 are Rust drops.
+        comp_setunset(
+            CP_COMPSTATE as i32,           // c:1627
+            0,                             // c:1627
+            (!kunset & CP_RESTORE) as i32, // c:1627
+            (kunset & CP_RESTORE) as i32,  // c:1628
+        );
+    }
+    // c:1642-1643 — `zsfree(comprestore); comprestore = orest;`.
+    compcore::set_compstate_str("restore", orest.as_deref().unwrap_or(""));
+    0 // c:1645
 }
 
 /// Direct port of `comp_check()` from `Src/Zle/complete.c:1651`.
@@ -3627,6 +3906,82 @@ mod tests {
         let _g2 = zle_test_setup();
         ignore_suffix(0);
         ignore_suffix(0);
+    }
+
+    /// C `atoi(3)` semantics, which `bin_compset` relies on for every
+    /// numeric option argument (c:1188/1189/1200/1209). The strict
+    /// `str::parse::<i32>()` this replaced returned `Err` — funnelled into
+    /// `unwrap_or(0)` — for every one of the non-canonical forms below, and a
+    /// count of 0 makes `compset -p` a silent no-op that still reports
+    /// success.
+    #[test]
+    fn atoi_matches_c_semantics() {
+        assert_eq!(atoi("1"), 1);
+        assert_eq!(atoi(" 1"), 1, "leading whitespace is skipped");
+        assert_eq!(atoi("1 "), 1, "trailing junk is ignored");
+        assert_eq!(atoi("2x"), 2, "parse stops at the first non-digit");
+        assert_eq!(atoi("-3"), -3);
+        assert_eq!(atoi("+4"), 4);
+        assert_eq!(atoi("abc"), 0, "no leading digits = 0");
+        assert_eq!(atoi(""), 0);
+    }
+
+    /// `compset -p <n>` moves `<n>` characters off the front of `$PREFIX`
+    /// onto the end of `$IPREFIX` and reports success (exit 0), which is
+    /// `_main_complete` sh:106's whole mechanism for handing `~user` to the
+    /// `-tilde-` completer with the `~` already consumed.
+    /// C: `do_comp_vars` CVT_PRENUM (c:1001-1041) + `bin_compset` c:1217
+    /// `return !do_comp_vars(...)`.
+    #[test]
+    fn compset_p_moves_prefix_chars_to_iprefix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        *lock_str(&COMPPREFIX).lock().unwrap() = "~ro".to_string();
+        *lock_str(&COMPIPREFIX).lock().unwrap() = String::new();
+        let rc = bin_compset(
+            "compset",
+            &["-p".to_string(), "1".to_string()],
+            &make_test_ops(),
+            0,
+        );
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+        assert_eq!(rc, 0, "a successful move reports exit status 0");
+        assert_eq!(*lock_str(&COMPPREFIX).lock().unwrap(), "ro");
+        assert_eq!(*lock_str(&COMPIPREFIX).lock().unwrap(), "~");
+        // The gsu binding C gets for free: $PREFIX/$IPREFIX are the same
+        // storage as compprefix/compiprefix, so a completer reading them
+        // right after the compset must see the moved text.
+        assert_eq!(
+            crate::ported::params::getsparam("PREFIX").unwrap_or_default(),
+            "ro"
+        );
+        assert_eq!(
+            crate::ported::params::getsparam("IPREFIX").unwrap_or_default(),
+            "~"
+        );
+    }
+
+    /// `compset -p <n>` with `$PREFIX` shorter than `<n>` moves nothing and
+    /// reports failure — C `do_comp_vars` c:1040 `return 0` → `bin_compset`
+    /// `!0` = 1.
+    #[test]
+    fn compset_p_too_short_prefix_fails_without_moving() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        *lock_str(&COMPPREFIX).lock().unwrap() = "~r".to_string();
+        *lock_str(&COMPIPREFIX).lock().unwrap() = String::new();
+        let rc = bin_compset(
+            "compset",
+            &["-p".to_string(), "5".to_string()],
+            &make_test_ops(),
+            0,
+        );
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+        assert_eq!(rc, 1, "no move reports non-zero");
+        assert_eq!(*lock_str(&COMPPREFIX).lock().unwrap(), "~r");
+        assert_eq!(*lock_str(&COMPIPREFIX).lock().unwrap(), "");
     }
 
     /// `restrict_range(0, 0)` writes degenerate empty range.

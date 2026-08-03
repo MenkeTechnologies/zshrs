@@ -281,7 +281,10 @@ impl RefreshState {
     /// both video buffers allocated, `need_full_redraw` set so the
     /// first paint touches every cell.
     pub fn new() -> Self {
-        let (cols, rows) = (adjustcolumns(), adjustlines());
+        let (cols, rows) = (
+            adjustcolumns() as i32 as usize,
+            adjustlines() as i32 as usize,
+        );
         RefreshState {
             columns: cols,
             lines: rows,
@@ -298,7 +301,10 @@ impl RefreshState {
     /// SIGWINCH (the C source calls it from `adjustwinsize()` in
     /// Src/init.c).
     pub fn reset_video(&mut self) {
-        let (cols, rows) = (adjustcolumns(), adjustlines());
+        let (cols, rows) = (
+            adjustcolumns() as i32 as usize,
+            adjustlines() as i32 as usize,
+        );
         self.columns = cols;
         self.lines = rows;
         self.old_video = Some(VideoBuffer::new(cols, rows));
@@ -668,12 +674,12 @@ pub fn resetvideo(state: &mut RefreshState) {
     use crate::ported::zsh_h::TERM_SHORT;
 
     // c:729 — `winw = zterm_columns;`
-    let cols = adjustcolumns();
+    let cols = adjustcolumns() as i32 as usize;
     state.columns = cols;
     WINW.store(cols as i32, Ordering::Relaxed);
 
     // c:730-733 — TERM_SHORT clamps to 1 row, else clamp ≥ 24.
-    let real_lines = adjustlines();
+    let real_lines = adjustlines() as i32 as usize;
     let rows = if TERMFLAGS.load(Ordering::Relaxed) & TERM_SHORT != 0 {
         1
     } else if real_lines < 2 {
@@ -1112,7 +1118,7 @@ pub fn zrefresh() {
     //          shout destination and reduces syscall count.
     let mut handle = String::new();
 
-    let cols = adjustcolumns();
+    let cols = adjustcolumns() as i32 as usize;
     // c:729-734 — sync the global video dimensions to the terminal each
     // frame, as C's resetvideo does (`winw = zterm_columns`, winh clamped).
     // The cursor primitives (moveto automargin, scrollwindow, the line-opt)
@@ -1124,7 +1130,7 @@ pub fn zrefresh() {
         use crate::ported::params::TERMFLAGS;
         use crate::ported::zsh_h::TERM_SHORT;
         WINW.store(cols as i32, Ordering::Relaxed); // c:729
-        let real_lines = adjustlines();
+        let real_lines = adjustlines() as i32 as usize;
         let rows = if TERMFLAGS.load(Ordering::Relaxed) & TERM_SHORT != 0 {
             1 // c:730-731
         } else if real_lines < 2 {
@@ -1201,18 +1207,19 @@ pub fn zrefresh() {
     // engaged the horizontal-scroll slice on the full prompt string —
     // painting the prompt from mid-line-1 and echoing typed input at
     // a far-right column.
-    let cols_nz = cols.max(1);
+    // `cols` is `adjustcolumns() as i32`, which C guarantees is > 0
+    // (Src/utils.c:1866-1870), so it is safe to divide by.
     let (prompt_width, prompt_rows) = {
         let mut rows = 0usize;
         let mut last_w = 0usize;
         for line in prompt.split('\n') {
             let w = countprompt(line);
-            rows += 1 + if w > 0 { (w - 1) / cols_nz } else { 0 };
+            rows += 1 + if w > 0 { (w - 1) / cols } else { 0 };
             last_w = w;
         }
         // Width of the last PHYSICAL row (a wrapped last line leaves
         // only the remainder on the cursor's row).
-        (last_w % cols_nz.max(1), rows.max(1))
+        (last_w % cols, rows.max(1))
     };
     // c:676 — `lpromptw` is the left prompt's display width. The NBUF build
     // emits that many prompt cells at the start of row 0, so syncing it
@@ -2271,15 +2278,39 @@ pub fn zrefresh() {
                                                // line. trashzle sets trashedzle=1 + resetneeded=1; consuming
                                                // resetneeded here is where trashedzle gets cleared again, matching C.
         TRASHEDZLE.store(0, Ordering::Relaxed);
-        // Home the real cursor to column 0 before re-emitting the prompt.
-        // On the first paint of a line this is a fresh row (a no-op CR); on
-        // the post-list repaint (the recursive zrefresh after listmatches) it
-        // guarantees the prompt redraws at the start of the row below the
-        // printed grid rather than wherever the list left the cursor.
-        {
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, b"\r");
+        // c:1146-1153 —
+        // ```c
+        //     if (!clearflag) {
+        //         if (tccan(TCCLEAREOD))
+        //             tcoutclear(TCCLEAREOD);
+        //         else
+        //             cleareol = 1;   /* request: clear to end of line */
+        //         if (listshown > 0)
+        //             listshown = 0;
+        //     }
+        // ```
+        // Wipe whatever the previous frame (a completion listing, a cleared
+        // screen) left below the cursor before the prompt is re-emitted. The
+        // port used to write a bare `\r` here instead — that is C's
+        // `clearflag` branch (c:1169), not this one — so the escape stream
+        // carried no clear sequence at all. complist can leave a dangling
+        // `\x1b[` in the stream; zsh's next byte is the ESC that closes it,
+        // while a bare `\r` left the prompt's first character to be eaten as
+        // the CSI final byte by any conforming parser.
+        let clearflag = CLEARFLAG.load(Ordering::SeqCst) != 0;
+        if !clearflag {
+            // c:1147 — `tccan(TCCLEAREOD)` (zsh.h:2682 = `tclen[cap] != 0`).
+            let tcd = crate::ported::init::tclen.lock().unwrap()
+                [crate::ported::zsh_h::TCCLEAREOD as usize]
+                != 0;
+            if tcd {
+                tcoutclear(crate::ported::zsh_h::TCCLEAREOD); // c:1148
+            } else {
+                CLEAREOL.store(1, Ordering::SeqCst); // c:1150
+            }
+            if LISTSHOWN.load(Ordering::Relaxed) > 0 {
+                LISTSHOWN.store(0, Ordering::Relaxed); // c:1151-1152
+            }
         }
         // c:1158-1159 — `zputs(lpromptbuf, shout)`: print the expanded left
         // prompt so it is physically on screen. refreshline's prompt-skip
@@ -2291,7 +2322,17 @@ pub fn zrefresh() {
         // moved but does not track); C leaves vcs at 0 and relies on its
         // moveto, but zshrs' singmoveto emits a RELATIVE cursor-right, so a
         // stale vcs=0 would double-offset the first content moveto.
-        if !prompt.is_empty() {
+        //
+        // c:1156-1158 — `if (termflags & TERM_SHORT) vcs = 0; else if
+        // (!clearflag && lpromptbuf[0])`. Under `clearflag` the prompt is
+        // already on screen (always-last-prompt kept it there) and C only
+        // re-homes the cursor onto it, at c:1168-1172 below.
+        if crate::ported::params::TERMFLAGS.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::TERM_SHORT
+            != 0
+        {
+            VCS.store(0, Ordering::SeqCst); // c:1157
+        } else if !clearflag && !prompt.is_empty() {
             let fd = SHTTY.load(Ordering::Relaxed);
             let out_fd = if fd >= 0 { fd } else { 1 };
             // c:1158-1159 `zputs(lpromptbuf, shout)` skips the itok marker
@@ -2336,6 +2377,24 @@ pub fn zrefresh() {
                 OLNCT.store(seed_rows as i32, Ordering::SeqCst);
                 VLN.store(seed_rows as i32, Ordering::SeqCst);
             }
+        }
+        // c:1168-1172 —
+        // ```c
+        //     if (clearflag) {
+        //         zputc(&zr_cr);
+        //         vcs = 0;
+        //         moveto(0, lpromptw);
+        //     }
+        // ```
+        // The prompt is still on screen from the listing's always-last-prompt
+        // restore, so C only returns the real cursor to column 0 and walks it
+        // back out to the end of the prompt.
+        if clearflag {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, b"\r"); // c:1169 `zputc(&zr_cr)`
+            VCS.store(0, Ordering::SeqCst); // c:1170
+            moveto(0, LPROMPTW.load(Ordering::SeqCst).max(0) as usize); // c:1171
         }
     }
 
@@ -2627,11 +2686,12 @@ pub fn zrefresh() {
     // case nvcs == lpromptw + cursor_idx == cursor_col, so behaviour is
     // unchanged. Falls back to the recompute only when the cursor was never
     // reached (nvln stayed -1 because the line loop bailed on a scroll).
-    let cols_c = cols.max(1);
     if cur_nvln >= 0 {
         moveto(cur_nvln as usize, cur_nvcs.max(0) as usize);
     } else {
-        moveto(cursor_col / cols_c, cursor_col % cols_c);
+        // `cols` is `adjustcolumns() as i32`, which C guarantees is > 0
+        // (Src/utils.c:1866-1870), so these are safe to divide by.
+        moveto(cursor_col / cols, cursor_col % cols);
     }
     // c:1742 — `cursor_form()`: update the terminal cursor shape (block /
     // beam / underline) for the current ZLE state once it's repositioned.
@@ -8030,11 +8090,11 @@ mod tests {
 
     /// c:729-734 — zrefresh syncs the global video width to the terminal
     /// each frame, so the cursor primitives don't read the stale 80-col
-    /// default. After a frame, WINW must equal adjustcolumns(), regardless
-    /// of any earlier bogus value.
+    /// default. After a frame, WINW must equal `adjustcolumns() as i32` (the
+    /// clamped-positive width C's `winw = zterm_columns` assignment sees),
+    /// regardless of any earlier bogus value.
     #[test]
     fn zrefresh_syncs_winw_to_terminal() {
-        use crate::ported::utils::adjustcolumns;
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
 
@@ -8060,6 +8120,70 @@ mod tests {
             WINW.load(Ordering::SeqCst),
             adjustcolumns() as i32,
             "zrefresh must sync WINW to the terminal width"
+        );
+    }
+
+    /// c:1146-1153 — the reset frame must clear below the cursor with the
+    /// terminal's TCCLEAREOD capability before re-emitting the prompt, not
+    /// with a bare CR. zsh's byte stream after a completion listing is
+    /// `<attrs-off><clr_eod><prompt>`; emitting `\r` instead left a dangling
+    /// `\x1b[` from complist unterminated, so the prompt's first byte got
+    /// consumed as that CSI's final byte.
+    #[test]
+    fn reset_frame_clears_to_end_of_display() {
+        use crate::ported::init::{tclen, tcstr};
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let ci = crate::ported::zsh_h::TCCLEAREOD as usize;
+        let save_len = tclen.lock().unwrap()[ci];
+        let save_str = tcstr.lock().unwrap()[ci].clone();
+        tclen.lock().unwrap()[ci] = 3;
+        tcstr.lock().unwrap()[ci] = "\x1b[J".to_string();
+
+        RESETNEEDED.store(1, Ordering::SeqCst);
+        CLEARFLAG.store(0, Ordering::SeqCst); // c:1146 — the !clearflag path
+        LISTSHOWN.store(1, Ordering::SeqCst); // c:1151 — must be cleared
+                                              // Keep the c:1084-1104 invalidated-list path out of the way; it clears
+                                              // with the same capability and would mask the reset frame's own emit.
+        CLEARLIST.store(0, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        zrefresh();
+
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[ci] = save_len;
+        tcstr.lock().unwrap()[ci] = save_str;
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+
+        assert!(
+            s.contains("\x1b[J"),
+            "reset frame must emit TCCLEAREOD (c:1148); got {:?}",
+            s
+        );
+        assert_eq!(
+            LISTSHOWN.load(Ordering::SeqCst),
+            0,
+            "reset frame must drop listshown (c:1151-1152)"
         );
     }
 

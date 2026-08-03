@@ -1025,27 +1025,57 @@ pub fn maybe_rebind_tab_for_expand() {
     // `lookupstyle` below instead of the builtin, so the module was never
     // marked booted: `zmodload -L` printed four lines against zsh's six.
     load_module_i("zsh/zutil");
-    let curcontext = crate::ported::params::getsparam("curcontext").unwrap_or_default();
-    let completers = crate::ported::modules::zutil::lookupstyle(
-        &format!(":completion:{}:", curcontext),
-        "completer",
-    );
-    let has_expand = completers
-        .iter()
-        .any(|c| c == "_expand" || c.starts_with("_expand:"));
+    // sh:565 is the literal context `':completion:'` — NOT
+    // `:completion:$curcontext:`. The two agree under a `:completion:*`
+    // fixture, so the difference only shows with a scoped zstyle, but the
+    // spec string is the unadorned one.
+    let completers = crate::ported::modules::zutil::lookupstyle(":completion:", "completer");
+    // sh:566 `(( ${_i_line[(i)_expand]} <= ${#_i_line} ))` is an EXACT
+    // element match, so a named completer such as `_expand:foo` does not
+    // arm the rebind in zsh either.
+    let has_expand = completers.iter().any(|c| c == "_expand");
     if !has_expand {
         return;
     }
-    // sh:564 — `bindkey '^i' | IFS=$' \t' read -A _i_line`. We can't
-    //   capture bindkey output without a real executor, so just
-    //   dispatch the rebind unconditionally when _expand is in
-    //   the chain. The shell guards on `expand-or-complete` being
-    //   the current binding; without capture we'd be over-eager,
-    //   so dispatch via the hook (no-op when no executor wired).
-    let _ = crate::ported::exec::dispatch_function_call(
-        "bindkey",
-        &["^i".to_string(), "complete-word".to_string()],
-    );
+    // sh:563-564 — `bindkey '^i' | IFS=$' \t' read -A _i_line` /
+    // `[[ ${_i_line[2]} = expand-or-complete ]]`. `_i_line[2]` is the
+    // widget name `bindkey` prints after the quoted key sequence, so the
+    // guard asks exactly what `bin_bindkey_list` resolves at
+    // `zle_keymap.rs:1840-1846`: `keybind(km, getkeystring("^i"))` on the
+    // keymap `bindkey` picks with no `-M`/-e/-v/-a, which
+    // `bin_bindkey` (zle_keymap.rs:1250-1263) fixes at `main`. Reading the
+    // table directly instead of running the builtin keeps `bindkey`'s
+    // listing off stdout. Without this guard a user who had already put
+    // their own widget on TAB got it silently clobbered by every compinit.
+    let seq = crate::ported::zle::zle_bindings::getkeystring("^i");
+    // `openkeymap` misses until `default_bindings()` has run; mirror the
+    // same emptiness gate `bin_bindkey` uses (zle_keymap.rs:1121-1127) so
+    // a compinit that precedes any `bindkey` call still sees the defaults,
+    // and an already-built keymap is never rebuilt (that would wipe the
+    // user's bindings).
+    let km = crate::ported::zle::zle_keymap::openkeymap("main").or_else(|| {
+        crate::ported::zle::zle_keymap::default_bindings();
+        crate::ported::zle::zle_keymap::openkeymap("main")
+    });
+    let bound = km
+        .and_then(|km| crate::ported::zle::zle_keymap::keybind(&km, &seq).0)
+        .map(|t| t.nam);
+    if bound.as_deref() != Some("expand-or-complete") {
+        return;
+    }
+    // sh:568 — `bindkey '^i' complete-word`. `bindkey` is a BUILTIN, so it
+    // must go through `bin_bindkey`; `dispatch_function_call` resolves only
+    // shell functions and returned None here, making the whole rebind a
+    // silent no-op (see the same warning in
+    // `install_standard_complete_widgets`).
+    let empty_ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    let bk_args = ["^i".to_string(), "complete-word".to_string()];
+    let _ = crate::ported::zle::zle_keymap::bin_bindkey("bindkey", &bk_args, &empty_ops, 0);
 }
 
 // `compaudit` lives in its own file (`src/compsys/ported/compaudit.rs`)
@@ -1667,7 +1697,7 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
         for (k, v) in &result.compautos {
             s.compautos.insert(k.clone(), v.clone());
         }
-        publish_compdef_state(s);
+        publish_compdef_state_mut(s);
     });
 
     result
@@ -1831,11 +1861,48 @@ pub fn compinit_lazy(cache: &crate::compsys::cache::CompsysCache) -> (bool, usiz
     (count > 0, count)
 }
 
+/// Metadata key holding the `comps` row count a cache build finished
+/// with. Written as the LAST statement of `build_cache_from_fpath`'s
+/// caller, after every table is populated — see
+/// `stamp_cache_complete` and `cache_is_valid`.
+pub const CACHE_COMPLETE_KEY: &str = "comps_rows_at_build_end";
+
+/// Record that a freshly built cache is complete.
+///
+/// Must be the final write of a build. Pairs with `cache_is_valid`.
+pub fn stamp_cache_complete(cache: &crate::compsys::cache::CompsysCache) -> bool {
+    match cache.comp_count() {
+        Ok(n) => cache
+            .set_metadata(CACHE_COMPLETE_KEY, &n.to_string())
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
 /// Check if cache is valid and up-to-date
 ///
-/// Returns true if cache exists and has entries, false if cache needs to be rebuilt.
+/// Returns true only for a cache some build finished writing; false when
+/// it is empty, unstamped, or still filling.
+///
+/// A bare `comp_count() > 0` was NOT a validity test. The rebuild path
+/// spends seconds inserting ~50k `comps` rows, and up to 16 of the user's
+/// shells run against this one file, so a shell starting inside that
+/// window saw a non-zero partial count, took the cache-hit branch, and
+/// published a `_comps` holding a fraction of the registrations —
+/// `_dispatch` then resolved no completer for any command and every
+/// `<cmd> <TAB>` completed nothing. Matching the stamped count against
+/// the live count makes "still filling" and "builder died midway" both
+/// fail: the stamp is written once, at the end, and any later insert
+/// moves the live count away from it.
 pub fn cache_is_valid(cache: &crate::compsys::cache::CompsysCache) -> bool {
-    cache.comp_count().unwrap_or(0) > 0
+    let rows = cache.comp_count().unwrap_or(0);
+    if rows <= 0 {
+        return false;
+    }
+    match cache.get_metadata(CACHE_COMPLETE_KEY) {
+        Ok(Some(stamp)) => stamp.parse::<i64>().map(|n| n == rows).unwrap_or(false),
+        _ => false,
+    }
 }
 
 /// Get system fpath from environment or defaults
@@ -1933,8 +2000,11 @@ impl CompInitOpts {
 // State lives in a session-side `CompdefState` (a Mutex<HashMap>
 // quintet for `_comps`, `_services`, `_patcomps`, `_postpatcomps`,
 // `_compautos`). Cluster ports already read these via shell-side
-// `getaparam("_comps")` etc.; the published-to-paramtab step
-// happens in `publish_compdef_state` at the bottom of this section.
+// `assoc_get("_comps")` etc.; the published-to-paramtab step happens
+// in `publish_compdef_state_mut` at the bottom of this section, which
+// MERGES into those parameters rather than rebuilding them (see
+// `merge_hparam`) — the state is one contributor to `_comps`, never
+// its definition.
 // =====================================================================
 
 /// Session-side compdef registrations. Mirrors the five upstream
@@ -1946,9 +2016,26 @@ pub struct CompdefState {
     pub patcomps: HashMap<String, String>,
     pub postpatcomps: HashMap<String, String>,
     pub compautos: HashMap<String, String>,
+    /// Keys a `compdef -d` (sh:426-444 `unset "_comps[$^@]"`) removed and
+    /// that the next publish still has to unset on the shell side.
+    /// Removal is the one edit a merge cannot express, so it is carried
+    /// explicitly instead of being implied by the absence of a key.
+    removed: CompdefRemovals,
+}
+
+/// Per-array key lists for pending `compdef -d` removals.
+#[derive(Default)]
+struct CompdefRemovals {
+    comps: Vec<String>,
+    services: Vec<String>,
+    patcomps: Vec<String>,
+    postpatcomps: Vec<String>,
 }
 
 static COMPDEF_STATE: Mutex<Option<CompdefState>> = Mutex::new(None);
+
+/// Depth of the enclosing `compdef_batch` calls. See that function.
+static PUBLISH_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Lock the session-side state, initializing on first call.
 fn with_state<F, R>(f: F) -> R
@@ -1962,42 +2049,114 @@ where
     f(guard.as_mut().unwrap())
 }
 
-/// Helper to publish state inside a `with_state` closure (takes
-/// `&mut` to fit the closure signature).
-fn publish_compdef_state_mut(s: &mut CompdefState) {
-    publish_compdef_state(s);
+/// Run `f` with shell-side publication held until it returns, then
+/// publish once.
+///
+/// Publication is a whole-hash read-modify-write: `gethparam`/`sethparam`
+/// are the only associative-array accessors `params.rs` exposes, so there
+/// is no way to assign a single `_comps[$cmd]` the way sh:376 does. A bulk
+/// replay (`cdreplay` after zinit turbo) calls `compdef` once per deferred
+/// registration and would otherwise pay that read-modify-write over a
+/// 50k-entry `_comps` on every one of them. The batched end state is
+/// identical — the same accumulated `CompdefState`, published once.
+pub fn compdef_batch<R>(f: impl FnOnce() -> R) -> R {
+    use std::sync::atomic::Ordering;
+    // Restores the depth even if `f` panics or returns early.
+    struct Depth;
+    impl Drop for Depth {
+        fn drop(&mut self) {
+            PUBLISH_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    PUBLISH_DEPTH.fetch_add(1, Ordering::Relaxed);
+    let out = {
+        let _depth = Depth;
+        f()
+    };
+    with_state(publish_compdef_state_mut);
+    out
 }
 
-/// Publish the in-memory state back to shell-side assoc arrays so
-/// engine cluster code (which reads via `getaparam("_comps")` etc.)
-/// sees the updates. Flat key/value layout per the existing
-/// per-engine-port convention.
-fn publish_compdef_state(s: &CompdefState) {
-    let mut flatten = |arr: &HashMap<String, String>| -> Vec<String> {
-        let mut sorted: Vec<(&String, &String)> = arr.iter().collect();
-        sorted.sort_by(|a, b| a.0.cmp(b.0));
-        let mut out = Vec::with_capacity(sorted.len() * 2);
-        for (k, v) in sorted {
-            out.push(k.clone());
-            out.push(v.clone());
+/// Apply one array's pending edits to its shell-side associative array.
+///
+/// `set` is overlaid onto whatever the parameter already holds and
+/// `remove` is unset from it — the parameter is never rebuilt from `set`
+/// alone. That distinction is the whole fix: `CompdefState` holds only
+/// what THIS process's `compdef` calls (and its own `$fpath` scan)
+/// registered, while `compinit -C`'s cache-hit path fills the parameter
+/// directly (`ext_builtins.rs`, `set_assoc`) without going through the
+/// state at all. Publishing `flatten(&s.comps)` wholesale therefore
+/// replaced a 51 647-entry `_comps` with however many keys the state
+/// happened to have — one, for a session whose only `compdef` was
+/// `_zstyle zstyle` — and `_dispatch` then resolved an empty completer
+/// for EVERY command, so `man <TAB>`, `git <TAB>` and `kill <TAB>` all
+/// completed nothing at all.
+fn merge_hparam(name: &str, set: &HashMap<String, String>, remove: &[String]) {
+    if set.is_empty() && remove.is_empty() {
+        return;
+    }
+    // BTreeMap so the published pair order is deterministic, matching what
+    // the previous sort-by-key flatten produced. The read goes through
+    // `subst::assoc_get` because that is the accessor backed by the same
+    // `paramtab_hashed_storage` `sethparam` writes — `gethparam` returns
+    // the VALUES only (params.rs:5723-5728), not the key/value pairs.
+    let mut merged: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    if let Some(existing) = crate::ported::subst::assoc_get(name) {
+        for (k, v) in existing {
+            merged.insert(k, v);
         }
-        out
-    };
+    }
+    for k in remove {
+        merged.remove(k);
+    }
+    for (k, v) in set {
+        merged.insert(k.clone(), v.clone());
+    }
+    let mut out = Vec::with_capacity(merged.len() * 2);
+    for (k, v) in merged {
+        out.push(k);
+        out.push(v);
+    }
     // These are ASSOCIATIVE arrays in zsh (`typeset -gHA _comps _services
     // _patcomps _postpatcomps` / `_compautos`, sh:116/121). They MUST be
-    // published via `sethparam` (hashed) — `flatten` already emits the
-    // `[k, v, k, v, …]` pair layout `sethparam` consumes. Using `setaparam`
-    // (plain array) made `_comps` a flat array, so `${_comps[ls]}` couldn't
+    // published via `sethparam` (hashed) — the `[k, v, k, v, …]` pair
+    // layout above is what `sethparam` consumes. Using `setaparam` (plain
+    // array) made `_comps` a flat array, so `${_comps[ls]}` couldn't
     // hash-lookup and `_complete`/`_dispatch` found no completer for ANY
     // command → every `<cmd> <TAB>` (incl. `ls -<TAB>`) just rang the bell.
     // The synchronous `compinit -C` path used `set_assoc` (→ sethparam) and
     // worked, which is why only the fresh/compdef-driven path was broken.
     // Bug #655.
-    crate::ported::params::sethparam("_comps", flatten(&s.comps));
-    crate::ported::params::sethparam("_services", flatten(&s.services));
-    crate::ported::params::sethparam("_patcomps", flatten(&s.patcomps));
-    crate::ported::params::sethparam("_postpatcomps", flatten(&s.postpatcomps));
-    crate::ported::params::sethparam("_compautos", flatten(&s.compautos));
+    crate::ported::params::sethparam(name, out);
+}
+
+/// Publish the in-memory state into the shell-side assoc arrays so
+/// engine cluster code (which reads via `getaparam("_comps")` etc.)
+/// sees the updates.
+///
+/// A no-op inside `compdef_batch`; the batch publishes on exit.
+fn publish_compdef_state_mut(s: &mut CompdefState) {
+    use std::sync::atomic::Ordering;
+    if PUBLISH_DEPTH.load(Ordering::Relaxed) > 0 {
+        return;
+    }
+    merge_hparam("_comps", &s.comps, &s.removed.comps);
+    merge_hparam("_services", &s.services, &s.removed.services);
+    merge_hparam("_patcomps", &s.patcomps, &s.removed.patcomps);
+    merge_hparam("_postpatcomps", &s.postpatcomps, &s.removed.postpatcomps);
+    merge_hparam("_compautos", &s.compautos, &[]);
+    s.removed = CompdefRemovals::default();
+}
+
+/// Read one key out of a shell-side assoc array.
+///
+/// The parameter — not `CompdefState` — is the source of truth for what
+/// is registered: `compinit -C` fills it from the dump/cache without
+/// touching the state (see `merge_hparam`).
+fn hparam_has_key(name: &str, key: &str) -> bool {
+    crate::ported::subst::assoc_get(name)
+        .map(|m| m.contains_key(key))
+        .unwrap_or(false)
 }
 
 /// Parse `compdef`'s short-option flags via the upstream
@@ -2076,17 +2235,24 @@ pub fn compdef(args: &[String]) -> i32 {
     }
 
     if flags.delete {
-        // sh:426-444  -d: delete by name from the right hash
+        // sh:426-444  -d: delete by name from the right hash. The key has
+        // to be dropped from the session state AND queued for removal from
+        // the shell parameter — a key registered by `compinit -C`'s cache
+        // load is only ever in the parameter, so removing it from the state
+        // alone would leave `compdef -d` a no-op for everything the dump
+        // defined.
         let names = &args[idx..];
         with_state(|s| match flags.spec_type {
             SpecType::Pattern => {
                 for n in names {
                     s.patcomps.remove(n);
+                    s.removed.patcomps.push(n.clone());
                 }
             }
             SpecType::PostPattern => {
                 for n in names {
                     s.postpatcomps.remove(n);
+                    s.removed.postpatcomps.push(n.clone());
                 }
             }
             SpecType::Key | SpecType::WidgetKey => {
@@ -2096,6 +2262,8 @@ pub fn compdef(args: &[String]) -> i32 {
                 for n in names {
                     s.comps.remove(n);
                     s.services.remove(n);
+                    s.removed.comps.push(n.clone());
+                    s.removed.services.push(n.clone());
                 }
             }
         });
@@ -2302,8 +2470,15 @@ pub fn compdef(args: &[String]) -> i32 {
                         } else {
                             (arg.clone(), None)
                         };
-                        // sh:415  -n: no-clobber
-                        if flags.new && s.comps.contains_key(&cmd) {
+                        // sh:415 — `-n`: no-clobber. zsh tests
+                        // `[[ -z ${_comps[$1]} ]]` against the PARAMETER, so
+                        // an entry that came from the dump/cache load counts
+                        // as already-defined; testing only the session state
+                        // let every `compdef -na` from an fpath rescan
+                        // overwrite the dump's registration.
+                        if flags.new
+                            && (s.comps.contains_key(&cmd) || hparam_has_key("_comps", &cmd))
+                        {
                             return;
                         }
                         s.comps.insert(cmd.clone(), func.clone());
@@ -2338,13 +2513,33 @@ fn pattern_matches(pat: &str, s: &str) -> bool {
 
 /// Reset session-side state (test-only helper; exposed via
 /// `#[cfg(test)]` users).
+///
+/// Clears the shell-side parameters too. Publication merges into them
+/// (`merge_hparam`), so they outlive the `CompdefState` and would carry
+/// one case's registrations into the next — `-n`'s no-clobber test reads
+/// `_comps` directly, and a leftover `_comps[git]` would silently skip
+/// the registration the next case is asserting on.
 #[cfg(test)]
 pub fn reset_compdef_state() {
     *COMPDEF_STATE.lock().unwrap() = Some(CompdefState::default());
+    for name in [
+        "_comps",
+        "_services",
+        "_patcomps",
+        "_postpatcomps",
+        "_compautos",
+    ] {
+        crate::ported::params::sethparam(name, Vec::new());
+    }
 }
 
-/// Snapshot of session-side state — useful for `compdump` to read
-/// without locking inside the hot path.
+/// Snapshot of the session-side state — what THIS process's `compdef`
+/// calls and `$fpath` scan registered.
+///
+/// Not the full `_comps`: a `compinit -C` that loaded the dump/SQLite
+/// cache fills the shell parameter without going through this state, so
+/// read `subst::assoc_get("_comps")` when the question is "what is
+/// registered", and this when the question is "what did we register".
 pub fn snapshot_compdef_state() -> CompdefState {
     with_state(|s| CompdefState {
         comps: s.comps.clone(),
@@ -2352,6 +2547,7 @@ pub fn snapshot_compdef_state() -> CompdefState {
         patcomps: s.patcomps.clone(),
         postpatcomps: s.postpatcomps.clone(),
         compautos: s.compautos.clone(),
+        removed: CompdefRemovals::default(),
     })
 }
 
@@ -2645,6 +2841,117 @@ mod tests {
         assert_eq!(
             snapshot_compdef_state().comps.get("git"),
             Some(&"_first".to_string())
+        );
+    }
+
+    #[test]
+    fn compdef_no_clobber_honours_a_registration_only_the_parameter_holds() {
+        // sh:415 tests `[[ -z ${_comps[$1]} ]]` — the PARAMETER. Everything
+        // `compinit -C` loaded from the dump lives only there, so checking
+        // `CompdefState` alone let a later `compdef -n` overwrite it.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        crate::ported::params::sethparam(
+            "_comps",
+            vec!["git".to_string(), "_git_from_dump".to_string()],
+        );
+        run(&["-n", "_second", "git"]);
+        assert_eq!(
+            crate::ported::subst::assoc_get("_comps")
+                .and_then(|m| m.get("git").cloned())
+                .as_deref(),
+            Some("_git_from_dump")
+        );
+    }
+
+    #[test]
+    fn compdef_keeps_registrations_it_did_not_make() {
+        // The regression this whole merge-on-publish design exists for.
+        // `compinit -C`'s cache-hit path fills `_comps` directly
+        // (ext_builtins.rs, `set_assoc`) and never touches `CompdefState`,
+        // so publishing the state wholesale replaced ~51k registrations
+        // with the one key this process happened to register — after which
+        // `_dispatch` resolved an empty completer for every command and
+        // `man <TAB>` / `git <TAB>` / `kill <TAB>` all produced nothing.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        crate::ported::params::sethparam(
+            "_comps",
+            vec![
+                "man".to_string(),
+                "_man".to_string(),
+                "git".to_string(),
+                "_git".to_string(),
+            ],
+        );
+        assert_eq!(run(&["_zstyle", "zstyle"]), 0);
+        let comps = crate::ported::subst::assoc_get("_comps").expect("_comps must still be a hash");
+        assert_eq!(comps.get("man").map(String::as_str), Some("_man"));
+        assert_eq!(comps.get("git").map(String::as_str), Some("_git"));
+        assert_eq!(comps.get("zstyle").map(String::as_str), Some("_zstyle"));
+    }
+
+    #[test]
+    fn compdef_delete_removes_a_key_only_the_parameter_holds() {
+        // The flip side: sh:442 `unset "_comps[$^@]"` has to reach an entry
+        // that came from the dump, which a merge cannot express by omission.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        crate::ported::params::sethparam(
+            "_comps",
+            vec![
+                "man".to_string(),
+                "_man".to_string(),
+                "git".to_string(),
+                "_git".to_string(),
+            ],
+        );
+        assert_eq!(run(&["-d", "man"]), 0);
+        let comps = crate::ported::subst::assoc_get("_comps").expect("_comps must still be a hash");
+        assert_eq!(comps.get("man"), None);
+        assert_eq!(comps.get("git").map(String::as_str), Some("_git"));
+    }
+
+    #[test]
+    fn compdef_batch_defers_publication_but_still_publishes() {
+        // The batch must be a deferral, not a drop: a `cdreplay` whose
+        // registrations never reached `_comps` would be the same outage
+        // by another route.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        compdef_batch(|| {
+            run(&["_git", "git"]);
+            assert!(
+                crate::ported::subst::assoc_get("_comps")
+                    .map(|m| m.is_empty())
+                    .unwrap_or(true),
+                "publication must be held until the batch ends"
+            );
+            run(&["_man", "man"]);
+        });
+        let comps = crate::ported::subst::assoc_get("_comps").expect("_comps must still be a hash");
+        assert_eq!(comps.get("git").map(String::as_str), Some("_git"));
+        assert_eq!(comps.get("man").map(String::as_str), Some("_man"));
+    }
+
+    #[test]
+    fn cache_is_valid_rejects_a_cache_that_is_still_filling() {
+        // A row count alone cannot distinguish "finished" from "another
+        // shell is 200 rows into a 50k-row rebuild" — accepting the latter
+        // is what published a `_comps` with a handful of entries.
+        let cache = crate::compsys::cache::CompsysCache::memory().expect("in-memory cache");
+        assert!(!cache_is_valid(&cache), "an empty cache is not valid");
+        cache.set_comp("git", "_git").unwrap();
+        assert!(
+            !cache_is_valid(&cache),
+            "a cache no build has stamped is not valid, however many rows it has"
+        );
+        assert!(stamp_cache_complete(&cache));
+        assert!(cache_is_valid(&cache));
+        cache.set_comp("man", "_man").unwrap();
+        assert!(
+            !cache_is_valid(&cache),
+            "a row written after the stamp means the build was not the last writer"
         );
     }
 

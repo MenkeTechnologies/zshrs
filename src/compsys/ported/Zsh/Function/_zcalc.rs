@@ -40,7 +40,11 @@ pub fn _zcalc(_args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zcalc");
     // sh:3-8 — the upstream function ignores its positional args and calls
     // `_arguments` with a fixed spec list.
-    _arguments(&zcalc_argv())
+    // By NAME so `_arguments` gets its own `comp_wrapper` frame (c:1556);
+    // otherwise its `compstate[restore]=''` (`_arguments.rs:1130`) leaks into
+    // `_zcalc`'s frame and suppresses the caller's restore.
+    let argv = zcalc_argv();
+    crate::compsys::ported::shared::call_compfn("_arguments", &argv, || _arguments(&argv))
 }
 
 #[cfg(test)]

@@ -64,7 +64,9 @@ pub fn _ld_debug(_args: &[String]) -> i32 {
     // sh:39  _values -s , capability $vals
     let mut argv = vec!["-s".to_string(), ",".to_string(), "capability".to_string()];
     argv.extend(vals);
-    _values(&argv)
+    // By NAME so `_values` runs under its own `comp_wrapper` frame (c:1556) —
+    // that frame contains its `compstate[restore]=''` (`_values.rs:388`).
+    crate::compsys::ported::shared::call_compfn("_values", &argv, || _values(&argv))
 }
 
 #[cfg(test)]

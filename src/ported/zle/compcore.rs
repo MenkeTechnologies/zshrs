@@ -714,13 +714,72 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     // have no gsu binding, so without this every completer reads
     // `$PREFIX=''` — `_main_complete`'s `compset -P 1 '='` then matches
     // the empty prefix and wrongly forces `$compstate[context]=equal`,
-    // and `_path_files` has no prefix to glob. Split at `OFFS`
-    // (zlemetacs - wb), the cursor offset within the word.
+    // and `_path_files` has no prefix to glob. The word is split the way
+    // c:699-718 splits it — whole-word under `unset(COMPLETEINWORD)`, else
+    // at `OFFS` (zlemetacs - wb), the cursor offset within the word.
     {
-        let scs: Vec<char> = s.chars().collect();
-        let off = (OFFS.load(Ordering::Relaxed).max(0) as usize).min(scs.len());
-        let pre: String = scs[..off].iter().collect();
-        let suf: String = scs[off..].iter().collect();
+        // c:699-718 — the compprefix/compsuffix split. C branches on
+        // `unset(COMPLETEINWORD)` FIRST: with the option OFF (the default)
+        // the WHOLE word is the prefix and the suffix is EMPTY — completion
+        // runs from the end of the word whatever column the cursor sits in;
+        // only with completeinword SET is the word split at `offs`:
+        //     if (unset(COMPLETEINWORD)) {
+        //         tmp = (linwhat == IN_MATH ? dupstring(s) : multiquote(s, 0));
+        //         untokenize(tmp);
+        //         compprefix = ztrdup(tmp);
+        //         compsuffix = ztrdup("");
+        //     } else { … split at s + offs … }
+        // The port applied the split unconditionally, i.e. completeinword
+        // semantics for everyone, so a mid-word TAB completed against the
+        // text left of the cursor instead of the whole word. The sibling
+        // site (`set_comp_sep`, c:1892-1906) already carries this branch —
+        // compcore.rs:2861-2868.
+        //
+        // Two steps of the C hunk are deliberately NOT replayed, because
+        // this port's `s` is not in the token state C's `s` is:
+        //
+        //   * `multiquote(s, 0)` (c:700/711/715). It is NOT a no-op —
+        //     `do_completion` seeds `$compqstack` with one QT_BACKSLASH
+        //     element on every single completion (c:301-308,
+        //     compcore.rs:100-112), so it backslash-escapes every
+        //     `ispecial()` character it is handed. C can afford that
+        //     because its word is still TOKENIZED here: an active glob `*`
+        //     is the token byte `Star`, which `ispecial()`
+        //     (utils.rs:9931-9946) does not match, while a `\*` the user
+        //     typed has had its `Bnull` marker chucked out of the word
+        //     already (zle_tricky.c:1885-1923) and is a plain `*` that
+        //     correctly gets its backslash back. This port's
+        //     `get_comp_string` returns the word ALREADY untokenized
+        //     (zle_tricky.rs:2578-2587) and does not port that inull
+        //     cleanup, so `multiquote` here sees plain ASCII and escapes
+        //     the LIVE metacharacters: it published `$PREFIX` as `\*` for
+        //     `ls *`, `\*\(` for `ls *(`, `\$\{\(` for `echo ${(` and
+        //     `\\\*` for `ls \*`. Measured against zsh 5.9 through
+        //     scripts/comptab_parity.py with a completer that prints
+        //     `${(qq)PREFIX}`, zsh publishes the bare word for all of them
+        //     (`'*('`, `'${('`, `'~/'`, `'../'`, `'\*'`) — which is exactly
+        //     the un-requoted `s` this port already has.
+        //   * `untokenize` (c:701/712/716) — already applied upstream at
+        //     `get_comp_string`'s return. Repeating it is a no-op on ASCII
+        //     but would silently drop a literal U+00A1 (`Nularg`) or
+        //     U+0084-U+00A1 character out of a non-ASCII word.
+        //
+        // Reinstating either needs the tokenized word AND the unported
+        // c:1788-1926 line cleanup, not a local change here. The IN_MATH
+        // fork at c:700/711/715 (`dupstring` instead of `multiquote`)
+        // therefore collapses into the same expression too.
+        let (pre, suf) = if !isset(crate::ported::zsh_h::COMPLETEINWORD) {
+            // c:699
+            (s.to_string(), String::new()) // c:700-703
+        } else {
+            // c:704
+            let scs: Vec<char> = s.chars().collect();
+            let off = (OFFS.load(Ordering::Relaxed).max(0) as usize).min(scs.len()); // c:707
+            (
+                scs[..off].iter().collect::<String>(), // c:709-713
+                scs[off..].iter().collect::<String>(), // c:714-717
+            )
+        };
         let _ = crate::ported::params::setsparam("PREFIX", &pre);
         let _ = crate::ported::params::setsparam("SUFFIX", &suf);
         let _ = crate::ported::params::setsparam("IPREFIX", "");
@@ -747,23 +806,29 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             }
         }
 
-        // c:720-723 — `complastprefix = ztrdup(compprefix);
+        // c:720-723 — `zsfree(complastprefix); zsfree(complastsuffix);
+        //              complastprefix = ztrdup(compprefix);
         //              complastsuffix = ztrdup(compsuffix);`.
-        // Captured here (before the completion fn runs and before any
-        // `compset -P/-S` strips $PREFIX/$SUFFIX) so `domenuselect`'s
-        // interactive status line can render the search buffer as
-        // `interactive: <prefix>[]<suffix>` (setmstatus, complist.c:2234).
-        if let Ok(mut g) = crate::ported::zle::complete::COMPLASTPREFIX
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-        {
-            *g = pre.clone(); // c:722
-        }
-        if let Ok(mut g) = crate::ported::zle::complete::COMPLASTSUFFIX
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-        {
-            *g = suf.clone(); // c:723
+        // Assigned from the compprefix/compsuffix GLOBALS the block above
+        // just published — which is literally what C copies — rather than
+        // from a second, locally recomputed split that can only agree with
+        // them by accident. Taken here (before the completion fn runs and
+        // before any `compset -P/-S` strips $PREFIX/$SUFFIX) so
+        // `domenuselect`'s interactive status line renders the search
+        // buffer as `interactive: <prefix>[]<suffix>` (setmstatus,
+        // complist.c:2234-2235).
+        for (src, dst) in [
+            (&COMPPREFIX, &crate::ported::zle::complete::COMPLASTPREFIX),
+            (&COMPSUFFIX, &crate::ported::zle::complete::COMPLASTSUFFIX),
+        ] {
+            let v = src
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            if let Ok(mut g) = dst.get_or_init(|| Mutex::new(String::new())).lock() {
+                *g = v; // c:722-723
+            }
         }
     }
 
@@ -885,9 +950,9 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     // `complist` global, which is one storage in C (gsu-bound) and is what
     // `addmatch` reads at c:2048-2050 for CMF_PACKED/CMF_ROWS.
     let mut cl_value = match uselist.load(Ordering::Relaxed) {
-        0 => String::new(),      // c:755
-        1 => "list".to_string(), // c:756
-        2 => "autolist".to_string(), // c:757
+        0 => String::new(),           // c:755
+        1 => "list".to_string(),      // c:756
+        2 => "autolist".to_string(),  // c:757
         3 => "ambiguous".to_string(), // c:758
         _ => String::new(),
     };
@@ -1315,10 +1380,40 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         None => String::new(),
     };
     let have_insert = post("insert").is_some();
+    // c:857-858 — `if (!compinsert) useline = 0;`. C's test is on the
+    // POINTER: it fires only when `$compstate[insert]` has no value at all.
+    // An EMPTY STRING is a perfectly ordinary `char *` and falls all the way
+    // through to the c:883-896 else, whose own comment spells out that the
+    // empty case is the one it exists for:
+    //
+    //     } else {
+    //         if (strpfx("menu", compinsert)) useline = 1, usemenu = 1;
+    //         else if (strpfx("auto", compinsert)) useline = 1, usemenu = 2;
+    //         else {
+    //             useline = usemenu = 0;
+    //             /* if compstate[insert] was emptied, no unambiguous prefix
+    //              * ever gets inserted so allow the next tab to already start
+    //              * menu completion */
+    //             startauto = lastambig = isset(AUTOMENU);
+    //         }
+    //
+    // The port used to short-circuit `post_insert.is_empty()` into the NULL
+    // arm, so it set `useline = 0` and stopped — never clearing `usemenu`
+    // and, far more visibly, never arming `startauto`/`lastambig`. That
+    // arming is the ONLY thing that lets the SECOND Tab start menu
+    // completion after a round that inserted nothing: `before_complete`
+    // (c:493-495, `startauto && lastambig` → `usemenu = 2`) has no other
+    // source. Measured on `bindkey -` under
+    // scripts/parity_combos/full.zsh (`menu 'select=0' interactive`):
+    // `$compstate[insert]` reads back EMPTY in both shells there (sampled
+    // from `comppostfuncs`, the last hook `_main_complete` runs before it
+    // snapshots `_lastcomp`), so c:895 is the only arming zsh gets — and
+    // zsh's second Tab entered interactive menu-select and printed
+    // `interactive: -[]` above the list where this port's did not. The
+    // follow-on keystrokes then went to the line instead of the menu
+    // filter: typing `s` narrowed zsh's list to `-s` and self-inserted here.
     if !have_insert {
         // no-op: keep the c:767-782 values
-    } else if post_insert.is_empty() {
-        useline.store(0, Ordering::Relaxed); // c:858
     } else if post_insert.contains("tab") {
         useline.store(-1, Ordering::Relaxed); // c:860
     } else if post_insert == "unambig"
@@ -1337,11 +1432,19 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     } else if post_insert == "all" {
         useline.store(2, Ordering::Relaxed); // c:866
         USEMENU.store(0, Ordering::Relaxed); // c:866
-    } else if post_insert.as_bytes()[0].is_ascii_digit() {
+    } else if post_insert
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_digit)
+    {
         // c:867 — `idigit(*compinsert)`: insert the Nth match directly.
+        // `first()` rather than `[0]`: an empty `$compstate[insert]` now
+        // reaches this arm (see the c:857-858 note above), and C's
+        // `idigit(*compinsert)` reads the NUL terminator there — false —
+        // where an unguarded index would panic.
         useline.store(1, Ordering::Relaxed); // c:872
         USEMENU.store(3, Ordering::Relaxed); // c:872
-        // c:873 — `insmnum = atoi(compinsert)`; inlined (leading digits).
+                                             // c:873 — `insmnum = atoi(compinsert)`; inlined (leading digits).
         insmnum.store(
             post_insert
                 .chars()
@@ -1367,9 +1470,9 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         } else {
             useline.store(0, Ordering::Relaxed); // c:890
             USEMENU.store(0, Ordering::Relaxed); // c:890
-            // c:891-894 — "if compstate[insert] was emptied, no unambiguous
-            // prefix ever gets inserted so allow the next tab to already
-            // start menu completion".
+                                                 // c:891-894 — "if compstate[insert] was emptied, no unambiguous
+                                                 // prefix ever gets inserted so allow the next tab to already
+                                                 // start menu completion".
             let am = opt_isset("AUTOMENU");
             startauto.store(am, Ordering::Relaxed); // c:894
             LASTAMBIG.store(am, Ordering::Relaxed); // c:894
@@ -3070,19 +3173,106 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
 // =====================================================================
 
 /// Direct port of `static char **get_data_arr(char *name, int keys)`
-/// from `Src/Zle/compcore.c:2022`. C uses `fetchvalue` with
-/// `SCANPM_WANTKEYS`/`SCANPM_WANTVALS` + `SCANPM_MATCHMANY` to scan
-/// an associative-array parameter and return either its keys or its
-/// values as a flat array. Without `fetchvalue` ported with full
-/// SCANPM flag support, we go straight to the hashed-storage
-/// thread-local maintained by params.rs for assoc-arrays.
+/// from `Src/Zle/compcore.c:2022`:
+/// ```c
+/// queue_signals();
+/// if (!(v = fetchvalue(&vbuf, &name, 1,
+///                      (keys ? SCANPM_WANTKEYS : SCANPM_WANTVALS) |
+///                      SCANPM_MATCHMANY)))
+///     ret = NULL;
+/// else
+///     ret = getarrvalue(v);
+/// unqueue_signals();
+/// ```
+/// A SUBSCRIPTED name goes straight through that call: `fetchvalue`
+/// consumes the identifier (`Src/params.c:2196`) and hands the `[…]`
+/// remainder to `getindex` (c:2289), which sets the SCANPM_MATCH* bits and
+/// runs `getvaluearr` → `paramvalarr` → `scanparamvals`.
+///
+/// A BARE name keeps this port's accessor path (`getaparam` / `gethparam` /
+/// `gethkparam`) rather than `fetchvalue`, because those are where the
+/// zsh/parameter magic hashes and arrays (`commands`, `builtins`,
+/// `reswords`, …) resolve their module scanfn/getfn — the paramtab node
+/// holds no value for them, so a `fetchvalue` + `arrgetfn` read would come
+/// back empty and `compadd -k commands` would add the literal word
+/// "commands".
 pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
     // c:2022
 
     queue_signals(); // c:2028
 
-    // c:2030-2034 — `fetchvalue(&vbuf, &name, 1, (keys ? SCANPM_WANTKEYS
-    //   : SCANPM_WANTVALS) | SCANPM_MATCHMANY)` then `getarrvalue(v)`.
+    if name.contains('[') {
+        // c:2030-2033 — `fetchvalue(&vbuf, &name, 1, (keys ?
+        //   SCANPM_WANTKEYS : SCANPM_WANTVALS) | SCANPM_MATCHMANY)`.
+        //
+        // Both scan flags are FIXED at this call site: WANTKEYS vs WANTVALS
+        // comes from `keys`, and SCANPM_MATCHMANY is ALWAYS set — so
+        // `scanparamvals`' single-match early-out (`Src/params.c:648-650`)
+        // never fires and EVERY match is returned, whatever the case of the
+        // subscript's search letter. `Src/params.c:1719-1722` picks the
+        // match TARGET (`i`/`I` → SCANPM_MATCHKEY, `k`/`K` →
+        // SCANPM_KEYMATCH, else SCANPM_MATCHVAL) while
+        // `scanparamvals` (c:665-681) picks the OUTPUT purely from
+        // WANTKEYS/WANTVALS. That is why `compadd -k 'styles[(R)…]'`
+        // (Zsh/Command/_zstyle:363) yields the KEYS of the entries whose
+        // VALUE matched.
+        let sf = (if keys {
+            crate::ported::zsh_h::SCANPM_WANTKEYS
+        } else {
+            crate::ported::zsh_h::SCANPM_WANTVALS
+        }) | crate::ported::zsh_h::SCANPM_MATCHMANY;
+        let mut vbuf = crate::ported::zsh_h::value {
+            pm: None,
+            arr: Vec::new(),
+            scanflags: 0,
+            valflags: 0,
+            start: 0,
+            end: -1,
+        };
+        let mut cursor: &str = name;
+        let result =
+            match crate::ported::params::fetchvalue(Some(&mut vbuf), &mut cursor, 1, sf as i32) {
+                None => None, // c:2034-2035
+                Some(v) => {
+                    // c:2037 — `ret = getarrvalue(v)`. zshrs's `getarrvalue`
+                    // takes the resolved array plus the slice bounds rather
+                    // than the Value, so spell out the C body's steps here.
+                    //
+                    // c:2554-2555 — `else if (IS_UNSET_VALUE(v)) return
+                    // arrdup(&nular[1]);` (empty). IS_UNSET_VALUE (c:472-474)
+                    // is `!pm || (pm->flags & PM_UNSET) || !*pm->nam`, which is
+                    // how a missing assoc KEY reports nothing: getindex rebinds
+                    // `v->pm` to a `PM_SCALAR|PM_UNSET` element on a miss
+                    // (c:1588).
+                    let unset = v.pm.as_ref().map_or(true, |p| {
+                        (p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0
+                            || p.node.nam.is_empty()
+                    });
+                    if unset {
+                        Some(Vec::new()) // c:2555
+                    } else {
+                        let arr = crate::ported::params::getvaluearr(Some(&mut *v)); // c:2564
+                        if v.start == 0 && v.end == -1 {
+                            // c:2565-2566 — whole-value read: hand the array
+                            // straight back. A PRESENT assoc key lands here
+                            // with an empty `arr` (getvaluearr has no
+                            // PM_SCALAR arm, c:719), which is C's "a scalar
+                            // element is not a match list" answer.
+                            Some(arr)
+                        } else {
+                            Some(crate::ported::params::getarrvalue(
+                                &arr,
+                                v.start as i64,
+                                v.end as i64,
+                            ))
+                        }
+                    }
+                }
+            };
+        unqueue_signals(); // c:2039
+        return result;
+    }
+
     // Route through the same param accessors `${(k)name}` / `${(v)name}`
     // / `${name}` use so SPECIAL magic hashes (`commands`, `builtins`,
     // `functions`, `aliases`, `reswords`, …) resolve via their module
@@ -3547,6 +3737,48 @@ pub fn addmatches(
     let mut lpre = compprefix_s.clone();
     let mut lsuf = compsuffix_s.clone();
 
+    // c:2266-2276 — "Test if there is an existing -P prefix":
+    //     if (dat->pre && *dat->pre) {
+    //         int prefix_length = pfxlen(dat->pre, lpre);
+    //         if (dat->pre[prefix_length] == '\0' ||
+    //             lpre[prefix_length] == '\0') {
+    //             /* $compadd_args[-P] is a prefix of ${PREFIX}, or
+    //              * vice-versa. */
+    //             llpl -= prefix_length;
+    //             lpre += prefix_length;
+    //         }
+    //     }
+    // `compadd -P PRE` puts PRE on the line AHEAD of every candidate, so —
+    // exactly like the `-p PPRE` strip below — it has to come off `lpre`
+    // before comp_match compares the candidates against it. `dat.pre` stays
+    // in the add_match_data call further down; that is what re-inserts it.
+    // This step was missing entirely, so `_zstyle`'s
+    //     compadd -P : -qS : chpwd completion vcs_info zftp zle
+    // matched NOTHING the moment $PREFIX was ":" — comp_match(":", "",
+    // "chpwd") rejects every candidate — which is the whole `zstyle <TAB>`
+    // divergence. C compares C strings byte-wise, so the shared-prefix
+    // length is a BYTE count here (zle_tricky::pfxlen counts chars, which
+    // would mis-slice a multibyte prefix).
+    if (dat.aflags & CAF_MATCH) != 0 {
+        // c:2267
+        if let Some(pre) = dat.pre.as_deref() {
+            if !pre.is_empty() {
+                // c:2268 — `pfxlen(dat->pre, lpre)`, in bytes.
+                let prefix_length: usize = pre
+                    .chars()
+                    .zip(lpre.chars())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(a, _)| a.len_utf8())
+                    .sum();
+                // c:2269-2270 — one of the two ran out at the split point,
+                // i.e. one is a prefix of the other.
+                if prefix_length == pre.len() || prefix_length == lpre.len() {
+                    lpre = lpre[prefix_length..].to_string(); // c:2273-2274
+                }
+            }
+        }
+    }
+
     // c:2084 — `char *oppre = dat->ppre`: the UNQUOTED path prefix as it
     // arrived, captured before the c:2288 quoting rewrites `dat.ppre`. Used
     // as the `prpre` default at c:2436.
@@ -3583,8 +3815,16 @@ pub fn addmatches(
                 // through comp_match's own output, and instmatch re-inserts
                 // dat.ppre from the Cmatch, so the probe's `pline` is unused).
                 crate::ported::zle::compmatch::start_match();
-                let ml =
-                    crate::ported::zle::compmatch::match_str(&lpre, ppre, None, 0, None, 0, 0, 1);
+                let ml = crate::ported::zle::compmatch::match_str(
+                    lpre.as_bytes(),
+                    ppre.as_bytes(),
+                    None,
+                    0,
+                    None,
+                    0,
+                    0,
+                    1,
+                );
                 if ml >= 0 {
                     // c:2318-2325 — matcher matched the prefix.
                     let cut = (ml as usize).min(lpre.len());
@@ -4120,15 +4360,15 @@ pub fn add_match_data(
     // c:2663 — DPUTS(!line, "BUG: add_match_data() without cline")
     DPUTS!(line.is_none(), "BUG: add_match_data() without cline"); // c:2663
                                                                    // c:2656 — `Aminfo ai = (alt ? fainfo : ainfo);` — EVERY `ai->…` below
-    // (c:3002 join_clines, c:3005 count++, c:3023 firstm, c:3036-3063 exact)
-    // goes through this selection. The port bound it and then used the plain
-    // `ainfo` at all five sites, so every alternate-set match (`alt != 0` —
-    // the fignore/ignored-suffix path) accumulated into the MAIN aminfo:
-    // `ainfo.count` counted matches that were never offered, and the
-    // unambiguous cline built from `ainfo.line` was polluted by strings the
-    // user asked to ignore.
+                                                                   // (c:3002 join_clines, c:3005 count++, c:3023 firstm, c:3036-3063 exact)
+                                                                   // goes through this selection. The port bound it and then used the plain
+                                                                   // `ainfo` at all five sites, so every alternate-set match (`alt != 0` —
+                                                                   // the fignore/ignored-suffix path) accumulated into the MAIN aminfo:
+                                                                   // `ainfo.count` counted matches that were never offered, and the
+                                                                   // unambiguous cline built from `ainfo.line` was polluted by strings the
+                                                                   // user asked to ignore.
     let ai_ref: &OnceLock<Mutex<Option<Aminfo>>> = if alt != 0 { &fainfo } else { &ainfo }; // c:2656
-                                                           // c:2666-2671 — cline_matched(line); pline; sline.
+                                                                                            // c:2666-2671 — cline_matched(line); pline; sline.
     cline_matched(&mut line);
     if pline.is_some() {
         cline_matched(&mut pline);
@@ -5142,10 +5382,10 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                         n -= 1; // c:3336
                     }
                     let run_end = bp; // c:3337 `ap = bp`
-                    // c:3338-3342 — mark, do NOT remove: `n` is untouched and
-                    // the outer loop resumes at `run_end + 1`, so CMF_MULT
-                    // elements stay in the array (they are dropped from the
-                    // LISTING via `nl` at c:3351-3352, not from `mcount`).
+                                      // c:3338-3342 — mark, do NOT remove: `n` is untouched and
+                                      // the outer loop resumes at `run_end + 1`, so CMF_MULT
+                                      // elements stay in the array (they are dropped from the
+                                      // LISTING via `nl` at c:3351-3352, not from `mcount`).
                     let mut mark = run_end;
                     let mut dup = 0i32;
                     while mark + 1 < rp.len()
@@ -7206,7 +7446,22 @@ mod tests {
             *g = Some(Aminfo::default());
         }
         let _ = add_match_data(
-            0, "x", "x", None, "", "", "", Some(""), "", "", None, "", None, Some(""), 0, 1,
+            0,
+            "x",
+            "x",
+            None,
+            "",
+            "",
+            "",
+            Some(""),
+            "",
+            "",
+            None,
+            "",
+            None,
+            Some(""),
+            0,
+            1,
         );
         let a = ainfo.get().unwrap().lock().unwrap().clone().unwrap();
         useexact.store(saved_useexact, Ordering::Relaxed);

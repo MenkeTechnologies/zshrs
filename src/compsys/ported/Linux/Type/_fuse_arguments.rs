@@ -179,7 +179,18 @@ pub fn _fuse_arguments(args: &[String]) -> i32 {
     call.push("-R".to_string());
     call.extend(opts);
     call.extend(remaining);
-    let mut ret = _arguments(&call);
+    // By NAME, not as a direct Rust call. `_arguments` is a shell function in
+    // zsh, so `comp_wrapper` (`Src/Zle/complete.c:1556`) gives it its own
+    // frame; c:1642 then puts the CALLER's `compstate[restore]` back on the way
+    // out. That is exactly what bounds `_arguments`' own
+    // `compstate[restore]=''` (`_arguments.rs:1130`, sh:401) — the marker that
+    // deliberately keeps its `words`/`CURRENT` narrowing alive for the action it
+    // dispatched. Called directly there is no frame, so the `''` lands in THIS
+    // function's frame and cancels the restore its caller was owed. The status
+    // (including the 300 "state" protocol value read just below) is returned
+    // unchanged: `doshfunc` propagates `LASTVAL` as an i32 with no masking.
+    let mut ret =
+        crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call));
 
     // sh:46-51
     if ret == 300 {

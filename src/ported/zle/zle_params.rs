@@ -19,7 +19,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use crate::ported::params::{setiparam, setsparam};
-use crate::ported::zle::compcore::ZMULT;
 use crate::ported::zle::zle_h::{WidgetImpl, MOD_MULT, MOD_NEG, MOD_TMULT};
 use crate::ported::zle::zle_hist::{ISEARCH_ACTIVE, ISEARCH_ENDPOS, ISEARCH_STARTPOS};
 use crate::ported::zle::zle_keymap::{addkeybuf, freekeynode, KeyBinding};
@@ -34,61 +33,97 @@ use crate::ported::zle::{
     zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 use crate::ported::zsh_h::{
-    hashnode, param, ScanFunc, PM_READONLY, PM_SCALAR, ZLCON_LINE_CONT, ZLCON_LINE_START,
-    ZLCON_SELECT, ZLCON_VARED,
+    hashnode, param, ScanFunc, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY,
+    PM_REMOVABLE, PM_SCALAR, PM_SPECIAL, PM_UNSET, ZLCON_LINE_CONT, ZLCON_LINE_START, ZLCON_SELECT,
+    ZLCON_VARED,
 };
 
-/// Names of the ZLE special parameters, in the order of the C
-/// `zleparams[]` table (`Src/Zle/zle_params.c:141-188`) plus the
-/// `registers` special hash `makezleparams` adds at c:225.
+/// The ZLE special parameters, in the order of the C `zleparams[]`
+/// table (`Src/Zle/zle_params.c:141-188`) plus the `registers` special
+/// hash `makezleparams` adds at c:225.
 ///
 /// C reaches these through `zleparams[]` itself; the Rust port has no
-/// such table (each entry's gsu is a plain accessor fn), so the NAMES
-/// are kept here for the callers that need to act on the whole family:
-/// `compcore::callcompfunc` stamps the completion-scope level onto them
-/// so `endparamscope` tears them down again (c:compcore.c:820/839).
-pub const ZLEPARAM_NAMES: &[&str] = &[
-    "BUFFER",              // c:142
-    "BUFFERLINES",         // c:143
-    "CONTEXT",             // c:145
-    "CURSOR",              // c:147
-    "CUTBUFFER",           // c:149
-    "HISTNO",              // c:150
-    "KEYMAP",              // c:151
-    "KEYS",                // c:152
-    "KEYS_QUEUED_COUNT",   // c:153
-    "killring",            // c:155
-    "LASTABORTEDSEARCH",   // c:156
-    "LASTSEARCH",          // c:158
-    "LASTWIDGET",          // c:159
-    "LBUFFER",             // c:160
-    "MARK",                // c:161
-    "NUMERIC",             // c:162
-    "PENDING",             // c:163
-    "POSTDISPLAY",         // c:164
-    "PREBUFFER",           // c:165
-    "PREDISPLAY",          // c:166
-    "RBUFFER",             // c:167
-    "REGION_ACTIVE",       // c:168
-    "region_highlight",    // c:169
-    "UNDO_CHANGE_NO",      // c:170
-    "UNDO_LIMIT_NO",       // c:172
-    "WIDGET",              // c:173
-    "WIDGETFUNC",          // c:174
-    "WIDGETSTYLE",         // c:175
-    "YANK_START",          // c:176
-    "YANK_END",            // c:177
-    "YANK_ACTIVE",         // c:178
-    "ISEARCHMATCH_START",  // c:179
-    "ISEARCHMATCH_END",    // c:180
-    "ISEARCHMATCH_ACTIVE", // c:181
-    "SUFFIX_START",        // c:182
-    "SUFFIX_END",          // c:183
-    "SUFFIX_ACTIVE",       // c:184
-    "ZLE_RECURSIVE",       // c:185
-    "ZLE_STATE",           // c:186
-    "registers",           // c:225 createspecialhash
-];
+/// such table (each entry's gsu is a plain accessor fn), so the table
+/// is kept here in two views generated from ONE list so they cannot
+/// drift apart:
+///
+/// * `ZLEPARAM_NAMES` — the names. `compcore::callcompfunc` walks it to
+///   stamp the completion-scope level onto every published name so
+///   `endparamscope` tears them down again (c:compcore.c:820/839).
+/// * `ZLEPARAM_TABLE` — name + C's `zp->type` word. `makezleparams`
+///   walks it to reproduce c:200-206 (`PM_SPECIAL|PM_REMOVABLE|PM_LOCAL`
+///   plus the per-parameter `PM_READONLY`/`PM_UNSET` bits) and the
+///   `pm->level = locallevel + 1` scope stamp.
+macro_rules! zleparams_table {
+    ($($name:literal => $ty:expr),* $(,)?) => {
+        /// Names of the ZLE special parameters — see [`ZLEPARAM_TABLE`].
+        pub const ZLEPARAM_NAMES: &[&str] = &[$($name),*];
+        /// `(name, zp->type)` pairs from the C `zleparams[]` table.
+        pub const ZLEPARAM_TABLE: &[(&str, u32)] = &[$(($name, $ty)),*];
+    };
+}
+
+zleparams_table! {
+    "BUFFER" => PM_SCALAR,                            // c:142
+    "BUFFERLINES" => PM_INTEGER | PM_READONLY,        // c:143
+    "CONTEXT" => PM_SCALAR | PM_READONLY,             // c:145
+    "CURSOR" => PM_INTEGER,                           // c:147
+    "CUTBUFFER" => PM_SCALAR,                         // c:149
+    "HISTNO" => PM_INTEGER,                           // c:150
+    "KEYMAP" => PM_SCALAR | PM_READONLY,              // c:151
+    "KEYS" => PM_SCALAR | PM_READONLY,                // c:152
+    "KEYS_QUEUED_COUNT" => PM_INTEGER | PM_READONLY,  // c:153
+    "killring" => PM_ARRAY,                           // c:155
+    "LASTABORTEDSEARCH" => PM_SCALAR | PM_READONLY,   // c:156
+    "LASTSEARCH" => PM_SCALAR | PM_READONLY,          // c:158
+    "LASTWIDGET" => PM_SCALAR | PM_READONLY,          // c:159
+    "LBUFFER" => PM_SCALAR,                           // c:160
+    "MARK" => PM_INTEGER,                             // c:161
+    "NUMERIC" => PM_INTEGER | PM_UNSET,               // c:162
+    "PENDING" => PM_INTEGER | PM_READONLY,            // c:163
+    "POSTDISPLAY" => PM_SCALAR,                       // c:164
+    "PREBUFFER" => PM_SCALAR | PM_READONLY,           // c:165
+    "PREDISPLAY" => PM_SCALAR,                        // c:166
+    "RBUFFER" => PM_SCALAR,                           // c:167
+    "REGION_ACTIVE" => PM_INTEGER,                    // c:168
+    "region_highlight" => PM_ARRAY,                   // c:169
+    "UNDO_CHANGE_NO" => PM_INTEGER | PM_READONLY,     // c:170
+    "UNDO_LIMIT_NO" => PM_INTEGER,                    // c:172
+    "WIDGET" => PM_SCALAR | PM_READONLY,              // c:173
+    "WIDGETFUNC" => PM_SCALAR | PM_READONLY,          // c:174
+    "WIDGETSTYLE" => PM_SCALAR | PM_READONLY,         // c:175
+    "YANK_START" => PM_INTEGER,                       // c:176
+    "YANK_END" => PM_INTEGER,                         // c:177
+    "YANK_ACTIVE" => PM_INTEGER | PM_READONLY,        // c:178
+    "ISEARCHMATCH_START" => PM_INTEGER,               // c:179
+    "ISEARCHMATCH_END" => PM_INTEGER,                 // c:180
+    "ISEARCHMATCH_ACTIVE" => PM_INTEGER | PM_READONLY, // c:181
+    "SUFFIX_START" => PM_INTEGER,                     // c:182
+    "SUFFIX_END" => PM_INTEGER,                       // c:183
+    "SUFFIX_ACTIVE" => PM_INTEGER | PM_READONLY,      // c:184
+    "ZLE_RECURSIVE" => PM_INTEGER | PM_READONLY,      // c:185
+    "ZLE_STATE" => PM_SCALAR | PM_READONLY,           // c:186
+    // c:225-228 — `createspecialhash("registers", …, PM_LOCAL|PM_REMOVABLE)`.
+    // Not published yet (needs the special-hash gsu substrate); listed so
+    // the scope stamp covers it the moment it is.
+    "registers" => PM_HASHED,
+}
+
+/// `$KEYMAP` is `PM_SCALAR|PM_READONLY` in C (c:151) but is NOT stamped
+/// read-only here.
+///
+/// C backs it with a live getfn (`get_keymap`, c:456 → `curkeymapname`)
+/// so the value tracks `zle -K` with no write ever happening. zshrs has
+/// no gsu vtable: the only way to keep `$KEYMAP` current mid-widget is
+/// `zle_keymap::selectkeymap`'s `setsparam("KEYMAP", …)`
+/// (zle_keymap.rs:979), and `assignsparam` rejects a read-only target
+/// with a `zerr` (params.rs:7121-7122). Stamping PM_READONLY would turn
+/// every in-widget `zle -K` into a "read-only variable: KEYMAP" message
+/// on the user's terminal and freeze `$KEYMAP` at its entry value.
+///
+/// Removing this exemption is gated on `$KEYMAP` growing a real getfn
+/// (owner: params.rs gsu substrate + zle_keymap.rs), not on this file.
+const ZLEPARAM_READONLY_EXEMPT: &[&str] = &["KEYMAP"];
 
 /// `$BUFFER` accessor — full edited line as a String.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c (the
@@ -115,6 +150,24 @@ pub const ZLEPARAM_NAMES: &[&str] = &[
 pub fn makezleparams(ro: i32) {
     // c:194
 
+    // c:200-206 — C creates every entry fresh with
+    // `PM_SPECIAL|PM_REMOVABLE|PM_LOCAL` and stamps `pm->level =
+    // locallevel + 1`, so the family belongs to the scope the caller
+    // just pushed and `endparamscope` deletes it again. The Rust port
+    // publishes VALUES through setsparam/setiparam/setaparam (there is
+    // no gsu vtable), which leaves ordinary level-0 globals behind, so
+    // the three C teardown sites (zle_main.c:1540, :2117,
+    // compcore.c:839) had nothing to collect and all 37 names leaked
+    // into the interactive shell on the first widget call.
+    //
+    // Order matters: pick the scope level, clear the read-only stamp a
+    // previous publish left (C re-creates the params instead), shadow
+    // any same-named global so it is not destroyed with the scope, THEN
+    // publish, THEN stamp flags + level (c:200-206, c:221-222).
+    let level = zleparams_level(ro);
+    zleparams_unlock();
+    zleparams_shadow(level);
+
     // Snapshot through the canonical GSU getter ports (get_buffer /
     // get_lbuffer / get_rbuffer / get_cursor read the LIVE editor
     // state in zle_main::ZLELINE / ZLECS). The previous version read
@@ -130,12 +183,17 @@ pub fn makezleparams(ro: i32) {
     let _ = setsparam("LBUFFER", &lbuf); // c:zleparams[1]
     let _ = setsparam("RBUFFER", &rbuf); // c:zleparams[2]
     let _ = setiparam("CURSOR", cs as i64); // c:zleparams[3]
-    let _ = setiparam("NUMERIC", ZMULT.load(Ordering::Relaxed) as i64); // c:zleparams[7]
-                                                                        // $KEYMAP — currently-active keymap name (zle_params.c backs this
-                                                                        // with the get_keymap getfn). Seed it here so a widget that reads
-                                                                        // $KEYMAP before any keymap switch (or when the shell starts in vi
-                                                                        // mode) sees a value; selectkeymap keeps it in sync on every
-                                                                        // change. Without it $KEYMAP was empty in zle-keymap-select. Bug #654.
+                                            // c:162 + c:485-487 — `get_numeric` returns `zmult`, which is
+                                            // `zmod.mult` (zle.h `#define zmult zmod.mult`); `handleprefixes`
+                                            // (zle_main.c:1618) has already promoted the digit-argument prefix
+                                            // into it. compcore's ZMULT is an unrelated counter that stays 1, so
+                                            // `ESC-3 <widget>` reported `$NUMERIC=1` where zsh reports 3.
+    let _ = setiparam("NUMERIC", get_numeric() as i64); // c:zleparams[7]
+                                                        // $KEYMAP — currently-active keymap name (zle_params.c backs this
+                                                        // with the get_keymap getfn). Seed it here so a widget that reads
+                                                        // $KEYMAP before any keymap switch (or when the shell starts in vi
+                                                        // mode) sees a value; selectkeymap keeps it in sync on every
+                                                        // change. Without it $KEYMAP was empty in zle-keymap-select. Bug #654.
     let _ = setsparam("KEYMAP", &super::zle_params::get_keymap()); // c:zleparams KEYMAP
                                                                    // $BUFFERLINES — count of newlines in BUFFER + 1.
     let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;
@@ -208,6 +266,18 @@ pub fn makezleparams(ro: i32) {
         "UNDO_LIMIT_NO",
         crate::ported::zle::zle_main::UNDO_LIMITNO.load(Ordering::SeqCst) as i64,
     ); // c:172
+       // c:156/158 — the incremental-search result params. Listed in
+       // `zleparams[]` but never published here, so `$LASTSEARCH` /
+       // `$LASTABORTEDSEARCH` read empty inside widgets where zsh has the
+       // last isearch string (vi-mode `n` / `N` wrappers use them).
+    let _ = setsparam("LASTABORTEDSEARCH", &get_lasearch()); // c:156
+    let _ = setsparam("LASTSEARCH", &get_lsearch()); // c:158
+
+    // c:200-206 + c:221-222 — install C's flags and scope level on
+    // everything just published. Runs for BOTH `ro` values: the
+    // completion (compcore.c:820) and trap (zle_main.c:2108) call sites
+    // need the teardown stamp just as much as the widget one.
+    zleparams_stamp(ro, level);
 
     // RUST-ONLY (crate::zle_param_sync — adapter for C's live GSU
     // setters): record the values just snapshotted so the sync
@@ -237,7 +307,178 @@ pub fn makezleparams(ro: i32) {
         cutbuffer,
         killring_v,
     );
+
+    // RUST-ONLY helpers, nested because they have no C counterpart:
+    // C does all four jobs inline in the c:199-223 loop, through
+    // `createparam` flags it can pass in one call.
+    /// Scope level to stamp on the ZLE specials — c:206 `pm->level =
+    /// locallevel + 1`.
+    ///
+    /// `ro != 0` (completion c:820, trap c:2108) is C's value verbatim: the
+    /// params die with the function `doshfunc` is about to run.
+    ///
+    /// `ro == 0` (widget entry, zle_main.c:1534) uses `locallevel`, one
+    /// LESS than C. zshrs has no gsu setters, so a widget's `BUFFER=…`
+    /// write lands in the paramtab and only reaches the editor when
+    /// `zle_param_sync::sync_from_paramtab()` reads it back — and that read
+    /// happens AFTER `doshfunc` returns (zle_main.rs:1649). At
+    /// `locallevel + 1` the params would be the widget function's own
+    /// locals, so `doshfunc`'s `endparamscope` would delete them before the
+    /// read and every widget assignment would be silently dropped.
+    /// `locallevel` puts them in the scope `execzlefunc` pushed at
+    /// zle_main.rs:1620, which is popped at zle_main.rs:1652 — one line
+    /// after the sync. Both choices are torn down before the prompt
+    /// returns; only this one survives long enough to be read back.
+    fn zleparams_level(ro: i32) -> i32 {
+        let ll = crate::ported::params::locallevel.load(Ordering::Relaxed);
+        if ro != 0 {
+            return ll + 1; // c:206
+        }
+        // A publish into a scope that already holds this family (the
+        // mid-widget refresh) must not re-level it: keep the level the
+        // family was installed at. `BUFFER` is always published, so it
+        // stands for the whole family, which C creates at one level.
+        let installed = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("BUFFER").map(|p| (p.level, p.node.flags as u32)));
+        let stamp = (PM_SPECIAL | PM_REMOVABLE) as u32;
+        if let Some((lvl, flags)) = installed {
+            if lvl > 0 && lvl <= ll && flags & stamp == stamp {
+                return lvl;
+            }
+        }
+        // Family absent but a widget scope is still live: it was torn down
+        // under us by a nested completion (compcore.c:820 re-levels the
+        // family to its own scope, compcore.rs:1277). Re-publish at the
+        // widget's level, not the level of whatever function is running.
+        if crate::zle_param_sync::active() {
+            let remembered = WIDGET_PARAM_LEVEL.load(Ordering::Relaxed);
+            if remembered > 0 && remembered <= ll {
+                return remembered;
+            }
+        }
+        WIDGET_PARAM_LEVEL.store(ll, Ordering::Relaxed);
+        ll
+    }
+
+    /// Clear the `PM_READONLY` bit a previous publish stamped — c:200.
+    ///
+    /// C calls `createparam` on every entry every time, so the read-only
+    /// bit is rebuilt from scratch and never blocks the next publish. The
+    /// Rust port re-uses the live param and publishes through
+    /// `setsparam`/`setiparam`, which DO enforce PM_READONLY
+    /// (params.rs:7121-7122), so the bit has to come off first.
+    ///
+    /// Only entries carrying this module's own stamp (`PM_SPECIAL |
+    /// PM_REMOVABLE` at a non-global level) are touched — a user's
+    /// `readonly BUFFER` at level 0 is left alone.
+    fn zleparams_unlock() {
+        let stamp = (PM_SPECIAL | PM_REMOVABLE) as u32;
+        let Ok(mut tab) = crate::ported::params::paramtab().write() else {
+            return;
+        };
+        for (name, _) in ZLEPARAM_TABLE {
+            if let Some(pm) = tab.get_mut(*name) {
+                if pm.level > 0 && pm.node.flags as u32 & stamp == stamp {
+                    pm.node.flags &= !((PM_READONLY | PM_UNSET) as i32);
+                }
+            }
+        }
+    }
+
+    /// Push any same-named parameter that is NOT part of this family out of
+    /// the way — the `PM_LOCAL` half of c:200.
+    ///
+    /// C's `createparam(name, …|PM_LOCAL)` chains an outer binding into
+    /// `pm->old` and `endparamscope` restores it. Publishing through
+    /// `setsparam` does not: it writes straight into the existing node, so
+    /// stamping the scope level onto it would make `endparamscope` DELETE a
+    /// variable the user owns (`MARK`, `CONTEXT`, `KEYS` are plausible
+    /// names). Create the shadow explicitly for that case; the common case
+    /// (no such global) does nothing.
+    fn zleparams_shadow(level: i32) {
+        let stamp = (PM_SPECIAL | PM_REMOVABLE) as u32;
+        let foreign: Vec<(&str, u32)> = {
+            let Ok(tab) = crate::ported::params::paramtab().read() else {
+                return;
+            };
+            ZLEPARAM_TABLE
+                .iter()
+                .filter(|(name, _)| {
+                    tab.get(*name)
+                        .is_some_and(|pm| pm.level < level && pm.node.flags as u32 & stamp != stamp)
+                })
+                .map(|(name, ty)| (*name, *ty))
+                .collect()
+        };
+        for (name, ty) in foreign {
+            // c:200 — the type bits from `zp->type` plus PM_LOCAL, which is
+            // what makes createparam chain the outer binding into pm.old.
+            // PM_SPECIAL/PM_READONLY are deliberately NOT passed: they would
+            // skip `assigngetset` (params.rs:2402) and reject the publish
+            // below. zleparams_stamp puts them on afterwards.
+            let ty = crate::ported::zsh_h::PM_TYPE(ty);
+            crate::ported::params::createparam(name, (ty | PM_LOCAL) as i32);
+        }
+    }
+
+    /// Stamp C's `zleparams[]` flags and the scope level onto every entry
+    /// this publish created — c:200-206 plus the `PM_UNSET` fixup at
+    /// c:221-222.
+    ///
+    /// ```c
+    /// Param pm = createparam(zp->name, (zp->type |PM_SPECIAL|PM_REMOVABLE|
+    ///                                   PM_LOCAL|(ro ? PM_READONLY : 0)));
+    /// ...
+    /// pm->level = locallevel + 1;
+    /// ...
+    /// if ((zp->type & PM_UNSET) && (zmod.flags & (MOD_MULT|MOD_TMULT)))
+    ///     pm->node.flags &= ~PM_UNSET;
+    /// ```
+    ///
+    /// `PM_LOCAL` itself is not stamped: C strips it at c:1155
+    /// (`pm->node.flags = flags & ~PM_LOCAL`, params.rs:2401) — it only
+    /// drives the shadow decision, which `zleparams_shadow` already made.
+    fn zleparams_stamp(ro: i32, level: i32) {
+        // c:221 — `zmod.flags & (MOD_MULT|MOD_TMULT)`: a numeric prefix is
+        // in effect, so `$NUMERIC` is set rather than unset. Read it before
+        // taking the paramtab lock.
+        let numeric_given = {
+            let zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
+            zmod.flags & (MOD_MULT | MOD_TMULT) != 0
+        };
+        let Ok(mut tab) = crate::ported::params::paramtab().write() else {
+            return;
+        };
+        for (name, ty) in ZLEPARAM_TABLE {
+            let Some(pm) = tab.get_mut(*name) else {
+                continue; // not published (yet) — nothing to scope
+            };
+            pm.level = level; // c:206
+            pm.node.flags |= (PM_SPECIAL | PM_REMOVABLE) as i32; // c:200
+                                                                 // c:200-201 — `zp->type` read-only bit, plus the blanket one the
+                                                                 // completion / trap call sites pass in `ro`.
+            if (ty & PM_READONLY != 0 || ro != 0) && !ZLEPARAM_READONLY_EXEMPT.contains(name) {
+                pm.node.flags |= PM_READONLY as i32;
+            }
+            // c:221-222 — `$NUMERIC` is created PM_UNSET and only becomes
+            // set when a numeric prefix was typed.
+            if ty & PM_UNSET != 0 && !numeric_given {
+                pm.node.flags |= PM_UNSET as i32;
+            }
+        }
+    }
 }
+
+/// Scope level of the last widget publish (`makezleparams(0)`).
+///
+/// RUST-ONLY. C never needs it: `makezleparams` runs exactly once per
+/// scope, at the top. The port also calls it MID-widget to refresh the
+/// snapshot after a nested `zle <widget>` (zle_thingy.rs:1569), and by
+/// then `locallevel` has moved on, so the level has to be remembered
+/// rather than recomputed.
+static WIDGET_PARAM_LEVEL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `static void zleunsetfn(Param pm, int exp)` from
 /// `Src/Zle/zle_params.c:237`.
@@ -2288,5 +2529,133 @@ mod widget_killring_tests {
                  ZLEPARAM_NAMES — it would survive the completion scope"
             );
         }
+    }
+}
+
+/// `makezleparams` scope + flag parity with `Src/Zle/zle_params.c:200-222`.
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use crate::ported::params::{endparamscope, locallevel, paramtab};
+    use crate::ported::zle::zle_main::{zle_test_setup, ZMOD};
+
+    /// Enter the scope `execzlefunc` pushes at zle_main.c:1533, publish,
+    /// and hand back the level the family must land on.
+    fn enter_widget_scope() -> i32 {
+        crate::zle_param_sync::clear_snapshot();
+        ZMOD.lock().unwrap().flags = 0;
+        locallevel.fetch_add(1, Ordering::Relaxed); // c:1533 startparamscope
+        makezleparams(0); // c:1534
+        locallevel.load(Ordering::Relaxed)
+    }
+
+    fn leave_widget_scope() {
+        crate::zle_param_sync::clear_snapshot();
+        endparamscope(); // c:1540
+    }
+
+    /// c:206 `pm->level = locallevel + 1` + c:200 `PM_SPECIAL|PM_REMOVABLE`
+    /// are what let `endparamscope` (zle_main.c:1540) collect the family.
+    /// Without them all 37 names stayed at level 0 and leaked into the
+    /// interactive shell after the first widget call.
+    #[test]
+    fn published_params_are_scoped_and_endparamscope_collects_them() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let outer = locallevel.load(Ordering::Relaxed);
+        let level = enter_widget_scope();
+
+        let stamp = PM_SPECIAL | PM_REMOVABLE;
+        let mut checked = 0;
+        {
+            let tab = paramtab().read().unwrap();
+            for name in ZLEPARAM_NAMES {
+                let Some(pm) = tab.get(*name) else { continue };
+                assert_eq!(pm.level, level, "${name} not in the widget scope");
+                assert_eq!(
+                    pm.node.flags as u32 & stamp,
+                    stamp,
+                    "${name} lacks PM_SPECIAL|PM_REMOVABLE — c:200"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 30, "only {checked} params published");
+
+        leave_widget_scope();
+        let tab = paramtab().read().unwrap();
+        for name in ZLEPARAM_NAMES {
+            if let Some(pm) = tab.get(*name) {
+                assert!(
+                    pm.level <= outer,
+                    "${name} survived endparamscope at level {} — c:zle_main.c:1540",
+                    pm.level
+                );
+            }
+        }
+    }
+
+    /// c:200-201 `zp->type ... |(ro ? PM_READONLY : 0)` — the read-only
+    /// bit is per-parameter, not blanket. `$KEYMAP` is the one documented
+    /// exemption (see ZLEPARAM_READONLY_EXEMPT).
+    #[test]
+    fn readonly_bits_match_the_c_zleparams_table() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        enter_widget_scope();
+
+        {
+            let tab = paramtab().read().unwrap();
+            for (name, ty) in ZLEPARAM_TABLE {
+                let Some(pm) = tab.get(*name) else { continue };
+                let want = ty & PM_READONLY != 0 && !ZLEPARAM_READONLY_EXEMPT.contains(name);
+                assert_eq!(
+                    pm.node.flags as u32 & PM_READONLY != 0,
+                    want,
+                    "${name} read-only bit disagrees with zleparams[]"
+                );
+            }
+        }
+        leave_widget_scope();
+    }
+
+    /// c:162 `{ "NUMERIC", PM_INTEGER | PM_UNSET, ... }` + c:221-222 — the
+    /// param exists but reads UNSET unless a numeric prefix was typed, so
+    /// `${NUMERIC:-1}` in a widget gets zsh's answer.
+    #[test]
+    fn numeric_is_unset_without_a_prefix_and_set_with_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        enter_widget_scope();
+        assert!(
+            paramtab()
+                .read()
+                .unwrap()
+                .get("NUMERIC")
+                .unwrap()
+                .node
+                .flags as u32
+                & PM_UNSET
+                != 0,
+            "$NUMERIC must be PM_UNSET with no numeric prefix — c:162"
+        );
+
+        // c:221 — `zmod.flags & (MOD_MULT|MOD_TMULT)`: prefix in effect.
+        ZMOD.lock().unwrap().flags = MOD_MULT;
+        makezleparams(0);
+        assert!(
+            paramtab()
+                .read()
+                .unwrap()
+                .get("NUMERIC")
+                .unwrap()
+                .node
+                .flags as u32
+                & PM_UNSET
+                == 0,
+            "$NUMERIC must be set once a numeric prefix is in effect — c:222"
+        );
+        ZMOD.lock().unwrap().flags = 0;
+        leave_widget_scope();
     }
 }

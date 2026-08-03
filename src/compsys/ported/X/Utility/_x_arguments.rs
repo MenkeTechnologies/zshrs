@@ -137,7 +137,15 @@ pub fn _x_arguments(args: &[String]) -> i32 {
     call.push("-R".to_string());
     call.extend(opts);
     call.extend(remaining);
-    let mut ret = _arguments(&call);
+    // By NAME, not a direct Rust call: `_arguments` is a shell function in zsh
+    // and so runs inside its own `comp_wrapper` frame (`Src/Zle/complete.c:1556`),
+    // whose c:1642 epilogue restores the CALLER's `compstate[restore]`. That is
+    // what stops `_arguments`' own `compstate[restore]=''` (`_arguments.rs:1130`)
+    // from cancelling the restore owed to whoever called `_x_arguments`. The
+    // sh:31 opt-out below is this function's own and is unaffected; the 300
+    // status survives `doshfunc` (LASTVAL is an i32, unmasked).
+    let mut ret =
+        crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call));
 
     // sh:28 — ret=$?
     // sh:30-33

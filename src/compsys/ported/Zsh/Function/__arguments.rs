@@ -90,13 +90,18 @@ pub fn __arguments(_args: &[String]) -> i32 {
     let words = getaparam("words").unwrap_or_default();
     let current = getiparam("CURRENT");
 
-    if dashdash_before_current(&words, current) {
-        // sh:23
-        _arguments(&help_branch_specs())
+    // By NAME so `_arguments` runs under its own `comp_wrapper` frame
+    // (c:1556) — that frame is what keeps its `compstate[restore]=''`
+    // (`_arguments.rs:1130`) from cancelling the restore owed to
+    // `__arguments`' caller. `__arguments` and `_arguments` are distinct
+    // names, so the by-name dispatch cannot recurse back here.
+    let specs = if dashdash_before_current(&words, current) {
+        help_branch_specs() // sh:23
     } else {
         // sh:28  (TODO upstream: no support for multiple argument sets)
-        _arguments(&flag_branch_specs())
-    }
+        flag_branch_specs()
+    };
+    crate::compsys::ported::shared::call_compfn("_arguments", &specs, || _arguments(&specs))
 }
 
 #[cfg(test)]

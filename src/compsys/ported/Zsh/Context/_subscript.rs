@@ -52,12 +52,64 @@ fn s(v: &str) -> String {
 }
 
 /// `${(Pt)name}` — typeset-style type of the parameter *named* by
-/// `name`. Returns `"association"`, `"array"`, `"scalar"`, or `""`
-/// (unset). Substring-compatible with the source's `assoc*` /
-/// `array*` / `scalar*` case tests.
+/// `name`. Returns `"association"`, `"array"`, `"integer"`,
+/// `"float"`, `"scalar"`, or `""` (unset). Substring-compatible with
+/// the source's `assoc*` / `array*` / `scalar*` case tests.
+///
+/// The type comes from the `paramtab` node's `PM_TYPE` flag bits —
+/// the same read `${(t)param}` performs (`subst.rs:14836-14858`,
+/// c:Src/subst.c:2817-2825) and the same predicate `zle_tricky.rs`
+/// uses to decide assoc-key vs math subscript context
+/// (`param_is_hashed`, zle_tricky.rs:1742-1752, c:Src/Zle/zle_tricky.c:
+/// 1515). Flags — not a value lookup — is what upstream tests, and it
+/// is the only read that answers for the module-magic specials
+/// (`commands`, `aliases`, `functions`, …): those live in
+/// `PARTAB`/`PARTAB_ARRAY` and are seeded into `paramtab` as
+/// `PM_SPECIAL` stubs carrying the row's `PM_HASHED`/`PM_ARRAY` bit
+/// (`vm_helper.rs:5121-5156 init_partab_params`) while their VALUES
+/// are served by `partab_get`/`partab_scan_keys`/`partab_array_get`.
+/// A value-based classification therefore reported `""` for every one
+/// of them and `_subscript` fell through to `_dispatch -math- -math-`.
+///
+/// The value lookups are kept as a fallback for names with no
+/// `paramtab` node at all (e.g. an assoc whose only trace is the
+/// parallel `paramtab_hashed_storage` map) and for namerefs, whose
+/// target type `getaparam`/`getsparam` already resolve.
 fn param_type(name: &str) -> String {
+    use crate::ported::zsh_h::{
+        PM_ARRAY, PM_DECLARED, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_UNSET,
+    };
     if name.is_empty() {
         return String::new();
+    }
+    // `paramtab` PM_TYPE read — c:Src/subst.c:2814. A shadowing local
+    // replaces the special's node (c:Src/params.c:1090-1115
+    // createparam), so this automatically reports the visible binding's
+    // type rather than the special's.
+    let flags: Option<u32> = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|tab| tab.get(name).map(|pm| pm.node.flags as u32));
+    if let Some(f) = flags {
+        // c:Src/subst.c:2855-2856 — an unset *and* undeclared param has
+        // no type tag. Same guard as the `(t)` arm at subst.rs:14665.
+        let live = (f & PM_DECLARED) != 0 || (f & PM_UNSET) == 0;
+        if live {
+            // c:2817-2825 — same precedence as the `(t)` tag builder.
+            if f & PM_HASHED != 0 {
+                return s("association");
+            } else if f & PM_ARRAY != 0 {
+                return s("array");
+            } else if f & PM_INTEGER != 0 {
+                return s("integer");
+            } else if f & (PM_EFLOAT | PM_FFLOAT) != 0 {
+                return s("float");
+            } else if f & PM_NAMEREF == 0 {
+                return s("scalar");
+            }
+            // PM_NAMEREF falls through: the value lookups below resolve
+            // the reference and report the TARGET's type (c:2800-2806).
+        }
     }
     let is_assoc = crate::ported::params::paramtab_hashed_storage()
         .lock()
@@ -324,17 +376,36 @@ pub fn _subscript(args: &[String]) -> i32 {
         // sh:83  _values -s '' 'subscript flag' $flags
         let mut vargs: Vec<String> = vec![s("-s"), s(""), s("subscript flag")];
         vargs.extend(flags);
-        return _values(&vargs);
+        // By NAME so `_values` gets its own `comp_wrapper` frame (c:1556):
+        // it rewrites PREFIX/SUFFIX/IPREFIX and sets `compstate[restore]=''`
+        // (`_values.rs:235-283`, `:388`), and the frame is what undoes both
+        // instead of letting them leak into `_subscript`'s caller.
+        return crate::compsys::ported::shared::call_compfn("_values", &vargs, || _values(&vargs));
     }
 
     // sh:84  elif (Pt) == assoc*  → association-key completion
     if param_type(&param).starts_with("assoc") {
         // sh:86-88  keys with special chars backslash-escaped, and a
         //   key that is exactly `*` or `@` rewritten as `(e)*` / `(e)@`.
+        //   `${(@k)${(P)compstate[parameter]}}` — the key set. A user
+        //   assoc's keys live in the parallel `paramtab_hashed_storage`
+        //   map; a module-magic assoc (`commands`, `aliases`, …) has NO
+        //   entry there and is enumerated through its `PARTAB` row's
+        //   canonical `scanfn` instead (vm_helper.rs:5025
+        //   `partab_scan_keys`, c:Src/Modules/parameter.c scanpm* family).
+        //   Without the second source this array came back empty for
+        //   every special.
         let mut keys: Vec<String> = Vec::new();
+        let mut from_storage = false;
         if let Ok(tab) = crate::ported::params::paramtab_hashed_storage().lock() {
             if let Some(h) = tab.get(&param) {
                 keys.extend(h.keys().cloned());
+                from_storage = true;
+            }
+        }
+        if !from_storage {
+            if let Some(k) = crate::vm_helper::partab_scan_keys(&param) {
+                keys = k;
             }
         }
         for k in keys.iter_mut() {
@@ -397,7 +468,16 @@ pub fn _subscript(args: &[String]) -> i32 {
             // sh:99  if _requested indexes; then
             if _requested(&[s("indexes")]) == 0 {
                 // sh:100  ind=( {1..${#${(P)compstate[parameter]}}} )
-                let arr = getaparam(&param).unwrap_or_default();
+                //   `getaparam` reads `pm.u_arr` only (params.rs:5275-5281),
+                //   which is `None` on the `PM_SPECIAL` stub seeded for a
+                //   `PARTAB_ARRAY` magic array (`dirstack`, `funcstack`,
+                //   `reswords`, …) — those compute their elements in the
+                //   row's whole-array getfn. Fall back to that dispatch
+                //   (vm_helper.rs:4998 `partab_array_get`, c:Src/Modules/
+                //   parameter.c:2239-2291) so the index list is non-empty.
+                let arr = getaparam(&param)
+                    .or_else(|| crate::vm_helper::partab_array_get(&param))
+                    .unwrap_or_default();
                 let n = arr.len();
                 let ind: Vec<String> = (1..=n).map(|i| i.to_string()).collect();
                 setaparam("ind", ind.clone());
@@ -543,6 +623,51 @@ mod tests {
         assert_eq!(param_type("st_array"), "array");
         assert_eq!(param_type("never_ever_set_qwerty"), "");
         assert_eq!(param_type(""), "");
+    }
+
+    #[test]
+    fn param_type_classifies_module_magic_specials_from_flags() {
+        // sh:84 / sh:93 — `${(Pt)${compstate[parameter]}}` must report
+        //   `assoc*` for a PM_HASHED magic special and `array*` for a
+        //   PM_ARRAY one. These names have no `paramtab_hashed_storage`
+        //   entry and no `pm.u_arr`, so a value-based classification
+        //   returned "" and `echo $commands[<TAB>` fell through to
+        //   `_dispatch -math- -math-` instead of completing keys.
+        let _g = crate::test_util::global_state_lock();
+        // `init_partab_params` seeds the PROCESS-WIDE paramtab and the lock
+        // only serializes access — it does not undo the mutation. Left in
+        // place, the seeded `commands` stub changes what a later test in the
+        // same process sees (`_x_color`'s `setaparam("commands", …)` then
+        // reads it back), so this test passed alone and failed in a full run.
+        // Snapshot the table and remove exactly what we added.
+        let before: std::collections::HashSet<String> = crate::ported::params::paramtab()
+            .read()
+            .map(|t| t.keys().cloned().collect())
+            .unwrap_or_default();
+        crate::vm_helper::init_partab_params();
+        assert_eq!(param_type("commands"), "association");
+        assert_eq!(param_type("aliases"), "association");
+        assert_eq!(param_type("dirstack"), "array");
+        assert_eq!(param_type("funcstack"), "array");
+        assert_eq!(param_type("reswords"), "array");
+        let added: Vec<String> = crate::ported::params::paramtab()
+            .read()
+            .map(|t| {
+                t.keys()
+                    .filter(|k| !before.contains(*k))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Drop the seeded nodes straight out of the table. `unsetparam`
+        // refuses PM_SPECIAL/PM_READONLY entries, which is exactly what these
+        // magic rows are, so it leaves them behind and the next test in the
+        // process still sees a `commands` stub.
+        if let Ok(mut t) = crate::ported::params::paramtab().write() {
+            for name in &added {
+                t.remove(name);
+            }
+        }
     }
 
     #[test]

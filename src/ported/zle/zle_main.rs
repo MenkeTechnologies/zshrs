@@ -1166,6 +1166,17 @@ pub fn zleread(
     // `RAW_LP`/`RAW_RP` statics (zle_main.rs).
     *RAW_LP.lock().unwrap() = lprompt.to_string();
     *RAW_RP.lock().unwrap() = rprompt.to_string();
+    // c:1250 — `keytimeout = (time_t)getiparam("KEYTIMEOUT");`. The
+    // ZLE-side global is refreshed from the parameter once per edit
+    // session, so a `KEYTIMEOUT=1` in .zshrc (or a mid-session change)
+    // takes effect on the NEXT line, not retroactively. Without this
+    // the static below kept its startup value forever and `$KEYTIMEOUT`
+    // was decorative.
+    KEYTIMEOUT.store(
+        crate::ported::params::getiparam("KEYTIMEOUT").max(0) as u64,
+        SeqCst,
+    ); // c:1250
+
     // c:1260-1261 — `if (termflags & TERM_UNKNOWN) init_term();` —
     // make sure the terminal caps are set up before the first paint.
     if crate::ported::params::TERMFLAGS.load(SeqCst) & crate::ported::zsh_h::TERM_UNKNOWN != 0 {
@@ -3699,9 +3710,9 @@ pub static ZLE_RECURSIVE: std::sync::atomic::AtomicI32 = std::sync::atomic::Atom
 
 /// Port of `time_t keytimeout` from `Src/Zle/zle_main.c`. Multi-byte
 /// key-sequence timeout in 100ths of a second. 0 = no timeout. The
-/// default 10 (0.1s) matches zsh 5.9.1's observed `$KEYTIMEOUT`
-/// startup default. Bug #321 in docs/BUGS.md.
-pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(10);
+/// default 40 (0.4s) is `Src/params.c:859` — `setiparam("KEYTIMEOUT",
+/// 40);` in `createparamtable`.
+pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(40);
 
 /// Port of `int lastcmd` from `Src/Zle/zle_main.c:145`. Flags of
 /// the most-recently-executed widget — drives `yank`/`yank-pop`

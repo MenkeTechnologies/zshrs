@@ -1532,18 +1532,53 @@ impl modulestab {
         // their MOD_LINKED-without-MOD_INIT_B initial state so the
         // `zmodload` (no-args) listing — gated on MOD_INIT_B per
         // bug #76 — still shows only `zsh/main`.
-        //
-        // boot_ honours --zsh parity mode internally — the
-        // partab registration always runs (so `$+WATCH`/`$+watch`/
-        // `${(t)WATCHFMT}` report the same shape as zsh -fc) but
-        // the WATCHFMT/LOGCHECK default-value seeding is skipped
-        // when IS_ZSH_MODE is set, matching zsh -fc where the
-        // names are declared but empty until `zmodload zsh/watch`.
         for name in zsh_default_loaded {
             #[allow(clippy::single_match)]
             match *name {
                 "zsh/watch" => {
+                    // `Src/Modules/watch.mdd` is `link=dynamic` with
+                    // `autofeatures="b:log p:WATCH p:watch"`, so real zsh
+                    // registers ONLY those three names up front and defers
+                    // `boot_` until the module is actually loaded. C's
+                    // `boot_` is the sole creator of WATCHFMT/LOGCHECK:
+                    //
+                    //   c:Src/Modules/watch.c:756-759
+                    //     if (!paramtab->getnode(paramtab, "WATCHFMT"))
+                    //         setsparam("WATCHFMT", ztrdup_metafy(default_watchfmt));
+                    //     if (!paramtab->getnode(paramtab, "LOGCHECK"))
+                    //         setiparam("LOGCHECK", 60);
+                    //
+                    // and it runs only from `load_module`
+                    // (c:Src/module.c:2306). Verified against the oracle:
+                    // `zsh -f -c 'print ${WATCHFMT-UNSET}'` prints UNSET and
+                    // neither name appears in `${(ko)parameters}`, while
+                    // `zsh -f -c 'zmodload zsh/watch; print $WATCHFMT'`
+                    // prints `%n has %a %l from %m.` — the same is true for
+                    // any first touch of `$WATCH`/`$watch`/`log`, which is
+                    // what triggers the autoload.
+                    //
+                    // This call is a zshrs-only shim: the reason it exists
+                    // is the `watch`/`WATCH` paramtab registration that C
+                    // gets from the autofeature list, so `${(t)watch}`
+                    // reads `array-special` from the first prompt (bug #270
+                    // in docs/BUGS.md). Its WATCHFMT/LOGCHECK side effect is
+                    // NOT part of that contract, so undo it for names the
+                    // shim itself invented. The condition is "was zsh/watch
+                    // really loaded", exactly as in C — NOT the shell's
+                    // emulation mode: the previous `--zsh`-only gate inside
+                    // `watch::boot_` left both names in `${(ko)parameters}`
+                    // for the native binary. A pre-existing value (exported
+                    // WATCHFMT, or a real `zmodload zsh/watch` later on)
+                    // is left untouched.
+                    let seeded_watchfmt = crate::ported::params::getsparam("WATCHFMT").is_none();
+                    let seeded_logcheck = crate::ported::params::getsparam("LOGCHECK").is_none();
                     crate::ported::modules::watch::boot_(std::ptr::null());
+                    if seeded_watchfmt {
+                        crate::ported::params::unsetparam("WATCHFMT"); // c:756-757
+                    }
+                    if seeded_logcheck {
+                        crate::ported::params::unsetparam("LOGCHECK"); // c:758-759
+                    }
                 }
                 // c:Src/Zle/compctl.c:4016 setup_ — seed the hardwired
                 // default compctls (cc_compos/cc_default/cc_first) the
