@@ -2294,7 +2294,40 @@ impl ShellExecutor {
         // it: `--bash --zsh` asks for zsh-STYLE emulation, where zsh's
         // leave-it-unset behavior is the correct answer. Guarded on the
         // environment so an inherited TERM always wins.
-        if crate::extensions::dash_mode::bash_mode() && std::env::var_os("TERM").is_none() {
+        //
+        // macOS-only `--sh` follow-on to the same delta (commit f77164dcb6
+        // landed the `--bash` half). On macOS `/bin/sh` IS bash — it reports
+        // "GNU bash, version 3.2.57(1)-release" — so the reference shell the
+        // `sh` emulation-parity way compares against runs that identical
+        // define-TERM startup step:
+        //
+        //   $ env -u TERM /bin/sh -c 'printf "%s" "${TERM+set}"'
+        //   set
+        //
+        // On Linux `/bin/sh` is dash, which leaves TERM unset, so the delta
+        // is macOS-only by construction. The `cfg` below encodes that: every
+        // Linux build keeps zsh's leave-it-unset behavior for `--sh`.
+        //
+        // Scoped to the bare `--sh` drop-in. The reference shells for the
+        // other POSIX-family ways all print `[]` (TERM unset) with TERM
+        // absent, so none of them may take this branch:
+        //   * `--ksh`      EMULATION is EMULATE_KSH, not EMULATE_SH
+        //                  (`/bin/ksh` and Homebrew ksh/ksh93 leave it unset)
+        //   * `--dash`     EMULATE_SH but `dash_strict()` is raised
+        //                  (`/bin/dash` and Homebrew dash leave it unset)
+        //   * `--sh --zsh` zsh-STYLE emulation clears `posix_faithful()`,
+        //                  and zsh — including `emulate sh` — leaves it
+        //                  unset, same reasoning as the `--bash --zsh` note
+        //                  above.
+        #[cfg(target_os = "macos")]
+        let sh_dropin_defines_term = crate::extensions::dash_mode::posix_faithful()
+            && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
+            && !crate::extensions::dash_mode::dash_strict();
+        #[cfg(not(target_os = "macos"))]
+        let sh_dropin_defines_term = false;
+        if (crate::extensions::dash_mode::bash_mode() || sh_dropin_defines_term)
+            && std::env::var_os("TERM").is_none()
+        {
             crate::ported::params::setsparam("TERM", "dumb");
             // bash exports it (`declare -x TERM` shows up in `export -p`);
             // addenv stamps PM_EXPORTED and pushes it into the child env.
