@@ -13687,56 +13687,473 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
     }
 }
 
+/// The single-letter conditions the condition grammar compiles inline rather
+/// than dispatching to a module.
+///
+/// C spells the same 25 letters twice in a different order: `par_cond_double`
+/// uses `"abcdefgknoprstuvwxzhLONGS"` (c:Src/parse.c:2630) and `par_cond_2`'s
+/// `dble` flag uses `"abcdefghknoprstuvwxzLONGS"` (c:Src/parse.c:2551).
+/// Anything outside the set is a module condition (`COND_MOD`).
+const COND_UNARY_LETTERS: &str = "abcdefghknoprstuvwxzLONGS";
+
 /// Port of `testlex()` from Src/builtin.c:7200.
 /// C: `void testlex(void)` — advance the test-builtin lexer one token
 ///   from `testargs` into `tok`/`tokstr`. Maps `-o`→DBAR, `-a`→DAMPER,
 ///   `!`→Bang, `(`→Inpar, `)`→Outpar, otherwise STRING.
+///
+/// This is the global-state form C reaches through the `condlex` function
+/// pointer. The token rules themselves live in `TestParse::testlex`, which
+/// `bin_test` drives with per-call state so two threads cannot share one
+/// cursor the way C's globals do.
 pub fn testlex() {
     // c:7200
-    // c:7203 — `if (tok == LEXERR) return;`
-    if TEST_TOK.load(Relaxed) == TEST_LEXERR {
-        // c:7203
-        return;
-    }
-    // c:7206-7224 — `tokstr = *(curtestarg = testargs);`
-    let mut targs = TESTARGS.lock().unwrap_or_else(|e| {
+    let targs = TESTARGS.lock().unwrap_or_else(|e| {
         TESTARGS.clear_poison();
         e.into_inner()
     });
-    let mut idx = TESTARGS_IDX.load(Relaxed) as usize;
-    let cur = targs.get(idx).cloned(); // c:7206
-    if let Some(t) = cur.as_ref() {
+    let mut p = TestParse::new(&targs);
+    p.idx = TESTARGS_IDX.load(Relaxed) as usize;
+    p.tok = TEST_TOK.load(Relaxed);
+    p.testlex();
+    TEST_TOK.store(p.tok, Relaxed);
+    TESTARGS_IDX.store(p.idx as i32, Relaxed);
+    if let Some(t) = p.tokstr {
         if let Ok(mut ts) = TOKSTR.lock() {
-            *ts = t.clone();
-        } // c:7206
+            *ts = t; // c:7205
+        }
     }
-    // c:7207-7211 — `if (!*testargs) { tok = tok ? NULLTOK : LEXERR; return; }`
-    let none = cur.is_none() || cur.as_deref() == Some("");
-    if none {
-        // c:7207
-        let prev = TEST_TOK.load(Relaxed);
-        TEST_TOK.store(
-            if prev != 0 { TEST_NULLTOK } else { TEST_LEXERR }, // c:7210
-            Relaxed,
-        );
-        return;
+}
+
+
+/// One node of the condition tree `parse_cond` builds for `test` / `[`.
+///
+/// C emits wordcode into `ecbuf` (`WCB_COND(...)` + `ecstr(...)`) and
+/// `evalcond` walks it. zshrs evaluates conditions from an argv slice
+/// (`cond::evalcond`), so the parser yields this tree instead and the
+/// structural opcodes are applied to it; the leaves are handed back to the
+/// argv evaluator as the 2- or 3-token forms C compiled them from.
+enum TestCond {
+    /// c:Src/parse.c:2530 — `WCB_COND(COND_NOT, 0)`.
+    Not(Box<TestCond>),
+    /// c:Src/parse.c:2447 — `WCB_COND(COND_AND, …)`.
+    And(Box<TestCond>, Box<TestCond>),
+    /// c:Src/parse.c:2422 — `WCB_COND(COND_OR, …)`.
+    Or(Box<TestCond>, Box<TestCond>),
+    /// c:Src/parse.c:2626 — `par_cond_double(a, b)`.
+    Double(String, String),
+    /// c:Src/parse.c:2659 — `par_cond_triple(a, b, c)`.
+    Triple(String, String, String),
+    /// c:Src/parse.c:2716 — `par_cond_multi(a, l)`.
+    Multi(String, Vec<String>),
+}
+
+/// The condition grammar of Src/parse.c:2409-2729 driven by `testlex`.
+///
+/// This is the entry point C reserves for `bin_test` (c:Src/parse.c:714-731
+/// "This entry point is only used for bin_test"). The whole point of running
+/// the real grammar is `n_testargs` (c:Src/parse.c:2480): the POSIX rules for
+/// `test` are keyed on how many arguments REMAIN, so which `-a` is the
+/// connective and which is a plain operand falls out of the parse position
+/// rather than from scanning the argument list for a spelling.
+struct TestParse<'a> {
+    args: &'a [String],
+    /// C: `testargs` — index of the next argument `testlex` will fetch.
+    idx: usize,
+    /// C: `curtestarg` — index of the argument most recently fetched.
+    cur: usize,
+    /// C: `tok`.
+    tok: i32,
+    /// C: `tokstr`; `None` once the lexer has read past the last argument.
+    tokstr: Option<String>,
+    /// C: `errflag |= ERRFLAG_ERROR`, set by `COND_ERROR`
+    /// (c:Src/parse.c:89-96). `bin_test` checks it before anything else and
+    /// returns 2 with no further diagnostic (c:7284-7288).
+    errflag: bool,
+}
+
+impl<'a> TestParse<'a> {
+    fn new(args: &'a [String]) -> Self {
+        TestParse {
+            args,
+            idx: 0,
+            cur: 0,
+            // c:7278 — `tok = NULLTOK;` before the priming testlex().
+            tok: TEST_NULLTOK,
+            tokstr: None,
+            errflag: false,
+        }
     }
-    let arg = cur.unwrap();
-    let new_tok = match arg.as_str() {
-        // c:7212
-        "-o" => TEST_DBAR,   // c:7213
-        "-a" => TEST_DAMPER, // c:7215
-        "!" => TEST_BANG,    // c:7217
-        "(" => TEST_INPAR,   // c:7219
-        ")" => TEST_OUTPAR,  // c:7221
-        "<" => TEST_INANG,   // c:7223
-        ">" => TEST_OUTANG,  // c:7225
-        _ => TEST_STRING,    // c:7227
-    };
-    TEST_TOK.store(new_tok, Relaxed);
-    idx += 1; // c:7228 testargs++
-    TESTARGS_IDX.store(idx as i32, Relaxed);
-    let _ = &mut *targs; // ensure lock holds for the duration of mutation
+
+    /// Port of `testlex()` from Src/builtin.c:7200 — advance one token over
+    /// `args`. C holds this state in the `testargs` / `curtestarg` / `tok` /
+    /// `tokstr` globals; the parser owns a copy so concurrent shells on
+    /// different threads cannot share one cursor.
+    fn testlex(&mut self) {
+        // c:7203 — `if (tok == LEXERR) return;`
+        if self.tok == TEST_LEXERR {
+            return;
+        }
+        // c:7205 — `tokstr = *(curtestarg = testargs);`
+        self.cur = self.idx;
+        self.tokstr = self.args.get(self.idx).cloned();
+        // c:7206-7209 — `if (!*testargs)`: the ARRAY is exhausted. C tests the
+        // POINTER, so an EMPTY-STRING argument (`test '' -a x`) is an ordinary
+        // STRING token, not end-of-input.
+        if self.idx >= self.args.len() {
+            // c:7208 — `tok = tok ? NULLTOK : LEXERR;` (NULLTOK is 0, so
+            // reading past the end a second time is the error).
+            self.tok = if self.tok != TEST_NULLTOK {
+                TEST_NULLTOK
+            } else {
+                TEST_LEXERR
+            };
+            return;
+        }
+        self.tok = match self.args[self.idx].as_str() {
+            "-o" => TEST_DBAR,   // c:7211
+            "-a" => TEST_DAMPER, // c:7213
+            "!" => TEST_BANG,    // c:7215
+            "(" => TEST_INPAR,   // c:7217
+            ")" => TEST_OUTPAR,  // c:7219
+            "<" => TEST_INANG,   // c:7221
+            ">" => TEST_OUTANG,  // c:7223
+            _ => TEST_STRING,    // c:7225
+        };
+        self.idx += 1; // c:7226 — `testargs++`
+    }
+
+    /// c:Src/parse.c:2480 — `arrlen(testargs) + 1`: the argument count from
+    /// the CURRENT token onward. `testargs` already points past it.
+    fn n_testargs(&self) -> usize {
+        self.args.len() - self.idx + 1
+    }
+
+    /// c:Src/parse.c:2496 etc — C's `*testargs`, the argument AFTER the
+    /// current token. `None` where C would see the array's NULL terminator.
+    fn next_arg(&self) -> Option<&str> {
+        self.args.get(self.idx).map(|s| s.as_str())
+    }
+
+    /// c:Src/parse.c:87 — `#define YYERROR(O) { tok = LEXERR; … return 0; }`.
+    fn yyerror(&mut self) -> Option<TestCond> {
+        self.tok = TEST_LEXERR;
+        None
+    }
+
+    /// c:Src/parse.c:89-96 — `COND_ERROR(X, Y)`: report via `zwarn` (no
+    /// builtin-name prefix), set `errflag`, then `YYERROR`.
+    fn cond_error(&mut self, msg: String) -> Option<TestCond> {
+        crate::ported::utils::zwarn(&msg); // c:91
+        self.errflag = true; // c:94
+        self.yyerror() // c:95
+    }
+
+    /// Port of `par_cond(void)` from Src/parse.c:2409.
+    /// C: `cond : cond_1 { SEPER } [ DBAR { SEPER } cond ]`. `COND_SEP()` is
+    /// false throughout under `testlex` (c:2405 `condlex != testlex`).
+    fn par_cond(&mut self) -> Option<TestCond> {
+        let r = self.par_cond_1()?; // c:2413
+        if self.tok == TEST_DBAR {
+            // c:2416
+            self.testlex(); // c:2417
+            let rhs = self.par_cond()?; // c:2421
+            return Some(TestCond::Or(Box::new(r), Box::new(rhs))); // c:2422
+        }
+        Some(r) // c:2425
+    }
+
+    /// Port of `par_cond_1(void)` from Src/parse.c:2434.
+    /// C: `cond_1 : cond_2 { SEPER } [ DAMPER { SEPER } cond_1 ]`.
+    fn par_cond_1(&mut self) -> Option<TestCond> {
+        let r = self.par_cond_2()?; // c:2438
+        if self.tok == TEST_DAMPER {
+            // c:2441
+            self.testlex(); // c:2442
+            let rhs = self.par_cond_1()?; // c:2446
+            return Some(TestCond::And(Box::new(r), Box::new(rhs))); // c:2447
+        }
+        Some(r) // c:2450
+    }
+
+    /// Port of `par_cond_2(void)` from Src/parse.c:2476 — the POSIX `test`
+    /// rules, all of them keyed on `n_testargs`.
+    fn par_cond_2(&mut self) -> Option<TestCond> {
+        // c:2480 — under `testlex` this is always >= 1, so every `n_testargs`
+        // guard in the C (`!n_testargs` / `|| n_testargs`) resolves the
+        // testlex way here; the `[[ … ]]` half of those conditions lives in
+        // parse.rs's wordcode `par_cond_2`.
+        let n_testargs = self.n_testargs();
+
+        // c:2484-2486 — no arguments left: false.
+        if self.tok == TEST_NULLTOK {
+            return self.par_cond_double("-n".to_string(), String::new());
+        }
+        // c:2487-2495 — one argument: `[ foo ]` is `[ -n foo ]`, whatever
+        // `foo` looks like. This is the rule an argument-count scanner cannot
+        // express: the trailing `-a` of `test -e /dev/null -a -a` reaches
+        // par_cond_2 as the LAST argument and is therefore an operand.
+        if n_testargs == 1 {
+            let s1 = self.tokstr.clone().unwrap_or_default(); // c:2489
+            self.testlex(); // c:2490
+                            // c:2492 — ksh: `[ -t ]` means `[ -t 1 ]`; bash disagrees.
+            if !isset(POSIXBUILTINS) && crate::ported::parse::check_cond(&s1, "t") {
+                return self.par_cond_double(s1, "1".to_string()); // c:2493
+            }
+            return self.par_cond_double("-n".to_string(), s1); // c:2494
+        }
+        // c:2496-2512 — three or more arguments: if the SECOND is a binary
+        // operator, apply it to the first and third.
+        if n_testargs > 2 {
+            let nxt = self.next_arg().unwrap_or_default().to_string();
+            let is_binop = nxt == "="
+                || nxt == "<"
+                || nxt == ">"
+                || nxt == "=="
+                || nxt == "!="
+                || (nxt.starts_with(crate::ported::zsh_h::IS_DASH)
+                    && crate::ported::parse::get_cond_num(&nxt[nxt.chars().next().map_or(0, char::len_utf8)..]) >= 0); // c:2504
+            if is_binop {
+                let s1 = self.tokstr.clone().unwrap_or_default(); // c:2505
+                self.testlex();
+                let s2 = self.tokstr.clone().unwrap_or_default(); // c:2507
+                self.testlex();
+                let s3 = self.tokstr.clone().unwrap_or_default(); // c:2509
+                self.testlex();
+                return self.par_cond_triple(s1, s2, s3); // c:2511
+            }
+        }
+        if self.tok == TEST_BANG {
+            // c:2521-2532 — in `test` compatibility mode `! -a …` / `! -o …`
+            // read as "[string] [and] …", not as a negation.
+            let next_is_connective = n_testargs > 2
+                && self.next_arg().is_some_and(|t| {
+                    crate::ported::parse::check_cond(t, "a")
+                        || crate::ported::parse::check_cond(t, "o")
+                }); // c:2526
+            if !next_is_connective {
+                self.testlex(); // c:2529
+                let inner = self.par_cond_2()?; // c:2531
+                return Some(TestCond::Not(Box::new(inner))); // c:2530
+            }
+        }
+        if self.tok == TEST_INPAR {
+            // c:2534-2547
+            self.testlex(); // c:2537
+            let r = self.par_cond()?; // c:2540
+            if self.tok != TEST_OUTPAR {
+                return self.yyerror(); // c:2544
+            }
+            self.testlex(); // c:2545
+            return Some(r); // c:2546
+        }
+        let s1 = self.tokstr.clone(); // c:2548
+                                      // c:2549-2552 — `dble`: a two-character `-X` built-in condition, which
+                                      // takes exactly ONE operand and so blocks the triple/multi forms below.
+        let dble = s1.as_deref().is_some_and(TestCond::is_unary_letter);
+        if self.tok != TEST_STRING {
+            // c:2553-2561 — `[[ STRING ]]` re-interpretation. The
+            // `(!dble || n_testargs)` guard is satisfied by `n_testargs`.
+            match s1 {
+                Some(s) if self.tok != TEST_LEXERR => {
+                    self.testlex(); // c:2557
+                    return self.par_cond_double("-n".to_string(), s); // c:2558
+                }
+                _ => return self.yyerror(), // c:2560
+            }
+        }
+        let s1 = s1.unwrap_or_default();
+        self.testlex(); // c:2562
+                        // c:2563-2569 — something like `test -z` followed by a non-STRING
+                        // token: turn that token back into a plain string operand.
+        if n_testargs == 2
+            && self.tok != TEST_STRING
+            && self.tokstr.is_some()
+            && s1.starts_with(crate::ported::zsh_h::IS_DASH)
+        {
+            self.tok = TEST_STRING; // c:2569
+        }
+        if self.tok == TEST_INANG || self.tok == TEST_OUTANG {
+            // c:2573-2583 — `STRING ( INANG | OUTANG ) STRING`.
+            let xtok = self.tok; // c:2574
+            self.testlex(); // c:2575
+            if self.tok != TEST_STRING {
+                return self.yyerror(); // c:2577
+            }
+            let s3 = self.tokstr.clone().unwrap_or_default(); // c:2578
+            self.testlex(); // c:2579
+                            // c:2580 — COND_STRLT for `<`, COND_STRGTR for `>`.
+            let op = if xtok == TEST_INANG { "<" } else { ">" };
+            return Some(TestCond::Triple(s1, op.to_string(), s3));
+        }
+        if self.tok != TEST_STRING {
+            // c:2585-2596
+            if self.tok != TEST_LEXERR {
+                return self.par_cond_double("-n".to_string(), s1); // c:2592
+            }
+            return self.yyerror(); // c:2596
+        }
+        let s2 = self.tokstr.clone().unwrap_or_default(); // c:2598
+                                                          // c:2599-2600 — `if (!n_testargs) dble = …`; never taken under testlex.
+        self.testlex(); // c:2602
+        if self.tok == TEST_STRING && !dble {
+            // c:2604
+            let s3 = self.tokstr.clone().unwrap_or_default(); // c:2605
+            self.testlex(); // c:2606
+            if self.tok == TEST_STRING {
+                // c:2607
+                let mut l = vec![s2, s3]; // c:2610-2611
+                while self.tok == TEST_STRING {
+                    // c:2613
+                    l.push(self.tokstr.clone().unwrap_or_default()); // c:2614
+                    self.testlex(); // c:2615
+                }
+                return self.par_cond_multi(s1, l); // c:2617
+            }
+            return self.par_cond_triple(s1, s2, s3); // c:2619
+        }
+        self.par_cond_double(s1, s2) // c:2621
+    }
+
+    /// Port of `par_cond_double(char *a, char *b)` from Src/parse.c:2626.
+    /// The `-X` / `COND_MOD` split C makes here is deferred to evaluation,
+    /// where the module lookup that decides the diagnostic actually happens
+    /// (c:Src/cond.c:143-190); only the parse-time rejection is done now.
+    fn par_cond_double(&mut self, a: String, b: String) -> Option<TestCond> {
+        // c:2628 — `if (!IS_DASH(a[0]) || !a[1])`
+        if !a.starts_with(crate::ported::zsh_h::IS_DASH) || a.chars().count() < 2 {
+            return self.cond_error(format!("parse error: condition expected: {}", a)); // c:2629
+        }
+        Some(TestCond::Double(a, b))
+    }
+
+    /// Port of `par_cond_triple(char *a, char *b, char *c)` from
+    /// Src/parse.c:2659. Recognises the operator spellings C compiles to a
+    /// `COND_*` opcode plus the two `COND_MOD`/`COND_MODI` fallbacks; anything
+    /// else is a parse error naming the middle argument.
+    fn par_cond_triple(&mut self, a: String, b: String, c: String) -> Option<TestCond> {
+        let known = matches!(b.as_str(), "=" | "<" | ">" | "==" | "!=" | "=~") // c:2663-2691
+            || b.starts_with(crate::ported::zsh_h::IS_DASH)                    // c:2692
+            || (a.starts_with(crate::ported::zsh_h::IS_DASH) && a.chars().count() > 1); // c:2703
+        if known {
+            return Some(TestCond::Triple(a, b, c));
+        }
+        self.cond_error(format!("condition expected: {}", b)) // c:2709
+    }
+
+    /// Port of `par_cond_multi(char *a, LinkList l)` from Src/parse.c:2716 —
+    /// four or more bare words, which can only be a module condition.
+    fn par_cond_multi(&mut self, a: String, l: Vec<String>) -> Option<TestCond> {
+        // c:2718 — `if (!IS_DASH(a[0]) || !a[1])`
+        if !a.starts_with(crate::ported::zsh_h::IS_DASH) || a.chars().count() < 2 {
+            return self.cond_error(format!("condition expected: {}", a)); // c:2719
+        }
+        Some(TestCond::Multi(a, l))
+    }
+}
+
+impl TestCond {
+    /// True for the two-character `-X` form whose `X` is a built-in condition —
+    /// C's `!a[2] && strspn(a+1, "abcdefgknoprstuvwxzhLONGS") == 1`
+    /// (c:Src/parse.c:2630). Anything else is a module condition.
+    fn is_unary_letter(a: &str) -> bool {
+        let mut ch = a.chars();
+        match (ch.next(), ch.next(), ch.next()) {
+            (Some(d), Some(l), None) => {
+                crate::ported::zsh_h::IS_DASH(d) && COND_UNARY_LETTERS.contains(l)
+            }
+            _ => false,
+        }
+    }
+
+    /// Evaluate the tree `TestParse` produced.
+    ///
+    /// The structural opcodes are ported from `evalcond` (c:Src/cond.c:86-112);
+    /// the leaves go back through `cond::evalcond` in the 2- or 3-token argv
+    /// form C compiled them from, so every operator implementation stays in one
+    /// place. A leaf whose operator is not built in is C's `COND_MOD` /
+    /// `COND_MODI`: with no module supplying it, `evalcond` reports
+    /// `unknown condition` (c:Src/cond.c:187-189) naming the first
+    /// dash-prefixed word (c:Src/cond.c:143-148).
+    fn eval(
+        &self,
+        name: &str,
+        options: &HashMap<String, bool>,
+        variables: &HashMap<String, String>,
+        posix: bool,
+    ) -> i32 {
+        let leaf = |toks: &[&str]| -> i32 {
+            crate::ported::cond::evalcond(toks, options, variables, posix, Some(name))
+        };
+        let unknown = |which: &str| -> i32 {
+            // c:Src/cond.c:187 — `zwarnnam(fromtest, "unknown condition: %s", errname)`
+            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", which));
+            2 // c:Src/cond.c:193
+        };
+        match self {
+            TestCond::Not(inner) => {
+                // c:Src/cond.c:86-93
+                let ret = inner.eval(name, options, variables, posix);
+                if ret == 0 || ret == 1 {
+                    1 - ret // c:91
+                } else {
+                    ret // c:93
+                }
+            }
+            TestCond::And(l, r) => {
+                // c:Src/cond.c:94-102 — evaluate the right side only when the
+                // left is TRUE (0); any other status short-circuits out.
+                let ret = l.eval(name, options, variables, posix);
+                if ret == 0 {
+                    r.eval(name, options, variables, posix)
+                } else {
+                    ret // c:101
+                }
+            }
+            TestCond::Or(l, r) => {
+                // c:Src/cond.c:103-112 — 1 (false) and 3 (no such option) both
+                // continue to the right side; 0 and 2 short-circuit.
+                let ret = l.eval(name, options, variables, posix);
+                if ret == 1 || ret == 3 {
+                    r.eval(name, options, variables, posix)
+                } else {
+                    ret // c:111
+                }
+            }
+            TestCond::Double(a, b) => {
+                // c:Src/parse.c:2630 — a two-character `-X` is compiled inline;
+                // anything else is COND_MOD.
+                if TestCond::is_unary_letter(a) {
+                    leaf(&[a.as_str(), b.as_str()])
+                } else {
+                    unknown(a)
+                }
+            }
+            TestCond::Triple(a, b, c) => {
+                // c:Src/parse.c:2663-2702 — the operator spellings with a real
+                // opcode. A dash-prefixed `b` that is not one of them is
+                // COND_MODI, reported against `b`; otherwise `a` carried the
+                // module name (c:2703) and is reported instead.
+                let opcode = matches!(
+                    b.as_str(),
+                    "=" | "<" | ">" | "==" | "!=" | "=~" | "-regex-match"
+                ) || (b.starts_with(crate::ported::zsh_h::IS_DASH)
+                    // c:2693 — `get_cond_num(b + 1)`; skip one CHAR, since the
+                    // lexer's `Dash` token is multi-byte in UTF-8.
+                    && crate::ported::parse::get_cond_num(
+                        &b[b.chars().next().map_or(0, char::len_utf8)..],
+                    ) >= 0);
+                if opcode {
+                    leaf(&[a.as_str(), b.as_str(), c.as_str()])
+                } else if b.starts_with(crate::ported::zsh_h::IS_DASH) {
+                    unknown(b) // c:2698 COND_MODI
+                } else {
+                    unknown(a) // c:2704 COND_MOD
+                }
+            }
+            // c:Src/parse.c:2723 — COND_MOD with `a` as the module condition name.
+            TestCond::Multi(a, _) => unknown(a),
+        }
+    }
 }
 
 /// Port of `bin_test(char *name, char **argv, UNUSED(Options ops), int func)` from Src/builtin.c:7231.
@@ -13771,19 +14188,6 @@ pub fn bin_test(
         return 1; // c:7250
     }
 
-    // c:Src/parse.c par_cond / par_cond_1 — a SINGLE remaining token is
-    // always a NON-EMPTY-STRING test (implicit `-n`), no matter what it
-    // looks like: a unary op (`-z`/`-f`), `!`, a binary op (`<`/`>`/`=`),
-    // or a paren all need at least one more token to form an operator, and
-    // with one token there is none. So `[ -z ]` / `[ ! ]` / `[ ( ]` /
-    // `[ < ]` are true iff the token is non-empty; `[ "" ]` is false.
-    // Verified vs /opt/homebrew/bin/zsh 5.9. Handle it before the operator
-    // special-cases below, which otherwise (mis)treat the lone token as an
-    // operator with a missing operand.
-    if argv.len() == 1 {
-        return i32::from(argv[0].is_empty());
-    }
-
     // c:7257-7274 — XSI 3/4-arg parens + 4-arg `!` extension.
     let nargs = argv.len(); // c:7257
     if nargs == 3 || nargs == 4 {
@@ -13797,412 +14201,29 @@ pub fn bin_test(
             argv.pop(); // c:7266
             argv.remove(0); // c:7267
         }
-    }
-    if argv.len() == 4 && argv[0] == "!" {
-        // c:Src/builtin.c:7262 — `if (nargs == 4 && !strcmp("!", argv[0]))`.
-        // The `!` negation short-circuit fires ONLY at FOUR args (`[ ! a = b ]`
-        // → negate the 3-arg binary test). At THREE args the leading `!` is
-        // NOT stripped: it falls through to parse_cond, which applies the POSIX
-        // rule "if $2 is a binary operator, test $1 op $3" — so `[ ! = x ]` is
-        // the string comparison "!" = "x", not a negation. A prior port used
-        // `nargs == 3` here, erroring (rc 2) on every `[ "!" op X ]` / `[ "(" op
-        // X ]` / `[ "-n" op X ]` where op is binary. Found by the test/[ fuzzer.
-        sense = 1; // c:7263
-        argv.remove(0); // c:7264
-    }
-
-    // c:Src/parse.c:2486-2492 par_cond_2 — a condition that is a single WORD
-    // means `-n word`:
-    //     if (n_testargs == 1) {
-    //         /* one argument: [ foo ] is equivalent to [ -n foo ] */
-    //         s1 = tokstr; condlex();
-    //         return par_cond_double(dupstring("-n"), s1);
-    //     }
-    //
-    // C needs no special handling around `-a`/`-o` for this: bin_test hands the
-    // whole argument list to the real grammar (c:7276-7280 `condlex = testlex;
-    // parse_cond()`), and every operand of a connective is parsed by
-    // par_cond_2 — so a lone word ANYWHERE becomes `-n word`. This port has no
-    // grammar to lean on: bin_test is an ad-hoc argument-count parser,
-    // `testlex` is dead code, and par_cond_2 hardcodes `let n_testargs = 0`,
-    // disabling the POSIX-test rules it otherwise ports. So do the equivalent
-    // rewrite explicitly — split on the top-level connectives and expand any
-    // single-word operand:
-    //     test a -a b     → -n a -a -n b     → 0   (was "unknown condition: -a")
-    //     test '' -a ''   → -n '' -a -n ''   → 1
-    //     test -n -a a    → -n -n -a -n a    → 0   (that first `-n` is an OPERAND)
-    //     test -n a -a -n → -n a -a -n -n    → 0   (2-word segment left alone)
-    //
-    // Skipped when parentheses are present: segmenting those needs the real
-    // grammar, and the parenthesised forms already agree. Skipped when any
-    // segment is empty (`test -a a`), which zsh reports as an error rather
-    // than parsing.
-    if !argv.iter().any(|a| a == "(" || a == ")") && argv.iter().any(|a| a == "-a" || a == "-o") {
-        let segs: Vec<Vec<String>> = argv
-            .split(|a| a == "-a" || a == "-o")
-            .map(|s| s.to_vec())
-            .collect();
-        if segs.iter().all(|s| !s.is_empty()) {
-            let mut rebuilt: Vec<String> = Vec::with_capacity(argv.len() + segs.len());
-            let mut seg_iter = segs.iter();
-            let mut pending = seg_iter.next();
-            let mut emitted_in_seg = 0usize;
-            for a in argv.iter() {
-                if a == "-a" || a == "-o" {
-                    rebuilt.push(a.clone());
-                    pending = seg_iter.next();
-                    emitted_in_seg = 0;
-                    continue;
-                }
-                if emitted_in_seg == 0 {
-                    // c:2488 — one word ⇒ `-n word`. `!` is an operator, never
-                    // an operand, so it does not take the implicit -n.
-                    if let Some(seg) = pending {
-                        if seg.len() == 1 && seg[0] != "!" {
-                            rebuilt.push("-n".to_string());
-                        }
-                    }
-                }
-                rebuilt.push(a.clone());
-                emitted_in_seg += 1;
-            }
-            argv = rebuilt;
+        if nargs == 4 && argv[0] == "!" {
+            // c:7270 — the `!` negation short-circuit fires ONLY at FOUR args
+            // (`[ ! a = b ]` → negate the 3-arg binary test). At THREE args the
+            // leading `!` is NOT stripped: it falls through to the grammar,
+            // which applies the POSIX rule "if $2 is a binary operator, test $1
+            // op $3" — so `[ ! = x ]` is the string comparison "!" = "x".
+            sense = 1; // c:7272
+            argv.remove(0); // c:7273
         }
     }
 
-    // c:Src/parse.c par_cond — 3-arg form with binary op at args[0]
-    // (instead of args[1]) is a parse error: zsh treats args[0] as a
-    // unary condition probe; binary ops aren't valid unary ops →
-    // "unknown condition: ARGV[0]" rc=2. Verified vs
-    // /opt/homebrew/bin/zsh: `[ -lt 5 3 ]` →
-    //   "zsh:[:1: unknown condition: -lt" rc=2.
-    // Also: 4-arg with binop at args[1] (the valid binop slot) →
-    // "too many arguments" because the extra trailing arg can't be
-    // consumed.
-    if argv.len() == 3 && argv[0].starts_with('-') && argv[0].len() >= 3 {
-        if matches!(
-            argv[0].as_str(),
-            "-eq" | "-ne" | "-lt" | "-gt" | "-le" | "-ge" | "-nt" | "-ot" | "-ef"
-        ) {
-            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", argv[0]));
-            return 2;
-        }
-    }
-    // c:Src/parse.c par_cond — 3-arg form analysis:
-    //   (a) `[ -X arg extra ]` — unary at pos 0, extra at pos 2
-    //       → "too many arguments"
-    //   (b) `[ a OP b ]` with unknown OP → "unknown condition: OP"
-    //   (c) `[ a b c ]` (no recognised op at pos 1) →
-    //       "condition expected: b"
-    let known_binops: &[&str] = &[
-        "=",
-        "==",
-        "!=",
-        "<",
-        ">",
-        "-eq",
-        "-ne",
-        "-lt",
-        "-gt",
-        "-le",
-        "-ge",
-        "-nt",
-        "-ot",
-        "-ef",
-        "&&",
-        "||",
-        "-a",
-        "-o",
-        "=~",
-        "-regex-match",
-    ];
-    if argv.len() == 3 && argv[0].starts_with('-') && argv[0].len() == 2 {
-        let op_char = argv[0].chars().nth(1).unwrap_or(' ');
-        let is_known_unary = matches!(
-            op_char,
-            'a' | 'b'
-                | 'c'
-                | 'd'
-                | 'e'
-                | 'f'
-                | 'g'
-                | 'h'
-                | 'k'
-                | 'L'
-                | 'n'
-                | 'o'
-                | 'p'
-                | 'r'
-                | 's'
-                | 'S'
-                | 't'
-                | 'u'
-                | 'v'
-                | 'w'
-                | 'x'
-                | 'z'
-                | 'G'
-                | 'N'
-                | 'O'
-        );
-        // For unary-flag-at-pos-0 with a 3rd extra arg, the canonical
-        // diagnostic is "too many arguments" — UNLESS args[1] is itself
-        // a binary op (e.g., `-z -lt 5` which is malformed differently).
-        if is_known_unary && !known_binops.contains(&argv[1].as_str()) {
-            crate::ported::utils::zwarnnam(name, "too many arguments");
-            return 2;
-        }
-    }
-    if argv.len() == 3 && !argv[0].starts_with('-') && argv[0] != "!" && argv[0] != "(" {
-        let mid = argv[1].as_str();
-        if mid.starts_with('-') && argv[1].len() >= 2 && !known_binops.contains(&mid) {
-            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", argv[1]));
-            return 2;
-        }
-        if !known_binops.contains(&mid) {
-            crate::ported::utils::zwarn(&format!("condition expected: {}", argv[1]));
-            return 2;
-        }
-    }
-    if argv.len() == 4
-        && matches!(
-            argv[1].as_str(),
-            "=" | "=="
-                | "!="
-                | "-eq"
-                | "-ne"
-                | "-lt"
-                | "-gt"
-                | "-le"
-                | "-ge"
-                | "-nt"
-                | "-ot"
-                | "-ef"
-        )
-    {
-        crate::ported::utils::zwarnnam(name, "too many arguments");
-        return 2;
-    }
-    // c:Src/parse.c par_cond — 4-arg form `-FLAG operand extra extra` /
-    // any 4+ arg layout where args[0] is a recognized unary flag with
-    // extras after the operand → "too many arguments".
-    //
-    // ...but NOT when the third argument is a CONNECTIVE. c:Src/parse.c:2495
-    // par_cond_2 has no blanket 4-argument rejection: with n_testargs > 2 it
-    // only special-cases a binary operator in the SECOND position (`=`, `<`,
-    // `>`, `==`, `!=`, `-<condnum>`) and otherwise falls through to the general
-    // condition grammar, which happily consumes `-FLAG operand` and then
-    // applies the `-a`/`-o` that follows. So `test -n a -a b` is `(-n a) && b`
-    // → 0, and `test -n -a -n x` is `(-n -a) && (-n x)`; both were rejected
-    // here as "too many arguments".
-    // The connective can sit at either position: `test -f a -a b` puts it at
-    // index 2, while `test -n -a -n x` is `(-n -a) && (-n x)` and puts it at
-    // index 1. C never has to look — the grammar just consumes tokens — so the
-    // equivalent here is "a connective appears anywhere past argv[0]".
-    if argv.len() == 4
-        && argv[0].starts_with('-')
-        && argv[0].len() == 2
-        && !argv[1..].iter().any(|a| a == "-a" || a == "-o")
-    {
-        let op_char = argv[0].chars().nth(1).unwrap_or(' ');
-        if matches!(
-            op_char,
-            'a' | 'b'
-                | 'c'
-                | 'd'
-                | 'e'
-                | 'f'
-                | 'g'
-                | 'h'
-                | 'k'
-                | 'L'
-                | 'n'
-                | 'o'
-                | 'p'
-                | 'r'
-                | 's'
-                | 'S'
-                | 't'
-                | 'u'
-                | 'v'
-                | 'w'
-                | 'x'
-                | 'z'
-                | 'G'
-                | 'N'
-                | 'O'
-        ) {
-            crate::ported::utils::zwarnnam(name, "too many arguments");
-            return 2;
-        }
-    }
-    // c:Src/parse.c par_cond — 4+ args with no recognised connective:
-    // "condition expected: ARGV[0]" rc=2 (zsh points at the first
-    // operand, mirroring 2-arg bare-operands message).
-    if argv.len() >= 4 && argv[0] != "(" {
-        let has_connective = argv
-            .iter()
-            .any(|a| matches!(a.as_str(), "&&" | "||" | "-a" | "-o"));
-        let has_paren = argv.iter().any(|a| a == "(");
-        let has_known_binop_mid = argv.iter().any(|a| known_binops.contains(&a.as_str()));
-        // c:Src/builtin.c:7270 + par_cond's `!` rule — a LEADING `!` negation
-        // chain wraps a valid condition: `test ! ! -n x` = not(not(-n x)) → 0.
-        // The heuristic above only recognises BINARY ops, so it wrongly
-        // rejected a `!+ <unary-op> <operand>` form ("condition expected: !").
-        // Strip the leading `!`s: if the remainder is exactly a known unary op
-        // + its operand, let evalcond (which handles `!` at cond.rs:152)
-        // evaluate it. Other malformed leading-`!` forms (`! ! a b`) still fall
-        // through to the rejection below. Bug #1026 (double-negation leg).
-        let lead_bangs = argv.iter().take_while(|a| a.as_str() == "!").count();
-        let rest = &argv[lead_bangs..];
-        let rest_is_unary = lead_bangs >= 1
-            && rest.len() == 2
-            && rest[0].len() == 2
-            && rest[0].starts_with('-')
-            && matches!(
-                rest[0].chars().nth(1).unwrap_or(' '),
-                'a' | 'b'
-                    | 'c'
-                    | 'd'
-                    | 'e'
-                    | 'f'
-                    | 'g'
-                    | 'h'
-                    | 'k'
-                    | 'L'
-                    | 'n'
-                    | 'o'
-                    | 'p'
-                    | 'r'
-                    | 's'
-                    | 'S'
-                    | 't'
-                    | 'u'
-                    | 'v'
-                    | 'w'
-                    | 'x'
-                    | 'z'
-                    | 'G'
-                    | 'N'
-                    | 'O'
-            );
-        if !has_connective && !has_paren && !has_known_binop_mid && !rest_is_unary {
-            crate::ported::utils::zwarn(&format!("condition expected: {}", argv[0]));
-            let _ = name;
-            return 2;
-        }
-    }
-
-    // c:Src/builtin.c:7276-7280 + Src/parse.c par_cond — when the
-    // 2-arg form is `[ -FLAG operand ]` and `-FLAG` isn't a recognized
-    // unary op letter, par_cond emits `unknown condition: -FLAG` rc=2.
-    // The cond.rs walker's primary arm falls through to "bare arg /
-    // implicit -n" silently, returning 0 (truthy). Pre-flight: if
-    // 2-arg AND argv[0] starts with `-` AND argv[0] isn't a known
-    // unary op nor `!`/`(`, emit the canonical diagnostic.
-    // c:Src/builtin.c:7257 + par_cond — paren-balance diagnostics:
-    //   - `[ ( ) ]` empty parens          → "argument expected" rc=2
-    //   - `[ ( a ]` unmatched open        → "argument expected" rc=2
-    //   - `[ a ) ]` unmatched close       → "too many arguments" rc=2
-    // zshrs's evalcond walker silently returned 2 with no diagnostic;
-    // mirror C. Walk and check depth.
-    {
-        let mut depth: i32 = 0;
-        let mut surplus_close = false;
-        let mut had_open = false;
-        for a in &argv {
-            if a == "(" {
-                depth += 1;
-                had_open = true;
-            } else if a == ")" {
-                depth -= 1;
-                if depth < 0 {
-                    surplus_close = true;
-                    break;
-                }
-            }
-        }
-        if surplus_close {
-            crate::ported::utils::zwarnnam(name, "too many arguments");
-            return 2;
-        }
-        if depth > 0 && had_open {
-            crate::ported::utils::zwarnnam(name, "argument expected");
-            return 2;
-        }
-    }
-    if argv.len() == 2 && argv[0] == "(" && argv[1] == ")" {
-        crate::ported::utils::zwarnnam(name, "argument expected");
-        return 2;
-    }
-    if argv.len() == 2 && argv[0].starts_with('-') && argv[0].len() >= 2 && argv[0] != "!" {
-        let op_char = argv[0].chars().nth(1).unwrap_or(' ');
-        let is_known_unary = argv[0].len() == 2
-            && matches!(
-                op_char,
-                'a' | 'b'
-                    | 'c'
-                    | 'd'
-                    | 'e'
-                    | 'f'
-                    | 'g'
-                    | 'h'
-                    | 'k'
-                    | 'L'
-                    | 'n'
-                    | 'o'
-                    | 'p'
-                    | 'r'
-                    | 's'
-                    | 'S'
-                    | 't'
-                    | 'u'
-                    | 'v'
-                    | 'w'
-                    | 'x'
-                    | 'z'
-                    | 'G'
-                    | 'N'
-                    | 'O'
-            );
-        if !is_known_unary {
-            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", argv[0]));
-            return 2;
-        }
-    } else if argv.len() == 2
-        && !argv[0].starts_with('-')
-        && argv[0] != "!"
-        && argv[0] != "("
-        && argv[1] != ")"
-    {
-        // c:Src/parse.c par_cond — 2-arg form with two bare operands
-        // (no flag, no `!`, no paren wrapping) is a parse error —
-        // zsh emits "parse error: condition expected: SECOND_OPERAND"
-        // (via zwarn, no builtin-name prefix). Verified vs
-        // /opt/homebrew/bin/zsh: `[ "" "" ]` →
-        //   "zsh:1: parse error: condition expected: " rc=2
-        crate::ported::utils::zwarn(&format!("parse error: condition expected: {}", argv[0]));
-        let _ = name;
-        return 2;
-    }
-    // c:Src/builtin.c:7276-7280 — `[ ]`/`test` uses `parse_cond`
-    // which has no rule for TEST_INANG (`<`) or TEST_OUTANG (`>`) as
-    // binary string-comparators; the parser errors with
-    // `condition expected: <`. Only `[[ ]]` (which routes through
-    // `execcond` instead of this builtin) accepts `<`/`>` for lex
-    // compare. Bug #98 in docs/BUGS.md — zshrs's `bin_test` routed
-    // through the shared `cond::evalcond` which accepts them as
-    // COND_STRLT/COND_STRGTR, so `[ a \< b ]` silently evaluated.
-    //
-    // Detect `<`/`>` in a binary-op position (the middle of a 3-arg
-    // form, or any position after an operand) and emit the canonical
-    // diagnostic before reaching evalcond.
+    // c:Src/builtin.c:7276-7280 — `[ ]`/`test` uses `parse_cond`, whose
+    // `testlex` maps `<` / `>` to INANG / OUTANG. Both zsh 5.9 and 5.9.2
+    // nevertheless reject them from this builtin:
+    //   `test a '<' b` → `zsh:1: condition expected: <` rc=2
+    // Only `[[ ]]` (which routes through `execcond`) accepts them for lex
+    // compare. Bug #98 in docs/BUGS.md.
     //
     // !!! POSIX-FAITHFUL GATE !!! This zsh-only rejection is WRONG for the
     // Bourne-family drop-ins: dash / sh / ksh / bash `test` all accept
     // `string1 < string2` / `>` as lexical string comparison (`[ abc \< abd ]`
-    // → true). Only zsh's `[` lacks it. Under `--sh`/`--ksh`/`--dash`/`--bash`
-    // (posix_faithful) skip the rejection and let evalcond evaluate them as
+    // → true). Under `--sh`/`--ksh`/`--dash`/`--bash` (posix_faithful) skip the
+    // rejection and let the INANG/OUTANG grammar arm (c:2573-2583) build
     // COND_STRLT / COND_STRGTR, matching the real shell.
     if !crate::dash_mode::posix_faithful() && argv.iter().any(|a| a == "<" || a == ">") {
         let offending = argv
@@ -14216,14 +14237,45 @@ pub fn bin_test(
         // segment that zwarnnam adds; zwarn also doesn't set
         // errflag, so `echo $?` after the failed test still runs.
         crate::ported::utils::zwarn(&format!("condition expected: {}", offending));
-        let _ = name;
         return 2;
     }
 
-    // c:7276-7301 — zcontext_save + par_cond + evalcond.
-    // Static-link path: route through cond.rs's evalcond which handles
-    // the full tokenization + parse + eval inline.
-    let args_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    // c:7276-7281 — `zcontext_save(); testargs = argv; tok = NULLTOK;
+    //                condlex = testlex; testlex(); prog = parse_cond();`
+    let mut p = TestParse::new(&argv);
+    p.testlex(); // c:7280
+                 // c:Src/parse.c:722-731 — `parse_cond()` is just `par_cond()`,
+                 // returning NULL when the grammar bailed out.
+    let prog = p.par_cond(); // c:7281
+
+    // c:7284-7288 — a COND_ERROR already printed its diagnostic.
+    if p.errflag {
+        // c:7284
+        return 2; // c:7287
+    }
+    // c:7290-7294 — a bare YYERROR prints here. `tokstr` is NULL exactly when
+    // the lexer ran off the end of the argument list.
+    if prog.is_none() || p.tok == TEST_LEXERR {
+        // c:7290
+        zwarnnam(
+            name,
+            if p.tokstr.is_some() {
+                "parse error"
+            } else {
+                "argument expected"
+            },
+        ); // c:7291
+        return 2; // c:7293
+    }
+    // c:7297-7300 — `if (*curtestarg)`: the grammar stopped before consuming
+    // every argument.
+    if p.cur < argv.len() {
+        // c:7297
+        zwarnnam(name, "too many arguments"); // c:7298
+        return 2; // c:7299
+    }
+
+    // c:7302-7308 — syntax is OK, so evaluate.
     let options = HashMap::new();
     let mut variables = HashMap::new();
     // C `evalcond` reaches param values through `getvalue` / `getsparam`
@@ -14254,8 +14306,7 @@ pub fn bin_test(
     // `name` argument is C's `fromtest` signal — non-NULL means "called
     // from test/[", which enables the strict integer-expression error
     // path (c:Src/cond.c:236-251). Bug #411.
-    let mut ret =
-        crate::ported::cond::evalcond(&args_refs, &options, &variables, posix, Some(name)); // c:7305
+    let mut ret = prog.unwrap().eval(name, &options, &variables, posix); // c:7305
 
     // c:7307-7308 — `if (ret < 2 && sense) ret = !ret;`
     if ret < 2 && sense != 0 {

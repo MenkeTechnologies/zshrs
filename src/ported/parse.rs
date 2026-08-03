@@ -10316,7 +10316,7 @@ pub fn par_cond_top() -> i32 {
 /// form whose `X` matches `cond` — used by par_cond_2 to detect
 /// `-a` / `-o` n-ary chain operators and by build_dump for `-k` /
 /// `-z`. C: `return !IS_DASH(input[0]) ? 0 : !strcmp(input+1, cond);`.
-fn check_cond(input: &str, cond: &str) -> bool {
+pub fn check_cond(input: &str, cond: &str) -> bool {
     let mut chars = input.chars();
     match chars.next() {
         Some(c) if IS_DASH(c) => chars.as_str() == cond,

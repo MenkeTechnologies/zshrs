@@ -4426,42 +4426,55 @@ if the token reaches a display/`(V)` context un-expanded.
 
 ---
 
-## #643 — `test`/`[` POSIX argument-count edge cases diverge
+## #643 — `test`/`[` paren operands are still parsed as grouping by the evaluator
 
-**Status:** `port-bug` — `bin_test` (builtin.rs:12331) is a hand-rolled pile
-of `if argv.len() == N` special cases rather than a faithful port of C's
-`testlex` + `par_cond` recursive-descent (Src/parse.c:2409 / builtin.c:7231).
-The common forms work; several POSIX count-based rules were wrong. The
-**1-arg rule is now FIXED** (bin_test:12357 — a lone token is a non-empty
-test); the rest remain:
+**Status:** `port-bug` — narrowed. The PARSER half is fixed: `bin_test` now
+runs the real grammar (`TestParse` in builtin.rs — a port of `testlex`
+(Src/builtin.c:7200) plus `par_cond` / `par_cond_1` / `par_cond_2` /
+`par_cond_double` / `par_cond_triple` / `par_cond_multi`,
+Src/parse.c:2409-2729) with a live `n_testargs`, replacing the
+`if argv.len() == N` ladder. Every count-driven POSIX rule now matches:
 
 ```
-[ -z ]                zsh: true   zshrs: true   (FIXED)
+[ -z ]                zsh: true   zshrs: true                        (FIXED)
   # POSIX 1-arg rule: a single arg is a NON-EMPTY-STRING test; "-z" is
   # non-empty → true, whatever the token looks like. `[ "" ]` → false.
 
-[ "(" = "(" ]         zsh: true   zshrs: [:1: argument expected (false)
-  # 3-arg `arg1 OP arg2` with a binary OP takes priority over paren grouping
-  # (builtin.c:7264-7265). The `(`/`)` are OPERANDS. zshrs's paren-balance
-  # walk (builtin.rs:12556) mis-fires; and even skipping it, the cond
-  # EVALUATOR still treats `(`/`)` as grouping in the binary compare (a
-  # naive skip made `[ ( = ) ]` wrongly true — needs both bin_test AND the
-  # evaluator fixed together, so reverted).
+[ 1 = 1 = 1 ]         zsh: "too many arguments" rc=2                  (FIXED)
+  # C reports it from bin_test:7297 `if (*curtestarg)` — the grammar stopped
+  # before consuming every argument. The port tracks the same cursor.
 
-[ 1 = 1 = 1 ]         zsh: "too many arguments" rc=2   zshrs: rc=2, NO message
-  # zshrs detects the arity error (correct rc) but emits no diagnostic.
+test 3 -eq 3 -a       zsh: rc=1 (false)                               (FIXED)
+  # trailing `-a` with no right operand: par_cond_1 takes it as the
+  # connective, then par_cond_2 sees n_testargs == 1 and the remaining
+  # nothing becomes `-n ""` → false.
 
-test 3 -eq 3 -a       zsh: rc=1 (false)   zshrs: "too many arguments" rc=2
-  # trailing `-a` with no right operand: zsh evaluates to false, zshrs errors.
+test -e /dev/null -a -a   zsh: rc=0                                   (FIXED)
+  # the SECOND `-a` is the connective and the THIRD is an operand
+  # (`-n "-a"` → true) — decided by parse POSITION, which is why no amount of
+  # scanning the argument list for a connective spelling could get it right.
 ```
 
-Root cause is the special-case reimplementation missing the count-driven
-POSIX algorithm C runs in `par_cond`/`par_cond_1` (the 0/1/2/3/4-arg rules)
-plus the evaluator's paren-as-operand handling. Faithful fix = port
-`testlex` + `par_cond` properly (a recursive-descent condition parser) rather
-than extend the `argv.len() == N` ladder — deferred as a coordinated
-bin_test + cond-evaluator rewrite. Niche (real scripts don't write these
-shapes).
+What remains is the EVALUATOR half only:
+
+```
+[ "(" = "(" ]         zsh: rc=0 (true)    zshrs: rc=2
+[ "(" = ")" ]         zsh: rc=1 (false)   zshrs: rc=0
+  # 3-arg `arg1 OP arg2` with a binary OP takes priority over paren grouping
+  # (builtin.c:7264-7265), so the `(`/`)` are OPERANDS. bin_test now gets this
+  # right and hands `cond::evalcond` the three tokens as a leaf — but
+  # `evalcond` is a combined parse+eval walker (cond.rs:105 `walk`) whose
+  # primary arm still treats a leading `(` as a grouping token, so the leaf is
+  # re-parsed as a group.
+```
+
+Root cause is now solely that `cond::evalcond` parses as it evaluates. C's
+`evalcond` (Src/cond.c:70) walks pre-compiled wordcode and never sees a paren
+— grouping was resolved by `par_cond` — so there is nothing there to misfire.
+Faithful fix = feed `evalcond` a parsed structure (the `[[ … ]]` path needs the
+same treatment) rather than special-casing `(` in the walker; a naive skip made
+`[ ( = ) ]` wrongly true when it was tried before. Niche (real scripts do not
+write these shapes).
 
 ---
 
