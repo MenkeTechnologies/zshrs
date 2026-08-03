@@ -119,8 +119,13 @@ jobs:
     # substring/replace) runs for the extended ways (zsh/bash/ksh + ksh/zsh).
     # ZSHRS_REQUIRE_REF_SHELLS=1 turns a missing reference shell into a
     # failure so the contract is enforced, not silently skipped — hence every
-    # shell is installed below (bash, dash and /bin/sh are already present on
-    # both runners; the ubuntu runner additionally needs zsh and ksh).
+    # shell is installed below. PRESENCE is not enough: a reference shell also
+    # has to be RECENT enough to have the features the corpus exercises. Only
+    # `/bin/sh` and `/bin/dash` are taken as the platform ships them (they are
+    # resolved by absolute path); `bash`, `ksh` and `zsh` are resolved through
+    # `command -v` and are installed per-runner below — ubuntu needs zsh and
+    # ksh at all, macOS needs bash and ksh REPLACED because the ones in /bin
+    # are 13-18 years old (see the macOS step).
     name: Emulation parity
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -145,6 +150,29 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y zsh ksh dash mksh
           sudo ln -sf "$(command -v dash)" /usr/local/bin/ash
+      - name: Install reference shells (macOS runner)
+        if: runner.os == 'macOS'
+        # macOS ships bash and ksh, but both are museum pieces: /bin/bash is
+        # 3.2.57 (2007 — the last GPLv2 bash) and /bin/ksh is AT&T 93u+
+        # 2012-08-01. They predate features the EXTENDED corpus uses, so they
+        # diverge from zshrs where a MODERN bash/ksh agrees with it exactly:
+        #   * bash 3.2 has no brace-expansion STEP (`{2..8..2}` is bash 4.0),
+        #     so it emits the braces literally instead of `2 4 6 8`.
+        #   * ksh 93u+ 2012 fails `${v:(-3):2}` / `${v:(-2)}` (parenthesised
+        #     negative substring offset) with an arithmetic syntax error, and
+        #     silently no-ops the anchored array replacements `${a[@]/#/x}`
+        #     and `${a[@]/%/y}`, leaving the array unchanged.
+        # Homebrew's bash 5.x and ksh93u+m 1.0.10 agree with zshrs on all of
+        # those, which is why the ubuntu leg — running against modern distro
+        # packages — is green on the same corpus. `find_shell`
+        # (tests/emulation_parity.rs:648) tries the bare names `bash` / `ksh`
+        # through `command -v` BEFORE the /bin/* absolute fallbacks, so
+        # prepending the Homebrew prefix to PATH is what selects them.
+        # `/bin/sh` and `/bin/dash` are absolute candidates and stay exactly
+        # as the platform ships them — this step cannot affect those ways.
+        run: |
+          brew install bash ksh93
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Run emulation parity + dash-strict suites
         run: cargo test --locked --test emulation_parity --test dash_mode -- --nocapture
 
