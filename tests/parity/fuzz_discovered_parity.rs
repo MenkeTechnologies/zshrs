@@ -1428,12 +1428,18 @@ case $d in (/tmp/pf_auto_*) command rm -rf -- "$d";; esac"#,
 // C dispatches `[[ =~ ]]` to a module, and which one is an option
 // (Src/cond.c:115): `zsh/pcre` under REMATCH_PCRE, else `zsh/regex`, which is
 // regcomp(REG_EXTENDED) — POSIX ERE. ERE is a different language from the RE2
-// syntax the Rust regex crate speaks: there is no `\d`/`\w`/`\s` (a backslash
-// before an ordinary character yields that character, so `\d` matches a literal
-// `d`), and `(?…)` is a repetition operator with no operand, i.e. a compile
-// error, not a group modifier. zshrs accepted both and so MATCHED text zsh does
-// not — and it ignored REMATCH_PCRE entirely, so `setopt rematchpcre` did
-// nothing.
+// syntax the Rust regex crate speaks: there is no `\d` (a backslash before an
+// ordinary character yields that character, so `\d` matches a literal `d`), and
+// `(?…)` is a repetition operator with no operand, i.e. a compile error, not a
+// group modifier. zshrs accepted both and so MATCHED text zsh does not — and it
+// ignored REMATCH_PCRE entirely, so `setopt rematchpcre` did nothing.
+//
+// `\w`/`\W`/`\s`/`\S`/`\b`/`\B`/`\<`/`\>`/`` \` ``/`\'` are the exception:
+// they are libc-CONDITIONAL, because zsh calls the HOST regcomp(3). glibc
+// honours them as GNU regex operators (RE_SYNTAX_POSIX_EXTENDED omits
+// RE_NO_GNU_OPS — posix/regcomp.c:464-465 + posix/regex.h), BSD libc does not.
+// Every case below is `assert_parity`, i.e. compared against the zsh running on
+// the SAME libc, so each pins whichever answer that platform's regcomp gives.
 // ─────────────────────────────────────────────────────────────────────
 mod regex_ere_vs_pcre {
     use super::*;
@@ -1454,9 +1460,12 @@ mod regex_ere_vs_pcre {
         );
     }
 
-    /// `\w` likewise.
+    /// `\w` follows the HOST libc, not a fixed rule: a literal `w` under BSD
+    /// regcomp (so NOMATCH), the `[[:alnum:]_]` GNU operator under glibc (so
+    /// `M=user@site.com`). This exact line was the sole signature behind the
+    /// 7 ubuntu `Fuzz — pcre` divergences.
     #[test]
-    fn backslash_w_is_a_literal_w() {
+    fn backslash_w_follows_the_host_libc() {
         assert_parity(
             r#"[[ 'user@site.com' =~ '^(\w+)@(\w+)\.com$' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#,
         );
