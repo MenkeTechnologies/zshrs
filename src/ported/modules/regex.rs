@@ -90,14 +90,16 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // LANGUAGE from the RE2 syntax the Rust `regex` crate speaks, and the
     // difference is observable, not cosmetic:
     //
-    //   * ERE has no `\d` / `\w` / `\s`. A backslash before an ordinary
-    //     character just yields that character, so `\d` matches a literal `d`.
+    //   * ERE has no `\d`. A backslash before an ordinary character just
+    //     yields that character, so `\d` matches a literal `d`.
     //       [[ 2024-06 =~ '(\d{2,4})-(\d{2})' ]]  -> zsh: NO match
     //     zshrs matched it, and captured "2024"/"06" that zsh never captures.
     //   * `(?` is not a group modifier — `?` is a repetition operator with no
     //     operand, which regcomp rejects:
     //       [[ abc =~ '(?<w>[a-z]+)' ]]  -> zsh: failed to compile regex
     //     zshrs compiled it as a named group and matched.
+    //   * `\w` / `\s` / `\b` and friends are libc-CONDITIONAL: glibc honours
+    //     them as GNU operators, BSD libc does not. See `gnu_ere_escape`.
     //
     // Calling regcomp directly would be the literal port, but `libc` does not
     // declare regcomp for linux-gnu and keeps every regex_t field private, so
@@ -172,7 +174,9 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // c:78 — regcomp(3) POSIX-ERE semantics the RE2 dialect does not share:
     // backslash-before-ordinary is a LITERAL (so `\d` is `d`, not a digit
     // class), and inside `[...]` a backslash is an ordinary class member
-    // (`[a-z\n]` is {a..z, '\', 'n'}, not "plus newline").
+    // (`[a-z\n]` is {a..z, '\', 'n'}, not "plus newline"). On glibc the GNU
+    // operator escapes are lifted back out of that literal rule first —
+    // see `gnu_ere_escape`.
     let pat_for_compile = crate::ported::modules::regex::posix_ere_bracket_escape(&pat_for_compile);
     // zsh's regex treats `.` as matching newline (regcomp without REG_NEWLINE);
     // the regex crate defaults `.` to exclude it. Bug #557.
@@ -1167,6 +1171,169 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = crate::regex_module::zcond_regex_match(&["pattern"], 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // c:74-78 — libc-CONDITIONAL GNU ERE operators.
+    //
+    // `[[ … =~ … ]]` without RE_MATCH_PCRE hands the pattern to the host
+    // `regcomp(3)`, so the honoured backslash escapes are a property of the
+    // C library. glibc recognizes the GNU operators (`RE_SYNTAX_POSIX_EXTENDED`
+    // omits `RE_NO_GNU_OPS` — posix/regcomp.c:464-465 + posix/regex.h, and the
+    // `!(syntax & RE_NO_GNU_OPS)` arms at posix/regcomp.c:1841-1899); BSD libc
+    // implements plain POSIX ERE and has none of them. Both arms are pinned so
+    // a regression on either platform fails the build on that platform.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// glibc: `\w` is `class "alnum" + extra "_"` (posix/regcomp.c:2410-2415,
+    /// `build_charclass_op` :3701-3718), so the pattern the ubuntu `Fuzz — pcre`
+    /// job diverged on matches. Exact CI signature.
+    #[cfg(target_env = "gnu")]
+    #[test]
+    fn gnu_ere_word_escape_matches_glibc_regcomp() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            crate::regex_module::zcond_regex_match(
+                &["user@site.com", r"^(\w+)@(\w+)\.com$"],
+                ZREGEX_EXTENDED
+            ),
+            1,
+            r"glibc \w = [[:alnum:]_]; ^(\w+)@(\w+)\.com$ must match user@site.com"
+        );
+        assert_eq!(
+            crate::regex_module::zcond_regex_match(&["-", r"^\w$"], ZREGEX_EXTENDED),
+            0,
+            r"'-' is not [[:alnum:]_]"
+        );
+    }
+
+    /// glibc: the rest of the GNU operator set from `peek_token`'s
+    /// `!(syntax & RE_NO_GNU_OPS)` arms — `\W \s \S \b \B \< \> \` \'`.
+    #[cfg(target_env = "gnu")]
+    #[test]
+    fn gnu_ere_remaining_operators_match_glibc_regcomp() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("casematch").unwrap_or(false);
+        opt_state_set("casematch", true);
+        let cases: &[(&str, &str, i32, &str)] = &[
+            ("a-b", r"a\Wb", 1, r"\W = [^[:alnum:]_]"),
+            ("a_b", r"a\Wb", 0, r"_ IS a word char, so \W must reject"),
+            ("a b", r"a\sb", 1, r"\s = [[:space:]]"),
+            ("a\tb", r"a\sb", 1, r"\s covers TAB"),
+            ("ab", r"a\Sb", 0, r"\S needs a non-space between a and b"),
+            ("foo bar", r"\bbar", 1, r"\b = WORD_FIRST|WORD_LAST boundary"),
+            ("foobar", r"\bbar", 0, r"no boundary inside foobar"),
+            ("foobar", r"o\Bb", 1, r"\B = INSIDE_WORD|INSIDE_NOTWORD"),
+            ("foo bar", r"\<bar", 1, r"\< = WORD_FIRST"),
+            ("foobar", r"\<bar", 0, r"\< needs a not-word char before"),
+            ("foo bar", r"bar\>", 1, r"\> = WORD_LAST"),
+            ("barfoo", r"bar\>", 0, r"\> needs a not-word char after"),
+            ("abc", "\\`abc", 1, r"\` = BUF_FIRST"),
+            ("xabc", "\\`abc", 0, r"\` anchors at buffer start only"),
+            ("abc", r"abc\'", 1, r"\' = BUF_LAST"),
+            ("abcx", r"abc\'", 0, r"\' anchors at buffer end only"),
+        ];
+        let observed: Vec<(&str, &str, i32)> = cases
+            .iter()
+            .map(|(s, p, _, _)| {
+                (
+                    *s,
+                    *p,
+                    crate::regex_module::zcond_regex_match(&[s, p], ZREGEX_EXTENDED),
+                )
+            })
+            .collect();
+        opt_state_set("casematch", saved);
+        for ((s, p, want, why), (_, _, got)) in cases.iter().zip(observed) {
+            assert_eq!(got, *want, "[[ {:?} =~ {:?} ]] — {}", s, p, why);
+        }
+    }
+
+    /// BSD libc has NO GNU operators: a backslash before an ordinary character
+    /// yields that character. Verified against both local oracles — zsh 5.9
+    /// (arm64-apple-darwin25.0) and zsh 5.9.2 (aarch64-apple-darwin25.4.0)
+    /// print NOMATCH for every pattern below except the literal-`w` case.
+    #[cfg(not(target_env = "gnu"))]
+    #[test]
+    fn bsd_ere_gnu_operators_stay_literal() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("casematch").unwrap_or(false);
+        opt_state_set("casematch", true);
+        let cases: &[(&str, &str, i32, &str)] = &[
+            ("user@site.com", r"^(\w+)@(\w+)\.com$", 0, r"\w is literal w"),
+            ("w", r"^\w$", 1, r"\w matches the LETTER w"),
+            ("a b", r"a\sb", 0, r"\s is literal s"),
+            ("asb", r"a\sb", 1, r"…so a\sb matches 'asb'"),
+            ("foo bar", r"\bbar", 0, r"\b is literal b"),
+            ("foo bbar", r"\bbar", 1, r"…so \bbar matches 'bbar'"),
+            ("foo bar", r"\<bar", 0, r"\< is literal <, NOT a word boundary"),
+            ("foo <bar", r"\<bar", 1, r"…so \<bar matches '<bar'"),
+            ("foo bar", r"bar\>", 0, r"\> is literal >"),
+            ("bar> x", r"bar\>", 1, r"…so bar\> matches 'bar>'"),
+            ("abab", r"(ab)\1", 0, r"\1 is literal 1, not a backreference"),
+        ];
+        let observed: Vec<(&str, &str, i32)> = cases
+            .iter()
+            .map(|(s, p, _, _)| {
+                (
+                    *s,
+                    *p,
+                    crate::regex_module::zcond_regex_match(&[s, p], ZREGEX_EXTENDED),
+                )
+            })
+            .collect();
+        opt_state_set("casematch", saved);
+        for ((s, p, want, why), (_, _, got)) in cases.iter().zip(observed) {
+            assert_eq!(got, *want, "[[ {:?} =~ {:?} ]] — {}", s, p, why);
+        }
+    }
+
+    /// `\d` is NOT a GNU operator on EITHER libc — it falls through
+    /// `peek_token`'s `default:` arm, so it stays a literal `d` on glibc too.
+    /// This is the pin the glibc arm must not over-reach and break.
+    #[test]
+    fn digit_escape_is_literal_on_every_libc() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            crate::regex_module::zcond_regex_match(
+                &["2024-06", r"(\d{2,4})-(\d{2})"],
+                ZREGEX_EXTENDED
+            ),
+            0,
+            r"\d is a literal 'd' in POSIX ERE on both glibc and BSD"
+        );
+        assert_eq!(
+            crate::regex_module::zcond_regex_match(
+                &["dd-dd", r"(\d{2,4})-(\d{2})"],
+                ZREGEX_EXTENDED
+            ),
+            1,
+            r"…so the pattern matches a run of literal 'd's instead of digits"
+        );
+    }
+
+    /// GNU operators do NOT apply inside a bracket expression:
+    /// `_RE_SYNTAX_POSIX_COMMON` omits `RE_BACKSLASH_ESCAPE_IN_LISTS`, so a
+    /// backslash in a list is an ordinary member on glibc as well as BSD.
+    /// `[\w]` is therefore {'\\', 'w'} on both, never `[[:alnum:]_]`.
+    #[test]
+    fn gnu_operators_do_not_leak_into_bracket_expressions() {
+        let _g = crate::test_util::global_state_lock();
+        let translated = crate::regex_module::posix_ere_bracket_escape(r"[\w]");
+        assert_eq!(
+            translated, r"[\\w]",
+            "backslash inside a list is a literal member on every libc"
+        );
+        assert_eq!(
+            crate::regex_module::zcond_regex_match(&["5", r"^[\w]$"], ZREGEX_EXTENDED),
+            0,
+            r"[\w] must not become a digit-accepting class"
+        );
+        assert_eq!(
+            crate::regex_module::zcond_regex_match(&["\\", r"^[\w]$"], ZREGEX_EXTENDED),
+            1,
+            r"[\w] is the two-member set: a backslash, and the letter w"
+        );
+    }
 }
 
 // !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART AS A
@@ -1188,19 +1355,115 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
     let mut i = 0;
     // POSIX ERE special characters — the only ones for which a backslash is
     // meaningful. For ANY other character, ERE says `\X` is just the literal X,
-    // so `\d` is the letter `d`, `\w` is `w`, `\s` is `s`, `\b` is `b`. RE2
-    // reads those as character classes / assertions instead, which made zshrs
-    // match text zsh does not.
+    // so `\d` is the letter `d`. `\w` / `\s` / `\b` are the exception on glibc
+    // only; `gnu_ere_escape` handles them ahead of this table. RE2 reads all of
+    // them as character classes / assertions, which made zshrs match text BSD
+    // zsh does not.
     const ERE_SPECIAL: &[char] = &[
         '.', '[', ']', '\\', '(', ')', '*', '+', '?', '{', '}', '|', '^', '$',
     ];
+    // Punctuation that ERE reads as the plain literal but RE2 reads as SYNTAX,
+    // so re-emitting the backslash would change the meaning. `\<` / `\>` are
+    // RE2's start/end-of-word boundary assertions (regex 1.12.3
+    // `src/lib.rs:734-735`), while BSD `regcomp(3)` yields the literal `<` /
+    // `>` — verified: `zsh 5.9 (arm64-apple-darwin25.0)` and `zsh 5.9.2` both
+    // print NOMATCH for `[[ 'foo bar' =~ '\<bar' ]]` and `[[ 'foo bar' =~
+    // 'bar\>' ]]`. Emit them bare so RE2 sees a literal too. (On glibc these
+    // two never reach here — `gnu_ere_escape` claims them first.)
+    const RE2_SYNTAX_PUNCT: &[char] = &['<', '>'];
     while i < chars.len() {
         let c = chars[i];
         if c == '\\' {
             i += 1;
             if i < chars.len() {
                 let n = chars[i];
-                if ERE_SPECIAL.contains(&n) {
+                // ── libc-CONDITIONAL: the GNU regex operators ──────────────
+                //
+                // zsh links libc `regcomp(3)`, so WHICH backslash escapes are
+                // honoured is a property of the C LIBRARY, not of zsh. The
+                // faithful port is therefore libc-conditional too.
+                //
+                // glibc: `regcomp(pattern, REG_EXTENDED)` selects
+                // `RE_SYNTAX_POSIX_EXTENDED` (glibc `posix/regcomp.c:464-465`
+                // — `reg_syntax_t syntax = ((cflags & REG_EXTENDED)
+                // ? RE_SYNTAX_POSIX_EXTENDED : RE_SYNTAX_POSIX_BASIC);`), and
+                // that syntax word does NOT contain `RE_NO_GNU_OPS` (glibc
+                // `posix/regex.h`: `RE_SYNTAX_POSIX_EXTENDED` is
+                // `_RE_SYNTAX_POSIX_COMMON | RE_CONTEXT_INDEP_ANCHORS |
+                // RE_CONTEXT_INDEP_OPS | RE_NO_BK_BRACES | RE_NO_BK_PARENS |
+                // RE_NO_BK_VBAR | RE_CONTEXT_INVALID_OPS |
+                // RE_UNMATCHED_RIGHT_PAREN_ORD` — `RE_NO_GNU_OPS`, documented
+                // there as "If this bit is set, do not process the GNU regex
+                // operators. If not set, then the GNU regex operators are
+                // recognized.", is in none of them). So every
+                // `if (!(syntax & RE_NO_GNU_OPS))` arm of `peek_token` (glibc
+                // `posix/regcomp.c:1841-1899`) fires, and that arm set is
+                // EXACTLY the ten escapes below:
+                //
+                //   \w  OP_WORD      class "alnum" + extra "_"  regcomp.c:2410-2415
+                //   \W  OP_NOTWORD   same set, `bitset_not`     regcomp.c:3701-3722
+                //   \s  OP_SPACE     class "space", no extra    regcomp.c:2420-2425
+                //   \S  OP_NOTSPACE  same set, negated          regcomp.c:3701-3722
+                //   \b  ANCHOR WORD_DELIM      → `WORD_FIRST | WORD_LAST` OP_ALT
+                //                                (regcomp.c:2358-2367) = word boundary
+                //   \B  ANCHOR NOT_WORD_DELIM  → `INSIDE_WORD | INSIDE_NOTWORD`
+                //                                (regcomp.c:2368-2373) = NOT a boundary
+                //   \<  ANCHOR WORD_FIRST  PREV_NOTWORD|NEXT_WORD regex_internal.h:221
+                //   \>  ANCHOR WORD_LAST   PREV_WORD|NEXT_NOTWORD regex_internal.h:222
+                //   \`  ANCHOR BUF_FIRST   PREV_BEGBUF            regex_internal.h:226
+                //   \'  ANCHOR BUF_LAST    NEXT_ENDBUF            regex_internal.h:227
+                //
+                // Word-char set: `init_word_char` (glibc `posix/regcomp.c:929-957`)
+                // seeds the bitset with `0x03ff0000 / 0x87fffffe / 0x07fffffe`
+                // — i.e. `0-9`, `A-Z`, `_`, `a-z` — matching
+                // `#define IS_WORD_CHAR(ch) (isalnum (ch) || (ch) == '_')`
+                // (`posix/regex_internal.h:505`). The RE2 replacements are
+                // therefore the ASCII forms: the `regex` crate documents
+                // `[[:alnum:]]` as `[0-9A-Za-z]` and `(?-u:\b)` uses
+                // `[0-9A-Za-z_]`. Bytes >= 0x80 follow the process locale in
+                // glibc (`isalnum`/`iswalnum` via the COMPLEX_BRACKET arm,
+                // regcomp.c:3736-3751); that residual is not expressible in
+                // RE2 and is the same approximation this translation already
+                // makes for a literal `[[:alpha:]]` in a bracket expression.
+                //
+                // NOT in the GNU arm set, so NOT translated on either libc:
+                //   * `\d` falls through `peek_token`'s `default:` and stays a
+                //     literal `d` on glibc exactly as on BSD.
+                //   * `\1`..`\9` ARE backreferences on glibc
+                //     (`RE_SYNTAX_POSIX_EXTENDED` omits `RE_NO_BK_REFS`, so
+                //     `regcomp.c:1836-1842` makes them `OP_BACK_REF`). RE2 has
+                //     no backreferences at all, so they keep the BSD
+                //     literal-digit reading — known, unexpressible residual.
+                #[cfg(target_env = "gnu")]
+                let gnu_op: Option<&'static str> = match n {
+                    'w' => Some("[[:alnum:]_]"),
+                    'W' => Some("[^[:alnum:]_]"),
+                    's' => Some("[[:space:]]"),
+                    'S' => Some("[^[:space:]]"),
+                    'b' => Some(r"(?-u:\b)"),
+                    'B' => Some(r"(?-u:\B)"),
+                    '<' => Some(r"(?-u:\b{start})"),
+                    '>' => Some(r"(?-u:\b{end})"),
+                    '`' => Some(r"\A"),
+                    '\'' => Some(r"\z"),
+                    _ => None,
+                };
+                // BSD libc (macOS, the `target_env = ""` Apple targets) runs
+                // the Spencer engine, which implements POSIX ERE and nothing
+                // else: a backslash before an ordinary character yields that
+                // character, so NONE of the GNU operators exist. Verified
+                // against both local oracles — `zsh 5.9 (arm64-apple-darwin25.0)`
+                // and `zsh 5.9.2 (aarch64-apple-darwin25.4.0)` each print
+                // NOMATCH for `[[ 'user@site.com' =~ '^(\w+)@(\w+)\.com$' ]]`,
+                // `[[ 'a b' =~ 'a\sb' ]]`, `[[ 'foo bar' =~ '\bbar' ]]`,
+                // `[[ 'foo bar' =~ '\<bar' ]]` and `[[ abab =~ '(ab)\1' ]]`,
+                // while `[[ w =~ '^\w$' ]]` MATCHES (i.e. `\w` is the letter
+                // `w`). `None` keeps every one of them on the literal path.
+                #[cfg(not(target_env = "gnu"))]
+                let gnu_op: Option<&'static str> = None;
+                if let Some(gnu) = gnu_op {
+                    out.push_str(gnu);
+                } else if ERE_SPECIAL.contains(&n) {
                     // A real ERE escape — keep the pair, it means the same in RE2.
                     out.push('\\');
                     out.push(n);
@@ -1210,7 +1473,7 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
                     // syntax (it cannot be an ERE special here, but `-` and the
                     // like are harmless; escaping alphanumerics is ILLEGAL in
                     // RE2, so only escape punctuation).
-                    if n.is_alphanumeric() {
+                    if n.is_alphanumeric() || RE2_SYNTAX_PUNCT.contains(&n) {
                         out.push(n);
                     } else {
                         out.push('\\');
