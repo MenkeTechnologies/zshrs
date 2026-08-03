@@ -11,3 +11,30 @@
 # part as the length and failed with "bad math expression: ':' without '?'".
 # Reverting the fix yields 10 divergences on seed 1. Bug #1014.
 print -r -- "${(L#P)t}"
+#
+# (#) ON A BAD MATH EXPRESSION — the CI oracle predates the upstream fix.
+# Upstream 0eab788437 ("52122 + 52129: fix (#) parameter expansion flag",
+# 2023-09-13) rewrote substevalchar (c:Src/subst.c:1490). Before it:
+#     zlong ires = mathevali(ptr);
+#     if (errflag) return NULL;
+# so a non-numeric operand made paramsubst return NULL, prefork bailed out of
+# the word mid-expansion (c:Src/subst.c:142-147), and the node was left holding
+# the still-tokenized source prefix — which untokenizes the Dnull back to a
+# literal quote. Hence `print -r -- "${(#)path}"` emits a bare `"` and
+# `echo a${(#):-@}z` emits `a`. After it:
+#     if (errflag) { errflag |= saved_errflag; return noerrs ? dupstring("") : NULL; }
+# i.e. an empty string whenever the (X) flag is absent, so the word survives.
+# Test/D04parameter.ztst:2816 pins the new contract (`echo a${(#):-@}z` → `az`).
+#
+# zshrs ports the post-fix C, so it is the OLDER oracle that is out of step:
+#     zsh 5.9   (Apple /bin/zsh, ubuntu 5.9-6ubuntu2)   a${(#):-@}z → "a
+#     zsh 5.9.2 (Homebrew, zsh-5.9.2-0-gddee3e7)        a${(#):-@}z → az
+#     zshrs                                             a${(#):-@}z → az
+# `--mode expr --count 4000` against the 5.9.2 oracle reports 0 divergences with
+# NO baseline at all; against a 5.9 oracle it reports exactly these two. Same
+# fork-ahead-of-oracle split documented in zutil.txt and mathfunc.txt, and the
+# same ruling as docs/BUGS.md #648 — matching the old oracle would mean
+# re-introducing a bug upstream already deleted, so do NOT "fix" zshrs here.
+# Retire these two lines once the ubuntu runner's zsh carries 0eab788437.
+print -r -- "${(#)path}"
+print -r -- "${(L#)path}"
