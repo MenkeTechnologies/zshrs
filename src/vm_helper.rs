@@ -2653,6 +2653,73 @@ impl ShellExecutor {
         self.execute_script_zsh_pipeline(script)
     }
 
+    /// Run `script` with stdout AND stderr captured, returning `(exit status,
+    /// output)` — the entry point for an embedder that owns the terminal (a
+    /// TUI), where a stray `echo` corrupts the display.
+    ///
+    /// A shell cannot capture its output into an in-process buffer the way a
+    /// single-runtime language can: a forked child writes fd 1 directly and
+    /// knows nothing about the parent's buffers. The capture is therefore at fd
+    /// level, and it differs from `$(…)` in the one way that matters to an
+    /// embedder: [`Self::run_command_substitution`] runs on a sub-VM, as a
+    /// subshell must, so a variable it sets is gone afterwards. This runs the
+    /// script on THIS VM, so state persists across captured runs exactly as it
+    /// does across ordinary [`Self::execute_script`] calls.
+    ///
+    /// The saved fds go through `movefd` to land at fd >= 10 and marked
+    /// `FDT_INTERNAL`, per zsh's invariant that shell-internal fds never live
+    /// below 10 — otherwise a script doing `exec 9>&-` closes the capture's own
+    /// bookkeeping. A temp file, not a pipe, receives the output: with no
+    /// concurrent reader, a pipe deadlocks the moment a script writes past the
+    /// 64 KiB buffer.
+    pub fn execute_script_captured(&mut self, script: &str) -> (i32, String) {
+        use std::io::{Read, Seek, SeekFrom};
+        use std::os::unix::io::AsRawFd;
+
+        let Ok(mut tmp) = tempfile::tempfile() else {
+            // No temp file, no capture: run it anyway rather than silently
+            // dropping the script, and report nothing captured.
+            let status = self.execute_script(script).unwrap_or(1);
+            return (status, String::new());
+        };
+
+        // Flush Rust's buffered stdout against the REAL fd 1 before the swap,
+        // or bytes written before this call drain into the capture instead
+        // (the same ordering bug `run_command_substitution` documents).
+        let _ = io::stdout().flush();
+
+        let saved_out = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDOUT_FILENO) });
+        let saved_err = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDERR_FILENO) });
+        unsafe {
+            libc::dup2(tmp.as_raw_fd(), libc::STDOUT_FILENO);
+            libc::dup2(tmp.as_raw_fd(), libc::STDERR_FILENO);
+        }
+
+        let status = self.execute_script(script);
+
+        let _ = io::stdout().flush();
+        unsafe {
+            libc::dup2(saved_out, libc::STDOUT_FILENO);
+            libc::dup2(saved_err, libc::STDERR_FILENO);
+        }
+        crate::ported::utils::zclose(saved_out);
+        crate::ported::utils::zclose(saved_err);
+
+        let mut output = String::new();
+        let _ = tmp.seek(SeekFrom::Start(0));
+        let mut bytes = Vec::new();
+        if tmp.read_to_end(&mut bytes).is_ok() {
+            output = String::from_utf8_lossy(&bytes).into_owned();
+        }
+        // Match `$(…)`: one trailing newline is an artifact of the last `echo`,
+        // not part of the output.
+        while output.ends_with('\n') {
+            output.pop();
+        }
+
+        (status.unwrap_or_else(|_| self.last_status()), output)
+    }
+
     /// Run an ALREADY-PARSED program (the back half of
     /// `execute_script_zsh_pipeline`): compile the `ZshProgram` to a
     /// fusevm Chunk and run it. Used by the ported `loop()` REPL
