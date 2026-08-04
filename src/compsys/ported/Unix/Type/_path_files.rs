@@ -39,7 +39,7 @@ use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
 use crate::ported::subst::{filesubstr, singsub};
 use crate::ported::zle::compcore::get_compstate_str;
-use crate::ported::zle::complete::{bin_compadd, bin_compset};
+use crate::ported::zle::complete::{bin_compadd, bin_compadd_body, bin_compset};
 use crate::ported::zle::computil::{bin_compfiles, bin_compquote};
 use crate::ported::zsh_h::{isset, options, CASEGLOB, MAX_OPS};
 
@@ -56,6 +56,13 @@ fn make_ops() -> options {
 
 fn compadd(argv: Vec<String>) -> i32 {
     bin_compadd("compadd", &argv, &make_ops(), 0)
+}
+/// `builtin compadd …` — the real builtin with shell-function lookup
+/// bypassed (`Src/exec.c:3402-3406` gates the `shfunctab` lookup on
+/// `!(cflags & BINF_BUILTIN)`), so the `compadd()` function that
+/// `_approximate` / `_correct` install never sees the call.
+fn compadd_builtin(argv: Vec<String>) -> i32 {
+    bin_compadd_body("compadd", &argv, &make_ops(), 0)
 }
 fn compset(argv: Vec<String>) -> i32 {
     bin_compset("compset", &argv, &make_ops(), 0)
@@ -1077,22 +1084,49 @@ pub fn _path_files(argv: &[String]) -> i32 {
                         .collect();
                 } else if tmp1.first().map(|s| s.contains('/')).unwrap_or(false) {
                     // sh:506-518 — reduce to basenames via compadd -D.
-                    tmp2b = tmp1.clone();
-                    setaparam("tmp1", tmp1.clone());
-                    let mut a: Vec<String> = vec!["-D".into(), "tmp1".into()];
-                    a.extend(matcher.clone());
-                    a.push("-".into());
-                    a.extend(tails(&tmp1));
-                    compadd(a);
-                    tmp1 = get_arr("tmp1");
-                    if !comp_correct.is_empty() && tmp1.is_empty() {
-                        tmp1 = tmp2b.clone();
+                    if !comp_correct.is_empty() {
+                        // sh:507-514 — while a correcting completer is
+                        // active, narrow EXACTLY first: sh:509 is
+                        // `builtin compadd`, which bypasses the
+                        // `compadd()` shell function `_approximate`
+                        // installs (and therefore its `(#a$N)` PREFIX
+                        // injection). Only if that leaves nothing does
+                        // sh:513 retry through the shadowed `compadd`
+                        // to let approximation widen the set.
+                        // sh:508  tmp2=( "$tmp1[@]" )
+                        tmp2b = tmp1.clone();
                         setaparam("tmp1", tmp1.clone());
-                        let mut a2: Vec<String> = vec!["-D".into(), "tmp1".into()];
-                        a2.extend(matcher.clone());
-                        a2.push("-".into());
-                        a2.extend(tails(&tmp2b));
-                        compadd(a2);
+                        // sh:509  builtin compadd -D tmp1 "$matcher[@]" - "${(@)tmp1:t}"
+                        let mut a: Vec<String> = vec!["-D".into(), "tmp1".into()];
+                        a.extend(matcher.clone());
+                        a.push("-".into());
+                        a.extend(tails(&tmp1));
+                        compadd_builtin(a);
+                        tmp1 = get_arr("tmp1");
+                        // sh:511  if [[ $#tmp1 -eq 0 ]]
+                        if tmp1.is_empty() {
+                            // sh:512  tmp1=( "$tmp2[@]" )
+                            tmp1 = tmp2b.clone();
+                            setaparam("tmp1", tmp1.clone());
+                            // sh:513  compadd -D tmp1 "$matcher[@]" - "${(@)tmp2:t}"
+                            let mut a2: Vec<String> = vec!["-D".into(), "tmp1".into()];
+                            a2.extend(matcher.clone());
+                            a2.push("-".into());
+                            a2.extend(tails(&tmp2b));
+                            compadd(a2);
+                            tmp1 = get_arr("tmp1");
+                        }
+                    } else {
+                        // sh:515-518 — no correcting completer active.
+                        // sh:516  tmp2=( "$tmp1[@]" )
+                        tmp2b = tmp1.clone();
+                        setaparam("tmp1", tmp1.clone());
+                        // sh:517  compadd -D tmp1 "$matcher[@]" - "${(@)tmp1:t}"
+                        let mut a: Vec<String> = vec!["-D".into(), "tmp1".into()];
+                        a.extend(matcher.clone());
+                        a.push("-".into());
+                        a.extend(tails(&tmp1));
+                        compadd(a);
                         tmp1 = get_arr("tmp1");
                     }
                 } else {

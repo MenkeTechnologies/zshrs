@@ -5895,11 +5895,17 @@ pub fn cv_next(
                 *sp = None;
             }
         } else {
-            *sp = if s_idx < bytes.len() {
-                Some(String::from_utf8_lossy(&bytes[s_idx..]).into_owned())
-            } else {
-                None
-            };
+            // c:3274 — `*sp = s`, an unconditional pointer store. When the
+            // value ends the string, `s` addresses the terminating NUL: C
+            // still hands back a NON-NULL pointer to an empty string. The
+            // port collapsed that to `None`, which is C's NULL, and the two
+            // are distinguished by the caller at c:3404 (`if (str) pign = str;
+            // else val->active = 1`). A fully typed value — `tar -c<TAB>`
+            // through `_values -s ''` — therefore took the NULL branch, was
+            // re-activated after its own xor entry had just deactivated it,
+            // and left `pign` at the head of compprefix so the typed letter
+            // never moved into IPREFIX.
+            *sp = Some(String::from_utf8_lossy(&bytes[s_idx.min(bytes.len())..]).into_owned());
         }
         // c:3275 — set *ap.
         let argsep_b = d.argsep as u8;
@@ -5907,11 +5913,9 @@ pub fn cv_next(
             *ap = Some(String::from_utf8_lossy(&bytes[os + 1..]).into_owned());
             *sp = None;
         } else if r.as_deref().map_or(false, |v| v.r#type != CVV_NOARG) {
-            *ap = if os < bytes.len() {
-                Some(String::from_utf8_lossy(&bytes[os..]).into_owned())
-            } else {
-                None
-            };
+            // c:3279 — `*ap = os`, non-NULL at end of string for the same
+            // reason as c:3274 above.
+            *ap = Some(String::from_utf8_lossy(&bytes[os.min(bytes.len())..]).into_owned());
         } else {
             *ap = None;
         }
@@ -6055,6 +6059,11 @@ pub fn cv_parse_word(d: &mut cvdef) {
     while str_opt.as_deref().map_or(false, |s| !s.is_empty()) {
         let mut ap: Option<String> = None;
         let val = cv_next(d, &mut str_opt, &mut ap);
+        // c:3385 — `arg` is one variable that every `cv_next` call
+        // overwrites through its `**ap` out-parameter, including back to
+        // NULL. Recording it only when a value carried an argument left a
+        // stale `arg` behind, which c:3411 and c:3467 both test.
+        last_arg = ap.clone();
         if let Some(v) = val {
             state_vals.push(v.name.clone().unwrap_or_default());
             match ap.as_deref() {
@@ -6066,7 +6075,6 @@ pub fn cv_parse_word(d: &mut cvdef) {
                         state_vals.push(joined);
                         nosfx = true;
                     }
-                    last_arg = ap.clone();
                 }
                 None => state_vals.push(String::new()),
             }
@@ -6168,12 +6176,15 @@ pub fn cv_parse_word(d: &mut cvdef) {
             }
         }
     } else if last_arg.is_some() {
-        let cp_len = compprefix.len();
-        let arg_off = compprefix
-            .find(last_arg.as_deref().unwrap_or(""))
-            .map(|i| i as i32)
-            .unwrap_or(cp_len as i32);
-        ignore_prefix(arg_off); // c:3467
+        // c:3467 — `ignore_prefix(arg - compprefix)`. `arg` points INTO
+        // compprefix, so the offset is how much of it was consumed ahead of
+        // the argument: total length minus what `arg` still spans. Searching
+        // compprefix for the argument's TEXT returned the first occurrence
+        // instead, which for the now-reachable empty argument is 0 and would
+        // leave the whole word in PREFIX.
+        let arg_len = last_arg.as_deref().map_or(0, str::len);
+        let arg_off = compprefix.len() - arg_len.min(compprefix.len());
+        ignore_prefix(arg_off as i32);
     } else {
         let cp_len = compprefix.len();
         ignore_prefix(cp_len as i32 - pign.len() as i32); // c:3469

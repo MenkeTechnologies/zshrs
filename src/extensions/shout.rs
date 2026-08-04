@@ -115,13 +115,7 @@ mod tests {
         assert_eq!(ready, 0, "inner end must not flush the outer frame");
         end(); // outer close: one write, in order
 
-        let n = unsafe {
-            libc::read(
-                fds[0],
-                probe.as_mut_ptr() as *mut libc::c_void,
-                probe.len(),
-            )
-        };
+        let n = unsafe { libc::read(fds[0], probe.as_mut_ptr() as *mut libc::c_void, probe.len()) };
         SHTTY.store(saved, Ordering::Relaxed);
         unsafe {
             libc::close(fds[0]);
@@ -144,13 +138,7 @@ mod tests {
         write(b"direct");
 
         let mut probe = [0u8; 16];
-        let n = unsafe {
-            libc::read(
-                fds[0],
-                probe.as_mut_ptr() as *mut libc::c_void,
-                probe.len(),
-            )
-        };
+        let n = unsafe { libc::read(fds[0], probe.as_mut_ptr() as *mut libc::c_void, probe.len()) };
         SHTTY.store(saved, Ordering::Relaxed);
         unsafe {
             libc::close(fds[0]);

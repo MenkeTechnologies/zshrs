@@ -278,6 +278,7 @@ comp_string_global!(pub COMPLIST,      "complist",      65);
 comp_string_global!(pub COMPCONTEXT,   "compcontext",   59);
 comp_string_global!(pub COMPPARAMETER, "compparameter", 60);
 comp_string_global!(pub COMPREDIRECT,  "compredirect",  61);
+comp_string_global!(pub COMPPATINSERT, "comppatinsert", 69);
 
 /// Port of `char **compwords` (complete.c:45) — argv-style array of
 /// the command-line words being completed.
@@ -1095,9 +1096,37 @@ pub fn set_compadd_trace(active: bool) {
     COMPADD_TRACE_ACTIVE.store(active, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Internal: the actual compadd body. Split out so the injector
-/// wrapper can run before / after it without code duplication.
-fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
+/// The actual compadd body — i.e. C's `bin_compadd` proper
+/// (`Src/Zle/complete.c:603`). Split out so the shell-function
+/// emulation in [`bin_compadd`] above (the shfunc-override dispatch,
+/// [`COMPADD_ARGV_SHADOW`], [`COMPADD_PREFIX_INJECTOR`],
+/// [`COMPADD_TRACE_ACTIVE`]) can run before / after it without code
+/// duplication.
+///
+/// **This is the `builtin compadd` entry point.** In C the `builtin`
+/// precommand modifier sets `BINF_BUILTIN`, and `execcmd_exec` gates
+/// its `shfunctab->getnode(shfunctab, cmdarg)` lookup on
+/// `!(cflags & (BINF_BUILTIN | BINF_COMMAND))` (`Src/exec.c:3402-3406`),
+/// so no shell function named `compadd` is ever consulted — the
+/// builtin's handler runs directly. zshrs folds that shfunc lookup
+/// into [`bin_compadd`]'s prologue (the Rust ports call the handler
+/// by symbol rather than going through `execcmd_exec`), so a ported
+/// completion function that upstream writes as `builtin compadd`
+/// must call this function instead of [`bin_compadd`]. Six upstream
+/// sites do exactly that in order to bypass the `compadd()` shell
+/// function `_approximate` / `_correct` install
+/// (`Completion/Base/Completer/_approximate:54-73`):
+/// `_path_files:509`, `_sep_parts:55`, `_sep_parts:85`,
+/// `_sep_parts:121`, `_multi_parts:94`, `_message:43`.
+pub fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
+    // c:608-610 — `if (incompfunc != 1) { zwarnnam(...); return 1; }`.
+    // [`bin_compadd`] checks this before its shfunc-emulation prologue
+    // and never reaches here when it trips, so this copy only guards
+    // direct (`builtin compadd`) callers.
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
+        zwarnnam(name, "can only be called from completion function"); // c:609
+        return 1; // c:610
+    }
     // c:613-820 — flag-arg parse loop. Walk argv consuming `-X arg`
     // pairs into the `Cadata` struct; per-flag dispatch ports the C
     // switch at c:621-820.

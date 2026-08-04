@@ -59,7 +59,7 @@ use super::_tags::_tags;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
-use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zle::complete::{bin_compadd, bin_compadd_body};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 fn make_ops() -> options {
@@ -262,10 +262,14 @@ pub fn _message(args: &[String]) -> i32 {
     };
 
     // sh:43  builtin compadd "$gopt[@]" -x "$format"
+    //   `builtin` bypasses the `compadd()` shell function
+    //   `_approximate` / `_correct` install (and `_complete_help`'s
+    //   `compadd() { return 1 }` at sh:_complete_help:13) so the
+    //   message is emitted unconditionally.
     let mut compadd_argv: Vec<String> = gopt;
     compadd_argv.push("-x".to_string());
     compadd_argv.push(format_final);
-    let _ = bin_compadd("compadd", &compadd_argv, &make_ops(), 0);
+    let _ = bin_compadd_body("compadd", &compadd_argv, &make_ops(), 0);
 
     // sh:44
     let _ = setsparam("_comp_mesg", "yes");

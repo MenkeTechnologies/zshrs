@@ -60,17 +60,20 @@ pub fn _set_command() -> i32 {
         return 0;
     }
 
-    // sh:12  `=cmd` — expand to full path via the `commands` assoc
+    // sh:12  `=cmd` — `eval _comp_command2\=$command` runs equals-expansion,
+    // which is the same `$PATH` command lookup `$commands[...]` performs
+    // (`Src/Modules/parameter.c:213 getpmcommand`).
     if command.starts_with('=') {
         let bare = &command[1..];
-        let commands = getaparam("commands").unwrap_or_default();
-        // commands is a flat array of key/value pairs in our port —
-        //   look up `bare` linearly.
-        let resolved: String = commands
-            .chunks(2)
-            .find(|kv| kv.first().map(|k| k == bare).unwrap_or(false))
-            .and_then(|kv| kv.get(1).cloned())
-            .unwrap_or_default();
+        // c:Src/Modules/parameter.c:213 `getpmcommand` — the getfn
+        // behind the `commands` special hash (`PARTAB` row
+        // parameter.rs:4391). `commands` is NOT paramtab-hashed
+        // storage, so the previous `getaparam("commands")` returned
+        // None and every bare-name lookup here yielded "".
+        let resolved: String =
+            crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), bare)
+                .and_then(|pm| pm.u_str.clone())
+                .unwrap_or_default();
         let _ = setsparam("_comp_command2", &resolved);
         let _ = setsparam("_comp_command1", bare);
         let _ = setsparam("_comp_command", &resolved);
@@ -99,12 +102,16 @@ pub fn _set_command() -> i32 {
     }
 
     // sh:24-27 — bare name, lookup in $commands
-    let commands = getaparam("commands").unwrap_or_default();
-    let cmd2: String = commands
-        .chunks(2)
-        .find(|kv| kv.first().map(|k| k == &command).unwrap_or(false))
-        .and_then(|kv| kv.get(1).cloned())
-        .unwrap_or_default();
+    // c:Src/Modules/parameter.c:213 `getpmcommand` — same `commands`
+    // special-hash getfn as the `=cmd` branch above. This is the value
+    // `_redirect` (Completion/Zsh/Context/_redirect:13-14) puts FIRST in
+    // `strs`, so an empty `_comp_command2` cost the full-path dispatch
+    // key: zsh builds `-redirect-,<,/bin/cat`, zshrs built
+    // `-redirect-,<,cat`.
+    let cmd2: String =
+        crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), &command)
+            .and_then(|pm| pm.u_str.clone())
+            .unwrap_or_default();
     let _ = setsparam("_comp_command1", &command);
     let _ = setsparam("_comp_command2", &cmd2);
     let _ = setsparam("_comp_command", &command);

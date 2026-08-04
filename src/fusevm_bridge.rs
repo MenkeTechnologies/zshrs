@@ -4405,10 +4405,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let (_joined, parts, _isarr, _flags) =
             crate::ported::subst::multsub(&s, crate::ported::zsh_h::PREFORK_SPLIT);
         // Empty single-string special case → empty Array (drop empty arg).
+        // The Array is a carrier for "no argv word", not an array-SHAPED
+        // result: a single empty field came from an empty SCALAR (c:3922-3923
+        // `if (!aval || !aval[0]) val = dupstring("");`). Record that, or
+        // under RC_EXPAND_PARAM `concat_plan9` reads a stale bit and applies
+        // c:4362's `uremnode` to a word zsh keeps — `x$(true)y` and
+        // `v=""; x${=v}y` are each the single word `xy`, not zero words.
         if parts.len() == 1 && parts[0].is_empty() {
+            note_empty_is_scalar(true);
             return Value::Array(Vec::new());
         }
-        nodes_to_value(parts)
+        // Zero parts is the same story reached by a different route: an empty
+        // command substitution splits to nothing at all rather than to one
+        // empty field. `to_str()` above means this builtin's input is always
+        // a scalar, so an empty result here is never array-shaped.
+        restore_empty_shape(nodes_to_value(parts), true)
     });
 
     // BUILTIN_FORCE_SPLIT — `${=name}` / SH_WORD_SPLIT forced split.
@@ -4478,6 +4489,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `${...}` param-expansion braces), so its collapse hit even
         // pure-paramsubst args.
         let raw = vm.pop();
+        // Brace expansion runs BETWEEN the expansion builtin that produced
+        // this word and the concat that consumes it (`x${${P}}y` compiles to
+        // EXPAND_TEXT, BRACE_EXPAND, CONCAT_DISTRIBUTE). It cannot change
+        // whether an empty result was scalar- or array-SHAPED — c:Src/glob.c
+        // xpandbraces only ever rewrites the text of existing words. But both
+        // exits below funnel through `nodes_to_value`, which records
+        // `note_empty_is_scalar(false)` for an empty result, so the shape bit
+        // its producer set was being overwritten with "array" before
+        // `concat_plan9` could read it. Under RC_EXPAND_PARAM that deleted
+        // words zsh keeps: `unset P; x${${P}}y` and `x$(true)y` are each the
+        // single word `xy` (c:4438-4467 scalar arm), not zero words.
+        // Carry the incoming bit across an empty→empty pass-through.
+        let incoming_empty_is_scalar = empty_is_scalar();
         // c:Src/options.c — `no_brace_expand` (negated braceexpand)
         // disables brace expansion entirely. When set, `{a,b}` stays
         // literal. Mirror by short-circuiting xpandbraces; pass the
@@ -4489,7 +4513,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             other => vec![other.to_str()],
         };
         if !brace_expand {
-            return nodes_to_value(inputs);
+            return restore_empty_shape(nodes_to_value(inputs), incoming_empty_is_scalar);
         }
         let mut out: Vec<String> = Vec::with_capacity(inputs.len());
         for s in inputs {
@@ -4497,7 +4521,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 out.push(w);
             }
         }
-        nodes_to_value(out)
+        restore_empty_shape(nodes_to_value(out), incoming_empty_is_scalar)
     });
 
     // `*(qual)` glob qualifier filter. Stack: [pattern, qualifier].
@@ -7676,39 +7700,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    vm.register_builtin(BUILTIN_SUBLIST_FINISH, |vm, _argc| {
-        // c:Src/jobs.c:1754 — `pipestats[0] = lastval;`. C has ONE
-        // `lastval` global (c:Src/exec.c:120), so `waitonejob` reads
-        // exactly the status the finished sublist just produced.
-        //
-        // zshrs splits that global in two: the fusevm status cell that
-        // `Op::SetStatus`/`Op::GetStatus` and therefore `$?` use, and
-        // the `builtin::LASTVAL` mirror that the ported `waitonejob`
-        // reads. The compound-command compilers (compile_if,
-        // compile_while, compile_for, compile_case, …) settle their
-        // result with `Op::SetStatus` alone, so LASTVAL still holds
-        // whatever the last dispatched BUILTIN returned — the loop
-        // condition, typically. `if [[ -z x ]]; then :; fi` and
-        // `while false; do :; done` both end with `$? == 0` and a
-        // stale LASTVAL of 1.
-        //
-        // compile_sublist pushes `Op::GetStatus` ahead of this call so
-        // the authoritative status arrives as an argument; republish it
-        // through LASTVAL to reunify the two before the ported
-        // waitonejob reads it, exactly as the single-command dispatch
-        // sites at c:Src/exec.c:4367 do.
-        let status = vm.pop().to_int() as i32;
-        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-        // c:Src/jobs.c:1750-1756 — `compile_sublist` only emits this
-        // marker for a cmplx sublist element that is not a multi-stage
-        // pipeline, i.e. exactly the case where C's job carries no
-        // procs, so drive the canonical port with a procs-less job the
-        // same way the single-command sites do.
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
-        Value::Status(0)
-    });
-
     // `[[ -z X ]]` / `[[ -n X ]]` — pop one Value, route through
     // canonical `src/ported/cond.rs::evalcond` so the actual
     // empty/non-empty test reuses the C-port at `cond.rs:270-271`
@@ -9616,8 +9607,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // `${(s::)str}`) splat into multiple argv words.
                 // singsub() collapses to one string and discards the
                 // splat — parity bug #28 (whole-array modifier).
+                // c:Src/subst.c:3929-3932 — `if (isarr) l->list.flags |=
+                // LF_ARRAY; else l->list.flags &= ~LF_ARRAY;`. C's paramsubst
+                // holds the LinkList and stamps its `isarr` on it directly;
+                // the Rust port hands the same bit back through the
+                // `PARAMSUBST_LF_ARRAY` thread-local (subst.rs:20511) — set at
+                // subst.rs:17796 (`isarr != 0 && !forced_split_to_one`) and
+                // reset to false at the top of EVERY paramsubst
+                // (subst.rs:3891 / subst.rs:17445).
+                //
+                // Clear it BEFORE multsub so a segment that runs no paramsubst
+                // at all reads false instead of some earlier expansion's
+                // value. `multsub`'s own `isarr` return cannot be used for
+                // this: an unquoted `$(cmd)` / `` `cmd` `` sets LF_ARRAY
+                // unconditionally (subst.rs:897 / :1159, c:Src/subst.c:285-286
+                // `if (!qt) list->list.flags |= LF_ARRAY;` and c:331), so
+                // `x$(true)y` would look array-shaped when zsh keeps that
+                // word (verified: it is the single word `xy`).
+                //
+                // Every paramsubst re-initialises the cell on entry, so
+                // clearing it here cannot disturb subst.rs's own readers
+                // (stringsubst reads it immediately after each paramsubst
+                // call, subst.rs:1094).
+                crate::ported::subst::PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
                 let (_first, nodes, _ms_ws, _ret) =
                     crate::ported::subst::multsub(&prepped, pf_flags);
+                // Read immediately: brace expansion / filesub / glob below can
+                // re-enter paramsubst and overwrite the cell. `seg_is_array` is
+                // the array-ness of the OUTERMOST paramsubst in this segment —
+                // C's c:4245 `if (isarr)` for the same expansion. Paired with
+                // `seg_zero_words` it separates the two empty shapes for the
+                // empty-result arm further down (c:4362 vs c:4464).
+                let seg_is_array = crate::ported::subst::PARAMSUBST_LF_ARRAY.with(|c| c.get());
+                let seg_zero_words = nodes.is_empty();
                 if std::env::var("ZSHRS_TRACE_MULTSUB").is_ok() {
                     eprintln!("[TRACE_MULTSUB] prepped={:?} nodes={:?}", prepped, nodes);
                 }
@@ -9800,8 +9822,46 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                         }
                         if word_has_quoted_span {
+                            // Returns a SCALAR Value, so the empty-Array
+                            // shape bit does not describe it — leave the
+                            // cell alone. Overwriting it here would let a
+                            // trailing quoted-empty segment resurrect a word
+                            // an EARLIER empty array already deleted:
+                            // `setopt rcexpandparam; a=(); x${a}"${P}"y` is
+                            // ZERO words in zsh, and concat_plan9's
+                            // `(Array(empty), scalar)` arm returns the scalar
+                            // when the bit says "scalar".
                             Value::str(String::new())
                         } else {
+                            // The empty `Value::Array` below stands for TWO
+                            // different C shapes, and under RC_EXPAND_PARAM
+                            // they behave OPPOSITELY:
+                            //
+                            //   c:Src/subst.c:4362-4365 (plan9, empty ARRAY)
+                            //     if (plan9) { uremnode(l, n); return n; }
+                            //   → the whole word is deleted:
+                            //     `a=(); x${a}y` and `x${${a}}y` are 0 words.
+                            //
+                            //   c:Src/subst.c:4438-4467 (scalar arm, empty
+                            //   SCALAR) — c:4464
+                            //     *str = strcatsub(&y, ostr, aptr, x, xlen,
+                            //                      fstr, globsubst, copied);
+                            //   then c:4467 `setdata(n, (void *) y);`
+                            //   → the surrounding text survives:
+                            //     `unset P; x${P}y` and `x${${P}}y` are the
+                            //     single word `xy`.
+                            //
+                            // Nesting is NOT the discriminator — shape is.
+                            // The word is deleted only when the expansion was
+                            // ARRAY-shaped (c:4245 `if (isarr)`) AND produced
+                            // zero words, i.e. C's `while ((x = *aval++))`
+                            // loop at c:4327 never ran and left `plan9`
+                            // non-zero at c:4362. Anything else empty — an
+                            // unset/empty scalar, a nested subexp that
+                            // resolved to a scalar, a command substitution
+                            // with no output — takes c:4438's scalar arm and
+                            // keeps the word.
+                            note_empty_is_scalar(!(seg_zero_words && seg_is_array));
                             Value::Array(Vec::new())
                         }
                     } else {
@@ -10269,6 +10329,11 @@ thread_local! {
     /// Sticky until the next expansion overwrites it — a word folds its
     /// segments left-associatively (`concat(concat(x, $e), y)`), so the
     /// propagating second concat must still see the first one's bit.
+    /// Consequence: only a builtin that RETURNS an empty `Value::Array` may
+    /// write the cell. A builtin returning an empty SCALAR `Value` must leave
+    /// it alone, or it resurrects a word an earlier empty array deleted
+    /// (`a=(); x${a}"${P}"y` is zero words in zsh) — see the
+    /// `word_has_quoted_span` arm of `BUILTIN_EXPAND_TEXT`.
     static EMPTY_EXPANSION_IS_SCALAR: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
@@ -10280,9 +10345,25 @@ fn note_empty_is_scalar(is_scalar: bool) {
 }
 
 /// True when the empty `Value::Array` about to be concatenated stands for
-/// an empty SCALAR (c:4437), not an empty array (c:4362).
+/// an empty SCALAR (c:4438-4467), not an empty array (c:4362).
 fn empty_is_scalar() -> bool {
     EMPTY_EXPANSION_IS_SCALAR.with(|c| c.get())
+}
+
+/// Re-assert `was_scalar` when `v` is an empty result.
+///
+/// For a pass-through stage — one that rewrites word TEXT but cannot turn a
+/// scalar into an array or vice versa — the shape bit belongs to whichever
+/// expansion produced the value, not to the stage. Such stages usually end in
+/// `nodes_to_value`, which records "array" for an empty result, so without
+/// this the producer's bit is lost before `concat_plan9` reads it.
+/// Non-empty results carry their shape in the `Value` itself and are
+/// returned untouched.
+fn restore_empty_shape(v: Value, was_scalar: bool) -> Value {
+    if matches!(&v, Value::Array(a) if a.is_empty()) {
+        note_empty_is_scalar(was_scalar);
+    }
+    v
 }
 
 /// c:Src/subst.c:4366-4437 — the NON-plan9 arm of paramsubst's array
@@ -11214,46 +11295,6 @@ pub const BUILTIN_END_INLINE_ENV: u16 = 434;
 /// `git-completion.bash` option tables (`__git_log_common_options`
 /// et al.) that `_git` sources via `GIT_SOURCING_ZSH_COMPLETION=y . …`.
 pub const BUILTIN_SEAL_INLINE_ENV: u16 = 654;
-
-/// End-of-sublist `waitonejob` for a sublist that ran wholly in the
-/// current shell. Emitted by `compile_zsh::compile_sublist` after each
-/// element of the `&&`/`||` chain whose parse-time `cmplx` flag is set
-/// (see `compile_zsh::sublist_elem_is_cmplx`) and whose top level is
-/// NOT a multi-stage pipeline.
-///
-/// c:Src/exec.c:1489-1492 — `execlist` routes each sublist element on
-/// the parse-time flag: `if (WC_SUBLIST_FLAGS(code) & WC_SUBLIST_SIMPLE)
-/// execsimple(state); else execpline(state, code, ltype, ...);`. Only
-/// the `execpline` arm builds a job, and `execpline` ends by calling
-/// `waitonejob` on it.
-///
-/// c:Src/jobs.c:1748-1757 — `waitonejob(Job jn)`:
-/// ```c
-/// if (jn->procs || jn->auxprocs) zwaitjob(jn - jobtab, 0);
-/// else { deletejob(jn, 0); pipestats[0] = lastval; numpipestats = 1; }
-/// ```
-/// A sublist that forked (a real multi-stage pipeline) takes the
-/// `zwaitjob` arm, whose `storepipestats` (c:Src/jobs.c:420) publishes
-/// the per-stage array — in zshrs that is `BUILTIN_RUN_PIPELINE`'s own
-/// `set_array("pipestatus", ...)`. Every other cmplx sublist runs with
-/// an empty proc list and takes the `else` arm, which is what this
-/// builtin performs. Resolving which arm applies is a compile-time
-/// decision in C (the parse-time flag) and is a compile-time decision
-/// here too, so no marker is emitted for the pipeline case at all.
-///
-/// This is what makes a compound command publish `$pipestatus`:
-/// `if ...; fi`, `for ...; done`, `case ... esac`, `while ...; done`,
-/// `{ ... }`, `( ... )` and a bare command all reach `execpline` when
-/// their body is cmplx, so zsh leaves `numpipestats == 1`. It also
-/// makes the OUTER sublist win over an inner pipeline's array —
-/// `if true; then true|false; fi` is `n=1 p=(1)`, not `(0 1)` — because
-/// the outer procs-less job overwrites what the inner job stored.
-///
-/// Fires BEFORE the `!` negation (`emit_negate_status`): C applies
-/// `WC_SUBLIST_NOT` inside `execpline` after the wait, so
-/// `! [[ -z x ]]` records the PRE-negation status — `p=(1)` with `$?`
-/// of 0.
-pub const BUILTIN_SUBLIST_FINISH: u16 = 655;
 
 /// `[[ -o option ]]` — shell-option-set test. Stack: \[option_name\].
 /// Normalizes the name (strip underscores, lowercase) and reads

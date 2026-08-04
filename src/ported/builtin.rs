@@ -4801,10 +4801,45 @@ pub fn bin_typeset(
             // 0, paramtab->printnode, printflags);` — walk paramtab
             // entries whose name matches the pattern AND whose flag
             // bits intersect on|roff.
-            let names: Vec<String> = {
+            //
+            // c:3073-3080 — C collects the matches into `pmlist`
+            // FIRST and only then walks it, because the per-entry work
+            // can reorganise paramtab underneath the scan. zshrs needs
+            // the same two-phase shape for a second, harder reason:
+            // the table lock must be RELEASED before any entry is
+            // touched. `printparamnode` re-enters `paramtab().read()`
+            // on several paths —
+            //   params.rs:12622  PM_TIED peer lookup (the `+m` /
+            //                    PRINT_TYPE arm),
+            //   params.rs:12303 + 12312, 12009, 12038  PM_SPECIAL /
+            //                    empty-scalar / zero-integer value
+            //                    probes via `getsparam` (→
+            //                    params.rs:5353 and
+            //                    `lookup_special_var` at 13494 /
+            //                    13547 / 13554 / 13640 / 13669),
+            //   params.rs:9365   `tiedarrgetfn`, reached through the
+            //                    tied-scalar `gsu_s` getfn shim
+            //                    (builtin.rs:4671).
+            // `paramtab()` is a plain `std::sync::RwLock`, which is
+            // NOT reentrant: acquiring the read half while this thread
+            // already holds the write half parks the thread forever.
+            // The previous code held `paramtab().write()` across
+            // `printparamnode`, so `typeset -m PAT` hung the shell the
+            // moment PAT matched any param that takes one of those
+            // paths (`HISTCHARS`, `HOME`, `IFS`, `TERM`, `WORDCHARS`,
+            // `USERNAME`, `SECONDS`, `TIMEFMT`, any tied scalar, and
+            // every empty PM_SPECIAL scalar / zero-valued special
+            // integer). It surfaced as a pattern-COUNT threshold
+            // (`typeset -m` over ~19+ `${(k)parameters}` names hung
+            // while 18 returned) only because the list is walked in
+            // name order and the first such name sits around there;
+            // the real trigger is the name, not the count.
+            // Pre-cloning is the rule the `typeset -p NAME` path
+            // already documents at builtin.rs:5156-5159.
+            let matched: Vec<crate::ported::zsh_h::Param> = {
                 let tab = paramtab().read().unwrap();
                 let on_roff = (on as u32) | (roff as u32);
-                let mut names: Vec<String> = tab
+                let mut matched: Vec<crate::ported::zsh_h::Param> = tab
                     .iter()
                     .filter(|(k, pm)| {
                         let f = pm.node.flags as u32;
@@ -4835,20 +4870,18 @@ pub fn bin_typeset(
                         }
                         crate::ported::pattern::pattry(&pat, k)
                     })
-                    .map(|(k, _)| k.clone())
+                    // c:3087 `addlinknode(pmlist, pm)` — the match list.
+                    .map(|(_, pm)| pm.clone())
                     .collect();
-                names.sort_by(|a, b| hnamcmp(a, b));
-                names
+                matched.sort_by(|a, b| hnamcmp(&a.node.nam, &b.node.nam));
+                matched
             };
+            // The table guard is dropped here, before any print.
             if OPT_PLUS(&ops, b'm') {
                 // c:3068-3070 — `+m`: direct print using the
                 // PRINT_TYPE | PRINT_NAMEONLY flags built above.
-                for k in names {
-                    if let Ok(mut tab) = paramtab().write() {
-                        if let Some(pm) = tab.get_mut(&k) {
-                            printparamnode(pm, printflags);
-                        }
-                    }
+                for mut pm in matched {
+                    printparamnode(&mut pm, printflags);
                 }
                 continue;
             }
@@ -4861,12 +4894,15 @@ pub fn bin_typeset(
             // name loop for `-m` args, so on/roff currently acts as
             // a listing filter only.
             if do_minus_print {
-                for k in names {
-                    if let Ok(mut tab) = paramtab().write() {
-                        if let Some(pm) = tab.get_mut(&k) {
-                            printparamnode(pm, single_flags);
-                        }
-                    }
+                // c:3090-3095 — walk the pre-built match list. Clones,
+                // per the lock note above; printparamnode's writes into
+                // `hn` (the u_str seed at params.rs:12312, the PM_TIED
+                // value swap at 12639) are display-local scratch that C
+                // performs on a reassigned local pointer, never on the
+                // stored node, so printing the clone is also the more
+                // faithful shape.
+                for mut pm in matched {
+                    printparamnode(&mut pm, single_flags);
                 }
             }
         }
@@ -13724,7 +13760,6 @@ pub fn testlex() {
     }
 }
 
-
 /// One node of the condition tree `parse_cond` builds for `test` / `[`.
 ///
 /// C emits wordcode into `ecbuf` (`WCB_COND(...)` + `ecstr(...)`) and
@@ -13911,7 +13946,9 @@ impl<'a> TestParse<'a> {
                 || nxt == "=="
                 || nxt == "!="
                 || (nxt.starts_with(crate::ported::zsh_h::IS_DASH)
-                    && crate::ported::parse::get_cond_num(&nxt[nxt.chars().next().map_or(0, char::len_utf8)..]) >= 0); // c:2504
+                    && crate::ported::parse::get_cond_num(
+                        &nxt[nxt.chars().next().map_or(0, char::len_utf8)..],
+                    ) >= 0); // c:2504
             if is_binop {
                 let s1 = self.tokstr.clone().unwrap_or_default(); // c:2505
                 self.testlex();
@@ -14021,7 +14058,8 @@ impl<'a> TestParse<'a> {
     fn par_cond_double(&mut self, a: String, b: String) -> Option<TestCond> {
         // c:2628 — `if (!IS_DASH(a[0]) || !a[1])`
         if !a.starts_with(crate::ported::zsh_h::IS_DASH) || a.chars().count() < 2 {
-            return self.cond_error(format!("parse error: condition expected: {}", a)); // c:2629
+            return self.cond_error(format!("parse error: condition expected: {}", a));
+            // c:2629
         }
         Some(TestCond::Double(a, b))
     }

@@ -9643,8 +9643,16 @@ static POSIXZERO: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLo
 /// the current value, `errflag.fetch_or(ERRFLAG_ERROR, …)` matches
 /// C's `errflag |= ERRFLAG_ERROR`, `errflag.store(0, …)` matches
 /// C's `errflag = 0`.
+///
+/// Storage is [`crate::errflag_cell::ErrflagCell`], not a bare
+/// `AtomicI32`: C's `errflag` is a per-PROCESS `int` and C's background
+/// work is a forked child, so a child's errors never reach the parent's
+/// line editor. zshrs runs that work on threads, so the flag is
+/// process-global on the shell thread and thread-local everywhere else —
+/// which is what `fork()` gave C. See that module for the ^G-abort
+/// corruption this prevents.
 #[allow(non_upper_case_globals)]
-pub static errflag: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static errflag: crate::errflag_cell::ErrflagCell = crate::errflag_cell::ErrflagCell::new();
 
 /// Port of `int noerrs` from `Src/init.c`. Counter — when `> 0`,
 /// suppresses error printing. `noerrs >= 2` also suppresses the

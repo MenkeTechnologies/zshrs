@@ -1166,11 +1166,27 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
     // The `haspattern && comppatinsert == "menu"` companion term is C's
     // GLOB_COMPLETE path; it was dropped on the grounds that haspattern was
     // unported, but compcore.rs:262 sets it, so it is restored here.
+    //
+    // `comppatinsert` MUST be read from the module global (complete.c:69,
+    // defaulted to "menu" by compcore.c:321), NOT from
+    // `$compstate[pattern_insert]`: the parameter is created inside the
+    // completion widget's scope and `endparamscope()` deletes it before
+    // control gets here, so the parameter read returned None on every call
+    // and this term was dead. Measured on `ls **/s` under
+    // scripts/parity_combos/full.zsh against an instrumented 5.9.2
+    // (`Src/Zle/compresult.c` + fprintf at c:746): zsh reports
+    // `usemenu=0 haspattern=1 patins=menu` and takes `do_ambig_menu`,
+    // while this port took the `else if (ainfo)` branch, deleted the word
+    // (`ls **/s` → `ls `), and then bailed out at c:830-839 with `la` set,
+    // so the corrections list was never shown at all.
     let iforcemenu_top = crate::ported::zle::compcore::iforcemenu.load(Relaxed);
     let usemenu_top = crate::ported::zle::zle_tricky::USEMENU.load(Relaxed);
     let patmenu = crate::ported::zle::compcore::haspattern.load(Relaxed) != 0
-        && crate::ported::zle::compcore::get_compstate_str("pattern_insert").as_deref()
-            == Some("menu"); // c:764-765
+        && crate::ported::zle::complete::COMPPATINSERT
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .map(|g| *g == "menu")
+            .unwrap_or(false); // c:764-765
     if iforcemenu_top != -1 && (usemenu_top != 0 || patmenu) {
         // c:773 — insert the first/next match; fall through to the tail.
         let _ = do_ambig_menu();
@@ -1196,36 +1212,100 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
             .lock()
             .ok()
             .and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
-        let prefix = if let Some(line) = ainfo_line {
-            // c:535 — render the unambiguous string (ins=0 → copy out).
-            cline_str(Some(line), 0, None, None).unwrap_or_default()
-        } else {
-            unambig_data(matches)
-        };
-        if prefix.is_empty() && matches.is_empty() {
-            return 0; // c:843-844 — else return ret (no ainfo → nothing to do)
+        if ainfo_line.is_none() && matches.is_empty() {
+            return 0; // c:841-842 — `else return ret` (no ainfo → nothing to do)
         }
-        // c:783-790 — buffer-edit: foredel the original word, inststr
-        // the unambig prefix, when WB/WE describe a valid range.
-        if !prefix.is_empty() {
-            let wb = crate::ported::zle::compcore::WB.load(Relaxed);
-            let we = crate::ported::zle::compcore::WE.load(Relaxed);
-            // c:783-790 — C foredel(we-wb)+inststr is UNCONDITIONAL; foredel(0)
-            // is a safe no-op for the empty word (we == wb, e.g. `ssh-keygen
-            // <tab>`), so a genuine shared prefix still inserts. Safe now that
-            // join_clines no longer wrongly wipes a no-common-prefix anchor
-            // (compmatch.rs) — chmod's prefix is empty here, so `!prefix
-            // .is_empty()` above already gates it out.
-            if we >= wb && wb >= 0 {
-                let span = we - wb;
-                crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:785
-                                                                            // c:786 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on
-                                                                            // a metafied line; without it foredel takes the non-raw path
-                                                                            // and deletes nothing, so inststr below prepends the prefix
-                                                                            // to the still-present word (ambiguous `ec` → `ecec`).
-                foredel(span, CUT_RAW); // c:786
-                let _ = inststr(&prefix); // c:790
+        let wb = crate::ported::zle::compcore::WB.load(Relaxed);
+        let we = crate::ported::zle::compcore::WE.load(Relaxed);
+        // c:782-785 — "First remove the old string from the line."
+        //     tcs = zlemetacs;
+        //     zlemetacs = wb;
+        //     memcpy(old, zlemetaline + wb, we - wb);
+        //     foredel(we - wb, CUT_RAW);
+        // `tcs` and `old` (C's `VARARR(char, old, we - wb)` at c:774) were both
+        // absent, which is what made the c:794 fallback below unportable.
+        // `old` is a BYTE copy out of the metafied line, exactly like C's
+        // memcpy — the restore re-inserts those same bytes.
+        let tcs = crate::ported::zle::compcore::ZLEMETACS.load(Relaxed); // c:782
+        let old: String = crate::ported::zle::compcore::ZLEMETALINE
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|g| {
+                let b = g.as_bytes();
+                let s = (wb.max(0) as usize).min(b.len());
+                let e = (we.max(0) as usize).min(b.len()).max(s);
+                String::from_utf8_lossy(&b[s..e]).into_owned()
+            })
+            .unwrap_or_default(); // c:784
+        if we >= wb && wb >= 0 {
+            crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:783
+                                                                        // c:785 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on a
+                                                                        // metafied line; without it foredel takes the non-raw path and
+                                                                        // deletes nothing, so the insert below would prepend the prefix
+                                                                        // to the still-present word (ambiguous `ec` → `ecec`).
+            foredel(we - wb, CUT_RAW); // c:785
+        }
+        // c:788 — `cline_str(ainfo->line, 1, NULL, NULL)`: render the
+        // unambiguous string DIRECTLY into the line. C passes ins=1, which is
+        // the only path that records `lastend` (c:479) — the port called it
+        // with ins=0 (copy-out) and re-inserted the result by hand, so
+        // `lastend` kept the PREVIOUS completion's value forever. Under
+        // `menu select … interactive` that stale value is what setmstatus
+        // reads (complist.c:2207/2214), e.g. `lastend=95` on a one-character
+        // line.
+        if let Some(line) = ainfo_line {
+            let _ = cline_str(Some(line), 1, None, None); // c:788
+        } else {
+            // No `ainfo->line` to render (C always has one here): fall back to
+            // the plain longest-common-prefix over the match strings, and keep
+            // cline_str's ins=1 bookkeeping so `lastend` still describes the
+            // end of what was just inserted.
+            let p = unambig_data(matches);
+            let _ = inststr(&p);
+            lastend.store(
+                crate::ported::zle::compcore::ZLEMETACS.load(Relaxed),
+                Relaxed,
+            ); // c:479
+        }
+
+        // c:790-800 — "Sometimes the different match specs used may result in
+        // a cline that gives an empty string. If that happened, we re-insert
+        // the old string. Unless there were matches added with -U, that is."
+        //     if (lastend < we && !lenchanged && !hasunmatched) {
+        //         zlemetacs = wb;
+        //         foredel(lastend - wb, CUT_RAW);
+        //         inststrlen(old, 0, we - wb);
+        //         lastend = we;
+        //         zlemetacs = tcs;
+        //     }
+        // Missing entirely. It is what puts the typed word back when the
+        // unambiguous string is shorter than the word on the line, and it is
+        // the reason `~<TAB><TAB>s` shows `interactive: ~s[]` in zsh: the
+        // cline for `~s` renders just `~`, so C restores `~s` and sets
+        // `lastend = we`. The port left the line at `~` with a stale
+        // `lastend`, printing `interactive: ~[]`.
+        if lastend.load(Relaxed) < we
+            && crate::ported::zle::compcore::lenchanged.load(Relaxed) == 0
+            && crate::ported::zle::compcore::hasunmatched.load(Relaxed) == 0
+        {
+            crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:795
+            foredel(lastend.load(Relaxed) - wb, CUT_RAW); // c:796
+            inststrlen(&old, false, we - wb); // c:797
+            lastend.store(we, Relaxed); // c:798
+            crate::ported::zle::compcore::ZLEMETACS.store(tcs, Relaxed); // c:799
+        }
+        // c:801-807 — re-close the `$'…'`-style quotes the word carried:
+        //     if (eparq) { tcs = zlemetacs; zlemetacs = lastend;
+        //                  for (eq = eparq; eq; eq--) inststrlen("\"", 0, 1);
+        //                  zlemetacs = tcs; }
+        let eparq_v = eparq.load(Relaxed);
+        if eparq_v != 0 {
+            let tcs2 = crate::ported::zle::compcore::ZLEMETACS.load(Relaxed); // c:802
+            crate::ported::zle::compcore::ZLEMETACS.store(lastend.load(Relaxed), Relaxed); // c:803
+            for _ in 0..eparq_v {
+                inststrlen("\"", false, 1); // c:805
             }
+            crate::ported::zle::compcore::ZLEMETACS.store(tcs2, Relaxed); // c:806
         }
 
         // c:813 — `la = (zlemetall != origll || strncmp(origline,
