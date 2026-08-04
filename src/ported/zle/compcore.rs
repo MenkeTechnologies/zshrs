@@ -154,6 +154,22 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     if let Ok(mut g) = comppatmatch.get_or_init(|| Mutex::new(None)).lock() {
         *g = Some(opm.clone()); // c:319
     }
+    // c:320-321 — `zsfree(comppatinsert); comppatinsert = ztrdup("menu");`
+    // `comppatinsert` is a plain module global (`complete.c:69`) that the
+    // `$compstate[pattern_insert]` entry is only a `VAL()` VIEW onto
+    // (`complete.c:1281`), so it OUTLIVES the completion widget's parameter
+    // scope. Writing only the parameter — as this port did — meant
+    // `do_ambiguous`'s GLOB_COMPLETE test (`compresult.c:764`) read it back
+    // absent after `endparamscope()` deleted `$compstate`, so that whole
+    // branch was dead. Keep the global and the parameter in step here, and
+    // re-sync the global from the parameter after the completion function
+    // returns (the c:843-925 unwind below).
+    if let Ok(mut g) = crate::ported::zle::complete::COMPPATINSERT
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+    {
+        *g = "menu".into(); // c:321
+    }
     set_compstate_str("pattern_insert", "menu"); // c:320
     forcelist.store(0, Ordering::Relaxed); // c:322
     haspattern.store(0, Ordering::Relaxed); // c:323
@@ -830,6 +846,49 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
                 *g = v; // c:722-723
             }
         }
+
+        // c:743-751 — `compqiprefix = qipre; compqisuffix = qisuf;
+        //   origlpre = strlen(compqiprefix)+strlen(compiprefix)+strlen(compprefix);
+        //   origlsuf = strlen(compqisuffix)+strlen(compisuffix)+strlen(compsuffix);
+        //   lenchanged = 0;`
+        // `origlpre`/`origlsuf` record how long the prefix/suffix were when the
+        // completion widget was entered; `addmatches` (c:2252-2254) compares the
+        // CURRENT lengths against them and sets `lenchanged` when a completer has
+        // moved the PREFIX/SUFFIX split (`compset -P/-S`, `_approximate`,
+        // `_prefix`). `do_ambiguous` (compresult.c:794) reads that flag: with the
+        // split moved it must NOT put the old word back when the unambiguous
+        // string comes out short. All three were declared but never assigned, so
+        // the flag was permanently 0 and `ls **/<TAB><TAB>s` restored `**/s` where
+        // zsh leaves the word deleted (`interactive: []`).
+        //
+        // `compqiprefix`/`compqisuffix` ARE `$QIPREFIX`/`$QISUFFIX` in C
+        // (gsu-bound, complete.c) — read back the values the publish above set
+        // rather than a second, independently derived copy.
+        {
+            use crate::ported::zle::complete::{COMPISUFFIX, COMPQIPREFIX, COMPQISUFFIX};
+            let qip = crate::ported::params::getsparam("QIPREFIX").unwrap_or_default(); // c:744
+            let qis = crate::ported::params::getsparam("QISUFFIX").unwrap_or_default(); // c:746
+            for (global, v) in [(&COMPQIPREFIX, &qip), (&COMPQISUFFIX, &qis)] {
+                if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
+                    *g = v.clone();
+                }
+            }
+            let glen = |g: &std::sync::OnceLock<Mutex<String>>| -> usize {
+                g.get_or_init(|| Mutex::new(String::new()))
+                    .lock()
+                    .map(|s| s.len())
+                    .unwrap_or(0)
+            };
+            origlpre.store(
+                (qip.len() + glen(&COMPIPREFIX) + glen(&COMPPREFIX)) as i32,
+                Ordering::Relaxed,
+            ); // c:747-748
+            origlsuf.store(
+                (qis.len() + glen(&COMPISUFFIX) + glen(&COMPSUFFIX)) as i32,
+                Ordering::Relaxed,
+            ); // c:749-750
+            lenchanged.store(0, Ordering::Relaxed); // c:751
+        }
     }
 
     // c:591-617 — context selection.
@@ -849,28 +908,63 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     // missing entirely, so `$compstate[parameter]` kept whatever a previous
     // completion left: `_value` dispatched `-value-,,-default-` instead of
     // `-value-,PATH,-default-` and never reached the per-parameter completer.
+    let varname = || {
+        crate::ported::zle::zle_tricky::VARNAME
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_default()
+    };
     let compparameter = match context.as_str() {
-        "subscript" if linwhat.load(Ordering::Relaxed) == IN_MATH_LW => {
-            // c:585-588
-            crate::ported::zle::zle_tricky::VARNAME
-                .get_or_init(|| Mutex::new(None))
-                .lock()
-                .ok()
-                .and_then(|g| g.clone())
-                .unwrap_or_default()
-        }
-        "value" | "array_value" => {
-            // c:607
-            crate::ported::zle::zle_tricky::VARNAME
-                .get_or_init(|| Mutex::new(None))
-                .lock()
-                .ok()
-                .and_then(|g| g.clone())
-                .unwrap_or_default()
-        }
+        "subscript" if linwhat.load(Ordering::Relaxed) == IN_MATH_LW => varname(), // c:585-588
+        "value" | "array_value" if linwhat.load(Ordering::Relaxed) == IN_ENV_LW => varname(), // c:607
+        // c:628-629 — the default (no-command-word) `value` arm names
+        // the parameter from the FIRST word on the line, not `varname`.
+        "value" => crate::ported::zle::zle_tricky::CLWORDS
+            .lock()
+            .ok()
+            .and_then(|g| g.first().cloned())
+            .unwrap_or_default(),
         _ => String::new(), // c:577
     };
     set_compstate_str("parameter", &compparameter);
+
+    // c:598-602 — `compcontext = "redirect"; if (rdstr) compredirect =
+    // rdstr;`. `compredirect` is `$compstate[redirect]` (complete.c:1265)
+    // and was never written by this port, so `_redirect` had nothing to
+    // dispatch on and `_expand`'s multios branch (sh:236) saw an empty
+    // operator. Reset to "" (c:577) in every other context.
+    let compredirect = if context == "redirect" {
+        crate::ported::zle::zle_tricky::RDSTR
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_default() // c:600-601
+    } else {
+        String::new() // c:577
+    };
+    set_compstate_str("redirect", &compredirect);
+    // C binds `compredirect` to `$compstate[redirect]` through one gsu
+    // storage; this port keeps the global and the param separate, so
+    // mirror the write (same pattern as PREFIX/COMPPREFIX above).
+    if let Ok(mut g) = crate::ported::zle::complete::COMPREDIRECT
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+    {
+        *g = compredirect;
+    }
+
+    // c:648-653 — `compredirs = zlinklist2array(rdstrs, 1)`, published as
+    // the `redirections` real-param (complete.c:1250). One entry per
+    // COMPLETED redirection on the line, each `<op>:<target>`.
+    setaparam(
+        "redirections",
+        crate::ported::zle::zle_tricky::RDSTRS
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default(),
+    );
 
     // c:634-645 — `if (compwords) freearray(compwords); if (usea && …)
     // { compwords = copy of clwords } else compwords = empty`. C rebuilds
@@ -1513,6 +1607,23 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             if post_exact == "accept" { 1 } else { 0 },
             Ordering::Relaxed,
         );
+    }
+
+    // `comppatinsert` (complete.c:69) is `VAL()`-bound to
+    // `$compstate[pattern_insert]` (complete.c:1281), so a completer's
+    // `compstate[pattern_insert]=unambiguous` (`_expand:_expand:…`,
+    // `_approximate:91`) lands straight in the C global and C needs no
+    // read-back here. This port keeps the two storages separate, so mirror
+    // the parameter into the global now — same treatment `complist` gets at
+    // c:846-853 above. Absent (`None`) keeps the c:321 value, which is the
+    // state C would be in when no completer touched it.
+    if let Some(post_patins) = post("pattern_insert") {
+        if let Ok(mut g) = crate::ported::zle::complete::COMPPATINSERT
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = post_patins;
+        }
     }
 
     // c:914-921 — movetoend from `comptoend`.
@@ -3577,6 +3688,45 @@ pub fn addmatches(
     let exact_str = get_compstate_str("exact").unwrap_or_default();
     useexact.store(if exact_str == "accept" { 1 } else { 0 }, Ordering::Relaxed);
 
+    // c:2170-2175 —
+    //     if ((doadd = (!dat->apar && !dat->opar && !dat->dpar))) {
+    //         if (dat->aflags & CAF_MATCH)
+    //             hasmatched = 1;
+    //         else
+    //             hasunmatched = 1;
+    //     }
+    // `doadd` says this compadd puts matches on the completion list rather
+    // than only filling `-A`/`-O`/`-D` arrays; only those calls tell the
+    // result stage anything about the line. CAF_MATCH is `compadd` WITHOUT
+    // `-U`, i.e. the candidate was matched against `$PREFIX`/`$SUFFIX`, so
+    // the cline parts carry meaningful line/word anchors — that is exactly
+    // the condition `cut_cline` (compresult.c:57) tests before it is willing
+    // to trim the unambiguous string, and the condition `do_ambiguous`
+    // (compresult.c:794) tests before restoring the typed word.
+    //
+    // The port set `hasmatched` only from the compctl path (compctl.c:3292),
+    // never from compadd, so every compsys completion left both flags 0:
+    // `cut_cline` took the `!hasmatched` "keep everything" branch forever and
+    // `do_ambiguous`'s `!hasunmatched` guard was always satisfied. Measured on
+    // the parity corpus under the `full` zstyle fixture: `cut_cline` reads
+    // `hasmatched=0` without these lines and `hasmatched=1` with them, on 22
+    // of the 31 corpus buffers that reach it (`df -` also reaches it with
+    // `hasunmatched=1`, so both arms of the `if/else` fire).
+    //
+    // Placement follows C: this is c:2169-2175, ahead of the mstack push
+    // (c:2200) and well ahead of the `*argv = NULL` prefix-mismatch bail at
+    // c:2335. The port hoists parts of c:2280-2454 above the `doadd` binding
+    // at the candidate loop and returns early on that bail, so setting the
+    // flags there would silently skip the calls C still counts.
+    let doadd = dat.apar.is_none() && dat.opar.is_none() && dat.dpar.is_empty(); // c:2170
+    if doadd {
+        if (dat.aflags & CAF_MATCH) != 0 {
+            hasmatched.store(1, Ordering::Relaxed); // c:2172
+        } else {
+            hasunmatched.store(1, Ordering::Relaxed); // c:2174
+        }
+    }
+
     // c:2210-2222 — push dat.match onto mstack (the matcher chain
     // queried by match_str during candidate evaluation).
     //
@@ -3736,6 +3886,24 @@ pub fn addmatches(
     let lisuf = compisuffix_s.clone();
     let mut lpre = compprefix_s.clone();
     let mut lsuf = compsuffix_s.clone();
+
+    // c:2252-2254 — `if (llpl + strlen(compqiprefix) + strlen(lipre) != origlpre
+    //                 || llsl + strlen(compqisuffix) + strlen(lisuf) != origlsuf)
+    //                    lenchanged = 1;`
+    // The completer moved the PREFIX/SUFFIX split since the widget was entered
+    // (`compset -P/-S`, `_approximate`, `_prefix`). `do_ambiguous`
+    // (compresult.c:794) uses this to decide NOT to put the old word back when
+    // the unambiguous string comes out shorter than the word on the line.
+    // Never assigned before, so the flag was stuck at 0.
+    if (dat.aflags & CAF_MATCH) != 0 {
+        let qip = getsparam("QIPREFIX").unwrap_or_default();
+        let qis = getsparam("QISUFFIX").unwrap_or_default();
+        if lpre.len() + qip.len() + lipre.len() != origlpre.load(Ordering::Relaxed) as usize
+            || lsuf.len() + qis.len() + lisuf.len() != origlsuf.load(Ordering::Relaxed) as usize
+        {
+            lenchanged.store(1, Ordering::Relaxed); // c:2254
+        }
+    }
 
     // c:2266-2276 — "Test if there is an existing -P prefix":
     //     if (dat->pre && *dat->pre) {
@@ -3967,8 +4135,8 @@ pub fn addmatches(
         lsuf = multiquote(&lsuf, 1); // c:2454
     }
 
-    // c:2178-2183 — `doadd = !apar && !opar && !dpar`.
-    let doadd = dat.apar.is_none() && dat.opar.is_none() && dat.dpar.is_empty();
+    // c:2170 — `doadd` was computed (and set hasmatched/hasunmatched) above,
+    // at C's position for the assignment.
     tracing::debug!(
         target: "compsys_args",
         %lpre,
@@ -6297,36 +6465,78 @@ fn lastpostbr_set(s: &str) {
 }
 
 /// Choose `$compstate[context]` per the lex classification in `inwhat`
-/// (and the `ispar` modifier). Direct lift of compcore.c:591-617.
+/// (and the `ispar` modifier). Direct lift of compcore.c:578-633.
+///
+/// The arm ORDER is load-bearing and follows C exactly: `ispar`,
+/// `IN_PAR`, `IN_MATH`, **`lincmd`**, **`linredir`**, then the
+/// `switch (linwhat)` for IN_ENV / IN_COND / default. An earlier
+/// revision tested IN_COND/IN_ENV before `lincmd`, which is the
+/// opposite of C — harmless in practice only because `get_comp_string`
+/// forces `lincmd = 0` inside a `[[ … ]]` (c:1198-1202, the `!incond`
+/// terms) and `docomplete` zeroes it for IN_ENV (zle_tricky.c:701-702).
 fn compcontext_for(_s: &str) -> String {
-    // c:591
-    let ip = ispar.load(Ordering::Relaxed); // c:599
-    if ip == 2 {
-        return "brace_parameter".into();
-    } // c:600
-    if ip == 1 {
-        return "parameter".into();
-    } // c:601
-    let lw = linwhat.load(Ordering::Relaxed); // c:602
+    use crate::ported::zle::zle_tricky::{CMDSTR, LINARR, LINCMD, LINREDIR};
+    let ip = ispar.load(Ordering::Relaxed); // c:578
+    if ip != 0 {
+        // c:579
+        return if ip == 2 {
+            "brace_parameter".into()
+        } else {
+            "parameter".into()
+        };
+    }
+    let lw = linwhat.load(Ordering::Relaxed);
     let insubscr = crate::ported::zle::zle_tricky::INSUBSCR.load(Ordering::Relaxed); // c:583
-    match lw {
-        // c:602
-        x if x == IN_PAR_LW => "assign_parameter".into(), // c:603
+    if lw == IN_PAR_LW {
+        return "assign_parameter".into(); // c:580-581
+    }
+    if lw == IN_MATH_LW {
         // c:582-591 — inside an unclosed `[` the math context is a
         // SUBSCRIPT, and `$compstate[parameter]` names the array
         // (published by callcompfunc from `varname`). Without this
         // `echo $fpath[<TAB>` never reached `_subscript`.
-        x if x == IN_MATH_LW && insubscr != 0 => "subscript".into(), // c:584
-        x if x == IN_MATH_LW => "math".into(),                       // c:590
-        x if x == IN_COND_LW => "condition".into(),                  // c:613
-        x if x == IN_ENV_LW => "value".into(),                       // c:615
+        return if insubscr != 0 {
+            "subscript".into() // c:584
+        } else {
+            "math".into() // c:590
+        };
+    }
+    if LINCMD.load(Ordering::Relaxed) != 0 {
         // c:592-597 — `[` in COMMAND position is a subscript too.
-        _ if crate::ported::zle::zle_tricky::LINCMD.load(Ordering::Relaxed) != 0
-            && insubscr != 0 =>
-        {
+        return if insubscr != 0 {
             "subscript".into() // c:594
+        } else {
+            "command".into() // c:597
+        };
+    }
+    if LINREDIR.load(Ordering::Relaxed) != 0 {
+        // c:598-602 — the cursor word is a redirection TARGET
+        // (`echo x > /tm<TAB>`). `callcompfunc` publishes `rdstr` as
+        // `$compstate[redirect]` right after this returns, which is what
+        // `_redirect` (Completion/Zsh/Context/_redirect) dispatches on.
+        return "redirect".into(); // c:599
+    }
+    match lw {
+        // c:604
+        // c:605-606 — an array assignment (`x=(a b <TAB>)`) is
+        // `array_value`, a scalar one (`x=<TAB>`) plain `value`.
+        x if x == IN_ENV_LW => if LINARR.load(Ordering::Relaxed) != 0 {
+            "array_value"
+        } else {
+            "value"
         }
-        _ => "command".into(), // c:617
+        .into(),
+        x if x == IN_COND_LW => "condition".into(), // c:619-620
+        // c:622-630 — no command word was parsed at all, so this is the
+        // value of something rather than an argument to a command.
+        _ => {
+            let have_cmdstr = CMDSTR.lock().map(|g| g.is_some()).unwrap_or(false); // c:623
+            if have_cmdstr {
+                "command".into() // c:624
+            } else {
+                "value".into() // c:626
+            }
+        }
     }
 }
 
@@ -7283,6 +7493,12 @@ mod tests {
         // does not clear it).
         crate::ported::zle::zle_tricky::INSUBSCR.store(0, Ordering::Relaxed);
         crate::ported::zle::zle_tricky::LINCMD.store(0, Ordering::Relaxed);
+        // c:598/606/623 — the redirect / array_value / default-command
+        // arms read three more file-scope globals; pin them so the
+        // routing below is deterministic regardless of test order.
+        crate::ported::zle::zle_tricky::LINREDIR.store(0, Ordering::Relaxed);
+        crate::ported::zle::zle_tricky::LINARR.store(0, Ordering::Relaxed);
+        *crate::ported::zle::zle_tricky::CMDSTR.lock().unwrap() = Some("ls".into());
         ispar.store(2, Ordering::Relaxed);
         linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
         assert_eq!(compcontext_for("x"), "brace_parameter");
@@ -7297,6 +7513,49 @@ mod tests {
         assert_eq!(compcontext_for("x"), "value");
         linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
         assert_eq!(compcontext_for("x"), "command");
+        *crate::ported::zle::zle_tricky::CMDSTR.lock().unwrap() = None;
+    }
+
+    /// c:598-602 / c:605-606 / c:622-630 — the three arms that were
+    /// missing from this port entirely. `linredir` outranks the
+    /// `switch (linwhat)` but is outranked by `lincmd`; `linarr`
+    /// upgrades IN_ENV from `value` to `array_value`; and the default
+    /// arm degrades to `value` when no command word was parsed.
+    #[test]
+    fn compcontext_for_redirect_array_value_and_cmdstr_arms() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        use crate::ported::zle::zle_tricky::{CMDSTR, INSUBSCR, LINARR, LINCMD, LINREDIR};
+        ispar.store(0, Ordering::Relaxed);
+        INSUBSCR.store(0, Ordering::Relaxed);
+        LINCMD.store(0, Ordering::Relaxed);
+        LINARR.store(0, Ordering::Relaxed);
+        *CMDSTR.lock().unwrap() = Some("echo".into());
+
+        // c:598-599 — `echo x > /tm<TAB>`.
+        linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
+        LINREDIR.store(1, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "redirect");
+        // c:592 — but a command-position word still wins over it.
+        LINCMD.store(1, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "command");
+        LINCMD.store(0, Ordering::Relaxed);
+        LINREDIR.store(0, Ordering::Relaxed);
+
+        // c:605-606 — IN_ENV splits on `linarr`.
+        linwhat.store(IN_ENV_LW, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "value");
+        LINARR.store(1, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "array_value");
+        LINARR.store(0, Ordering::Relaxed);
+
+        // c:623-626 — the default arm needs a command word to say
+        // "command"; without one it is a `value`.
+        linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
+        assert_eq!(compcontext_for("x"), "command");
+        *CMDSTR.lock().unwrap() = None;
+        assert_eq!(compcontext_for("x"), "value");
     }
 
     /// c:582-597 — with `insubscr` set, BOTH the math arm and the command
@@ -7308,9 +7567,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
-        use crate::ported::zle::zle_tricky::{INSUBSCR, LINCMD};
+        use crate::ported::zle::zle_tricky::{CMDSTR, INSUBSCR, LINCMD, LINREDIR};
         ispar.store(0, Ordering::Relaxed);
         LINCMD.store(0, Ordering::Relaxed);
+        LINREDIR.store(0, Ordering::Relaxed);
+        *CMDSTR.lock().unwrap() = Some("ls".into());
 
         // c:584 — math context inside an unclosed subscript.
         linwhat.store(IN_MATH_LW, Ordering::Relaxed);
@@ -7328,6 +7589,7 @@ mod tests {
         INSUBSCR.store(0, Ordering::Relaxed);
         assert_eq!(compcontext_for("x"), "command");
         LINCMD.store(0, Ordering::Relaxed);
+        *CMDSTR.lock().unwrap() = None;
     }
 
     #[test]

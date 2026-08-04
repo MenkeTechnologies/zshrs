@@ -111,6 +111,10 @@ pub mod cow_map;
 /// `daemon_presence` submodule.
 #[path = "extensions/daemon_presence.rs"]
 pub mod daemon_presence;
+/// `errflag_cell` submodule — per-thread storage for `errflag`, restoring
+/// the copy-on-fork semantics C zsh gets for free.
+#[path = "extensions/errflag_cell.rs"]
+pub mod errflag_cell;
 /// `fast_hash` submodule — dependency-free FxHash for internal name tables.
 #[path = "extensions/fast_hash.rs"]
 pub mod fast_hash;

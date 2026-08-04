@@ -2267,6 +2267,42 @@ pub fn zrefresh() {
         // `raw_getbyte`'s ICANON guard reported EOF, ZLE ended the line and
         // the shell exited(0) the moment a long completion list was shown.
         let _ = crate::ported::zle::zle_main::zsetterm();
+        // c:1191-1194 —
+        // ```c
+        //     /* we probably should only have explicitly set attributes */
+        //     tsetcap(TCALLATTRSOFF, 0);
+        //     tsetcap(TCSTANDOUTEND, 0);
+        //     tsetcap(TCUNDERLINEEND, 0);
+        //     txtattrmask = 0;
+        // ```
+        // (line numbers are zsh 5.9.2's zle_refresh.c — the release the parity
+        // harness diffs against, and the same release `prompt.rs::tsetcap`
+        // pins its emission order to. Master collapsed these three into a
+        // single `tsetcap(TCALLATTRSOFF, 0)` when the attribute machine was
+        // rewritten around `applytextattributes`; 5.9.2 emits all three
+        // unconditionally.)
+        //
+        // A reset frame repaints the prompt over whatever was on screen — a
+        // completion listing whose rows carried `list-colors` / `%S`
+        // highlighting, most often. Those were written as raw capability
+        // bytes, so nothing in the attribute state machine knows they are
+        // still in effect and the diff-based `applytextattributes` inside
+        // `tcoutclear` below has nothing to emit. C's answer is this blunt
+        // three-cap reset, which is why zsh's teardown reads
+        // `\e[0m \e[27m \e[24m \e[J` where the port emitted a bare `\e[J`.
+        // pyte then mis-parsed the following escape (the listing's trailing
+        // `ESC SP BS` swallows one sequence), costing a whole grid row on
+        // every `echo $commands[` and `man ` menu-select teardown.
+        //
+        // `tcout` rather than `tsetcap(cap, 0)`: both are
+        // `tputs(tcstr[cap], 1, putshout)` in C, but the port's `tsetcap`
+        // writes STRAIGHT to the tty fd while `tcout` goes through the
+        // buffered `shout` stream that the rest of this frame is written to.
+        // Bypassing the buffer would reorder these three caps ahead of
+        // everything still queued.
+        tcout(crate::ported::zsh_h::TCALLATTRSOFF); // c:1191
+        tcout(crate::ported::zsh_h::TCSTANDOUTEND); // c:1192
+        tcout(crate::ported::zsh_h::TCUNDERLINEEND); // c:1193
         VCS.store(0, Ordering::SeqCst); // c:1157/1170 vcs = 0
         VLN.store(0, Ordering::SeqCst);
         OBUF.lock().unwrap().clear(); // c:1142 resetvideo — drop the stale frame

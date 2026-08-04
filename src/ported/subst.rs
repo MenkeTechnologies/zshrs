@@ -18643,7 +18643,7 @@ pub fn paramsubst(
 
         // c:Src/subst.c:1820 — bare `$NAME:MOD` and `$NAME[SUB]:MOD`
         // history-style modifier chain. Bugs #579, #580, #581.
-        let (new_value, new_pos) = apply_bare_modifier_chain(&value, &chars, pos);
+        let (new_value, new_pos, bare_mod_chain) = apply_bare_modifier_chain(&value, &chars, pos);
         let mut value = new_value;
         pos = new_pos;
         let _ = value;
@@ -18788,6 +18788,31 @@ pub fn paramsubst(
                 .or(assoc_vals)
                 .or_else(|| arrays_get(&var_name))
             {
+                // c:Src/subst.c:3764-3776 — the ARRAY leg of the colon-modifier
+                // block. C runs `modify` once PER ELEMENT of `aval`:
+                //     char **ap = aval;
+                //     char **pp = aval = (char **) hcalloc(…);
+                //     while ((*pp = *ap++)) { ss = s; modify(pp++, &ss, inbrace); }
+                // Only the `!isarr` leg (c:3761) was ported, and it operates on
+                // the JOINED scalar, which this splat then discards by
+                // re-reading the raw array — so an unbraced `$arr:q` / `$arr:t`
+                // silently dropped the modifier while the braced `${arr:q}` and
+                // the scalar `$s:q` both worked.
+                //
+                // `_git`'s `__git_commit_tags` argument plumbing depends on it:
+                //     local -a sopts ropt
+                //     zparseopts -E -a sopts S: r:=ropt R: q
+                //     sopts+=( $ropt:q )
+                // then `eval "__git_commit_tags $sopts"`. With `-r '@~ \^:\t\n\-'`
+                // the un-quoted value re-split at the eval, so the callee saw
+                // `[-r] [@~] [^:tn-]` (6 args) where zsh 5.9.2 passes
+                // `[-r] [@~ \^:\t\n\-]` (5) — one stray word reaching
+                // `compadd "$@" -a - tags` as an operand.
+                let arr: Vec<String> = if bare_mod_chain.is_empty() {
+                    arr
+                } else {
+                    arr.iter().map(|e| modify(e, &bare_mod_chain)).collect() // c:3774
+                };
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect(); // c:3950
                 let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
@@ -18904,7 +18929,9 @@ pub fn paramsubst(
                                                      // extends the bare-form modifier walker to `?` and `$`.
                                                      // Accept Quest token (`\u{97}`) alongside ASCII `?` for
                                                      // unquoted contexts where the lexer tokenizes `?`.
-            let (value, after_pos) = apply_bare_modifier_chain(&value, &chars, pos + 1);
+                                                     // c:3761 — scalar special (`isarr` is 0 here), so only the
+                                                     // `modify(&val, &s, inbrace)` leg applies; no element list.
+            let (value, after_pos, _) = apply_bare_modifier_chain(&value, &chars, pos + 1);
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
@@ -18922,7 +18949,9 @@ pub fn paramsubst(
                                                         // Stringg token (`\u{85}`) alongside ASCII `$` since the
                                                         // lexer tokenizes the second `$` of `$$` as Stringg in
                                                         // unquoted contexts.
-            let (value, after_pos) = apply_bare_modifier_chain(&value, &chars, pos + 1);
+                                                        // c:3761 — scalar special (`isarr` is 0 here), so only the
+                                                        // `modify(&val, &s, inbrace)` leg applies; no element list.
+            let (value, after_pos, _) = apply_bare_modifier_chain(&value, &chars, pos + 1);
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
@@ -19020,7 +19049,16 @@ pub fn paramsubst(
                 result_nodes,
             ) // c:1625
         } // c:1625
-        '*' | '@' => {
+        // c:Src/subst.c:1885 — the paramsubst gate that decides whether the
+        // char after `$` starts a parameter at all spells the star leg as
+        // `c != '*' && c != Star`, i.e. C accepts BOTH the ASCII `*` and the
+        // Star TOKEN (`\u{87}`) that Src/lex.c produces for every unquoted
+        // `*` — including the one directly after `$`. `@` has no token form,
+        // hence the single spelling there (same line). Without Star in this
+        // arm a tokenized `$*` fell through to the literal-`$` arm below and
+        // left `*` (still a Star) to the globber, so `$*:q` died with
+        // "no matches found: $*:q".
+        c if c == '*' || c == Star || c == '@' => {
             // c:1625
             let mut values = arrays_get("@").unwrap_or_default(); // c:1625
                                                                   // c:Src/lex.c gettokstr — bare `$@[SUB]` / `$*[SUB]` parses
@@ -19109,14 +19147,61 @@ pub fn paramsubst(
                     }
                 }
             }
+            // c:Src/subst.c:3759-3784 — history-style colon modifiers on the
+            // bare positional forms. `$@` carries SCANPM_ISVAR_AT
+            // (c:Src/params.c:2107-2121 `isvarat = (t[0] == '@' && !t[1])`), so
+            // `isarr` stays negative through the c:2798 DQ sepjoin and C takes
+            // the ARRAY leg at c:3764-3776 — one `modify` per element — even
+            // inside `"…"`. `$*` has no ISVAR_AT, sepjoins to a scalar, and
+            // takes the c:3761 scalar leg. Verified against zsh 5.9.2 with
+            // `set -- -r 'c d'`: `"$@:q"` is two words (`-r`, `c\ d`) while
+            // `"$*:q"` is the single word `-r\ c\ d`.
+            //
+            // Without this the whole chain stayed literal: `$@:q` produced
+            // `-r` + `c d:q`.
+            // Gated on the leading `:` (c:3759 `if (colf)`) so the common
+            // `"$@"` never pays for the sepjoin the scalar leg needs.
+            //
+            // c:2795-2802 — `if (isarr) { if (nojoin) isarr = -1;
+            //   if (qt && !getlen && isarr > 0) { val = sepjoin(...); isarr = 0; } }`
+            // The `$*` sepjoin is gated on `qt`: only the QUOTED `"$*"` collapses
+            // to a scalar. Unquoted `$*` keeps `isarr > 0` and therefore also
+            // takes the c:3764-3776 ARRAY leg, exactly like `$@`. zsh 5.9.2,
+            // `set -- 'a b' 'c d'`: `w=( $*:q )` is TWO words (`a\ b`, `c\ d`)
+            // while `w=( "$*:q" )` is the single word `a\ b\ c\ d`.
+            //
+            // The `qt` FLAG is not the discriminator here — the CHARACTER is.
+            // Src/lex.c tokenizes every unquoted `*` to Star and leaves `*`
+            // inside `"…"` as ASCII, so an ASCII `*` in this arm can only have
+            // come from a double-quoted `"$*"` (C's qt leg) and the Star token
+            // can only be the unquoted spelling. PREFORK_SINGLE (the port's
+            // "caller wants one word" flag, e.g. a scalar-assignment RHS) joins
+            // either spelling.
+            let is_star = c == '*' || c == Star; // c:1885
+            let star_joins = c == '*' || (is_star && (pf_flags & PREFORK_SINGLE) != 0); // c:2798
+            if chars.get(after_pos).copied() == Some(':') {
+                let joined = crate::ported::utils::sepjoin(&values, None); // c:2799
+                let (joined_modified, mod_end, mod_chain) =
+                    apply_bare_modifier_chain(&joined, &chars, after_pos);
+                if !mod_chain.is_empty() {
+                    if star_joins {
+                        // c:3761 — scalar leg on the already-joined value.
+                        values = vec![joined_modified];
+                    } else {
+                        // c:3766-3776 — `while ((*pp = *ap++)) { ss = s;
+                        // modify(pp++, &ss, inbrace); }`
+                        values = values.iter().map(|e| modify(e, &mod_chain)).collect();
+                    }
+                    after_pos = mod_end;
+                }
+            }
             // zsh semantics:
             //   $* / "$*" — join with IFS first char
             //   $@        — splat into separate words
             //   "$@"      — preserve array shape (still splat)
-            // Our port: $@ (qt or unqt) → splat; $* → join.
-            // Direct port of subst.c c:1625 dispatch — only $* with
-            // any quoting joins; $@ always preserves array shape.
-            let value = if c == '*' {
+            // Our port: $@ (qt or unqt) → splat; "$*" → join, bare $* → splat
+            // (c:2798 gates the sepjoin on `qt`, see `star_joins` above).
+            let value = if star_joins {
                 // c:1625 — `$*` joins via sepjoin(arr, NULL, 1).
                 // c:Src/utils.c:3936-3945 — set-but-empty IFS joins
                 // with "" (`IFS=""; echo "$*"` concatenates); only
@@ -19194,7 +19279,8 @@ pub fn paramsubst(
                // `$NAME:MOD` walker at subst.rs:10080 but rooted at the
                // digit-positional arm.
             if chars.get(nx).copied() == Some(':') {
-                let (new_value, new_pos) = apply_bare_modifier_chain(&value, &chars, nx);
+                // c:3761 — a single positional is scalar (`!isarr`).
+                let (new_value, new_pos, _) = apply_bare_modifier_chain(&value, &chars, nx);
                 value = new_value;
                 nx = new_pos;
             }
@@ -19221,7 +19307,9 @@ pub fn paramsubst(
                 c.to_string()
             };
             let value = exec_getsparam(&name).unwrap_or_default();
-            let (value, after_pos) = apply_bare_modifier_chain(&value, &chars, pos + 1);
+            // c:3761 — scalar special (`isarr` is 0 here), so only the
+            // `modify(&val, &s, inbrace)` leg applies; no element list.
+            let (value, after_pos, _) = apply_bare_modifier_chain(&value, &chars, pos + 1);
             let prefix: String = chars[..start_pos].iter().collect();
             let suffix: String = chars[after_pos..].iter().collect();
             let result = format!("{}{}{}", prefix, value, suffix);
@@ -19452,9 +19540,28 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
 ///
 /// Anchored on `:` followed by a known modifier letter (or `g` then
 /// `s`) so `$a:$b` stays two expansions. Bugs #579/#580/#581.
-pub fn apply_bare_modifier_chain(value: &str, chars: &[char], start: usize) -> (String, usize) {
+///
+/// The third return slot is the ACCUMULATED modifier text (`":t:u"`,
+/// `":gs/x/y/"`, …), empty when no chain was recognised. c:Src/subst.c:3760-3784
+/// applies the very same chain twice over, once per shape:
+///
+///     if (!isarr)
+///         modify(&val, &s, inbrace);
+///     else {
+///         char *ss;  char **ap = aval;  char **pp = aval = …;
+///         while ((*pp = *ap++)) { ss = s; modify(pp++, &ss, inbrace); }
+///     }
+///
+/// Callers that keep an element list (`aval`) re-run `modify` per element
+/// with this text; the scalar (`val`) result is what this function already
+/// returns.
+pub fn apply_bare_modifier_chain(
+    value: &str,
+    chars: &[char],
+    start: usize,
+) -> (String, usize, String) {
     if chars.get(start).copied() != Some(':') {
-        return (value.to_string(), start);
+        return (value.to_string(), start, String::new());
     }
     let mut mod_buf = String::new();
     let mut probe = start;
@@ -19541,9 +19648,10 @@ pub fn apply_bare_modifier_chain(value: &str, chars: &[char], start: usize) -> (
         // No digit loop here; probe halts after the modifier letter.
     }
     if mod_buf.is_empty() {
-        (value.to_string(), start)
+        (value.to_string(), start, String::new())
     } else {
-        (modify(value, &mod_buf), probe)
+        // c:3761 `modify(&val, &s, inbrace)` — the scalar (`!isarr`) leg.
+        (modify(value, &mod_buf), probe, mod_buf)
     }
 }
 

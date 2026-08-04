@@ -1328,12 +1328,16 @@ impl ShellExecutor {
         // Bug #90 in docs/BUGS.md — scripts that fingerprint by
         // $ZSH_PATCHLEVEL fell to the wildcard arm under "unknown".
         setsparam("ZSH_PATCHLEVEL", crate::ported::patchlevel::ZSH_PATCHLEVEL);
-        // Skip ZSHRS_VERSION in `--zsh` parity mode so `${(k)parameters}`
-        // doesn't carry a name zsh doesn't ship — matches the guard
-        // in `ported::params::createparamtable`. Scripts running under
-        // `--zsh` mode can still detect zshrs via `$ZSH_VERSION` which
-        // carries a `-test` suffix.
-        if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+        // Skip ZSHRS_VERSION whenever the zsh-compatible namespace must
+        // stay free of zshrs-original names, so `${(k)parameters}`
+        // doesn't carry a name zsh doesn't ship — same predicate and
+        // same reasoning as the guard in
+        // `ported::params::createparamtable`. `hide_ext_builtins()` is
+        // `--zsh` OR `ZSHRS_HIDE_EXT_BUILTINS` (the parity harnesses'
+        // knob); the previous `--zsh`-only gate missed the native
+        // binary the harnesses actually run. Scripts can still detect
+        // zshrs via `$ZSH_VERSION`, which carries a `-test` suffix.
+        if !crate::ext_builtins::hide_ext_builtins() {
             setsparam("ZSHRS_VERSION", crate::ported::patchlevel::ZSHRS_VERSION);
         }
         setsparam("ZSH_NAME", "zsh");
@@ -1546,11 +1550,7 @@ impl ShellExecutor {
         // gates on arithmetic-typed semantics. Bug #268 in
         // docs/BUGS.md.
         crate::ported::params::setiparam("MAILCHECK", 60); // c:858
-                                                           // c:Src/params.c:859 — original `KEYTIMEOUT = 40` but
-                                                           // zsh 5.9.1 observably reports 10 (Homebrew arm-darwin).
-                                                           // Match the observed default so vi-mode / multi-key
-                                                           // bindings feel responsive. Bug #321 in docs/BUGS.md.
-        crate::ported::params::setiparam("KEYTIMEOUT", 10); // c:859
+        crate::ported::params::setiparam("KEYTIMEOUT", 40); // c:859
         crate::ported::params::setiparam("LISTMAX", 100); // c:860
                                                           // c:config.h:1004 — MAX_FUNCTION_DEPTH=500. Advisory cap;
                                                           // dispatch_function_call enforces against this.
@@ -2294,40 +2294,7 @@ impl ShellExecutor {
         // it: `--bash --zsh` asks for zsh-STYLE emulation, where zsh's
         // leave-it-unset behavior is the correct answer. Guarded on the
         // environment so an inherited TERM always wins.
-        //
-        // macOS-only `--sh` follow-on to the same delta (commit f77164dcb6
-        // landed the `--bash` half). On macOS `/bin/sh` IS bash — it reports
-        // "GNU bash, version 3.2.57(1)-release" — so the reference shell the
-        // `sh` emulation-parity way compares against runs that identical
-        // define-TERM startup step:
-        //
-        //   $ env -u TERM /bin/sh -c 'printf "%s" "${TERM+set}"'
-        //   set
-        //
-        // On Linux `/bin/sh` is dash, which leaves TERM unset, so the delta
-        // is macOS-only by construction. The `cfg` below encodes that: every
-        // Linux build keeps zsh's leave-it-unset behavior for `--sh`.
-        //
-        // Scoped to the bare `--sh` drop-in. The reference shells for the
-        // other POSIX-family ways all print `[]` (TERM unset) with TERM
-        // absent, so none of them may take this branch:
-        //   * `--ksh`      EMULATION is EMULATE_KSH, not EMULATE_SH
-        //                  (`/bin/ksh` and Homebrew ksh/ksh93 leave it unset)
-        //   * `--dash`     EMULATE_SH but `dash_strict()` is raised
-        //                  (`/bin/dash` and Homebrew dash leave it unset)
-        //   * `--sh --zsh` zsh-STYLE emulation clears `posix_faithful()`,
-        //                  and zsh — including `emulate sh` — leaves it
-        //                  unset, same reasoning as the `--bash --zsh` note
-        //                  above.
-        #[cfg(target_os = "macos")]
-        let sh_dropin_defines_term = crate::extensions::dash_mode::posix_faithful()
-            && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
-            && !crate::extensions::dash_mode::dash_strict();
-        #[cfg(not(target_os = "macos"))]
-        let sh_dropin_defines_term = false;
-        if (crate::extensions::dash_mode::bash_mode() || sh_dropin_defines_term)
-            && std::env::var_os("TERM").is_none()
-        {
+        if crate::extensions::dash_mode::bash_mode() && std::env::var_os("TERM").is_none() {
             crate::ported::params::setsparam("TERM", "dumb");
             // bash exports it (`declare -x TERM` shows up in `export -p`);
             // addenv stamps PM_EXPORTED and pushes it into the child env.
@@ -3789,6 +3756,15 @@ impl ShellExecutor {
         // which does `zsh_subshell++`; in-process equivalent (RAII,
         // restored on every return path below).
         let _subshell_bump = crate::fusevm_bridge::CmdSubstSubshellBump::enter();
+
+        // c:Src/exec.c:1208-1209 — the same forked child clears
+        // `opts[USEZLE]` and `zleactive`. Without it a substitution run
+        // from inside a widget still looks "in ZLE", so `fc` refuses with
+        // "no interactive history within ZLE" (c:Src/builtin.c:1523-1527)
+        // and history-based completers come back empty. Placed here rather
+        // than in exec::getoutput so the bridge's own cmdsubst paths
+        // (BUILTIN_CMD_SUBST_TEXT, backtick) are covered too.
+        let _subsh_state = crate::ported::exec::SubshStateGuard::enter();
 
         // Parse + compile + run.
         // Push CS_CMDSUBST for `%_` xtrace prefix — direct port of

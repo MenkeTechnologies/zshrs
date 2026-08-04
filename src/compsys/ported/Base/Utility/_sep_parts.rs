@@ -51,7 +51,7 @@
 
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::get_compstate_str;
-use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zle::complete::{bin_compadd, bin_compadd_body};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 fn make_ops() -> options {
@@ -237,13 +237,17 @@ pub fn _sep_parts(args: &[String]) -> i32 {
         };
         let _ = setsparam("PREFIX", &seg);
 
-        // sh:55  compadd -O testarr "$matcher[@]" -a "$arr"
+        // sh:55  builtin compadd -O testarr "$matcher[@]" -a "$arr"
+        //   `builtin` bypasses the `compadd()` shell function
+        //   `_approximate` installs, so this pass matches EXACTLY;
+        //   sh:56-57 then retries through the shadow if it found
+        //   nothing.
         let mut argv: Vec<String> = vec!["-O".into(), "testarr".into()];
         argv.extend(matcher.iter().cloned());
         argv.push("-a".into());
         argv.push(arr.clone());
-        let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
-        // sh:56-57  correction retry (identical call)
+        let _ = bin_compadd_body("compadd", &argv, &make_ops(), 0);
+        // sh:56-57  correction retry (identical call, shadowed)
         if arrlen("testarr") == 0 && !comp_correct.is_empty() {
             let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
         }
@@ -280,11 +284,14 @@ pub fn _sep_parts(args: &[String]) -> i32 {
     };
     if build {
         let _ = setsparam("PREFIX", &str);
+        // sh:85  builtin compadd -O testarr "$matcher[@]" -a "$arr"
+        //   (shadow bypassed — see sh:55 above)
         let mut argv: Vec<String> = vec!["-O".into(), "testarr".into()];
         argv.extend(matcher.iter().cloned());
         argv.push("-a".into());
         argv.push(arr.clone());
-        let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
+        let _ = bin_compadd_body("compadd", &argv, &make_ops(), 0);
+        // sh:86-87  correction retry (shadowed)
         if arrlen("testarr") == 0 && !comp_correct.is_empty() {
             let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
         }
@@ -325,12 +332,13 @@ pub fn _sep_parts(args: &[String]) -> i32 {
             String::new()
         };
 
-        // sh:121  compadd -O tmparr "$matcher[@]" -a "$arr"
+        // sh:121  builtin compadd -O tmparr "$matcher[@]" -a "$arr"
+        //   (shadow bypassed — see sh:55 above)
         let mut argv: Vec<String> = vec!["-O".into(), "tmparr".into()];
         argv.extend(matcher.iter().cloned());
         argv.push("-a".into());
         argv.push(arr2.clone());
-        let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
+        let _ = bin_compadd_body("compadd", &argv, &make_ops(), 0);
         // sh:122-123  correction retry. NOTE: upstream uses `- "$arr"`
         // (bare, not `-a`) here — an upstream inconsistency; the name
         // is added literally. Reproduced faithfully.

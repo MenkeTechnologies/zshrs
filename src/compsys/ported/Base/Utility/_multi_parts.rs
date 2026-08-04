@@ -30,7 +30,7 @@
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::get_compstate_str;
-use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zle::complete::{bin_compadd, bin_compadd_body};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 fn make_ops() -> options {
@@ -429,8 +429,13 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                 "-".into(),
             ];
             argv.extend(words.iter().cloned());
-            let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
+            // sh:94  builtin compadd -O tmp1 -M … - "${(@)…}"
+            //   `builtin` bypasses the `compadd()` shell function
+            //   `_approximate` installs, so this pass matches EXACTLY;
+            //   sh:96-97 retries through the shadow if it found nothing.
+            let _ = bin_compadd_body("compadd", &argv, &make_ops(), 0);
             tmp1 = dedup(getaparam("tmp1").unwrap_or_default());
+            // sh:96-97  correction retry (identical call, shadowed)
             if tmp1.is_empty() && !comp_correct.is_empty() {
                 let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
                 tmp1 = dedup(getaparam("tmp1").unwrap_or_default());

@@ -31,7 +31,10 @@ use crate::ported::zle::comp_h::{
 };
 use crate::ported::zle::compcore::{listdat, MINFO, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
 use crate::ported::zle::zle_refresh::{tcmultout, tcout, CLEARFLAG, NLNCT};
-use crate::ported::zsh_h::{isset, Patprog, EXTENDEDGLOB, TCCLEAREOD, TCCLEAREOL, USEZLE};
+use crate::ported::zsh_h::{
+    isset, Patprog, EXTENDEDGLOB, TCALLATTRSOFF, TCBOLDFACEBEG, TCCLEAREOD, TCCLEAREOL,
+    TCSTANDOUTBEG, TCSTANDOUTEND, TCUNDERLINEBEG, TCUNDERLINEEND, USEZLE,
+};
 use crate::DPUTS2;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -1190,7 +1193,6 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
     let mlend = MLEND.load(Ordering::SeqCst);
     let mscroll = MSCROLL.load(Ordering::SeqCst) != 0;
 
-
     // c:741-744 — `ums = ztrdup(s); untokenize(ums);
     //              uptr = unmetafy(ums, &umlen); umleft = umlen;`
     let ums = untokenize(s);
@@ -1594,6 +1596,15 @@ pub fn compprintfmt(
     let mut dopr = dopr; // c:1273 — literal branch may downgrade to 2 (measure-only)
     let mut ml = ml; // c:1301 — C mutates its own copy while wrapping
 
+    // c:1075 — `int l = 0, cc = 0, b = 0, s = 0, u = 0, m, ...`. The three
+    // attribute latches track which of bold / standout / underline the format
+    // has turned ON so far, so an OFF escape (which is emitted as
+    // `TCALLATTRSOFF`, a blunt reset) can re-apply the ones still wanted
+    // (c:1256-1262).
+    let mut attr_b = false;
+    let mut attr_s = false;
+    let mut attr_u = false;
+
     // c:1075 — `stat = !fmt`: captured BEFORE the mstatus/mlistp fallback
     // reassigns fmt. Only stat-mode (caller passed NULL/empty) emits the
     // count/position fields and applies whole-prompt width truncation.
@@ -1661,6 +1672,10 @@ pub fn compprintfmt(
             // c:1118 — `m` flag: this escape produced a count/position field
             // in `nc` that needs the c:1257-1266 truncation-and-print path.
             let mut m_field: Option<String> = None;
+            // c:1118 `m = 0;` — the second value `m` takes: an OFF escape
+            // (`%b`/`%s`/`%u`) sets it so the c:1256-1262 epilogue re-applies
+            // the attributes that are still supposed to be on.
+            let mut m_reapply = false;
             match chars.next() {
                 // c:1119
                 // c:1120-1126 — `%%` is a literal percent sign. The port
@@ -1684,11 +1699,70 @@ pub fn compprintfmt(
                         cc += s.len() as i32;
                     }
                 }
-                // c:1138-1183 — text-attribute toggles: zero-width, emit
-                // nothing (the terminal grid the parity harness reads keeps
-                // attributes off-cell).
-                Some('B') | Some('b') | Some('S') | Some('s') | Some('U') | Some('u')
-                | Some('f') | Some('k') => {}
+                // c:1134-1163 — text-attribute toggles. They ARE emitted: each
+                // one writes its termcap capability straight out, exactly like
+                // the literal escape bytes the format string carries around
+                // them. The port used to swallow all six ("zero-width, emit
+                // nothing"), so a `list-prompt` / `select-prompt` using
+                // `%S…%s` lost its `\e[7m` / `\e[27m` pair — the status line
+                // rendered unhighlighted AND, because the pair also leaves the
+                // terminal's attribute state where zsh leaves it, the frame
+                // that tears the listing down diverged by those bytes.
+                //
+                // The `b`/`s`/`u` latches feed the c:1256-1262 re-apply: the
+                // OFF escapes emit TCALLATTRSOFF, which clears *every*
+                // attribute, so any still-wanted ones are turned back on.
+                //
+                // Line numbers on THIS arm (and on the re-apply below) are zsh
+                // 5.9.2's complist.c — the release the parity harness diffs
+                // against. Master rewrote these six to go through
+                // `tsetattrs`/`tunsetattrs` (its c:1138-1183), which only move
+                // the pending-attribute word and leave emission to a later
+                // `applytextattributes`; 5.9.2 writes the capability here and
+                // now, which is what the reference byte stream shows.
+                Some('B') => {
+                    attr_b = true; // c:1135
+                    if dopr != 0 {
+                        tcout(TCBOLDFACEBEG); // c:1137
+                    }
+                }
+                Some('b') => {
+                    attr_b = false; // c:1140
+                    m_reapply = true;
+                    if dopr != 0 {
+                        tcout(TCALLATTRSOFF); // c:1142
+                    }
+                }
+                Some('S') => {
+                    attr_s = true; // c:1145
+                    if dopr != 0 {
+                        tcout(TCSTANDOUTBEG); // c:1147
+                    }
+                }
+                Some('s') => {
+                    attr_s = false; // c:1150
+                    m_reapply = true;
+                    if dopr != 0 {
+                        tcout(TCSTANDOUTEND); // c:1152
+                    }
+                }
+                Some('U') => {
+                    attr_u = true; // c:1155
+                    if dopr != 0 {
+                        tcout(TCUNDERLINEBEG); // c:1157
+                    }
+                }
+                Some('u') => {
+                    attr_u = false; // c:1160
+                    m_reapply = true;
+                    if dopr != 0 {
+                        tcout(TCUNDERLINEEND); // c:1162
+                    }
+                }
+                // c:1179-1185 — `%f` / `%k` reset one colour channel. Left
+                // silent: the port has no `set_colour_attribute(TXTNOFGCOLOUR,
+                // …)` call site here yet and no fixture exercises them.
+                Some('f') | Some('k') => {}
                 // c:1162-1183 — %F / %K optionally carry a `{colour}` payload
                 // that must be consumed so it does not leak into the output.
                 Some('F') | Some('K') => {
@@ -1832,6 +1906,20 @@ pub fn compprintfmt(
                     }
                     cc += out.len() as i32; // c:1265
                 }
+            } else if dopr != 0 && m_reapply {
+                // c:1256-1262 — `else if (dopr && m == 1)`. The OFF escape just
+                // emitted TCALLATTRSOFF (or an END cap that some terminals
+                // implement as a full reset), so re-arm whichever of
+                // bold/standout/underline the format still wants on.
+                if attr_b {
+                    tcout(TCBOLDFACEBEG); // c:1258
+                }
+                if attr_s {
+                    tcout(TCSTANDOUTBEG); // c:1260
+                }
+                if attr_u {
+                    tcout(TCUNDERLINEBEG); // c:1262
+                }
             }
         } else {
             // c:1269 — literal char (ANSI escape bytes included: every byte
@@ -1867,7 +1955,7 @@ pub fn compprintfmt(
                 let mut buf = [0u8; 4];
                 let bs = c.encode_utf8(&mut buf).as_bytes();
                 crate::shout::write(bs); // c:1288-1295
-                                                // c:1300-1303 — a wrap lands us on a new screen row.
+                                         // c:1300-1303 — a wrap lands us on a new screen row.
                 let beg = (cc % zterm_columns) == 0;
                 if beg && !stat {
                     ml += 1; // c:1301
@@ -3526,11 +3614,8 @@ pub fn complistmatches(
     // those in place the LISTPROMPT listing at 12x60 renders identically to
     // zsh, rows and highlight alike. The baseline singledraw draws from is
     // `trashzle`'s `moveto(nlnct, 0)` (zle_main.c:2085), made at c:2053.
-    let took_singledraw = !mnew
-        && inselect != 0
-        && cur_onlnct == nlnct
-        && mlbeg_cur >= 0
-        && mlbeg_cur == molbeg;
+    let took_singledraw =
+        !mnew && inselect != 0 && cur_onlnct == nlnct && mlbeg_cur >= 0 && mlbeg_cur == molbeg;
     // TEMP env-gated diagnostic (ZSHRS_COMPLIST_LOG) — traces every complist
     // redraw invocation + which branch it takes, to diagnose the p10k <TAB>
     // multi-draw duplication. No-op unless the env var is set.
@@ -3847,11 +3932,11 @@ pub fn setmstatus(
         if pl > h - 3 {
             // c:2245
             status.push_str("..."); // c:2246
-            // c:2247 — `strcat(status, p + pl - h + 3);`. The offset is
-            // `pl - h + 3`, NOT `pl - h - 3`: the "..." already accounts for
-            // three columns, so the kept tail is `h - 3` bytes long. The
-            // minus-3 form kept `h + 3` bytes and pushed the interactive
-            // status line six columns past zsh's.
+                                    // c:2247 — `strcat(status, p + pl - h + 3);`. The offset is
+                                    // `pl - h + 3`, NOT `pl - h - 3`: the "..." already accounts for
+                                    // three columns, so the kept tail is `h - 3` bytes long. The
+                                    // minus-3 form kept `h + 3` bytes and pushed the interactive
+                                    // status line six columns past zsh's.
             let mut skip = (pl - h + 3).max(0) as usize;
             while skip < p.len() && !p.is_char_boundary(skip) {
                 skip += 1;
@@ -4916,9 +5001,9 @@ pub fn domenuselect(
                 {
                     mi.cur = Some(Box::new(c)); // c:2612 minfo.cur = *p
                     mi.group = g.map(Box::new); // c:2613 minfo.group = *pg
-                    // The offsets half of the same assignment. Guarded: a cell
-                    // whose match is not in `amatches` (stale mtab between
-                    // rebuilds) must not reset the cursor to group 0 / match 0.
+                                                // The offsets half of the same assignment. Guarded: a cell
+                                                // whose match is not in `amatches` (stale mtab between
+                                                // rebuilds) must not reset the cursor to group 0 / match 0.
                     if gidx >= 0 {
                         mi.group_idx = gidx;
                         mi.cur_idx = midx;
@@ -5218,7 +5303,7 @@ pub fn domenuselect(
                 } else {
                     trashzle(); // c:2803
                     let _ = crate::ported::zle::zle_main::zsetterm(); // c:2804
-                    // c:2805-2806 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
+                                                                      // c:2805-2806 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
                     let can_cleareod = crate::ported::init::tclen
                         .lock()
                         .map(|t| t[TCCLEAREOD as usize] != 0)

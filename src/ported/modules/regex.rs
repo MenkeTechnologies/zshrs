@@ -1220,7 +1220,12 @@ mod tests {
             ("a b", r"a\sb", 1, r"\s = [[:space:]]"),
             ("a\tb", r"a\sb", 1, r"\s covers TAB"),
             ("ab", r"a\Sb", 0, r"\S needs a non-space between a and b"),
-            ("foo bar", r"\bbar", 1, r"\b = WORD_FIRST|WORD_LAST boundary"),
+            (
+                "foo bar",
+                r"\bbar",
+                1,
+                r"\b = WORD_FIRST|WORD_LAST boundary",
+            ),
             ("foobar", r"\bbar", 0, r"no boundary inside foobar"),
             ("foobar", r"o\Bb", 1, r"\B = INSIDE_WORD|INSIDE_NOTWORD"),
             ("foo bar", r"\<bar", 1, r"\< = WORD_FIRST"),
@@ -1259,17 +1264,32 @@ mod tests {
         let saved = opt_state_get("casematch").unwrap_or(false);
         opt_state_set("casematch", true);
         let cases: &[(&str, &str, i32, &str)] = &[
-            ("user@site.com", r"^(\w+)@(\w+)\.com$", 0, r"\w is literal w"),
+            (
+                "user@site.com",
+                r"^(\w+)@(\w+)\.com$",
+                0,
+                r"\w is literal w",
+            ),
             ("w", r"^\w$", 1, r"\w matches the LETTER w"),
             ("a b", r"a\sb", 0, r"\s is literal s"),
             ("asb", r"a\sb", 1, r"…so a\sb matches 'asb'"),
             ("foo bar", r"\bbar", 0, r"\b is literal b"),
             ("foo bbar", r"\bbar", 1, r"…so \bbar matches 'bbar'"),
-            ("foo bar", r"\<bar", 0, r"\< is literal <, NOT a word boundary"),
+            (
+                "foo bar",
+                r"\<bar",
+                0,
+                r"\< is literal <, NOT a word boundary",
+            ),
             ("foo <bar", r"\<bar", 1, r"…so \<bar matches '<bar'"),
             ("foo bar", r"bar\>", 0, r"\> is literal >"),
             ("bar> x", r"bar\>", 1, r"…so bar\> matches 'bar>'"),
-            ("abab", r"(ab)\1", 0, r"\1 is literal 1, not a backreference"),
+            (
+                "abab",
+                r"(ab)\1",
+                0,
+                r"\1 is literal 1, not a backreference",
+            ),
         ];
         let observed: Vec<(&str, &str, i32)> = cases
             .iter()

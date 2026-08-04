@@ -1615,8 +1615,18 @@ pub fn get_comp_string() -> Option<String> {
         ORIGLL.store(meta_snap.len() as i32, Ordering::SeqCst);
     }
 
-    // c:1119-1130 — reset brace-info state. `rdstrs` recording
-    // (c:1245-1250, c:1396-1398) is omitted (no writable shared list).
+    // c:1119-1130 — reset brace-info state plus the redirection
+    // recorders: `if (rdstrs) freelinklist(...); rdstrs = znewlinklist();
+    // rdop[0] = '\0'; rdstr = NULL;`. `rdop` is a function-scope buffer
+    // (c:1114 `char … rdop[20]`) cleared ONCE here — the two `goto start`
+    // restarts deliberately keep whatever the previous pass left in it.
+    if let Ok(mut g) = RDSTRS.lock() {
+        g.clear(); // c:1126-1128
+    }
+    let mut rdop = String::new(); // c:1129
+    if let Ok(mut g) = RDSTR.lock() {
+        *g = None; // c:1130
+    }
     if let Some(b) = BRBEG.get() {
         *b.lock().unwrap() = None;
     }
@@ -1719,9 +1729,9 @@ pub fn get_comp_string() -> Option<String> {
     // ==================================================================
     let mut linptr = zml.clone();
     let mut t0: lextok;
-    // Locals that survive the loop for post-loop resolution. clwords /
-    // cmdstr / varname have no writable shared globals in the Rust port,
-    // so they stay local (reported).
+    // Locals that survive the loop for post-loop resolution. `clwords`
+    // is published into the CLWORDS global at the end; `cmdstr` and
+    // `varname` mirror into CMDSTR / VARNAME at each assignment.
     let mut clwords: Vec<String> = Vec::new(); // c:1416
     let mut clwpos: i32; // c:1168
     let mut clwnum: i32;
@@ -1756,8 +1766,12 @@ pub fn get_comp_string() -> Option<String> {
         LEX_PARBEGIN.set(-1); // c:1159
         LEX_PAREND.set(-1);
         LINCMD.store(incmdpos() as i32, Ordering::SeqCst); // c:1160
-        let mut linredir: i32 = inredir() as i32; // c:1161 (local; no shared global)
+        let mut linredir: i32 = inredir() as i32; // c:1161
+        LINREDIR.store(linredir, Ordering::SeqCst); // c:1161
         cmdstr = None; // c:1162-1163
+        if let Ok(mut g) = CMDSTR.lock() {
+            *g = None; // c:1162-1163
+        }
         let mut cmdtok: lextok = NULLTOK; // c:1164
         varname = None; // c:1165-1166
         if let Ok(mut g) = VARNAME.get_or_init(|| Mutex::new(None)).lock() {
@@ -1781,6 +1795,7 @@ pub fn get_comp_string() -> Option<String> {
         let mut ins: i32 = 0;
         let mut oins: i32 = 0; // prior-iteration ins (c:1203); init 0
         let mut linarr: i32 = 0;
+        LINARR.store(0, Ordering::SeqCst); // c:1173
         let mut parct: i32 = 0;
         let mut redirpos: i32 = 0;
         WB.store(zlemetacs, Ordering::SeqCst); // c:1174 we = wb = zlemetacs
@@ -1798,6 +1813,7 @@ pub fn get_comp_string() -> Option<String> {
 
             // c:1197 — linredir = (inredir && !ins)
             linredir = (inredir() && ins == 0) as i32;
+            LINREDIR.store(linredir, Ordering::SeqCst); // c:1197
             // c:1198-1202 — lincmd command-position determination.
             let lincmd_val = (!inredir()
                 && ((incmdpos() && ins == 0 && incond() == 0)
@@ -1841,7 +1857,17 @@ pub fn get_comp_string() -> Option<String> {
             // c:1230-1243 — array-assignment / paren nesting.
             if tokv == ENVARRAY {
                 linarr = 1;
+                LINARR.store(1, Ordering::SeqCst); // c:1231
+                // c:1232-1233 — `zsfree(varname); varname = ztrdup(tokstr);`.
+                // The mirror into the VARNAME global was missing, so the
+                // IN_ENV arm's `compparameter = varname` (compcore.c:607)
+                // published EMPTY for an array assignment: `myarr=(/tm<TAB>`
+                // reported `$compstate[parameter]=''` and `_value` built
+                // `-value-,,-default-` where zsh builds `-value-,myarr,`.
                 varname = tokstr().map(|s| ztrdup(&s));
+                if let Ok(mut g) = VARNAME.get_or_init(|| Mutex::new(None)).lock() {
+                    *g = varname.clone();
+                }
             } else if tokv == INPAR_TOK {
                 parct += 1;
             } else if tokv == OUTPAR_TOK {
@@ -1849,14 +1875,32 @@ pub fn get_comp_string() -> Option<String> {
                     parct -= 1;
                 } else if linarr != 0 {
                     linarr = 0;
+                    LINARR.store(0, Ordering::SeqCst); // c:1241
                     set_incmdpos(true);
                 }
             }
 
-            // c:1244-1268 — redirection handling. rdstrs recording is
-            // omitted; the cursor-in-middle-of-redirection wb/we
-            // adjustment IS ported.
+            // c:1244-1268 — redirection handling.
             if inredir() && IS_REDIROP(tokv) {
+                // c:1245-1250 — remember the operator text so
+                // `callcompfunc` can publish `$compstate[redirect]`
+                // (compcore.c:600-601). C keeps it in the static
+                // `rdstrbuf` and points `rdstr` at it; the Rust global
+                // owns the string directly.
+                let op = crate::ported::lex::tokstrings
+                    .get(tokv as usize)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(""); // c:1247/1249 tokstrings[tok]
+                let tokfd = crate::ported::lex::tokfd();
+                rdop = if tokfd >= 0 {
+                    format!("{}{}", tokfd, op) // c:1246-1247
+                } else {
+                    op.to_string() // c:1248-1249
+                };
+                if let Ok(mut g) = RDSTR.lock() {
+                    *g = Some(rdop.clone()); // c:1245/1250
+                }
                 if wordpos == redirpos {
                     redirpos += 1;
                 }
@@ -1923,7 +1967,10 @@ pub fn get_comp_string() -> Option<String> {
                 if let Some(ts) = tokstr() {
                     let mut c = ztrdup(&untokenize(&ts));
                     crate::ported::glob::remnulargs(&mut c);
-                    cmdstr = Some(c);
+                    cmdstr = Some(c); // c:1319-1322
+                    if let Ok(mut g) = CMDSTR.lock() {
+                        *g = cmdstr.clone();
+                    }
                 }
                 cmdtok = tokv;
                 if wordpos != redirpos && clwpos == -1 {
@@ -2009,9 +2056,21 @@ pub fn get_comp_string() -> Option<String> {
                     INWHAT.store(IN_COND, Ordering::SeqCst); // c:1394
                 }
             } else if linredir != 0 {
-                // c:1395-1398 — rdstrs recording omitted; C `continue`.
-                // A do-while `continue` re-tests the loop condition, so
-                // honor the c:1446 end condition before continuing.
+                // c:1396-1397 — `if (rdop[0] && tokstr)
+                //   zaddlinknode(rdstrs, tricat(rdop, ":", tokstr));`.
+                // Records every COMPLETED redirection on the line (the
+                // one under the cursor took the branch above) for
+                // `$compstate[redirections]` (compcore.c:650-651).
+                if !rdop.is_empty() {
+                    if let Some(ts) = tokstr() {
+                        if let Ok(mut g) = RDSTRS.lock() {
+                            g.push(format!("{}:{}", rdop, ts)); // c:1397
+                        }
+                    }
+                }
+                // c:1398 — C `continue`. A do-while `continue` re-tests
+                // the loop condition, so honor the c:1446 end condition
+                // before continuing.
                 let lexflags_nz = LEX_LEXFLAGS.get() != 0;
                 let end = tokv == LEXERR
                     || tokv == ENDINPUT
@@ -2110,10 +2169,12 @@ pub fn get_comp_string() -> Option<String> {
         if ia != 0 {
             LINCMD.store(0, Ordering::SeqCst);
             linredir = 0;
+            LINREDIR.store(0, Ordering::SeqCst); // c:1454
             INWHAT.store(IN_ENV, Ordering::SeqCst);
         } else {
             LINCMD.store(cp, Ordering::SeqCst);
             linredir = rd;
+            LINREDIR.store(rd, Ordering::SeqCst); // c:1458
         }
         crate::ported::hist::strinend(); // c:1460
         crate::ported::input::inpop(); // c:1461
@@ -2564,8 +2625,11 @@ pub fn get_comp_string() -> Option<String> {
             crate::ported::params::setsparam("CURRENT", &cur.to_string());
         }
 
-        // cmdstr/varname/cp/rd/ia are computed for fidelity but have no
-        // wired downstream consumer (no shared globals).
+        // cmdstr/linredir/linarr now mirror into the file-scope globals
+        // (c:366/385) as the loop runs, so `callcompfunc` can read them
+        // (compcore.c:598-630). `clwnum`/`cp`/`rd`/`ia` stay local — the
+        // first is folded into the CLWORDS publish above, the rest are
+        // only the restore sources for c:1453-1459.
         let _ = (clwnum, &cmdstr, &varname, cp, rd, ia);
 
         // c:1385-1386 — `if (addedx && tt) chuck(...)`: remove the `x`
@@ -3751,6 +3815,39 @@ pub static BASHLISTFIRST: AtomicI32 = AtomicI32::new(0); // c:157
 /// Threaded into the COMPLETEHOOK payload as `compldat.incmd` — drives
 /// `_command_names` selection in `_main_complete`.
 pub static LINCMD: AtomicI32 = AtomicI32::new(0); // c:139
+
+/// Port of `mod_export int linredir` from `Src/Zle/zle_tricky.c:366`
+/// (`mod_export int lincmd, linredir, linarr;`). Non-zero when the
+/// cursor word is the TARGET of a redirection (`echo x > /tm<TAB>`),
+/// which `callcompfunc` turns into `$compstate[context]=redirect`
+/// (compcore.c:598-602).
+pub static LINREDIR: AtomicI32 = AtomicI32::new(0); // c:366
+
+/// Port of `mod_export int linarr` from `Src/Zle/zle_tricky.c:366`.
+/// Non-zero while the cursor is inside an array assignment
+/// (`x=(a b <TAB>)`) — selects `array_value` over `value`
+/// (compcore.c:605).
+pub static LINARR: AtomicI32 = AtomicI32::new(0); // c:366
+
+/// Port of `mod_export char *rdstr` from `Src/Zle/zle_tricky.c:371`
+/// ("The string for the redirection operator"). Holds the text of the
+/// redirection operator in front of the cursor word — `>`, `2>`, `<<<`
+/// … — copied from `rdstrbuf`/`rdop` at c:1245-1250. `callcompfunc`
+/// publishes it as `$compstate[redirect]` (compcore.c:600-601).
+pub static RDSTR: Mutex<Option<String>> = Mutex::new(None); // c:371
+
+/// Port of `mod_export LinkList rdstrs` from `Src/Zle/zle_tricky.c:378`
+/// ("The list of redirections on the line"). Each entry is
+/// `<op>:<target>` as built by c:1396-1397; `callcompfunc` turns it
+/// into `$compstate[redirections]` (compcore.c:650-651).
+pub static RDSTRS: Mutex<Vec<String>> = Mutex::new(Vec::new()); // c:378
+
+/// Port of `mod_export char *cmdstr` from `Src/Zle/zle_tricky.c:385`
+/// ("This holds the name of the current command"). Set by
+/// `get_comp_string` at c:1319-1322 from the command-position word.
+/// `callcompfunc`'s default context arm branches on it —
+/// `cmdstr ? "command" : "value"` (compcore.c:622-630).
+pub static CMDSTR: Mutex<Option<String>> = Mutex::new(None); // c:385
 
 /// Port of `mod_export char **cfargs` from
 /// `Src/Zle/zle_tricky.c:162`. The argv passed into the wrapping

@@ -2064,8 +2064,14 @@ fn typeset_family_name_equals_value_arg_keeps_assignment_semantics() {
         "[x y]\n",
     );
     // Quoted value, paren-init array, `$PATH:/x`-style append.
-    ok(r#"f() { local x="a b c"; print -r -- "[$x]" }; f"#, "[a b c]\n");
-    ok(r#"f() { typeset "n=a b"; print -r -- "[$n]" }; f"#, "[a b]\n");
+    ok(
+        r#"f() { local x="a b c"; print -r -- "[$x]" }; f"#,
+        "[a b c]\n",
+    );
+    ok(
+        r#"f() { typeset "n=a b"; print -r -- "[$n]" }; f"#,
+        "[a b]\n",
+    );
     ok(
         r#"f() { typeset -a v=(1 2 3); print -r -- "${#v}/${v[2]}" }; f"#,
         "3/2\n",

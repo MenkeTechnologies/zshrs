@@ -125,6 +125,14 @@ impl WorkerPool {
                             continue; // drain without executing
                         }
 
+                        // Every task starts on a clear error flag. The
+                        // thread's `errflag` is private (see
+                        // crate::errflag_cell), so an abort or parse error
+                        // left behind by the PREVIOUS task on this same
+                        // thread would otherwise be inherited — C never
+                        // has that problem because its equivalent of a
+                        // task is a fresh forked child.
+                        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
                         // catch_unwind keeps the worker alive if a task panics
                         if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task))
                         {
