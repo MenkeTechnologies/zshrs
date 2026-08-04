@@ -42,3 +42,23 @@ fn captured_runs_cover_builtins_children_stderr_and_state() {
     let (_, out) = sh.execute_script_captured("echo $kept");
     assert_eq!(out, "yes");
 }
+
+/// Two threads capturing at once must not restore each other's fds mid-run:
+/// fd 1 belongs to the process, so the capture serializes. Without the lock one
+/// of these reads back an empty string.
+#[test]
+fn concurrent_captures_do_not_clobber_each_other() {
+    let handles: Vec<_> = (0..4)
+        .map(|i| {
+            std::thread::spawn(move || {
+                let mut sh = ShellExecutor::new();
+                let (_, out) = sh.execute_script_captured(&format!("echo thread-{i}"));
+                (i, out)
+            })
+        })
+        .collect();
+    for h in handles {
+        let (i, out) = h.join().expect("thread");
+        assert_eq!(out, format!("thread-{i}"));
+    }
+}
