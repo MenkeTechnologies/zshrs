@@ -2676,6 +2676,13 @@ impl ShellExecutor {
         use std::io::{Read, Seek, SeekFrom};
         use std::os::unix::io::AsRawFd;
 
+        /// Serializes the redirect/restore window. fd 1 belongs to the process,
+        /// not to a `ShellExecutor`, so two threads capturing at once would
+        /// restore each other's fds mid-run and each would read back an empty
+        /// file. An embedder that evaluates on one thread never contends here.
+        static CAPTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = CAPTURE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
         let Ok(mut tmp) = tempfile::tempfile() else {
             // No temp file, no capture: run it anyway rather than silently
             // dropping the script, and report nothing captured.
