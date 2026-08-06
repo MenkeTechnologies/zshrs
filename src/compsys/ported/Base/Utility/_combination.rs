@@ -35,6 +35,24 @@ fn make_ops() -> options {
     }
 }
 
+/// Reach `_combination` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_combination -s '[@:]' '' users-hosts-ports \`
+/// (Completion/Unix/Command/_telnet sh:69) — so the normal function lookup
+/// runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn combination_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_combination", args, || _combination(args))
+}
+
 /// `_combination` — multi-key zstyle-driven completer. See upstream
 /// docstring for the spec language (e.g. `users-hosts-ports`).
 pub fn _combination(args: &[String]) -> i32 {

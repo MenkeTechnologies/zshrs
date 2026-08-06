@@ -39,9 +39,9 @@
 //! sh:81  return ret
 //! ```
 
-use crate::compsys::ported::_description::_description;
-use crate::compsys::ported::_requested::_requested;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_requested::requested_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setsparam};
@@ -88,7 +88,7 @@ pub fn _match() -> i32 {
     );
 
     // sh:20
-    let _ = _tags(&["matches".to_string(), "original".to_string()]);
+    let _ = tags_byname(&["matches".to_string(), "original".to_string()]);
 
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
@@ -146,14 +146,14 @@ pub fn _match() -> i32 {
         let unambig = get_compstate_str("unambiguous").unwrap_or_default();
         if matches!(ins.as_str(), "true" | "yes" | "on" | "1") && unambig.len() >= combined.len() {
             set_compstate_str("pattern_insert", "unambiguous");
-        } else if _requested(&["original".to_string()]) == 0 {
+        } else if requested_byname(&["original".to_string()]) == 0 {
             let orig_style_on = lookupstyle(&ctx, "original")
                 .first()
                 .map(|v| matches!(v.as_str(), "yes" | "true" | "1" | "on"))
                 .unwrap_or(false);
             if nm > 1 || orig_style_on {
                 // sh:74
-                let _ = _description(&[
+                let _ = description_byname(&[
                     "-V".to_string(),
                     "original".to_string(),
                     "expl".to_string(),

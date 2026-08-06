@@ -23,7 +23,7 @@
 //! sh:26  return 1
 //! ```
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::getsparam;
 use std::process::Command;
 
@@ -99,7 +99,7 @@ pub fn _bsd_disks(args: &[String]) -> i32 {
         ];
         wanted_argv.extend(args.iter().cloned());
         wanted_argv.extend(disks);
-        return _wanted(&wanted_argv);
+        return wanted_byname(&wanted_argv);
     }
 
     // sh:26  return 1

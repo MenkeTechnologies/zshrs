@@ -11,7 +11,7 @@
 //! sh: 9      ppc64 ppc64el riscv64 s390x sh4 sparc sparc64 x32 ${=extra[2]}
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::getaparam;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -86,7 +86,7 @@ pub fn _deb_architectures(args: &[String]) -> i32 {
     let (extra2, rest) = zparse_a(args);
 
     // sh:6  _description architectures expl 'architecture'
-    let _ = _description(&[
+    let _ = description_byname(&[
         "architectures".to_string(),
         "expl".to_string(),
         "architecture".to_string(),

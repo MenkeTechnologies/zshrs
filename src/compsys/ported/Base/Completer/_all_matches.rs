@@ -38,7 +38,7 @@
 //! sh:47  _all_matches "$@"
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -132,7 +132,7 @@ pub fn _all_matches_end() -> i32 {
             set_compstate_str("insert", "all");
         } else {
             // sh:39-40
-            let _ = _description(&[
+            let _ = description_byname(&[
                 "all-matches".to_string(),
                 "expl".to_string(),
                 "all matches".to_string(),

@@ -23,10 +23,10 @@
 //! — the `${(z)${(f)…}}` line-then-word split uses whitespace splitting.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_requested::_requested;
-use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_requested::requested_byname;
+use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -105,7 +105,7 @@ pub fn _dict_words(args: &[String]) -> i32 {
 
     if cur_word.is_empty() {
         // sh:10-11
-        let _ = _message(&[
+        let _ = message_byname(&[
             "-e".to_string(),
             "dict".to_string(),
             "dictionary word".to_string(),
@@ -158,14 +158,14 @@ pub fn _dict_words(args: &[String]) -> i32 {
     if separate {
         // sh:24  _tags words.$^dicts
         let tag_names: Vec<String> = dicts.iter().map(|d| format!("words.{}", d)).collect();
-        let _ = _tags(&tag_names);
+        let _ = tags_byname(&tag_names);
         let mut ret = 1;
         // sh:24  while _tags; do
-        while _tags(&[]) == 0 {
+        while tags_byname(&[]) == 0 {
             // sh:25  for dict in $dicts
             for dict in &dicts {
                 // sh:26  _requested words.$dict expl "word from $dict"
-                if _requested(&[
+                if requested_byname(&[
                     format!("words.{}", dict),
                     "expl".to_string(),
                     format!("word from {}", dict),
@@ -220,7 +220,7 @@ pub fn _dict_words(args: &[String]) -> i32 {
     wanted_argv.push("-".to_string());
     wanted_argv.push("-a".to_string());
     wanted_argv.push("dictwords".to_string());
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

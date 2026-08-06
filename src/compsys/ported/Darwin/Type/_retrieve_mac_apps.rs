@@ -67,10 +67,10 @@
 //! self/sibling-prefixed directories of `app_dir`, never descendants —
 //! ported literally (sibling-prefix scan), not "fixed".
 
-use crate::compsys::ported::_cache_invalid::_cache_invalid;
+use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
-use crate::compsys::ported::_store_cache::_store_cache;
+use crate::compsys::ported::_retrieve_cache::retrieve_cache_byname;
+use crate::compsys::ported::_store_cache::store_cache_byname;
 use crate::ported::modules::zutil::{bin_zstyle, lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -558,8 +558,9 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
 
     // sh:69-70
     let mac_apps_empty = getaparam("_mac_apps").map(|v| v.is_empty()).unwrap_or(true);
-    let need_rebuild = (mac_apps_empty || _cache_invalid(&["Mac_applications".to_string()]) == 0)
-        && _retrieve_cache(&["Mac_applications".to_string()]) != 0;
+    let need_rebuild = (mac_apps_empty
+        || cache_invalid_byname(&["Mac_applications".to_string()]) == 0)
+        && retrieve_cache_byname(&["Mac_applications".to_string()]) != 0;
 
     if !need_rebuild {
         // sh — untaken `if` (no `else`) → exit status 0 (verified live).
@@ -615,7 +616,7 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
     setaparam("_mac_apps", mac_apps);
 
     // sh:105
-    _store_cache(&["Mac_applications".to_string(), "_mac_apps".to_string()])
+    store_cache_byname(&["Mac_applications".to_string(), "_mac_apps".to_string()])
 }
 
 #[cfg(test)]

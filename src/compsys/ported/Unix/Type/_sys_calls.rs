@@ -20,7 +20,7 @@
 //! sh:16 the nested `${(M)…:#…}#*…SYS_}%%…` decomposition is done with
 //! straight string ops (`// sh:16 approx`).
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -90,7 +90,7 @@ pub fn _sys_calls(args: &[String]) -> i32 {
     }
 
     // sh:20-21  _description + compadd -a syscalls
-    let _ = _description(&[
+    let _ = description_byname(&[
         "syscalls".to_string(),
         "expl".to_string(),
         "system call".to_string(),

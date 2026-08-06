@@ -29,8 +29,8 @@
 //! sh:82  [[ nm -ne $compstate[nmatches] ]]
 //! ```
 
-use crate::compsys::ported::_alternative::_alternative;
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_alternative::alternative_byname;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::glob::remnulargs;
 use crate::ported::lex::{parse_subst_string, untokenize};
 use crate::ported::modules::zutil::bin_zregexparse;
@@ -84,6 +84,22 @@ pub fn _ra_comp(args: &[String]) -> i32 {
     }
     setaparam("_ra_actions", acts);
     0
+}
+
+/// Reach `_regex_arguments` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_regex_arguments "${funcname}_sm" "$regex_all[@]"` (Completion/Debian/Command/_apt sh:347) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn regex_arguments_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_regex_arguments", args, || _regex_arguments(args))
 }
 
 /// `_regex_arguments funcname regex…` — rewrite the spec's cactions to
@@ -229,7 +245,7 @@ pub fn dispatch_registered(funcname: &str) -> i32 {
     match rc {
         // sh:69 — `0|2) _message "no more arguments"`.
         0 | 2 => {
-            let _ = _message(&["no more arguments".to_string()]);
+            let _ = message_byname(&["no more arguments".to_string()]);
         }
         // sh:70-79 — `1) …`.
         1 => {
@@ -243,7 +259,7 @@ pub fn dispatch_registered(funcname: &str) -> i32 {
                 .unwrap_or(false);
             if tail_has_nul {
                 // sh:72 — `_message "parse failed before current word"`.
-                let _ = _message(&["parse failed before current word".to_string()]);
+                let _ = message_byname(&["parse failed before current word".to_string()]);
             } else {
                 // sh:74-75 — `_ra_left`/`_ra_right` are assigned but never
                 // used downstream in upstream; compute for fidelity.
@@ -268,13 +284,13 @@ pub fn dispatch_registered(funcname: &str) -> i32 {
                 // sh:77 — `(( $#_ra_actions )) && _alternative "$_ra_actions[@]"`.
                 let actions = getaparam("_ra_actions").unwrap_or_default();
                 if !actions.is_empty() {
-                    let _ = _alternative(&actions);
+                    let _ = alternative_byname(&actions);
                 }
             }
         }
         // sh:80 — `3) _message "invalid regex"`.
         3 => {
-            let _ = _message(&["invalid regex".to_string()]);
+            let _ = message_byname(&["invalid regex".to_string()]);
         }
         _ => {}
     }

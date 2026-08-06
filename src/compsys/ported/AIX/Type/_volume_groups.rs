@@ -9,7 +9,7 @@
 //! sh:5  _wanted volumegroups expl 'volume group' compadd "$@" - $(lsvg)
 //! ```
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 
 /// `_volume_groups` — complete AIX LVM volume-group names (`lsvg`).
 pub fn _volume_groups(args: &[String]) -> i32 {
@@ -37,7 +37,7 @@ pub fn _volume_groups(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.extend(groups);
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

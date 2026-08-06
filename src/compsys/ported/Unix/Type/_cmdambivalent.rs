@@ -21,8 +21,8 @@
 //! sh:17  fi
 //! ```
 
-use crate::compsys::ported::_cmdstring::_cmdstring;
-use crate::compsys::ported::_command_names::_command_names;
+use crate::compsys::ported::_cmdstring::cmdstring_byname;
+use crate::compsys::ported::_command_names::command_names_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -41,19 +41,28 @@ pub fn _cmdambivalent() -> i32 {
         // sh:6  $words[CURRENT] contains a space
         let curword = words.first().cloned().unwrap_or_default();
         if curword.contains(' ') {
-            return _cmdstring();
+            return cmdstring_byname();
         }
         // sh:8  compstate[all_quotes][1] is `'` or `"`
         let all_quotes = get_compstate_str("all_quotes").unwrap_or_default();
         if all_quotes.starts_with('\'') || all_quotes.starts_with('"') {
-            return _cmdstring();
+            return cmdstring_byname();
         }
-        // sh:11
-        return _command_names(&["-e".to_string()]);
+        // sh:11 — bare command word; by name so `$fpath` arbitration runs.
+        // `_command_names` IS overridden on a real zpwr host
+        // (`~/.zpwr/autoload/comp_utils/_command_names`), which is the same
+        // defect fixed for the direct dispatch path in b8e714f7be.
+        let a = ["-e".to_string()];
+        return crate::compsys::ported::shared::call_compfn("_command_names", &a, || {
+            command_names_byname(&a)
+        });
     }
-    // sh:13
+    // sh:13 — likewise.
     if current == 1 {
-        return _command_names(&["-e".to_string()]);
+        let a = ["-e".to_string()];
+        return crate::compsys::ported::shared::call_compfn("_command_names", &a, || {
+            command_names_byname(&a)
+        });
     }
     // sh:16
     dispatch_function_call("_normal", &[]).unwrap_or(1)

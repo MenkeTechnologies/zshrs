@@ -54,8 +54,13 @@
 //! (returns None without an executor — in that case `__ret` stays 1
 //! for that iteration, matching shell behavior when the action fn
 //! returns non-zero).
+//!
+//! `_description` is reached BY NAME (`description_byname` →
+//! [`crate::compsys::ported::shared::call_compfn`]), matching the sh body's
+//! bare `_description …` command word: a user's own copy earlier on
+//! `$fpath` wins, and the call gets its own `doshfunc` frame.
 
-use super::_description::_description;
+use super::_description::description_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
@@ -157,6 +162,24 @@ fn dispatch_action(action_argv: &[String], prev_arr_vals: &[String], extras: &[S
     } else {
         dispatch_function_call(cmd, &full).unwrap_or(1)
     }
+}
+
+/// Reach `_all_labels` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_all_labels options expl option \`
+/// (Completion/Base/Utility/_arguments sh:493) — so the normal function
+/// lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn all_labels_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_all_labels", args, || _all_labels(args))
 }
 
 /// `_all_labels` — iterate every tag-spec registered for `$1`,
@@ -295,7 +318,7 @@ pub fn _all_labels(args: &[String]) -> i32 {
             desc_argv.push(lhs);
             desc_argv.push(name.clone());
             desc_argv.push(descr);
-            let _ = _description(&desc_argv);
+            let _ = description_byname(&desc_argv);
 
             // sh:35  "$4" "${(P@)2}" "${(@)argv[5,-1]}" && ret=0
             //   $4 = argv[3] (0-based); extras = argv[4..].
@@ -317,7 +340,7 @@ pub fn _all_labels(args: &[String]) -> i32 {
             desc_argv.push(curtag);
             desc_argv.push(name.clone());
             desc_argv.push(descr_arg);
-            let _ = _description(&desc_argv);
+            let _ = description_byname(&desc_argv);
 
             // sh:39  "${(@)argv[4,__pre]}" "${(P@)2}" "${(@)argv[__suf,-1]}" && ret=0
             //   Translate 1-based [4,__pre] to 0-based [3..pre]

@@ -3373,28 +3373,38 @@ pub fn scanpmnameddirs(
 #[allow(unused_variables)]
 pub fn getpmuserdir(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1646
-    // c:1651 — `nameddirtab->filltable(nameddirtab);` populates the
-    // nameddir table from /etc/passwd. Static-link path: query
-    // getpwnam(3) directly; same data source.
-    // c:1657 — the lookup is `nameddirtab->getnode(nameddirtab, name)`
-    // AFTER c:1651's filltable, and filltable is a no-op in a
-    // non-interactive shell (Src/utils.c:1193-1194 `if (!interact)
-    // return;` inside adduserdir — see scanpmuserdirs below). With an
-    // empty table C takes the c:1660-1663 else-arm: empty value,
-    // PM_UNSET. zshrs queries getpwnam directly, which has no such gate,
-    // so `zsh -f -c 'print ${userdirs[root]}'` printed `/var/root` where
-    // zsh prints nothing (and `${+userdirs[root]}` read 1 vs 0).
-    let cname = std::ffi::CString::new(name).ok()?;
-    let pwd = if crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
-        unsafe { libc::getpwnam(cname.as_ptr()) } // c:1657 nd lookup
-    } else {
-        std::ptr::null_mut() // c:1660 — empty nameddirtab, no node
-    };
-    let (value, found) = if !pwd.is_null() {
-        let dir = unsafe { std::ffi::CStr::from_ptr((*pwd).pw_dir) };
-        (dir.to_string_lossy().into_owned(), true) // c:1659 nd->dir
-    } else {
-        (String::new(), false) // c:1662
+    // c:1651 — `nameddirtab->filltable(nameddirtab);`. Route through the
+    // real port of that callback (Src/hashnameddir.c:96 fillnameddirtable),
+    // which is guarded by `allusersadded` (c:98/111) so the passwd database
+    // is enumerated exactly ONCE per shell and every later read is a plain
+    // hash lookup. Calling `getpwnam(3)` here instead re-entered the
+    // platform directory service on EVERY key: on macOS that is an
+    // opendirectoryd XPC round trip per key, so one whole-map read of
+    // `$userdirs` (137 accounts on this host) cost 137 round trips —
+    // 19 ms per read, and 15.7% of `subst::assoc_get` during a single TAB
+    // completion.
+    //
+    // The interactive gate is preserved because it lives where C puts it:
+    // `fillnameddirtable` feeds every entry through `adduserdir`, whose
+    // first statement is Src/utils.c:1193-1194 `if (!interact) return;`.
+    // So in a non-interactive shell the table stays empty and the lookup
+    // below takes C's c:1660-1663 else-arm (empty value, PM_UNSET), which
+    // is what `zsh -f -c 'print ${userdirs[root]}'` prints.
+    crate::ported::hashnameddir::fillnameddirtable(); // c:1651
+                                                      // c:1657-1658 — `nameddirtab->getnode(nameddirtab, name)` AND the
+                                                      // node must carry ND_USERNAME; `hash -d` / PWD entries live in the
+                                                      // same table but are NOT userdirs.
+    let found_dir = crate::ported::hashnameddir::nameddirtab()
+        .lock()
+        .ok()
+        .and_then(|t| {
+            t.get(name)
+                .filter(|nd| (nd.node.flags & crate::ported::zsh_h::ND_USERNAME) != 0)
+                .map(|nd| nd.dir.clone()) // c:1659 nd->dir
+        });
+    let (value, found) = match found_dir {
+        Some(dir) => (dir, true),       // c:1659
+        None => (String::new(), false), // c:1662
     };
     let pm = Box::new(param {
         // c:1653 hcalloc
@@ -3455,29 +3465,29 @@ pub fn scanpmuserdirs(
     // enumeration here instead of routing it through adduserdir, so it
     // skipped that gate and reported every account in the directory
     // service — 136 entries against zsh's 0.
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
-        return; // c:Src/utils.c:1193-1194 via c:1676 filltable
-    }
-    if let Some(f) = func {
-        unsafe {
-            libc::setpwent();
-        } // c:1673
-        loop {
-            let pwd = unsafe { libc::getpwent() }; // c:1677
-            if pwd.is_null() {
-                break;
-            }
-            let name = unsafe { std::ffi::CStr::from_ptr((*pwd).pw_name) };
-            let node = Box::new(hashnode {
-                next: None,
-                nam: name.to_string_lossy().into_owned(), // c:1683
-                flags: 0,
-            });
-            f(&node, flags); // c:1693
+    crate::ported::hashnameddir::fillnameddirtable(); // c:1676
+    let Some(f) = func else { return };
+    // c:1682-1692 — walk `nameddirtab` and emit only the ND_USERNAME
+    // entries. Enumerating `getpwent(3)` here instead re-read the whole
+    // passwd database on every scan (and skipped the ND_USERNAME filter,
+    // so `hash -d` names would have leaked into `$userdirs` once the walk
+    // was over the real table). `fillnameddirtable`'s `allusersadded`
+    // guard (c:Src/hashnameddir.c:98/111) makes the database read happen
+    // once per shell; the interactive gate stays where C has it, inside
+    // `adduserdir` (c:Src/utils.c:1193-1194).
+    let Ok(tab) = crate::ported::hashnameddir::nameddirtab().lock() else {
+        return;
+    };
+    for (nam, nd) in tab.iter() {
+        if (nd.node.flags & crate::ported::zsh_h::ND_USERNAME) == 0 {
+            continue; // c:1684
         }
-        unsafe {
-            libc::endpwent();
-        } // c:1696
+        let node = Box::new(hashnode {
+            next: None,
+            nam: nam.clone(), // c:1685
+            flags: 0,
+        });
+        f(&node, flags); // c:1690
     }
 }
 

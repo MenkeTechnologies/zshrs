@@ -35,12 +35,28 @@
 //! executor in scope the load step is a no-op and we still return
 //! success when the file exists + is fresh.
 
-use crate::compsys::ported::_cache_invalid::_cache_invalid;
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::exec::execute_script;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::getsparam;
 use std::path::Path;
+
+/// Reach `_retrieve_cache` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_retrieve_cache luarocks_installed_list` (Completion/Unix/Command/_luarocks sh:213) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn retrieve_cache_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_retrieve_cache", args, || _retrieve_cache(args))
+}
 
 /// `_retrieve_cache` — load `$cache_ident` from disk if the cache
 /// is enabled, exists, and isn't invalid per `_cache_invalid`.
@@ -73,7 +89,7 @@ pub fn _retrieve_cache(args: &[String]) -> i32 {
     match dir_meta {
         Ok(m) if m.is_dir() => {}
         Ok(_) => {
-            let _ = _message(&[format!("cache-dir ({}) isn't a directory!", cache_dir)]);
+            let _ = message_byname(&[format!("cache-dir ({}) isn't a directory!", cache_dir)]);
             return 1;
         }
         Err(_) => return 1,
@@ -85,7 +101,7 @@ pub fn _retrieve_cache(args: &[String]) -> i32 {
     // sh:20
     if Path::new(&cache_path).exists() {
         // sh:21
-        if _cache_invalid(&[cache_ident]) == 0 {
+        if cache_invalid_byname(&[cache_ident]) == 0 {
             return 1;
         }
         // sh:23  `. "$_cache_path"` — source the cache file in the

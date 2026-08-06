@@ -30,7 +30,7 @@
 //! that prefixes EVERY signal name with `minus` — ported by iterating the
 //! signal slice and prepending `minus` per element (not shell expansion).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -151,7 +151,7 @@ pub fn _signals(args: &[String]) -> i32 {
     wanted_argv.push("-".to_string());
     wanted_argv.extend(prefixed);
     wanted_argv.extend(sigs);
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

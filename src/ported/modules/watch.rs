@@ -895,11 +895,10 @@ pub fn boot_(m: *const module) -> i32 {
     //
     // zshrs's `init_bltinmods` (module.rs) auto-runs `boot_` for
     // statically-linked default-loaded modules so `${(t)watch}`
-    // reads as `array-special` straight from the prompt — a QoL
-    // win in default mode but a parity divergence in --zsh mode.
-    // Gate the value-seeding so `--zsh` matches zsh's "declared but
-    // empty until zmodload" behaviour while default mode keeps the
-    // auto-loaded defaults. In C, boot_ ONLY runs from load_module
+    // reads as `array-special` straight from the prompt. Registering the
+    // parameter is that shim's whole contract; SEEDING VALUES is not, in
+    // either emulation mode (module.rs:1564-1565 already said so). In C,
+    // boot_ ONLY runs from load_module
     // (Src/module.c:2306), where MOD_SETUP is set around the call
     // (c:2305/c:2318) — so a real `zmodload zsh/watch` seeds the
     // defaults in BOTH modes, exactly like C. Only the Rust-only
@@ -910,7 +909,15 @@ pub fn boot_(m: *const module) -> i32 {
     // the MODULESTAB lock, so re-locking here would deadlock.
     let mid_load =
         !m.is_null() && unsafe { ((*m).node.flags & crate::ported::zsh_h::MOD_SETUP) != 0 };
-    if mid_load || !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+    // c:Src/Modules/watch.c:740-753 — `boot_` runs ONLY from `load_module`
+    // (c:Src/module.c:2306), so a plain `zsh -f` has neither WATCHFMT nor
+    // LOGCHECK and neither appears in `${(ko)parameters}`. The Rust-only
+    // startup shim in module.rs calls `boot_` with a null `m` purely to
+    // register `$watch`/`$WATCH`; it must NOT seed values in ANY emulation
+    // mode. Gating on emulation mode instead left the native binary printing
+    // `W=%n has %a %l from %m. L=60` where zsh prints nothing, and left two
+    // extra rows in `unset <TAB>`'s parameter listing.
+    if mid_load {
         if crate::ported::params::getsparam("WATCHFMT").is_none() {
             crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT); // c:757
         }

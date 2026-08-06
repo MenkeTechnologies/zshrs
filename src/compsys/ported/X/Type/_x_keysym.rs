@@ -36,8 +36,8 @@
 //! (`%%[ \t]*` — a single whitespace char followed by anything,
 //! longest suffix match starting at the first whitespace).
 
-use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getaparam, setaparam};
 
 /// sh:10 — the 6 `keysymdef.h` candidate paths, in brace-expansion
@@ -136,7 +136,7 @@ fn build_keysym_cache() -> Vec<String> {
 pub fn _x_keysym(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_keysym");
     // sh:5  _tags keysyms || return 1
-    if _tags(&["keysyms".to_string()]) != 0 {
+    if tags_byname(&["keysyms".to_string()]) != 0 {
         return 1;
     }
 
@@ -159,7 +159,7 @@ pub fn _x_keysym(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("_keysym_cache".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

@@ -22,7 +22,7 @@
 //! `$PREFIX` prefix), and for the sub-type pass take the segment after
 //! `maintype/` up to the first blank.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compset;
@@ -117,7 +117,7 @@ pub fn _mime_types(args: &[String]) -> i32 {
                 "--".to_string(),
             ];
             w.extend(subs);
-            return _wanted(&w);
+            return wanted_byname(&w);
         }
     }
 
@@ -149,7 +149,7 @@ pub fn _mime_types(args: &[String]) -> i32 {
         "--".to_string(),
     ];
     w.extend(mains);
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

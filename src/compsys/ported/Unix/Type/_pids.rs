@@ -30,9 +30,9 @@
 //! the real filtering).
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_next_label::_next_label;
-use crate::compsys::ported::_requested::_requested;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_next_label::next_label_byname;
+use crate::compsys::ported::_requested::requested_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -75,7 +75,7 @@ pub fn _pids(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pids");
     let mut ret = 1;
     // sh:8  _tags processes || return 1
-    if _tags(&["processes".to_string()]) != 0 {
+    if tags_byname(&["processes".to_string()]) != 0 {
         return 1;
     }
 
@@ -119,14 +119,14 @@ pub fn _pids(args: &[String]) -> i32 {
 
     // sh:24-48  the tag / requested / next-label loop.
     loop {
-        if _tags(&[]) != 0 {
+        if tags_byname(&[]) != 0 {
             break;
         }
         // sh:25  _requested processes
-        if _requested(&["processes".to_string()]) == 0 {
+        if requested_byname(&["processes".to_string()]) == 0 {
             // sh:26  while _next_label processes expl 'process ID'; do
             loop {
-                if _next_label(&[
+                if next_label_byname(&[
                     "processes".to_string(),
                     "expl".to_string(),
                     "process ID".to_string(),

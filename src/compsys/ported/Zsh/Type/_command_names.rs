@@ -45,10 +45,26 @@
 //! at sh:62-71 left as TODO (only fires under `_comp_priv_prefix`
 //! ≠ empty, rare).
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
+
+/// Reach `_command_names` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `"(-)1: :{ $cpp; _command_names -e }" \` (Completion/BSD/Command/_mdo sh:30) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn command_names_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_command_names", args, || _command_names(args))
+}
 
 /// `_command_names` — complete a command name. `-e` (first arg)
 /// restricts to externals only.
@@ -78,7 +94,7 @@ pub fn _command_names(args: &[String]) -> i32 {
     if path_has_dot || prefix.contains('/') {
         defs.push("executables:executable file:_files -g \\*\\(-\\*\\)".to_string());
     } else {
-        let _ = _description(&[
+        let _ = description_byname(&[
             "executables".to_string(),
             "expl".to_string(),
             "executable file".to_string(),

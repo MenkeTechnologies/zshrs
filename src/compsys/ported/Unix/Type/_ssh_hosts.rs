@@ -23,8 +23,8 @@
 //! (`// sh:17 approx`); Host/Hostname and Include are handled, Match is
 //! reduced to its `host`/`canonical`/`final` host list.
 
-use crate::compsys::ported::_combination::_combination;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_combination::combination_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getaparam, getsparam};
 
 /// sh:17 approx — collect non-glob host names from an ssh_config file
@@ -109,7 +109,7 @@ pub fn _ssh_hosts(args: &[String]) -> i32 {
     }
     comb.push("hosts".to_string());
     comb.extend(args.iter().cloned());
-    if _combination(&comb) == 0 {
+    if combination_byname(&comb) == 0 {
         return 0;
     }
 
@@ -137,7 +137,7 @@ pub fn _ssh_hosts(args: &[String]) -> i32 {
     ];
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.extend(config_hosts);
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

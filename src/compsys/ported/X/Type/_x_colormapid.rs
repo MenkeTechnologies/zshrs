@@ -27,8 +27,8 @@
 //! when the `colormap-id` style's `verbose` boolean is on (sh:9, default
 //! true — `zstyle -T` is false only when explicitly set false).
 
-use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -88,7 +88,7 @@ fn strip_after_first_space(s: &str) -> String {
 pub fn _x_colormapid(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_colormapid");
     // sh:5
-    if _tags(&["colormapids".to_string()]) != 0 {
+    if tags_byname(&["colormapids".to_string()]) != 0 {
         return 1;
     }
 
@@ -119,7 +119,7 @@ pub fn _x_colormapid(args: &[String]) -> i32 {
     w.extend(desc);
     w.push("-".to_string());
     w.extend(candidates);
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

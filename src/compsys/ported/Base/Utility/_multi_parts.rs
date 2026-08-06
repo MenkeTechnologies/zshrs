@@ -291,6 +291,22 @@ fn resolve_array(spec: &str) -> Vec<String> {
         .collect()
 }
 
+/// Reach `_multi_parts` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `(( $#mbox_names )) && _multi_parts "$@" / mbox_names && ret=0` (Completion/Unix/Type/_mailboxes sh:193) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn multi_parts_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_multi_parts", args, || _multi_parts(args))
+}
+
 /// `_multi_parts` — complete each `sep`-delimited segment of a
 /// path-like string from a shared array of complete strings.
 pub fn _multi_parts(args: &[String]) -> i32 {

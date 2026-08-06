@@ -12,7 +12,7 @@
 //! sh:8      NSEC3PARAM OPT PTR RRSIG RP SIG SOA SPF SRV SSHFP TA TKEY TLSA TSIG TXT
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::getaparam;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -77,7 +77,7 @@ const DNS_TYPES: &[&str] = &[
 pub fn _dns_types(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dns_types");
     // sh:4
-    let _ = _description(&[
+    let _ = description_byname(&[
         "dns-types".to_string(),
         "expl".to_string(),
         "DNS type".to_string(),

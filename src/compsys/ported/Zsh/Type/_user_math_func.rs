@@ -19,7 +19,7 @@
 //!   `MFF_USERFUNC` (the same predicate that `functions -M` uses
 //!   to decide what to list, at `builtin.rs:4471`).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::module::MATHFUNCS;
 use crate::ported::params::setaparam;
 use crate::ported::zsh_h::MFF_USERFUNC;
@@ -56,7 +56,7 @@ pub fn _user_math_func(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-a".to_string());
     wanted_argv.push("funcs".to_string());
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@
 //! sh:20  _files "$@" "$expl[@]" -g "*.(#i)pdf$ext(-.)"
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::compsys::ported::_files::_files;
 use crate::ported::params::getaparam;
 
@@ -26,7 +26,7 @@ pub fn _pdf(args: &[String]) -> i32 {
         ("", args)
     };
     // sh:19
-    let _ = _description(&[
+    let _ = description_byname(&[
         "files".to_string(),
         "expl".to_string(),
         "PDF file".to_string(),

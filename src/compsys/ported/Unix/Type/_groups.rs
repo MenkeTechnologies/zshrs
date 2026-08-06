@@ -23,8 +23,8 @@
 //! `getaparam("_cache_groups").is_none()`.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -42,7 +42,7 @@ fn parse_dscacheutil(out: &str) -> Vec<String> {
 pub fn _groups(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_groups");
     // sh:5
-    if _tags(&["groups".to_string()]) != 0 {
+    if tags_byname(&["groups".to_string()]) != 0 {
         return 1;
     }
 
@@ -107,7 +107,7 @@ pub fn _groups(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("groups".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

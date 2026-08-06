@@ -485,3 +485,93 @@ fn ports_reach_parameters_through_the_router() {
         );
     }
 }
+
+// ─── loaddir inheritance: abspath-loaded fn autoloads a sibling ───────
+
+/// Build a tempdir holding `wrapper` (which autoloads + calls `sibling`
+/// by BARE name) and `sibling`, then run `autoload -Uz <dir>/wrapper;
+/// wrapper` with `$fpath` EMPTY so the only way `sibling` can resolve is
+/// the inherited load directory.
+fn run_sibling_inheritance(sibling: &str) -> (R, tempfile::TempDir) {
+    let d = tempfile::tempdir().expect("loaddir tempdir");
+    fs::write(
+        d.path().join("wrapper"),
+        format!("#autoload\nautoload -Uz {sibling}\n{sibling}\n"),
+    )
+    .expect("write wrapper");
+    fs::write(
+        d.path().join(sibling),
+        "#autoload\nprint SIBLING_FROM_LOADDIR\n",
+    )
+    .expect("write sibling");
+    let home = fresh_zshrs_home("rust");
+    let script = format!(
+        "fpath=()\nautoload -Uz {}/wrapper\nwrapper\n",
+        d.path().display()
+    );
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", &script])
+        .env("ZSHRS_HOME", home.path())
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("spawn zshrs");
+    (
+        R {
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            exit: o.status.code().unwrap_or(-1),
+        },
+        d,
+    )
+}
+
+/// PROOF #13 — `Src/builtin.c:3310-3323`: a function loaded by ABSOLUTE
+/// PATH lends its load directory to any sibling it autoloads by bare name.
+///
+/// C's `add_autoload_function` walks `funcstack` for the calling function,
+/// and when that function carries `PM_LOADDIR | PM_ABSPATH_USED` it copies
+/// the caller's directory onto the new stub:
+/// ```c
+/// if ((shf2 = (Shfunc) shfunctab->getnode2(shfunctab, calling_f))
+///         && (shf2->node.flags & PM_LOADDIR) && (shf2->node.flags & PM_ABSPATH_USED)
+///         && shf2->filename)
+/// ```
+/// zshrs re-registers an autoloaded body through the funcdef pipeline,
+/// which builds a FRESH shfunc node and drops the whole flag word;
+/// `PM_ABSPATH_USED` therefore never survived the load and the arm above
+/// could not fire. `wrapper` then died with "function definition file not
+/// found" where zsh runs `<dir>/sibling`. `src/vm_helper.rs` restores the
+/// bit next to the `loadautofnsetfile` filename/`PM_LOADDIR` restore.
+#[test]
+fn abspath_loaded_function_lends_its_loaddir_to_a_sibling() {
+    let (r, _d) = run_sibling_inheritance("helper");
+    assert_eq!(r.exit, 0, "exit nonzero; stdout=`{}`", r.stdout);
+    assert!(
+        r.stdout.contains("SIBLING_FROM_LOADDIR"),
+        "`autoload -Uz /abs/dir/wrapper` must lend /abs/dir to the bare \
+         `autoload -Uz helper` inside it (Src/builtin.c:3310-3323); got \
+         stdout=`{}`",
+        r.stdout,
+    );
+}
+
+/// PROOF #14 — the same inheritance decides compsys arbitration.
+///
+/// `_describe` HAS a Rust port, so the inherited loaddir is what tells
+/// `router::is_abspath_autoload` that the user named a file of their own:
+/// the stub carries `PM_LOADDIR | PM_ABSPATH_USED` with a non-stock
+/// directory, `has_shfunc_override` returns true, and the port steps
+/// aside. Without the flag restore the stub looked like a plain
+/// `$fpath` autoload and the port won, silently killing the user's file.
+#[test]
+fn inherited_loaddir_lets_a_user_describe_beat_the_rust_port() {
+    let (r, _d) = run_sibling_inheritance("_describe");
+    assert_eq!(r.exit, 0, "exit nonzero; stdout=`{}`", r.stdout);
+    assert!(
+        r.stdout.contains("SIBLING_FROM_LOADDIR"),
+        "a `_describe` inherited from an abspath-loaded caller's own \
+         directory MUST beat the Rust port; got stdout=`{}` (the port \
+         produces `_tags:comptags: can only be called from completion \
+         function` on stderr and nothing on stdout)",
+        r.stdout,
+    );
+}

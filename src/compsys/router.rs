@@ -53,7 +53,101 @@ pub fn try_rust_dispatch(name: &str) -> Option<fn(&[String]) -> i32> {
     if has_fpath_override(name) {
         return None;
     }
+    // Same arbitration, one rung higher: a shell function that is already
+    // DEFINED beats the port outright. `has_fpath_override` only stats
+    // `$fpath` for a *file*, so `_describe() { … }` typed in `.zshrc` (or
+    // sourced from a plugin, or defined by `eval`) was invisible to it and
+    // the port silently won. In C there is nothing to arbitrate — a defined
+    // shfunc is simply what `execcmd` runs — so the spec is: defined wins.
+    if has_shfunc_override(name) {
+        return None;
+    }
     rust_compsys_lookup(name)
+}
+
+/// True when `name` is a shell function that is already **defined** and did
+/// not come from the stock `Completion/` tree — i.e. the user's own body,
+/// which C would run unconditionally.
+///
+/// zshrs-original, the in-memory counterpart of [`has_fpath_override`].
+///
+/// Three cases must be told apart, and only the last one may block the port:
+/// * **no entry** — nothing defined; the port stands in for the upstream
+///   function (the overwhelmingly common case).
+/// * **`PM_UNDEFINED` autoload stub** — `autoload -Uz _describe` records a
+///   body-less placeholder. Nothing user-authored exists yet, and resolving
+///   it would just read the stock file, so the port still wins. This is what
+///   `compinit`/`compdef -na` leaves behind for every completer, so treating
+///   a stub as an override would disable the entire Rust backend. The one
+///   exception is a **path-qualified** stub — see [`is_abspath_autoload`].
+/// * **defined body** — either the user wrote it, or `loadautofn` already
+///   pulled it in from `$fpath`. `PM_LOADDIR` + a stock directory in
+///   `filename` identifies the latter (`loadautofnsetfile`,
+///   `src/ported/exec.rs:3303`, sets both); anything else is user-authored
+///   and takes precedence.
+fn has_shfunc_override(name: &str) -> bool {
+    use crate::ported::zsh_h::{PM_LOADDIR, PM_UNDEFINED};
+    let tab = match crate::ported::hashtable::shfunctab_lock().read() {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let Some(shf) = tab.get(name) else {
+        return false;
+    };
+    let flags = shf.node.flags as u32;
+    if (flags & PM_UNDEFINED) != 0 {
+        // Ordinary stub — no user body behind it, port wins. Unless the
+        // autoload named the FILE outright, in which case the user already
+        // told us which body to run.
+        return is_abspath_autoload(flags, shf.filename.as_deref());
+    }
+    if (flags & PM_LOADDIR) != 0 {
+        // Autoloaded from `$fpath`. Stock dir → the port is the faithful
+        // stand-in for exactly that file; anywhere else → user/plugin copy.
+        return !shf.filename.as_deref().is_some_and(is_stock_functions_dir);
+    }
+    true
+}
+
+/// True when an autoload stub's flags say the definition file was named by
+/// **absolute path** (`autoload -Uz /abs/dir/_describe`) and that directory is
+/// not the stock `Completion/` tree — i.e. the user pointed at their own file,
+/// so it must beat the Rust port even though no body has been read yet.
+///
+/// The discriminator is C's `PM_ABSPATH_USED`, whose sole meaning is
+/// "(function): loaded using absolute path" (`Src/zsh.h:1900`). It is set in
+/// exactly two places, both in `add_autoload_function`:
+/// * `Src/builtin.c:3290-3291` — `shf->node.flags |= PM_LOADDIR;` /
+///   `shf->node.flags |= PM_ABSPATH_USED;`, the explicit `/dir/name` arm;
+/// * `Src/builtin.c:3322-3323` — same pair, inherited when a function that was
+///   itself loaded by absolute path autoloads a sibling out of its own dir.
+///
+/// Critically, `-r`/`-R` resolution does NOT set it: `check_autoload` records
+/// only `shf->node.flags |= PM_LOADDIR;` (`Src/builtin.c:3224`). That is what
+/// keeps `compinit`'s own `autoload -rUz _describe` on the port — it resolves
+/// through `$fpath`, it does not name a file — while the path-qualified form
+/// steps aside. The stock-directory test is the same one the loaded-body arm
+/// uses: a port is the faithful stand-in for exactly the stock file, so naming
+/// the stock file by path still leaves the port in charge.
+///
+/// zshrs-original: C has no port to arbitrate against, so it has no such gate.
+/// The flag it reads is a faithful port (`add_autoload_function`,
+/// `src/ported/builtin.rs:7323`).
+fn is_abspath_autoload(flags: u32, filename: Option<&str>) -> bool {
+    use crate::ported::zsh_h::{PM_ABSPATH_USED, PM_LOADDIR};
+    let want = PM_LOADDIR | PM_ABSPATH_USED;
+    (flags & want) == want && !filename.is_some_and(is_stock_functions_dir)
+}
+
+/// True for a `$fpath` entry inside the shipped zsh `Completion/` tree, as
+/// installed at `…/share/zsh/<version>/functions`. `site-functions` is NOT
+/// stock: third parties install there.
+fn is_stock_functions_dir(dir: &str) -> bool {
+    dir.contains("/share/zsh/")
+        && std::path::Path::new(dir)
+            .file_name()
+            .map(|f| f == "functions")
+            .unwrap_or(false)
 }
 
 /// True when `$fpath`'s FIRST file for `name` is not a stock zsh
@@ -67,6 +161,25 @@ pub fn try_rust_dispatch(name: &str) -> Option<fn(&[String]) -> i32> {
 /// Memoized against the live `$fpath`; the map is rebuilt whenever fpath
 /// changes, so a mid-session `fpath=(…)` is honored. Without the memo this
 /// would stat up to `#fpath` directories on every completer call.
+///
+/// The port stands in for the stock file, so it inherits the stock
+/// directory's **fpath POSITION** as well as its name. A file found in a
+/// non-stock directory that sits BEHIND the stock directory does not win:
+/// with a complete `Completion/` tree installed, `loadautofn` would have
+/// stopped at the stock copy first and never reached it.
+///
+/// This matters because the installed tree can be OLDER than the ported one.
+/// Upstream master added `Completion/Base/Utility/_shadow` and `_unshadow`
+/// (used by `_approximate` at sh:53/sh:114); zsh 5.9.2 ships neither, so on a
+/// 5.9.2 host the first `$fpath` hit for `_shadow` was
+/// `…/zsh-more-completions/more_src5/_shadow` — an unrelated `#compdef shadow`
+/// completion at fpath position 45, thirty entries BEHIND the stock dir. The
+/// port stepped aside, `_approximate`'s `_shadow -s _approximate compadd`
+/// ran that completion instead, and its `_arguments -s -S '*:file:_files'`
+/// dragged `_files` (and, through the user's `_files`, `__fasd_files_comp` →
+/// `_retrieve_cache` → `_cache_invalid`) into every `_approximate` pass:
+/// `jot -<TAB><TAB>qzx` listed `file`, `files`, `fasd ranked files` and
+/// `fasd ranked directories` where zsh lists none of them.
 fn has_fpath_override(name: &str) -> bool {
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -86,16 +199,14 @@ fn has_fpath_override(name: &str) -> bool {
     if let Some(hit) = guard.1.get(name) {
         return *hit;
     }
+    // Where the port's own stock file would sit. `None` = no stock tree on
+    // `$fpath` at all, in which case any hit is a genuine override.
+    let stock_pos = fpath.iter().position(|d| is_stock_functions_dir(d));
     let mut overridden = false;
-    for dir in &fpath {
+    for (i, dir) in fpath.iter().enumerate() {
         let path = std::path::Path::new(dir).join(name);
         if path.is_file() {
-            let stock = dir.contains("/share/zsh/")
-                && std::path::Path::new(dir)
-                    .file_name()
-                    .map(|f| f == "functions")
-                    .unwrap_or(false);
-            overridden = !stock;
+            overridden = !is_stock_functions_dir(dir) && stock_pos.is_none_or(|s| i < s);
             break;
         }
     }
@@ -466,5 +577,123 @@ mod tests {
 
         crate::ported::params::setaparam("fpath", saved);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A shell function DEFINED in `.zshrc` (never a file on `$fpath`) must
+    /// beat the Rust port, because in C there is no port to beat: `execcmd`
+    /// finds the shfunc and runs it, full stop.
+    ///
+    /// Regression: `_describe() { … }` in `.zshrc` + `tar -<TAB>` ran zshrs's
+    /// port and never the user's body. `has_fpath_override` could not see it —
+    /// it only stats `$fpath` for a *file* — and nothing was printed, so the
+    /// override failed silently.
+    ///
+    /// The two negative halves matter as much as the positive one: an
+    /// `autoload -Uz` stub (`PM_UNDEFINED`) and a body already pulled in from
+    /// the STOCK tree (`PM_LOADDIR` + `…/share/zsh/*/functions`) must both
+    /// leave the port in charge, or `compinit` — which stubs every completer —
+    /// would switch the whole Rust backend off.
+    #[test]
+    fn defined_shell_function_beats_the_rust_port() {
+        use crate::ported::zsh_h::{hashnode, shfunc, PM_ABSPATH_USED, PM_LOADDIR, PM_UNDEFINED};
+        let _g = crate::test_util::global_state_lock();
+
+        let stock_dir = std::env::temp_dir().join("zshrs_router_shfn_test/share/zsh/5.9/functions");
+        let _ = std::fs::remove_dir_all(stock_dir.parent().unwrap().parent().unwrap());
+        std::fs::create_dir_all(&stock_dir).unwrap();
+        std::fs::write(stock_dir.join("_setup"), "#autoload\n").unwrap();
+        let saved_fpath = crate::ported::params::getaparam("fpath").unwrap_or_default();
+        crate::ported::params::setaparam("fpath", vec![stock_dir.to_string_lossy().into_owned()]);
+
+        let mk = |flags: u32, filename: Option<&str>| shfunc {
+            node: hashnode {
+                next: None,
+                nam: "_setup".to_string(),
+                flags: flags as i32,
+            },
+            filename: filename.map(str::to_string),
+            lineno: 0,
+            funcdef: None,
+            redir: None,
+            sticky: None,
+            body: Some("print hi".to_string()),
+        };
+        let put = |shf: shfunc| {
+            let mut tab = crate::ported::hashtable::shfunctab_lock().write().unwrap();
+            tab.remove("_setup");
+            tab.add(shf);
+        };
+        let drop_entry = || {
+            let mut tab = crate::ported::hashtable::shfunctab_lock().write().unwrap();
+            tab.remove("_setup");
+        };
+
+        drop_entry();
+        assert!(
+            try_rust_dispatch("_setup").is_some(),
+            "no shfunc entry → the port stands in for the stock function"
+        );
+
+        put(mk(PM_UNDEFINED, None));
+        assert!(
+            try_rust_dispatch("_setup").is_some(),
+            "`autoload -Uz` stub has no user body → port still wins"
+        );
+
+        // `autoload -rUz _setup` resolved through the stock tree: C records
+        // PM_LOADDIR *without* PM_ABSPATH_USED (`Src/builtin.c:3224`). This is
+        // compinit's own form for every completer — it must not disable ports.
+        put(mk(
+            PM_UNDEFINED | PM_LOADDIR,
+            Some(&stock_dir.to_string_lossy()),
+        ));
+        assert!(
+            try_rust_dispatch("_setup").is_some(),
+            "`autoload -rUz` stub resolved to the STOCK tree → port still wins"
+        );
+
+        // `autoload -Uz /home/u/mine/_setup`: C sets PM_LOADDIR|PM_ABSPATH_USED
+        // (`Src/builtin.c:3290-3291`) on a still-PM_UNDEFINED stub. The user
+        // named the file, so it beats the port before any body is read.
+        put(mk(
+            PM_UNDEFINED | PM_LOADDIR | PM_ABSPATH_USED,
+            Some("/home/u/mine"),
+        ));
+        assert!(
+            try_rust_dispatch("_setup").is_none(),
+            "path-qualified `autoload -Uz /dir/_setup` must beat the port"
+        );
+
+        // Same form, but the path names the stock file the port stands in for.
+        put(mk(
+            PM_UNDEFINED | PM_LOADDIR | PM_ABSPATH_USED,
+            Some(&stock_dir.to_string_lossy()),
+        ));
+        assert!(
+            try_rust_dispatch("_setup").is_some(),
+            "path-qualified autoload of the STOCK file → port is that file's stand-in"
+        );
+
+        put(mk(PM_LOADDIR, Some(&stock_dir.to_string_lossy())));
+        assert!(
+            try_rust_dispatch("_setup").is_some(),
+            "body autoloaded from the STOCK tree is what the port ports → port wins"
+        );
+
+        put(mk(PM_LOADDIR, Some("/home/u/.zpwr/autoload/comp_utils")));
+        assert!(
+            try_rust_dispatch("_setup").is_none(),
+            "body autoloaded from a non-stock fpath dir must win"
+        );
+
+        put(mk(0, Some("zsh")));
+        assert!(
+            try_rust_dispatch("_setup").is_none(),
+            "function defined in .zshrc (no PM_LOADDIR) must win over the port"
+        );
+
+        drop_entry();
+        crate::ported::params::setaparam("fpath", saved_fpath);
+        let _ = std::fs::remove_dir_all(stock_dir.parent().unwrap().parent().unwrap());
     }
 }

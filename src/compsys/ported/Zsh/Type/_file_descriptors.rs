@@ -25,7 +25,7 @@
 //! the verbose list. Always emits `0 1 2` in the output regardless
 //! of platform.
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -40,6 +40,24 @@ fn make_ops() -> options {
         argscount: 0,
         argsalloc: 0,
     }
+}
+
+/// Reach `_file_descriptors` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_file_descriptors` (Completion/Zsh/Context/_condition sh:10) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn file_descriptors_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_file_descriptors", args, || {
+        _file_descriptors(args)
+    })
 }
 
 /// `_file_descriptors` — complete numeric file-descriptor names
@@ -108,7 +126,7 @@ pub fn _file_descriptors(args: &[String]) -> i32 {
     setaparam("fds", fds);
 
     // sh:58
-    let _ = _description(&[
+    let _ = description_byname(&[
         "-V".to_string(),
         "file-descriptors".to_string(),
         "expl".to_string(),

@@ -10,7 +10,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -22,6 +22,22 @@ fn make_ops() -> options {
         argscount: 0,
         argsalloc: 0,
     }
+}
+
+/// Reach `_selinux_roles` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_selinux_$parts[1] ${(P)parts[1]}` (Completion/Linux/Type/_selinux_contexts sh:18) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn selinux_roles_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_selinux_roles", args, || _selinux_roles(args))
 }
 
 /// `_selinux_roles` — offer the list of SELinux roles reported by
@@ -43,7 +59,7 @@ pub fn _selinux_roles(args: &[String]) -> i32 {
     setaparam("seroles", seroles);
 
     // sh:6  _description selinux-roles expl "selinux role"
-    let _ = _description(&[
+    let _ = description_byname(&[
         "selinux-roles".to_string(),
         "expl".to_string(),
         "selinux role".to_string(),

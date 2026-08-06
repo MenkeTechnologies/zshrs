@@ -23,7 +23,7 @@
 //! Navigation/state-management around the `_history` completer.
 //! Reads `$WIDGET` to decide direction.
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getsparam, setsparam};
@@ -80,7 +80,7 @@ pub fn _history_complete_word() -> i32 {
                 set_compstate_str("insert", &(old_insert + 1).to_string());
             } else if stop_on {
                 let _ = setsparam("_hist_stop", "old");
-                let _ = _message(&["beginning of history reached".to_string()]);
+                let _ = message_byname(&["beginning of history reached".to_string()]);
                 let _ = setsparam("curcontext", &saved_ctx);
                 return 1;
             } else {
@@ -94,7 +94,7 @@ pub fn _history_complete_word() -> i32 {
                 set_compstate_str("insert", &(old_insert - 1).to_string());
             } else if stop_on {
                 let _ = setsparam("_hist_stop", "new");
-                let _ = _message(&["end of history reached".to_string()]);
+                let _ = message_byname(&["end of history reached".to_string()]);
                 let _ = setsparam("curcontext", &saved_ctx);
                 return 1;
             } else {

@@ -20,7 +20,7 @@
 //! sh:57  return ret
 //! ```
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -64,7 +64,7 @@ pub fn _globflags() -> i32 {
     }
     // sh:13
     if preprefix.contains('q') {
-        return _message(&["q flag has to be specified by itself".to_string()]);
+        return message_byname(&["q flag has to be specified by itself".to_string()]);
     }
     // sh:15
     if preprefix.starts_with('a') || preprefix.contains(|c: char| c == 'a') {
@@ -73,7 +73,7 @@ pub fn _globflags() -> i32 {
         let tail_a_count =
             preprefix.starts_with('a') && preprefix[1..].chars().all(|c| c.is_ascii_digit());
         if tail_a_only || tail_a_count {
-            let _ = _message(&["-e".to_string(), "number".to_string(), "errors".to_string()]);
+            let _ = message_byname(&["-e".to_string(), "number".to_string(), "errors".to_string()]);
             if tail_a_only {
                 return 0;
             } else {
@@ -88,7 +88,7 @@ pub fn _globflags() -> i32 {
     }
     // sh:21
     if preprefix.ends_with("#c") {
-        return _message(&[
+        return message_byname(&[
             "-e".to_string(),
             "range".to_string(),
             "repetitions (min,max) or (exact)".to_string(),

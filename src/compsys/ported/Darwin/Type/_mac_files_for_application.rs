@@ -292,17 +292,22 @@ pub fn _mac_files_for_application(args: &[String]) -> i32 {
     // sh:67-71  case ${#glob_patterns} in 0) return 1 ;; 1) … ;; *) … ;; esac
     match glob_patterns.len() {
         0 => 1,
+        // sh:69/70 are bare command words. `_files` is overridden on a real
+        // zpwr host (`~/.zpwr/autoload/comp_utils/_files`, ahead of the stock
+        // tree in `$fpath`), so a direct Rust call silently kills it —
+        // `crate::compsys::router::try_rust_dispatch`'s `has_fpath_override`
+        // gate is only reached via `dispatch_function_call`.
         1 => {
             let mut fargs = opts;
             fargs.push("-g".to_string());
             fargs.push(glob_patterns[0].clone());
-            _files(&fargs)
+            crate::compsys::ported::shared::call_compfn("_files", &fargs, || _files(&fargs))
         }
         _ => {
             let mut fargs = opts;
             fargs.push("-g".to_string());
             fargs.push(format!("{{{}}}", glob_patterns.join(",")));
-            _files(&fargs)
+            crate::compsys::ported::shared::call_compfn("_files", &fargs, || _files(&fargs))
         }
     }
 }

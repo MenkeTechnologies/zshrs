@@ -13,8 +13,8 @@
 //! sh:9  fi
 //! ```
 
-use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::getsparam;
 
 /// `_sub_commands` — complete the FIRST sub-command argument only
@@ -35,10 +35,10 @@ pub fn _sub_commands(args: &[String]) -> i32 {
             "compadd".to_string(),
         ];
         wanted_argv.extend(args.iter().cloned());
-        _wanted(&wanted_argv)
+        wanted_byname(&wanted_argv)
     } else {
         // sh:8
-        _message(&["no more arguments".to_string()])
+        message_byname(&["no more arguments".to_string()])
     }
 }
 

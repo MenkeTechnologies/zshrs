@@ -27,9 +27,9 @@
 //! sh:14-15 the nested xinetd-based split of `chkconfig --list` output is
 //! done with straight line/field ops (`// sh:14 approx`).
 
-use crate::compsys::ported::_alternative::_alternative;
+use crate::compsys::ported::_alternative::alternative_byname;
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam};
 
 /// sh:29 approx — basenames of executable entries in `dir` (`*(-*:t)`).
@@ -83,7 +83,7 @@ pub fn _services(args: &[String]) -> i32 {
             wanted_argv.extend(args.iter().cloned());
             wanted_argv.push("-".to_string());
             wanted_argv.extend(alls);
-            return _wanted(&wanted_argv);
+            return wanted_byname(&wanted_argv);
         }
         return 1;
     }
@@ -126,7 +126,7 @@ pub fn _services(args: &[String]) -> i32 {
         };
         setaparam("inits", inits);
         setaparam("xinetds", xinetds);
-        return _alternative(&[
+        return alternative_byname(&[
             "init:init service:compadd -a inits".to_string(),
             "xinetd:xinetd service:compadd -a xinetds".to_string(),
         ]);
@@ -147,7 +147,7 @@ pub fn _services(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
     wanted_argv.extend(names);
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

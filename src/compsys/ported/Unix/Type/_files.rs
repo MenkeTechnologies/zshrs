@@ -23,9 +23,9 @@
 //! blank→brace / `#q` glob rewrites use string ops rather than the full
 //! zsh expansion engine.
 
-use crate::compsys::ported::_next_label::_next_label;
-use crate::compsys::ported::_path_files::_path_files;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_next_label::next_label_byname;
+use crate::compsys::ported::_path_files::path_files_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::glob::{matchpat, tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
@@ -380,17 +380,17 @@ pub fn _files(argv: &[String]) -> i32 {
             };
 
             // sh:108 — register tags.
-            let _ = _tags(&[tag.clone()]);
+            let _ = tags_byname(&[tag.clone()]);
             // sh:109 — while _tags; do
             loop {
-                if _tags(&[]) != 0 {
+                if tags_byname(&[]) != 0 {
                     break;
                 }
                 // sh:110
                 setaparam("_comp_ignore", Vec::new());
                 // sh:111 — while _next_label ...; do
                 loop {
-                    if _next_label(&[tag.clone(), "expl".to_string(), descr.clone()]) != 0 {
+                    if next_label_byname(&[tag.clone(), "expl".to_string(), descr.clone()]) != 0 {
                         break;
                     }
                     // sh:112 — _comp_ignore += ign.
@@ -413,7 +413,7 @@ pub fn _files(argv: &[String]) -> i32 {
                     // sh:119 — _path_files -g pat "$expl[@]"
                     let mut pf = vec!["-g".to_string(), pat.clone()];
                     pf.extend(new_expl.clone());
-                    if _path_files(&pf) == 0 {
+                    if path_files_byname(&pf) == 0 {
                         ret = 0;
                     } else {
                         // sh:121-138 — recursive-files.
@@ -439,7 +439,7 @@ pub fn _files(argv: &[String]) -> i32 {
                                             );
                                             let mut pf2 = vec!["-g".to_string(), pat.clone()];
                                             pf2.extend(new_expl.clone());
-                                            if _path_files(&pf2) == 0 {
+                                            if path_files_byname(&pf2) == 0 {
                                                 ret = 0;
                                             }
                                             setsparam("PREFIX", &oprefix);

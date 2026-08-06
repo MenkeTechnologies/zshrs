@@ -26,7 +26,7 @@
 //! sh:50    'directories:mount point:_canonical_paths -A mp_tmp -N -M "r:|/=* r:|=*" directories mount\ point'
 //! ```
 
-use crate::compsys::ported::_alternative::_alternative;
+use crate::compsys::ported::_alternative::alternative_byname;
 use crate::ported::params::setaparam;
 
 /// sh:42-43 — decode each `\NNN` (backslash + exactly 3 octal digits)
@@ -164,7 +164,7 @@ pub fn _umountable(_args: &[String]) -> i32 {
     setaparam("mp_tmp", mp_tmp);
 
     // sh:47-50
-    _alternative(&[
+    alternative_byname(&[
         "device-labels:device label:compadd -a dev_tmp".to_string(),
         "device-paths: device path:_canonical_paths -A dpath_tmp -N -M \"r:|/=* r:|=*\" device-paths device\\ path".to_string(),
         "directories:mount point:_canonical_paths -A mp_tmp -N -M \"r:|/=* r:|=*\" directories mount\\ point".to_string(),

@@ -22,7 +22,7 @@
 //! per-OS `;|` fall-through cases in the BSD/Solaris branch are matched
 //! on `$OSTYPE` prefixes.
 
-use crate::compsys::ported::_alternative::_alternative;
+use crate::compsys::ported::_alternative::alternative_byname;
 use crate::compsys::ported::_arguments::_arguments;
 use crate::compsys::ported::_values::_values;
 use crate::ported::exec::dispatch_function_call;
@@ -109,7 +109,7 @@ pub fn _diff_palette(_args: &[String]) -> i32 {
             "colors:color:((30:default 31:red 32:green 33:yellow 34:blue 35:magenta 36:cyan 37:white))"
                 .to_string(),
         );
-        if _alternative(&alt) == 0 {
+        if alternative_byname(&alt) == 0 {
             ret = 0;
         }
     }

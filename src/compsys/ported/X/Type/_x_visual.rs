@@ -10,7 +10,7 @@
 //! sh:10      $best DirectColor TrueColor PseudoColor StaticColor GrayScale StaticGray
 //! ```
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 
 /// sh:6-7 — with `-b` present in `argv`, offer `Best` too; strip the
 /// first (and, per `(i)` index-removal semantics, only the first)
@@ -61,7 +61,7 @@ pub fn _x_visual(args: &[String]) -> i32 {
     ] {
         w.push(v.to_string());
     }
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

@@ -32,11 +32,11 @@
 //! compadd-override layer's eventual install/remove (deferred) is
 //! correctly scoped per-iteration.
 
-use crate::compsys::ported::_complete::_complete;
-use crate::compsys::ported::_description::_description;
-use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_complete::complete_byname;
+use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_requested::requested_byname;
 use crate::compsys::ported::_shadow::{_shadow, _unshadow};
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -206,7 +206,7 @@ pub fn _approximate(args: &[String]) -> i32 {
     }
 
     // sh:50
-    let _ = _tags(&["corrections".to_string(), "original".to_string()]);
+    let _ = tags_byname(&["corrections".to_string(), "original".to_string()]);
 
     // sh:74-77
     let opm = get_compstate_str("pattern_match").unwrap_or_default();
@@ -217,11 +217,16 @@ pub fn _approximate(args: &[String]) -> i32 {
     // sh:56  `_shadow -s _approximate compadd` — wrap the entire
     //   loop so the compadd-override (when wired) installs/restores
     //   exactly once, not once per pass.
-    let _ = _shadow(&[
+    // Bare command word at sh:53 — reach it by name. `_shadow` is overridden
+    // on a real zpwr host (zsh-more-completions `more_src5/_shadow`), and the
+    // `has_fpath_override` gate that honors that lives behind
+    // `dispatch_function_call`, not behind a plain Rust call.
+    let shargs = [
         "-s".to_string(),
         "_approximate".to_string(),
         "compadd".to_string(),
-    ]);
+    ];
+    let _ = crate::compsys::ported::shared::call_compfn("_shadow", &shargs, || _shadow(&shargs));
 
     let mut ret: i32 = 1;
     let mut comp_correct: i64 = 1;
@@ -247,7 +252,7 @@ pub fn _approximate(args: &[String]) -> i32 {
         let new_ctx = replace_completer_field(&oldcontext, comp_correct);
         let _ = setsparam("curcontext", &new_ctx);
 
-        let _ = _description(&[
+        let _ = description_byname(&[
             "corrections".to_string(),
             "_correct_expl".to_string(),
             "corrections".to_string(),
@@ -271,7 +276,7 @@ pub fn _approximate(args: &[String]) -> i32 {
         set_compadd_prefix_injector(format!("(#a{})", comp_correct));
         *COMPADD_ARGV_SHADOW.lock().unwrap() = Some(approximate_compadd_shadow);
 
-        let comp_ret = _complete();
+        let comp_ret = complete_byname();
 
         *COMPADD_ARGV_SHADOW.lock().unwrap() = None;
         clear_compadd_prefix_injector();
@@ -283,14 +288,14 @@ pub fn _approximate(args: &[String]) -> i32 {
                 && unambig.chars().count() >= pre_suf.chars().count()
             {
                 set_compstate_str("pattern_insert", "unambiguous");
-            } else if _requested(&["original".to_string()]) == 0 {
+            } else if requested_byname(&["original".to_string()]) == 0 {
                 // sh:88-90
                 let nm: i64 = get_compstate_str("nmatches")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
                 if nm > 1 || testforstyle(&format!(":completion:{}:", new_ctx), "original") == 0 {
                     // sh:93
-                    let _ = _description(&[
+                    let _ = description_byname(&[
                         "-V".to_string(),
                         "original".to_string(),
                         "expl".to_string(),
@@ -329,8 +334,10 @@ pub fn _approximate(args: &[String]) -> i32 {
         comp_correct += 1;
     }
 
-    // sh:114  `_unshadow` — restore the compadd entry.
-    let _ = _unshadow();
+    // sh:114  `_unshadow` — restore the compadd entry. Bare command word;
+    // paired with the `_shadow` call above, so it must go by name too or the
+    // user's `_shadow` would be torn down by the port's `_unshadow`.
+    let _ = crate::compsys::ported::shared::call_compfn("_unshadow", &[], _unshadow);
 
     // sh:13 — drop the function-locals (see the note above the loop).
     let _ = unsetparam("_comp_correct");

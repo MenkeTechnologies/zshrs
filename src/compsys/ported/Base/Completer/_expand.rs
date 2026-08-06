@@ -70,9 +70,9 @@
 //!     than faked. `glob_subst` reproduces the OBSERVABLE half —
 //!     a pattern matching nothing comes back as itself.
 
-use crate::compsys::ported::_description::_description;
-use crate::compsys::ported::_requested::_requested;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_requested::requested_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::compsys::ported::shared::{FnScope, LocalScope, PM_ARRAY};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, paramtab, setaparam};
@@ -418,7 +418,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
         // sh:184-191 — nothing is going to be inserted, so one flat group
         // of every expansion is all that is wanted.
         setaparam("exp", exp.clone());
-        let _ = _description(&description_args(&sort, "expansions", "expansions", &word));
+        let _ = description_byname(&description_args(&sort, "expansions", "expansions", &word));
         let mut argv = getaparam("expl").unwrap_or_default();
         argv.extend([
             "-UQ".to_string(),
@@ -434,16 +434,16 @@ pub fn _expand_with(args: &[String]) -> i32 {
         // offered as separate groups and insertion is turned into a menu.
 
         // sh:193
-        let _ = _tags(&[
+        let _ = tags_byname(&[
             "all-expansions".to_string(),
             "expansions".to_string(),
             "original".to_string(),
         ]);
 
         // sh:195
-        if !exp.is_empty() && _requested(&["expansions".to_string()]) == 0 {
+        if !exp.is_empty() && requested_byname(&["expansions".to_string()]) == 0 {
             // sh:198-202
-            let _ = _description(&description_args(&sort, "expansions", "expansions", &word));
+            let _ = description_byname(&description_args(&sort, "expansions", "expansions", &word));
 
             // sh:203-216 — split by what each expansion IS, because the
             // suffix differs: `/` for directories, a space for files,
@@ -507,9 +507,9 @@ pub fn _expand_with(args: &[String]) -> i32 {
         }
 
         // sh:222-238 — one match holding EVERY expansion, joined.
-        if _requested(&["all-expansions".to_string()]) == 0 {
+        if requested_byname(&["all-expansions".to_string()]) == 0 {
             // sh:225-229
-            let _ = _description(&description_args(
+            let _ = description_byname(&description_args(
                 &sort,
                 "all-expansions",
                 "all expansions",
@@ -557,7 +557,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
         }
 
         // sh:240  _requested original expl original && compadd "$expl[@]" -UQ - "$word"
-        if _requested(&[
+        if requested_byname(&[
             "original".to_string(),
             "expl".to_string(),
             "original".to_string(),

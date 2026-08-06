@@ -14,7 +14,7 @@
 //! `net_intf_list`; dispatched via the sibling path. `${(@)net_intf_list%%:*}`
 //! strips the `:`-suffixed metadata off each list element.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::getaparam;
 
@@ -41,7 +41,7 @@ pub fn _net_interfaces(args: &[String]) -> i32 {
     w.extend(disp);
     w.push("-".to_string());
     w.extend(names);
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

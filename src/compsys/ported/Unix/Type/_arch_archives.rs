@@ -20,7 +20,7 @@
 //! capture is reproduced by reading `REPLY` and whitespace-splitting.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -32,6 +32,22 @@ fn make_ops() -> options {
         argscount: 0,
         argsalloc: 0,
     }
+}
+
+/// Reach `_arch_archives` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_arch_archives "$ARCHCMD" -S / ${library:+--library}` (Completion/Unix/Type/_arch_namespace sh:37) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn arch_archives_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_arch_archives", args, || _arch_archives(args))
 }
 
 /// `_arch_archives` — complete arch/tla archive names via `$ARCHCMD archives`.
@@ -65,7 +81,7 @@ pub fn _arch_archives(args: &[String]) -> i32 {
         .collect();
 
     // sh:12  _description -V archives expl "${library}archives"
-    let _ = _description(&[
+    let _ = description_byname(&[
         "-V".to_string(),
         "archives".to_string(),
         "expl".to_string(),

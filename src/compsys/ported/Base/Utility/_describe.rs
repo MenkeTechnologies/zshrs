@@ -8,38 +8,49 @@
 //! group's compadd-options/matches/displays out into named params which
 //! are fed straight to `compadd`.
 //!
+//! Line numbers below are the CURRENT upstream file (identical in zsh 5.9.2
+//! and master @ 599af4604f). They are load-bearing, not decoration: the
+//! `compdescribe` / `compadd` call sites publish them through
+//! [`crate::compsys::ported::shared::set_sh_lineno`] so a diagnostic reads
+//! `_describe:compdescribe:129: no parsed state` exactly as C does. Re-read
+//! the upstream file before changing one — the earlier numbers in this block
+//! had drifted up to 6 lines behind the shipped `_describe`.
+//!
 //! ```text
 //! sh:  1  #autoload
-//! sh: 19  while getopts "oOt:12JVx" _opt; do …           (flag parse)
-//! sh: 30  shift $(( OPTIND - 1 ))
-//! sh: 38  [[ "$_type$_noprefix" = options && ! -prefix [-+]* ]] &&
-//! sh: 39      zstyle -T … options prefix-needed && return 1
-//! sh: 42  zstyle -T … verbose && _showd=yes
-//! sh: 46  zstyle -s … list-separator _sep || _sep=--
-//! sh: 47  zstyle -s … max-matches-width _mlen || _mlen=$((COLUMNS/2))
+//! sh: 21  while getopts "oOt:12JVx" _opt; do …           (flag parse)
+//! sh: 36  shift $(( OPTIND - 1 ))
+//! sh: 39  [[ "$_type$_noprefix" = options && ! -prefix [-+]* ]] &&
+//! sh: 40      zstyle -T … options prefix-needed && return 1
+//! sh: 45  zstyle -T … verbose && _showd=yes
+//! sh: 47  zstyle -s … list-separator _sep || _sep=--
+//! sh: 48  zstyle -s … max-matches-width _mlen || _mlen=$((COLUMNS/2))
 //! sh: 51  _descr="$1"; shift
-//! sh: 53  if _showd && zstyle -T … list-grouped; then _oargv=("$@"); _grp=(-g)
-//! sh: 61  [[ options ]] && zstyle -t … prefix-hidden && _hide=${(M)PREFIX##(--|[-+])}
-//! sh: 64  _tags "$_type"
-//! sh: 65  while _tags; do
-//! sh: 66    while _next_label $_jvx12 "$_type" _expl "$_descr"; do
-//! sh: 68      if (( $#_grp )); then … grouped -D/-O pre-pass … fi
-//! sh: 118     if _showd; compdescribe -I "$_hide" "$_mlen" "$_sep " _expl "$_grp[@]" "$@"
-//! sh: 120     else       compdescribe -i "$_hide" "$_mlen" "$@"
-//! sh: 122     compstate[list]="$csl"
-//! sh: 124     while compdescribe -g csl2 _args _tmpm _tmpd; do
-//! sh: 126       compstate[list]="$csl $csl2"
-//! sh: 127       [[ -n "$csl2" ]] && compstate[list]="${compstate[list]:s/rows//}"
-//! sh: 128       compadd "$_args[@]" -d _tmpd -a _tmpm && _ret=0
-//! sh: 129     done
-//! sh: 130   done
-//! sh: 131   (( _ret )) || return 0
-//! sh: 132 done
-//! sh: 134 return 1
+//! sh: 54  if _showd && zstyle -T … list-grouped; then _oargv=("$@"); _grp=(-g)
+//! sh: 62  [[ options ]] && zstyle -t … prefix-hidden && _hide=${(M)PREFIX##(--|[-+])}
+//! sh: 66  _tags "$_type"
+//! sh: 67  while _tags; do
+//! sh: 68    while _next_label $_jvx12 "$_type" _expl "$_descr"; do
+//! sh: 70      if (( $#_grp )); then … grouped -D/-O pre-pass … fi
+//! sh: 111       compadd … -D $_strs -O $_mats - …            (pre-pass, with -O)
+//! sh: 114       compadd … -D $_strs - …                      (pre-pass, no -O)
+//! sh: 121     if _showd; compdescribe -I "$_hide" "$_mlen" "$_sep " _expl "$_grp[@]" "$@"
+//! sh: 122        (the compdescribe -I call itself)
+//! sh: 124     else       compdescribe -i "$_hide" "$_mlen" "$@"
+//! sh: 127     compstate[list]="$csl"
+//! sh: 129     while compdescribe -g csl2 _args _tmpm _tmpd; do
+//! sh: 131       compstate[list]="$csl $csl2"
+//! sh: 132       [[ -n "$csl2" ]] && compstate[list]="${compstate[list]:s/rows//}"
+//! sh: 134       compadd "$_args[@]" -d _tmpd -a _tmpm && _ret=0
+//! sh: 135     done
+//! sh: 136   done
+//! sh: 137   (( _ret )) || return 0
+//! sh: 138 done
+//! sh: 140 return 1
 //! ```
 
-use crate::compsys::ported::_next_label::_next_label;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_next_label::next_label_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -142,6 +153,23 @@ fn resolve_array_arg(arg: &str) -> Vec<String> {
     } else {
         getaparam(arg).unwrap_or_default()
     }
+}
+
+/// Reach `_describe` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_describe \` (Completion/Unix/Command/_7zip sh:132) — so the
+/// normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn describe_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_describe", args, || _describe(args))
 }
 
 /// `_describe` — add options or values with descriptions as matches.
@@ -297,20 +325,20 @@ pub fn _describe(args: &[String]) -> i32 {
     }
 
     // sh:64 — request the tag.
-    let _ = _tags(&[_type.clone()]);
+    let _ = tags_byname(&[_type.clone()]);
 
     let csl = get_compstate_str("list").unwrap_or_default();
     let mut _try = 0i32;
 
     // sh:65 — while _tags; do
-    while _tags(&[]) == 0 {
+    while tags_byname(&[]) == 0 {
         // sh:66 — while _next_label $_jvx12 "$_type" _expl "$_descr"; do
         loop {
             let mut nl_args = _jvx12.clone();
             nl_args.push(_type.clone());
             nl_args.push("_expl".to_string());
             nl_args.push(_descr.clone());
-            if _next_label(&nl_args) != 0 {
+            if next_label_byname(&nl_args) != 0 {
                 break;
             }
 
@@ -374,7 +402,7 @@ pub fn _describe(args: &[String]) -> i32 {
                         _i += 1;
                     }
 
-                    // sh:108-115 — dry-run compadd that filters _strs
+                    // sh:110-116 — dry-run compadd that filters _strs
                     // (and records into _mats) against the current word.
                     let mut cadd: Vec<String> = _opts;
                     cadd.push("-2".to_string());
@@ -394,14 +422,21 @@ pub fn _describe(args: &[String]) -> i32 {
                         extract_match_parts(&vals)
                     };
                     cadd.extend(words);
+                    // The two upstream branches are merged into one call here,
+                    // so publish whichever branch's line this invocation is.
+                    crate::compsys::ported::shared::set_sh_lineno(if mats_name.is_some() {
+                        111
+                    } else {
+                        114
+                    });
                     bin_compadd("compadd", &cadd, &make_ops(), 0);
                 }
-                _argv // sh:117 set - "$_argv[@]"
+                _argv // sh:118 set - "$_argv[@]"
             } else {
                 positional.clone()
             };
 
-            // sh:118-121 — init parsed state.
+            // sh:121-125 — init parsed state.
             if _showd {
                 // compdescribe -I "$_hide" "$_mlen" "$_sep " _expl "$_grp[@]" "$@"
                 let mut cd: Vec<String> = vec![
@@ -415,19 +450,21 @@ pub fn _describe(args: &[String]) -> i32 {
                     cd.push("-g".to_string());
                 }
                 cd.extend(cd_argv.clone());
+                crate::compsys::ported::shared::set_sh_lineno(122);
                 bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
             } else {
                 // compdescribe -i "$_hide" "$_mlen" "$@"
                 let mut cd: Vec<String> = vec!["-i".to_string(), _hide.clone(), _mlen.clone()];
                 cd.extend(cd_argv.clone());
+                crate::compsys::ported::shared::set_sh_lineno(124);
                 let rc_i = bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
                 tracing::debug!(target: "compsys_args", rc_i, ?cd_argv, "compdescribe -i");
             }
 
-            // sh:122 — compstate[list]="$csl".
+            // sh:127 — compstate[list]="$csl".
             set_compstate_str("list", &csl);
 
-            // sh:124-129 — pull each group out and add it.
+            // sh:129-135 — pull each group out and add it.
             loop {
                 let g_argv = [
                     "-g".to_string(),
@@ -436,11 +473,12 @@ pub fn _describe(args: &[String]) -> i32 {
                     "_tmpm".to_string(),
                     "_tmpd".to_string(),
                 ];
+                crate::compsys::ported::shared::set_sh_lineno(129);
                 if bin_compdescribe("compdescribe", &g_argv, &make_ops(), 0) != 0 {
                     break;
                 }
 
-                // sh:126-127 — compstate[list]="$csl $csl2"; drop "rows".
+                // sh:131-132 — compstate[list]="$csl $csl2"; drop "rows".
                 let csl2 = getsparam("csl2").unwrap_or_default();
                 let mut list_val = format!("{} {}", csl, csl2);
                 if !csl2.is_empty() {
@@ -448,12 +486,13 @@ pub fn _describe(args: &[String]) -> i32 {
                 }
                 set_compstate_str("list", &list_val);
 
-                // sh:128 — compadd "$_args[@]" -d _tmpd -a _tmpm && _ret=0.
+                // sh:134 — compadd "$_args[@]" -d _tmpd -a _tmpm && _ret=0.
                 let mut cadd: Vec<String> = getaparam("_args").unwrap_or_default();
                 cadd.push("-d".to_string());
                 cadd.push("_tmpd".to_string());
                 cadd.push("-a".to_string());
                 cadd.push("_tmpm".to_string());
+                crate::compsys::ported::shared::set_sh_lineno(134);
                 let rc_add = bin_compadd("compadd", &cadd, &make_ops(), 0);
                 tracing::debug!(
                     target: "compsys_args",
@@ -474,13 +513,13 @@ pub fn _describe(args: &[String]) -> i32 {
             }
         }
 
-        // sh:131 — (( _ret )) || return 0.
+        // sh:137 — (( _ret )) || return 0.
         if _ret == 0 {
             return 0;
         }
     }
 
-    // sh:134 — return 1.
+    // sh:140 — return 1.
     1
 }
 

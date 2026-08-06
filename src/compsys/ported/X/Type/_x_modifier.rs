@@ -9,7 +9,7 @@
 //! sh:7              Shift Lock Control Mod1 Mod2 Mod3 Mod4 Mod5
 //! ```
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 
 /// sh:7 — the fixed list of X keyboard modifier names.
 const MODIFIERS: &[&str] = &[
@@ -33,7 +33,7 @@ pub fn _x_modifier(args: &[String]) -> i32 {
     wanted_argv.push("m:{a-z}={A-Z}".to_string());
     wanted_argv.push("-".to_string());
     wanted_argv.extend(MODIFIERS.iter().map(|s| s.to_string()));
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

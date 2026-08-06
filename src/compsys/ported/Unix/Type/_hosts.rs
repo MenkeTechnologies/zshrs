@@ -23,7 +23,7 @@
 //! expansions are implemented with explicit string scanning.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -110,6 +110,22 @@ fn parse_known_hosts(body: &str, useip: bool) -> Vec<String> {
     out
 }
 
+/// Reach `_hosts` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_hosts -U -O res` (Completion/bashcompinit sh:97) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn hosts_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_hosts", args, || _hosts(args))
+}
+
 /// `_hosts` — complete host names from `/etc/hosts` (or `getent`) and
 /// ssh `known_hosts` files, cached in `$_cache_hosts`.
 pub fn _hosts(args: &[String]) -> i32 {
@@ -180,7 +196,7 @@ pub fn _hosts(args: &[String]) -> i32 {
     w.push("m:{a-zA-Z}={A-Za-z} r:|.=* r:|=*".to_string());
     w.push("-".to_string());
     w.push("_hosts".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@
 //!   `user:<fnname>`         — user-defined widget bound to fn
 //!   `completion:<wid>:<fn>` — completion widget
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
@@ -119,7 +119,7 @@ pub fn _widgets(args: &[String]) -> i32 {
     keys.sort();
 
     // sh:8
-    let _ = _description(&[
+    let _ = description_byname(&[
         "widgets".to_string(),
         "expl".to_string(),
         "widget".to_string(),

@@ -29,7 +29,7 @@
 //! cleanly). Calls real `bin_compset` then delegates to ported
 //! `_directories`.
 
-use crate::compsys::ported::_directories::_directories;
+use crate::compsys::ported::_directories::directories_byname;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -102,7 +102,7 @@ pub fn _dir_list(args: &[String]) -> i32 {
     dir_args.push("-r".to_string());
     dir_args.push(format!("{} /\t\t-", sep));
     dir_args.extend(argv);
-    _directories(&dir_args)
+    directories_byname(&dir_args)
 }
 
 #[cfg(test)]

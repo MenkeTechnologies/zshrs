@@ -22,14 +22,14 @@
 //! word to `bin_compadd` internally). Scratch by-name arrays (`keys`,
 //! `ind`, `list`) are unset after use.
 
-use crate::compsys::ported::_all_labels::_all_labels;
-use crate::compsys::ported::_dynamic_directory_name::_dynamic_directory_name;
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_all_labels::all_labels_byname;
+use crate::compsys::ported::_dynamic_directory_name::dynamic_directory_name_byname;
+use crate::compsys::ported::_message::message_byname;
 use crate::compsys::ported::_parameters::call_parameters;
-use crate::compsys::ported::_requested::_requested;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_requested::requested_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::compsys::ported::_values::_values;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
@@ -217,7 +217,7 @@ pub fn _subscript(args: &[String]) -> i32 {
                                 .map(|c| c.is_whitespace() || c == ':' || c == '=')
                                 .unwrap_or(false);
                         if ok {
-                            return _dynamic_directory_name();
+                            return dynamic_directory_name_byname();
                         }
                     }
                 }
@@ -227,7 +227,7 @@ pub fn _subscript(args: &[String]) -> i32 {
 
     // sh:25-28  :class:  — character-class completion (literal compadd args)
     if prefix.starts_with(':') {
-        return _wanted(&[
+        return wanted_byname(&[
             s("characters"),
             s("expl"),
             s("character class"),
@@ -290,7 +290,7 @@ pub fn _subscript(args: &[String]) -> i32 {
             // sh:36
             if d.is_empty() {
                 // sh:37  _message -e delimiters 'delimiter'; return
-                return _message(&[s("-e"), s("delimiters"), s("delimiter")]);
+                return message_byname(&[s("-e"), s("delimiters"), s("delimiter")]);
             } else {
                 // sh:40-44  case $d
                 match d.as_str() {
@@ -305,13 +305,13 @@ pub fn _subscript(args: &[String]) -> i32 {
                     match f {
                         's' => {
                             // sh:47  _message 'separator string'
-                            let _ = _message(&[s("separator string")]);
+                            let _ = message_byname(&[s("separator string")]);
                         }
                         'b' | 'n' => {
                             // sh:48  [[ $v = <-># ]] && _message 'number' || return 1
                             //   <-># matches zero or more integers → all digits (or empty).
                             if v.chars().all(|c| c.is_ascii_digit()) {
-                                let _ = _message(&[s("number")]);
+                                let _ = message_byname(&[s("number")]);
                             } else {
                                 return 1;
                             }
@@ -323,7 +323,7 @@ pub fn _subscript(args: &[String]) -> i32 {
                     let isuffix2 = getsparam("ISUFFIX").unwrap_or_default();
                     let combined = format!("{}{}", suffix, isuffix2);
                     if !v.is_empty() && !combined.contains(&e) {
-                        let _ = _message(&[s("delimiter")]);
+                        let _ = message_byname(&[s("delimiter")]);
                     }
                     // sh:51  return 0
                     return 0;
@@ -436,7 +436,7 @@ pub fn _subscript(args: &[String]) -> i32 {
         // sh:91-92  _wanted association-keys expl 'association key'
         //           compadd -Q -S "$suf" -a keys
         setaparam("keys", keys);
-        let r = _wanted(&[
+        let r = wanted_byname(&[
             s("association-keys"),
             s("expl"),
             s("association key"),
@@ -457,16 +457,16 @@ pub fn _subscript(args: &[String]) -> i32 {
         let mut ret: i32 = 1;
 
         // sh:96  _tags indexes parameters
-        let _ = _tags(&[s("indexes"), s("parameters")]);
+        let _ = tags_byname(&[s("indexes"), s("parameters")]);
 
         // sh:98  while _tags; do
         loop {
-            if _tags(&[]) != 0 {
+            if tags_byname(&[]) != 0 {
                 break;
             }
 
             // sh:99  if _requested indexes; then
-            if _requested(&[s("indexes")]) == 0 {
+            if requested_byname(&[s("indexes")]) == 0 {
                 // sh:100  ind=( {1..${#${(P)compstate[parameter]}}} )
                 //   `getaparam` reads `pm.u_arr` only (params.rs:5275-5281),
                 //   which is `None` on the `PM_SPECIAL` stub seeded for a
@@ -551,7 +551,7 @@ pub fn _subscript(args: &[String]) -> i32 {
                 la.extend(disp); // "$disp[@]"
                 la.push(s("-a"));
                 la.push(s("ind"));
-                if _all_labels(&la) == 0 {
+                if all_labels_byname(&la) == 0 {
                     ret = 0;
                 }
                 unsetparam("list");
@@ -559,7 +559,7 @@ pub fn _subscript(args: &[String]) -> i32 {
             }
 
             // sh:125  _requested parameters && _parameters && ret=0
-            if _requested(&[s("parameters")]) == 0 && call_parameters(&[]) == 0 {
+            if requested_byname(&[s("parameters")]) == 0 && call_parameters(&[]) == 0 {
                 ret = 0;
             }
 
@@ -652,12 +652,7 @@ mod tests {
         assert_eq!(param_type("reswords"), "array");
         let added: Vec<String> = crate::ported::params::paramtab()
             .read()
-            .map(|t| {
-                t.keys()
-                    .filter(|k| !before.contains(*k))
-                    .cloned()
-                    .collect()
-            })
+            .map(|t| t.keys().filter(|k| !before.contains(*k)).cloned().collect())
             .unwrap_or_default();
         // Drop the seeded nodes straight out of the table. `unsetparam`
         // refuses PM_SPECIAL/PM_READONLY entries, which is exactly what these

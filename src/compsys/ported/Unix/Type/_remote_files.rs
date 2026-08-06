@@ -40,8 +40,8 @@
 //! ported glob matcher.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_next_label::next_label_byname;
 use crate::ported::glob::{matchpat, tokenize};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -150,7 +150,7 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
     // sh:43 — honour the remote-access style (default on).
     if !zstyle_t_default_true(&files_ctx, "remote-access") {
         // sh:112
-        return _message(&[
+        return message_byname(&[
             "-e".to_string(),
             "remote-files".to_string(),
             "remote file".to_string(),
@@ -287,7 +287,7 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
         } else {
             "remote directory"
         };
-        if _next_label(&[
+        if next_label_byname(&[
             "remote-files".to_string(),
             "expl".to_string(),
             descr.to_string(),

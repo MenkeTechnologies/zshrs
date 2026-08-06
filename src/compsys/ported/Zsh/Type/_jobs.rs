@@ -23,7 +23,7 @@
 //! (running only), `-s` (suspended only), `-t` (prefix-needed
 //! guard).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -135,7 +135,7 @@ pub fn _jobs(args: &[String]) -> i32 {
         w_args.extend(argv);
         w_args.push("-".to_string());
         w_args.extend(jids);
-        _wanted(&w_args)
+        wanted_byname(&w_args)
     } else {
         // sh:83
         let mut w_args: Vec<String> = vec![
@@ -148,7 +148,7 @@ pub fn _jobs(args: &[String]) -> i32 {
         for j in &jids {
             w_args.push(format!("{}{}", pfx, j));
         }
-        _wanted(&w_args)
+        wanted_byname(&w_args)
     }
 }
 

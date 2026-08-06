@@ -35,7 +35,7 @@
 
 use crate::compsys::ported::_call_program::_call_program;
 use crate::compsys::ported::_describe::_describe;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam, unsetparam};
 
 /// sh:11 — bridge for `zparseopts -D -K -E 0=addhost o:=param`. `-E`
@@ -158,7 +158,9 @@ pub fn _jails(args: &[String]) -> i32 {
         ];
         a.extend(rest);
         a.extend(extra_args);
-        let r = _describe(&a);
+        // sh:67 is a bare command word — reach it by name so `$fpath`/shfunc
+        // arbitration runs and `_describe`'s locals land in its own scope.
+        let r = crate::compsys::ported::shared::call_compfn("_describe", &a, || _describe(&a));
         unsetparam("jails");
         r
     } else {
@@ -174,7 +176,7 @@ pub fn _jails(args: &[String]) -> i32 {
         a.extend(extra_args);
         a.push("-".to_string());
         a.extend(stripped);
-        _wanted(&a)
+        wanted_byname(&a)
     }
 }
 

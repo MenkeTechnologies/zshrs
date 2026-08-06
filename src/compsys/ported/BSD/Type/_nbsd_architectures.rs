@@ -13,7 +13,7 @@
 //! sh:11    sun2 sun3 vax x68k zaurus
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::getaparam;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -92,7 +92,7 @@ const ARCHITECTURES: &[&str] = &[
 pub fn _nbsd_architectures(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_nbsd_architectures");
     // sh:5  _description architectures expl 'architecture'
-    let _ = _description(&[
+    let _ = description_byname(&[
         "architectures".to_string(),
         "expl".to_string(),
         "architecture".to_string(),

@@ -2702,3 +2702,127 @@ fn return_in_nested_function() {
         "in-inner\nafter-inner\n",
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// $pipestatus at the sublist boundary — zsh's parse-time `cmplx` flag
+//
+// c:Src/parse.c:755 `set_sublist_code` records `WC_SUBLIST_SIMPLE` when a
+// sublist is cond/arith/assign/funcdef, or a compound whose entire body is
+// likewise simple. c:Src/exec.c:1489-1492 routes on it: SIMPLE sublists go to
+// `execsimple`, which bypasses job handling; every other sublist goes to
+// `execpline`, which builds a job and ends in `waitonejob`
+// (c:Src/jobs.c:1748-1757). The no-procs arm there is the ONLY writer of
+// `$pipestatus` for code that runs wholly in the shell:
+//     else { deletejob(jn, 0); pipestats[0] = lastval; numpipestats = 1; }
+//
+// Every case below is prefixed with `false`, which is itself a cmplx sublist
+// and therefore leaves `pipestatus == (1)`. A SIMPLE sublist must then leave
+// that `1` untouched; a cmplx one must overwrite it with its own status. The
+// prefix also makes the expectations independent of the shell's startup
+// pipestatus, which differs by platform (Debian's /etc/zsh/zshenv ends in an
+// `if`, so a login shell there starts at `(0)` rather than empty).
+//
+// Expectations verified against zsh 5.9.2.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn pipestatus_sublist_boundary_cmplx_rule() {
+    let _g = FORK_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+
+    // SIMPLE — no job, so `false`'s pipestatus survives verbatim.
+    let simple = [
+        // c:Src/parse.c:1026 DINBRACK / :1031 DINPAR — the leaf commands.
+        "[[ -z x ]]",
+        "(( 1 ))",
+        // c:Src/parse.c:1836 par_simple — pure scalar assignments only.
+        "x=1",
+        "x=1 y=2",
+        // c:Src/parse.c:1672 par_funcdef declares its own `int c = 0`, so a
+        // function BODY never reaches the caller's flag.
+        "f() { true }",
+        "function f { true }",
+        // Compounds whose entire body is simple stay simple, because
+        // par_if/par_while/par_for/par_case thread the caller's `cmplx`
+        // pointer straight through par_save_list.
+        "if [[ -z x ]]; then [[ -z y ]]; fi",
+        "{ [[ -z x ]] }",
+        "for i in; do [[ -n x ]]; done",
+        "for ((i = 0; i < 1; i++)); do [[ -z x ]]; done",
+        "case a in a) [[ -z x ]];; esac",
+        "{ [[ -z x ]] } always { [[ -z y ]] }",
+        // c:Src/exec.c:1290 execsimple runs with `thisjob = -1`, and a
+        // command substitution's own pipeline cannot reach the parent's
+        // pipestats.
+        "x=$(true|false)",
+    ];
+    for code in simple {
+        let (_, out) = run(&format!(
+            "false; {code}\nprint -rn -- \"$#pipestatus:$pipestatus\""
+        ));
+        assert_eq!(
+            out, "1:1",
+            "simple sublist must not publish $pipestatus: `{code}`"
+        );
+    }
+
+    // CMPLX, single-stage — waitonejob's no-procs arm stores `[lastval]`.
+    // c:Src/parse.c:1928 (a command word), :1890 (array assign), :1910
+    // (redirection), :1041 (TIME), :1011 (subshell), :982 (select).
+    let cmplx = [
+        ("true", "1:0"),
+        ("typeset t=1", "1:0"),
+        ("arr=(1 2)", "1:0"),
+        ("x=1 >/dev/null", "1:0"),
+        ("time true", "1:0"),
+        ("{ true }", "1:0"),
+        // A compound with ANY command in its body becomes cmplx, which is
+        // what makes `if`/`for`/`case`/`while` publish at all. `while` and
+        // the untaken `if` both settle at 0 even though their condition
+        // failed — the sublist's status, not the condition's, is stored.
+        ("if [[ -z x ]]; then :; fi", "1:0"),
+        ("for i in; do :; done", "1:0"),
+        ("case a in b) :;; esac", "1:0"),
+        ("while false; do :; done", "1:0"),
+        ("until true; do :; done", "1:0"),
+        ("repeat 1; do true; done", "1:0"),
+        ("{ [[ -z x ]] } >/dev/null", "1:1"),
+        // c:Src/parse.c:878 — BANG sets cmplx, and c:Src/exec.c applies
+        // WC_SUBLIST_NOT inside execpline AFTER the wait, so the stored
+        // entry is the PRE-negation status while `$?` is its inverse.
+        ("! true", "1:0"),
+        ("! [[ -z x ]]", "1:1"),
+        // The outer sublist's procs-less job OVERWRITES whatever array an
+        // inner pipeline stored — the rule is uniform per sublist.
+        ("if true; then true|false; fi", "1:1"),
+        ("{ true|false }", "1:1"),
+        ("( true|false )", "1:1"),
+        ("f() { true|false }; f", "1:1"),
+        // c:Src/parse.c:844/854 — set_sublist_code runs once per element of
+        // the && / || chain with that element's own flag, so a cmplx head
+        // publishes and a simple tail leaves it alone.
+        ("true && [[ -z x ]]", "1:0"),
+        ("[[ -n x ]] && true", "1:0"),
+    ];
+    for (code, want) in cmplx {
+        let (_, out) = run(&format!(
+            "false; {code}\nprint -rn -- \"$#pipestatus:$pipestatus\""
+        ));
+        assert_eq!(out, want, "cmplx sublist pipestatus for `{code}`");
+    }
+
+    // CMPLX, multi-stage — waitonejob takes its `jn->procs` branch into
+    // zwaitjob/storepipestats (c:Src/jobs.c:420), which publishes one entry
+    // per stage. The no-procs single-entry store must NOT run here.
+    let pipelines = [
+        ("true|false", "2:0 1"),
+        ("if true; then true; fi | cat", "2:0 0"),
+        ("[[ -z x ]] | true", "2:1 0"),
+        ("! true | false", "2:0 1"),
+    ];
+    for (code, want) in pipelines {
+        let (_, out) = run(&format!(
+            "false; {code}\nprint -rn -- \"$#pipestatus:$pipestatus\""
+        ));
+        assert_eq!(out, want, "pipeline pipestatus for `{code}`");
+    }
+}

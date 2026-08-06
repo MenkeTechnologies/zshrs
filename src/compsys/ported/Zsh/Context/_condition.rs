@@ -25,10 +25,10 @@
 //! sh:65  fi
 //! ```
 
-use crate::compsys::ported::_alternative::_alternative;
-use crate::compsys::ported::_file_descriptors::_file_descriptors;
-use crate::compsys::ported::_options::_options;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_alternative::alternative_byname;
+use crate::compsys::ported::_file_descriptors::file_descriptors_byname;
+use crate::compsys::ported::_options::options_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam};
@@ -96,21 +96,21 @@ pub fn _condition() -> i32 {
 
     // sh:5
     if prev == "-o" {
-        if _tags(&["-C".to_string(), "-o".to_string(), "options".to_string()]) == 0 {
-            return _options(&[]);
+        if tags_byname(&["-C".to_string(), "-o".to_string(), "options".to_string()]) == 0 {
+            return options_byname(&[]);
         }
         return 1;
     }
     // sh:7
     if is_file_test_op(&prev) {
-        if _tags(&["-C".to_string(), prev, "files".to_string()]) == 0 {
+        if tags_byname(&["-C".to_string(), prev, "files".to_string()]) == 0 {
             return dispatch_function_call("_files", &[]).unwrap_or(1);
         }
         return 1;
     }
     // sh:9
     if prev == "-t" {
-        return _file_descriptors(&[]);
+        return file_descriptors_byname(&[]);
     }
     // sh:11
     if prev == "-v" {
@@ -146,7 +146,7 @@ pub fn _condition() -> i32 {
         }
     }
     // sh:62
-    if _alternative(&[
+    if alternative_byname(&[
         "files:: _files".to_string(),
         "parameters:: _parameters".to_string(),
     ]) == 0

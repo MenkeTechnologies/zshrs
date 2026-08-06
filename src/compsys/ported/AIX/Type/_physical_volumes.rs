@@ -17,7 +17,7 @@
 //! `compadd` action to the real `bin_compadd` builtin once a tag/label
 //! round is active — mirrors the sibling `_volume_groups` port exactly.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 
 /// `` `lsdev -C -c disk -S a -F name` `` — list AIX physical volume
 /// (disk) device names.
@@ -50,7 +50,7 @@ pub fn _physical_volumes(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.extend(lsdev_physical_volumes());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

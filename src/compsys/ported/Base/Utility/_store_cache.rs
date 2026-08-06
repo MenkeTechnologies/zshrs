@@ -41,11 +41,27 @@
 //! associations get heredoc-style emission; readonly vars are
 //! skipped. Returns 0 on write, 1 when cache disabled.
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam};
 use std::fs;
 use std::path::Path;
+
+/// Reach `_store_cache` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_store_cache DEBS_avail _deb_packages_cache_avail` (Completion/Debian/Type/_deb_packages sh:13) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn store_cache_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_store_cache", args, || _store_cache(args))
+}
 
 /// `_store_cache` — write the named vars to disk under cache path.
 pub fn _store_cache(args: &[String]) -> i32 {
@@ -75,11 +91,11 @@ pub fn _store_cache(args: &[String]) -> i32 {
     let dir_path = Path::new(&cache_dir);
     if !dir_path.is_dir() {
         if dir_path.exists() {
-            let _ = _message(&["cache-dir style points to a non-directory!".to_string()]);
+            let _ = message_byname(&["cache-dir style points to a non-directory!".to_string()]);
             return 1;
         }
         if fs::create_dir_all(dir_path).is_err() {
-            let _ = _message(&[format!("couldn't create cache-dir {}", cache_dir)]);
+            let _ = message_byname(&[format!("couldn't create cache-dir {}", cache_dir)]);
             return 1;
         }
     }
@@ -92,7 +108,8 @@ pub fn _store_cache(args: &[String]) -> i32 {
     if let Some(p) = ident_dir.as_ref() {
         if !p.exists() {
             if fs::create_dir_all(p).is_err() {
-                let _ = _message(&[format!("couldn't create cache-ident_dir {}", p.display())]);
+                let _ =
+                    message_byname(&[format!("couldn't create cache-ident_dir {}", p.display())]);
                 return 1;
             }
         }

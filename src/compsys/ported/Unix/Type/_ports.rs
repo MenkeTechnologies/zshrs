@@ -15,7 +15,7 @@
 //! sh:7 parses `/etc/services`: keep tcp lines, take the field before
 //! `/tcp`, then the first whitespace-delimited token (the port number).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -71,7 +71,7 @@ pub fn _ports(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("ports".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

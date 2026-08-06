@@ -39,8 +39,8 @@
 //! entries. Heavy `compcontext`-based dispatch left as a thin
 //! delegation since most live invocations skip that branch.
 
-use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_normal::_normal;
+use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_normal::normal_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -87,6 +87,23 @@ fn set_ccarray_field(n: usize, value: &str) {
     }
     parts[n - 1] = value;
     let _ = setsparam("curcontext", &parts.join(":"));
+}
+
+/// Reach `_complete` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `if _complete; then` (Completion/Base/Completer/_approximate
+/// sh:84) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn complete_byname() -> i32 {
+    crate::compsys::ported::shared::call_compfn("_complete", &[], || _complete())
 }
 
 /// `_complete` — primary `completer` entry: dispatches to per-context
@@ -156,7 +173,7 @@ pub fn _complete() -> i32 {
                 .unwrap_or_else(|| "value".to_string());
             let action = parts.next().unwrap_or("").to_string();
             if action.trim().is_empty() {
-                return _message(&["-e".to_string(), tag, descr]);
+                return message_byname(&["-e".to_string(), tag, descr]);
             }
             // Fall through to the generic dispatch via _alternative-
             //   style action: treat `action` as a command.
@@ -221,7 +238,7 @@ pub fn _complete() -> i32 {
         // `has_fpath_override` gate only runs on the shell-function
         // dispatch path. Same bug class as the `_command_names`
         // override fix; tracked separately from Divergence C.
-        if _normal(&["-s".to_string()]) == 0 {
+        if normal_byname(&["-s".to_string()]) == 0 {
             ret = 0;
         }
     } else {

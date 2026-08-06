@@ -18,7 +18,7 @@
 //! produces nothing (locale absent / spawn failure).
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam};
 
 /// `_locales` — complete installed locale names.
@@ -66,7 +66,7 @@ pub fn _locales(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("locales".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

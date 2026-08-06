@@ -529,7 +529,14 @@ mod tests {
 /// tree at 24) and ten ports call it directly.
 ///
 /// `fallback` runs only when no shell function and no registered port claims
-/// the name — i.e. in unit tests with no executor installed.
+/// the name — i.e. in unit tests with no executor installed. It is a DEGRADED
+/// stand-in for the `doshfunc` frame the dispatch path opens: no `FUNCSTACK`
+/// entry, no param scope, no `locallevel` bump. A caller whose sh semantics
+/// depend on the callee's scope depth — anything driving `comptags`, which is
+/// indexed by `locallevel` (`Src/Zle/computil.c:3782` "Array of tag-set
+/// infos. Index is the locallevel", `:3873` `level = locallevel -
+/// (args[0][2] ? 1 : 0)`) — must supply the missing piece inside its own
+/// `fallback` closure rather than assume this helper does it.
 pub fn call_compfn(name: &str, args: &[String], fallback: impl FnOnce() -> i32) -> i32 {
     crate::ported::exec::dispatch_function_call(name, args).unwrap_or_else(fallback)
 }
@@ -557,29 +564,135 @@ pub fn call_compfn(name: &str, args: &[String], fallback: impl FnOnce() -> i32) 
 //
 // `FnScope::enter` is the `scriptname` half of that prologue/epilogue, applied
 // at the entry of each port so a port called either way reports identically.
-// (The `lineno` half — C's `:36:`, driven from the wordcode line markers at
-// `Src/exec.c:1356` and `Src/exec.c:2057` — has no port-side source yet and is
-// still missing from these messages.)
+//
+// `FnScope` also carries the `lineno` half. In C the second field of the
+// diagnostic prefix is the GLOBAL `lineno`, printed by `zerrmsg`
+// (`Src/utils.c:301-305` — `if ((unset(SHINSTDIN) || locallevel) && lineno)
+// fprintf(file, "%lld: ", lineno);`), and it is maintained by the wordcode
+// line markers as each statement of the function body executes
+// (`Src/exec.c:1356` — `lineno = code - 1;`, `Src/exec.c:2057` —
+// `lineno = WC_PIPE_LINENO(pcode) - 1;`). A Rust port has no wordcode, so
+// nothing advances that counter and the field came out empty:
+//
+//     zsh    _describe:compdescribe:129: no parsed state
+//     zshrs  _describe:compdescribe: no parsed state
+//
+// `execlist` saves `lineno` on entry to a body and restores it on exit
+// (`Src/exec.c:1429` — `oldlineno = lineno;`, `Src/exec.c:1696` —
+// `lineno = oldlineno;`), which is what makes a nested call leave the
+// caller's line intact. `FnScope` reproduces that save/restore, and
+// [`set_sh_lineno`] is what a port calls to stand in for the line marker.
+//
+// Entry deliberately publishes 0 ("unknown"), not the caller's line: 0 is the
+// value `zerrmsg` treats as "no line to print", so a statement that has not
+// been annotated yet keeps today's behaviour (field absent) instead of
+// inheriting a number belonging to a different file. A wrong line number is
+// worse than a missing one — it points the reader at the wrong function.
 
-/// RAII guard publishing `scriptname` for the body of a Rust compsys port,
-/// mirroring `doshfunc`'s `scriptname` save/set/restore.
+/// RAII guard publishing `scriptname` and `lineno` for the body of a Rust
+/// compsys port, mirroring `doshfunc`'s `scriptname` save/set/restore and
+/// `execlist`'s `lineno` save/restore.
 pub struct FnScope {
     saved: Option<String>,
+    saved_lineno: u64,
 }
 
 impl FnScope {
-    /// `scriptname = dupstring(name)` (`Src/exec.c:5963`), remembering the
-    /// caller's value for [`Drop`].
+    /// `scriptname = dupstring(name)` (`Src/exec.c:5963`) plus
+    /// `oldlineno = lineno` (`Src/exec.c:1429`), remembering the caller's
+    /// values for [`Drop`].
     pub fn enter(name: &str) -> Self {
         let saved = crate::ported::utils::scriptname_get();
         crate::ported::utils::set_scriptname(Some(name.to_string()));
-        FnScope { saved }
+        let saved_lineno = crate::ported::lex::lineno();
+        // No wordcode line marker has run for this body yet, and the caller's
+        // line belongs to a different file — publish "unknown" so `zerrmsg`
+        // omits the field (`Src/utils.c:301` — `&& lineno`).
+        crate::ported::lex::set_lineno(0);
+        FnScope {
+            saved,
+            saved_lineno,
+        }
     }
 }
 
 impl Drop for FnScope {
-    /// `scriptname = funcsave->scriptname` (`Src/exec.c:6124`).
+    /// `scriptname = funcsave->scriptname` (`Src/exec.c:6124`) and
+    /// `lineno = oldlineno` (`Src/exec.c:1696`).
     fn drop(&mut self) {
         crate::ported::utils::set_scriptname(self.saved.take());
+        crate::ported::lex::set_lineno(self.saved_lineno);
+    }
+}
+
+/// Publish the upstream shell-source line of the statement a port is about to
+/// run, standing in for the wordcode line marker C executes ahead of every
+/// statement (`Src/exec.c:2057` — `lineno = WC_PIPE_LINENO(pcode) - 1;`).
+///
+/// Diagnostics only originate at builtin call sites, so a port only needs this
+/// immediately before invoking a builtin that can call `zwarnnam`; the value is
+/// then read by `zwarning`/`zerrmsg` (`src/ported/utils.rs:191`).
+/// [`FnScope`] restores the caller's line when the port returns.
+///
+/// `line` MUST be read off the upstream `Completion/**` file the port was
+/// translated from. Never estimate it — the `// sh:NN` comments in the ports
+/// predate later upstream edits and have drifted (`_describe`'s
+/// `compdescribe -I` is annotated `sh:118-121` but lives at line 122 of both
+/// zsh 5.9.2 and master).
+pub fn set_sh_lineno(line: u64) {
+    crate::ported::lex::set_lineno(line);
+}
+
+#[cfg(test)]
+mod lineno_scope_tests {
+    use super::*;
+    use crate::ported::lex::{lineno, set_lineno};
+
+    /// `zerrmsg` prints the line only when it is non-zero
+    /// (`Src/utils.c:301` — `&& lineno`), so a port body must start at 0:
+    /// an un-annotated statement has to report NO line rather than inherit
+    /// the caller's, which belongs to a different file.
+    #[test]
+    fn fn_scope_zeroes_lineno_for_the_port_body() {
+        let _g = crate::test_util::global_state_lock();
+        set_lineno(218); // caller mid-body, e.g. _main_complete sh:218
+        {
+            let _s = FnScope::enter("_describe");
+            assert_eq!(lineno(), 0, "port body must start with no known line");
+        }
+    }
+
+    /// `execlist` restores the caller's line when a body finishes
+    /// (`Src/exec.c:1429` / `Src/exec.c:1696`), which is what keeps a
+    /// nested call from renumbering its caller's diagnostics.
+    #[test]
+    fn fn_scope_restores_the_callers_lineno_on_exit() {
+        let _g = crate::test_util::global_state_lock();
+        set_lineno(218);
+        {
+            let _s = FnScope::enter("_describe");
+            set_sh_lineno(129);
+            assert_eq!(lineno(), 129);
+        }
+        assert_eq!(lineno(), 218, "caller's line must survive the port call");
+    }
+
+    /// Nested ports each restore their own caller, so `_describe` calling
+    /// `_tags` leaves `_describe`'s line intact for the statement after it.
+    #[test]
+    fn nested_fn_scopes_unwind_to_the_right_line() {
+        let _g = crate::test_util::global_state_lock();
+        set_lineno(0);
+        let outer = FnScope::enter("_describe");
+        set_sh_lineno(122);
+        {
+            let _inner = FnScope::enter("_tags");
+            assert_eq!(lineno(), 0);
+            set_sh_lineno(36); // _tags sh:36 — comptags "-i$prev" …
+            assert_eq!(lineno(), 36);
+        }
+        assert_eq!(lineno(), 122, "_describe's line must survive _tags");
+        drop(outer);
+        assert_eq!(lineno(), 0);
     }
 }

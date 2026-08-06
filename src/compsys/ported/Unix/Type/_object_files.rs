@@ -19,7 +19,7 @@
 //! (dropping the executable-bit leg). `(-.)` keeps the regular-file
 //! filter of the original `-.` qualifier.
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::compsys::ported::_files::_files;
 use crate::ported::params::getaparam;
 
@@ -28,7 +28,7 @@ use crate::ported::params::getaparam;
 pub fn _object_files(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_object_files");
     // sh:5
-    let _ = _description(&[
+    let _ = description_byname(&[
         "files".to_string(),
         "expl".to_string(),
         "object file".to_string(),

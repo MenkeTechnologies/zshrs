@@ -23,7 +23,7 @@
 //! testability (mirrors the `_printers.rs` convention of porting `sed`/`awk`
 //! text-processing stages as pure functions rather than shelling back out).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -164,7 +164,7 @@ pub fn _logical_volumes(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.extend(names);
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

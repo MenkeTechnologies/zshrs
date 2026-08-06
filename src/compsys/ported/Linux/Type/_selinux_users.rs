@@ -11,7 +11,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -37,6 +37,22 @@ const DEFAULT_SEUSERS: &[&str] = &[
     "user_u",
 ];
 
+/// Reach `_selinux_users` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_selinux_$parts[1] ${(P)parts[1]}` (Completion/Linux/Type/_selinux_contexts sh:18) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn selinux_users_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_selinux_users", args, || _selinux_users(args))
+}
+
 /// `_selinux_users` — complete SELinux user identities via `seinfo --flat -u`,
 /// falling back to the well-known default identity set.
 pub fn _selinux_users(args: &[String]) -> i32 {
@@ -52,7 +68,7 @@ pub fn _selinux_users(args: &[String]) -> i32 {
     }
 
     // sh:7  _description selinux-users expl "selinux user"
-    let _ = _description(&[
+    let _ = description_byname(&[
         "selinux-users".to_string(),
         "expl".to_string(),
         "selinux user".to_string(),

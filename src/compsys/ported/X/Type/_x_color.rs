@@ -37,7 +37,7 @@
 //! forwarded — `bin_compadd` does the expansion itself.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
 /// sh:25 — the brace-expanded (left-to-right) candidate `rgb.txt`
@@ -166,7 +166,7 @@ pub fn _x_color(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("_cache_x_colors".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

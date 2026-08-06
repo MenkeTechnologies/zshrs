@@ -34,6 +34,22 @@
 
 use crate::ported::params::{getaparam, getsparam, setsparam};
 
+/// Reach `_set_command` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_set_command` (Completion/Zsh/Context/_redirect sh:5) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn set_command_byname() -> i32 {
+    crate::compsys::ported::shared::call_compfn("_set_command", &[], || _set_command())
+}
+
 /// `_set_command` — classify `$words[1]` and publish
 /// `_comp_command`, `_comp_command1`, `_comp_command2`. Returns 0
 /// on success, 1 when `$words[1]` is empty.

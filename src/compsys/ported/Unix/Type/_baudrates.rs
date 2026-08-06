@@ -21,7 +21,7 @@
 //! sh:77  compadd "${argv[@]}" "$expl[@]" -- "${rates[@]}"
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getaparam;
@@ -135,7 +135,7 @@ pub fn _baudrates(args: &[String]) -> i32 {
     }
 
     // sh:76  _description -1V baud-rates expl 'baud rate'
-    let _ = _description(&[
+    let _ = description_byname(&[
         "-1V".to_string(),
         "baud-rates".to_string(),
         "expl".to_string(),

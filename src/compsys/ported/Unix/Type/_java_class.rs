@@ -20,7 +20,7 @@
 //! walk; both strip the `.class` suffix and map `/` → `.` to package form.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam};
 use std::path::Path;
 
@@ -126,7 +126,7 @@ pub fn _java_class(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("c".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

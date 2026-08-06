@@ -53,7 +53,7 @@
 //! and `_cache_invalid`) assign nothing outside their own locals, so the
 //! fork is unobservable and this port evaluates the group in-process.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
 use crate::ported::exec::{dispatch_function_call, getoutput};
 use crate::ported::hashtable::shfunctab_lock;
@@ -422,7 +422,7 @@ fn add_with_descriptions(curcontext: &str, args: &[String]) -> bool {
         "-a".to_string(),
         "dcmds".to_string(),
     ]);
-    if _wanted(&described) == 0 {
+    if wanted_byname(&described) == 0 {
         ret = true;
     }
 
@@ -435,7 +435,7 @@ fn add_with_descriptions(curcontext: &str, args: &[String]) -> bool {
     ];
     plain.extend(args.iter().cloned());
     plain.extend(["-a".to_string(), "cmds".to_string()]);
-    if _wanted(&plain) == 0 {
+    if wanted_byname(&plain) == 0 {
         ret = true;
     }
     ret
@@ -468,7 +468,7 @@ fn add_path_dirs(args: &[String]) -> bool {
             "-g".to_string(),
             "*(-*)".to_string(),
         ];
-        return _wanted(&argv) == 0;
+        return wanted_byname(&argv) == 0;
     }
 
     // sh:116 — `path_dirs=(${^path}/*(/N:t))`: the basename of every
@@ -506,7 +506,7 @@ fn add_path_dirs(args: &[String]) -> bool {
         "-a".to_string(),
         "path_dirs".to_string(),
     ]);
-    _wanted(&argv) == 0
+    wanted_byname(&argv) == 0
 }
 
 /// `_path_commands` — complete names of external commands from
@@ -549,7 +549,7 @@ pub fn _path_commands(args: &[String]) -> i32 {
         ];
         argv.extend(args.iter().cloned());
         argv.extend(["-k".to_string(), "commands".to_string()]);
-        _wanted(&argv) == 0
+        wanted_byname(&argv) == 0
     };
     if added {
         ret = 0;

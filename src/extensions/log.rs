@@ -119,18 +119,44 @@ pub fn init_named(filename: &str) {
         {
             let _ = std::fs::rename(&log_path, dir.join(format!("{filename}.1")));
         }
+        // Logging is diagnostic infrastructure and must NEVER be able to stop
+        // the shell from starting. This used to `.expect("cannot open any log
+        // file")`, so an unwritable `$HOME` (unmounted NFS, read-only image,
+        // `su` to an account whose home is absent, a container with no home)
+        // killed zshrs outright where zsh starts fine.
+        //
+        // The fallback is also per-user. It was a fixed `/tmp/zshrs.log`,
+        // which in a shared /tmp is owned by whoever ran zshrs first — every
+        // other user then hit EACCES and, before this, the panic. A fixed name
+        // in a world-writable directory is equally a squatting target: a
+        // pre-created symlink there would have been appended to. `$TMPDIR` is
+        // per-user on macOS, and the uid suffix keeps it unambiguous elsewhere.
+        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+        let uid = unsafe { libc::getuid() };
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)
-            .unwrap_or_else(|_| {
+            .or_else(|_| {
                 std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(format!("/tmp/{}", filename))
-                    .expect("cannot open any log file")
-            });
-        let log_writer = std::sync::Mutex::new(log_file);
+                    .open(
+                        std::path::Path::new(&tmp_dir)
+                            .join(format!("{filename}.{uid}")),
+                    )
+            })
+            .ok();
+        // `None` => no file layer at all; the shell runs, just without a log.
+        // Same `Option<Layer>` shape the chrome/flame layers below already use.
+        let file_layer = log_file.map(|f| {
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::sync::Mutex::new(f))
+                .with_ansi(false)
+                .with_target(true)
+                .with_thread_names(true)
+                .compact()
+        });
 
         // Filter precedence:
         //   1. $ZSHRS_LOG (env var, ad-hoc / one-shot debugging)
@@ -140,12 +166,6 @@ pub fn init_named(filename: &str) {
         let env_filter = std::env::var("ZSHRS_LOG")
             .unwrap_or_else(|_| crate::daemon_presence::read_log_directive());
 
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(log_writer)
-            .with_ansi(false)
-            .with_target(true)
-            .with_thread_names(true)
-            .compact();
 
         // --- Chrome tracing layer (--features profiling) ---
         #[cfg(feature = "profiling")]

@@ -43,7 +43,7 @@
 //! ```
 
 use crate::compsys::ported::_arguments::_arguments;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zstyle;
 use crate::ported::params::getaparam;
@@ -148,7 +148,7 @@ pub fn _add_zle_hook_widget_widgets(_args: &[String]) -> i32 {
             "--".to_string(),
         ];
         wargs.extend(tmp.iter().map(|t| strip_num_colon(t)));
-        if _wanted(&wargs) == 0 {
+        if wanted_byname(&wargs) == 0 {
             return 0; // sh:18 — && return 0
         }
     } else {
@@ -161,7 +161,7 @@ pub fn _add_zle_hook_widget_widgets(_args: &[String]) -> i32 {
             "-g".to_string(),
             "user:*".to_string(),
         ];
-        if _wanted(&wargs) == 0 {
+        if wanted_byname(&wargs) == 0 {
             return 0; // sh:20 — && return 0
         }
     }

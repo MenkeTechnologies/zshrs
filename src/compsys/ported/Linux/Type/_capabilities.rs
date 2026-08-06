@@ -16,7 +16,7 @@
 //! array is published via `setaparam` first and referenced by name —
 //! mirrors `_ports.rs`'s `compadd -a … - ports` pattern.
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -87,7 +87,7 @@ pub fn _capabilities(args: &[String]) -> i32 {
     setaparam("caplist", caplist);
 
     // sh:64  _description capabilities expl "Linux capability"
-    let _ = _description(&[
+    let _ = description_byname(&[
         "capabilities".to_string(),
         "expl".to_string(),
         "Linux capability".to_string(),

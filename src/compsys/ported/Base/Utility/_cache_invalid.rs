@@ -65,6 +65,24 @@ fn call_cache_policy(policy: &str, cache_path: &str) -> i32 {
     execute_script_zsh_pipeline(&src).unwrap_or(1)
 }
 
+/// Reach `_cache_invalid` the way every upstream caller writes it — as a BARE
+/// COMMAND WORD (`_cache_invalid "$_cache_ident"`, `_retrieve_cache` sh:21;
+/// `_cache_invalid $cache_id`, `_python_modules` sh:25) — so the normal
+/// function lookup runs.
+///
+/// Six ports called the Rust fn directly instead, which skipped
+/// [`crate::compsys::ported::shared::call_compfn`]'s two effects: `$fpath` /
+/// shfunc arbitration (a user's own `_cache_invalid` earlier on `$fpath` was
+/// inert) and the `doshfunc` frame (no `FUNCSTACK` entry, so `$funcstack`
+/// inside the `cache-policy` hook read `zpwrDailyCachingPolicy _retrieve_cache
+/// __fasd_files_comp …` where zsh reads `… _cache_invalid _retrieve_cache …`).
+///
+/// One wrapper rather than eleven inline `call_compfn` calls: the callee name
+/// and its fallback are identical at every site.
+pub fn cache_invalid_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_cache_invalid", args, || _cache_invalid(args))
+}
+
 /// `_cache_invalid` — query the cache-policy hook for tag `$1`.
 /// Returns 0 (cache stale) or 1 (cache fresh / disabled / no policy).
 pub fn _cache_invalid(args: &[String]) -> i32 {

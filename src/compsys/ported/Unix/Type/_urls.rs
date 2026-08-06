@@ -23,11 +23,11 @@
 //! `$match`; sibling completers `_hosts`/`_users`/`_remote_files` dispatch
 //! to their (possibly shell) implementations.
 
-use crate::compsys::ported::_next_label::_next_label;
-use crate::compsys::ported::_path_files::_path_files;
-use crate::compsys::ported::_requested::_requested;
-use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_next_label::next_label_byname;
+use crate::compsys::ported::_path_files::path_files_byname;
+use crate::compsys::ported::_requested::requested_byname;
+use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam};
@@ -103,7 +103,7 @@ pub fn _urls(args: &[String]) -> i32 {
         w.push("-a".to_string());
         w.push("urls".to_string());
         crate::ported::params::setaparam("urls", urls.clone());
-        if _wanted(&w) == 0 {
+        if wanted_byname(&w) == 0 {
             return 0;
         }
         // sh:52  urls=()
@@ -137,13 +137,13 @@ pub fn _urls(args: &[String]) -> i32 {
 
     // sh:62-74 — no `scheme:` yet → complete the scheme prefix.
     if compset(&["-P", "(#b)([-+.a-z0-9]#):"]) != 0 {
-        let _ = _tags(&[
+        let _ = tags_byname(&[
             "-C".to_string(),
             "argument".to_string(),
             "prefixes".to_string(),
         ]);
         loop {
-            if _tags(&[]) != 0 {
+            if tags_byname(&[]) != 0 {
                 break;
             }
             loop {
@@ -155,7 +155,7 @@ pub fn _urls(args: &[String]) -> i32 {
                     "".to_string(),
                 ];
                 nl.extend(rest.iter().cloned());
-                if _next_label(&nl) != 0 {
+                if next_label_byname(&nl) != 0 {
                     break;
                 }
                 let _ = compset(&["-S", "[^:/]*"]); // sh:66 (to_end approx)
@@ -206,7 +206,7 @@ pub fn _urls(args: &[String]) -> i32 {
             ];
             w.extend(rest.iter().cloned());
             w.push("//".to_string());
-            return _wanted(&w);
+            return wanted_byname(&w);
         }
     } else if scheme == "file" || scheme == "unix" {
         // sh:84-101 — local file path.
@@ -218,13 +218,13 @@ pub fn _urls(args: &[String]) -> i32 {
             let _ = compset(&["-P", "//"]);
         }
         if compset(&["-P", "//"]) != 0 {
-            let _ = _tags(&["-C".to_string(), "file".to_string(), "files".to_string()]);
+            let _ = tags_byname(&["-C".to_string(), "file".to_string(), "files".to_string()]);
             loop {
-                if _tags(&[]) != 0 {
+                if tags_byname(&[]) != 0 {
                     break;
                 }
                 loop {
-                    if _next_label(&[
+                    if next_label_byname(&[
                         "files".to_string(),
                         "expl".to_string(),
                         "local file".to_string(),
@@ -238,11 +238,11 @@ pub fn _urls(args: &[String]) -> i32 {
                         let mut pf = expl.clone();
                         pf.extend(["-S".to_string(), "".to_string()]);
                         pf.extend(glob.clone());
-                        if _path_files(&pf) == 0 {
+                        if path_files_byname(&pf) == 0 {
                             ret = 0;
                         }
                         let pf2 = build(&expl, &["-S", "/", "-r", "/", "-/"]);
-                        if _path_files(&pf2) == 0 {
+                        if path_files_byname(&pf2) == 0 {
                             ret = 0;
                         }
                     } else if prefix.is_empty() {
@@ -292,20 +292,20 @@ pub fn _urls(args: &[String]) -> i32 {
             w.push("-U".to_string());
             w.push("-".to_string());
             w.push(format!("{}{}", ipre, contents.trim_end_matches('\n')));
-            return _wanted(&w);
+            return wanted_byname(&w);
         } else {
             let wdir = format!("{}/{}", db, scheme);
-            let _ = _tags(&[
+            let _ = tags_byname(&[
                 "-C".to_string(),
                 "bookmark".to_string(),
                 "files".to_string(),
             ]);
             loop {
-                if _tags(&[]) != 0 {
+                if tags_byname(&[]) != 0 {
                     break;
                 }
                 loop {
-                    if _next_label(&[
+                    if next_label_byname(&[
                         "files".to_string(),
                         "expl".to_string(),
                         "bookmark".to_string(),
@@ -318,7 +318,7 @@ pub fn _urls(args: &[String]) -> i32 {
                     pf.extend(expl.clone());
                     pf.extend(["-S".to_string(), "".to_string()]);
                     pf.extend(glob.clone());
-                    if _path_files(&pf) == 0 {
+                    if path_files_byname(&pf) == 0 {
                         ret = 0;
                     }
                     let mut pf2 = vec![
@@ -331,7 +331,7 @@ pub fn _urls(args: &[String]) -> i32 {
                     ];
                     pf2.extend(expl.clone());
                     pf2.push("-/".to_string());
-                    if _path_files(&pf2) == 0 {
+                    if path_files_byname(&pf2) == 0 {
                         ret = 0;
                     }
                 }
@@ -349,13 +349,14 @@ pub fn _urls(args: &[String]) -> i32 {
         let suffix = get("SUFFIX");
         let mut uhosts = glob_hosts(&db, &scheme, &prefix, &suffix);
 
-        let _ = _tags(&["hosts".to_string()]);
+        let _ = tags_byname(&["hosts".to_string()]);
         loop {
-            if _tags(&[]) != 0 {
+            if tags_byname(&[]) != 0 {
                 break;
             }
             loop {
-                if _next_label(&["hosts".to_string(), "expl".to_string(), "host".to_string()]) != 0
+                if next_label_byname(&["hosts".to_string(), "expl".to_string(), "host".to_string()])
+                    != 0
                 {
                     break;
                 }
@@ -409,7 +410,7 @@ pub fn _urls(args: &[String]) -> i32 {
         .cloned()
         .unwrap_or_default();
     if match2 == ":" && compset(&["-P", "<->/"]) != 0 {
-        let _ = crate::compsys::ported::_message::_message(&[
+        let _ = crate::compsys::ported::_message::message_byname(&[
             "-e".to_string(),
             "ports".to_string(),
             "port number".to_string(),
@@ -418,7 +419,7 @@ pub fn _urls(args: &[String]) -> i32 {
     }
 
     // sh:144-181 — path after the hostname.
-    if _tags(&["remote-files".to_string(), "files".to_string()]) != 0 {
+    if tags_byname(&["remote-files".to_string(), "files".to_string()]) != 0 {
         return 1;
     }
 
@@ -443,13 +444,13 @@ pub fn _urls(args: &[String]) -> i32 {
     } else {
         // sh:171-181 — the URL database, or scp/sftp remote listing.
         loop {
-            if _tags(&[]) != 0 {
+            if tags_byname(&[]) != 0 {
                 break;
             }
             if has_db {
                 let wdir = format!("{}/{}/{}", db, scheme, host);
                 loop {
-                    if _next_label(&[
+                    if next_label_byname(&[
                         "files".to_string(),
                         "expl".to_string(),
                         "local file".to_string(),
@@ -462,7 +463,7 @@ pub fn _urls(args: &[String]) -> i32 {
                     pf.extend(rest.iter().cloned());
                     pf.extend(["-W".to_string(), wdir.clone()]);
                     pf.extend(glob.clone());
-                    if _path_files(&pf) == 0 {
+                    if path_files_byname(&pf) == 0 {
                         ret = 0;
                     }
                     let mut pf2 = vec![
@@ -473,13 +474,13 @@ pub fn _urls(args: &[String]) -> i32 {
                     ];
                     pf2.extend(expl.clone());
                     pf2.extend(["-W".to_string(), wdir.clone(), "-/".to_string()]);
-                    if _path_files(&pf2) == 0 {
+                    if path_files_byname(&pf2) == 0 {
                         ret = 0;
                     }
                 }
             }
             if (scheme == "scp" || scheme == "sftp")
-                && _requested(&["remote-files".to_string()]) == 0
+                && requested_byname(&["remote-files".to_string()]) == 0
                 && dispatch(
                     "_remote_files",
                     &[
@@ -504,11 +505,11 @@ pub fn _urls(args: &[String]) -> i32 {
 /// `-W dir` root inside the `_next_label files` loop.
 fn path_after_host_loop(ret: &mut i32, rest: &[String], glob: &[String], wdir: &str) {
     loop {
-        if _tags(&[]) != 0 {
+        if tags_byname(&[]) != 0 {
             break;
         }
         loop {
-            if _next_label(&[
+            if next_label_byname(&[
                 "files".to_string(),
                 "expl".to_string(),
                 "local file".to_string(),
@@ -521,7 +522,7 @@ fn path_after_host_loop(ret: &mut i32, rest: &[String], glob: &[String], wdir: &
             pf.extend(rest.iter().cloned());
             pf.extend(["-W".to_string(), wdir.to_string()]);
             pf.extend(glob.iter().cloned());
-            if _path_files(&pf) == 0 {
+            if path_files_byname(&pf) == 0 {
                 *ret = 0;
             }
             let mut pf2 = vec![
@@ -532,7 +533,7 @@ fn path_after_host_loop(ret: &mut i32, rest: &[String], glob: &[String], wdir: &
             ];
             pf2.extend(expl.clone());
             pf2.extend(["-W".to_string(), wdir.to_string(), "-/".to_string()]);
-            if _path_files(&pf2) == 0 {
+            if path_files_byname(&pf2) == 0 {
                 *ret = 0;
             }
         }
