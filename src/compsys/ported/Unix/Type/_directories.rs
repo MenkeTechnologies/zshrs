@@ -13,26 +13,30 @@
 //! a sibling shell fn (not ported); dispatches via `_wanted`'s
 //! action-chunk path which routes through `exec accessors`.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 
 /// Reach `_directories` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_directories "${suf[@]}" && ret=0` (Completion/bashcompinit sh:38) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn directories_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_directories", args, || _directories(args))
+/// [`_directories_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _directories(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_directories", args, || _directories_impl(args))
 }
 
 /// `_directories` — directory-only completion via `_files -/`.
-pub fn _directories(args: &[String]) -> i32 {
+pub fn _directories_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_directories");
     // sh:5
     let mut wanted_argv: Vec<String> = vec![
@@ -44,7 +48,7 @@ pub fn _directories(args: &[String]) -> i32 {
     ];
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]
@@ -57,7 +61,7 @@ mod tests {
     fn returns_one_without_registered_tags() {
         let _g = crate::test_util::global_state_lock();
         INCOMPFUNC.store(1, Ordering::Relaxed);
-        let r = _directories(&[]);
+        let r = _directories_impl(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
         assert_eq!(r, 1);
     }

@@ -14,7 +14,7 @@
 //! sh:10      compadd "$@" -M 'B:[nN][oO]= M:_= M:{A-Z}={a-z}' -a - _options_unset
 //! ```
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 
 /// `_options_unset` — complete names of zsh options currently unset.
 /// Returns `_wanted`'s exit code.
@@ -33,7 +33,7 @@ pub fn _options_unset(args: &[String]) -> i32 {
     wanted_argv.push("-a".to_string());
     wanted_argv.push("-".to_string());
     wanted_argv.push("_options_unset".to_string());
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

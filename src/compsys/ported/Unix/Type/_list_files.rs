@@ -12,15 +12,15 @@
 //! sh:28  for elt in $stylevals; do   # decide `ok` (use long format?)
 //! sh:30    (*($what|all|true|1|yes)*=<->)  (( ${(P)#1} <= ${elt##*=} )) && ok=1
 //! sh:35    ([^=]#($what|all|true|1|yes)[^=]#)  ok=1
-//! sh:41  (( ok )) || return 1
+//! sh:47  (( ok )) || return 1
 //! sh:43  zmodload -F zsh/stat b:zstat … || return 1
 //! sh:45  dir=${2:+$2/}; dir=${(Q)dir}
-//! sh:47  for f in ${(PQ)1}; do
+//! sh:54  for f in ${(PQ)1}; do
 //! sh:48    [[ ! -e "$dir$f" ]] && listfiles+=("$dir$f") && continue
 //! sh:53    zstat -s -H stat -F "%b %e %H:%M" - "$dir$f"
 //! sh:55    listfiles+=("$stat[mode] nlink uid gid size mtime $f")
-//! sh:60  (( ${#listfiles} )) && listopts=(-d listfiles -l -o match)
-//! sh:62  return 0
+//! sh:67  (( ${#listfiles} )) && listopts=(-d listfiles -l -o match)
+//! sh:69  return 0
 //! ```
 //!
 //! sh:53 approx — `zstat -s` (string mode) shows uid/gid as *names*; this port
@@ -118,7 +118,7 @@ pub fn _list_files(args: &[String]) -> i32 {
             break;
         }
     }
-    // sh:41
+    // sh:47
     if !ok {
         return 1;
     }
@@ -129,7 +129,7 @@ pub fn _list_files(args: &[String]) -> i32 {
         _ => String::new(),
     };
 
-    // sh:47  for f in ${(PQ)1}
+    // sh:54  for f in ${(PQ)1}
     let files = getaparam(&name).unwrap_or_default();
     let mut listfiles: Vec<String> = Vec::new();
     for raw in &files {
@@ -159,7 +159,7 @@ pub fn _list_files(args: &[String]) -> i32 {
         ));
     }
 
-    // sh:60 — non-empty → set the compadd display opts.
+    // sh:67 — non-empty → set the compadd display opts.
     if !listfiles.is_empty() {
         setaparam(
             "listopts",

@@ -18,15 +18,15 @@
 //! sh:14    done
 //! sh:15    return ret
 //! sh:16  }
-//! sh:18  _typed-in_absolute_command_paths() {
-//! sh:20    if [[ -z $PREFIX ]]; then
-//! sh:21      _path_files -/ -g '*(-*)' -P / -W /
-//! sh:22    elif [[ $PREFIX[1] == / ]]; then
-//! sh:23      _path_files -/ -g '*(-*)' -W /
-//! sh:24    else
-//! sh:25      return 1
-//! sh:26    fi
-//! sh:27  }
+//! sh:19  _typed-in_absolute_command_paths() {
+//! sh:21    if [[ -z $PREFIX ]]; then
+//! sh:22      _path_files -/ -g '*(-*)' -P / -W /
+//! sh:23    elif [[ $PREFIX[1] == / ]]; then
+//! sh:24      _path_files -/ -g '*(-*)' -W /
+//! sh:25    else
+//! sh:26      return 1
+//! sh:27    fi
+//! sh:28  }
 //! sh:30  _absolute_command_paths() {
 //! sh:31    _alternative \
 //! sh:32      'commands:hashed command by absolute path:_hashed_absolute_command_paths' \
@@ -100,11 +100,11 @@ pub fn _hashed_absolute_command_paths(args: &[String]) -> i32 {
     ret
 }
 
-/// sh:18-27 — inner helper.
+/// sh:19-28 — inner helper.
 pub fn _typed_in_absolute_command_paths(args: &[String]) -> i32 {
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if prefix.is_empty() {
-        // sh:21
+        // sh:22
         let mut a: Vec<String> = vec![
             "-/".to_string(),
             "-g".to_string(),
@@ -117,7 +117,7 @@ pub fn _typed_in_absolute_command_paths(args: &[String]) -> i32 {
         a.extend(args.iter().cloned());
         dispatch_function_call("_path_files", &a).unwrap_or(1)
     } else if prefix.starts_with('/') {
-        // sh:23
+        // sh:24
         let mut a: Vec<String> = vec![
             "-/".to_string(),
             "-g".to_string(),
@@ -128,7 +128,7 @@ pub fn _typed_in_absolute_command_paths(args: &[String]) -> i32 {
         a.extend(args.iter().cloned());
         dispatch_function_call("_path_files", &a).unwrap_or(1)
     } else {
-        // sh:25
+        // sh:26
         1
     }
 }
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn typed_in_returns_one_for_relative_prefix() {
-        // sh:25 — non-empty, non-/ PREFIX → 1.
+        // sh:26 — non-empty, non-/ PREFIX → 1.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "ls");
         assert_eq!(_typed_in_absolute_command_paths(&[]), 1);

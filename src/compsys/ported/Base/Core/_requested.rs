@@ -22,15 +22,15 @@
 //! ```
 //!
 //! Calls real `bin_comptags -R` + real `bin_zparseopts`. Reaches
-//! `_all_labels` and `_description` BY NAME (`all_labels_byname` /
-//! `description_byname` → [`crate::compsys::ported::shared::call_compfn`])
+//! `_all_labels` and `_description` BY NAME (`_all_labels` /
+//! `_description` → [`crate::compsys::ported::shared::call_compfn`])
 //! for the dispatch arms, matching the sh body's bare command words: a
 //! user's own copy earlier on `$fpath` wins, and each call gets its own
 //! `doshfunc` frame — which the `comptags -A-` level arithmetic below
 //! depends on.
 
-use super::_all_labels::_all_labels;
-use super::_description::description_byname;
+use super::_all_labels::_all_labels_impl;
+use super::_description::_description;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::zle::computil::bin_comptags;
@@ -80,23 +80,27 @@ fn run_gopt(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// writes it — `if _requested jobs; then` (Completion/Unix/Command/_lp
 /// sh:144) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn requested_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_requested", args, || _requested(args))
+/// [`_requested_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _requested(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_requested", args, || _requested_impl(args))
 }
 
 /// `_requested` — check if tag `$1` was requested by the current
 /// completion context. Returns 0 when requested (after dispatching
 /// to `_all_labels` or `_description` as appropriate), 1 otherwise.
-pub fn _requested(args: &[String]) -> i32 {
+pub fn _requested_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_requested");
     // sh:3  local __gopt
     crate::compsys::ported::shared::declare_locals(&["__gopt"], 0);
@@ -124,7 +128,7 @@ pub fn _requested(args: &[String]) -> i32 {
         // missed, aborting the whole `_tags`/`while _tags`/`_requested`
         // idiom with "comptags: no tags registered". A hand-rolled
         // inc/dec_locallevel pair simulated the missing depth. Going BY NAME
-        // now supplies the real frame instead: `all_labels_byname` →
+        // now supplies the real frame instead: `_all_labels` →
         // `call_compfn` → `dispatch_function_call` → `doshfunc`, which does
         // the `inc_locallevel` itself AND lets a user's own `_all_labels`
         // earlier on `$fpath` win, exactly as the bare `_all_labels` command
@@ -137,7 +141,7 @@ pub fn _requested(args: &[String]) -> i32 {
             // opens no `doshfunc` frame, so hand-roll the one effect this
             // call depends on — see the module header.
             crate::ported::utils::inc_locallevel();
-            let r = _all_labels(&all_args);
+            let r = _all_labels_impl(&all_args);
             crate::ported::utils::dec_locallevel();
             r
         });
@@ -148,7 +152,7 @@ pub fn _requested(args: &[String]) -> i32 {
         // sh:12  _description "$__gopt[@]" "$@"
         let mut desc_args: Vec<String> = gopt;
         desc_args.extend(argv);
-        let _ = description_byname(&desc_args);
+        let _ = _description(&desc_args);
     }
     // sh:14
     0
@@ -173,7 +177,7 @@ mod tests {
     fn unrequested_tag_returns_one() {
         // sh:16 — comptags -R fails for tags never registered.
         let r = with_incompfunc(|| {
-            _requested(&[
+            _requested_impl(&[
                 "unregistered_tag".to_string(),
                 "name".to_string(),
                 "descr".to_string(),

@@ -2,29 +2,29 @@
 //!
 //! Full upstream body (112 lines, abridged):
 //! ```text
-//! sh:  1  #autoload
-//! sh:  3  local flag ret=1; local -aU specs; local -A exclusion
-//! sh:  6  exclusion=( E '[cCgGxXyY]' O '[BdeHImMSuUVwWy]' - '[OEdegHIjklmMSUz]'
+//! sh:1  #autoload
+//! sh:3  local flag ret=1; local -aU specs; local -A exclusion
+//! sh:6  exclusion=( E '[cCgGxXyY]' O '[BdeHImMSuUVwWy]' - '[OEdegHIjklmMSUz]'
 //! sh:         _ '[OEdgHIjmMSUz]' 0 '[Oekl]' ^ '[OEaAbBchP]' '#' '[OEaAbBchpPrXZ]' )
 //! sh: 15  compset -P '(%[0-9EO_\^#-]#[^0-9%EO_\^#-]|[^%])#'
-//! sh: 16  compset -S '%*'
+//! sh: 18  compset -S '%*'
 //! sh: 17  specs=( 'a:abbreviated day name' … '%:literal %' )   # ~45 base entries
 //! sh: 60  case $OSTYPE in … esac                                # per-OS additions
 //! sh: 92  if [[ $1 == zsh ]]; then specs+=( 'f:…' 'K:…' … ); fi  # zsh strftime extras
-//! sh:101  for flag in ${(s..)PREFIX#%}; do
-//! sh:102    (( $+exclusion[$flag] )) && specs=( ${(M)specs:#${~exclusion[$flag]}:*} )
-//! sh:103  done
-//! sh:105  _describe -t date-format-specifier 'date format specifier' specs \
-//! sh:106      -p "${(Q)PREFIX:-%}" -S '' && ret=0
+//! sh:104  for flag in ${(s..)PREFIX#%}; do
+//! sh:105    (( $+exclusion[$flag] )) && specs=( ${(M)specs:#${~exclusion[$flag]}:*} )
+//! sh:106  done
+//! sh:108  _describe -t date-format-specifier 'date format specifier' specs \
+//! sh:109      -p "${(Q)PREFIX:-%}" -S '' && ret=0
 //! sh:107  [[ $1 == zsh ]] && _message -e date-format-precision 'precision for %. (1-9)'
-//! sh:109  return ret
+//! sh:112  return ret
 //! ```
 //!
 //! sh:15-16 approx — the `compset -P/-S` glob strips are dispatched to the
 //! real `bin_compset`. sh:60 uses `$OSTYPE` (via the `OSTYPE` parameter).
 
 use crate::compsys::ported::_describe::_describe;
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -175,7 +175,7 @@ pub fn _date_formats(args: &[String]) -> i32 {
     let mut seen = std::collections::HashSet::new();
     specs.retain(|s| seen.insert(s.clone()));
 
-    // sh:101-103 — narrow by already-typed modifier flags.
+    // sh:104-106 — narrow by already-typed modifier flags.
     let prefix = getsparam("PREFIX").unwrap_or_default();
     for flag in prefix.trim_start_matches('%').chars() {
         if let Some(class) = exclusion_class(flag) {
@@ -183,7 +183,7 @@ pub fn _date_formats(args: &[String]) -> i32 {
         }
     }
 
-    // sh:105-106  _describe -t date-format-specifier 'date format specifier' specs -p PREFIX -S ''
+    // sh:108-109  _describe -t date-format-specifier 'date format specifier' specs -p PREFIX -S ''
     let prefix_p = if prefix.is_empty() {
         "%".to_string()
     } else {
@@ -210,13 +210,13 @@ pub fn _date_formats(args: &[String]) -> i32 {
     // `declare_locals` list (_describe.rs:160-192 — 26 unprefixed names
     // including `csl`, `_opt`, `_i`, `OPTIND`) inside THIS function's
     // param scope instead of its own.
-    if crate::compsys::ported::shared::call_compfn("_describe", &d, || _describe(&d)) == 0 {
+    if _describe(&d) == 0 {
         ret = 0;
     }
 
     // sh:107
     if is_zsh {
-        let _ = message_byname(&[
+        let _ = _message(&[
             "-e".to_string(),
             "date-format-precision".to_string(),
             "precision for %. (1-9)".to_string(),

@@ -20,31 +20,35 @@
 //! sh:16  fi
 //! ```
 
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getsparam, setaparam};
 
 /// Reach `_delimiters` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_delimiters qualifier-$char` (Completion/Zsh/Context/_brace_parameter sh:34) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn delimiters_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_delimiters", args, || _delimiters(args))
+/// [`_delimiters_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _delimiters(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_delimiters", args, || _delimiters_impl(args))
 }
 
 /// `_delimiters` — offer the delimiter chars used in modifiers /
 /// qualifiers. Reads the `delimiters` style for the caller's tag
 /// (arg 0); falls back to `: + / - %`.
-pub fn _delimiters(args: &[String]) -> i32 {
+pub fn _delimiters_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_delimiters");
     // sh:6-7  locals
     let tag = args.first().cloned().unwrap_or_default();
@@ -69,7 +73,7 @@ pub fn _delimiters(args: &[String]) -> i32 {
         //   The `-a list` flag tells compadd to read from a shell
         //   array named `list`; publish ours under that name.
         setaparam("list", list);
-        wanted_byname(&[
+        _wanted(&[
             "delimiters".to_string(),
             "expl".to_string(),
             "delimiter".to_string(),
@@ -81,7 +85,7 @@ pub fn _delimiters(args: &[String]) -> i32 {
         ])
     } else {
         // sh:15  _message delimiter
-        message_byname(&["delimiter".to_string()])
+        _message(&["delimiter".to_string()])
     }
 }
 
@@ -101,7 +105,7 @@ mod tests {
         //   are registered, matching shell semantics).
         let _g = crate::test_util::global_state_lock();
         INCOMPFUNC.store(1, Ordering::Relaxed);
-        let r = _delimiters(&["mytag".to_string()]);
+        let r = _delimiters_impl(&["mytag".to_string()]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
         assert_eq!(r, 1);
         // Verify the default list was published.

@@ -9,7 +9,7 @@
 //! sh:11  if [[ "$1" = -r ]]; then jids=( "${(@k)jobstates[(R)running*]}" )
 //! sh:15  elif [[ "$1" = -s ]]; then jids=( "${(@k)jobstates[(R)suspended*]}" )
 //! sh:18  else jids=( "${(@k)jobtexts}" )
-//! sh:21  fi
+//! sh:25  fi
 //! sh:24  if zstyle -T … how-many; then how=$expls fi
 //! sh:30  for job in $jids do … build display lines …
 //! sh:80  if [[ -n "$desc" ]]; then
@@ -23,7 +23,7 @@
 //! (running only), `-s` (suspended only), `-t` (prefix-needed
 //! guard).
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -135,7 +135,7 @@ pub fn _jobs(args: &[String]) -> i32 {
         w_args.extend(argv);
         w_args.push("-".to_string());
         w_args.extend(jids);
-        wanted_byname(&w_args)
+        _wanted(&w_args)
     } else {
         // sh:83
         let mut w_args: Vec<String> = vec![
@@ -148,7 +148,7 @@ pub fn _jobs(args: &[String]) -> i32 {
         for j in &jids {
             w_args.push(format!("{}{}", pfx, j));
         }
-        wanted_byname(&w_args)
+        _wanted(&w_args)
     }
 }
 

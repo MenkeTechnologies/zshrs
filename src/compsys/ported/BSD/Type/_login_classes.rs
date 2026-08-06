@@ -12,7 +12,7 @@
 //! sh:11  compadd "$@" "$expl[@]" - $login_classes
 //! ```
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -81,7 +81,7 @@ pub fn _login_classes(args: &[String]) -> i32 {
     }
 
     // sh:10  _description login-classes expl 'login class'
-    let _ = description_byname(&[
+    let _ = _description(&[
         "login-classes".to_string(),
         "expl".to_string(),
         "login class".to_string(),

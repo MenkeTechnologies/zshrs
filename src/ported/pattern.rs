@@ -743,7 +743,21 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         inflags & !(PAT_PURES | PAT_HAS_EXCLUDP) as i32,
         Ordering::Relaxed,
     ); // c:566
-    patglobflags.store(0, Ordering::Relaxed);
+    // c:568-576 — `patcompile` re-seeds the RUNNING `patglobflags`
+    // (`if (isset(MULTIBYTE)) patglobflags = GF_MULTIBYTE; else
+    // patglobflags = 0;`) for a non-file pattern, and leaves
+    // `patcompstart`'s equally option-gated seed alone for a file glob.
+    // Every P_GFLAGS node emitted below records that running value
+    // verbatim (c:993 `up.l = patglobflags`), so storing a bare 0 here
+    // made a mid-pattern `(#i)` / `(#b)` node clear GF_MULTIBYTE for the
+    // remainder of the match (c:2942 assigns the payload ABSOLUTELY).
+    //
+    // GF_MULTIBYTE is forced ON rather than taken from `seeded_globflags`:
+    // the option gate is correct C (c:572-575) but zshrs's capture and
+    // substitution layers index the subject as UTF-8, and `unsetopt
+    // multibyte` makes zsh match in raw BYTES (c:1946), which those layers
+    // cannot yet represent — see the `charinc` note below.
+    patglobflags.store(seeded_globflags | GF_MULTIBYTE, Ordering::Relaxed);
 
     // c:583-590 — emit P_GFLAGS placeholder. Phase 5.1: instead of
     // emitting an opcode, hoist leading `(#...)` flag specifiers into
@@ -766,9 +780,14 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // which `patcompstart` seeded with GF_IGNCASE when CASEGLOB/CASEPATHS are
     // off (`setopt nocaseglob`). Carry those case bits through so `pattry`
     // matches case-insensitively; `matchpat` masks the loss by pre-folding
-    // both sides, but the glob scanner now drives `pattry` directly. Keep
-    // the prior unconditional GF_MULTIBYTE to avoid disturbing multibyte
-    // callers that relied on it.
+    // both sides, but the glob scanner now drives `pattry` directly.
+    //
+    // c:572-575 — `if (isset(MULTIBYTE)) patglobflags = GF_MULTIBYTE; else
+    // patglobflags = 0;`. The bit is OPTION-GATED in C, but it is kept
+    // unconditional here (see the `patglobflags.store` note above): zshrs's
+    // capture / substitution layers slice the subject as UTF-8, and the
+    // nomultibyte unit is a raw BYTE. An explicit in-pattern `(#U)` still
+    // clears it below (c:1116), which the matcher now honours.
     let mut hoisted_globflags: i32 =
         GF_MULTIBYTE | (seeded_globflags & (GF_IGNCASE | GF_LCMATCHUC));
     let hash_char_pre = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:957
@@ -1407,7 +1426,7 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             && bytes[off + 1] == b'#'
         {
             let rest = std::str::from_utf8(&bytes[off..]).unwrap_or("").to_string();
-            if let Some((bits, assertp, consumed)) = patgetglobflags(&rest) {
+            if let Some((_bits, assertp, consumed)) = patgetglobflags(&rest) {
                 patparse_off.fetch_add(consumed, Ordering::Relaxed);
                 // Emit P_GFLAGS for flag-bit changes if any. Include the
                 // low byte (the `(#aN)` approximation budget) so a
@@ -1417,7 +1436,17 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                 // sets the WHOLE value. Without the 0xff, `(#a1)cat(#a0)
                 // dog` kept the outer budget and `dog` wrongly tolerated
                 // an error.
-                let flag_bits = bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | 0xff);
+                // c:989-994 — the payload is the RUNNING `patglobflags`
+                // (`up.l = patglobflags`), not the delta this specifier
+                // contributed. `patgetglobflags` only ever reports bits it
+                // turned ON, so building the payload from it dropped
+                // GF_MULTIBYTE — and since c:2942 assigns the payload
+                // ABSOLUTELY (`patglobflags = P_OPERAND(scan)->l`), a
+                // mid-pattern `(#b)` demoted the rest of the match to
+                // single-byte stepping: `[[ $'αβγδε' = *(#b)(?) ]]` then
+                // matched only the last BYTE of `ε`.
+                let flag_bits = patglobflags.load(Ordering::Relaxed)
+                    & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | 0xff);
                 if flag_bits != 0 || (flag_bits == 0 && assertp == 0) {
                     let gf_off = patnode(P_GFLAGS);
                     let mut buf = patout.lock().unwrap();
@@ -3057,11 +3086,27 @@ pub fn charsub(x: &str, y: usize) -> usize {
         // c:2003-2004 — `if (!isset(MULTIBYTE)) return y - x;`
         return y;
     }
-    // c:2006-2021 — count codepoints in `x[0..y]`. Rust `&str` is valid
-    // UTF-8, so `chars().count()` is the faithful equivalent of the C
-    // mbrtowc loop (the MB_INVALID byte-by-byte fallback can't arise —
-    // a `&str` never holds invalid sequences).
-    x[..y].chars().count()
+    // c:2011-2026 — count characters in `x[0..y]`. C bounds each
+    // `mbrtowc` by `y-x` (c:2012), so an END OFFSET THAT CUTS a
+    // multibyte character in half yields MB_INCOMPLETE and c:2014-2018
+    // `return res + (y - x)` counts every leftover byte as one
+    // character. That is reachable: with GF_MULTIBYTE clear (`(#U)`,
+    // c:1116) the matcher steps raw BYTES (c:1946), so `patendp[i]` can
+    // land mid-character. A plain `x[..y].chars().count()` PANICS there.
+    let mut res = 0usize;
+    let mut i = 0usize;
+    while i < y {
+        // `i` is always on a character boundary — it only ever advances
+        // by a whole character below.
+        match x[i..].chars().next() {
+            Some(c) if i + c.len_utf8() <= y => {
+                res += 1; // c:2024
+                i += c.len_utf8(); // c:2025
+            }
+            _ => return res + (y - i), // c:2018
+        }
+    }
+    res // c:2028
 }
 
 // =====================================================================
@@ -3372,6 +3417,28 @@ pub fn pattryrefs(
     if ok {
         let n = (prog.0.patnpar as usize).min(NSUBEXP);
         let have_nump = nump.is_some();
+        // c:2536 / c:2587 — `metafy(patinstart, *sp - patinstart, META_DUP)`:
+        // C hands back the RAW matched bytes, re-metafied. With GF_MULTIBYTE
+        // clear (`(#U)`, c:1116) the match unit is a single byte (c:1946), so
+        // `lo`/`hi` can cut a multibyte character in half and a plain
+        // `trial[lo..hi]` slice PANICS. Rebuild such a span the way zshrs
+        // stores `$'\xNN'` elsewhere — Meta (0x83) followed by `byte ^ 32` —
+        // which is exactly what C's `metafy` produces.
+        let metafy_span = |lo: usize, hi: usize| -> String {
+            if let Some(s) = trial.get(lo..hi) {
+                return s.to_string();
+            }
+            let mut out = String::new();
+            for &b in &trial.as_bytes()[lo..hi] {
+                if b >= crate::ported::zsh_h::Meta {
+                    out.push('\u{83}'); // c:4862 Meta
+                    out.push(char::from(b ^ 32)); // c:4863 `*t++ = *p ^ 32`
+                } else {
+                    out.push(char::from(b));
+                }
+            }
+            out
+        };
         if let Some(np) = nump {
             *np = n as i32;
         }
@@ -3397,7 +3464,7 @@ pub fn pattryrefs(
         let cur_globflags = patglobflags.load(Ordering::Relaxed);
         if (cur_globflags & GF_MATCHREF) != 0 && (prog.0.flags & PAT_FILE as i32) == 0 {
             let hi = matched_end.min(trial.len());
-            let mstr: String = trial[..hi].to_string(); // c:2536 metafy(patinstart..patinput)
+            let mstr: String = metafy_span(0, hi); // c:2536 metafy(patinstart..patinput)
             let mlen = mstr.chars().count() as i64; // c:2534 CHARSUB
             let base: i64 = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
                 0
@@ -3504,7 +3571,7 @@ pub fn pattryrefs(
                     let e = state.patendp[i];
                     let lo = b.min(trial.len());
                     let hi = e.min(trial.len()).max(lo);
-                    match_arr.push(trial[lo..hi].to_string()); // c:2587 metafy(*sp..*ep)
+                    match_arr.push(metafy_span(lo, hi)); // c:2587 metafy(*sp..*ep)
                                                                // c:2596-2599 — `CHARSUB(patinstart, *sp) + patoffset +
                                                                // !isset(KSHARRAYS)`. CHARSUB (c:1997) counts CHARACTERS;
                                                                // `patbeginp`/`patendp` hold BYTE offsets into `trial`, so
@@ -4860,6 +4927,73 @@ pub fn patmatch(
         false // c:2677
     };
 
+    // Byte advance past ONE *input* character at `off` — C's `CHARINC`
+    // macro (c:1963 `#define CHARINC(x, y) ((x) = charnext((x), (y)))`),
+    // whose `charnext` body is c:1940-1960.
+    //
+    // The unit is option-dependent, and that is the whole point:
+    // c:1946 `if (!(patglobflags & GF_MULTIBYTE) || !((unsigned char) *x
+    // & 0x80)) return x + 1;` — with GF_MULTIBYTE clear (`unsetopt
+    // multibyte`) a character is ONE RAW BYTE, so `?` matches a byte and
+    // `*` backtracks over bytes. Only with GF_MULTIBYTE set does C decode
+    // a whole multibyte character (c:1949 `mbrtowc`), falling back to a
+    // single byte on MB_INVALID/MB_INCOMPLETE (c:1951-1955).
+    //
+    // C matches over an UNMETAFIED buffer (`patallocstr`), whereas zshrs
+    // keeps non-UTF-8 input metafied inside the `&str` — Meta `\u{83}`
+    // followed by `byte ^ 32`. One metafied pair stands for ONE raw byte,
+    // so it is consumed as a unit in both modes; under GF_MULTIBYTE
+    // consecutive pairs are accumulated until they form one valid UTF-8
+    // character, which is what C's `mbrtowc` over the raw bytes does.
+    //
+    // Returns 0 only at end of input (C's `patinput == patinend`, c:2737).
+    let charinc = |off: usize, gflags: i32| -> usize {
+        if off >= string.len() {
+            return 0; // c:2737 — no character left.
+        }
+        let multibyte = (gflags & GF_MULTIBYTE) != 0; // c:1946
+        // A non-boundary offset is only reachable while stepping bytes
+        // with GF_MULTIBYTE clear; C's raw-byte view advances one byte.
+        let Some(rest) = string.get(off..) else {
+            return 1; // c:1947
+        };
+        let mut raw: Vec<u8> = Vec::new();
+        let mut advance = 0usize;
+        let mut chs = rest.chars();
+        while let Some(c) = chs.next() {
+            if c == '\u{83}' {
+                if let Some(n) = chs.clone().next() {
+                    if (n as u32) >= 0x80 {
+                        raw.push((n as u32 as u8) ^ 32);
+                        advance += c.len_utf8() + n.len_utf8();
+                        chs.next();
+                        // c:1946 — one raw byte IS one character without
+                        // GF_MULTIBYTE; otherwise keep collecting bytes
+                        // until `mbrtowc` would have completed one
+                        // character (c:1949).
+                        if !multibyte || std::str::from_utf8(&raw).is_ok() {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+                // Lone Meta — count it as one character.
+                advance += c.len_utf8();
+                break;
+            }
+            // Natively stored character: its `&str` bytes ARE the raw
+            // bytes C would see, so without GF_MULTIBYTE only the first
+            // one is consumed (c:1947).
+            advance += if !multibyte && (c as u32) >= 0x80 {
+                1
+            } else {
+                c.len_utf8()
+            };
+            break;
+        }
+        advance
+    };
+
     // Membership test for a P_ANYOF/P_ANYBUT body at `body_off` against the
     // input char at byte offset `off`. Returns (in_set, byte_advance). ASCII
     // input takes the unchanged byte `charmatch` path over the `chars` set; a
@@ -4889,14 +5023,46 @@ pub fn patmatch(
         // behaviour). C only takes the wide `mb_patmatchrange` path under
         // GF_MULTIBYTE; with it clear a high byte is matched as a raw byte.
         //
-        // `off` can also land inside a multibyte char: P_STAR backtracks
-        // byte-by-byte (`s_off + consumed`) and the approx omit-input paths
-        // step `s_off + 1`, so a continuation P_ANYOF/P_ANYBUT can be tested
-        // at a continuation byte. Decoding `string[off..]` there would panic,
-        // so treat a non-boundary position as a raw byte (advance 1) — the
-        // same fallback the byte-level machinery already relies on.
+        // `off` can also land inside a multibyte char: the approx omit-input
+        // paths step `s_off + 1`, so a continuation P_ANYOF/P_ANYBUT can be
+        // tested at a continuation byte. Decoding `string[off..]` there would
+        // panic, so treat a non-boundary position as a raw byte (advance 1) —
+        // the same fallback the byte-level machinery already relies on.
         if b < 0x80 || (gflags & GF_MULTIBYTE) == 0 || !string.is_char_boundary(off) {
-            return (set.iter().any(|&c| charmatch(b, c, range_flags)), 1);
+            if set.iter().any(|&c| charmatch(b, c, range_flags)) {
+                return (true, 1);
+            }
+            // c:2800 — without GF_MULTIBYTE the input char is a single BYTE
+            // (`charref`, c:1919-1920) and `patmatchrange` walks the operand's
+            // RAW bytes, so a bracket member written as a multibyte character
+            // matches each of its UTF-8 bytes individually. C keeps those
+            // bytes in the operand; zshrs splits them out of `chars` into the
+            // wide literal / wide range tables at compile time, so re-encode
+            // them here. Without this, `unsetopt multibyte; [[ $'αβ' = [α]* ]]`
+            // stopped matching once GF_MULTIBYTE became option-gated.
+            if (gflags & GF_MULTIBYTE) == 0 {
+                let mut utf8 = [0u8; 4];
+                let mut member_byte = |cp: u32| -> bool {
+                    char::from_u32(cp).is_some_and(|c| {
+                        c.encode_utf8(&mut utf8).as_bytes().iter().any(|&x| x == b)
+                    })
+                };
+                for k in 0..n_mbc {
+                    let o = mbc_start + k * 4;
+                    if member_byte(u32::from_le_bytes(code[o..o + 4].try_into().unwrap())) {
+                        return (true, 1);
+                    }
+                }
+                for k in 0..n_mbr {
+                    let o = mbr_start + k * 8;
+                    if member_byte(u32::from_le_bytes(code[o..o + 4].try_into().unwrap()))
+                        || member_byte(u32::from_le_bytes(code[o + 4..o + 8].try_into().unwrap()))
+                    {
+                        return (true, 1);
+                    }
+                }
+            }
+            return (false, 1);
         }
         // Decode one logical input char + its source byte span.
         let mut it = string[off..].chars();
@@ -4985,17 +5151,15 @@ pub fn patmatch(
                     // (e.g. c:5046); this is the same edit at the pattern end.
                     let max_errs = (glob_flags & 0xff) as i32;
                     if state.errsfound < max_errs {
-                        if let Some(c) = string[s_off..].chars().next() {
+                        // c:3475 `CHARINC(patinput, patinend)` + continue
+                        // (retry P_END). CHARINC is option-gated, and
+                        // `s_off` can sit mid-character when GF_MULTIBYTE
+                        // is clear, so go through `charinc` rather
+                        // than slicing `string` (which would panic).
+                        let advance = charinc(s_off, glob_flags);
+                        if advance != 0 {
                             state.errsfound += 1; // c:3466 ++errsfound
-                                                  // c:3475 CHARINC(patinput) + continue (retry P_END).
-                            return patmatch(
-                                code,
-                                scan,
-                                string,
-                                s_off + c.len_utf8(),
-                                state,
-                                glob_flags,
-                            );
+                            return patmatch(code, scan, string, s_off + advance, state, glob_flags);
                         }
                     }
                     return None; // c:3452 fail, no budget → caller tries next alt
@@ -5141,39 +5305,16 @@ pub fn patmatch(
                 s_off += len;
             }
             P_ANY => {
-                // c:P_ANY arm — `?` matches ONE character, advanced via
-                // METACHARINC. zshrs stores `$'\xNN'` escapes metafied
-                // (Meta `\u{83}` + byte^32); a multibyte character is
-                // several Meta-pair chars that must be consumed as one,
-                // else `?` matches a single metafied byte and leaves the
-                // rest unmatched. Walk source chars, demetafying, until
-                // one UTF-8 character forms; advance by its source span.
-                // Identity for non-metafied (single-char advance).
-                let s = &string[s_off..];
-                let mut raw: Vec<u8> = Vec::new();
-                let mut advance = 0usize;
-                let mut chs = s.chars();
-                while let Some(c) = chs.next() {
-                    if c == '\u{83}' {
-                        if let Some(n) = chs.clone().next() {
-                            if (n as u32) >= 0x80 {
-                                raw.push((n as u32 as u8) ^ 32);
-                                advance += c.len_utf8() + n.len_utf8();
-                                chs.next();
-                                if std::str::from_utf8(&raw).is_ok() {
-                                    break;
-                                }
-                                continue;
-                            }
-                        }
-                        // Lone Meta — count it as one character.
-                        advance += c.len_utf8();
-                        break;
-                    }
-                    // Non-metafied char = one logical character.
-                    advance += c.len_utf8();
-                    break;
-                }
+                // c:2736-2741 — `case P_ANY: if (patinput == patinend)
+                // fail = 1; else CHARINC(patinput, patinend); break;`.
+                // `CHARINC` (c:1963) is `charnext`, which advances a full
+                // multibyte character ONLY under GF_MULTIBYTE and a single
+                // raw byte otherwise (c:1946). `charinc` carries
+                // that option gate plus zshrs's metafied-input handling;
+                // it previously consumed a whole UTF-8 character
+                // unconditionally, so `[[ $'α' = ?? ]]` failed under
+                // `unsetopt multibyte` where zsh matches the two bytes.
+                let advance = charinc(s_off, glob_flags);
                 if advance == 0 {
                     return None;
                 }
@@ -5239,30 +5380,51 @@ pub fn patmatch(
                 s_off += adv;
             }
             P_STAR => {
-                // c:P_STAR arm (greedy)
-                // Greedy: try to match as many chars as possible then
-                // backtrack until the rest matches.
-                let input_bytes = string.as_bytes();
-                let max = input_bytes.len() - s_off;
-                let mut consumed = max;
-                loop {
-                    let mut sub_state = state.clone();
-                    if let Some(end) = patmatch(
-                        code,
-                        next,
-                        string,
-                        s_off + consumed,
-                        &mut sub_state,
-                        glob_flags,
-                    ) {
-                        *state = sub_state;
-                        return Some(end);
+                // c:3277-3400 — `*` is handled specially "although really
+                // P_ONEHASH+P_ANY". C walks the input with CHARINC and
+                // records every CHARACTER start in `charstart[]`
+                // (c:3310-3315 `for (no = 0; patinput < patinend;
+                // CHARINC(patinput, patinend)) { charstart[patinput-start]
+                // = 1; no++; }`), then backtracks by rewinding to the
+                // previous recorded start (c:3385-3389 `/* find start of
+                // previous full character */ while (!*--lastcharstart) ...
+                // patinput = start + (lastcharstart-charstart);`).
+                //
+                // Rewinding one BYTE instead left the continuation opcode
+                // positioned inside a multibyte character: `[[ $'αβγδε' =
+                // *(#b)(?) ]]` panicked slicing at a UTF-8 continuation
+                // byte, and any `*`-then-atom pattern could match at a
+                // non-character position. `charinc` reproduces
+                // CHARINC exactly, so with GF_MULTIBYTE clear every byte
+                // is still a valid stop (c:1946) — the byte-stepping
+                // behaviour zsh has under `unsetopt multibyte`.
+                let end = string.len();
+                // c:3310-3315 — record the character starts.
+                let mut starts: Vec<usize> = Vec::new();
+                let mut p = s_off;
+                while p < end {
+                    starts.push(p);
+                    let adv = charinc(p, glob_flags);
+                    if adv == 0 {
+                        break;
                     }
-                    if consumed == 0 {
-                        return None;
-                    }
-                    consumed -= 1;
+                    p += adv;
                 }
+                // c:3299-3315 — the greedy end position (`patinput` after
+                // the walk) is tried first; `min` is 0 for P_STAR
+                // (c:3328), so the rewind reaches `start` inclusive.
+                starts.push(end);
+                for &pos in starts.iter().rev() {
+                    // c:3374-3382 — try the continuation at this position.
+                    let mut sub_state = state.clone();
+                    if let Some(matched) =
+                        patmatch(code, next, string, pos, &mut sub_state, glob_flags)
+                    {
+                        *state = sub_state;
+                        return Some(matched);
+                    }
+                }
+                return None; // c:3400
             }
             P_ONEHASH | P_TWOHASH => {
                 // c:P_ONEHASH / P_TWOHASH
@@ -6575,6 +6737,88 @@ mod tests {
         assert!(pattry(&prog, "XYZ"));
         assert!(!pattry(&prog, "1"));
         assert!(!pattry(&prog, ""));
+        crate::ported::options::opt_state_set("extendedglob", saved);
+    }
+
+    /// `*` must backtrack over CHARACTER starts, not bytes.
+    ///
+    /// c:3310-3315 records every character start in `charstart[]` while
+    /// walking the input with `CHARINC`, and c:3385-3389 rewinds to the
+    /// previous recorded start (`while (!*--lastcharstart)`). Stepping back
+    /// one BYTE left the continuation opcode inside a multibyte character:
+    /// `[[ $'αβγδε' = *(#b)(?) ]]` aborted the shell with
+    /// "start byte index 9 is not a char boundary".
+    ///
+    /// zsh 5.9.2 oracle (`zsh -fc "setopt extendedglob; [[ αβγδε = *(#b)(?) ]] &&
+    /// print \$mbegin \$mend \$match"`) → `5 5 ε`.
+    #[test]
+    fn star_backtracks_over_character_starts_not_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
+
+        // The pattern that used to panic; every `*` rewind position must be
+        // a character start, so the trailing `?` sees a whole `ε`.
+        let prog = compile("*(#b)(?)");
+        assert!(pattry(&prog, "αβγδε"), "c:3374-3382 — `*` then `?` must match");
+        assert_eq!(
+            crate::ported::params::getaparam("match"),
+            Some(vec!["ε".to_string()]),
+            "c:2587 — the capture is the last CHARACTER, not a trailing byte"
+        );
+        assert_eq!(
+            crate::ported::params::getaparam("mbegin"),
+            Some(vec!["5".to_string()]),
+            "c:2596-2599 — CHARSUB offset of the 5th character"
+        );
+
+        // 4-byte subjects exercise the same rewind with a wider character.
+        let emoji = compile("*(#b)(?)");
+        assert!(pattry(&emoji, "\u{1F600}\u{1F601}\u{1F602}"));
+        assert_eq!(
+            crate::ported::params::getaparam("match"),
+            Some(vec!["\u{1F602}".to_string()])
+        );
+
+        crate::ported::options::opt_state_set("extendedglob", saved);
+    }
+
+    /// `(#U)` (c:1115-1117 `patglobflags &= ~GF_MULTIBYTE`) must reach the
+    /// matcher, and the matcher must key its character UNIT off that bit
+    /// (c:1946 `if (!(patglobflags & GF_MULTIBYTE) || ...) return x + 1;`).
+    ///
+    /// Two ports were missing: `P_ANY` advanced a whole UTF-8 character
+    /// unconditionally, and the mid-pattern P_GFLAGS payload was built from
+    /// `patgetglobflags`'s set-only delta instead of the running
+    /// `patglobflags` (c:993 `up.l = patglobflags`), which cleared
+    /// GF_MULTIBYTE for the rest of the match.
+    ///
+    /// zsh 5.9.2 oracle (`zsh -fc 'setopt extendedglob; [[ αβγδε = (#U)????? ]]'`
+    /// → 1; the ten-`?` form → 0).
+    #[test]
+    fn upper_u_flag_makes_quest_match_one_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
+
+        // "αβγδε" is 5 characters but 10 bytes.
+        let five = compile("(#U)?????");
+        assert!(
+            !pattry(&five, "αβγδε"),
+            "c:1946 — with GF_MULTIBYTE clear `?` is one BYTE, so five don't span it"
+        );
+        let ten = compile("(#U)??????????");
+        assert!(
+            pattry(&ten, "αβγδε"),
+            "c:1946 — ten `?` cover the ten raw bytes"
+        );
+        // `(#u)` (c:1111-1113) puts it back.
+        let u_five = compile("(#u)?????");
+        assert!(pattry(&u_five, "αβγδε"));
+        // Default (no flag) stays multibyte.
+        let plain = compile("?????");
+        assert!(pattry(&plain, "αβγδε"));
+
         crate::ported::options::opt_state_set("extendedglob", saved);
     }
 

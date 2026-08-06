@@ -27,8 +27,8 @@
 //! sh: 71    _deb_packages_update_avail
 //! sh: 72    _deb_packages_update_installed
 //! sh: 73    if (( ! $+_deb_packages_cache_uninstalled )); then
-//! sh: 75      # Package lists too large to efficiently diff with zsh expansion
-//! sh: 76      _deb_packages_cache_uninstalled=(
+//! sh: 74      # Package lists too large to efficiently diff with zsh expansion
+//! sh: 75      _deb_packages_cache_uninstalled=(
 //! sh: 76        $( print -l $_deb_packages_cache_avail |
 //! sh: 77           fgrep -xvf =(print -l $_deb_packages_cache_installed) )
 //! sh: 78      )
@@ -80,11 +80,11 @@
 //! `std::process::Command` spawns (mirroring `_bsd_disks.rs`) rather than
 //! routed through `_call_program`, since the upstream uses bare `$(...)`.
 
-use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_retrieve_cache::retrieve_cache_byname;
-use crate::compsys::ported::_store_cache::store_cache_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_cache_invalid::_cache_invalid;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
+use crate::compsys::ported::_store_cache::_store_cache;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::{bin_zstyle, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -149,15 +149,15 @@ fn update_avail() -> String {
     const IDENT: &str = "DEBS_avail";
     const VAR: &str = "_deb_packages_cache_avail";
     // sh:6-7  (not-set OR invalid) AND retrieve-cache failed → rebuild.
-    if (!cache_exists(VAR) || cache_invalid_byname(&[IDENT.to_string()]) == 0)
-        && retrieve_cache_byname(&[IDENT.to_string()]) != 0
+    if (!cache_exists(VAR) || _cache_invalid(&[IDENT.to_string()]) == 0)
+        && _retrieve_cache(&[IDENT.to_string()]) != 0
     {
         // sh:10  ${(f)"$(apt-cache --generate pkgnames 2>/dev/null)"}
         let raw = run_capture("apt-cache", &["--generate", "pkgnames"]);
         let pkgs: Vec<String> = raw.lines().map(String::from).collect();
         setaparam(VAR, pkgs);
         // sh:13
-        let _ = store_cache_byname(&[IDENT.to_string(), VAR.to_string()]);
+        let _ = _store_cache(&[IDENT.to_string(), VAR.to_string()]);
     }
     // sh:15
     VAR.to_string()
@@ -168,8 +168,8 @@ fn update_avail() -> String {
 fn update_installed() -> String {
     const IDENT: &str = "DEBS_installed";
     const VAR: &str = "_deb_packages_cache_installed";
-    if (!cache_exists(VAR) || cache_invalid_byname(&[IDENT.to_string()]) == 0)
-        && retrieve_cache_byname(&[IDENT.to_string()]) != 0
+    if (!cache_exists(VAR) || _cache_invalid(&[IDENT.to_string()]) == 0)
+        && _retrieve_cache(&[IDENT.to_string()]) != 0
     {
         // sh:23-24
         let pkgs: Vec<String> = dpkg_get_selections()
@@ -178,7 +178,7 @@ fn update_installed() -> String {
             .map(|(pkg, _)| pkg)
             .collect();
         setaparam(VAR, pkgs);
-        let _ = store_cache_byname(&[IDENT.to_string(), VAR.to_string()]);
+        let _ = _store_cache(&[IDENT.to_string(), VAR.to_string()]);
     }
     VAR.to_string()
 }
@@ -187,8 +187,8 @@ fn update_installed() -> String {
 fn update_held() -> String {
     const IDENT: &str = "DEBS_held";
     const VAR: &str = "_deb_packages_cache_held";
-    if (!cache_exists(VAR) || cache_invalid_byname(&[IDENT.to_string()]) == 0)
-        && retrieve_cache_byname(&[IDENT.to_string()]) != 0
+    if (!cache_exists(VAR) || _cache_invalid(&[IDENT.to_string()]) == 0)
+        && _retrieve_cache(&[IDENT.to_string()]) != 0
     {
         // sh:36-37
         let pkgs: Vec<String> = dpkg_get_selections()
@@ -197,7 +197,7 @@ fn update_held() -> String {
             .map(|(pkg, _)| pkg)
             .collect();
         setaparam(VAR, pkgs);
-        let _ = store_cache_byname(&[IDENT.to_string(), VAR.to_string()]);
+        let _ = _store_cache(&[IDENT.to_string(), VAR.to_string()]);
     }
     VAR.to_string()
 }
@@ -207,8 +207,8 @@ fn update_held() -> String {
 fn update_deinstalled() -> String {
     const IDENT: &str = "DEBS_deinstalled";
     const VAR: &str = "_deb_packages_cache_deinstalled";
-    if (!cache_exists(VAR) || cache_invalid_byname(&[IDENT.to_string()]) == 0)
-        && retrieve_cache_byname(&[IDENT.to_string()]) != 0
+    if (!cache_exists(VAR) || _cache_invalid(&[IDENT.to_string()]) == 0)
+        && _retrieve_cache(&[IDENT.to_string()]) != 0
     {
         // sh:49-50
         let pkgs: Vec<String> = dpkg_get_selections()
@@ -217,7 +217,7 @@ fn update_deinstalled() -> String {
             .map(|(pkg, _)| pkg)
             .collect();
         setaparam(VAR, pkgs);
-        let _ = store_cache_byname(&[IDENT.to_string(), VAR.to_string()]);
+        let _ = _store_cache(&[IDENT.to_string(), VAR.to_string()]);
     }
     VAR.to_string()
 }
@@ -227,8 +227,8 @@ fn update_deinstalled() -> String {
 fn update_xinstalled() -> String {
     const IDENT: &str = "DEBS_xinstalled";
     const VAR: &str = "_deb_packages_cache_xinstalled";
-    if (!cache_exists(VAR) || cache_invalid_byname(&[IDENT.to_string()]) == 0)
-        && retrieve_cache_byname(&[IDENT.to_string()]) != 0
+    if (!cache_exists(VAR) || _cache_invalid(&[IDENT.to_string()]) == 0)
+        && _retrieve_cache(&[IDENT.to_string()]) != 0
     {
         // sh:62-63
         let pkgs: Vec<String> = dpkg_get_selections()
@@ -236,7 +236,7 @@ fn update_xinstalled() -> String {
             .map(|(pkg, _)| pkg)
             .collect();
         setaparam(VAR, pkgs);
-        let _ = store_cache_byname(&[IDENT.to_string(), VAR.to_string()]);
+        let _ = _store_cache(&[IDENT.to_string(), VAR.to_string()]);
     }
     VAR.to_string()
 }
@@ -271,8 +271,8 @@ fn update_uninstalled() -> String {
 fn update_source() -> String {
     const IDENT: &str = "DEBS_source";
     const VAR: &str = "_deb_packages_cache_source";
-    if (!cache_exists(VAR) || cache_invalid_byname(&[IDENT.to_string()]) == 0)
-        && retrieve_cache_byname(&[IDENT.to_string()]) != 0
+    if (!cache_exists(VAR) || _cache_invalid(&[IDENT.to_string()]) == 0)
+        && _retrieve_cache(&[IDENT.to_string()]) != 0
     {
         // sh:90 inner  $(apt-get indextargets --format '$(FILENAME)'
         //   'Created-By: Sources' 2>/dev/null) — unquoted, so the result
@@ -300,7 +300,7 @@ fn update_source() -> String {
         pkgs.dedup();
         setaparam(VAR, pkgs);
         // sh:93
-        let _ = store_cache_byname(&[IDENT.to_string(), VAR.to_string()]);
+        let _ = _store_cache(&[IDENT.to_string(), VAR.to_string()]);
     }
     // sh:95
     VAR.to_string()
@@ -376,7 +376,7 @@ pub fn _deb_packages(args: &[String]) -> i32 {
     if !VALID_COMMANDS.contains(&command.as_str()) {
         // sh:107  _message "unknown command: $command"
         // sh:108  return — bare `return` propagates _message's status.
-        return message_byname(&[format!("unknown command: {}", command)]);
+        return _message(&[format!("unknown command: {}", command)]);
     }
 
     // sh:111  zstyle -s ":completion:${curcontext}:" packageset pkgset
@@ -423,7 +423,7 @@ pub fn _deb_packages(args: &[String]) -> i32 {
     //   has no observable effect here, so this is a documented no-op.
 
     // sh:125  _tags packages && compadd "$expl[@]" -a - $cachevar
-    let tags_ret = tags_byname(&["packages".to_string()]);
+    let tags_ret = _tags(&["packages".to_string()]);
     if tags_ret != 0 {
         return tags_ret;
     }

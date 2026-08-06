@@ -6,10 +6,10 @@
 //! sh: 1  #autoload
 //! sh: 4  local term=$'\0'
 //! sh: 6  while getopts "t:" opt; do …  -t TERM
-//! sh:16  shift $(( OPTIND - 1 ))
+//! sh:17  shift $(( OPTIND - 1 ))
 //! sh:18  local tag=$1 desc=$2; shift 2
 //! sh:20  if (( $# )); then reply=( "(" ) else reply=( ); return; fi
-//! sh:27  if [[ $term = $'\0' ]]; then
+//! sh:34  if [[ $term = $'\0' ]]; then
 //! sh:28    matches=":${tag}:${desc}:(( "; end="))"
 //! sh:29  else matches=":${tag}:${desc}:_values -s ${term} ${desc}"
 //! sh:32  for word_i in argv ...
@@ -58,7 +58,7 @@ pub fn _regex_words(args: &[String]) -> i32 {
     }
 
     let mut reply: Vec<String> = vec!["(".to_string()];
-    // sh:27
+    // sh:34
     let (mut matches, end): (String, String) = if term == "\0" {
         (format!(":{}:{}:(( ", tag, desc), "))".to_string())
     } else {

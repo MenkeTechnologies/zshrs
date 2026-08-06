@@ -18,7 +18,7 @@
 //! handling). It populates the global `_mac_apps` array param with
 //! application bundle paths.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::getaparam;
 
@@ -56,7 +56,7 @@ pub fn _mac_applications(args: &[String]) -> i32 {
     wanted_args.extend(args.iter().cloned());
     wanted_args.push("-".to_string());
     wanted_args.extend(names);
-    wanted_byname(&wanted_args)
+    _wanted(&wanted_args)
 }
 
 #[cfg(test)]

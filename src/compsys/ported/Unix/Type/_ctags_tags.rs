@@ -14,7 +14,7 @@
 //! compadd reads a NAMED array, so the port publishes `tags` as an array
 //! parameter before dispatching `_wanted`.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::setaparam;
 
 /// `_ctags_tags` — complete tag names from a ctags `tags` file in $PWD.
@@ -48,7 +48,7 @@ pub fn _ctags_tags(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
     wanted_argv.push("tags".to_string());
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

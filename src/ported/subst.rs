@@ -6694,8 +6694,117 @@ pub fn paramsubst(
                 } else {
                     val.unwrap_or_default()
                 }
-            } else if let Some(map) = assoc_get(&var_name) {
+            } else if let Some(map) = (|| -> Option<Vec<(String, String)>> {
+                // c:Src/params.c:689-702 `paramvalarr` scans the parameter's
+                // hash table and filters PER NODE (`scanparamvals`, c:644-681);
+                // it never builds a copy of the table. The one O(n) consumer in
+                // this arm is the flagged-subscript scan below, which walks the
+                // entries once in `scanhashtable` order (c:Src/hashtable.c:426)
+                // and keeps only the matches — so materialising an owned
+                // `IndexMap` first, re-hashing every key into a fresh hashbrown
+                // table before the caller has looked at a single node, is pure
+                // waste. A `sample(1)` profile of
+                // `repeat 1500 { v=${(k)big[(I)k1234]} }` over a 5,000-entry
+                // assoc put `subst::assoc_get` at 3,645 of the 5,953 samples
+                // under `fusevm_bridge::paramsubst_to_value` — 61% of the read
+                // building a map that the `(I)` scan discards.
+                //
+                // The scan still cannot borrow straight out of the store: its
+                // per-node filter is `pattry`, and `pattry` writes
+                // `$MATCH`/`$MBEGIN`/`$MEND` for a `(#m)` pattern
+                // (pattern.rs:3475 `setsparam("MATCH", …)`), which re-enters the
+                // same non-reentrant `Mutex` (params.rs:6872, inside
+                // `assignsparam`). Matching under the store lock therefore
+                // self-deadlocks on `${h[(I)(#m)k*]}`. So the entries are copied
+                // out once, in bucket order, with the lock held and no
+                // intermediate hash table — which is the part `assoc_get` was
+                // paying for twice.
+                let resolved = match crate::ported::params::resolve_nameref_name(&var_name, None) {
+                    crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+                    _ => var_name.clone(),
+                };
+                // c:Src/params.c:1090-1115 createparam — a `local NAME` /
+                // `typeset NAME` inside a function replaces the special's
+                // paramtab node with a plain one, so the magic getfn/scanfn is
+                // unreachable until the scope pops.
+                if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+                    return None;
+                }
+                // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a
+                // live gsu integer spliced into the map BEFORE its bucket order
+                // is taken, so it keeps going through `assoc_get`; likewise the
+                // `zsh/parameter` magic PM_HASHED specials, whose values only
+                // exist once their getfn has run. Both are handled there, and
+                // both are small next to a user assoc.
+                if resolved != "compstate" {
+                    if let Some(store) = paramtab_hashed_storage().lock().ok() {
+                        if let Some(m) = store.get(resolved.as_str()) {
+                            // Same hash-bucket order as `assoc_get` (see there
+                            // for the C provenance: c:217 front insert, c:457 ×4
+                            // growth, c:426 walk), but the visit order is applied
+                            // straight to the output pairs instead of to a second
+                            // `IndexMap`.
+                            let keys: Vec<&str> = m.keys().map(String::as_str).collect();
+                            let n = keys.len();
+                            let hashes: Vec<u32> = keys
+                                .iter()
+                                .map(|k| crate::ported::hashtable::hasher(k)) // c:86
+                                .collect();
+                            let mut hsize = 17usize; // c:Src/params.c:1602
+                            let mut head: Vec<i32> = vec![-1; hsize];
+                            let mut next: Vec<i32> = vec![-1; n];
+                            let mut ct = 0usize; // c:118
+                            for i in 0..n {
+                                let hv = (hashes[i] as usize) % hsize; // c:176
+                                next[i] = head[hv]; // c:217
+                                head[hv] = i as i32; // c:218
+                                ct += 1; // c:219
+                                if ct >= hsize * 2 {
+                                    let osize = hsize; // c:463
+                                    hsize = osize * 4; // c:466
+                                    let old_head =
+                                        std::mem::replace(&mut head, vec![-1; hsize]); // c:467
+                                    ct = 0; // c:468
+                                    for b in 0..osize {
+                                        // c:472
+                                        let mut p = old_head[b];
+                                        while p >= 0 {
+                                            let idx = p as usize;
+                                            let nxt = next[idx]; // c:474
+                                            let hv = (hashes[idx] as usize) % hsize;
+                                            next[idx] = head[hv]; // c:475
+                                            head[hv] = idx as i32;
+                                            ct += 1;
+                                            p = nxt; // c:476
+                                        }
+                                    }
+                                }
+                            }
+                            let mut out: Vec<(String, String)> = Vec::with_capacity(n);
+                            for b in 0..hsize {
+                                // c:426
+                                let mut p = head[b];
+                                while p >= 0 {
+                                    // c:427
+                                    if let Some((k, v)) = m.get_index(p as usize) {
+                                        out.push((k.clone(), v.clone()));
+                                    }
+                                    p = next[p as usize];
+                                }
+                            }
+                            return Some(out);
+                        }
+                    }
+                }
+                assoc_get(&var_name).map(|m| m.into_iter().collect())
+            })() {
                 // c:2926 (assoc lookup)
+                // `map` is the parameter's entries in `scanhashtable` visit
+                // order (c:Src/hashtable.c:426). Single-key lookups below are
+                // linear over it rather than hashed; that is strictly cheaper
+                // than the `IndexMap` build they replace, and the O(1)
+                // single-key arms above this one already catch every plain
+                // `${assoc[key]}` read before it gets here.
                 // c:Src/params.c — `${assoc[@]}` and `${assoc[*]}`
                 // enumerate VALUES (matching the unquoted-bare
                 // splat `$assoc[@]` semantics handled in
@@ -6706,8 +6815,10 @@ pub fn paramsubst(
                 // `${h[@]}` came out blank instead of enumerating
                 // the value bag. Bug #109 in docs/BUGS.md.
                 if sub == "@" || sub == "*" {
-                    // Values in insertion order (IndexMap iter order).
-                    map.values().cloned().collect::<Vec<_>>().join(" ")
+                    map.iter()
+                        .map(|(_, v)| v.clone())
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 } else
                 // Subscript-flag form: (I)pat / (i)pat (search keys
                 // for pattern, return matching key) and (R)pat /
@@ -7015,13 +7126,13 @@ pub fn paramsubst(
                     let key_owned = crate::lex::untokenize(key);
                     let key = key_owned.as_str();
                     if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0 {
-                        if map.contains_key(key) {
+                        if map.iter().any(|(k, _)| k == key) {
                             key.to_string()
                         } else {
                             String::new()
                         }
                     } else {
-                        map.get(key).cloned().unwrap_or_default()
+                        map.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
                     }
                 } else if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0 {
                     // c:Src/params.c:1492-1494 — `if (v->scanflags &
@@ -7037,13 +7148,13 @@ pub fn paramsubst(
                     // (zsh 5.9: `${(k)H[missing]}` → ""). `(kv)`
                     // keeps WANTVALS so it stays on the value arm
                     // (zsh 5.9: `${(kv)H[k1]}` → "v1").
-                    if map.contains_key(sub) {
+                    if map.iter().any(|(k, _)| k == sub) {
                         sub.to_string()
                     } else {
                         String::new()
                     }
                 } else {
-                    map.get(sub).cloned().unwrap_or_default()
+                    map.iter().find(|(k, _)| k == sub).map(|(_, v)| v.clone()).unwrap_or_default()
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
                 // c:2926 (array)

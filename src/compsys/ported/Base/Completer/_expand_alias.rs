@@ -40,7 +40,7 @@
 //! ```
 
 use crate::compsys::ported::_aliases::_aliases;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
@@ -169,7 +169,7 @@ pub fn _expand_alias() -> i32 {
             argv.extend(w_args);
             dispatch_function_call("_main_complete", &argv).unwrap_or(1)
         } else {
-            wanted_byname(&w_args)
+            _wanted(&w_args)
         }
     } else if has_main_complete_pre && testforstyle(&ctx, "complete") == 0 {
         // sh:56-57

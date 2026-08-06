@@ -4,28 +4,28 @@
 //! ```text
 //! sh: 1  #autoload  (complete locally bound IP addresses)
 //! sh:14  local -a expl tmp cmd=( ifconfig -a ); local -A opts
-//! sh:16  zparseopts -A opts -D -E -- 0 4 6 b h L K
-//! sh:20  [[ $OSTYPE == linux* ]] && (( $+commands[ip] )) && cmd=( ip addr show )
-//! sh:22  tmp=( ${(f)"$( _call_program bind-addresses $cmd )"} )
-//! sh:23  tmp=( ${(@M)tmp##(|[[:space:]]##)inet(|6)(|:)[[:space:]]*} )
-//! sh:24  tmp=( ${(@)tmp#*inet(|6)(|:)[[:space:]]##} )
-//! sh:25  tmp=( ${(@)tmp%%[^0-9A-Fa-f:.]*} )
-//! sh:28  (( $+opts[-0] )) && tmp+=( 0.0.0.0 :: )
+//! sh:18  zparseopts -A opts -D -E -- 0 4 6 b h L K
+//! sh:22  [[ $OSTYPE == linux* ]] && (( $+commands[ip] )) && cmd=( ip addr show )
+//! sh:24  tmp=( ${(f)"$( _call_program bind-addresses $cmd )"} )
+//! sh:25  tmp=( ${(@M)tmp##(|[[:space:]]##)inet(|6)(|:)[[:space:]]*} )
+//! sh:26  tmp=( ${(@)tmp#*inet(|6)(|:)[[:space:]]##} )
+//! sh:27  tmp=( ${(@)tmp%%[^0-9A-Fa-f:.]*} )
+//! sh:30  (( $+opts[-0] )) && tmp+=( 0.0.0.0 :: )
 //! sh:30  if (( $+opts[-6] )); then tmp=( ${(@M)tmp:#*:*} )
 //! sh:31  elif (( $+opts[-4] )); then tmp=( ${(@)tmp:#*:*} ); fi
 //! sh:35  (( $+opts[-L] )) && { tmp=( ${(@)tmp:#127.*} ); tmp=( ${(@)tmp:#[0:]##:1} ) }
 //! sh:39  (( $+opts[-K] )) && { tmp=( ${(@)tmp:#169.254.*} ); tmp=( ${(@)tmp:#(#i)fe[89ab]?:*} ) }
-//! sh:43  (( $+opts[-b] )) && tmp=( ${(@)tmp/(#m)*:*/\[$MATCH\]} )
-//! sh:44  (( $+opts[-h] )) && tmp+=( localhost )
-//! sh:46  _wanted bind-addresses expl 'bind address' compadd -a "$@" - tmp
+//! sh:47  (( $+opts[-b] )) && tmp=( ${(@)tmp/(#m)*:*/\[$MATCH\]} )
+//! sh:48  (( $+opts[-h] )) && tmp+=( localhost )
+//! sh:50  _wanted bind-addresses expl 'bind address' compadd -a "$@" - tmp
 //! ```
 //!
-//! sh:23-25 approx — the address extraction uses per-line string ops
+//! sh:25-27 approx — the address extraction uses per-line string ops
 //! (match an `inet`/`inet6` line, then keep the leading `[0-9A-Fa-f:.]`
 //! run) rather than the zsh `${(@M)…##…}` engine.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
 /// sh:23-25 approx — pull the address token out of one `ifconfig`/`ip` line.
@@ -53,7 +53,7 @@ fn extract_inet(line: &str) -> Option<String> {
 /// `_bind_addresses` — complete locally bound IP addresses.
 pub fn _bind_addresses(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_bind_addresses");
-    // sh:16 — parse the flag set (no arguments); everything else passes through.
+    // sh:18 — parse the flag set (no arguments); everything else passes through.
     let flags = ['0', '4', '6', 'b', 'h', 'L', 'K'];
     let mut opt: std::collections::HashSet<char> = std::collections::HashSet::new();
     let mut rest: Vec<String> = Vec::new();
@@ -76,14 +76,14 @@ pub fn _bind_addresses(args: &[String]) -> i32 {
         vec!["ifconfig".into(), "-a".into()]
     };
 
-    // sh:22-25 — run it, split lines, extract addresses.
+    // sh:24-27 — run it, split lines, extract addresses.
     let mut cp: Vec<String> = vec!["bind-addresses".to_string()];
     cp.extend(cmd);
     let _ = _call_program(&cp);
     let out = getsparam("REPLY").unwrap_or_default();
     let mut tmp: Vec<String> = out.lines().filter_map(extract_inet).collect();
 
-    // sh:28 — order is significant.
+    // sh:30 — order is significant.
     if hasf('0') {
         tmp.push("0.0.0.0".to_string());
         tmp.push("::".to_string());
@@ -104,7 +104,7 @@ pub fn _bind_addresses(args: &[String]) -> i32 {
         tmp.retain(|a| !a.starts_with("169.254."));
         tmp.retain(|a| !is_v6_link_local(a));
     }
-    // sh:43 — bracket v6 addresses for use with a port.
+    // sh:47 — bracket v6 addresses for use with a port.
     if hasf('b') {
         for a in tmp.iter_mut() {
             if a.contains(':') {
@@ -112,12 +112,12 @@ pub fn _bind_addresses(args: &[String]) -> i32 {
             }
         }
     }
-    // sh:44
+    // sh:48
     if hasf('h') {
         tmp.push("localhost".to_string());
     }
 
-    // sh:46  _wanted bind-addresses expl 'bind address' compadd -a "$@" - tmp
+    // sh:50  _wanted bind-addresses expl 'bind address' compadd -a "$@" - tmp
     setaparam("tmp", tmp);
     let mut wanted_argv: Vec<String> = vec![
         "bind-addresses".to_string(),
@@ -129,7 +129,7 @@ pub fn _bind_addresses(args: &[String]) -> i32 {
     wanted_argv.extend(rest);
     wanted_argv.push("-".to_string());
     wanted_argv.push("tmp".to_string());
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 /// `(( $+commands[ip] ))` — is `ip` on $PATH.
@@ -173,7 +173,7 @@ mod tests {
             extract_inet("    inet6 fe80::1%en0 prefixlen 64"),
             Some("fe80::1".to_string())
         );
-        // `inet:` colon form — sh:24 `inet(|6)(|:)[[:space:]]##` still
+        // `inet:` colon form — sh:26 `inet(|6)(|:)[[:space:]]##` still
         // requires whitespace after the optional `:`, so the address
         // starts past the space.
         assert_eq!(

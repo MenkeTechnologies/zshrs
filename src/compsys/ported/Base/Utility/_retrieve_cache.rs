@@ -4,9 +4,9 @@
 //! Full upstream body (31 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 6  local _cache_ident _cache_dir _cache_path _cache_policy
-//! sh: 7  _cache_ident="$1"
-//! sh: 9  if zstyle -t ":completion:${curcontext}:" use-cache; then
+//! sh: 5  local _cache_ident _cache_dir _cache_path _cache_policy
+//! sh: 6  _cache_ident="$1"
+//! sh: 8  if zstyle -t ":completion:${curcontext}:" use-cache; then
 //! sh:10    zstyle -s ":completion:${curcontext}:" cache-path _cache_dir
 //! sh:11    : ${_cache_dir:=${ZDOTDIR:-$HOME}/.zcompcache}
 //! sh:12    if [[ ! -d "$_cache_dir" ]]; then
@@ -35,8 +35,8 @@
 //! executor in scope the load step is a no-op and we still return
 //! success when the file exists + is fresh.
 
-use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_cache_invalid::_cache_invalid;
+use crate::compsys::ported::_message::_message;
 use crate::ported::exec::execute_script;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::getsparam;
@@ -45,29 +45,35 @@ use std::path::Path;
 /// Reach `_retrieve_cache` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_retrieve_cache luarocks_installed_list` (Completion/Unix/Command/_luarocks sh:213) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn retrieve_cache_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_retrieve_cache", args, || _retrieve_cache(args))
+/// [`_retrieve_cache_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _retrieve_cache(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_retrieve_cache", args, || {
+        _retrieve_cache_impl(args)
+    })
 }
 
 /// `_retrieve_cache` — load `$cache_ident` from disk if the cache
 /// is enabled, exists, and isn't invalid per `_cache_invalid`.
 /// Returns 0 on successful load, 1 otherwise.
-pub fn _retrieve_cache(args: &[String]) -> i32 {
+pub fn _retrieve_cache_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_retrieve_cache");
     let cache_ident = args.first().cloned().unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
 
-    // sh:9
+    // sh:8
     if testforstyle(&ctx, "use-cache") != 0 {
         return 1;
     }
@@ -89,7 +95,7 @@ pub fn _retrieve_cache(args: &[String]) -> i32 {
     match dir_meta {
         Ok(m) if m.is_dir() => {}
         Ok(_) => {
-            let _ = message_byname(&[format!("cache-dir ({}) isn't a directory!", cache_dir)]);
+            let _ = _message(&[format!("cache-dir ({}) isn't a directory!", cache_dir)]);
             return 1;
         }
         Err(_) => return 1,
@@ -101,7 +107,7 @@ pub fn _retrieve_cache(args: &[String]) -> i32 {
     // sh:20
     if Path::new(&cache_path).exists() {
         // sh:21
-        if cache_invalid_byname(&[cache_ident]) == 0 {
+        if _cache_invalid(&[cache_ident]) == 0 {
             return 1;
         }
         // sh:23  `. "$_cache_path"` — source the cache file in the
@@ -132,6 +138,6 @@ mod tests {
     #[test]
     fn returns_one_when_use_cache_disabled() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_retrieve_cache(&["my-cache".to_string()]), 1);
+        assert_eq!(_retrieve_cache_impl(&["my-cache".to_string()]), 1);
     }
 }

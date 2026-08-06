@@ -4,37 +4,37 @@
 //! can see the spec without leaving the file:
 //!
 //! ```text
-//! sh: 1  # So that this file can also be read with `.' or `source' ...
-//! sh: 2  compaudit() {                           # Define and then call
-//! sh: 9  emulate -L zsh
-//! sh:10  setopt extendedglob
-//! sh:12  [[ -n $commands[getent] ]] || getent() { … shim … }
-//! sh:22  if (( $# )); then local _compdir='' ; elif (( ! $#fpath )); then
-//! sh:25    print 'compaudit: No directories in $fpath…' 1>&2; return 1
-//! sh:27  else set -- $fpath
-//! sh:35  (( $+_i_check )) || { local _i_q _i_line _i_file _i_fail=verbose
-//! sh:37    local -a _i_files _i_addfiles _i_wdirs _i_wfiles
-//! sh:38    local -a -U +h fpath
-//! sh:40  fpath=( $* )
-//! sh:45  (( $+_compdir )) || { _compdir=${fpath[(r)*/$ZSH_VERSION/*]} || $fpath[1] }
-//! sh:54  _i_files=( ${^~fpath:/.}/^([^_]*|*~|*.zwc)(N) )
-//! sh:55  if [[ -n $_compdir ]]; then … pad fpath with sibling dirs …
-//! sh:78  [[ $_i_fail == use ]] && return 0
-//! sh:82  _i_owners="u0u${EUID}"  # owners we trust: root + current EUID
-//! sh:90  exe lookup: /proc/$$/exe → stat its uid → trust that uid too
-//! sh:103 # We search for:
+//! sh:  1  # So that this file can also be read with `.' or `source' ...
+//! sh:  2  compaudit() {                           # Define and then call
+//! sh: 15  emulate -L zsh
+//! sh: 16  setopt extendedglob
+//! sh: 12  [[ -n $commands[getent] ]] || getent() { … shim … }
+//! sh: 22  if (( $# )); then local _compdir='' ; elif (( ! $#fpath )); then
+//! sh: 25    print 'compaudit: No directories in $fpath…' 1>&2; return 1
+//! sh: 27  else set -- $fpath
+//! sh: 35  (( $+_i_check )) || { local _i_q _i_line _i_file _i_fail=verbose
+//! sh: 44    local -a _i_files _i_addfiles _i_wdirs _i_wfiles
+//! sh: 45    local -a -U +h fpath
+//! sh: 48  fpath=( $* )
+//! sh: 45  (( $+_compdir )) || { _compdir=${fpath[(r)*/$ZSH_VERSION/*]} || $fpath[1] }
+//! sh: 62  _i_files=( ${^~fpath:/.}/^([^_]*|*~|*.zwc)(N) )
+//! sh: 55  if [[ -n $_compdir ]]; then … pad fpath with sibling dirs …
+//! sh: 86  [[ $_i_fail == use ]] && return 0
+//! sh: 82  _i_owners="u0u${EUID}"  # owners we trust: root + current EUID
+//! sh: 90  exe lookup: /proc/$$/exe → stat its uid → trust that uid too
+//! sh:116 # We search for:
 //! sh:104 #  - world/group-writable dirs in fpath not owned by trusted owners
 //! sh:105 #  - parent-dirs of fpath dirs likewise
 //! sh:106 #  - digest (.zwc) files for those dirs
 //! sh:107 #  - and `_*` files inside those dirs
-//! sh:111 _i_wdirs=( ${^fpath}(N-f:g+w:,-f:o+w:,-^${_i_owners})
-//! sh:112             ${^fpath:h}(N-f:g+w:,-f:o+w:,-^${_i_owners}) )
+//! sh:125 _i_wdirs=( ${^fpath}(N-f:g+w:,-f:o+w:,-^${_i_owners})
+//! sh:126             ${^fpath:h}(N-f:g+w:,-f:o+w:,-^${_i_owners}) )
 //! sh:116 # RedHat "per-user group" exemption
 //! sh:131 # Debian /usr/local + group `staff` exemption
 //! sh:141 _i_wdirs += ${^fpath}.zwc^([^_]*|*~)(N-^${_i_owners})
-//! sh:142 _i_wfiles=( ${^fpath}/^([^_]*|*~)(N-^${_i_owners}) )
+//! sh:156 _i_wfiles=( ${^fpath}/^([^_]*|*~)(N-^${_i_owners}) )
 //! sh:151 if [[ -n "$_i_q" ]]; … print + return 1
-//! sh:175 }
+//! sh:169 }
 //! sh:176 compaudit "$@"
 //! ```
 //!
@@ -53,7 +53,7 @@ use std::path::{Path, PathBuf};
 /// and files`) plus the actual offending path lists.
 #[derive(Debug, Default, Clone)]
 pub struct CompauditError {
-    /// sh:111-112 — fpath dirs (and their parents) that are
+    /// sh:125-126 — fpath dirs (and their parents) that are
     /// group/world writable or owned by an untrusted UID.
     pub insecure_dirs: Vec<PathBuf>,
     /// sh:141-142 — `_*` files inside fpath dirs (plus their
@@ -133,7 +133,7 @@ pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
 
     let mut audit = CompauditError::default();
 
-    // sh:111-112 — fpath dirs + their parents
+    // sh:125-126 — fpath dirs + their parents
     for dir in &fpath {
         check_directory(
             dir,
@@ -180,7 +180,7 @@ pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
         }
     }
 
-    // sh:142 — `${^fpath}/^([^_]*|*~)(N-^${_i_owners})` — files
+    // sh:156 — `${^fpath}/^([^_]*|*~)(N-^${_i_owners})` — files
     //   IN each fpath dir that start with `_` AND don't end with
     //   `~` AND aren't owned by trusted users.
     for dir in &fpath {
@@ -209,7 +209,7 @@ pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
     }
 }
 
-/// sh:111 per-dir audit — group/world writable + owner check.
+/// sh:125 per-dir audit — group/world writable + owner check.
 /// Applies the RedHat per-user-group + Debian staff-group
 /// exemptions.
 fn check_directory(
@@ -234,7 +234,7 @@ fn check_directory(
             }
         }
     }
-    // sh:111 — `-f:g+w:,-f:o+w:,-^${_i_owners}` means: NOT
+    // sh:125 — `-f:g+w:,-f:o+w:,-^${_i_owners}` means: NOT
     //   (group-writable AND not in user-private-group exception),
     //   NOT world-writable, AND owned by trusted user.
     let group_write = (meta.mode() & 0o020) != 0;

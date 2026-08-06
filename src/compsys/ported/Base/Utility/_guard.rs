@@ -22,7 +22,7 @@
 //! returns 1. Otherwise emits a description message and returns 0
 //! iff anything is typed.
 
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
@@ -106,7 +106,7 @@ pub fn _guard(args: &[String]) -> i32 {
         argv.remove(0); // shift
     }
     let msg = argv.join(" ");
-    let _ = message_byname(&["-e".to_string(), msg]);
+    let _ = _message(&["-e".to_string(), msg]);
 
     // sh:12  return code = "$PREFIX$SUFFIX" non-empty
     if combined.is_empty() {

@@ -32,7 +32,7 @@
 //! `_wanted.rs`/`_normal.rs` do, since zshrs has no positional-`$@`
 //! substrate for this call.
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_files::_files;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, setaparam, unsetparam};
@@ -124,7 +124,7 @@ pub fn _deb_files(args: &[String]) -> i32 {
     let exts = compute_exts(!c.is_empty(), !d.is_empty());
 
     // sh:18  _description files _expl 'Debian package'
-    let _ = description_byname(&[
+    let _ = _description(&[
         "files".to_string(),
         "_expl".to_string(),
         "Debian package".to_string(),

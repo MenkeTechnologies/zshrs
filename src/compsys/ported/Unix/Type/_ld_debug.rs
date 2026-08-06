@@ -2,15 +2,15 @@
 //!
 //! Full upstream body (40 lines, abridged):
 //! ```text
-//! sh: 1  #compdef -value-,LD_DEBUG,-default-
-//! sh: 3  local vals
-//! sh: 5  vals=( 'libs[…]' 'files[…]' 'bindings[…]' 'reloc[…]' 'symbols[…]'
+//! sh:1  #compdef -value-,LD_DEBUG,-default-
+//! sh:3  local vals
+//! sh:5  vals=( 'libs[…]' 'files[…]' 'bindings[…]' 'reloc[…]' 'symbols[…]'
 //! sh:      'unused[…]' 'versions[…]' 'help[…]' )
 //! sh:16  case $OSTYPE in
 //! sh:17    solaris*) vals+=( basic cap detail demangle init long move segments
 //! sh:                       strtab tls … ) ;;
 //! sh:31    linux*)   vals+=( all scopes statistics ) ;;
-//! sh:37  esac
+//! sh:38  esac
 //! sh:39  _values -s , capability $vals
 //! ```
 

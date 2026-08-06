@@ -15,21 +15,21 @@
 //! sh:14    inits=( … xinetd-based split, init side … )
 //! sh:15    xinetds=( … xinetd side … )
 //! sh:17    _alternative 'init:init service:compadd -a inits' \
-//! sh:18                 'xinetd:xinetd service:compadd -a xinetds' && ret=0
-//! sh:19  else
-//! sh:22    scriptpath=(/etc/init.d /etc/rc.d /etc/rc.d/init.d)
+//! sh:19                 'xinetd:xinetd service:compadd -a xinetds' && ret=0
+//! sh:20  else
+//! sh:25    scriptpath=(/etc/init.d /etc/rc.d /etc/rc.d/init.d)
 //! sh:24    for dir in $scriptpath; do [[ -d $dir ]] && break; done
 //! sh:29    _wanted services expl service compadd "$@" - $dir/*(-*:t) && ret=0
-//! sh:31  fi
-//! sh:33  return ret
+//! sh:30  fi
+//! sh:36  return ret
 //! ```
 //!
 //! sh:14-15 the nested xinetd-based split of `chkconfig --list` output is
 //! done with straight line/field ops (`// sh:14 approx`).
 
-use crate::compsys::ported::_alternative::alternative_byname;
+use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
 /// sh:29 approx — basenames of executable entries in `dir` (`*(-*:t)`).
@@ -83,7 +83,7 @@ pub fn _services(args: &[String]) -> i32 {
             wanted_argv.extend(args.iter().cloned());
             wanted_argv.push("-".to_string());
             wanted_argv.extend(alls);
-            return wanted_byname(&wanted_argv);
+            return _wanted(&wanted_argv);
         }
         return 1;
     }
@@ -126,7 +126,7 @@ pub fn _services(args: &[String]) -> i32 {
         };
         setaparam("inits", inits);
         setaparam("xinetds", xinetds);
-        return alternative_byname(&[
+        return _alternative(&[
             "init:init service:compadd -a inits".to_string(),
             "xinetd:xinetd service:compadd -a xinetds".to_string(),
         ]);
@@ -147,7 +147,7 @@ pub fn _services(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
     wanted_argv.extend(names);
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

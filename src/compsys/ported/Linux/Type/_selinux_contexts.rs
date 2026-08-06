@@ -27,10 +27,10 @@
 //! into a fixed 3-slot table rather than generic name indirection —
 //! the same style `_fuse_arguments` uses for its own fixed sub-calls.
 
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_selinux_roles::selinux_roles_byname;
-use crate::compsys::ported::_selinux_types::selinux_types_byname;
-use crate::compsys::ported::_selinux_users::{_selinux_users, selinux_users_byname};
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_selinux_roles::_selinux_roles;
+use crate::compsys::ported::_selinux_types::_selinux_types;
+use crate::compsys::ported::_selinux_users::_selinux_users;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -149,14 +149,14 @@ pub fn _selinux_contexts(args: &[String]) -> i32 {
     if idx < PART_NAMES.len() {
         // sh:18
         match PART_NAMES[idx] {
-            "users" => selinux_users_byname(&users),
-            "roles" => selinux_roles_byname(&roles),
-            "types" => selinux_types_byname(&types),
+            "users" => _selinux_users(&users),
+            "roles" => _selinux_roles(&roles),
+            "types" => _selinux_types(&types),
             _ => unreachable!(),
         }
     } else {
         // sh:20
-        message_byname(&[
+        _message(&[
             "-e".to_string(),
             "selinux-ranges".to_string(),
             "selinux range".to_string(),

@@ -17,18 +17,18 @@
 //! sh:15       ! zstyle -T … prefix-needed; then
 //! sh:17      if [[ "$prev" = (\[\[|\|\||\&\&|\!|\() ]]; then
 //! sh:18        _describe -o 'condition code' '( … unary tests … )'
-//! sh:51      else
+//! sh:44      else
 //! sh:52        _describe -o 'condition code' '( … binary tests … )'
-//! sh:60      fi
-//! sh:62    _alternative 'files:: _files' 'parameters:: _parameters' && ret=0
-//! sh:64    return ret
-//! sh:65  fi
+//! sh:56      fi
+//! sh:57    _alternative 'files:: _files' 'parameters:: _parameters' && ret=0
+//! sh:59    return ret
+//! sh:60  fi
 //! ```
 
-use crate::compsys::ported::_alternative::alternative_byname;
-use crate::compsys::ported::_file_descriptors::file_descriptors_byname;
-use crate::compsys::ported::_options::options_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_alternative::_alternative;
+use crate::compsys::ported::_file_descriptors::_file_descriptors;
+use crate::compsys::ported::_options::_options;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam};
@@ -96,21 +96,21 @@ pub fn _condition() -> i32 {
 
     // sh:5
     if prev == "-o" {
-        if tags_byname(&["-C".to_string(), "-o".to_string(), "options".to_string()]) == 0 {
-            return options_byname(&[]);
+        if _tags(&["-C".to_string(), "-o".to_string(), "options".to_string()]) == 0 {
+            return _options(&[]);
         }
         return 1;
     }
     // sh:7
     if is_file_test_op(&prev) {
-        if tags_byname(&["-C".to_string(), prev, "files".to_string()]) == 0 {
+        if _tags(&["-C".to_string(), prev, "files".to_string()]) == 0 {
             return dispatch_function_call("_files", &[]).unwrap_or(1);
         }
         return 1;
     }
     // sh:9
     if prev == "-t" {
-        return file_descriptors_byname(&[]);
+        return _file_descriptors(&[]);
     }
     // sh:11
     if prev == "-v" {
@@ -145,8 +145,8 @@ pub fn _condition() -> i32 {
             ret = 0;
         }
     }
-    // sh:62
-    if alternative_byname(&[
+    // sh:57
+    if _alternative(&[
         "files:: _files".to_string(),
         "parameters:: _parameters".to_string(),
     ]) == 0

@@ -15,7 +15,7 @@
 //! sh:        compadd "$@" -M 'L:|no=' -a "$@" - fss
 //! ```
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
 fn fixed(list: &[&str]) -> Vec<String> {
@@ -159,7 +159,7 @@ pub fn _file_systems(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("fss".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

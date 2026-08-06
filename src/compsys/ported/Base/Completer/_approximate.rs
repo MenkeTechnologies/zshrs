@@ -32,11 +32,11 @@
 //! compadd-override layer's eventual install/remove (deferred) is
 //! correctly scoped per-iteration.
 
-use crate::compsys::ported::_complete::complete_byname;
-use crate::compsys::ported::_description::description_byname;
-use crate::compsys::ported::_requested::requested_byname;
+use crate::compsys::ported::_complete::_complete;
+use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_shadow::{_shadow, _unshadow};
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -206,7 +206,7 @@ pub fn _approximate(args: &[String]) -> i32 {
     }
 
     // sh:50
-    let _ = tags_byname(&["corrections".to_string(), "original".to_string()]);
+    let _ = _tags(&["corrections".to_string(), "original".to_string()]);
 
     // sh:74-77
     let opm = get_compstate_str("pattern_match").unwrap_or_default();
@@ -252,7 +252,7 @@ pub fn _approximate(args: &[String]) -> i32 {
         let new_ctx = replace_completer_field(&oldcontext, comp_correct);
         let _ = setsparam("curcontext", &new_ctx);
 
-        let _ = description_byname(&[
+        let _ = _description(&[
             "corrections".to_string(),
             "_correct_expl".to_string(),
             "corrections".to_string(),
@@ -276,7 +276,7 @@ pub fn _approximate(args: &[String]) -> i32 {
         set_compadd_prefix_injector(format!("(#a{})", comp_correct));
         *COMPADD_ARGV_SHADOW.lock().unwrap() = Some(approximate_compadd_shadow);
 
-        let comp_ret = complete_byname();
+        let comp_ret = _complete();
 
         *COMPADD_ARGV_SHADOW.lock().unwrap() = None;
         clear_compadd_prefix_injector();
@@ -288,14 +288,14 @@ pub fn _approximate(args: &[String]) -> i32 {
                 && unambig.chars().count() >= pre_suf.chars().count()
             {
                 set_compstate_str("pattern_insert", "unambiguous");
-            } else if requested_byname(&["original".to_string()]) == 0 {
+            } else if _requested(&["original".to_string()]) == 0 {
                 // sh:88-90
                 let nm: i64 = get_compstate_str("nmatches")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
                 if nm > 1 || testforstyle(&format!(":completion:{}:", new_ctx), "original") == 0 {
                     // sh:93
-                    let _ = description_byname(&[
+                    let _ = _description(&[
                         "-V".to_string(),
                         "original".to_string(),
                         "expl".to_string(),

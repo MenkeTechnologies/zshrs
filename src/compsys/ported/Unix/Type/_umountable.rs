@@ -5,13 +5,13 @@
 //! sh: 1  #autoload
 //! sh: 5  case "$OSTYPE" in
 //! sh: 6  linux*)   tmp=( "${(@f)$(< /proc/self/mounts)}" )
-//! sh: 7            dev_tmp=( "${(@)${(@)tmp%% *}:#none}" )
+//! sh: 8            dev_tmp=( "${(@)${(@)tmp%% *}:#none}" )
 //! sh: 8            mp_tmp=( "${(@)${(@)tmp#* }%% *}" ) ;;
 //! sh:16  freebsd*|dragonfly*)  /sbin/mount | while read mline; do
-//! sh:17            [[ $mline[(w)1] = map ]] && continue
+//! sh:18            [[ $mline[(w)1] = map ]] && continue
 //! sh:18            dev_tmp+=( $mline[(w)1] ); mp_tmp+=( $mline[(w)3] ) done ;;
 //! sh:22  darwin*)  tmp=( "${(@f)$(/sbin/mount)}" )
-//! sh:23            dev_tmp=( "${(@)${(@)tmp%% *}:#map}" )
+//! sh:25            dev_tmp=( "${(@)${(@)tmp%% *}:#map}" )
 //! sh:24            mp_tmp=( "${(@)${(@)tmp#* on }%% \(*}" ) ;;
 //! sh:27  *)        /sbin/mount | while read mline; do
 //! sh:28            mp_tmp+=( $mline[(w)1] ); dev_tmp+=( $mline[(w)3] ) done ;;
@@ -26,7 +26,7 @@
 //! sh:50    'directories:mount point:_canonical_paths -A mp_tmp -N -M "r:|/=* r:|=*" directories mount\ point'
 //! ```
 
-use crate::compsys::ported::_alternative::alternative_byname;
+use crate::compsys::ported::_alternative::_alternative;
 use crate::ported::params::setaparam;
 
 /// sh:42-43 — decode each `\NNN` (backslash + exactly 3 octal digits)
@@ -164,7 +164,7 @@ pub fn _umountable(_args: &[String]) -> i32 {
     setaparam("mp_tmp", mp_tmp);
 
     // sh:47-50
-    alternative_byname(&[
+    _alternative(&[
         "device-labels:device label:compadd -a dev_tmp".to_string(),
         "device-paths: device path:_canonical_paths -A dpath_tmp -N -M \"r:|/=* r:|=*\" device-paths device\\ path".to_string(),
         "directories:mount point:_canonical_paths -A mp_tmp -N -M \"r:|/=* r:|=*\" directories mount\\ point".to_string(),

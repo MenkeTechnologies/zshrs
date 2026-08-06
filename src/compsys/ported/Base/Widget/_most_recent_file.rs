@@ -5,14 +5,14 @@
 //! ```text
 //! sh: 1  #compdef -k complete-word \C-xm
 //! sh: 3  # Complete the most recently modified file matching the pattern
-//! sh: 9  local file tilde etilde
-//! sh:10  if [[ $PREFIX = \~*/* ]]; then
-//! sh:11    tilde=${PREFIX%%/*}
-//! sh:12    etilde=${~tilde} 2>/dev/null
-//! sh:15    eval "file=($PREFIX*$SUFFIX(om[${NUMERIC:-1}]N))"
-//! sh:16    file=(${file/#$etilde})
-//! sh:17    file=($tilde${(q)^file})
-//! sh:18  else
+//! sh:11  local file tilde etilde
+//! sh:12  if [[ $PREFIX = \~*/* ]]; then
+//! sh:13    tilde=${PREFIX%%/*}
+//! sh:14    etilde=${~tilde} 2>/dev/null
+//! sh:17    eval "file=($PREFIX*$SUFFIX(om[${NUMERIC:-1}]N))"
+//! sh:18    file=(${file/#$etilde})
+//! sh:19    file=($tilde${(q)^file})
+//! sh:20  else
 //! sh:21    eval "file=($PREFIX*$SUFFIX(om[${NUMERIC:-1}]N))"
 //! sh:22    file=(${(q)file})
 //! sh:23  fi
@@ -39,7 +39,7 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:15/sh:21 — glob `$PREFIX*$SUFFIX` then pick the Nth by mtime
+/// sh:17/sh:21 — glob `$PREFIX*$SUFFIX` then pick the Nth by mtime
 /// (N from `$NUMERIC`, default 1, negative = oldest direction).
 fn pick_nth_recent(prefix: &str, suffix: &str, n: i64) -> Option<String> {
     // Determine search dir from PREFIX.

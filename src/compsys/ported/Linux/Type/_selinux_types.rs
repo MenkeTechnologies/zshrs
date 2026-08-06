@@ -19,7 +19,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -67,22 +67,28 @@ fn strip_leading_blank(line: &str) -> &str {
 /// Reach `_selinux_types` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_selinux_$parts[1] ${(P)parts[1]}` (Completion/Linux/Type/_selinux_contexts sh:18) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn selinux_types_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_selinux_types", args, || _selinux_types(args))
+/// [`_selinux_types_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _selinux_types(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_selinux_types", args, || {
+        _selinux_types_impl(args)
+    })
 }
 
 /// `_selinux_types` — offer SELinux type names reported by `seinfo`,
 /// optionally filtered by attribute via repeated `-a ATTR` options.
-pub fn _selinux_types(args: &[String]) -> i32 {
+pub fn _selinux_types_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_types");
     // sh:10
     let (extra, rest) = parse_a_opt(args);
@@ -115,7 +121,7 @@ pub fn _selinux_types(args: &[String]) -> i32 {
     };
 
     // sh:18  _description selinux-types expl "selinux type"
-    let _ = description_byname(&[
+    let _ = _description(&[
         "selinux-types".to_string(),
         "expl".to_string(),
         "selinux type".to_string(),
@@ -175,6 +181,6 @@ mod tests {
     fn returns_one_without_completion_context() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(_selinux_types(&[]), 1);
+        assert_eq!(_selinux_types_impl(&[]), 1);
     }
 }

@@ -3,13 +3,13 @@
 //! Full upstream body (114 lines, abridged):
 //! ```text
 //! sh:  1  #autoload
-//! sh: 39  local expl rempat remfiles remdispf{,q} remdispd{,q} args cmd suf ret=1
-//! sh: 41  local glob host dir esc dirprefix
-//! sh: 43  if zstyle -T ":completion:${curcontext}:files" remote-access; then
-//! sh: 46    zparseopts -D -E -a args / g:=glob h:=host W:=dir Q:=esc
-//! sh: 47    (( $#host)) && shift host || host="${IPREFIX%:}"
+//! sh: 36  local expl rempat remfiles remdispf{,q} remdispd{,q} args cmd suf ret=1
+//! sh: 38  local glob host dir esc dirprefix
+//! sh: 40  if zstyle -T ":completion:${curcontext}:files" remote-access; then
+//! sh: 43    zparseopts -D -E -a args / g:=glob h:=host W:=dir Q:=esc
+//! sh: 44    (( $#host)) && shift host || host="${IPREFIX%:}"
 //! sh: 49    args=( ${argv[1,(i)--]} ); shift ${#args}
-//! sh: 51    [[ $args[-1] = -- ]] && args[-1]=()
+//! sh: 48    [[ $args[-1] = -- ]] && args[-1]=()
 //! sh: 53    cmd="$1"; shift
 //! sh: 56    if [[ $cmd == ssh ]]; then zparseopts -D -E -a cmd_args p: 1 2 4 6 F:
 //! sh: 58      cmd_args=( -o BatchMode=yes "$cmd_args[@]" -a -x ); else cmd_args=( "$@" ); fi
@@ -26,7 +26,7 @@
 //! sh: 90    if (( $#esc )); then remdispfq=(${${remdispf%[*=|]}//(#b)(${~esc[2]})/\\$match[1]})
 //! sh: 92      remdispdq=(${${remdispd%/}//(#b)(${~esc[2]})/\\$match[1]})
 //! sh: 94    else remdispfq=(${(q)remdispf%[*=|]}); remdispdq=(${(q)remdispd%/}); fi
-//! sh: 98    [[ -o autoremoveslash ]] && autoremove=(-r "/ \t\n\-")
+//! sh: 99    [[ -o autoremoveslash ]] && autoremove=(-r "/ \t\n\-")
 //! sh:101    _tags remote-files; while _tags; do while _next_label remote-files expl ${suf:-remote directory}; do
 //! sh:104      [[ -n $suf ]] && compadd "$args[@]" "$expl[@]" -d remdispf -- $remdispfq && ret=0
 //! sh:106      compadd ${suf:+-S/} $autoremove "$args[@]" "$expl[@]" -d remdispd -- $remdispdq && ret=0
@@ -40,8 +40,8 @@
 //! ported glob matcher.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_next_label::next_label_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_next_label::_next_label;
 use crate::ported::glob::{matchpat, tokenize};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -147,10 +147,10 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let files_ctx = format!(":completion:{}:files", curcontext);
 
-    // sh:43 — honour the remote-access style (default on).
+    // sh:40 — honour the remote-access style (default on).
     if !zstyle_t_default_true(&files_ctx, "remote-access") {
         // sh:112
-        return message_byname(&[
+        return _message(&[
             "-e".to_string(),
             "remote-files".to_string(),
             "remote file".to_string(),
@@ -162,8 +162,8 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
     //   at `--` (before = passthrough compadd args, after = remote command).
     let mut host: Option<String> = None;
     let mut dir: Option<String> = None;
-    let mut glob: Option<String> = None; // sh:46 g:=glob
-    let mut esc: Option<String> = None; // sh:46 Q:=esc
+    let mut glob: Option<String> = None; // sh:43 g:=glob
+    let mut esc: Option<String> = None; // sh:43 Q:=esc
     let mut dirs_only = false;
     let mut passthru: Vec<String> = Vec::new();
     let mut cmdline: Vec<String> = Vec::new();
@@ -178,17 +178,17 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
             "--" => after_dashdash = true,
             "-/" => {
                 dirs_only = true;
-                passthru.push(a); // sh:46 `/` stays in $args (compadd -/)
+                passthru.push(a); // sh:43 `/` stays in $args (compadd -/)
             }
             "-h" => host = it.next(),
             "-W" => dir = it.next(),
-            "-g" => glob = it.next(), // sh:46 g:=glob
-            "-Q" => esc = it.next(),  // sh:46 Q:=esc
+            "-g" => glob = it.next(), // sh:43 g:=glob
+            "-Q" => esc = it.next(),  // sh:43 Q:=esc
             _ => passthru.push(a),
         }
     }
 
-    // sh:47 — default host = ${IPREFIX%:}.
+    // sh:44 — default host = ${IPREFIX%:}.
     let host = host.unwrap_or_else(|| {
         getsparam("IPREFIX")
             .unwrap_or_default()
@@ -271,7 +271,7 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
     let _ = compset(vec!["-P".to_string(), "*/".to_string()]);
     let suf_is_file = compset(vec!["-S".to_string(), "/*".to_string()]) != 0 && !dirs_only;
 
-    // sh:98 — autoremoveslash: strip a trailing `/` on the next keystroke.
+    // sh:99 — autoremoveslash: strip a trailing `/` on the next keystroke.
     let autoremove: Vec<String> = if isset(AUTOREMOVESLASH) {
         vec!["-r".to_string(), "/ \t\n-".to_string()]
     } else {
@@ -287,7 +287,7 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
         } else {
             "remote directory"
         };
-        if next_label_byname(&[
+        if _next_label(&[
             "remote-files".to_string(),
             "expl".to_string(),
             descr.to_string(),

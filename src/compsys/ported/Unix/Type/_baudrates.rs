@@ -4,24 +4,24 @@
 //! ```text
 //! sh: 1  #autoload
 //! sh:30  local tmp; local -a expl rates; local -A opts
-//! sh:33  zparseopts -E -A opts u: l: f:
-//! sh:47  zstyle -a ":completion:${curcontext}:" baud-rates rates ||
+//! sh:34  zparseopts -E -A opts u: l: f:
+//! sh:49  zstyle -a ":completion:${curcontext}:" baud-rates rates ||
 //! sh:48    rates=( 50 75 110 … 4000000 )            # default table
 //! sh:51  zstyle -s …:baud-rates max-value tmp && opts[-u]=$tmp
 //! sh:52  zstyle -s …:baud-rates min-value tmp && opts[-l]=$tmp
 //! sh:53  zstyle -s …:baud-rates filter    tmp && opts[-f]=$tmp
-//! sh:55  if (( ${+opts[-u]} )) || (( ${+opts[-l]} )); then
+//! sh:60  if (( ${+opts[-u]} )) || (( ${+opts[-l]} )); then
 //! sh:57    min=${opts[-l]:-0}; max=${opts[-u]:-${${(On)rates}[1]}}
 //! sh:59    rates=( ${(M)rates:#${~:-<$min-$max>}} )  # numeric range keep
-//! sh:61  fi
+//! sh:65  fi
 //! sh:63  if (( ${+opts[-f]} )); then                # predicate filter
 //! sh:66    for item; do ${opts[-f]} $item && rates+=( $item ); done
-//! sh:69  fi
-//! sh:76  _description -1V baud-rates expl 'baud rate'
-//! sh:77  compadd "${argv[@]}" "$expl[@]" -- "${rates[@]}"
+//! sh:73  fi
+//! sh:77  _description -1V baud-rates expl 'baud rate'
+//! sh:78  compadd "${argv[@]}" "$expl[@]" -- "${rates[@]}"
 //! ```
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getaparam;
@@ -134,14 +134,14 @@ pub fn _baudrates(args: &[String]) -> i32 {
         }
     }
 
-    // sh:76  _description -1V baud-rates expl 'baud rate'
-    let _ = description_byname(&[
+    // sh:77  _description -1V baud-rates expl 'baud rate'
+    let _ = _description(&[
         "-1V".to_string(),
         "baud-rates".to_string(),
         "expl".to_string(),
         "baud rate".to_string(),
     ]);
-    // sh:77  compadd "${argv[@]}" "$expl[@]" -- "${rates[@]}"
+    // sh:78  compadd "${argv[@]}" "$expl[@]" -- "${rates[@]}"
     let mut cadd: Vec<String> = rest;
     cadd.extend(getaparam("expl").unwrap_or_default());
     cadd.push("--".to_string());

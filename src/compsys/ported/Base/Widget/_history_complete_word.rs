@@ -3,27 +3,27 @@
 //!
 //! Full upstream body (121 lines, abridged):
 //! ```text
-//! sh: 1  #compdef -K _history-complete-older complete-word \e/ …
-//! sh:18  _history_complete_word() {
-//! sh:24    if [[ -z "$curcontext" ]]; then curcontext=history-words:::
-//! sh:26    else curcontext="history-words${curcontext#*:}"
-//! sh:30    direction=newer / older based on $WIDGET name
-//! sh:34    stop = style :stop
-//! sh:36    list-style governs compstate[list]
-//! sh:38    if last widget was a history-completer && we have old state:
-//! sh:39      navigate within existing list (older/newer/stop boundary)
-//! sh:81    else _hist_stop=; _hist_old_prefix=$PREFIX; _history_complete_word_gen_matches
-//! sh:86  }
-//! sh:97  _history_complete_word_gen_matches() {
-//! sh:99    _main_complete _history
+//! sh:  1  #compdef -K _history-complete-older complete-word \e/ …
+//! sh: 18  _history_complete_word() {
+//! sh: 24    if [[ -z "$curcontext" ]]; then curcontext=history-words:::
+//! sh: 26    else curcontext="history-words${curcontext#*:}"
+//! sh: 30    direction=newer / older based on $WIDGET name
+//! sh: 34    stop = style :stop
+//! sh: 36    list-style governs compstate[list]
+//! sh: 38    if last widget was a history-completer && we have old state:
+//! sh: 39      navigate within existing list (older/newer/stop boundary)
+//! sh: 81    else _hist_stop=; _hist_old_prefix=$PREFIX; _history_complete_word_gen_matches
+//! sh: 93  }
+//! sh: 97  _history_complete_word_gen_matches() {
+//! sh: 99    _main_complete _history
 //! sh:103   compute compstate[insert] direction-aware
-//! sh:120 }
+//! sh:119 }
 //! ```
 //!
 //! Navigation/state-management around the `_history` completer.
 //! Reads `$WIDGET` to decide direction.
 
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getsparam, setsparam};
@@ -80,7 +80,7 @@ pub fn _history_complete_word() -> i32 {
                 set_compstate_str("insert", &(old_insert + 1).to_string());
             } else if stop_on {
                 let _ = setsparam("_hist_stop", "old");
-                let _ = message_byname(&["beginning of history reached".to_string()]);
+                let _ = _message(&["beginning of history reached".to_string()]);
                 let _ = setsparam("curcontext", &saved_ctx);
                 return 1;
             } else {
@@ -94,7 +94,7 @@ pub fn _history_complete_word() -> i32 {
                 set_compstate_str("insert", &(old_insert - 1).to_string());
             } else if stop_on {
                 let _ = setsparam("_hist_stop", "new");
-                let _ = message_byname(&["end of history reached".to_string()]);
+                let _ = _message(&["end of history reached".to_string()]);
                 let _ = setsparam("curcontext", &saved_ctx);
                 return 1;
             } else {

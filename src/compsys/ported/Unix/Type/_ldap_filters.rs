@@ -4,14 +4,14 @@
 //! `zregexparse` spec array `query` and hands it to `_regex_arguments` to
 //! generate the `_ldap_search_filters` function, then calls it:
 //! ```text
-//! sh:  9  matchingrules=( … RFC4517 rule names … )
-//! sh: 22  classes=( … objectClass values … )
-//! sh: 40  compquote open close andop orop; open=${(q)open} close=${(q)close}
-//! sh: 43  zstyle -s …operators list-separator sep || sep=--
-//! sh: 44  print -v disp -f "%s $sep %s" \| or \& and \! not
-//! sh: 47  query=( … big zregexparse spec … )
-//! sh:114  _regex_arguments _ldap_search_filters "$query[@]"
-//! sh:115  _ldap_search_filters
+//! sh: 9  matchingrules=( … RFC4517 rule names … )
+//! sh:22  classes=( … objectClass values … )
+//! sh:40  compquote open close andop orop; open=${(q)open} close=${(q)close}
+//! sh:43  zstyle -s …operators list-separator sep || sep=--
+//! sh:49  print -v disp -f "%s $sep %s" \| or \& and \! not
+//! sh:47  query=( … big zregexparse spec … )
+//! sh:90  _regex_arguments _ldap_search_filters "$query[@]"
+//! sh:91  _ldap_search_filters
 //! ```
 //!
 //! Every RFC4515 filter branch of the `_regex_arguments` query (sh:52-89) is
@@ -30,7 +30,7 @@
 //! (`$compstate[quote]` empty). `print -v disp` (sh:49) builds the operator
 //! display array directly.
 
-use crate::compsys::ported::_regex_arguments::regex_arguments_byname;
+use crate::compsys::ported::_regex_arguments::_regex_arguments;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -191,9 +191,9 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
     // `${(q)orop}`==`\|`, `${andop}`==`&`.
     let mut argv = vec!["_ldap_search_filters".to_string()];
     argv.extend(build_query());
-    // sh:114
-    let _ = regex_arguments_byname(&argv);
-    // sh:115
+    // sh: 90
+    let _ = _regex_arguments(&argv);
+    // sh: 91
     dispatch_function_call("_ldap_search_filters", &[]).unwrap_or(1)
 }
 

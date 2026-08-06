@@ -17,7 +17,7 @@
 //!
 //! Number completion with optional unit suffixes (e.g. `5s` / `200MB`).
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -145,7 +145,7 @@ pub fn _numbers(args: &[String]) -> i32 {
             let val = s.splitn(2, ':').next().unwrap_or("").to_string();
             units_arr.push(val);
         }
-        let _ = description_byname(&[
+        let _ = _description(&[
             "-V".to_string(),
             "units".to_string(),
             "expl".to_string(),
@@ -186,7 +186,7 @@ pub fn _numbers(args: &[String]) -> i32 {
 
     let mut desc_argv: Vec<String> = vec!["-x".to_string(), tag, "expl".to_string(), desc];
     desc_argv.extend(formats);
-    let _ = description_byname(&desc_argv);
+    let _ = _description(&desc_argv);
     let insert = get_compstate_str("insert").unwrap_or_default();
     if insert.contains("unambiguous") {
         set_compstate_str("insert", "");

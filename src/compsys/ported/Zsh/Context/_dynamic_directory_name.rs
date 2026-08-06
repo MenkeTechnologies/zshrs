@@ -30,9 +30,9 @@
 //! sh:28  fi
 //! ```
 
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_next_label::next_label_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::utils::getshfunc;
@@ -40,24 +40,28 @@ use crate::ported::utils::getshfunc;
 /// Reach `_dynamic_directory_name` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_dynamic_directory_name` (Completion/Zsh/Context/_subscript sh:24) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn dynamic_directory_name_byname() -> i32 {
+/// [`_dynamic_directory_name_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _dynamic_directory_name() -> i32 {
     crate::compsys::ported::shared::call_compfn("_dynamic_directory_name", &[], || {
-        _dynamic_directory_name()
+        _dynamic_directory_name_impl()
     })
 }
 
 /// `_dynamic_directory_name` — `~[name]` lookup via user-defined
 /// `zsh_directory_name` function + `$zsh_directory_name_functions`.
-pub fn _dynamic_directory_name() -> i32 {
+pub fn _dynamic_directory_name_impl() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dynamic_directory_name");
     // sh:2-5  gather dispatch functions
     let mut dirfuncs: Vec<String> = Vec::new();
@@ -82,19 +86,19 @@ pub fn _dynamic_directory_name() -> i32 {
         };
 
         // sh:16
-        let _ = tags_byname(&[tag.clone()]);
+        let _ = _tags(&[tag.clone()]);
         let mut ret: i32 = 1;
 
         // sh:17-24
         loop {
-            if tags_byname(&[]) != 0 {
+            if _tags(&[]) != 0 {
                 break;
             }
             // sh:18
             loop {
                 let mut nl_args = vec![tag.clone(), "expl".to_string(), descr.to_string()];
                 nl_args.extend(suf.iter().cloned());
-                if next_label_byname(&nl_args) != 0 {
+                if _next_label(&nl_args) != 0 {
                     break;
                 }
                 // sh:19-21
@@ -113,7 +117,7 @@ pub fn _dynamic_directory_name() -> i32 {
         ret
     } else {
         // sh:27
-        message_byname(&[format!("{}: implement as zsh_directory_name c", descr)])
+        _message(&[format!("{}: implement as zsh_directory_name c", descr)])
     }
 }
 
@@ -126,6 +130,6 @@ mod tests {
         // sh:27 — no dirfuncs → _message path. _message returns 1
         //   when `messages` tag isn't registered.
         let _g = crate::test_util::global_state_lock();
-        let _r = _dynamic_directory_name();
+        let _r = _dynamic_directory_name_impl();
     }
 }

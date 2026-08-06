@@ -13,9 +13,9 @@
 //! sh: 39      matches+=( "${(@)tmp_buffer/$canpref/$origpref}" )
 //! sh: 45    else matches+=(${${(M)files:#$canpref*}/$canpref/$origpref})
 //! sh: 48    for subdir in $expref?*(@); do … recurse …
-//! sh: 53  _canonical_paths() {
-//! sh: 63    zparseopts -D -a __gopts M+: J+: V+: o+: 1 2 n F: x+: X+: A:=__opts N=__opts
-//! sh: 65    : ${1:=canonical-paths} ${2:=path}
+//! sh: 54  _canonical_paths() {
+//! sh: 64    zparseopts -D -a __gopts M+: J+: V+: o+: 1 2 n F: x+: X+: A:=__opts N=__opts
+//! sh: 66    : ${1:=canonical-paths} ${2:=path}
 //! sh: 67-68 -A var → append ${(P)var} to positionals
 //! sh: 74    if ! zmodload -F zsh/stat b:zstat; then _wanted … compadd; return
 //! sh: 82-86 files=($@) (-N) else files+=($@:P)
@@ -40,7 +40,7 @@
 //!  * `-ef` (sh:110) — same-file test via `(dev, ino)` comparison
 //!    (`same_file`).
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::module::bin_zmodload;
 use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, unsetparam};
@@ -260,7 +260,7 @@ fn _canonical_paths_add_paths(
 /// same-file completions (relative↔absolute, symlink-resolved).
 pub fn _canonical_paths(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_canonical_paths");
-    // sh:63  zparseopts -D -a __gopts M+: J+: V+: o+: 1 2 n F: x+: X+: A:=__opts N=__opts
+    // sh:64  zparseopts -D -a __gopts M+: J+: V+: o+: 1 2 n F: x+: X+: A:=__opts N=__opts
     let src = "__compsys_argv";
     setaparam(src, args.to_vec());
     setaparam("__gopts", Vec::new());
@@ -294,7 +294,7 @@ pub fn _canonical_paths(args: &[String]) -> i32 {
     let mut argv = getaparam(src).unwrap_or_default();
     unsetparam(src);
 
-    // sh:65  : ${1:=canonical-paths} ${2:=path}
+    // sh:66  : ${1:=canonical-paths} ${2:=path}
     while argv.len() < 2 {
         argv.push(String::new());
     }
@@ -337,7 +337,7 @@ pub fn _canonical_paths(args: &[String]) -> i32 {
         ];
         wargv.extend(__gopts.iter().cloned());
         wargv.extend(positional.iter().cloned());
-        let ret = wanted_byname(&wargv);
+        let ret = _wanted(&wargv);
         unsetparam("__gopts");
         unsetparam("__opts");
         return ret; // sh:76
@@ -404,7 +404,7 @@ pub fn _canonical_paths(args: &[String]) -> i32 {
     wargv.push("-U".to_string());
     wargv.push("-a".to_string());
     wargv.push("matches".to_string());
-    let ret = wanted_byname(&wargv); // sh:117-119
+    let ret = _wanted(&wargv); // sh:117-119
 
     // Tear down transient by-name arrays used to bridge compadd/_wanted.
     unsetparam("files");
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn returns_one_for_no_paths() {
-        // sh:65 — bare tag `mytag` (desc defaults to `path`); with no
+        // sh:66 — bare tag `mytag` (desc defaults to `path`); with no
         //   paths and no registered comptags, `_wanted` fails → 1.
         let _g = crate::test_util::global_state_lock();
         assert_eq!(_canonical_paths(&["mytag".to_string()]), 1);

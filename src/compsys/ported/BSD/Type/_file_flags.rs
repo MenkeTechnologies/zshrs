@@ -2,10 +2,10 @@
 //!
 //! Full upstream body (71 lines, abridged):
 //! ```text
-//! sh: 1  #autoload
-//! sh: 5  local curcontext=$curcontext su=$(( ! EUID || $+_comp_priv_prefix ))
-//! sh: 6  local -a … copts=( "${@}" ) flags flag_descs
-//! sh: 9  flag_descs+=( nodump nodump  uappnd 'user append-only'
+//! sh:1  #autoload
+//! sh:5  local curcontext=$curcontext su=$(( ! EUID || $+_comp_priv_prefix ))
+//! sh:6  local -a … copts=( "${@}" ) flags flag_descs
+//! sh:9  flag_descs+=( nodump nodump  uappnd 'user append-only'
 //! sh:        uchg 'user immutable' )
 //! sh:15  if (( su )); then
 //! sh:16    flag_descs+=( arch archived  sappnd 'system append-only'
@@ -15,7 +15,7 @@
 //! sh:24    flag_descs+=(opaque opaque)
 //! sh:26    if [[ $OSTYPE = darwin* ]]; then
 //! sh:27      flag_descs+=(hidden hidden)
-//! sh:29    fi
+//! sh:28    fi
 //! sh:30    if [[ $OSTYPE = (dragonfly|freebsd)* ]]; then
 //! sh:31      flag_descs+=(uunlnk 'user undeletable')
 //! sh:33      (( su )) && flag_descs+=(sunlnk 'system undeletable')

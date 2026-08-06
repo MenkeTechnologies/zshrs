@@ -11,29 +11,29 @@
 //! sh:11    : ${_cache_dir:=${ZDOTDIR:-$HOME}/.zcompcache}
 //! sh:12    if [[ ! -d "$_cache_dir" ]]; then
 //! sh:18      mkdir -m 0700 -p "$_cache_dir"
-//! sh:22    fi
-//! sh:24    _cache_ident_dir="$_cache_dir/$_cache_ident"
-//! sh:25    _cache_ident_dir="$_cache_ident_dir:h"
-//! sh:27    if [[ ! -d "$_cache_ident_dir" ]]; then
+//! sh:24    fi
+//! sh:27    _cache_ident_dir="$_cache_dir/$_cache_ident"
+//! sh:28    _cache_ident_dir="$_cache_ident_dir:h"
+//! sh:30    if [[ ! -d "$_cache_ident_dir" ]]; then
 //! sh:34      mkdir -m 0700 -p "$_cache_ident_dir"
-//! sh:38    fi
+//! sh:40    fi
 //! sh:45    shift
 //! sh:46    for var; do
 //! sh:47      case ${(Pt)var} in
 //! sh:48      (*readonly*) ;;
 //! sh:49      (*(association|array)*)
-//! sh:50          print -r "$var=( "'${(Q)"${(z)$(<<\EO:'"$var"
-//! sh:51          print -r "${(kv@Pqq)^^var}"
-//! sh:52          print -r "EO:$var"
-//! sh:53          print -r ')}"} )'
-//! sh:54          ;;
-//! sh:55      (*) print -r "$var=${(Pqq)^^var}";;
-//! sh:56      esac
-//! sh:57    done >! "$_cache_dir/$_cache_ident"
-//! sh:58  else
-//! sh:59    return 1
-//! sh:60  fi
-//! sh:62  return 0
+//! sh:52          print -r "$var=( "'${(Q)"${(z)$(<<\EO:'"$var"
+//! sh:53          print -r "${(kv@Pqq)^^var}"
+//! sh:54          print -r "EO:$var"
+//! sh:55          print -r ')}"} )'
+//! sh:56          ;;
+//! sh:57      (*) print -r "$var=${(Pqq)^^var}";;
+//! sh:58      esac
+//! sh:59    done >! "$_cache_dir/$_cache_ident"
+//! sh:60  else
+//! sh:61    return 1
+//! sh:62  fi
+//! sh:64  return 0
 //! ```
 //!
 //! Dumps the listed shell-side vars (after `$1` = cache ident) to
@@ -41,7 +41,7 @@
 //! associations get heredoc-style emission; readonly vars are
 //! skipped. Returns 0 on write, 1 when cache disabled.
 
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam};
 use std::fs;
@@ -50,21 +50,25 @@ use std::path::Path;
 /// Reach `_store_cache` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_store_cache DEBS_avail _deb_packages_cache_avail` (Completion/Debian/Type/_deb_packages sh:13) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn store_cache_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_store_cache", args, || _store_cache(args))
+/// [`_store_cache_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _store_cache(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_store_cache", args, || _store_cache_impl(args))
 }
 
 /// `_store_cache` — write the named vars to disk under cache path.
-pub fn _store_cache(args: &[String]) -> i32 {
+pub fn _store_cache_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_store_cache");
     let cache_ident = args.first().cloned().unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();
@@ -91,16 +95,16 @@ pub fn _store_cache(args: &[String]) -> i32 {
     let dir_path = Path::new(&cache_dir);
     if !dir_path.is_dir() {
         if dir_path.exists() {
-            let _ = message_byname(&["cache-dir style points to a non-directory!".to_string()]);
+            let _ = _message(&["cache-dir style points to a non-directory!".to_string()]);
             return 1;
         }
         if fs::create_dir_all(dir_path).is_err() {
-            let _ = message_byname(&[format!("couldn't create cache-dir {}", cache_dir)]);
+            let _ = _message(&[format!("couldn't create cache-dir {}", cache_dir)]);
             return 1;
         }
     }
 
-    // sh:24-25  ident dirname
+    // sh:27-28  ident dirname
     let cache_path = format!("{}/{}", cache_dir, cache_ident);
     let ident_dir = Path::new(&cache_path).parent().map(|p| p.to_path_buf());
 
@@ -108,8 +112,7 @@ pub fn _store_cache(args: &[String]) -> i32 {
     if let Some(p) = ident_dir.as_ref() {
         if !p.exists() {
             if fs::create_dir_all(p).is_err() {
-                let _ =
-                    message_byname(&[format!("couldn't create cache-ident_dir {}", p.display())]);
+                let _ = _message(&[format!("couldn't create cache-ident_dir {}", p.display())]);
                 return 1;
             }
         }
@@ -120,7 +123,7 @@ pub fn _store_cache(args: &[String]) -> i32 {
     let mut serialized = String::new();
     for var in var_names {
         if let Some(arr) = getaparam(var) {
-            // sh:50-53 — array form
+            // sh:52-55 — array form
             serialized.push_str(&format!("{}=( ", var));
             for v in &arr {
                 serialized.push('\'');
@@ -129,7 +132,7 @@ pub fn _store_cache(args: &[String]) -> i32 {
             }
             serialized.push_str(")\n");
         } else if let Some(s) = getsparam(var) {
-            // sh:55 — scalar form
+            // sh:57 — scalar form
             serialized.push_str(&format!("{}='{}'\n", var, s.replace('\'', "'\\''")));
         }
     }
@@ -148,6 +151,6 @@ mod tests {
     #[test]
     fn returns_one_when_use_cache_disabled() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_store_cache(&["test-cache".to_string()]), 1);
+        assert_eq!(_store_cache_impl(&["test-cache".to_string()]), 1);
     }
 }

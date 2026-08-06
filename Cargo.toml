@@ -231,8 +231,8 @@ members = [".", "daemon", "znative"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-zshrs-daemon = { path = "daemon", version = "0.12.29" }
-znative = { path = "znative", version = "0.12.29" }
+zshrs-daemon = { path = "daemon", version = "0.12.31" }
+znative = { path = "znative", version = "0.12.31" }
 
 [profile.release]
 opt-level = 3

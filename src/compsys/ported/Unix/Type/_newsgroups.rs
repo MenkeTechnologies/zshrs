@@ -13,7 +13,7 @@
 //! (unsubscribed), and keeps the group name (text before the first
 //! `:`).
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, setaparam};
 
 /// sh:5 — build `_cache_newsgroups` from the `~/.newsrc*` files.
@@ -78,7 +78,7 @@ pub fn _newsgroups(args: &[String]) -> i32 {
     w.push(".".to_string());
     w.push("_cache_newsgroups".to_string());
     // `_multi_parts` action is dispatched through _wanted's action-runner.
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

@@ -4,8 +4,8 @@
 //! Full upstream body (152 lines, abridged):
 //! ```text
 //! sh:  1  #compdef -k complete-word \C-x\C-r
-//! sh: 28  typeset -g _read_comp
-//! sh: 29  if [[ ${+NUMERIC} = 0 && -n $_read_comp ]]; then
+//! sh: 29  typeset -g _read_comp
+//! sh: 30  if [[ ${+NUMERIC} = 0 && -n $_read_comp ]]; then
 //! sh: 30    if [[ $_read_comp = _* ]]; then eval $_read_comp
 //! sh: 32    else eval "compadd $_read_comp"
 //! sh: 36  return

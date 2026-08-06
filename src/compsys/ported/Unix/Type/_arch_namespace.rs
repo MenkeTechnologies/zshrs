@@ -4,11 +4,11 @@
 //! shell functions that walk the arch/tla namespace one component at a
 //! time (category → branch → version → revision):
 //! ```text
-//! sh:  3  _arch_namespace()          ARCHCMD, $1 = #components (1..4)
-//! sh:  9    flags: --trailing-dashes  --library  --exclude-library-revisions
-//! sh: 15    suffix=(-q -S --) when more components wanted / trailing dashes
-//! sh: 18    $PREFIX = */*  → compset -P '*/'; archive=${IPREFIX%/*}; compadd categories
-//! sh: 24    else            find archive from -A/--archive word; compadd categories;
+//! sh: 3  _arch_namespace()          ARCHCMD, $1 = #components (1..4)
+//! sh: 9    flags: --trailing-dashes  --library  --exclude-library-revisions
+//! sh:15    suffix=(-q -S --) when more components wanted / trailing dashes
+//! sh:18    $PREFIX = */*  → compset -P '*/'; archive=${IPREFIX%/*}; compadd categories
+//! sh:24    else            find archive from -A/--archive word; compadd categories;
 //! sh:          _arch_archives "$ARCHCMD" -S / --library?
 //! sh: 40    archive && >1 comp && *--* → _arch_namespace_branches
 //! sh: 45  _arch_namespace_branches() compset -P 1 '*--'; compadd branches; recurse versions
@@ -20,8 +20,8 @@
 //! The shell runs `$ARCHCMD <sub>` via backticks; the port captures that
 //! stdout with a `sh -c` runner (backtick-equivalent, whitespace-split).
 
-use crate::compsys::ported::_arch_archives::arch_archives_byname;
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_arch_archives::_arch_archives;
+use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -138,7 +138,7 @@ fn arch_namespace(ctx: &Ctx, count: i64) -> i32 {
             .map(|(a, _)| a)
             .unwrap_or(&iprefix)
             .to_string();
-        let _ = description_byname(&[
+        let _ = _description(&[
             "-V".to_string(),
             "categories".to_string(),
             "expl".to_string(),
@@ -169,7 +169,7 @@ fn arch_namespace(ctx: &Ctx, count: i64) -> i32 {
             }
         }
         if !archive.is_empty() {
-            let _ = description_byname(&[
+            let _ = _description(&[
                 "-V".to_string(),
                 "categories".to_string(),
                 "expl".to_string(),
@@ -184,12 +184,12 @@ fn arch_namespace(ctx: &Ctx, count: i64) -> i32 {
             cadd.extend(cats);
             let _ = compadd(cadd);
         }
-        // sh:38  _arch_archives "$ARCHCMD" -S / ${library:+--library}
+        // sh:37  _arch_archives "$ARCHCMD" -S / ${library:+--library}
         let mut aa = vec![ctx.archcmd.clone(), "-S".to_string(), "/".to_string()];
         if !ctx.library.is_empty() {
             aa.push("--library".to_string());
         }
-        let _ = arch_archives_byname(&aa);
+        let _ = _arch_archives(&aa);
     }
 
     // sh:40-43 — descend to branches once past the category.
@@ -209,7 +209,7 @@ fn arch_namespace_branches(ctx: &Ctx, count: i64) -> i32 {
             .unwrap_or_default()
             .trim_end_matches("--")
             .to_string();
-        let _ = description_byname(&[
+        let _ = _description(&[
             "-V".to_string(),
             "branches".to_string(),
             "expl".to_string(),
@@ -243,7 +243,7 @@ fn arch_namespace_versions(ctx: &Ctx, count: i64) -> i32 {
         .unwrap_or_default()
         .trim_end_matches("--")
         .to_string();
-    let _ = description_byname(&[
+    let _ = _description(&[
         "-V".to_string(),
         "versions".to_string(),
         "expl".to_string(),
@@ -276,7 +276,7 @@ fn arch_namespace_revisions(ctx: &Ctx) -> i32 {
         .unwrap_or_default()
         .trim_end_matches("--")
         .to_string();
-    let _ = description_byname(&[
+    let _ = _description(&[
         "-V".to_string(),
         "revisions".to_string(),
         "expl".to_string(),

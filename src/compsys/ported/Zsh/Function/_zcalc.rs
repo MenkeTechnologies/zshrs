@@ -44,7 +44,7 @@ pub fn _zcalc(_args: &[String]) -> i32 {
     // otherwise its `compstate[restore]=''` (`_arguments.rs:1130`) leaks into
     // `_zcalc`'s frame and suppresses the caller's restore.
     let argv = zcalc_argv();
-    crate::compsys::ported::shared::call_compfn("_arguments", &argv, || _arguments(&argv))
+    _arguments(&argv)
 }
 
 #[cfg(test)]

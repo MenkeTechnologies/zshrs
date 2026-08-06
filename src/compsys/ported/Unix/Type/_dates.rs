@@ -27,8 +27,8 @@
 //! `compadd -x/-d/-E/-U/-i/-I/-a`. `${(l.N.)}` / `${(r.N.)}` padding is Rust
 //! string padding (marked `// sh:N approx`) producing the same layout.
 
-use crate::compsys::ported::_description::description_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -177,13 +177,13 @@ pub fn _dates(args: &[String]) -> i32 {
     // sh:34 — zsh/datetime is always available here (chrono), so rows stays.
 
     // sh:36  _tags dates || return 0
-    if tags_byname(&["dates".to_string()]) != 0 {
+    if _tags(&["dates".to_string()]) != 0 {
         return 0;
     }
     // sh:37
     let _ = setsparam("_comp_mesg", "yes");
     // sh:38  _description -2V -x dates expl date
-    let _ = description_byname(&[
+    let _ = _description(&[
         "-2V".to_string(),
         "-x".to_string(),
         "dates".to_string(),

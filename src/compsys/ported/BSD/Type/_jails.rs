@@ -5,37 +5,41 @@
 //!   -o param  jail parameter to complete instead of jid -
 //!                e.g. name, path, ip4.addr, host.hostname
 //!
-//! Full upstream body (34 lines, abridged — the head is a usage comment):
+//! Upstream is 70 lines (identical in 5.9.2 and master); the transcript below
+//! is abridged. NOT YET PORTED: upstream grew `-c` (complete configured but
+//! not-running jails, reading `jail.conf`) and `-f` (config file) at sh:13 and
+//! the whole sh:18-50 `if [[ -n $configured ]]` branch. This port implements
+//! only the running-jails path, so it accepts neither flag.
 //! ```text
 //! sh: 1  #autoload
-//! sh: 9  local addhost host param desc=1
-//! sh:10  local -a jails args expl
-//! sh:11  zparseopts -D -K -E 0=addhost o:=param
-//! sh:12  param=${param[2]:-name}
-//! sh:14  jails=( ${${(f)"$(_call_program jails jls $param name)"}/ /:} )
-//! sh:15  case $param in
-//! sh:16    jid) host=0 ;;
-//! sh:17    name)
-//! sh:18      host=0
-//! sh:19      desc=0
-//! sh:20    ;;
-//! sh:21    path)
-//! sh:22      host=/
-//! sh:23      args=( -M 'r:|/=* r:|=*' )
-//! sh:24    ;;
-//! sh:25    ip4.addr) args=( -M 'r:|.=* r:|=*' ) ;;
-//! sh:26  esac
-//! sh:27  [[ -n $addhost && -n $host ]] && jails+=( "$host:$HOST" )
-//! sh:29  if (( desc )); then
-//! sh:30    _describe -t jails jail jails "$@" "$args[@]"
-//! sh:31  else
-//! sh:32    _wanted jails expl jail compadd "$@" "$args[@]" - ${jails%:*}
-//! sh:33  fi
+//! sh:11  local addhost host param desc=1 configured
+//! sh:12  local -a jails args expl fopt match mbegin mend
+//! sh:13  zparseopts -D -K -E 0=addhost c=configured f:=fopt o:=param
+//! sh:14  param=${param[2]:-name}
+//! sh:16  jails=( ${${(f)"$(_call_program jails jls $param name)"}/ /:} )
+//! sh:52  case $param in
+//! sh:53    jid) host=0 ;;
+//! sh:54    name)
+//! sh:55      host=0
+//! sh:56      desc=0
+//! sh:57    ;;
+//! sh:58    path)
+//! sh:59      host=/
+//! sh:60      args=( -M 'r:|/=* r:|=*' )
+//! sh:61    ;;
+//! sh:62    ip4.addr) args=( -M 'r:|.=* r:|=*' ) ;;
+//! sh:63  esac
+//! sh:64  [[ -n $addhost && -n $host ]] && jails+=( "$host:$HOST" )
+//! sh:66  if (( desc )); then
+//! sh:67    _describe -t jails jail jails "$@" "$args[@]"
+//! sh:68  else
+//! sh:69    _wanted jails expl jail compadd "$@" "$args[@]" - ${jails%:*}
+//! sh:70  fi
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
 use crate::compsys::ported::_describe::_describe;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam, unsetparam};
 
 /// sh:11 — bridge for `zparseopts -D -K -E 0=addhost o:=param`. `-E`
@@ -86,7 +90,7 @@ fn first_space_to_colon(line: &str) -> String {
     }
 }
 
-/// sh:32 — `${jails%:*}`: strip the shortest suffix starting at the
+/// sh:69 — `${jails%:*}`: strip the shortest suffix starting at the
 /// *last* colon (i.e. drop the trailing `:name` field).
 fn strip_after_last_colon(s: &str) -> String {
     match s.rfind(':') {
@@ -100,12 +104,12 @@ pub fn _jails(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_jails");
     // sh:11
     let (addhost, param_opt, rest) = zparse_0_o(args);
-    // sh:12 — ${param[2]:-name}: default when unset OR empty.
+    // sh:14 — ${param[2]:-name}: default when unset OR empty.
     let param = param_opt
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "name".to_string());
 
-    // sh:14
+    // sh:16
     let _ = _call_program(&[
         "jails".to_string(),
         "jls".to_string(),
@@ -118,18 +122,18 @@ pub fn _jails(args: &[String]) -> i32 {
         .map(first_space_to_colon)
         .collect();
 
-    // sh:15-26
+    // sh:52-63
     let mut host: Option<String> = None;
     let mut desc = true;
     let mut extra_args: Vec<String> = Vec::new();
     match param.as_str() {
-        "jid" => host = Some("0".to_string()), // sh:16
+        "jid" => host = Some("0".to_string()), // sh:53
         "name" => {
-            host = Some("0".to_string()); // sh:18
-            desc = false; // sh:19
+            host = Some("0".to_string()); // sh:55
+            desc = false; // sh:56
         }
         "path" => {
-            host = Some("/".to_string()); // sh:22
+            host = Some("/".to_string()); // sh:59
             extra_args = vec!["-M".to_string(), "r:|/=* r:|=*".to_string()]; // sh:23
         }
         "ip4.addr" => {
@@ -138,7 +142,7 @@ pub fn _jails(args: &[String]) -> i32 {
         _ => {}
     }
 
-    // sh:27
+    // sh:64
     if addhost {
         if let Some(h) = &host {
             let hostname = getsparam("HOST").unwrap_or_default();
@@ -146,9 +150,9 @@ pub fn _jails(args: &[String]) -> i32 {
         }
     }
 
-    // sh:29-33
+    // sh:66-70
     if desc {
-        // sh:30  _describe -t jails jail jails "$@" "$args[@]"
+        // sh:67  _describe -t jails jail jails "$@" "$args[@]"
         setaparam("jails", jails);
         let mut a: Vec<String> = vec![
             "-t".to_string(),
@@ -160,11 +164,11 @@ pub fn _jails(args: &[String]) -> i32 {
         a.extend(extra_args);
         // sh:67 is a bare command word — reach it by name so `$fpath`/shfunc
         // arbitration runs and `_describe`'s locals land in its own scope.
-        let r = crate::compsys::ported::shared::call_compfn("_describe", &a, || _describe(&a));
+        let r = _describe(&a);
         unsetparam("jails");
         r
     } else {
-        // sh:32  _wanted jails expl jail compadd "$@" "$args[@]" - ${jails%:*}
+        // sh:69  _wanted jails expl jail compadd "$@" "$args[@]" - ${jails%:*}
         let stripped: Vec<String> = jails.iter().map(|s| strip_after_last_colon(s)).collect();
         let mut a: Vec<String> = vec![
             "jails".to_string(),
@@ -176,7 +180,7 @@ pub fn _jails(args: &[String]) -> i32 {
         a.extend(extra_args);
         a.push("-".to_string());
         a.extend(stripped);
-        wanted_byname(&a)
+        _wanted(&a)
     }
 }
 

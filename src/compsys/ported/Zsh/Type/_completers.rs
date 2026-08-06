@@ -22,7 +22,7 @@
 //! the prefix `$us` (either empty or `_`), yielding e.g.
 //! `_complete _approximate _correct …` when `-p` is given.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::{bin_zparseopts, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -114,7 +114,7 @@ pub fn _completers(args: &[String]) -> i32 {
     wanted_argv.extend(disp);
     wanted_argv.push("-".to_string());
     wanted_argv.extend(prefixed);
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

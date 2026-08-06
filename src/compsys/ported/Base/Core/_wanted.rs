@@ -19,11 +19,12 @@
 //!
 //! Calls real `bin_zparseopts` with extended spec `C:=__targs`
 //! (value-taking `-C <subcontext>` flag stored in `__targs`).
-//! Delegates to sibling ports `_tags::_tags` and
-//! `_all_labels::_all_labels` for the iteration.
+//! Delegates to sibling ports `_tags::_tags_impl` and
+//! `_all_labels::_all_labels_impl` for the iteration.
 //!
-//! NOT converted to the `_byname` wrappers, unlike the `_description` calls
-//! in `_next_label` / `_all_labels` / `_requested`. Both callees drive
+//! Those two deliberately name the raw bodies rather than the dispatching
+//! `_tags` / `_all_labels`, unlike the `_description` calls in `_next_label`
+//! / `_all_labels` / `_requested`. Both callees drive
 //! `comptags`, which is indexed by `locallevel` (`Src/Zle/computil.c:3782`
 //! "Array of tag-set infos. Index is the locallevel", `:3873` `level =
 //! locallevel - (args[0][2] ? 1 : 0)`). Routing them through
@@ -41,8 +42,8 @@
 //! obtained, so the conversion is deliberately left undone rather than
 //! landed on a guess.
 
-use super::_all_labels::_all_labels;
-use super::_tags::_tags;
+use super::_all_labels::_all_labels_impl;
+use super::_tags::_tags_impl;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -95,23 +96,27 @@ fn run_zparseopts_wanted(args: &[String]) -> (Vec<String>, Vec<String>, Vec<Stri
 /// writes it — `_wanted fonts expl font \` (Completion/X/Type/_x_font sh:15)
 /// — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn wanted_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_wanted", args, || _wanted(args))
+/// [`_wanted_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _wanted(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_wanted", args, || _wanted_impl(args))
 }
 
 /// `_wanted` — register tag `$1` and (if requested) loop through
 /// `_tags` calling `_all_labels` per round. Returns 0 if any
 /// iteration succeeded, 1 if none.
-pub fn _wanted(args: &[String]) -> i32 {
+pub fn _wanted_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_wanted");
     // sh:3  local -a __targs __gopt
     crate::compsys::ported::shared::declare_locals(
@@ -125,18 +130,18 @@ pub fn _wanted(args: &[String]) -> i32 {
     let arg1 = argv.first().cloned().unwrap_or_default();
     let mut tags_args: Vec<String> = targs.clone();
     tags_args.push(arg1);
-    let _ = _tags(&tags_args);
+    let _ = _tags_impl(&tags_args);
 
     // sh:9-11  while _tags; do _all_labels … && return 0; done
     loop {
-        if _tags(&[]) != 0 {
+        if _tags_impl(&[]) != 0 {
             // sh:9 — _tags's switch-to-next-tag-set form returns
             //   non-zero when no more tag sets exist.
             break;
         }
         let mut labels_args: Vec<String> = gopt.clone();
         labels_args.extend(argv.iter().cloned());
-        if _all_labels(&labels_args) == 0 {
+        if _all_labels_impl(&labels_args) == 0 {
             // sh:10
             return 0;
         }
@@ -167,7 +172,7 @@ mod tests {
         //   match (no comptags state pre-loaded), the while loop
         //   short-circuits and we return 1.
         let r = with_incompfunc(|| {
-            _wanted(&[
+            _wanted_impl(&[
                 "mytag".to_string(),
                 "name".to_string(),
                 "descr".to_string(),

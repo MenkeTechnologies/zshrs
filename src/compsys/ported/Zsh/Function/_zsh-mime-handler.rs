@@ -21,7 +21,7 @@
 //! `zsh-mime-handler` prefix and substitute the resolved program), so
 //! `CURRENT` is re-derived from the end, not the beginning.
 
-use crate::compsys::ported::_normal::normal_byname;
+use crate::compsys::ported::_normal::_normal;
 use crate::ported::hist::bufferwords;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use std::process::Command;
@@ -92,7 +92,7 @@ pub fn _zsh_mime_handler(_args: &[String]) -> i32 {
     let _ = setsparam("CURRENT", &new_current.to_string());
 
     // sh:19  _normal
-    normal_byname(&[])
+    _normal(&[])
 }
 
 #[cfg(test)]

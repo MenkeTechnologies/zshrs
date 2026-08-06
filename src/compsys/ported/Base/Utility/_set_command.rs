@@ -3,29 +3,29 @@
 //! Full upstream body (31 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 5  local command
-//! sh: 6  command="$words[1]"
-//! sh: 7  [[ -z "$command" ]] && return
-//! sh: 9  if (( $+builtins[$command] + $+functions[$command] )); then
-//! sh:10    _comp_command1="$command"
-//! sh:11    _comp_command="$_comp_command1"
-//! sh:12  elif [[ "$command[1]" = '=' ]]; then
-//! sh:13    eval _comp_command2\=$command
-//! sh:14    _comp_command1="$command[2,-1]"
-//! sh:15    _comp_command="$_comp_command2"
-//! sh:16  elif [[ "$command" = ..#/* ]]; then
-//! sh:17    _comp_command1="${PWD}/$command"
-//! sh:18    _comp_command2="${command:t}"
-//! sh:19    _comp_command="$_comp_command2"
-//! sh:20  elif [[ "$command" = */* ]]; then
-//! sh:21    _comp_command1="$command"
-//! sh:22    _comp_command2="${command:t}"
-//! sh:23    _comp_command="$_comp_command2"
-//! sh:24  else
-//! sh:25    _comp_command1="$command"
-//! sh:26    _comp_command2="$commands[$command]"
-//! sh:27    _comp_command="$_comp_command1"
-//! sh:28  fi
+//! sh: 6  local command
+//! sh: 8  command="$words[1]"
+//! sh:10  [[ -z "$command" ]] && return
+//! sh:12  if (( $+builtins[$command] + $+functions[$command] )); then
+//! sh:13    _comp_command1="$command"
+//! sh:14    _comp_command="$_comp_command1"
+//! sh:15  elif [[ "$command[1]" = '=' ]]; then
+//! sh:16    eval _comp_command2\=$command
+//! sh:17    _comp_command1="$command[2,-1]"
+//! sh:18    _comp_command="$_comp_command2"
+//! sh:19  elif [[ "$command" = ..#/* ]]; then
+//! sh:20    _comp_command1="${PWD}/$command"
+//! sh:21    _comp_command2="${command:t}"
+//! sh:22    _comp_command="$_comp_command2"
+//! sh:23  elif [[ "$command" = */* ]]; then
+//! sh:24    _comp_command1="$command"
+//! sh:25    _comp_command2="${command:t}"
+//! sh:26    _comp_command="$_comp_command2"
+//! sh:27  else
+//! sh:28    _comp_command1="$command"
+//! sh:29    _comp_command2="$commands[$command]"
+//! sh:30    _comp_command="$_comp_command1"
+//! sh:31  fi
 //! ```
 //!
 //! Reads `$words[1]`, classifies the command (builtin/function vs
@@ -37,40 +37,44 @@ use crate::ported::params::{getaparam, getsparam, setsparam};
 /// Reach `_set_command` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_set_command` (Completion/Zsh/Context/_redirect sh:5) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn set_command_byname() -> i32 {
-    crate::compsys::ported::shared::call_compfn("_set_command", &[], || _set_command())
+/// [`_set_command_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _set_command() -> i32 {
+    crate::compsys::ported::shared::call_compfn("_set_command", &[], || _set_command_impl())
 }
 
 /// `_set_command` — classify `$words[1]` and publish
 /// `_comp_command`, `_comp_command1`, `_comp_command2`. Returns 0
 /// on success, 1 when `$words[1]` is empty.
-pub fn _set_command() -> i32 {
+pub fn _set_command_impl() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_set_command");
     let words = getaparam("words").unwrap_or_default();
-    // sh:6
+    // sh:8
     let command = words.first().cloned().unwrap_or_default();
     // sh:7
     if command.is_empty() {
         return 1;
     }
 
-    // sh:9 — builtin OR function lookup (we approximate: check the
+    // sh:12 — builtin OR function lookup (we approximate: check the
     //   shfunc table; builtins are also enumerable but we keep it
     //   simple, falling through to the path-classify branches when
     //   not a known function).
     let is_function = crate::ported::utils::getshfunc(&command).is_some();
     let is_builtin = is_known_builtin(&command);
     if is_function || is_builtin {
-        // sh:10-11
+        // sh:13-14
         let _ = setsparam("_comp_command1", &command);
         let _ = setsparam("_comp_command", &command);
         return 0;
@@ -108,7 +112,7 @@ pub fn _set_command() -> i32 {
         }
     }
 
-    // sh:20 — `*/*` containing slash
+    // sh:23 — `*/*` containing slash
     if command.contains('/') {
         let _ = setsparam("_comp_command1", &command);
         let tail = basename(&command);
@@ -117,7 +121,7 @@ pub fn _set_command() -> i32 {
         return 0;
     }
 
-    // sh:24-27 — bare name, lookup in $commands
+    // sh:27-30 — bare name, lookup in $commands
     // c:Src/Modules/parameter.c:213 `getpmcommand` — same `commands`
     // special-hash getfn as the `=cmd` branch above. This is the value
     // `_redirect` (Completion/Zsh/Context/_redirect:13-14) puts FIRST in
@@ -157,15 +161,15 @@ mod tests {
     fn empty_words_returns_one() {
         let _g = crate::test_util::global_state_lock();
         setaparam("words", Vec::new());
-        assert_eq!(_set_command(), 1);
+        assert_eq!(_set_command_impl(), 1);
     }
 
     #[test]
     fn slash_path_uses_basename() {
-        // sh:20-23
+        // sh:23-26
         let _g = crate::test_util::global_state_lock();
         setaparam("words", vec!["/usr/bin/ls".to_string()]);
-        let _ = _set_command();
+        let _ = _set_command_impl();
         assert_eq!(getsparam("_comp_command1").as_deref(), Some("/usr/bin/ls"));
         assert_eq!(getsparam("_comp_command2").as_deref(), Some("ls"));
         assert_eq!(getsparam("_comp_command").as_deref(), Some("ls"));
@@ -173,10 +177,10 @@ mod tests {
 
     #[test]
     fn known_builtin_takes_builtin_branch() {
-        // sh:9-11
+        // sh:12-14
         let _g = crate::test_util::global_state_lock();
         setaparam("words", vec!["cd".to_string()]);
-        let _ = _set_command();
+        let _ = _set_command_impl();
         assert_eq!(getsparam("_comp_command1").as_deref(), Some("cd"));
         assert_eq!(getsparam("_comp_command").as_deref(), Some("cd"));
     }
@@ -281,7 +285,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PWD", "/here");
         setaparam("words", vec!["../tools/runme".to_string()]);
-        let _ = _set_command();
+        let _ = _set_command_impl();
         assert_eq!(
             getsparam("_comp_command1").as_deref(),
             Some("/here/../tools/runme")

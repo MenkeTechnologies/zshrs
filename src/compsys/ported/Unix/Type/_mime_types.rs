@@ -3,15 +3,15 @@
 //! Full upstream body (42 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 6  default_type_files=(~/.mime.types /etc/mime.types)
+//! sh: 7  default_type_files=(~/.mime.types /etc/mime.types)
 //! sh:10  if zstyle -a … mime-types type_files; then
-//! sh:11    while (( (ind = ${type_files[(I)+]}) > 0 )); do
+//! sh:12    while (( (ind = ${type_files[(I)+]}) > 0 )); do
 //! sh:12      type_files[$ind]=($default_type_files)   # splice defaults at `+`
 //! sh:14  else type_files=($default_type_files)
-//! sh:31  if [[ $PREFIX = (#b)([^/]##)/* ]]; then
+//! sh:30  if [[ $PREFIX = (#b)([^/]##)/* ]]; then
 //! sh:33    maintype=$match[1]; compset -p $(( ${#maintype} + 1 ))
 //! sh:34    _wanted mime-subtypes … compadd -- $(sed … "s%^\(type=\|\)$maintype/\([^ \t]*\).*$%\2%p" …)
-//! sh:38  else
+//! sh:37  else
 //! sh:40    _wanted mime-types … compadd -S/ -- $(sed … "s/^type=//" "s%^\(${PREFIX:-[a-z]}[^=\"]*\)/.*$%\1%p" …)
 //! sh:42  fi
 //! ```
@@ -22,7 +22,7 @@
 //! `$PREFIX` prefix), and for the sub-type pass take the segment after
 //! `maintype/` up to the first blank.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compset;
@@ -87,7 +87,7 @@ pub fn _mime_types(args: &[String]) -> i32 {
     let lines = read_type_lines(&type_files);
     let prefix = getsparam("PREFIX").unwrap_or_default();
 
-    // sh:31 — [[ $PREFIX = (#b)([^/]##)/* ]] : a maintype/ already typed.
+    // sh:30 — [[ $PREFIX = (#b)([^/]##)/* ]] : a maintype/ already typed.
     if let Some(slash) = prefix.find('/') {
         if slash > 0 {
             // sh:33 — maintype and compset past it.
@@ -117,7 +117,7 @@ pub fn _mime_types(args: &[String]) -> i32 {
                 "--".to_string(),
             ];
             w.extend(subs);
-            return wanted_byname(&w);
+            return _wanted(&w);
         }
     }
 
@@ -149,7 +149,7 @@ pub fn _mime_types(args: &[String]) -> i32 {
         "--".to_string(),
     ];
     w.extend(mains);
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

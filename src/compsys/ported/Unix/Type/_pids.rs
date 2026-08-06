@@ -8,17 +8,17 @@
 //! sh:10  if [[ "$1" = -m ]]; then …match on command line… shift 2
 //! sh:14  elif [[ "$PREFIX$SUFFIX" = ([%-]*|[0-9]#) ]]; then …numeric-only…
 //! sh:18  else all=(-P "$IPREFIX" -S "$ISUFFIX" -U); … nm=$compstate[nmatches] fi
-//! sh:24  while _tags; do
-//! sh:25    if _requested processes; then
-//! sh:26      while _next_label processes expl 'process ID'; do
-//! sh:27        out=( "${(@f)$(_call_program $curtag ps 2>/dev/null)}" )
+//! sh:23  while _tags; do
+//! sh:24    if _requested processes; then
+//! sh:25      while _next_label processes expl 'process ID'; do
+//! sh:26        out=( "${(@f)$(_call_program $curtag ps 2>/dev/null)}" )
 //! sh:28        desc="$out[1]"; out=( matching lines )
 //! sh:30-34    pids=( extract PID column )
 //! sh:36-42    verbose list handling
-//! sh:43        compadd "$@" "$expl[@]" "$desc[@]" "$all[@]" -a pids && ret=0
+//! sh:42        compadd "$@" "$expl[@]" "$desc[@]" "$all[@]" -a pids && ret=0
 //! sh:45    done; fi
-//! sh:47    (( ret )) || break
-//! sh:48  done
+//! sh:45    (( ret )) || break
+//! sh:46  done
 //! sh:50-58 insert-ids compstate tuning (approximated)
 //! sh:60  return ret
 //! ```
@@ -30,9 +30,9 @@
 //! the real filtering).
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_next_label::next_label_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -75,7 +75,7 @@ pub fn _pids(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pids");
     let mut ret = 1;
     // sh:8  _tags processes || return 1
-    if tags_byname(&["processes".to_string()]) != 0 {
+    if _tags(&["processes".to_string()]) != 0 {
         return 1;
     }
 
@@ -119,14 +119,14 @@ pub fn _pids(args: &[String]) -> i32 {
 
     // sh:24-48  the tag / requested / next-label loop.
     loop {
-        if tags_byname(&[]) != 0 {
+        if _tags(&[]) != 0 {
             break;
         }
-        // sh:25  _requested processes
-        if requested_byname(&["processes".to_string()]) == 0 {
-            // sh:26  while _next_label processes expl 'process ID'; do
+        // sh:24  _requested processes
+        if _requested(&["processes".to_string()]) == 0 {
+            // sh:25  while _next_label processes expl 'process ID'; do
             loop {
-                if next_label_byname(&[
+                if _next_label(&[
                     "processes".to_string(),
                     "expl".to_string(),
                     "process ID".to_string(),
@@ -147,7 +147,7 @@ pub fn _pids(args: &[String]) -> i32 {
                 let rows = &lines[1..];
                 // sh:30-34
                 let pids = extract_pids(header, rows);
-                // sh:43  compadd "$@" "$expl[@]" "$all[@]" -a pids
+                // sh:42  compadd "$@" "$expl[@]" "$all[@]" -a pids
                 let expl = getaparam("expl").unwrap_or_default();
                 let mut cadd: Vec<String> = rest.clone();
                 cadd.extend(expl);
@@ -159,7 +159,7 @@ pub fn _pids(args: &[String]) -> i32 {
                 }
             }
         }
-        // sh:47  (( ret )) || break
+        // sh:45  (( ret )) || break
         if ret == 0 {
             break;
         }

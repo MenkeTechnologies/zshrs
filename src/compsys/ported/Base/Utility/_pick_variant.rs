@@ -4,21 +4,21 @@
 //! Full upstream body (49 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 7  zparseopts -D -A opts b: c: r:
-//! sh: 8  : ${opts[-c]:=$words[1]}
-//! sh:10  while [[ $1 = *=* ]]; do
-//! sh:11    var+=( "${1%%\=*}" "${1#*=}" )
-//! sh:12    shift
-//! sh:13  done
-//! sh:15  if (( ${#precommands:|builtin_precommands} )); then
-//! sh:16    pre=command
+//! sh: 9  zparseopts -D -A opts b: c: r:
+//! sh:10  : ${opts[-c]:=$words[1]}
+//! sh:12  while [[ $1 = *=* ]]; do
+//! sh:13    var+=( "${1%%\=*}" "${1#*=}" )
+//! sh:14    shift
+//! sh:15  done
+//! sh:17  if (( ${#precommands:|builtin_precommands} )); then
+//! sh:18    pre=command
 //! sh:17  elif (( $+opts[-b] && (...) )); then
 //! sh:21    return 0
 //! sh:22  elif (( $precommands[(I)builtin] )); then
 //! sh:23    pre=builtin
 //! sh:24  else
-//! sh:26    pre=
-//! sh:27  fi
+//! sh:27    pre=
+//! sh:28  fi
 //! sh:30  if [[ $pre != builtin ]] && (( $+_cmd_variant[$opts[-c]] )); then
 //! sh:31    (( $+opts[-r] )) && : ${(P)opts[-r]::=${_cmd_variant[$opts[-c]]}}
 //! sh:32    [[ $_cmd_variant[$opts[-c]] = "$1" ]] && return 1
@@ -32,7 +32,7 @@
 //! sh:42      return 0
 //! sh:43    fi
 //! sh:44  done
-//! sh:47  return 1
+//! sh:49  return 1
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
@@ -50,7 +50,7 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:7 — `zparseopts -D -A opts b: c: r:`. `-A` makes opts an
+/// sh:9 — `zparseopts -D -A opts b: c: r:`. `-A` makes opts an
 /// assoc; we use the flat key/value layout.
 fn run_zparseopts_pick_variant(args: &[String]) -> (Vec<String>, Vec<String>) {
     let src = "__compsys_argv";
@@ -96,10 +96,10 @@ fn opt(opts_flat: &[String], key: &str) -> Option<String> {
 /// against caller-supplied `name=pattern` specs.
 pub fn _pick_variant(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pick_variant");
-    // sh:7
+    // sh:9
     let (argv, opts_flat) = run_zparseopts_pick_variant(args);
 
-    // sh:8 — opts[-c] defaults to $words[1]
+    // sh:10 — opts[-c] defaults to $words[1]
     let cmd_name = match opt(&opts_flat, "-c") {
         Some(v) => v,
         None => getaparam("words")

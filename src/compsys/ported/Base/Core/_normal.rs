@@ -11,25 +11,25 @@
 //! sh: 8  (( $+opts[-P] )) && precommands=()
 //! sh: 9  (( $#precommand )) && precommands+=(${precommand#-p})
 //! sh:14  if [[ -o BANGHIST &&
-//! sh:15       ( ( $words[CURRENT] = \!*: && -z $compstate[quote] ) ||
-//! sh:16         ( $words[CURRENT] = \"\!*: && $compstate[all_quotes] = \" ) ) ]]; then
-//! sh:19    PREFIX=${PREFIX//\\!/!}
-//! sh:20    compset -P '*:'
-//! sh:21    _history_modifiers h
-//! sh:22    return
-//! sh:23  fi
-//! sh:27  if [[ CURRENT -eq 1 ]]; then
-//! sh:28    curcontext="${curcontext%:*:*}:-command-:"
-//! sh:30    comp="$_comps[-command-]"
-//! sh:31    [[ -n "$comp" ]] && eval "$comp" && return
-//! sh:33    return 1
-//! sh:34  fi
-//! sh:36  _set_command
-//! sh:38  _dispatch ${(k)opts[-s]} "$_comp_command" \
-//! sh:39            "$_comp_command1" "$_comp_command2" -default-
+//! sh:16       ( ( $words[CURRENT] = \!*: && -z $compstate[quote] ) ||
+//! sh:17         ( $words[CURRENT] = \"\!*: && $compstate[all_quotes] = \" ) ) ]]; then
+//! sh:20    PREFIX=${PREFIX//\\!/!}
+//! sh:21    compset -P '*:'
+//! sh:22    _history_modifiers h
+//! sh:23    return
+//! sh:24  fi
+//! sh:28  if [[ CURRENT -eq 1 ]]; then
+//! sh:29    curcontext="${curcontext%:*:*}:-command-:"
+//! sh:31    comp="$_comps[-command-]"
+//! sh:32    [[ -n "$comp" ]] && eval "$comp" && return
+//! sh:34    return 1
+//! sh:35  fi
+//! sh:37  _set_command
+//! sh:39  _dispatch ${(k)opts[-s]} "$_comp_command" \
+//! sh:40            "$_comp_command1" "$_comp_command2" -default-
 //! ```
 
-use crate::compsys::ported::_set_command::set_command_byname;
+use crate::compsys::ported::_set_command::_set_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
@@ -49,23 +49,27 @@ fn make_ops() -> options {
 /// Reach `_normal` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_normal -p $service` (Completion/BSD/Command/_jexec sh:9) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn normal_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_normal", args, || _normal(args))
+/// [`_normal_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _normal(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_normal", args, || _normal_impl(args))
 }
 
 /// `_normal` — `-command-line-` context entry. Strips precommands,
 /// handles history-modifier completion, dispatches command-position
 /// vs arg-position completion.
-pub fn _normal(args: &[String]) -> i32 {
+pub fn _normal_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_normal");
     // sh:3  local _comp_command1 _comp_command2 _comp_command precommand
     // sh:4  local -A opts
@@ -149,21 +153,21 @@ pub fn _normal(args: &[String]) -> i32 {
     let bare_bang = curword.starts_with('!') && curword.ends_with(':') && quote.is_empty();
     let quoted_bang = curword.starts_with("\"!") && curword.ends_with(':') && all_quotes == "\"";
     if bang_hist && (bare_bang || quoted_bang) {
-        // sh:19
+        // sh:20
         let prefix = getsparam("PREFIX").unwrap_or_default();
         let _ = setsparam("PREFIX", &prefix.replace("\\!", "!"));
-        // sh:20
+        // sh:21
         let _ = bin_compset(
             "compset",
             &["-P".to_string(), "*:".to_string()],
             &make_ops(),
             0,
         );
-        // sh:21
+        // sh:22
         return dispatch_function_call("_history_modifiers", &["h".to_string()]).unwrap_or(1);
     }
 
-    // sh:27  CURRENT == 1: command-position completion
+    // sh:28  CURRENT == 1: command-position completion
     if current == 1 {
         let mut curcontext = getsparam("curcontext").unwrap_or_default();
         // sh:28 — strip last two `:` fields and append `:-command-:`
@@ -175,7 +179,7 @@ pub fn _normal(args: &[String]) -> i32 {
         curcontext.push_str(":-command-:");
         let _ = setsparam("curcontext", &curcontext);
 
-        // sh:30 — look up `$_comps[-command-]`.
+        // sh:31 — look up `$_comps[-command-]`.
         // `_comps` is a PM_HASHED associative array, so `getaparam("_comps")`
         // returns EMPTY (flat-array read of a hash) — the old chunks(2) lookup
         // always found nothing, so command-position completion (typing a
@@ -189,7 +193,7 @@ pub fn _normal(args: &[String]) -> i32 {
             .and_then(|t| t.get("_comps").and_then(|h| h.get("-command-").cloned()))
             .unwrap_or_default();
         if !comp.is_empty() {
-            // sh:31  eval "$comp" — dispatch via exec_hook
+            // sh:32  eval "$comp" — dispatch via exec_hook
             if dispatch_function_call(&comp, &[]).unwrap_or(1) == 0 {
                 return 0;
             }
@@ -199,9 +203,9 @@ pub fn _normal(args: &[String]) -> i32 {
     }
 
     // sh:36
-    let _ = set_command_byname();
+    let _ = _set_command();
 
-    // sh:38-39
+    // sh:39-40
     let mut dispatch_argv: Vec<String> = Vec::new();
     if saw_s {
         dispatch_argv.push("-s".to_string());
@@ -219,10 +223,10 @@ mod tests {
 
     #[test]
     fn returns_one_in_command_position_without_comps() {
-        // sh:27-33 — CURRENT=1, no $_comps[-command-] → return 1.
+        // sh:28-34 — CURRENT=1, no $_comps[-command-] → return 1.
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("CURRENT", "1");
         setaparam("_comps", Vec::new());
-        assert_eq!(_normal(&[]), 1);
+        assert_eq!(_normal_impl(&[]), 1);
     }
 }

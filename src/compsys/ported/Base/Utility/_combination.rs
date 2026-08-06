@@ -3,15 +3,15 @@
 //!
 //! Full upstream body (102 lines, abridged):
 //! ```text
-//! sh: 1  #autoload
-//! sh: 5  # Usage: _combination [-s S] TAG STYLE Ki=Pi ... Kj EXPL...
-//! sh:60  zstyle queries with multi-key matching
-//! sh:90  if zstyle -a … "$style" tmp; then
-//! sh:91    filter tmp by all (Ki=Pi) patterns
-//! sh:96    compadd "$@" -a tmp || _$key "$@"
-//! sh:98  else
-//! sh:99    _$key "$@"
-//! sh:100 fi
+//! sh:  1  #autoload
+//! sh:  5  # Usage: _combination [-s S] TAG STYLE Ki=Pi ... Kj EXPL...
+//! sh: 60  zstyle queries with multi-key matching
+//! sh: 90  if zstyle -a … "$style" tmp; then
+//! sh: 91    filter tmp by all (Ki=Pi) patterns
+//! sh: 96    compadd "$@" -a tmp || _$key "$@"
+//! sh:100  else
+//! sh: 99    _$key "$@"
+//! sh:102 fi
 //! ```
 //!
 //! Multi-field zstyle-key composer. Approximation: read the style
@@ -40,22 +40,26 @@ fn make_ops() -> options {
 /// (Completion/Unix/Command/_telnet sh:69) — so the normal function lookup
 /// runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn combination_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_combination", args, || _combination(args))
+/// [`_combination_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _combination(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_combination", args, || _combination_impl(args))
 }
 
 /// `_combination` — multi-key zstyle-driven completer. See upstream
 /// docstring for the spec language (e.g. `users-hosts-ports`).
-pub fn _combination(args: &[String]) -> i32 {
+pub fn _combination_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_combination");
     let mut idx = 0usize;
 
@@ -197,7 +201,7 @@ mod tests {
     fn returns_one_without_style() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            _combination(&[
+            _combination_impl(&[
                 "mytag".to_string(),
                 "users-hosts".to_string(),
                 "users".to_string(),

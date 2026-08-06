@@ -982,99 +982,211 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
 pub static IWIDGET_FLAGS: &[(&str, i32)] = {
     use super::zle_h::{
         ZLE_ISCOMP, ZLE_KEEPSUFFIX, ZLE_KILL, ZLE_LASTCOL, ZLE_LINEMOVE, ZLE_MENUCMP,
-        ZLE_NOTCOMMAND, ZLE_VIOPER, ZLE_YANK, ZLE_YANKAFTER, ZLE_YANKBEFORE,
+        ZLE_NOLAST, ZLE_NOTCOMMAND, ZLE_VIOPER, ZLE_YANKAFTER, ZLE_YANKBEFORE,
     };
     &[
-        // c:iwidgets.list:34 / c:40 / c:61 / c:62 / c:86 / c:87 /
-        // c:103 — the 7 simple ZLE_ISCOMP widgets that `zle -C` wraps.
-        ("complete-word", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
-        (
-            "delete-char-or-list",
-            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
-        ),
-        (
-            "expand-or-complete",
-            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
-        ),
-        (
-            "expand-or-complete-prefix",
-            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
-        ),
-        ("menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
-        (
-            "menu-expand-or-complete",
-            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
-        ),
-        (
-            "reverse-menu-complete",
-            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
-        ),
-        // c:83 — list-choices: ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP.
-        (
-            "list-choices",
-            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP,
-        ),
-        // c:13 — accept-and-menu-complete.
-        ("accept-and-menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX),
-        // c:21-24 — backward-delete / -kill widgets.
-        ("backward-delete-char", ZLE_KEEPSUFFIX),
-        ("backward-delete-word", ZLE_KEEPSUFFIX),
-        ("backward-kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("backward-kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),
-        // Line-movement (ZLE_LINEMOVE).
-        ("beginning-of-buffer-or-history", ZLE_LINEMOVE),
-        ("beginning-of-history", ZLE_LINEMOVE),
-        ("end-of-buffer-or-history", ZLE_LINEMOVE),
-        ("end-of-history", ZLE_LINEMOVE),
-        ("down-history", ZLE_LINEMOVE),
-        ("down-line-or-history", ZLE_LINEMOVE),
-        ("down-line-or-search", ZLE_LINEMOVE),
-        ("up-history", ZLE_LINEMOVE),
-        ("up-line-or-history", ZLE_LINEMOVE),
-        ("up-line-or-search", ZLE_LINEMOVE),
-        // Kill widgets (non-VI-operator forms) — flags per iwidgets.list.
-        ("kill-buffer", ZLE_KILL | ZLE_KEEPSUFFIX), // c:78
-        ("kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),   // c:79
-        ("kill-region", ZLE_KILL | ZLE_KEEPSUFFIX), // c:80
-        ("kill-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:81
-        ("kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),   // c:82
-        ("vi-backward-delete-char", ZLE_KEEPSUFFIX), // c:132
-        ("vi-backward-kill-word", ZLE_KEEPSUFFIX),  // c:133
-        ("vi-change-eol", 0),                       // c:140
-        ("vi-change-whole-line", 0),                // c:141
-        ("vi-delete-char", ZLE_KEEPSUFFIX),         // c:144
-        ("vi-kill-eol", ZLE_KEEPSUFFIX),            // c:169
-        ("vi-kill-line", ZLE_KEEPSUFFIX),           // c:170
-        ("vi-yank-eol", 0),                         // c:195
-        ("vi-yank-whole-line", 0),                  // c:196
-        // VI operator-pending widgets (read further keys).
-        ("vi-change", ZLE_LASTCOL | ZLE_VIOPER), // c:139
-        ("vi-delete", ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_VIOPER), // c:143
-        ("vi-yank", ZLE_LASTCOL | ZLE_VIOPER),   // c:194
-        ("vi-oper-swap-case", ZLE_LASTCOL | ZLE_VIOPER), // c:174
-        ("vi-swap-case", ZLE_LASTCOL),           // c:189
-        ("vi-undo-change", ZLE_KEEPSUFFIX),      // c:190
-        ("vi-repeat-change", 0),                 // c:179
-        // Yank/put widgets — ZLE_YANK* drives yankpop's before/after.
-        ("yank", ZLE_YANKBEFORE | ZLE_KEEPSUFFIX), // c:202
-        ("yank-pop", ZLE_KEEPSUFFIX | ZLE_NOTCOMMAND), // c:203
-        ("vi-put-after", ZLE_YANKAFTER | ZLE_KEEPSUFFIX), // c:176
-        ("vi-put-before", ZLE_YANKBEFORE | ZLE_KEEPSUFFIX), // c:177
-        ("put-replace-selection", ZLE_KEEPSUFFIX), // c:94
-        (
-            "bracketed-paste",
-            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_YANKBEFORE,
-        ), // c:31
-        ("copy-region-as-kill", ZLE_KEEPSUFFIX),   // c:37
-        ("delete-char", ZLE_KEEPSUFFIX),           // c:39
-        ("delete-word", ZLE_KEEPSUFFIX),           // c:41
-        // Non-command widgets (don't update lastcmd).
-        ("argument-base", ZLE_NOTCOMMAND),
-        ("digit-argument", ZLE_NOTCOMMAND),
-        ("neg-argument", ZLE_NOTCOMMAND),
-        ("auto-suffix-remove", ZLE_NOTCOMMAND),
-        ("universal-argument", ZLE_NOTCOMMAND),
-        ("auto-suffix-retain", ZLE_KEEPSUFFIX | ZLE_NOTCOMMAND),
+        // Generated verbatim from `Src/Zle/iwidgets.list` — every widget and its
+        // exact flag word, in upstream order. This table used to be maintained by
+        // hand and had drifted badly: 59 of 193 widgets present, 134 absent and 19
+        // carrying the wrong flags. A widget missing from here defaults to flag 0,
+        // which makes `execzlefunc` (c:zle_main.c:1468-1473) run `removesuffix()` and
+        // `fixsuffix()` on it. For `self-insert` (c:iwidgets.list:111, ZLE_MENUCMP |
+        // ZLE_KEEPSUFFIX) that stripped the completion suffix on every keystroke, so
+        // `git add <TAB>` then `s` gave `git add file.pys` where zsh gives
+        // `git add file.py s`. Keep this generated; do not hand-edit.
+        ("accept-and-hold", 0), // c:iwidgets.list:11
+        ("accept-and-infer-next-history", 0), // c:iwidgets.list:12
+        ("accept-and-menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX), // c:iwidgets.list:13
+        ("accept-line", 0), // c:iwidgets.list:14
+        ("accept-line-and-down-history", 0), // c:iwidgets.list:15
+        ("accept-search", 0), // c:iwidgets.list:16
+        ("argument-base", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_NOTCOMMAND), // c:iwidgets.list:17
+        ("auto-suffix-remove", ZLE_NOTCOMMAND), // c:iwidgets.list:18
+        ("auto-suffix-retain", ZLE_KEEPSUFFIX | ZLE_NOTCOMMAND), // c:iwidgets.list:19
+        ("backward-char", 0), // c:iwidgets.list:20
+        ("backward-delete-char", ZLE_KEEPSUFFIX), // c:iwidgets.list:21
+        ("backward-delete-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:22
+        ("backward-kill-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:iwidgets.list:23
+        ("backward-kill-word", ZLE_KILL | ZLE_KEEPSUFFIX), // c:iwidgets.list:24
+        ("backward-word", 0), // c:iwidgets.list:25
+        ("beep", 0), // c:iwidgets.list:26
+        ("beginning-of-buffer-or-history", ZLE_LINEMOVE), // c:iwidgets.list:27
+        ("beginning-of-history", 0), // c:iwidgets.list:28
+        ("beginning-of-line", 0), // c:iwidgets.list:29
+        ("beginning-of-line-hist", 0), // c:iwidgets.list:30
+        ("bracketed-paste", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_YANKBEFORE), // c:iwidgets.list:31
+        ("capitalize-word", 0), // c:iwidgets.list:32
+        ("clear-screen", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_NOTCOMMAND), // c:iwidgets.list:33
+        ("complete-word", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP), // c:iwidgets.list:34
+        ("copy-prev-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:35
+        ("copy-prev-shell-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:36
+        ("copy-region-as-kill", ZLE_KEEPSUFFIX), // c:iwidgets.list:37
+        ("deactivate-region", 0), // c:iwidgets.list:38
+        ("delete-char", ZLE_KEEPSUFFIX), // c:iwidgets.list:39
+        ("delete-char-or-list", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP), // c:iwidgets.list:40
+        ("delete-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:41
+        ("describe-key-briefly", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:42
+        ("digit-argument", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_NOTCOMMAND), // c:iwidgets.list:43
+        ("down-case-word", 0), // c:iwidgets.list:44
+        ("down-history", 0), // c:iwidgets.list:45
+        ("down-line", ZLE_LINEMOVE | ZLE_LASTCOL), // c:iwidgets.list:46
+        ("down-line-or-history", ZLE_LINEMOVE | ZLE_LASTCOL), // c:iwidgets.list:47
+        ("down-line-or-search", ZLE_LINEMOVE | ZLE_LASTCOL), // c:iwidgets.list:48
+        ("emacs-backward-word", 0), // c:iwidgets.list:49
+        ("emacs-forward-word", 0), // c:iwidgets.list:50
+        ("end-of-buffer-or-history", ZLE_LINEMOVE), // c:iwidgets.list:51
+        ("end-of-history", 0), // c:iwidgets.list:52
+        ("end-of-line", 0), // c:iwidgets.list:53
+        ("end-of-line-hist", 0), // c:iwidgets.list:54
+        ("end-of-list", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:55
+        ("exchange-point-and-mark", 0), // c:iwidgets.list:56
+        ("execute-last-named-cmd", 0), // c:iwidgets.list:57
+        ("execute-named-cmd", 0), // c:iwidgets.list:58
+        ("expand-cmd-path", 0), // c:iwidgets.list:59
+        ("expand-history", 0), // c:iwidgets.list:60
+        ("expand-or-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP), // c:iwidgets.list:61
+        ("expand-or-complete-prefix", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP), // c:iwidgets.list:62
+        ("expand-word", 0), // c:iwidgets.list:63
+        ("forward-char", 0), // c:iwidgets.list:64
+        ("forward-word", 0), // c:iwidgets.list:65
+        ("get-line", 0), // c:iwidgets.list:66
+        ("gosmacs-transpose-chars", 0), // c:iwidgets.list:67
+        ("history-beginning-search-backward", 0), // c:iwidgets.list:68
+        ("history-beginning-search-forward", 0), // c:iwidgets.list:69
+        ("history-incremental-search-backward", 0), // c:iwidgets.list:70
+        ("history-incremental-search-forward", 0), // c:iwidgets.list:71
+        ("history-incremental-pattern-search-backward", 0), // c:iwidgets.list:72
+        ("history-incremental-pattern-search-forward", 0), // c:iwidgets.list:73
+        ("history-search-backward", 0), // c:iwidgets.list:74
+        ("history-search-forward", 0), // c:iwidgets.list:75
+        ("infer-next-history", 0), // c:iwidgets.list:76
+        ("insert-last-word", ZLE_MENUCMP | ZLE_KEEPSUFFIX), // c:iwidgets.list:77
+        ("kill-buffer", ZLE_KILL | ZLE_KEEPSUFFIX), // c:iwidgets.list:78
+        ("kill-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:iwidgets.list:79
+        ("kill-region", ZLE_KILL | ZLE_KEEPSUFFIX), // c:iwidgets.list:80
+        ("kill-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:iwidgets.list:81
+        ("kill-word", ZLE_KILL | ZLE_KEEPSUFFIX), // c:iwidgets.list:82
+        ("list-choices", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP), // c:iwidgets.list:83
+        ("list-expand", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:84
+        ("magic-space", ZLE_KEEPSUFFIX | ZLE_MENUCMP), // c:iwidgets.list:85
+        ("menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP), // c:iwidgets.list:86
+        ("menu-expand-or-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP), // c:iwidgets.list:87
+        ("neg-argument", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_NOTCOMMAND), // c:iwidgets.list:88
+        ("overwrite-mode", 0), // c:iwidgets.list:89
+        ("pound-insert", 0), // c:iwidgets.list:90
+        ("push-input", 0), // c:iwidgets.list:91
+        ("push-line", 0), // c:iwidgets.list:92
+        ("push-line-or-edit", 0), // c:iwidgets.list:93
+        ("put-replace-selection", ZLE_KEEPSUFFIX), // c:iwidgets.list:94
+        ("quoted-insert", ZLE_MENUCMP | ZLE_KEEPSUFFIX), // c:iwidgets.list:95
+        ("quote-line", 0), // c:iwidgets.list:96
+        ("quote-region", 0), // c:iwidgets.list:97
+        ("read-command", ZLE_NOTCOMMAND), // c:iwidgets.list:98
+        ("recursive-edit", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:99
+        ("redisplay", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:100
+        ("redo", ZLE_KEEPSUFFIX), // c:iwidgets.list:101
+        ("reset-prompt", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_NOTCOMMAND | ZLE_NOLAST), // c:iwidgets.list:102
+        ("reverse-menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP), // c:iwidgets.list:103
+        ("run-help", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:104
+        ("select-a-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:105
+        ("select-in-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:106
+        ("select-a-blank-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:107
+        ("select-in-blank-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:108
+        ("select-a-shell-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:109
+        ("select-in-shell-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:110
+        ("self-insert", ZLE_MENUCMP | ZLE_KEEPSUFFIX), // c:iwidgets.list:111
+        ("self-insert-unmeta", ZLE_MENUCMP | ZLE_KEEPSUFFIX), // c:iwidgets.list:112
+        ("send-break", 0), // c:iwidgets.list:113
+        ("set-mark-command", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:114
+        ("split-undo", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_NOTCOMMAND), // c:iwidgets.list:115
+        ("spell-word", 0), // c:iwidgets.list:116
+        ("set-local-history", ZLE_LASTCOL), // c:iwidgets.list:117
+        ("transpose-chars", 0), // c:iwidgets.list:118
+        ("transpose-words", 0), // c:iwidgets.list:119
+        ("undefined-key", 0), // c:iwidgets.list:120
+        ("undo", ZLE_KEEPSUFFIX), // c:iwidgets.list:121
+        ("universal-argument", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_NOTCOMMAND), // c:iwidgets.list:122
+        ("up-case-word", 0), // c:iwidgets.list:123
+        ("up-history", 0), // c:iwidgets.list:124
+        ("up-line", ZLE_LINEMOVE | ZLE_LASTCOL), // c:iwidgets.list:125
+        ("up-line-or-history", ZLE_LINEMOVE | ZLE_LASTCOL), // c:iwidgets.list:126
+        ("up-line-or-search", ZLE_LINEMOVE | ZLE_LASTCOL), // c:iwidgets.list:127
+        ("vi-add-eol", 0), // c:iwidgets.list:128
+        ("vi-add-next", 0), // c:iwidgets.list:129
+        ("vi-backward-blank-word", 0), // c:iwidgets.list:130
+        ("vi-backward-char", 0), // c:iwidgets.list:131
+        ("vi-backward-delete-char", ZLE_KEEPSUFFIX), // c:iwidgets.list:132
+        ("vi-backward-kill-word", ZLE_KEEPSUFFIX), // c:iwidgets.list:133
+        ("vi-backward-word", 0), // c:iwidgets.list:134
+        ("vi-backward-word-end", 0), // c:iwidgets.list:135
+        ("vi-backward-blank-word-end", 0), // c:iwidgets.list:136
+        ("vi-beginning-of-line", 0), // c:iwidgets.list:137
+        ("vi-caps-lock-panic", ZLE_LASTCOL), // c:iwidgets.list:138
+        ("vi-change", ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:139
+        ("vi-change-eol", 0), // c:iwidgets.list:140
+        ("vi-change-whole-line", 0), // c:iwidgets.list:141
+        ("vi-cmd-mode", 0), // c:iwidgets.list:142
+        ("vi-delete", ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:143
+        ("vi-delete-char", ZLE_KEEPSUFFIX), // c:iwidgets.list:144
+        ("vi-digit-or-beginning-of-line", 0), // c:iwidgets.list:145
+        ("vi-down-case", ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:146
+        ("vi-down-line-or-history", ZLE_LINEMOVE), // c:iwidgets.list:147
+        ("vi-end-of-line", ZLE_LASTCOL), // c:iwidgets.list:148
+        ("vi-fetch-history", ZLE_LINEMOVE), // c:iwidgets.list:149
+        ("vi-find-next-char", 0), // c:iwidgets.list:150
+        ("vi-find-next-char-skip", 0), // c:iwidgets.list:151
+        ("vi-find-prev-char", 0), // c:iwidgets.list:152
+        ("vi-find-prev-char-skip", 0), // c:iwidgets.list:153
+        ("vi-first-non-blank", 0), // c:iwidgets.list:154
+        ("vi-forward-blank-word", 0), // c:iwidgets.list:155
+        ("vi-forward-blank-word-end", 0), // c:iwidgets.list:156
+        ("vi-forward-char", 0), // c:iwidgets.list:157
+        ("vi-forward-word", 0), // c:iwidgets.list:158
+        ("vi-forward-word-end", 0), // c:iwidgets.list:159
+        ("vi-goto-column", 0), // c:iwidgets.list:160
+        ("vi-goto-mark", 0), // c:iwidgets.list:161
+        ("vi-goto-mark-line", ZLE_LINEMOVE), // c:iwidgets.list:162
+        ("vi-history-search-backward", 0), // c:iwidgets.list:163
+        ("vi-history-search-forward", 0), // c:iwidgets.list:164
+        ("vi-indent", ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:165
+        ("vi-insert", 0), // c:iwidgets.list:166
+        ("vi-insert-bol", 0), // c:iwidgets.list:167
+        ("vi-join", 0), // c:iwidgets.list:168
+        ("vi-kill-eol", ZLE_KEEPSUFFIX), // c:iwidgets.list:169
+        ("vi-kill-line", ZLE_KEEPSUFFIX), // c:iwidgets.list:170
+        ("vi-match-bracket", 0), // c:iwidgets.list:171
+        ("vi-open-line-above", 0), // c:iwidgets.list:172
+        ("vi-open-line-below", 0), // c:iwidgets.list:173
+        ("vi-oper-swap-case", ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:174
+        ("vi-pound-insert", 0), // c:iwidgets.list:175
+        ("vi-put-after", ZLE_YANKAFTER | ZLE_KEEPSUFFIX), // c:iwidgets.list:176
+        ("vi-put-before", ZLE_YANKBEFORE | ZLE_KEEPSUFFIX), // c:iwidgets.list:177
+        ("vi-quoted-insert", ZLE_MENUCMP | ZLE_KEEPSUFFIX), // c:iwidgets.list:178
+        ("vi-repeat-change", 0), // c:iwidgets.list:179
+        ("vi-repeat-find", 0), // c:iwidgets.list:180
+        ("vi-repeat-search", 0), // c:iwidgets.list:181
+        ("vi-replace", 0), // c:iwidgets.list:182
+        ("vi-replace-chars", 0), // c:iwidgets.list:183
+        ("vi-rev-repeat-find", 0), // c:iwidgets.list:184
+        ("vi-rev-repeat-search", 0), // c:iwidgets.list:185
+        ("vi-set-buffer", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:186
+        ("vi-set-mark", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:187
+        ("vi-substitute", 0), // c:iwidgets.list:188
+        ("vi-swap-case", ZLE_LASTCOL), // c:iwidgets.list:189
+        ("vi-undo-change", ZLE_KEEPSUFFIX), // c:iwidgets.list:190
+        ("vi-unindent", ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:191
+        ("vi-up-case", ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:192
+        ("vi-up-line-or-history", ZLE_LINEMOVE), // c:iwidgets.list:193
+        ("vi-yank", ZLE_LASTCOL | ZLE_VIOPER), // c:iwidgets.list:194
+        ("vi-yank-eol", 0), // c:iwidgets.list:195
+        ("vi-yank-whole-line", 0), // c:iwidgets.list:196
+        ("visual-line-mode", ZLE_MENUCMP | ZLE_LASTCOL), // c:iwidgets.list:197
+        ("visual-mode", ZLE_MENUCMP | ZLE_LASTCOL), // c:iwidgets.list:198
+        ("what-cursor-position", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:199
+        ("where-is", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:200
+        ("which-command", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL), // c:iwidgets.list:201
+        ("yank", ZLE_YANKBEFORE | ZLE_KEEPSUFFIX), // c:iwidgets.list:202
+        ("yank-pop", ZLE_KEEPSUFFIX | ZLE_NOTCOMMAND), // c:iwidgets.list:203
     ]
 };
 

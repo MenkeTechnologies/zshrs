@@ -9,31 +9,31 @@
 //!
 //! Upstream body (verbatim structure, line numbers from zsh 5.9):
 //! ```text
-//! sh: 1  #autoload
-//! sh:23  local str arr sep test testarr tmparr prefix suffixes autosuffix
-//! sh:24  local matchflags opt group expl nm=$compstate[nmatches] opre osuf opts matcher
-//! sh:25  zparseopts -D -a opts 'J+:=group' 'V+:=group' P: F: S: r: R: q 1 2 o+: n \
-//! sh:26      'x+:=expl' 'X+:=expl' 'M+:=matcher'
-//! sh:30  opre="$PREFIX"; osuf="$SUFFIX"
-//! sh:32  str="$PREFIX$SUFFIX"; SUFFIX=""; prefix=""
-//! sh:38  while [[ $# -gt 1 ]]; do
-//! sh:40    arr="$1"; sep="$2"
-//! sh:44    [[ "$arr[1]" == '(' ]] && tmparr=( ${=arr[2,-2]} ); arr=tmparr
-//! sh:50    [[ "$str" != *${sep}* ]] && break
-//! sh:54    PREFIX="${str%%(|\\)${sep}*}"
-//! sh:55    builtin compadd -O testarr "$matcher[@]" -a "$arr"
-//! sh:56    [[ $#testarr -eq 0 && -n "$_comp_correct" ]] && compadd -O testarr …
-//! sh:62    (( $#testarr )) || return 1
-//! sh:63    [[ $#testarr -gt 1 ]] && break
-//! sh:68    prefix="${prefix}${testarr[1]}${sep}"; str="${str#*${sep}}"; shift 2
-//! sh:71  done
-//! sh:75  arr="$1"; [[ "$arr[1]" == '(' ]] && tmparr=( ${=arr[2,-2]} ); arr=tmparr
-//! sh:81  if [[ $# -le 1 || "$str" != *${2}* ]]; then
-//! sh:84    PREFIX="$str"; builtin compadd -O testarr "$matcher[@]" -a "$arr"; …
-//! sh:88  fi
-//! sh:90  [[ $#testarr -eq 0 || ${#testarr[1]} -eq 0 ]] && return 1
-//! sh:94  shift; suffixes=(""); autosuffix=()
-//! sh:98  while [[ $# -gt 0 && "$str" == *${1}* ]]; do
+//! sh:  1  #autoload
+//! sh: 20  local str arr sep test testarr tmparr prefix suffixes autosuffix
+//! sh: 21  local matchflags opt group expl nm=$compstate[nmatches] opre osuf opts matcher
+//! sh: 25  zparseopts -D -a opts 'J+:=group' 'V+:=group' P: F: S: r: R: q 1 2 o+: n \
+//! sh: 26      'x+:=expl' 'X+:=expl' 'M+:=matcher'
+//! sh: 30  opre="$PREFIX"; osuf="$SUFFIX"
+//! sh: 32  str="$PREFIX$SUFFIX"; SUFFIX=""; prefix=""
+//! sh: 38  while [[ $# -gt 1 ]]; do
+//! sh: 40    arr="$1"; sep="$2"
+//! sh: 44    [[ "$arr[1]" == '(' ]] && tmparr=( ${=arr[2,-2]} ); arr=tmparr
+//! sh: 50    [[ "$str" != *${sep}* ]] && break
+//! sh: 54    PREFIX="${str%%(|\\)${sep}*}"
+//! sh: 55    builtin compadd -O testarr "$matcher[@]" -a "$arr"
+//! sh: 56    [[ $#testarr -eq 0 && -n "$_comp_correct" ]] && compadd -O testarr …
+//! sh: 62    (( $#testarr )) || return 1
+//! sh: 63    [[ $#testarr -gt 1 ]] && break
+//! sh: 68    prefix="${prefix}${testarr[1]}${sep}"; str="${str#*${sep}}"; shift 2
+//! sh: 71  done
+//! sh: 75  arr="$1"; [[ "$arr[1]" == '(' ]] && tmparr=( ${=arr[2,-2]} ); arr=tmparr
+//! sh: 81  if [[ $# -le 1 || "$str" != *${2}* ]]; then
+//! sh: 84    PREFIX="$str"; builtin compadd -O testarr "$matcher[@]" -a "$arr"; …
+//! sh: 88  fi
+//! sh: 90  [[ $#testarr -eq 0 || ${#testarr[1]} -eq 0 ]] && return 1
+//! sh: 94  shift; suffixes=(""); autosuffix=()
+//! sh: 98  while [[ $# -gt 0 && "$str" == *${1}* ]]; do
 //! sh:101   str="${str#*${1}}"
 //! sh:106   [[ $# -gt 2 ]] && PREFIX="${str%%${3}*}" || PREFIX="$str"
 //! sh:115   arr="$2"; [[ "$arr[1]" == '(' ]] && tmparr=( ${=arr[2,-2]} ); arr=tmparr
@@ -188,7 +188,7 @@ fn resolve_array_name(arr: &str) -> String {
 /// from the paired (array, separator) arguments.
 pub fn _sep_parts(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sep_parts");
-    // sh:24  nm=$compstate[nmatches]
+    // sh:21  nm=$compstate[nmatches]
     let nm: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);

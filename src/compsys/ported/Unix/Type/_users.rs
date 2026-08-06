@@ -14,7 +14,7 @@
 //! sh:10  _wanted users expl user compadd "$@" -k - userdirs
 //! ```
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -40,7 +40,7 @@ pub fn _users(args: &[String]) -> i32 {
         w.push("-a".to_string());
         w.push("-".to_string());
         w.push("users".to_string());
-        return wanted_byname(&w);
+        return _wanted(&w);
     }
 
     // sh:10  _wanted users expl user compadd "$@" -k - userdirs
@@ -54,7 +54,7 @@ pub fn _users(args: &[String]) -> i32 {
     w.push("-k".to_string());
     w.push("-".to_string());
     w.push("userdirs".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

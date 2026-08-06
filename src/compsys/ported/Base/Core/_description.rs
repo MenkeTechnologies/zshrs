@@ -219,24 +219,28 @@ fn run_zparseopts(
 /// writes it — `_description ttys expl 'tty'` (Completion/Unix/Type/_ttys
 /// sh:20) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn description_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_description", args, || _description(args))
+/// [`_description_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _description(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_description", args, || _description_impl(args))
 }
 
 /// `_description` — build the option array for a `compadd`/`compgen`
 /// call against tag `$1`, store under array-named-by-`$2`, with
 /// description `$3` and optional extra match-specs `$4..`.
 /// Returns 0 (sh:123).
-pub fn _description(args: &[String]) -> i32 {
+pub fn _description_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_description");
     // sh:3  local name nopt xopt format gname hidden hide match opts tag
     // sh:4  local -a ign gropt sort
@@ -736,7 +740,7 @@ mod tests {
     #[test]
     fn returns_zero_for_empty_args() {
         // sh:123 — always exits 0.
-        let r = with_incompfunc(|| _description(&[]));
+        let r = with_incompfunc(|| _description_impl(&[]));
         assert_eq!(r, 0);
     }
 
@@ -744,7 +748,7 @@ mod tests {
     fn writes_named_array_with_default_group_no_format() {
         // sh:102 — gname empty, format empty → array ends in `-J -default-`.
         let arr = with_incompfunc(|| {
-            _description(&[
+            _description_impl(&[
                 "mytag".to_string(),
                 "expl".to_string(),
                 "the description".to_string(),
@@ -760,7 +764,7 @@ mod tests {
         // sh:13-14
         let _ = with_incompfunc(|| {
             setaparam("_lastdescr", Vec::new());
-            _description(&[
+            _description_impl(&[
                 "tagX".to_string(),
                 "varX".to_string(),
                 "  hello  ".to_string(),
@@ -775,7 +779,7 @@ mod tests {
         // sh:14 — `[[ -n "$3" ]]` guard.
         let _ = with_incompfunc(|| {
             setaparam("_lastdescr", vec!["seed".to_string()]);
-            _description(&["t".to_string(), "v".to_string(), "".to_string()])
+            _description_impl(&["t".to_string(), "v".to_string(), "".to_string()])
         });
         let arr = getaparam("_lastdescr").unwrap_or_default();
         assert_eq!(arr, vec!["seed".to_string()]);
@@ -788,7 +792,7 @@ mod tests {
         // "$gropt" ]]` is false → take sh:48 path forcing `-o nosort`.
         // Argv layout: `-V <tag> <name> <description>`.
         let _ = with_incompfunc(|| {
-            _description(&[
+            _description_impl(&[
                 "-V".to_string(),
                 "mytag".to_string(),
                 "outv".to_string(),
@@ -893,7 +897,8 @@ mod tests {
             setaparam("opts", vec!["-W".to_string(), "/dev".to_string()]);
 
             inc_locallevel(); // the scope `_alternative` runs in
-            let _ = _description(&["files".to_string(), "expl".to_string(), "file".to_string()]);
+            let _ =
+                _description_impl(&["files".to_string(), "expl".to_string(), "file".to_string()]);
             let seen = getaparam("opts").unwrap_or_default();
             endparamscope();
             endparamscope();

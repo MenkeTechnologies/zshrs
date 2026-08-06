@@ -6,24 +6,24 @@
 //! sh: 8  local expl suf tag=accounts
 //! sh:10  if [[ "$1" = -t?* ]]; then tag="${1[3,-1]}"; shift
 //! sh:13  elif [[ "$1" = -t ]]; then tag="$2"; shift 2
-//! sh:15  fi
-//! sh:17  [[ "$1" = -(|-) ]] && shift
-//! sh:19  if [[ -prefix 1 *@ ]]; then
-//! sh:20    local user=${PREFIX%%@*}
-//! sh:22    compset -P 1 '*@'
-//! sh:24    _wanted -C user-at hosts expl "host for $user" \
-//! sh:25        _combination -s '[:@]' "${tag}" users-hosts users="$user" hosts "$@" -
-//! sh:26  else
-//! sh:27    compset -S '@*' || suf="@"
-//! sh:28    _wanted users expl "user" \
-//! sh:29        _combination -s '[:@]' "${tag}" users-hosts users -S "$suf" -q "$@" -
-//! sh:30  fi
+//! sh:16  fi
+//! sh:18  [[ "$1" = -(|-) ]] && shift
+//! sh:20  if [[ -prefix 1 *@ ]]; then
+//! sh:21    local user=${PREFIX%%@*}
+//! sh:23    compset -P 1 '*@'
+//! sh:25    _wanted -C user-at hosts expl "host for $user" \
+//! sh:26        _combination -s '[:@]' "${tag}" users-hosts users="$user" hosts "$@" -
+//! sh:27  else
+//! sh:28    compset -S '@*' || suf="@"
+//! sh:29    _wanted users expl "user" \
+//! sh:30        _combination -s '[:@]' "${tag}" users-hosts users -S "$suf" -q "$@" -
+//! sh:31  fi
 //! ```
 //!
-//! The `[[ -prefix 1 *@ ]]` compsys condition (sh:19) — "the word before
+//! The `[[ -prefix 1 *@ ]]` compsys condition (sh:20) — "the word before
 //! the cursor matches `*@`" — is rendered as `PREFIX contains '@'`.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -71,11 +71,11 @@ pub fn _user_at_host(args: &[String]) -> i32 {
 
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if prefix.contains('@') {
-        // sh:19-25 — host-for-user branch.
+        // sh:20-26 — host-for-user branch.
         let user = prefix.split('@').next().unwrap_or("").to_string();
-        // sh:22  compset -P 1 '*@'
+        // sh:23  compset -P 1 '*@'
         let _ = compset(vec!["-P".to_string(), "1".to_string(), "*@".to_string()]);
-        // sh:24-25
+        // sh:25-26
         let mut w: Vec<String> = vec![
             "-C".to_string(),
             "user-at".to_string(),
@@ -92,10 +92,10 @@ pub fn _user_at_host(args: &[String]) -> i32 {
         ];
         w.extend(rest);
         w.push("-".to_string());
-        wanted_byname(&w)
+        _wanted(&w)
     } else {
-        // sh:26-29 — user branch.
-        // sh:27  compset -S '@*' || suf="@"
+        // sh:27-30 — user branch.
+        // sh:28  compset -S '@*' || suf="@"
         let suf = if compset(vec!["-S".to_string(), "@*".to_string()]) == 0 {
             String::new()
         } else {
@@ -117,7 +117,7 @@ pub fn _user_at_host(args: &[String]) -> i32 {
         ];
         w.extend(rest);
         w.push("-".to_string());
-        wanted_byname(&w)
+        _wanted(&w)
     }
 }
 

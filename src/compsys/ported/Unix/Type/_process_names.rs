@@ -14,8 +14,8 @@
 //! sh:23      if (( $#truncate )); then …opts+=(${hyphen}o comm=)…
 //! sh:29      else …opts+=(${hyphen}o args=); names=(…transform…) fi ;;
 //! sh:37    (*) opts+=(-o comm=); names=( ${${${(f)…}#-}:t} ) ;;
-//! sh:39  esac
-//! sh:43  _wanted $tagname expl 'process name' compadd "$@" -F '(ps)' -a - names
+//! sh:42  esac
+//! sh:44  _wanted $tagname expl 'process name' compadd "$@" -F '(ps)' -a - names
 //! ```
 //!
 //! sh:31-34 approx — the nested parameter-flag transform (`${${${…}%%
@@ -23,7 +23,7 @@
 //! entries) is reproduced with string ops.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
 /// `:t` — the basename (last path component).
@@ -110,7 +110,7 @@ pub fn _process_names(args: &[String]) -> i32 {
     }
     names.retain(|s| !s.is_empty());
 
-    // sh:43  _wanted $tagname expl 'process name' compadd "$@" -F '(ps)' -a - names
+    // sh:44  _wanted $tagname expl 'process name' compadd "$@" -F '(ps)' -a - names
     setaparam("names", names);
     let mut w = vec![
         tagname.to_string(),
@@ -124,7 +124,7 @@ pub fn _process_names(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("names".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 /// sh:23/29/37 — `_call_program $tagname ps $opts 2>/dev/null`, returning

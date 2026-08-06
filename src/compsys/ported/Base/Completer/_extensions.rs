@@ -3,18 +3,18 @@
 //! Full upstream body (33 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 7  compset -P '(#b)([~$][^/]#/|)(*/|)(\^|)\*.' || return 1
-//! sh: 9  local -aU files
-//! sh:10  local -a expl suf mfiles
-//! sh:12  files=( ${(e)~match[1]}${match[2]}*.* ) || return 1
+//! sh: 8  compset -P '(#b)([~$][^/]#/|)(*/|)(\^|)\*.' || return 1
+//! sh:10  local -aU files
+//! sh:11  local -a expl suf mfiles
+//! sh:13  files=( ${(e)~match[1]}${match[2]}*.* ) || return 1
 //! sh:13  eval set -A files '${(MSI:'{…}':)files%%.[^/]##}'
-//! sh:14  files=( ${files:#.<->(.*|)} )
-//! sh:16  if zstyle -t ":completion:${curcontext}:extensions" prefix-hidden; then
-//! sh:17    files=( ${files#.} )
-//! sh:18  else
-//! sh:19    PREFIX=".$PREFIX"
-//! sh:20    IPREFIX="${IPREFIX%.}"
-//! sh:21  fi
+//! sh:15  files=( ${files:#.<->(.*|)} )
+//! sh:17  if zstyle -t ":completion:${curcontext}:extensions" prefix-hidden; then
+//! sh:18    files=( ${files#.} )
+//! sh:19  else
+//! sh:20    PREFIX=".$PREFIX"
+//! sh:21    IPREFIX="${IPREFIX%.}"
+//! sh:22  fi
 //! sh:24  zstyle -T ":completion:${curcontext}:extensions" add-space ||
 //! sh:25    suf=( -S '' )
 //! sh:27  _description extensions expl 'file extension'
@@ -30,7 +30,7 @@
 //! std::fs scan of the directory implied by `$match[1]$match[2]`
 //! and extract extensions from filenames in that dir.
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -51,7 +51,7 @@ fn make_ops() -> options {
 /// `*.` or `^*.`. Pure heuristic per-directory file-extension scan.
 pub fn _extensions() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_extensions");
-    // sh:7  compset -P '(#b)([~$][^/]#/|)(*/|)(\^|)\*.'
+    // sh:8  compset -P '(#b)([~$][^/]#/|)(*/|)(\^|)\*.'
     //   When this matches, the captured prefix tells us where to
     //   scan. We dispatch to the real bin_compset; if it returns
     //   non-zero (no match), bail.
@@ -68,7 +68,7 @@ pub fn _extensions() -> i32 {
         return 1;
     }
 
-    // sh:12 — scan the dir for `*.*` filenames; collect unique
+    // sh:13 — scan the dir for `*.*` filenames; collect unique
     //   `.<ext>` suffixes.
     let m_arr = getaparam("match").unwrap_or_default();
     let dir_prefix = format!(
@@ -109,20 +109,20 @@ pub fn _extensions() -> i32 {
             .unwrap_or(false)
     });
 
-    // sh:16-21  prefix-hidden style
+    // sh:17-22  prefix-hidden style
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let prefix_hidden = testforstyle(
         &format!(":completion:{}:extensions", curcontext),
         "prefix-hidden",
     ) == 0;
     if prefix_hidden {
-        // sh:17  drop leading "." from each entry
+        // sh:18  drop leading "." from each entry
         files = files
             .iter()
             .map(|f| f.trim_start_matches('.').to_string())
             .collect();
     } else {
-        // sh:19-20
+        // sh:20-21
         let prefix = getsparam("PREFIX").unwrap_or_default();
         let _ = setsparam("PREFIX", &format!(".{}", prefix));
         let iprefix = getsparam("IPREFIX").unwrap_or_default();
@@ -141,7 +141,7 @@ pub fn _extensions() -> i32 {
     };
 
     // sh:27
-    let _ = description_byname(&[
+    let _ = _description(&[
         "extensions".to_string(),
         "expl".to_string(),
         "file extension".to_string(),
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn returns_one_when_compset_fails() {
-        // sh:7 — when bin_compset returns non-zero (PREFIX doesn't
+        // sh:8 — when bin_compset returns non-zero (PREFIX doesn't
         //   match the `*.` pattern), short-circuit with 1.
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "plain_string");

@@ -2,10 +2,10 @@
 //!
 //! Full upstream body (78 lines, abridged):
 //! ```text
-//! sh: 1  #compdef ftp rwho rup xping traceroute aaaa zone mx ns soa txt
-//! sh: 5  local expl _hosts tmp useip
-//! sh: 7  if ! zstyle -a ":completion:${curcontext}:hosts" hosts _hosts; then
-//! sh: 8    if (( $+_cache_hosts == 0 )); then
+//! sh:1  #compdef ftp rwho rup xping traceroute aaaa zone mx ns soa txt
+//! sh:5  local expl _hosts tmp useip
+//! sh:7  if ! zstyle -a ":completion:${curcontext}:hosts" hosts _hosts; then
+//! sh:8    if (( $+_cache_hosts == 0 )); then
 //! sh:      # use-ip style → keep IP addresses (default: strip them)
 //! sh:      getent hosts  ||  </etc/hosts   (+ ypcat)   — strip leading IP,
 //! sh:                                                    split on ws/tab
@@ -15,15 +15,15 @@
 //! sh:    fi
 //! sh:    _hosts=( "$_cache_hosts[@]" )
 //! sh:  fi
-//! sh:76 _wanted hosts expl host \
-//! sh:77     compadd -a "$@" -M 'm:{a-zA-Z}={A-Za-z} r:|.=* r:|=*' - _hosts
+//! sh:77 _wanted hosts expl host \
+//! sh:78     compadd -a "$@" -M 'm:{a-zA-Z}={A-Za-z} r:|.=* r:|=*' - _hosts
 //! ```
 //!
 //! sh approx — the layered `${(s: :)${(ps:\t:)${…##${~ipstrip}}}}`
 //! expansions are implemented with explicit string scanning.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -113,22 +113,26 @@ fn parse_known_hosts(body: &str, useip: bool) -> Vec<String> {
 /// Reach `_hosts` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_hosts -U -O res` (Completion/bashcompinit sh:97) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn hosts_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_hosts", args, || _hosts(args))
+/// [`_hosts_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _hosts(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_hosts", args, || _hosts_impl(args))
 }
 
 /// `_hosts` — complete host names from `/etc/hosts` (or `getent`) and
 /// ssh `known_hosts` files, cached in `$_cache_hosts`.
-pub fn _hosts(args: &[String]) -> i32 {
+pub fn _hosts_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_hosts");
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:hosts", curcontext);
@@ -182,7 +186,7 @@ pub fn _hosts(args: &[String]) -> i32 {
         hosts = cache.unwrap_or_default();
     }
 
-    // sh:76-77
+    // sh:77-78
     setaparam("_hosts", hosts);
     let mut w: Vec<String> = vec![
         "hosts".to_string(),
@@ -196,7 +200,7 @@ pub fn _hosts(args: &[String]) -> i32 {
     w.push("m:{a-zA-Z}={A-Za-z} r:|.=* r:|=*".to_string());
     w.push("-".to_string());
     w.push("_hosts".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]
@@ -229,7 +233,7 @@ mod tests {
     fn returns_one_without_registered_tags() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::zle::complete::INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
-        let r = _hosts(&[]);
+        let r = _hosts_impl(&[]);
         crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(r, 1);
     }

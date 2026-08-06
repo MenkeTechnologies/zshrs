@@ -920,6 +920,126 @@ pub fn dump_autoload_names(path: &Path) -> Vec<String> {
     names
 }
 
+/// The five association tables a dump file defines (compdump sh:31-72).
+///
+/// `IndexMap`, not `HashMap`: compdump writes every table in `${(ok)…}`
+/// order and sourcing it reproduces exactly that insertion order, which
+/// `${(k)_comps}` and — for `_patcomps`/`_postpatcomps` — pattern-match
+/// precedence are both observable through.
+#[derive(Debug, Default)]
+pub struct DumpTables {
+    /// `_comps=(…)`   — command -> completer
+    pub comps: indexmap::IndexMap<String, String>,
+    /// `_services=(…)` — command -> service name
+    pub services: indexmap::IndexMap<String, String>,
+    /// `_patcomps=(…)` — pattern -> completer (tried before `_comps`)
+    pub patcomps: indexmap::IndexMap<String, String>,
+    /// `_postpatcomps=(…)` — pattern -> completer (tried after `_comps`)
+    pub postpatcomps: indexmap::IndexMap<String, String>,
+    /// `_compautos=(…)` — autoload name -> extra `autoload` options
+    pub compautos: indexmap::IndexMap<String, String>,
+}
+
+/// Split one dump line into words the way the shell would, honouring the
+/// single-quoting `${(qq)}` applies in compdump (sh:38, 45, 52, 59, 64, 70).
+///
+/// `(qq)` renders an embedded `'` as `'\''`, so `'brew` is written
+/// `''\''brew'` — three concatenated segments. Adjacent segments join into
+/// one word, which is what makes plain `split_whitespace` wrong here.
+fn split_quoted_words(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut started = false;
+    let mut it = line.chars();
+    while let Some(c) = it.next() {
+        match c {
+            ' ' | '\t' => {
+                if started {
+                    out.push(std::mem::take(&mut cur));
+                    started = false;
+                }
+            }
+            '\'' => {
+                started = true;
+                for d in it.by_ref() {
+                    if d == '\'' {
+                        break;
+                    }
+                    cur.push(d);
+                }
+            }
+            '\\' => {
+                started = true;
+                if let Some(d) = it.next() {
+                    cur.push(d);
+                }
+            }
+            _ => {
+                started = true;
+                cur.push(c);
+            }
+        }
+    }
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
+/// sh:494 `builtin . "$_comp_dumpfile"` — the association-table half of
+/// sourcing a dump file, extracted without executing it.
+///
+/// On the `-C` path (sh:493-496) upstream sources the dump and sets
+/// `_i_done`, and sh:501's `if [[ -z "$_i_done" ]]` then skips the whole
+/// sh:504-528 `$fpath` scan. The dump is therefore the SOLE definition of
+/// `_comps`/`_services`/`_patcomps`/`_postpatcomps`/`_compautos` for that
+/// session — nothing else contributes a single key.
+///
+/// zshrs substituted its own SQLite cache for that payload, which is
+/// refreshed on a different schedule than the shared `.zcompdump` and can
+/// hold a partial scan. On this host the cache carried 1849 `_comps`
+/// entries against the dump's 51745, so `$_comps[zpwr]` (and `cargo`,
+/// `brew`, …) was simply absent, `_dispatch` fell through to `-default-`
+/// and `zpwr <TAB>` completed FILES where zsh runs `_zpwr`.
+///
+/// compdump writes each table as a bare `NAME=(` line, one `'key' 'value'`
+/// pair per line, and a bare `)` (sh:31-72); this parses exactly that
+/// shape and ignores everything else in the file.
+pub fn dump_assoc_tables(path: &Path) -> Option<DumpTables> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut tables = DumpTables::default();
+    let mut open: Option<usize> = None;
+    for line in text.lines() {
+        if let Some(idx) = open {
+            if line.trim_end() == ")" {
+                open = None;
+                continue;
+            }
+            let words = split_quoted_words(line);
+            if words.len() >= 2 {
+                let table = match idx {
+                    0 => &mut tables.comps,
+                    1 => &mut tables.services,
+                    2 => &mut tables.patcomps,
+                    3 => &mut tables.postpatcomps,
+                    _ => &mut tables.compautos,
+                };
+                table.insert(words[0].clone(), words[1].clone());
+            }
+            continue;
+        }
+        open = match line.trim_end() {
+            "_comps=(" => Some(0),
+            "_services=(" => Some(1),
+            "_patcomps=(" => Some(2),
+            "_postpatcomps=(" => Some(3),
+            "_compautos=(" => Some(4),
+            _ => None,
+        };
+    }
+    Some(tables)
+}
+
 /// Default `$_comp_dumpfile` path (sh:129-134). User can override
 /// via `compinit -d <file>`; without that, use `${ZDOTDIR:-$HOME}`
 /// + `/.zcompdump`.
@@ -3189,6 +3309,90 @@ mod tests {
             "continuation lines, `+X`/`-Uz` option words and the quoted \
              `_comps` key must all be handled"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Regression: on the sh:493-496 `-C` branch the dump is sourced and
+    /// sh:501's `[[ -z "$_i_done" ]]` skips the `$fpath` scan, so the dump
+    /// alone defines all five association tables. zshrs read them from its
+    /// SQLite cache instead, and a partially-built cache (1849 `_comps`
+    /// keys against the real dump's 51745 on a zpwr host) silently dropped
+    /// `$_comps[zpwr]`, `$_comps[cargo]`, `$_comps[brew]`, … — every one of
+    /// those commands then fell through `_dispatch` to `-default-` and
+    /// completed FILES where zsh runs the registered completer.
+    ///
+    /// The value shapes asserted here are the ones compdump's `${(qq)}`
+    /// actually emits (compdump:38-70): a plain `'k' 'v'` pair, a key that
+    /// starts with a literal quote (`''\''brew'` → `'brew`), and a key with
+    /// an embedded one (`'services'\'''` → `services'`).
+    #[test]
+    fn dump_assoc_tables_reads_all_five_compdump_tables() {
+        let dir = std::env::temp_dir().join("zshrs_compinit_dumptables_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let dump = dir.join("zcompdump");
+        fs::write(
+            &dump,
+            concat!(
+                "#files: 3\tversion: 5.9.2\n",
+                "\n",
+                "_comps=(\n",
+                "'zpwr' '_zpwr'\n",
+                "''\\''brew' '_brew_services'\n",
+                "'services'\\''' '_brew_services'\n",
+                ")\n",
+                "\n",
+                "_services=(\n",
+                "'ftp' 'ftp'\n",
+                ")\n",
+                "\n",
+                "_patcomps=(\n",
+                "'*/(init|rc[0-9S]#).d/*' '_init_d'\n",
+                ")\n",
+                "\n",
+                "_postpatcomps=(\n",
+                "'_*' '_compadd'\n",
+                "'gcc-*' '_gcc'\n",
+                ")\n",
+                "\n",
+                "_compautos=(\n",
+                "'_call_program' '+X'\n",
+                ")\n",
+                "\n",
+                // Everything after the tables must be ignored, including a
+                // `)` that does not close one.
+                "zle -C _complete_help complete-word _complete_help\n",
+                "autoload -Uz _zzt\n",
+                "typeset -gUa _comp_assocs\n",
+                "_comp_assocs=( '' )\n",
+            ),
+        )
+        .unwrap();
+
+        let t = dump_assoc_tables(&dump).expect("dump is readable");
+        assert_eq!(t.comps.get("zpwr").map(String::as_str), Some("_zpwr"));
+        assert_eq!(
+            t.comps.get("'brew").map(String::as_str),
+            Some("_brew_services"),
+            "`''\\''brew'` is three concatenated (qq) segments = `'brew`"
+        );
+        assert_eq!(
+            t.comps.get("services'").map(String::as_str),
+            Some("_brew_services")
+        );
+        assert_eq!(t.comps.len(), 3, "no stray keys from the trailing lines");
+        assert_eq!(t.services.get("ftp").map(String::as_str), Some("ftp"));
+        assert_eq!(
+            t.patcomps.get("*/(init|rc[0-9S]#).d/*").map(String::as_str),
+            Some("_init_d")
+        );
+        // Order is load-bearing: `_postpatcomps` is tried in insertion order,
+        // and compdump writes it in `${(ok)}` order (compdump:61-66).
+        assert_eq!(
+            t.postpatcomps.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["_*", "gcc-*"]
+        );
+        assert_eq!(t.compautos.get("_call_program").map(String::as_str), Some("+X"));
         let _ = fs::remove_dir_all(&dir);
     }
 }

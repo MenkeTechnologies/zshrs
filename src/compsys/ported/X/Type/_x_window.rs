@@ -33,8 +33,8 @@
 //! whitespace-stripped-only lines) as the paired display strings.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_tags::tags_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
 /// sh:7 — whole-line glob test `[ \t]#0x[0-9a-f]# \"*`: optional leading
@@ -91,7 +91,7 @@ fn extract_id(line: &str) -> String {
 pub fn _x_window(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_window");
     // sh:5  _tags windows || return 1
-    if tags_byname(&["windows".to_string()]) != 0 {
+    if _tags(&["windows".to_string()]) != 0 {
         return 1;
     }
 
@@ -143,7 +143,7 @@ pub fn _x_window(args: &[String]) -> i32 {
         wanted_args.extend(list.iter().map(|l| extract_id(l)));
     }
 
-    wanted_byname(&wanted_args)
+    _wanted(&wanted_args)
 }
 
 #[cfg(test)]

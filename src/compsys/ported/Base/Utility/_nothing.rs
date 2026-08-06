@@ -7,12 +7,12 @@
 //! sh:3  _message 'no argument or option'
 //! ```
 
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 
 /// `_nothing` — emit a message that the command takes no args.
 pub fn _nothing() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_nothing");
-    message_byname(&["no argument or option".to_string()])
+    _message(&["no argument or option".to_string()])
 }
 
 #[cfg(test)]

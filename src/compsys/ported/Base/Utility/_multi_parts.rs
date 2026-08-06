@@ -294,22 +294,26 @@ fn resolve_array(spec: &str) -> Vec<String> {
 /// Reach `_multi_parts` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `(( $#mbox_names )) && _multi_parts "$@" / mbox_names && ret=0` (Completion/Unix/Type/_mailboxes sh:193) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn multi_parts_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_multi_parts", args, || _multi_parts(args))
+/// [`_multi_parts_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _multi_parts(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_multi_parts", args, || _multi_parts_impl(args))
 }
 
 /// `_multi_parts` — complete each `sep`-delimited segment of a
 /// path-like string from a shared array of complete strings.
-pub fn _multi_parts(args: &[String]) -> i32 {
+pub fn _multi_parts_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_multi_parts");
     let comp_correct = getsparam("_comp_correct").unwrap_or_default();
 
@@ -880,7 +884,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "xyz");
         let _ = setsparam("SUFFIX", "");
-        let _r = _multi_parts(&["/".to_string(), "(foo/bar baz/qux)".to_string()]);
+        let _r = _multi_parts_impl(&["/".to_string(), "(foo/bar baz/qux)".to_string()]);
         // Transient by-name arrays cleaned up.
         assert!(getaparam("tmp1").map(|v| v.is_empty()).unwrap_or(true));
         assert!(getaparam("matches").map(|v| v.is_empty()).unwrap_or(true));

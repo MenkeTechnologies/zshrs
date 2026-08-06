@@ -30,12 +30,12 @@
 //!             `=`-descend (`comparguments -L`) branch.
 //!   sh:569-589 context restore + return value from `$compstate[nmatches]`.
 
-use crate::compsys::ported::_all_labels::all_labels_byname;
-use crate::compsys::ported::_description::description_byname;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_next_label::next_label_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_all_labels::_all_labels;
+use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::{dispatch_function_call, execute_script};
 use crate::ported::glob::matchpat;
 use crate::ported::modules::zutil::zstyletab;
@@ -794,22 +794,26 @@ fn subst_first(str_in: &str, pat: &str, repl: &str) -> String {
 /// Reach `_arguments` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_arguments -C -S \` (Completion/Debian/Command/_apt-file sh:6) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn arguments_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_arguments", args, || _arguments(args))
+/// [`_arguments_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _arguments(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_arguments", args, || _arguments_impl(args))
 }
 
 /// `_arguments` — spec engine. `args` is the full argument vector the
 /// caller passed after the function name (flags then spec strings).
-pub fn _arguments(args: &[String]) -> i32 {
+pub fn _arguments_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_arguments");
     // sh:6-8 — locals mirroring the zsh source. `cmd="$words[1]"`.
     let words0 = getaparam("words").unwrap_or_default();
@@ -1022,10 +1026,10 @@ pub fn _arguments(args: &[String]) -> i32 {
             opts = true;
             let mut targ = subcs.clone();
             targ.push("options".to_string());
-            let rc_tags = tags_byname(&targ); // sh:337
-            tracing::debug!(target: "compsys_args", ?targ, rc_tags, "_arguments tags_byname(subcs+options)");
+            let rc_tags = _tags(&targ); // sh:337
+            tracing::debug!(target: "compsys_args", ?targ, rc_tags, "_arguments _tags(subcs+options)");
         } else {
-            let _ = tags_byname(&subcs); // sh:338
+            let _ = _tags(&subcs); // sh:338
         }
     } else {
         // sh:341 comparguments -a
@@ -1038,7 +1042,7 @@ pub fn _arguments(args: &[String]) -> i32 {
         let orc = comparguments(&["-O", "next", "direct", "odirect", "equal"]);
         if orc == 0 {
             opts = true;
-            let _ = tags_byname(&["options".to_string()]); // sh:348
+            let _ = _tags(&["options".to_string()]); // sh:348
         } else if orc == 2 {
             // sh:349 — [[ $? -eq 2 ]] (singles): add the raw word, done.
             let word = prefix_suffix();
@@ -1050,7 +1054,7 @@ pub fn _arguments(args: &[String]) -> i32 {
             );
             return 0;
         } else {
-            let _ = message_byname(&[noargs.clone()]); // sh:353
+            let _ = _message(&[noargs.clone()]); // sh:353
             return 1;
         }
     }
@@ -1073,7 +1077,7 @@ pub fn _arguments(args: &[String]) -> i32 {
     // sh:364 — while true; do
     loop {
         // sh:365 — while _tags; do
-        while tags_byname(&[]) == 0 {
+        while _tags(&[]) == 0 {
             // sh:367 — if [[ -z "$tried" ]]; then walk the descrs.
             if !tried && have_descrs {
                 let descrs = getaparam("descrs").unwrap_or_default();
@@ -1093,7 +1097,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                     }
 
                     // sh:378 — if [[ -n "$matched" ]] || _requested "$subc"
-                    if !matched && requested_byname(std::slice::from_ref(&subc)) != 0 {
+                    if !matched && _requested(std::slice::from_ref(&subc)) != 0 {
                         continue;
                     }
 
@@ -1104,7 +1108,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                     );
 
                     // sh:382 — _description "$subc" expl "$descr"
-                    let _ = description_byname(&[subc.clone(), "expl".to_string(), descr.clone()]);
+                    let _ = _description(&[subc.clone(), "expl".to_string(), descr.clone()]);
 
                     // Work on a mutable copy of the action (sh reassigns it).
                     let mut action = action;
@@ -1173,7 +1177,7 @@ pub fn _arguments(args: &[String]) -> i32 {
 
                     if action.chars().all(|c| c == ' ') {
                         // sh:413 — [[ "$action" = \ # ]] empty action.
-                        let _ = message_byname(&["-e".to_string(), subc.clone(), descr.clone()]);
+                        let _ = _message(&["-e".to_string(), subc.clone(), descr.clone()]);
                         mesg = true;
                         tried = true;
                         if alwopt.is_empty() {
@@ -1216,7 +1220,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                         av.push("-a".to_string());
                         av.push("-".to_string());
                         av.push("ws".to_string());
-                        if all_labels_byname(&av) != 0 && alwopt.is_empty() {
+                        if _all_labels(&av) != 0 && alwopt.is_empty() {
                             alwopt = "yes".to_string();
                         }
                         tried = true;
@@ -1224,8 +1228,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                         // sh:440 — {body} → eval body per label.
                         let body = &action[1..action.len() - 1];
                         loop {
-                            if next_label_byname(&[subc.clone(), "expl".to_string(), descr.clone()])
-                                != 0
+                            if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()]) != 0
                             {
                                 break;
                             }
@@ -1243,11 +1246,8 @@ pub fn _arguments(args: &[String]) -> i32 {
                         let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
                         if let Some((cmd, rest)) = parts.split_first() {
                             loop {
-                                if next_label_byname(&[
-                                    subc.clone(),
-                                    "expl".to_string(),
-                                    descr.clone(),
-                                ]) != 0
+                                if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])
+                                    != 0
                                 {
                                     break;
                                 }
@@ -1267,11 +1267,8 @@ pub fn _arguments(args: &[String]) -> i32 {
                         let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
                         if let Some((cmd, rest)) = parts.split_first() {
                             loop {
-                                if next_label_byname(&[
-                                    subc.clone(),
-                                    "expl".to_string(),
-                                    descr.clone(),
-                                ]) != 0
+                                if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])
+                                    != 0
                                 {
                                     break;
                                 }
@@ -1313,7 +1310,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                     || (!aret && !mesg && !tried) // -z "$aret$mesg$tried"
             };
             let cur_prefix = getsparam("PREFIX").unwrap_or_default();
-            let requested_options = requested_byname(&["options".to_string()]);
+            let requested_options = _requested(&["options".to_string()]);
             tracing::debug!(
                 target: "compsys_args",
                 requested_options,
@@ -1369,7 +1366,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                     let word = prefix_suffix();
                     if single == "direct" {
                         // sh:493
-                        let _ = all_labels_byname(&[
+                        let _ = _all_labels(&[
                             "options".to_string(),
                             "expl".to_string(),
                             "option".to_string(),
@@ -1381,7 +1378,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                         ]);
                     } else if !optarg && single == "next" {
                         // sh:495
-                        let _ = all_labels_byname(&[
+                        let _ = _all_labels(&[
                             "options".to_string(),
                             "expl".to_string(),
                             "option".to_string(),
@@ -1392,7 +1389,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                         ]);
                     } else if single == "equal" {
                         // sh:498
-                        let _ = all_labels_byname(&[
+                        let _ = _all_labels(&[
                             "options".to_string(),
                             "expl".to_string(),
                             "option".to_string(),
@@ -1500,7 +1497,7 @@ pub fn _arguments(args: &[String]) -> i32 {
 
                         // sh:519 — optarg + next + no new matches → add word.
                         if optarg && single == "next" && nm == nmatches() {
-                            let _ = all_labels_byname(&[
+                            let _ = _all_labels(&[
                                 "options".to_string(),
                                 "expl".to_string(),
                                 "option".to_string(),
@@ -1619,7 +1616,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                 let _ = comparguments(&["-L", opt_name.as_str(), "descrs", "actions", "subcs"]);
                 have_descrs = true;
                 let subcs = getaparam("subcs").unwrap_or_default();
-                let _ = tags_byname(&subcs); // sh:561
+                let _ = _tags(&subcs); // sh:561
                 continue; // sh:563
             }
         }
@@ -1649,7 +1646,7 @@ pub fn _arguments(args: &[String]) -> i32 {
     } else {
         // sh:582 — [[ -n "$noargs" && nm -eq nmatches ]] && _message noargs
         if !noargs.is_empty() && nm == nmatches() {
-            let _ = message_byname(&[noargs.clone()]);
+            let _ = _message(&[noargs.clone()]);
         }
         // sh:586 — [[ nm -ne "$compstate[nmatches]" ]] (0 = added matches)
         if nm_live != nmatches_live() {
@@ -1703,14 +1700,14 @@ mod tests {
     fn empty_spec_list_returns_one() {
         // (( $# )) is false → sh:588 return 1 (no comparguments call).
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_arguments(&[]), 1);
+        assert_eq!(_arguments_impl(&[]), 1);
     }
 
     #[test]
     fn flags_only_still_returns_one() {
         // Only flags, no specs → `$#`==0 after the getopt loop.
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_arguments(&["-s".to_string(), "-C".to_string()]), 1);
+        assert_eq!(_arguments_impl(&["-s".to_string(), "-C".to_string()]), 1);
     }
 
     #[test]
@@ -1720,7 +1717,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         setaparam("words", vec!["cmd".to_string(), "".to_string()]);
         let _ = setiparam("CURRENT", 2);
-        let r = _arguments(&["1:file:_files".to_string()]);
+        let r = _arguments_impl(&["1:file:_files".to_string()]);
         assert_eq!(r, 1);
     }
 
@@ -1737,7 +1734,7 @@ mod tests {
             vec!["zshrs-no-such-cmd-xyz".to_string(), "".to_string()],
         );
         let _ = setiparam("CURRENT", 2);
-        let r = _arguments(&[
+        let r = _arguments_impl(&[
             "-v[verbose]".to_string(),
             "--".to_string(),
             "-i".to_string(),
@@ -1916,7 +1913,7 @@ Usage: foo [OPTION]...
         // still fall to sh:588 (return 1), proving the getopt arm consumed
         // `-0` rather than treating it as a spec.
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_arguments(&["-0".to_string()]), 1);
+        assert_eq!(_arguments_impl(&["-0".to_string()]), 1);
     }
 
     #[test]

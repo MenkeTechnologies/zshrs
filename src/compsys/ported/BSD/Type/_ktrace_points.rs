@@ -28,7 +28,7 @@
 //! sh:40      ;;
 //! sh:41    openbsd*)
 //! sh:43      points+=( 'p[trace violation of pledge(2) restrictions]'
-//! sh:45                'x[trace argument vector in execve(2)]'
+//! sh:44                'x[trace argument vector in execve(2)]'
 //! sh:46                'X[trace environment in execve(2)]' )
 //! sh:47      ;;
 //! sh:48  esac
