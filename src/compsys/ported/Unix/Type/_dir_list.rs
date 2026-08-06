@@ -6,14 +6,14 @@
 //! sh: 3  # options:
 //! sh: 4  #  -s <sep> to specify the separator (default is a colon)
 //! sh: 5  #  -S       to say that the separator should be added as a suffix
-//! sh: 9  local sep=: dosuf suf
-//! sh:11  while [[ "$1" = -(s*|S) ]]; do
-//! sh:12    case "$1" in
-//! sh:13    -s)  sep="$2"; shift 2;;
-//! sh:14    -s*) sep="${1[3,-1]}"; shift;;
-//! sh:15    -S)  dosuf=yes; shift;;
-//! sh:16    esac
-//! sh:17  done
+//! sh:10  local sep=: dosuf suf
+//! sh:12  while [[ "$1" = -(s*|S) ]]; do
+//! sh:13    case "$1" in
+//! sh:14    -s)  sep="$2"; shift 2;;
+//! sh:15    -s*) sep="${1[3,-1]}"; shift;;
+//! sh:16    -S)  dosuf=yes; shift;;
+//! sh:17    esac
+//! sh:18  done
 //! sh:20  compset -P "*${sep}"
 //! sh:21  compset -S "${sep}*" || suf="$sep"
 //! sh:23  if [[ -n "$dosuf" ]]; then
@@ -29,7 +29,7 @@
 //! cleanly). Calls real `bin_compset` then delegates to ported
 //! `_directories`.
 
-use crate::compsys::ported::_directories::directories_byname;
+use crate::compsys::ported::_directories::_directories;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -51,7 +51,7 @@ pub fn _dir_list(args: &[String]) -> i32 {
     let mut dosuf = false;
     let mut argv: Vec<String> = args.to_vec();
 
-    // sh:11-17  inline flag parse
+    // sh:12-18  inline flag parse
     while let Some(a) = argv.first() {
         if a == "-s" && argv.len() >= 2 {
             sep = argv[1].clone();
@@ -102,7 +102,7 @@ pub fn _dir_list(args: &[String]) -> i32 {
     dir_args.push("-r".to_string());
     dir_args.push(format!("{} /\t\t-", sep));
     dir_args.extend(argv);
-    directories_byname(&dir_args)
+    _directories(&dir_args)
 }
 
 #[cfg(test)]

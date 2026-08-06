@@ -3,11 +3,11 @@
 //! Full upstream body (62 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 4  local ret=1
-//! sh: 5  local -a flags
-//! sh: 6  local preprefix=$IPREFIX
-//! sh: 8  compset -P '([ilIUubBmMcq]|a(|<->))##'
-//! sh:10  preprefix=${IPREFIX[$#preprefix,-1]}
+//! sh: 6  local ret=1
+//! sh: 7  local -a flags
+//! sh: 8  local preprefix=$IPREFIX
+//! sh:10  compset -P '([ilIUubBmMcq]|a(|<->))##'
+//! sh:12  preprefix=${IPREFIX[$#preprefix,-1]}
 //! sh:11  if [[ $preprefix = *\#q* ]]; then _globquals; return; fi
 //! sh:13  elif [[ $preprefix = *q* ]]; then _message 'q flag has to be specified by itself'; return; fi
 //! sh:15  elif [[ $preprefix = *a(|<->) ]]; then _message -e number 'errors'; if a alone return else compset -P '<->'
@@ -15,12 +15,12 @@
 //! sh:24  flags=( i l I s e U u ); add b B m M when condition context
 //! sh:38  filter out already-used flags via :#[...] pattern
 //! sh:40  if [[ $IPREFIX != *# ]]; then flags=( ${flags:#[se]*} ); fi
-//! sh:42  _describe -t globflags "glob flag" flags -Q -S ')' && ret=0
+//! sh:50  _describe -t globflags "glob flag" flags -Q -S ')' && ret=0
 //! sh:44  flags=( a q c ); filter; _describe -t globflags … -S '' && ret=0
-//! sh:57  return ret
+//! sh:62  return ret
 //! ```
 
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -43,14 +43,14 @@ pub fn _globflags() -> i32 {
     let preprefix_initial = getsparam("IPREFIX").unwrap_or_default();
     let mut ret: i32 = 1;
 
-    // sh:8
+    // sh:10
     let _ = bin_compset(
         "compset",
         &["-P".to_string(), "([ilIUubBmMcq]|a(|<->))##".to_string()],
         &make_ops(),
         0,
     );
-    // sh:10  preprefix = portion of IPREFIX consumed by compset
+    // sh:12  preprefix = portion of IPREFIX consumed by compset
     let new_iprefix = getsparam("IPREFIX").unwrap_or_default();
     let preprefix = if new_iprefix.len() >= preprefix_initial.len() {
         new_iprefix[preprefix_initial.len()..].to_string()
@@ -64,7 +64,7 @@ pub fn _globflags() -> i32 {
     }
     // sh:13
     if preprefix.contains('q') {
-        return message_byname(&["q flag has to be specified by itself".to_string()]);
+        return _message(&["q flag has to be specified by itself".to_string()]);
     }
     // sh:15
     if preprefix.starts_with('a') || preprefix.contains(|c: char| c == 'a') {
@@ -73,7 +73,7 @@ pub fn _globflags() -> i32 {
         let tail_a_count =
             preprefix.starts_with('a') && preprefix[1..].chars().all(|c| c.is_ascii_digit());
         if tail_a_only || tail_a_count {
-            let _ = message_byname(&["-e".to_string(), "number".to_string(), "errors".to_string()]);
+            let _ = _message(&["-e".to_string(), "number".to_string(), "errors".to_string()]);
             if tail_a_only {
                 return 0;
             } else {
@@ -88,7 +88,7 @@ pub fn _globflags() -> i32 {
     }
     // sh:21
     if preprefix.ends_with("#c") {
-        return message_byname(&[
+        return _message(&[
             "-e".to_string(),
             "range".to_string(),
             "repetitions (min,max) or (exact)".to_string(),
@@ -135,7 +135,7 @@ pub fn _globflags() -> i32 {
         });
     }
 
-    // sh:42
+    // sh:50
     setaparam("flags", emit.clone());
     let mut describe_argv: Vec<String> = vec![
         "-t".to_string(),

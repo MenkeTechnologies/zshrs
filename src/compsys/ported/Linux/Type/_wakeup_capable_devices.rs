@@ -17,7 +17,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_describe::describe_byname;
+use crate::compsys::ported::_describe::_describe;
 use crate::ported::modules::zutil::zformat_substring;
 use crate::ported::params::{getsparam, setaparam};
 use regex::Regex;
@@ -103,10 +103,7 @@ pub fn _wakeup_capable_devices(args: &[String]) -> i32 {
     describe_argv.extend(args.iter().cloned());
     // sh:13 is a bare command word — reach it by name so `$fpath`/shfunc
     // arbitration runs and `_describe`'s locals land in its own scope.
-    if crate::compsys::ported::shared::call_compfn("_describe", &describe_argv, || {
-        describe_byname(&describe_argv)
-    }) == 0
-    {
+    if _describe(&describe_argv) == 0 {
         ret = 0;
     }
 

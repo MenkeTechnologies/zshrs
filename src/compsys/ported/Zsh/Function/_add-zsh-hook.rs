@@ -109,7 +109,7 @@ pub fn _add_zsh_hook(_args: &[String]) -> i32 {
     // (c:1556); otherwise its `compstate[restore]=''` (`_arguments.rs:1130`)
     // leaks up and suppresses the caller's restore.
     let call = build_arguments_call();
-    crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call))
+    _arguments(&call)
 }
 
 #[cfg(test)]

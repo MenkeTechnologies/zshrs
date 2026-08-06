@@ -1732,13 +1732,14 @@ mod corpus_dash_fc_bulk_j {
         bulk_j_cond_nul_and_nonempty => (r#"[[ -z -n ]]"#, r##"[[ -z '' && -n x ]]; print -r "znj=$?""##);
         bulk_j_alias_define_invoke_remove => (r#"alias cycle"#, r##"alias aj_pr='print ajv'; aj_pr; unalias aj_pr; print -r "has=${+aliases[aj_pr]}""##);
         bulk_j_array_subscript_range_slice => (r#"ary[2,4]"#, r##"arj_sl=(1 2 3 4); print -r "${arj_sl[2,4]}""##);
-        // $OSTYPE's kernel-release suffix is baked at zsh BUILD time
-        // (configure host triple, e.g. darwin25.4.0 for a zsh built
-        // on an older kernel) while zshrs derives it from uname at
-        // startup (darwin25.5.0 on the same host) — the numeric
-        // suffix comparison is provably impossible across binaries
-        // built at different times. Compare the OS-name prefix;
-        // VENDOR and UID stay exact.
+        // $OSTYPE's kernel-release suffix is baked at BUILD time in both
+        // shells — configure freezes `$host_os` for zsh, build.rs freezes
+        // the same `config.guess` derivation for zshrs — so the reference
+        // binary reports the kernel it was configured on (darwin25.4.0)
+        // and a zshrs built later reports the kernel of its own build
+        // (darwin25.5.0). The numeric suffix is therefore not comparable
+        // across binaries built at different times. Compare the OS-name
+        // prefix; VENDOR and UID stay exact.
         bulk_j_print_OSTYPE_VENDOR_UID => (r#"OSTYPE VENDOR UID"#, r##"print -r "${OSTYPE%%[0-9]*} $VENDOR $UID""##);
         bulk_j_count_modules_tables => (r#"#modules #loaded"#, r##"print -r "${#modules} ${#loaded_modules}""##);
         bulk_j_module_path_first => (r#"module_path[1]"#, r##"print -r "${module_path[1]:-nompath}""##);

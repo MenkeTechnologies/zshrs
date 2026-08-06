@@ -4,21 +4,21 @@
 //! Full upstream body (62 lines, abridged):
 //! ```text
 //! sh: 1  #compdef -k complete-word \C-xt
-//! sh:13  local c_Tagsfile=${TAGSFILE:-TAGS} c_tagsfile=${tagsfile:-tags} expl
+//! sh:14  local c_Tagsfile=${TAGSFILE:-TAGS} c_tagsfile=${tagsfile:-tags} expl
 //! sh:16  integer c_maxdir=10
 //! sh:18  local curcontext="$curcontext"
 //! sh:22  if [[ -z "$curcontext" ]]; then curcontext="complete-tag:::"; else …
 //! sh:28  local c_path=; integer c_idir
 //! sh:29  while [[ ! -f $c_path$c_Tagsfile && ! -f $c_path$c_tagsfile && $c_idir -lt $c_maxdir ]]; do
 //! sh:31    (( c_idir++ )); c_path=../$c_path
-//! sh:32  done
+//! sh:33  done
 //! sh:34  if TAGS-file is `tags`-only-disguised, blank c_Tagsfile
-//! sh:38  if [[ -f $c_path$c_Tagsfile ]]; then
+//! sh:40  if [[ -f $c_path$c_Tagsfile ]]; then
 //! sh:46    c_tags_array=($(sed extract names from emacs TAGS file))
 //! sh:53    _main_complete - '' _wanted etags expl 'emacs tag' compadd -a c_tags_array
 //! sh:55  elif [[ -f $c_path$c_tagsfile ]]; then
-//! sh:59    c_tags_array=($(awk '{ print $1 }' $c_path$c_tagsfile))
-//! sh:60    _main_complete - '' _wanted vtags expl 'vi tag' compadd -a c_tags_array
+//! sh:58    c_tags_array=($(awk '{ print $1 }' $c_path$c_tagsfile))
+//! sh:59    _main_complete - '' _wanted vtags expl 'vi tag' compadd -a c_tags_array
 //! sh:61  else return 1
 //! sh:62  fi
 //! ```
@@ -164,7 +164,7 @@ fn parse_emacs_tags(path: &str) -> Vec<String> {
     out
 }
 
-/// sh:59 — vi tags file: first whitespace-separated field per line.
+/// sh:58 — vi tags file: first whitespace-separated field per line.
 fn parse_vi_tags(path: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if let Ok(content) = fs::read_to_string(path) {

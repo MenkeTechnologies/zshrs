@@ -21,9 +21,9 @@
 
 use crate::compsys::ported::_call_program::_call_program;
 use crate::compsys::ported::_files::_files;
-use crate::compsys::ported::_multi_parts::multi_parts_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_multi_parts::_multi_parts;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
@@ -411,7 +411,7 @@ fn mua_mailboxes(args: &[String]) -> i32 {
         let mut mp: Vec<String> = args.to_vec();
         mp.push("/".to_string());
         mp.push("mbox_names".to_string());
-        if multi_parts_byname(&mp) == 0 {
+        if _multi_parts(&mp) == 0 {
             ret = 0;
         }
     }
@@ -458,17 +458,17 @@ pub fn _mailboxes(args: &[String]) -> i32 {
         want_files = !p.starts_with('+');
     }
     let _ = if want_files {
-        tags_byname(&["mailboxes".to_string(), "files".to_string()])
+        _tags(&["mailboxes".to_string(), "files".to_string()])
     } else {
-        tags_byname(&["mailboxes".to_string()])
+        _tags(&["mailboxes".to_string()])
     };
 
     // sh:49-58 — the _tags / _requested loop.
     loop {
-        if tags_byname(&[]) != 0 {
+        if _tags(&[]) != 0 {
             break;
         }
-        if requested_byname(&[
+        if _requested(&[
             "mailboxes".to_string(),
             "expl".to_string(),
             "mailbox specification".to_string(),
@@ -478,7 +478,7 @@ pub fn _mailboxes(args: &[String]) -> i32 {
         {
             ret = 0;
         }
-        if requested_byname(&[
+        if _requested(&[
             "files".to_string(),
             "expl".to_string(),
             "mailbox file".to_string(),

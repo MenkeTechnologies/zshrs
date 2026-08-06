@@ -23,7 +23,7 @@
 //! sh:19        -redirect-,{${compstate[redirect]},-default-},${^strs}
 //! ```
 
-use crate::compsys::ported::_set_command::set_command_byname;
+use crate::compsys::ported::_set_command::_set_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::getsparam;
 use crate::ported::zle::compcore::get_compstate_str;
@@ -33,7 +33,7 @@ use crate::ported::zle::compcore::get_compstate_str;
 pub fn _redirect() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_redirect");
     // sh:5
-    let _ = set_command_byname();
+    let _ = _set_command();
 
     // sh:7-15  build prefixes
     let mut strs: Vec<String> = vec!["-default-".to_string()];

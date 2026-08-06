@@ -4,12 +4,12 @@
 //! ```text
 //! sh: 1  #autoload
 //! sh: 3  # a separated list where each component uses the same function.
-//! sh:11  zparseopts -D -a opts s:=sep n:=num p:=pref i:=pref P:=pref I:=suf S:=suf \
-//! sh:12      q=suf r:=suf R:=suf C:=cont F:=garbage d=uniq M+: J+: V+: 1 2 o+: X+: x+:
-//! sh:13  (( $#cont )) && curcontext="${curcontext%:*}:$cont[2]"
-//! sh:14  (( $#sep )) || sep[2]=,
-//! sh:31  (( minus = argv[(ib:2:)-] ))
-//! sh:32  "${(@)argv[1,minus-1]}" "$opts[@]" -F dedup "$pref[@]" "$suf[@]" "${(@)argv[minus+1,-1]}"
+//! sh:13  zparseopts -D -a opts s:=sep n:=num p:=pref i:=pref P:=pref I:=suf S:=suf \
+//! sh:14      q=suf r:=suf R:=suf C:=cont F:=garbage d=uniq M+: J+: V+: 1 2 o+: X+: x+:
+//! sh:15  (( $#cont )) && curcontext="${curcontext%:*}:$cont[2]"
+//! sh:16  (( $#sep )) || sep[2]=,
+//! sh:39  (( minus = argv[(ib:2:)-] ))
+//! sh:40  "${(@)argv[1,minus-1]}" "$opts[@]" -F dedup "$pref[@]" "$suf[@]" "${(@)argv[minus+1,-1]}"
 //! ```
 //!
 //! Composes a separated-list completer: argv before `-` is the
@@ -33,7 +33,7 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:11-12 — bridge zparseopts with the dense spec list.
+/// sh:13-14 — bridge zparseopts with the dense spec list.
 fn run_zparseopts_sequence(
     args: &[String],
 ) -> (
@@ -106,10 +106,10 @@ fn run_zparseopts_sequence(
 /// separator-delimited list.
 pub fn _sequence(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sequence");
-    // sh:11
+    // sh:13
     let (mut argv, opts, sep, num, mut pref, mut suf, uniq) = run_zparseopts_sequence(args);
 
-    // sh:14
+    // sh:16
     let sep_char = sep.get(1).cloned().unwrap_or_else(|| ",".to_string());
     let qsep = sep_char.clone();
 

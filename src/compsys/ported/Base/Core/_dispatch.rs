@@ -3,31 +3,31 @@
 //! Full upstream body (91 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 5  local comp pat val name i ret=1 _compskip="$_compskip"
-//! sh: 6  local curcontext="$curcontext" service str noskip
+//! sh: 3  local comp pat val name i ret=1 _compskip="$_compskip"
+//! sh: 4  local curcontext="$curcontext" service str noskip
 //! sh:11  if [[ "$1" = -s ]]; then noskip=yes; shift; fi
 //! sh:14  [[ -z "$noskip" ]] && _compskip=
 //! sh:16  curcontext="${curcontext%:*:*}:${1}:"
-//! sh:17  shift
-//! sh:21  if [[ "$_compskip" != (all|*patterns*) ]]; then
-//! sh:23    for str in "$@"; do
-//! sh:25      service="${_services[$str]:-$str}"
+//! sh:18  shift
+//! sh:22  if [[ "$_compskip" != (all|*patterns*) ]]; then
+//! sh:24    for str in "$@"; do
+//! sh:26      service="${_services[$str]:-$str}"
 //! sh:26      for i in "${(@)_patcomps[(K)$str]}"; do … patterns dispatch …
-//! sh:39  fi
-//! sh:43  ret=1
+//! sh:38  fi
+//! sh:45  ret=1
 //! sh:44  for str in "$@"; do … look up $_comps[$str] …
-//! sh:54  done
-//! sh:58  if [[ -n "$comp" && "$name" != "${argv[-1]}" ]]; then
-//! sh:60    _compskip=patterns
-//! sh:61    eval "$comp" && ret=0
-//! sh:65  if [[ "$_compskip" != (all|*patterns*) ]]; then
+//! sh:57  done
+//! sh:61  if [[ -n "$comp" && "$name" != "${argv[-1]}" ]]; then
+//! sh:62    _compskip=patterns
+//! sh:63    eval "$comp" && ret=0
+//! sh:67  if [[ "$_compskip" != (all|*patterns*) ]]; then
 //! sh:67    for str; do … _postpatcomps …
-//! sh:81  [[ "$name" = "${argv[-1]}" && -n "$comp" &&
-//! sh:82     "$_compskip" != (all|*default*) ]] &&
-//! sh:83    service="${_services[$name]:-$name}" &&
-//! sh:84     eval "$comp" && ret=0
-//! sh:86  _compskip=''
-//! sh:88  return ret
+//! sh:84  [[ "$name" = "${argv[-1]}" && -n "$comp" &&
+//! sh:85     "$_compskip" != (all|*default*) ]] &&
+//! sh:86    service="${_services[$name]:-$name}" &&
+//! sh:87     eval "$comp" && ret=0
+//! sh:89  _compskip=''
+//! sh:91  return ret
 //! ```
 
 use crate::ported::exec::dispatch_function_call;
@@ -257,7 +257,7 @@ pub fn _dispatch(args: &[String]) -> i32 {
         }
     }
 
-    // sh:81-84  fallback to last-arg's comp
+    // sh:84-87  fallback to last-arg's comp
     let cs2 = getsparam("_compskip").unwrap_or_default();
     if name == last_arg && !comp.is_empty() && !(cs2 == "all" || cs2.contains("default")) {
         let service = assoc_get("_services", &name).unwrap_or_else(|| name.clone());

@@ -7,12 +7,12 @@
 //! sh: 5  [[ $# -eq 1 ]] && 2="$1"
 //! sh: 7  if zstyle -a ":completion:${curcontext}:$1" list-colors val; then
 //! sh: 8    zmodload -i zsh/complist
-//! sh:10    if [[ "$1" = default ]]; then
-//! sh:11      _comp_colors=( "$val[@]" )
-//! sh:12    else
-//! sh:13      _comp_colors+=( "(${2})${(@)^val:#(|\(*\)*)}" "${(M@)val:#\(*\)*}" )
-//! sh:14    fi
-//! sh:16  elif [[ "$1" = default ]]; then
+//! sh: 9    if [[ "$1" = default ]]; then
+//! sh:10      _comp_colors=( "$val[@]" )
+//! sh:11    else
+//! sh:12      _comp_colors+=( "(${2})${(@)^val:#(|\(*\)*)}" "${(M@)val:#\(*\)*}" )
+//! sh:13    fi
+//! sh:21  elif [[ "$1" = default ]]; then
 //! sh:22    unset ZLS_COLORS ZLS_COLOURS
 //! sh:23  fi
 //! sh:25  zstyle -s … show-ambiguity val → _ambiguous_color
@@ -35,22 +35,26 @@ use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 /// Reach `_setup` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_setup "$1" "${gname:--default-}"` (Completion/Base/Core/_description sh:19) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn setup_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_setup", args, || _setup(args))
+/// [`_setup_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _setup(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_setup", args, || _setup_impl(args))
 }
 
 /// `_setup` — apply per-tag style settings to compstate. Args:
 ///   `[$tag, $group_name?]`. If group_name omitted, equals $1.
-pub fn _setup(args: &[String]) -> i32 {
+pub fn _setup_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_setup");
     let tag = args.first().cloned().unwrap_or_default();
     let group = args.get(1).cloned().unwrap_or_else(|| tag.clone());
@@ -67,7 +71,7 @@ pub fn _setup(args: &[String]) -> i32 {
     // appends/assignments automatically — no manual dedup needed here.
     let lc = lookupstyle(&ctx, "list-colors");
     if !lc.is_empty() {
-        // sh:10
+        // sh: 9
         if tag == "default" {
             setaparam("_comp_colors", lc);
         } else {
@@ -206,7 +210,7 @@ mod tests {
     #[test]
     fn returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_setup(&["default".to_string()]), 0);
+        assert_eq!(_setup_impl(&["default".to_string()]), 0);
     }
 
     #[test]
@@ -216,6 +220,6 @@ mod tests {
         // We don't actually set the zstyle here — covers the "no
         //   style set" fall-through path. The assertion just checks
         //   no panic + integer return.
-        let _ = _setup(&["tag1".to_string()]);
+        let _ = _setup_impl(&["tag1".to_string()]);
     }
 }

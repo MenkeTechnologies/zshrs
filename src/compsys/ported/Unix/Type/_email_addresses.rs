@@ -32,11 +32,11 @@
 //!    immediately (faithful early-out).
 //!  * `_email-MH` (sh:36) — depends on the external `ali` binary.
 
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_next_label::next_label_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle, zstyletab};
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, unsetparam};
@@ -320,7 +320,7 @@ fn email_ldap(args: &[String], curcontext: &str, curtag: &str) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("ali".to_string());
-    let ret = wanted_byname(&w);
+    let ret = _wanted(&w);
     unsetparam("ali");
     ret
 }
@@ -562,17 +562,17 @@ pub fn _email_addresses(args: &[String]) -> i32 {
     let mut ret: i64 = 1;
     // sh:143  _tags email-$plugins
     let tag_names: Vec<String> = plugins.iter().map(|p| format!("email-{}", p)).collect();
-    let _ = tags_byname(&tag_names);
+    let _ = _tags(&tag_names);
 
     // sh:144  while _tags; do
     loop {
-        if tags_byname(&[]) != 0 {
+        if _tags(&[]) != 0 {
             break;
         }
         // sh:145  for plugin in $plugins
         for plugin in &plugins {
             // sh:146  if _requested email-$plugin
-            if requested_byname(&[format!("email-{}", plugin)]) == 0 {
+            if _requested(&[format!("email-{}", plugin)]) == 0 {
                 // sh:147  while _next_label email-$plugin expl 'email address'
                 loop {
                     let nl = vec![
@@ -580,7 +580,7 @@ pub fn _email_addresses(args: &[String]) -> i32 {
                         "expl".to_string(),
                         "email address".to_string(),
                     ];
-                    if next_label_byname(&nl) != 0 {
+                    if _next_label(&nl) != 0 {
                         break;
                     }
 
@@ -612,7 +612,7 @@ pub fn _email_addresses(args: &[String]) -> i32 {
                         Some(f) => f,
                         None => {
                             // sh:157  _message "$plugin: plugin not found"; continue
-                            let _ = message_byname(&[format!("{}: plugin not found", plugin)]);
+                            let _ = _message(&[format!("{}: plugin not found", plugin)]);
                             continue;
                         }
                     };
@@ -653,7 +653,7 @@ pub fn _email_addresses(args: &[String]) -> i32 {
                             for r in &reply {
                                 w.push(r.splitn(2, ':').next().unwrap_or("").to_string());
                             }
-                            if wanted_byname(&w) == 0 {
+                            if _wanted(&w) == 0 {
                                 ret = 0;
                             }
                             unsetparam("list");

@@ -7,21 +7,21 @@
 //! sh:21  if zstyle -t … remove-all-dups; then opt=-  else opt=-1  fi
 //! sh:27  if zstyle -t … sort; then opt+=J else opt+=V fi
 //! sh:33  if zstyle -s … range max; then …
-//! sh:42  PREFIX="$IPREFIX$PREFIX"
-//! sh:44  SUFFIX="$SUFFIX$ISUFFIX"
-//! sh:50  while [[ $compstate[nmatches] -eq 0 && beg -lt max ]]; do
-//! sh:52    if [[ -n $compstate[quote] ]]
-//! sh:53    then hslice=( ${(Q)historywords[beg,beg+slice]} )
-//! sh:54    else hslice=( ${historywords[beg,beg+slice]} )
-//! sh:55    fi
-//! sh:56    _wanted "$opt" history-words expl 'history word' \
-//! sh:57        compadd -Q -a hslice
-//! sh:58    (( beg+=slice ))
-//! sh:59  done
-//! sh:61  (( $compstate[nmatches] ))
+//! sh:46  PREFIX="$IPREFIX$PREFIX"
+//! sh:48  SUFFIX="$SUFFIX$ISUFFIX"
+//! sh:55  while [[ $compstate[nmatches] -eq 0 && beg -lt max ]]; do
+//! sh:56    if [[ -n $compstate[quote] ]]
+//! sh:57    then hslice=( ${(Q)historywords[beg,beg+slice]} )
+//! sh:58    else hslice=( ${historywords[beg,beg+slice]} )
+//! sh:59    fi
+//! sh:60    _wanted "$opt" history-words expl 'history word' \
+//! sh:61        compadd -Q -a hslice
+//! sh:62    (( beg+=slice ))
+//! sh:63  done
+//! sh:65  (( $compstate[nmatches] ))
 //! ```
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -91,7 +91,7 @@ pub fn _history() -> i32 {
             Vec::new()
         };
         setaparam("hslice", hslice);
-        let _ = wanted_byname(&[
+        let _ = _wanted(&[
             opt.clone(),
             "history-words".to_string(),
             "expl".to_string(),
@@ -107,7 +107,7 @@ pub fn _history() -> i32 {
         }
     }
 
-    // sh:61
+    // sh:65
     let nm: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);

@@ -537,6 +537,26 @@ mod tests {
 /// infos. Index is the locallevel", `:3873` `level = locallevel -
 /// (args[0][2] ? 1 : 0)`) — must supply the missing piece inside its own
 /// `fallback` closure rather than assume this helper does it.
+///
+/// # Naming convention for ports
+///
+/// A port with a dispatching entry point splits in two, and the names are
+/// chosen so that the OBVIOUS call is the CORRECT one:
+///
+/// * `_NAME` — the dispatching wrapper, one line: `call_compfn("_NAME",
+///   args, || _NAME_impl(args))`. This is what every sibling port calls, and
+///   it matches the zsh function name character for character.
+/// * `_NAME_impl` — the raw body. Two callers, both of which must not
+///   re-enter dispatch: the wrapper's own `fallback` above, and the
+///   `compsys::router` arm for `"_NAME"`. **The router arm MUST name
+///   `_NAME_impl`.** Pointing it at `_NAME` makes dispatch call the wrapper,
+///   which calls dispatch, forever.
+///
+/// Anything else that names `_NAME_impl` is asserting it genuinely needs no
+/// `doshfunc` frame — sh `continue` expressed as recursion
+/// (`_next_label.rs`), or a callee whose `comptags` level the caller manages
+/// by hand (`_message.rs`, `_wanted.rs`). Those sites carry a comment saying
+/// why.
 pub fn call_compfn(name: &str, args: &[String], fallback: impl FnOnce() -> i32) -> i32 {
     crate::ported::exec::dispatch_function_call(name, args).unwrap_or_else(fallback)
 }
@@ -637,8 +657,14 @@ impl Drop for FnScope {
 /// `line` MUST be read off the upstream `Completion/**` file the port was
 /// translated from. Never estimate it — the `// sh:NN` comments in the ports
 /// predate later upstream edits and have drifted (`_describe`'s
-/// `compdescribe -I` is annotated `sh:118-121` but lives at line 122 of both
+/// `compdescribe -I` was annotated `sh:118-121` but lives at line 122 of both
 /// zsh 5.9.2 and master).
+///
+/// `scripts/check_sh_lineno.py` diffs every `sh:NN` annotation against the
+/// upstream file and reports the ones whose cited line does not carry the
+/// quoted code; run it before trusting an annotation as a `line` argument.
+/// An annotation it reports as `unverified`, `suspect` or `out-of-range` has
+/// NOT been proven and must not be passed here.
 pub fn set_sh_lineno(line: u64) {
     crate::ported::lex::set_lineno(line);
 }

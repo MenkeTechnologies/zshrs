@@ -21,12 +21,12 @@
 //! sh:153  _perl_modules "$@"
 //! ```
 
-use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
+use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_retrieve_cache::retrieve_cache_byname;
-use crate::compsys::ported::_store_cache::store_cache_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
+use crate::compsys::ported::_store_cache::_store_cache;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::findcmd;
 use crate::ported::modules::zutil::{bin_zstyle, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -273,8 +273,8 @@ pub fn _perl_modules(args: &[String]) -> i32 {
 
     // sh:75-117 — (param unset OR cache invalid) AND retrieve failed → rebuild.
     let need_build = (getaparam(&perl_modules_var).is_none()
-        || cache_invalid_byname(std::slice::from_ref(&key)) == 0)
-        && retrieve_cache_byname(std::slice::from_ref(&key)) != 0;
+        || _cache_invalid(std::slice::from_ref(&key)) == 0)
+        && _retrieve_cache(std::slice::from_ref(&key)) != 0;
     if need_build {
         let try_pminst = matches!(
             lookupstyle(
@@ -298,8 +298,7 @@ pub fn _perl_modules(args: &[String]) -> i32 {
             let inc = if !perl.is_empty() {
                 perl_inc(&perl)
             } else {
-                let _ =
-                    message_byname(&["didn't find perl on $PATH; guessing @INC ...".to_string()]);
+                let _ = _message(&["didn't find perl on $PATH; guessing @INC ...".to_string()]);
                 guessed_inc()
             };
             let mut all: Vec<String> = Vec::new();
@@ -317,7 +316,7 @@ pub fn _perl_modules(args: &[String]) -> i32 {
         uniq.dedup();
         setaparam(&perl_modules_var, uniq);
         // sh:116  _store_cache <key> $perl_modules (the param NAME).
-        let _ = store_cache_byname(&[key.clone(), perl_modules_var.clone()]);
+        let _ = _store_cache(&[key.clone(), perl_modules_var.clone()]);
     }
 
     let mut modules = getaparam(&perl_modules_var).unwrap_or_default();
@@ -345,7 +344,7 @@ pub fn _perl_modules(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("_pm_subset".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

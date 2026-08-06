@@ -26,12 +26,12 @@
 //! sh:57        elif [[ "$action" = \ * ]]; then  # bare-call ` cmd args`
 //! sh:64        else  # action with description-args
 //! sh:65          while _next_label …; do "$action[1]" …; done
-//! sh:73    [[ nm -ne compstate[nmatches] ]] && return 0
-//! sh:74  done
-//! sh:77  for descr in "$mesgs[@]"; do
-//! sh:78    _message -e "${descr%%:*}" "${descr#*:}"
-//! sh:79  done
-//! sh:81  return 1
+//! sh:76    [[ nm -ne compstate[nmatches] ]] && return 0
+//! sh:77  done
+//! sh:79  for descr in "$mesgs[@]"; do
+//! sh:80    _message -e "${descr%%:*}" "${descr#*:}"
+//! sh:81  done
+//! sh:83  return 1
 //! ```
 //!
 //! Dispatches a list of `tag:description:action` specs, building
@@ -40,11 +40,11 @@
 //! describe-style, `(…)` literal list, `{…}` eval-body, bare `…`
 //! command, and `cmd args…` with desc passthrough.
 
-use crate::compsys::ported::_description::description_byname;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_next_label::next_label_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -63,22 +63,26 @@ fn make_ops() -> options {
 /// Reach `_alternative` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_alternative \` (Completion/Debian/Command/_bts sh:55) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn alternative_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_alternative", args, || _alternative(args))
+/// [`_alternative_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _alternative(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_alternative", args, || _alternative_impl(args))
 }
 
 /// `_alternative` — try each `tag:descr:action` spec until one
 /// produces matches. Returns 0 on first success, 1 if none match.
-pub fn _alternative(args: &[String]) -> i32 {
+pub fn _alternative_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_alternative");
     // sh:5
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
@@ -123,7 +127,7 @@ pub fn _alternative(args: &[String]) -> i32 {
         .iter()
         .map(|d| d.splitn(2, ':').next().unwrap_or("").to_string())
         .collect();
-    let _ = tags_byname(&tag_names);
+    let _ = _tags(&tag_names);
 
     let nm_initial: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse().ok())
@@ -131,7 +135,7 @@ pub fn _alternative(args: &[String]) -> i32 {
 
     // sh:22  while _tags …
     loop {
-        if tags_byname(&[]) != 0 {
+        if _tags(&[]) != 0 {
             break;
         }
 
@@ -143,12 +147,12 @@ pub fn _alternative(args: &[String]) -> i32 {
             let action = parts.next().unwrap_or("").to_string();
 
             // sh:24
-            if requested_byname(&[tag.clone()]) != 0 {
+            if _requested(&[tag.clone()]) != 0 {
                 continue;
             }
 
             // sh:28
-            let _ = description_byname(&[tag.clone(), "expl".to_string(), descr.clone()]);
+            let _ = _description(&[tag.clone(), "expl".to_string(), descr.clone()]);
 
             // sh:30 action dispatch
             if action.trim().is_empty() {
@@ -200,7 +204,7 @@ pub fn _alternative(args: &[String]) -> i32 {
                 setaparam("ws", items);
                 loop {
                     let mut nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
-                    if next_label_byname(&nl) != 0 {
+                    if _next_label(&nl) != 0 {
                         break;
                     }
                     nl.clear();
@@ -218,7 +222,7 @@ pub fn _alternative(args: &[String]) -> i32 {
                 let body = &action[1..action.len() - 1];
                 loop {
                     let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
-                    if next_label_byname(&nl) != 0 {
+                    if _next_label(&nl) != 0 {
                         break;
                     }
                     let _ = crate::ported::exec::execute_script(body);
@@ -228,7 +232,7 @@ pub fn _alternative(args: &[String]) -> i32 {
                 let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
                 loop {
                     let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
-                    if next_label_byname(&nl) != 0 {
+                    if _next_label(&nl) != 0 {
                         break;
                     }
                     if let Some(cmd) = parts.first() {
@@ -242,7 +246,7 @@ pub fn _alternative(args: &[String]) -> i32 {
                 if let Some((cmd, rest)) = parts.split_first() {
                     loop {
                         let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
-                        if next_label_byname(&nl) != 0 {
+                        if _next_label(&nl) != 0 {
                             break;
                         }
                         let expl = getaparam("expl").unwrap_or_default();
@@ -258,7 +262,7 @@ pub fn _alternative(args: &[String]) -> i32 {
                 }
             }
         }
-        // sh:73  nm != $compstate[nmatches] → success
+        // sh:76  nm != $compstate[nmatches] → success
         let nm_now: i64 = get_compstate_str("nmatches")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
@@ -269,15 +273,15 @@ pub fn _alternative(args: &[String]) -> i32 {
         }
     }
 
-    // sh:77
+    // sh:79
     for d in &mesgs {
         let mut parts = d.splitn(2, ':');
         let tag = parts.next().unwrap_or("").to_string();
         let desc = parts.next().unwrap_or("").to_string();
-        let _ = message_byname(&["-e".to_string(), tag, desc]);
+        let _ = _message(&["-e".to_string(), tag, desc]);
     }
 
-    // sh:81 restore + fail
+    // sh:83 restore + fail
     let _ = setsparam("curcontext", &saved_curcontext);
     1
 }
@@ -289,12 +293,12 @@ mod tests {
     #[test]
     fn returns_one_for_empty_specs() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_alternative(&[]), 1);
+        assert_eq!(_alternative_impl(&[]), 1);
     }
 
     #[test]
     fn returns_one_when_no_tag_requested() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_alternative(&["foo:desc:_files".to_string()]), 1);
+        assert_eq!(_alternative_impl(&["foo:desc:_files".to_string()]), 1);
     }
 }

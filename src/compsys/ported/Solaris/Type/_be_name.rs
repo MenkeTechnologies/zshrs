@@ -13,7 +13,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -106,7 +106,7 @@ pub fn _be_name(args: &[String]) -> i32 {
     }
 
     // sh:12  _description boot-environs expl 'boot environment'
-    let _ = description_byname(&[
+    let _ = _description(&[
         "boot-environs".to_string(),
         "expl".to_string(),
         "boot environment".to_string(),

@@ -4,8 +4,8 @@
 //! Full upstream body (72 lines, abridged):
 //! ```text
 //! sh: 1  #compdef -k complete-word \C-xC
-//! sh:17  local file="$PREFIX$SUFFIX" trylist tilde etilde testcmd
-//! sh:18  integer approx max_approx=6
+//! sh:19  local file="$PREFIX$SUFFIX" trylist tilde etilde testcmd
+//! sh:20  integer approx max_approx=6
 //! sh:20  if [[ -z $WIDGET ]]; then file=$1; local IPREFIX
 //! sh:23  else (( ${NUMERIC:-1} > 1 )) && max_approx=$NUMERIC
 //! sh:25  if [[ $file = \~*/* ]]; then tilde-expand
@@ -47,7 +47,7 @@ pub fn _correct_filename(args: &[String]) -> i32 {
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
 
-    // sh:17/sh:20
+    // sh:19/sh:20
     let (mut file, in_widget): (String, bool) = if widget.is_empty() {
         (args.first().cloned().unwrap_or_default(), false)
     } else {

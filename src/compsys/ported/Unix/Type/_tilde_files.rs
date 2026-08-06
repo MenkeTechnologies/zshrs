@@ -3,42 +3,42 @@
 //! Full upstream body (39 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 3  if [[ ( -o magicequalsubst && "$IPREFIX" = *\= ) || $argv[(I)-W*] -ne 0 ]]; then
-//! sh: 4    _files "$@"
-//! sh: 5    return
-//! sh: 6  fi
-//! sh: 8  case "$PREFIX" in
-//! sh: 9  \~/*)
-//! sh:10    IPREFIX="${IPREFIX}${HOME}/"
-//! sh:11    PREFIX="${PREFIX[3,-1]}"
-//! sh:12    _files "$@" -W "${HOME}"
-//! sh:13    ;;
-//! sh:14  \~*/*)
-//! sh:15    local user="${PREFIX[2,-1]%%/*}"
-//! sh:17    if (( $+userdirs[$user] )); then
-//! sh:18      user="$userdirs[$user]"
-//! sh:19    elif (( $+nameddirs[$user] )); then
-//! sh:20      user="$nameddirs[$user]"
-//! sh:21    else
-//! sh:22      _message "unknown user \`$user'"
-//! sh:23      return 1
-//! sh:24    fi
-//! sh:25    IPREFIX="${IPREFIX}${user%/}/"
-//! sh:26    PREFIX="${PREFIX#*/}"
-//! sh:27    _files "$@" -W "$user"
-//! sh:28    ;;
-//! sh:29  \~*)
-//! sh:30    compset -p 1
-//! sh:31    local -a expl=( "$@" )
-//! sh:32    _alternative -O expl users:user:_users named-directories:'named directory':'compadd -k nameddirs'
-//! sh:33    ;;
-//! sh:34  *)
-//! sh:35    _files "$@"
-//! sh:36    ;;
-//! sh:37  esac
+//! sh: 5  if [[ ( -o magicequalsubst && "$IPREFIX" = *\= ) || $argv[(I)-W*] -ne 0 ]]; then
+//! sh: 6    _files "$@"
+//! sh: 7    return
+//! sh: 8  fi
+//! sh:10  case "$PREFIX" in
+//! sh:11  \~/*)
+//! sh:12    IPREFIX="${IPREFIX}${HOME}/"
+//! sh:13    PREFIX="${PREFIX[3,-1]}"
+//! sh:14    _files "$@" -W "${HOME}"
+//! sh:15    ;;
+//! sh:16  \~*/*)
+//! sh:17    local user="${PREFIX[2,-1]%%/*}"
+//! sh:19    if (( $+userdirs[$user] )); then
+//! sh:20      user="$userdirs[$user]"
+//! sh:21    elif (( $+nameddirs[$user] )); then
+//! sh:22      user="$nameddirs[$user]"
+//! sh:23    else
+//! sh:24      _message "unknown user \`$user'"
+//! sh:25      return 1
+//! sh:26    fi
+//! sh:27    IPREFIX="${IPREFIX}${user%/}/"
+//! sh:28    PREFIX="${PREFIX#*/}"
+//! sh:29    _files "$@" -W "$user"
+//! sh:30    ;;
+//! sh:31  \~*)
+//! sh:32    compset -p 1
+//! sh:33    local -a expl=( "$@" )
+//! sh:34    _alternative -O expl users:user:_users named-directories:'named directory':'compadd -k nameddirs'
+//! sh:35    ;;
+//! sh:36  *)
+//! sh:37    _files "$@"
+//! sh:38    ;;
+//! sh:39  esac
 //! ```
 
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::complete::bin_compset;
@@ -53,7 +53,7 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:3 — assoc lookup helper for the flat key/value layout used in
+/// sh:5 — assoc lookup helper for the flat key/value layout used in
 /// the Rust port.
 fn assoc_get(name: &str, key: &str) -> Option<String> {
     let arr = getaparam(name)?;
@@ -67,7 +67,7 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
 /// emission.
 pub fn _tilde_files(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_tilde_files");
-    // sh:3
+    // sh:5
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
     let has_w = args.iter().any(|a| a.starts_with("-W"));
     if (isset(MAGICEQUALSUBST) && iprefix.ends_with('=')) || has_w {
@@ -75,10 +75,10 @@ pub fn _tilde_files(args: &[String]) -> i32 {
         return dispatch_function_call("_files", args).unwrap_or(1);
     }
 
-    // sh:8
+    // sh:10
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if prefix.starts_with("~/") {
-        // sh:9-13
+        // sh:11-15
         let home = getsparam("HOME").unwrap_or_default();
         let _ = setsparam("IPREFIX", &format!("{}{}/", iprefix, home));
         let _ = setsparam("PREFIX", &prefix[2..]);
@@ -89,14 +89,14 @@ pub fn _tilde_files(args: &[String]) -> i32 {
     }
 
     if prefix.starts_with('~') && prefix[1..].contains('/') {
-        // sh:14-28
+        // sh:16-30
         let user = prefix[1..].splitn(2, '/').next().unwrap_or("").to_string();
         let resolved = if let Some(v) = assoc_get("userdirs", &user) {
             v
         } else if let Some(v) = assoc_get("nameddirs", &user) {
             v
         } else {
-            let _ = message_byname(&[format!("unknown user `{}'", user)]);
+            let _ = _message(&[format!("unknown user `{}'", user)]);
             return 1;
         };
         let user_trim = resolved.trim_end_matches('/').to_string();
@@ -110,7 +110,7 @@ pub fn _tilde_files(args: &[String]) -> i32 {
     }
 
     if prefix.starts_with('~') {
-        // sh:29-33
+        // sh:31-35
         let _ = bin_compset(
             "compset",
             &["-p".to_string(), "1".to_string()],
@@ -130,7 +130,7 @@ pub fn _tilde_files(args: &[String]) -> i32 {
         .unwrap_or(1);
     }
 
-    // sh:34
+    // sh:36
     dispatch_function_call("_files", args).unwrap_or(1)
 }
 
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn unknown_user_returns_one_with_message() {
-        // sh:21-23
+        // sh:23-25
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "~nonexistentuser/path");
         let _ = setsparam("IPREFIX", "");

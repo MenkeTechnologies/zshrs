@@ -18,7 +18,7 @@
 //! filter `[(I)[^_.]*]` it keeps only names not starting with `_`
 //! or `.`. The full subscripted name is passed as a literal arg.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::getsparam;
 
@@ -48,7 +48,7 @@ pub fn _functions(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
     wanted_argv.push(format!("functions{}", ffilt));
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

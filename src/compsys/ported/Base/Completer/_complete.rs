@@ -39,8 +39,8 @@
 //! entries. Heavy `compcontext`-based dispatch left as a thin
 //! delegation since most live invocations skip that branch.
 
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_normal::normal_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_normal::_normal;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -93,22 +93,26 @@ fn set_ccarray_field(n: usize, value: &str) {
 /// writes it — `if _complete; then` (Completion/Base/Completer/_approximate
 /// sh:84) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn complete_byname() -> i32 {
-    crate::compsys::ported::shared::call_compfn("_complete", &[], || _complete())
+/// [`_complete_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _complete() -> i32 {
+    crate::compsys::ported::shared::call_compfn("_complete", &[], || _complete_impl())
 }
 
 /// `_complete` — primary `completer` entry: dispatches to per-context
 /// `$_comps` entries based on `$compstate[context]`.
-pub fn _complete() -> i32 {
+pub fn _complete_impl() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete");
     // sh:7 `local comp name oldcontext ret=1 service`.
     //
@@ -173,7 +177,7 @@ pub fn _complete() -> i32 {
                 .unwrap_or_else(|| "value".to_string());
             let action = parts.next().unwrap_or("").to_string();
             if action.trim().is_empty() {
-                return message_byname(&["-e".to_string(), tag, descr]);
+                return _message(&["-e".to_string(), tag, descr]);
             }
             // Fall through to the generic dispatch via _alternative-
             //   style action: treat `action` as a command.
@@ -238,7 +242,7 @@ pub fn _complete() -> i32 {
         // `has_fpath_override` gate only runs on the shell-function
         // dispatch path. Same bug class as the `_command_names`
         // override fix; tracked separately from Divergence C.
-        if normal_byname(&["-s".to_string()]) == 0 {
+        if _normal(&["-s".to_string()]) == 0 {
             ret = 0;
         }
     } else {
@@ -299,7 +303,7 @@ mod tests {
         let _ = setsparam("compcontext", "");
         set_compstate_str("context", "command");
         crate::ported::params::setaparam("_comps", Vec::new());
-        let _r = _complete();
+        let _r = _complete_impl();
     }
 
     /// sh:124 `ccarray[3]="$cname"` on the shape `_main_complete` hands

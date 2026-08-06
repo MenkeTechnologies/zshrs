@@ -10,7 +10,7 @@
 //! sh:6  _files "$@" "$expl[@]" -g '*.(texinfo|texi)(-.)'
 //! ```
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_files::_files;
 use crate::ported::params::getaparam;
 
@@ -18,7 +18,7 @@ use crate::ported::params::getaparam;
 pub fn _texi(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_texi");
     // sh:5
-    let _ = description_byname(&[
+    let _ = _description(&[
         "files".to_string(),
         "expl".to_string(),
         "texinfo file".to_string(),

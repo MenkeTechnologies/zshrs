@@ -4,23 +4,23 @@
 //! ```text
 //! sh: 1  #autoload
 //! sh: 3  # -a  add "all";  -n  add "none"
-//! sh: 9  local expl all none
-//! sh:10  local ifile=/usr/include/sys/syscall.h
-//! sh:11  local -au syscalls
-//! sh:13  zparseopts -D -K -E a=all n=none
-//! sh:15  [[ $OSTYPE = linux* ]] && ifile=/usr/include/bits/syscall.h
+//! sh: 8  local expl all none
+//! sh: 9  local ifile=/usr/include/sys/syscall.h
+//! sh:10  local -au syscalls
+//! sh:12  zparseopts -D -K -E a=all n=none
+//! sh:14  [[ $OSTYPE = linux* ]] && ifile=/usr/include/bits/syscall.h
 //! sh:16  syscalls=( ${${${(M)${(f)"$(<$ifile)"}:#\#[[:blank:]]#define[[:blank:]]##SYS_*}#*[[:blank:]]SYS_}%%[[:blank:]]*} )
-//! sh:17  [[ -n $all ]] && syscalls+=( all )
-//! sh:18  [[ -n $none ]] && syscalls+=( none )
-//! sh:20  _description syscalls expl 'system call'
-//! sh:21  compadd "$@" "$expl[@]" -a syscalls
+//! sh:16  [[ -n $all ]] && syscalls+=( all )
+//! sh:17  [[ -n $none ]] && syscalls+=( none )
+//! sh:19  _description syscalls expl 'system call'
+//! sh:20  compadd "$@" "$expl[@]" -a syscalls
 //! ```
 //!
-//! sh:11 `local -au` = array + uppercase, so each name is uppercased.
+//! sh:10 `local -au` = array + uppercase, so each name is uppercased.
 //! sh:16 the nested `${(M)…:#…}#*…SYS_}%%…` decomposition is done with
 //! straight string ops (`// sh:16 approx`).
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -59,7 +59,7 @@ fn parse_syscall_line(line: &str) -> Option<String> {
 /// `_sys_calls` — complete system-call names from `<sys/syscall.h>`.
 pub fn _sys_calls(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sys_calls");
-    // sh:13  zparseopts -D -K -E a=all n=none
+    // sh:12  zparseopts -D -K -E a=all n=none
     let all = args.iter().any(|a| a == "-a");
     let none = args.iter().any(|a| a == "-n");
     let rest: Vec<String> = args
@@ -68,7 +68,7 @@ pub fn _sys_calls(args: &[String]) -> i32 {
         .cloned()
         .collect();
 
-    // sh:10,15 — header path (linux uses bits/syscall.h).
+    // sh: 9,14 — header path (linux uses bits/syscall.h).
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let ifile = if ostype.starts_with("linux") {
         "/usr/include/bits/syscall.h"
@@ -81,7 +81,7 @@ pub fn _sys_calls(args: &[String]) -> i32 {
         .map(|c| c.lines().filter_map(parse_syscall_line).collect())
         .unwrap_or_default();
 
-    // sh:17-18
+    // sh:16-17
     if all {
         syscalls.push("all".to_string());
     }
@@ -89,8 +89,8 @@ pub fn _sys_calls(args: &[String]) -> i32 {
         syscalls.push("none".to_string());
     }
 
-    // sh:20-21  _description + compadd -a syscalls
-    let _ = description_byname(&[
+    // sh:19-20  _description + compadd -a syscalls
+    let _ = _description(&[
         "syscalls".to_string(),
         "expl".to_string(),
         "system call".to_string(),

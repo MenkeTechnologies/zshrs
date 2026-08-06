@@ -17,13 +17,13 @@
 //! sh:26      fi
 //! sh:27    fi
 //! sh:28  fi
-//! sh:31  local expl
+//! sh:30  local expl
 //! sh:32  _wanted pods expl 'perl base pod' compadd -a "$@" - _perl_basepods
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
 /// sh:25 — `${podpath}/*.pod(:r:t)`: basenames (`:t`) with the `.pod`
@@ -61,7 +61,7 @@ pub fn _perl_basepods(args: &[String]) -> i32 {
         // sh:21  [[ ! -e $podpath/perl.pod ]]
         if podpath.is_empty() || !std::path::Path::new(&format!("{}/perl.pod", podpath)).exists() {
             // sh:22-23
-            let _ = message_byname(&["can't find perl.pod from Config.pm; giving up".to_string()]);
+            let _ = _message(&["can't find perl.pod from Config.pm; giving up".to_string()]);
             return 1;
         }
         // sh:25
@@ -79,7 +79,7 @@ pub fn _perl_basepods(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("_perl_basepods".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

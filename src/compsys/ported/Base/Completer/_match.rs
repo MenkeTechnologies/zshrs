@@ -3,45 +3,45 @@
 //! Full upstream body (81 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 9  local tmp opm="$compstate[pattern_match]" ret=1 orig ins
-//! sh:10  local oms="$_old_match_string"
-//! sh:11  local ocsi="$compstate[insert]" ocspi="$compstate[pattern_insert]"
-//! sh:15  tmp="${${:-$PREFIX$SUFFIX}#[~=]}"
-//! sh:16  [[ "$tmp:q" = "$tmp" ]] && return 1
-//! sh:18  _old_match_string="$PREFIX$SUFFIX$HISTNO"
-//! sh:20  _tags matches original
+//! sh:14  local tmp opm="$compstate[pattern_match]" ret=1 orig ins
+//! sh:15  local oms="$_old_match_string"
+//! sh:16  local ocsi="$compstate[insert]" ocspi="$compstate[pattern_insert]"
+//! sh:20  tmp="${${:-$PREFIX$SUFFIX}#[~=]}"
+//! sh:21  [[ "$tmp:q" = "$tmp" ]] && return 1
+//! sh:23  _old_match_string="$PREFIX$SUFFIX$HISTNO"
+//! sh:25  _tags matches original
 //! sh:22  zstyle -s … match-original orig
 //! sh:23  zstyle -s … insert-unambiguous ins
-//! sh:27  if [[ -n "$orig" ]]; then
-//! sh:28    compstate[pattern_match]='-'
-//! sh:29    _complete && ret=0
-//! sh:30    compstate[pattern_match]="$opm"
-//! sh:32    [[ ret -eq 1 && "$orig" = only ]] && return 1
-//! sh:33  fi
-//! sh:35  if (( ret )); then
-//! sh:36    compstate[pattern_match]='*'
-//! sh:37    _complete && ret=0
-//! sh:38    compstate[pattern_match]="$opm"
-//! sh:39  fi
-//! sh:41  if (( ! ret )); then
-//! sh:43    if [[ "$ins" = pattern && $compstate[nmatches] -gt 1 ]]; then
-//! sh:46      [[ "$oms" = "$PREFIX$SUFFIX$HISTNO" &&
-//! sh:47         "$compstate[insert]" = automenu-unambiguous ]] &&
-//! sh:48          compstate[insert]=automenu
-//! sh:49      [[ "$compstate[insert]" != *menu ]] &&
-//! sh:50          compstate[pattern_insert]= compstate[insert]=
-//! sh:65    fi
+//! sh:32  if [[ -n "$orig" ]]; then
+//! sh:33    compstate[pattern_match]='-'
+//! sh:34    _complete && ret=0
+//! sh:35    compstate[pattern_match]="$opm"
+//! sh:39    [[ ret -eq 1 && "$orig" = only ]] && return 1
+//! sh:40  fi
+//! sh:42  if (( ret )); then
+//! sh:43    compstate[pattern_match]='*'
+//! sh:44    _complete && ret=0
+//! sh:45    compstate[pattern_match]="$opm"
+//! sh:46  fi
+//! sh:48  if (( ! ret )); then
+//! sh:50    if [[ "$ins" = pattern && $compstate[nmatches] -gt 1 ]]; then
+//! sh:52      [[ "$oms" = "$PREFIX$SUFFIX$HISTNO" &&
+//! sh:53         "$compstate[insert]" = automenu-unambiguous ]] &&
+//! sh:54          compstate[insert]=automenu
+//! sh:55      [[ "$compstate[insert]" != *menu ]] &&
+//! sh:56          compstate[pattern_insert]= compstate[insert]=
+//! sh:64    fi
 //! sh:67    if [[ "$ins" = (true|yes|on|1) && … ]] then …
 //! sh:71    elif _requested original && { … }; then
-//! sh:74      _description -V original expl original
-//! sh:76      compadd "$expl[@]" -U -Q - "$PREFIX$SUFFIX"
+//! sh:75      _description -V original expl original
+//! sh:77      compadd "$expl[@]" -U -Q - "$PREFIX$SUFFIX"
 //! sh:79  fi
 //! sh:81  return ret
 //! ```
 
-use crate::compsys::ported::_description::description_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setsparam};
@@ -69,26 +69,26 @@ pub fn _match() -> i32 {
     let _ocspi = get_compstate_str("pattern_insert").unwrap_or_default();
     let mut ret: i32 = 1;
 
-    // sh:15-16  short-circuit when prefix has no special meta chars
+    // sh:20-21  short-circuit when prefix has no special meta chars
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
     let combined = format!("{}{}", prefix, suffix);
     let stripped = combined.trim_start_matches(|c| c == '~' || c == '=');
-    // sh:16 `:q` no-op heuristic: if the trimmed string contains no
+    // sh:21 `:q` no-op heuristic: if the trimmed string contains no
     //   glob meta (`* ? [`), return 1.
     if !stripped.chars().any(|c| matches!(c, '*' | '?' | '[')) {
         return 1;
     }
 
-    // sh:18
+    // sh:23
     let histno = getsparam("HISTNO").unwrap_or_default();
     let _ = setsparam(
         "_old_match_string",
         &format!("{}{}{}", prefix, suffix, histno),
     );
 
-    // sh:20
-    let _ = tags_byname(&["matches".to_string(), "original".to_string()]);
+    // sh:25
+    let _ = _tags(&["matches".to_string(), "original".to_string()]);
 
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
@@ -103,20 +103,20 @@ pub fn _match() -> i32 {
         .cloned()
         .unwrap_or_default();
 
-    // sh:27
+    // sh:32
     if !orig.is_empty() {
         set_compstate_str("pattern_match", "-");
         if dispatch_function_call("_complete", &[]).unwrap_or(1) == 0 {
             ret = 0;
         }
         set_compstate_str("pattern_match", &opm);
-        // sh:32
+        // sh:39
         if ret == 1 && orig == "only" {
             return 1;
         }
     }
 
-    // sh:35
+    // sh:42
     if ret != 0 {
         set_compstate_str("pattern_match", "*");
         if dispatch_function_call("_complete", &[]).unwrap_or(1) == 0 {
@@ -146,14 +146,14 @@ pub fn _match() -> i32 {
         let unambig = get_compstate_str("unambiguous").unwrap_or_default();
         if matches!(ins.as_str(), "true" | "yes" | "on" | "1") && unambig.len() >= combined.len() {
             set_compstate_str("pattern_insert", "unambiguous");
-        } else if requested_byname(&["original".to_string()]) == 0 {
+        } else if _requested(&["original".to_string()]) == 0 {
             let orig_style_on = lookupstyle(&ctx, "original")
                 .first()
                 .map(|v| matches!(v.as_str(), "yes" | "true" | "1" | "on"))
                 .unwrap_or(false);
             if nm > 1 || orig_style_on {
                 // sh:74
-                let _ = description_byname(&[
+                let _ = _description(&[
                     "-V".to_string(),
                     "original".to_string(),
                     "expl".to_string(),

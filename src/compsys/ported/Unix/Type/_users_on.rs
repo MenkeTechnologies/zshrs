@@ -16,7 +16,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam};
 
 /// sh:5 — `(( $+commands[users] ))`: is `users` a hashed command?
@@ -53,7 +53,7 @@ pub fn _users_on(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.extend(logged_on);
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

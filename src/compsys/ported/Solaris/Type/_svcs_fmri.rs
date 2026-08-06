@@ -69,11 +69,11 @@
 //! last valid delimiter), which is what `find_rightmost_prefix_start`
 //! below replicates. sh:32's `(M)` filter is the same existence test.
 
-use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_retrieve_cache::retrieve_cache_byname;
-use crate::compsys::ported::_store_cache::store_cache_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_cache_invalid::_cache_invalid;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
+use crate::compsys::ported::_store_cache::_store_cache;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::{bin_zstyle, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -206,15 +206,15 @@ pub fn _svcs_fmri(args: &[String]) -> i32 {
             //   and no on-disk cache could be retrieved.
             let cur_fmris = getaparam("_smf_fmris").unwrap_or_default();
             let need_build = (cur_fmris.is_empty()
-                || cache_invalid_byname(std::slice::from_ref(&cache_id)) == 0)
-                && retrieve_cache_byname(std::slice::from_ref(&cache_id)) != 0;
+                || _cache_invalid(std::slice::from_ref(&cache_id)) == 0)
+                && _retrieve_cache(std::slice::from_ref(&cache_id)) != 0;
             if need_build {
                 // sh:27  ${(f)"$(svcs -a -H -o fmri)"} — newline split.
                 let raw = run_capture("svcs", &["-a", "-H", "-o", "fmri"]);
                 let fmris: Vec<String> = raw.lines().map(str::to_string).collect();
                 setaparam("_smf_fmris", fmris);
                 // sh:28  _store_cache $cache_id _smf_fmris
-                let _ = store_cache_byname(&[cache_id.clone(), "_smf_fmris".to_string()]);
+                let _ = _store_cache(&[cache_id.clone(), "_smf_fmris".to_string()]);
             }
             let smf_fmris = getaparam("_smf_fmris").unwrap_or_default();
 
@@ -274,7 +274,7 @@ pub fn _svcs_fmri(args: &[String]) -> i32 {
                 "compadd".to_string(),
             ];
             wanted_argv.extend(fmri_abbrevs);
-            wanted_byname(&wanted_argv)
+            _wanted(&wanted_argv)
         }
 
         // sh:73-76
@@ -288,11 +288,11 @@ pub fn _svcs_fmri(args: &[String]) -> i32 {
             ];
             wanted_argv.extend(raw.split_whitespace().map(str::to_string));
             wanted_argv.push("all".to_string());
-            wanted_byname(&wanted_argv)
+            _wanted(&wanted_argv)
         }
 
         // sh:78-82
-        "-r" => wanted_byname(&[
+        "-r" => _wanted(&[
             "fmri".to_string(),
             "expl".to_string(),
             "restarter FMRI".to_string(),
@@ -303,7 +303,7 @@ pub fn _svcs_fmri(args: &[String]) -> i32 {
         ]),
 
         // sh:84-86
-        _ => message_byname(&[format!("unknown argument to _svcs_fmri: {}", type_)]),
+        _ => _message(&[format!("unknown argument to _svcs_fmri: {}", type_)]),
     }
 }
 

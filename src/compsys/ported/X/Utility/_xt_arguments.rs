@@ -154,8 +154,7 @@ pub fn _xt_arguments(args: &[String]) -> i32 {
     // frame is what bounds `_arguments`' `compstate[restore]=''`
     // (`_arguments.rs:1130`) so it cannot cancel this function's caller's
     // restore. The sh:67 opt-out below is this function's own.
-    let mut ret =
-        crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call));
+    let mut ret = _arguments(&call);
 
     // sh:64-69
     if ret == 300 {

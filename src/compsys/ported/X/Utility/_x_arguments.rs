@@ -144,8 +144,7 @@ pub fn _x_arguments(args: &[String]) -> i32 {
     // from cancelling the restore owed to whoever called `_x_arguments`. The
     // sh:31 opt-out below is this function's own and is unaffected; the 300
     // status survives `doshfunc` (LASTVAL is an i32, unmasked).
-    let mut ret =
-        crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call));
+    let mut ret = _arguments(&call);
 
     // sh:28 — ret=$?
     // sh:30-33

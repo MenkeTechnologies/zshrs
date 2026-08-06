@@ -2,48 +2,48 @@
 //!
 //! Full upstream body (109 lines, abridged):
 //! ```text
-//! sh: 1  #autoload
-//! sh: 6  _mac_apps_caching_policy () {
-//! sh: 9    oldp=( "$1"(Nmw+1) )        # mtime qualifier: weeks unit, "+1" = older-than-1-week
-//! sh:10    (( $#oldp ))
-//! sh:19  _mac_apps_spotlight_retrieve () {
-//! sh:20    mdfind_query="kMDItemContentType == 'com.apple.application-*'"
-//! sh:22    for i in ${app_dir_root}; do
-//! sh:23      _mac_apps+=(${(f)"$(_call_program command mdfind -onlyin ${(q)i} ${(q)mdfind_query})"})
-//! sh:26    done
-//! sh:28  _mac_apps_old_retrieve () {
-//! sh:30    typeset -aU app_dir
-//! sh:31    if [[ -z "$app_dir" ]] && ! zstyle -a ":completion:${curcontext}:commands" application-dir app_dir
-//! sh:34      app_dir_stop_pattern=( "*.app" "contents#" "*data" "*plugins#" "*plug?ins#" "fonts#"
-//! sh:35                             "document[[:alpha:]]#" "*help" "resources#" "images#" "*configurations#" )
-//! sh:37      app_dir_pattern="(^(#i)(${(j/|/)app_dir_stop_pattern}))"
-//! sh:38      app_dir=( ${^app_dir_root}/(${~app_dir_pattern}/)#(N) )
-//! sh:39    fi
-//! sh:44    if ! zstyle -t ":completion:${curcontext}:commands" ignore-bundle; then
-//! sh:45      app_result=( ${^app_dir}*/Contents/(MacOS|MacOSClassic)(N) )
-//! sh:46      _mac_apps+=( ${app_result[@]%/Contents/MacOS*} )
-//! sh:47    fi
-//! sh:50    if ! zstyle -t ":completion:${curcontext}:commands" ignore-single; then
-//! sh:51      autoload -Uz zargs
-//! sh:53      app_cand=( ${^app_dir}^*.[a-z]#/..namedfork/rsrc(.UrN,.RN^U) )
-//! sh:54      envvars="$(builtin typeset -x)"
-//! sh:55      nargs=$(( $(command sysctl -n kern.argmax) - $#envvars - 2048 ))
-//! sh:56      app_result="$(zargs --max-chars $nargs ${app_cand[@]} -- grep -l APPL)"
-//! sh:57      _mac_apps+=( ${${(f)app_result}%/..namedfork/rsrc} )
-//! sh:59    fi
-//! sh:62  _retrieve_mac_apps() {
-//! sh:64    zstyle -s ":completion:*:*:$service:*" cache-policy cache_policy
-//! sh:65    if [[ -z "$cache_policy" ]]; then
-//! sh:66      zstyle ":completion:*:*:$service:*" cache-policy _mac_apps_caching_policy
-//! sh:69    if ( (( ${#_mac_apps} == 0 )) || _cache_invalid Mac_applications ) \
-//! sh:70          && ! _retrieve_cache Mac_applications; then
-//! sh:74      zstyle -s ":completion:*:*:${service}:commands" search-method retrieve ||
-//! sh:76        [[ mdutil -s / == *enabled* ]] && retrieve=_mac_apps_spotlight_retrieve
-//! sh:81        || retrieve=_mac_apps_old_retrieve
-//! sh:83      zstyle ":completion:*:*:${service}:commands" search-method $retrieve
-//! sh:88      zstyle -a ":completion:${curcontext}:" application-path app_dir_root ||
-//! sh:90-97     app_dir_root = default-old-set (if retrieve==old) else ( / )
-//! sh:99      zstyle ":completion:*" application-path $app_dir_root
+//! sh:  1  #autoload
+//! sh:  6  _mac_apps_caching_policy () {
+//! sh:  9    oldp=( "$1"(Nmw+1) )        # mtime qualifier: weeks unit, "+1" = older-than-1-week
+//! sh: 10    (( $#oldp ))
+//! sh: 19  _mac_apps_spotlight_retrieve () {
+//! sh: 20    mdfind_query="kMDItemContentType == 'com.apple.application-*'"
+//! sh: 22    for i in ${app_dir_root}; do
+//! sh: 23      _mac_apps+=(${(f)"$(_call_program command mdfind -onlyin ${(q)i} ${(q)mdfind_query})"})
+//! sh: 25    done
+//! sh: 28  _mac_apps_old_retrieve () {
+//! sh: 30    typeset -aU app_dir
+//! sh: 31    if [[ -z "$app_dir" ]] && ! zstyle -a ":completion:${curcontext}:commands" application-dir app_dir
+//! sh: 34      app_dir_stop_pattern=( "*.app" "contents#" "*data" "*plugins#" "*plug?ins#" "fonts#"
+//! sh: 35                             "document[[:alpha:]]#" "*help" "resources#" "images#" "*configurations#" )
+//! sh: 37      app_dir_pattern="(^(#i)(${(j/|/)app_dir_stop_pattern}))"
+//! sh: 38      app_dir=( ${^app_dir_root}/(${~app_dir_pattern}/)#(N) )
+//! sh: 39    fi
+//! sh: 44    if ! zstyle -t ":completion:${curcontext}:commands" ignore-bundle; then
+//! sh: 45      app_result=( ${^app_dir}*/Contents/(MacOS|MacOSClassic)(N) )
+//! sh: 46      _mac_apps+=( ${app_result[@]%/Contents/MacOS*} )
+//! sh: 47    fi
+//! sh: 50    if ! zstyle -t ":completion:${curcontext}:commands" ignore-single; then
+//! sh: 51      autoload -Uz zargs
+//! sh: 53      app_cand=( ${^app_dir}^*.[a-z]#/..namedfork/rsrc(.UrN,.RN^U) )
+//! sh: 54      envvars="$(builtin typeset -x)"
+//! sh: 55      nargs=$(( $(command sysctl -n kern.argmax) - $#envvars - 2048 ))
+//! sh: 56      app_result="$(zargs --max-chars $nargs ${app_cand[@]} -- grep -l APPL)"
+//! sh: 57      _mac_apps+=( ${${(f)app_result}%/..namedfork/rsrc} )
+//! sh: 58    fi
+//! sh: 62  _retrieve_mac_apps() {
+//! sh: 64    zstyle -s ":completion:*:*:$service:*" cache-policy cache_policy
+//! sh: 65    if [[ -z "$cache_policy" ]]; then
+//! sh: 66      zstyle ":completion:*:*:$service:*" cache-policy _mac_apps_caching_policy
+//! sh: 69    if ( (( ${#_mac_apps} == 0 )) || _cache_invalid Mac_applications ) \
+//! sh: 70          && ! _retrieve_cache Mac_applications; then
+//! sh: 74      zstyle -s ":completion:*:*:${service}:commands" search-method retrieve ||
+//! sh: 76        [[ mdutil -s / == *enabled* ]] && retrieve=_mac_apps_spotlight_retrieve
+//! sh: 81        || retrieve=_mac_apps_old_retrieve
+//! sh: 83      zstyle ":completion:*:*:${service}:commands" search-method $retrieve
+//! sh: 88      zstyle -a ":completion:${curcontext}:" application-path app_dir_root ||
+//! sh: 90-97     app_dir_root = default-old-set (if retrieve==old) else ( / )
+//! sh: 99      zstyle ":completion:*" application-path $app_dir_root
 //! sh:102     typeset -g -Ua _mac_apps
 //! sh:103     $retrieve
 //! sh:105     _store_cache Mac_applications _mac_apps
@@ -67,10 +67,10 @@
 //! self/sibling-prefixed directories of `app_dir`, never descendants —
 //! ported literally (sibling-prefix scan), not "fixed".
 
-use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
+use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_retrieve_cache::retrieve_cache_byname;
-use crate::compsys::ported::_store_cache::store_cache_byname;
+use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
+use crate::compsys::ported::_store_cache::_store_cache;
 use crate::ported::modules::zutil::{bin_zstyle, lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -558,9 +558,8 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
 
     // sh:69-70
     let mac_apps_empty = getaparam("_mac_apps").map(|v| v.is_empty()).unwrap_or(true);
-    let need_rebuild = (mac_apps_empty
-        || cache_invalid_byname(&["Mac_applications".to_string()]) == 0)
-        && retrieve_cache_byname(&["Mac_applications".to_string()]) != 0;
+    let need_rebuild = (mac_apps_empty || _cache_invalid(&["Mac_applications".to_string()]) == 0)
+        && _retrieve_cache(&["Mac_applications".to_string()]) != 0;
 
     if !need_rebuild {
         // sh — untaken `if` (no `else`) → exit status 0 (verified live).
@@ -616,7 +615,7 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
     setaparam("_mac_apps", mac_apps);
 
     // sh:105
-    store_cache_byname(&["Mac_applications".to_string(), "_mac_apps".to_string()])
+    _store_cache(&["Mac_applications".to_string(), "_mac_apps".to_string()])
 }
 
 #[cfg(test)]

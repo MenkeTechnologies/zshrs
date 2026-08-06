@@ -45,7 +45,7 @@
 //! at sh:62-71 left as TODO (only fires under `_comp_priv_prefix`
 //! ≠ empty, rare).
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -53,22 +53,28 @@ use crate::ported::params::{getaparam, getsparam, setaparam};
 /// Reach `_command_names` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `"(-)1: :{ $cpp; _command_names -e }" \` (Completion/BSD/Command/_mdo sh:30) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn command_names_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_command_names", args, || _command_names(args))
+/// [`_command_names_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _command_names(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_command_names", args, || {
+        _command_names_impl(args)
+    })
 }
 
 /// `_command_names` — complete a command name. `-e` (first arg)
 /// restricts to externals only.
-pub fn _command_names(args: &[String]) -> i32 {
+pub fn _command_names_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_command_names");
     // sh:7
     let mut ffilt = String::new();
@@ -94,7 +100,7 @@ pub fn _command_names(args: &[String]) -> i32 {
     if path_has_dot || prefix.contains('/') {
         defs.push("executables:executable file:_files -g \\*\\(-\\*\\)".to_string());
     } else {
-        let _ = description_byname(&[
+        let _ = _description(&[
             "executables".to_string(),
             "expl".to_string(),
             "executable file".to_string(),
@@ -165,7 +171,7 @@ mod tests {
     #[test]
     fn returns_one_without_executor() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_command_names(&[]), 1);
+        assert_eq!(_command_names_impl(&[]), 1);
     }
 
     #[test]
@@ -173,7 +179,7 @@ mod tests {
         // sh:26-27 — `-e` consumed; downstream `args` array doesn't
         //   contain it.
         let _g = crate::test_util::global_state_lock();
-        let _ = _command_names(&["-e".to_string()]);
+        let _ = _command_names_impl(&["-e".to_string()]);
         let args = getaparam("args").unwrap_or_default();
         assert!(!args.contains(&"-e".to_string()));
     }

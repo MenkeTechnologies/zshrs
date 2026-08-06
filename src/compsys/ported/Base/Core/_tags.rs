@@ -95,17 +95,21 @@ fn make_ops() -> options {
 /// writes it — `_tags maps` (Completion/Unix/Command/_yp sh:94) — so the
 /// normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn tags_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_tags", args, || _tags(args))
+/// [`_tags_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _tags(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_tags", args, || _tags_impl(args))
 }
 
 /// `_tags` — register / iterate completion tag sets for the current
@@ -113,9 +117,9 @@ pub fn tags_byname(args: &[String]) -> i32 {
 ///   * with args (registration mode): `comptags -T$prev` (0 → "at
 ///     least one tag set should be tried").
 ///   * without args (next-set mode): `comptags -N$prev`.
-pub fn _tags(args: &[String]) -> i32 {
+pub fn _tags_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_tags");
-    // sh:3  local prev
+    // sh: 3  local prev
     // sh:19 local curcontext="$curcontext" order tag nodef tmp
     //   (upstream declares the second group only inside the `(( $# ))`
     //   branch; this port has no early-return before that test that
@@ -236,7 +240,7 @@ fn run_default_sort(ctx: &str, argv: &[String]) {
         }
     }
 
-    // sh:46  for tag in $order; do
+    // sh:47  for tag in $order; do
     //   `$order` is a zsh array reference; with SH_WORD_SPLIT off (the
     //   default) the for-loop iterates by ELEMENT, NOT by word. A single
     //   tag-order value such as `fruits veggies` — or the built-in default
@@ -332,7 +336,7 @@ mod tests {
         //   comptags `-N` returns 0/1 depending on whether more sets
         //   exist; we just verify the call doesn't panic + returns an
         //   integer.
-        let r = with_incompfunc(|| _tags(&[]));
+        let r = with_incompfunc(|| _tags_impl(&[]));
         // No assertion on the specific value — depends on comptags
         // internal state. Just ensure the call path is reached.
         let _ = r;
@@ -342,7 +346,7 @@ mod tests {
     fn double_dash_only_routes_to_minus_n() {
         // sh:10-13 — single `--` arg → prev = "-", shift, argv empty →
         // sh:67 path with `-N-`.
-        let r = with_incompfunc(|| _tags(&["--".to_string()]));
+        let r = with_incompfunc(|| _tags_impl(&["--".to_string()]));
         let _ = r;
     }
 
@@ -357,7 +361,7 @@ mod tests {
         // hooks); the test just ensures the code path doesn't panic.
         let _r = with_incompfunc(|| {
             crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
-            _tags(&["-Cnewfield".to_string(), "mytag".to_string()])
+            _tags_impl(&["-Cnewfield".to_string(), "mytag".to_string()])
         });
     }
 
@@ -366,7 +370,7 @@ mod tests {
         // sh:24-26 — `-C newfield` consumes 2 argv entries.
         let _r = with_incompfunc(|| {
             crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
-            _tags(&[
+            _tags_impl(&[
                 "-C".to_string(),
                 "newfield".to_string(),
                 "mytag".to_string(),
@@ -379,7 +383,7 @@ mod tests {
         // sh:29 — single `-` or `--` between -C and tags is consumed.
         let _r = with_incompfunc(|| {
             crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
-            _tags(&["-".to_string(), "mytag".to_string()])
+            _tags_impl(&["-".to_string(), "mytag".to_string()])
         });
     }
 
@@ -391,7 +395,7 @@ mod tests {
         let _r = with_incompfunc(|| {
             crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
             crate::ported::params::setsparam("_sort_tags", "nonexistent_hook");
-            let r = _tags(&["options".to_string(), "values".to_string()]);
+            let r = _tags_impl(&["options".to_string(), "values".to_string()]);
             crate::ported::params::setsparam("_sort_tags", "");
             r
         });
@@ -416,7 +420,7 @@ mod tests {
             setaparam("tmp", vec!["-g*(-%b,-/)".to_string()]);
 
             inc_locallevel(); // the scope `_alternative` runs in
-            let _ = _tags(&["options".to_string()]);
+            let _ = _tags_impl(&["options".to_string()]);
             let seen = getaparam("tmp").unwrap_or_default();
             endparamscope();
             endparamscope();

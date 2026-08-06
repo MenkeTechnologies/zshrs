@@ -189,8 +189,7 @@ pub fn _fuse_arguments(args: &[String]) -> i32 {
     // function's frame and cancels the restore its caller was owed. The status
     // (including the 300 "state" protocol value read just below) is returned
     // unchanged: `doshfunc` propagates `LASTVAL` as an i32 with no masking.
-    let mut ret =
-        crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call));
+    let mut ret = _arguments(&call);
 
     // sh:46-51
     if ret == 300 {

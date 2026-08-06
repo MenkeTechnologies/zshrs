@@ -19,7 +19,7 @@
 //! raw `_message -r` format string; otherwise fall back to the
 //! `locales` tag with description `locale` via `_message -e`.
 
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_message::_message;
 
 /// sh:3 — 0-based Rust index of the last `"-X"` element in `args`
 /// (mirrors zsh's 1-based `(I)` reverse-search subscript, minus one).
@@ -37,11 +37,11 @@ pub fn _x_locale(args: &[String]) -> i32 {
         Some(i) => {
             // sh:6  _message -r "$argv[x + 1]"
             let fmt = args.get(i + 1).cloned().unwrap_or_default();
-            message_byname(&["-r".to_string(), fmt])
+            _message(&["-r".to_string(), fmt])
         }
         None => {
             // sh:8  _message -e locales 'locale'
-            message_byname(&[
+            _message(&[
                 "-e".to_string(),
                 "locales".to_string(),
                 "locale".to_string(),

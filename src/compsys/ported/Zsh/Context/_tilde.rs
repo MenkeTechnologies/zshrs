@@ -24,8 +24,8 @@
 //! sh:32  return ret
 //! ```
 
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -54,7 +54,7 @@ pub fn _tilde(args: &[String]) -> i32 {
     };
 
     // sh:19
-    let _ = tags_byname(&[
+    let _ = _tags(&[
         "users".to_string(),
         "named-directories".to_string(),
         "directory-stack".to_string(),
@@ -62,11 +62,11 @@ pub fn _tilde(args: &[String]) -> i32 {
 
     // sh:21-30
     loop {
-        if tags_byname(&[]) != 0 {
+        if _tags(&[]) != 0 {
             break;
         }
         // sh:22  _requested users && _users
-        if requested_byname(&["users".to_string()]) == 0 {
+        if _requested(&["users".to_string()]) == 0 {
             let mut users_args: Vec<String> = suf.clone();
             users_args.extend(args.iter().cloned());
             if dispatch_function_call("_users", &users_args).unwrap_or(1) == 0 {
@@ -84,11 +84,11 @@ pub fn _tilde(args: &[String]) -> i32 {
         nd_args.extend(args.iter().cloned());
         nd_args.push("-k".to_string());
         nd_args.push("nameddirs".to_string());
-        if requested_byname(&nd_args) == 0 {
+        if _requested(&nd_args) == 0 {
             ret = 0;
         }
         // sh:27  _requested directory-stack && _directory_stack
-        if requested_byname(&["directory-stack".to_string()]) == 0 {
+        if _requested(&["directory-stack".to_string()]) == 0 {
             if dispatch_function_call("_directory_stack", &suf).unwrap_or(1) == 0 {
                 ret = 0;
             }

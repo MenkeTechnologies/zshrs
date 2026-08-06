@@ -2,14 +2,14 @@
 //!
 //! Full upstream body (204 lines, abridged):
 //! ```text
-//! sh:  1  #autoload
-//! sh:  6  cmd="$1"; shift
-//! sh:  8  _diff_palette() { … _values attribute … _alternative colors … }
-//! sh: 27  if _pick_variant -r variant -c $cmd gnu=GNU unix -v ||
-//! sh: 28    [[ $OSTYPE = (freebsd<12->|darwin<22->).* ]]; then
-//! sh: 30    # GNU diff: build $of/$ofwuc/$ouc/$oss/$ofwy/$ofwg/$ofwl
+//! sh: 1  #autoload
+//! sh: 6  cmd="$1"; shift
+//! sh: 8  _diff_palette() { … _values attribute … _alternative colors … }
+//! sh:28  if _pick_variant -r variant -c $cmd gnu=GNU unix -v ||
+//! sh:28    [[ $OSTYPE = (freebsd<12->|darwin<22->).* ]]; then
+//! sh:30    # GNU diff: build $of/$ofwuc/$ouc/$oss/$ofwy/$ofwg/$ofwl
 //! sh:       #   exclusion groups, then a large `_arguments -s $args …`.
-//! sh:189  else
+//! sh:136  else
 //! sh:      # BSD/Solaris diff: OS-specific `$of` + `$args`, smaller
 //! sh:      #   `_arguments -s "$args[@]" …`.
 //! sh:  fi
@@ -22,7 +22,7 @@
 //! per-OS `;|` fall-through cases in the BSD/Solaris branch are matched
 //! on `$OSTYPE` prefixes.
 
-use crate::compsys::ported::_alternative::alternative_byname;
+use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_arguments::_arguments;
 use crate::compsys::ported::_values::_values;
 use crate::ported::exec::dispatch_function_call;
@@ -109,7 +109,7 @@ pub fn _diff_palette(_args: &[String]) -> i32 {
             "colors:color:((30:default 31:red 32:green 33:yellow 34:blue 35:magenta 36:cyan 37:white))"
                 .to_string(),
         );
-        if alternative_byname(&alt) == 0 {
+        if _alternative(&alt) == 0 {
             ret = 0;
         }
     }
@@ -427,7 +427,7 @@ fn gnu_arguments(ostype: &str, passthru: &[String]) -> i32 {
     // By NAME so `_arguments` runs under its own `comp_wrapper` frame
     // (c:1556); that frame is what bounds its `compstate[restore]=''`
     // (`_arguments.rs:1130`) to the action it dispatched.
-    crate::compsys::ported::shared::call_compfn("_arguments", &spec, || _arguments(&spec))
+    _arguments(&spec)
 }
 
 /// sh:189-241 — the BSD / Solaris `diff` `_arguments` spec.
@@ -512,7 +512,7 @@ fn bsd_arguments(ostype: &str, passthru: &[String]) -> i32 {
     spec.push("-r[recursively compare subdirectories]".to_string());
     spec.extend(passthru.iter().cloned());
     // By NAME — same `comp_wrapper` frame reasoning as `gnu_arguments` above.
-    crate::compsys::ported::shared::call_compfn("_arguments", &spec, || _arguments(&spec))
+    _arguments(&spec)
 }
 
 #[cfg(test)]

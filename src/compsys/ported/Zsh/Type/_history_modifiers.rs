@@ -60,25 +60,29 @@ fn compset(argv: &[&str]) -> bool {
 /// Reach `_history_modifiers` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_history_modifiers p` (Completion/Zsh/Context/_brace_parameter sh:210) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn history_modifiers_byname(args: &[String]) -> i32 {
+/// [`_history_modifiers_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _history_modifiers(args: &[String]) -> i32 {
     crate::compsys::ported::shared::call_compfn("_history_modifiers", args, || {
-        _history_modifiers(args)
+        _history_modifiers_impl(args)
     })
 }
 
 /// `_history_modifiers` — complete history modifier letters.
 /// `$1` is the context (`h`=history, `q`=glob qualifier,
 /// `p`=parameter).
-pub fn _history_modifiers(args: &[String]) -> i32 {
+pub fn _history_modifiers_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_history_modifiers");
     // sh: 8-11  locals. `type` is a Rust keyword → raw identifier
     //   keeps the source name verbatim.
@@ -241,7 +245,7 @@ mod tests {
         //   which returns None (no executor) → `.unwrap_or(1)`.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
-        assert_eq!(_history_modifiers(&["h".to_string()]), 1);
+        assert_eq!(_history_modifiers_impl(&["h".to_string()]), 1);
     }
 
     #[test]
@@ -250,7 +254,7 @@ mod tests {
         //   `list` shell array for `_describe -t modifiers`.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
-        let _ = _history_modifiers(&["h".to_string()]);
+        let _ = _history_modifiers_impl(&["h".to_string()]);
         let list = crate::ported::params::getaparam("list").unwrap_or_default();
         // s, & (always) + 12 non-global + p, x (type=h) + q (type=[hp]).
         assert_eq!(list.len(), 17);
@@ -266,7 +270,7 @@ mod tests {
         //   type; a `q` (glob-qualifier) context must not see them.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
-        let _ = _history_modifiers(&["q".to_string()]);
+        let _ = _history_modifiers_impl(&["q".to_string()]);
         let list = crate::ported::params::getaparam("list").unwrap_or_default();
         assert_eq!(list.len(), 14);
         assert!(!list.contains(&"p:print without executing".to_string()));

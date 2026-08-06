@@ -428,21 +428,25 @@ pub fn zparse_pathfiles(args: &[String]) -> Parsed {
 /// Reach `_path_files` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_path_files -/ -g '*(-*)' -P / -W /` (Completion/Unix/Type/_absolute_command_paths sh:22) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn path_files_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_path_files", args, || _path_files(args))
+/// [`_path_files_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _path_files(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_path_files", args, || _path_files_impl(args))
 }
 
 /// `_path_files` — file/directory completion entry point.
-pub fn _path_files(argv: &[String]) -> i32 {
+pub fn _path_files_impl(argv: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_path_files");
     // sh:3 — match/mbegin/mend are populated by _have_glob_qual.
     let curcontext = get_str("curcontext");
@@ -1970,6 +1974,6 @@ mod tests {
         let _ = setsparam("PREFIX", "/nonexistent/path/here_");
         let _ = setsparam("SUFFIX", "");
         // No active completion => nmatches unchanged => rc 1.
-        assert_eq!(_path_files(&[]), 1);
+        assert_eq!(_path_files_impl(&[]), 1);
     }
 }

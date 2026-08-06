@@ -6,41 +6,41 @@
 //! sh: 3  [[ _matcher_num -gt 1 || $_lastcomp[nmatches] -eq 0 ]] && return 1
 //! sh: 5  local list
 //! sh: 7  zstyle -s ":completion:${curcontext}:" old-list list
-//! sh:14  if [[ -n $compstate[old_list] && $list != never &&
-//! sh:15        $LASTWIDGET != _complete_help && $WIDGET != _complete_help ]]; then
-//! sh:16    if [[ $WIDGETSTYLE = *list* && ( $list = always || $list != shown ) ]]; then
-//! sh:17      compstate[old_list]=keep
-//! sh:18      return 0
-//! sh:19    elif [[ $list = *${_lastcomp[completer]}* ]]; then
-//! sh:20      [[ "$_lastcomp[insert]" = unambig* ]] && compstate[to_end]=single
-//! sh:21      compstate[old_list]=keep
-//! sh:22      if [[ -o automenu ]]; then
-//! sh:23        compstate[insert]=menu
-//! sh:24      else
-//! sh:25        compadd -Qs "$SUFFIX" - "$PREFIX"
-//! sh:26      fi
-//! sh:27      return 0
-//! sh:28    fi
-//! sh:29  fi
-//! sh:34  if [[ -z $compstate[old_insert] && -n $compstate[old_list] &&
-//! sh:35        ( $_lastcomp[nmatches] -ne 0 || $WIDGET != $LASTWIDGET ) &&
-//! sh:36        $LASTWIDGET != _complete_help && $WIDGET != _complete_help ]]; then
-//! sh:37    compstate[old_list]=keep
-//! sh:38    return 0
-//! sh:39  elif [[ $WIDGETSTYLE = *complete(|-prefix|-word) ]] &&
-//! sh:40       zstyle -T ":completion:${curcontext}:" old-menu; then
-//! sh:41    if [[ -n $compstate[old_insert] ]]; then
-//! sh:42      compstate[old_list]=keep
-//! sh:43      if [[ $WIDGETSTYLE = *reverse* ]]; then
-//! sh:44        compstate[insert]=$(( compstate[old_insert] - 1 ))
-//! sh:45      else
-//! sh:46        compstate[insert]=$(( compstate[old_insert] + 1 ))
-//! sh:47      fi
-//! sh:48    else
-//! sh:49      return 1
-//! sh:50    fi
-//! sh:51    return 0
-//! sh:52  fi
+//! sh:16  if [[ -n $compstate[old_list] && $list != never &&
+//! sh:17        $LASTWIDGET != _complete_help && $WIDGET != _complete_help ]]; then
+//! sh:18    if [[ $WIDGETSTYLE = *list* && ( $list = always || $list != shown ) ]]; then
+//! sh:19      compstate[old_list]=keep
+//! sh:20      return 0
+//! sh:21    elif [[ $list = *${_lastcomp[completer]}* ]]; then
+//! sh:22      [[ "$_lastcomp[insert]" = unambig* ]] && compstate[to_end]=single
+//! sh:23      compstate[old_list]=keep
+//! sh:24      if [[ -o automenu ]]; then
+//! sh:25        compstate[insert]=menu
+//! sh:26      else
+//! sh:27        compadd -Qs "$SUFFIX" - "$PREFIX"
+//! sh:28      fi
+//! sh:29      return 0
+//! sh:30    fi
+//! sh:31  fi
+//! sh:37  if [[ -z $compstate[old_insert] && -n $compstate[old_list] &&
+//! sh:38        ( $_lastcomp[nmatches] -ne 0 || $WIDGET != $LASTWIDGET ) &&
+//! sh:39        $LASTWIDGET != _complete_help && $WIDGET != _complete_help ]]; then
+//! sh:40    compstate[old_list]=keep
+//! sh:41    return 0
+//! sh:42  elif [[ $WIDGETSTYLE = *complete(|-prefix|-word) ]] &&
+//! sh:43       zstyle -T ":completion:${curcontext}:" old-menu; then
+//! sh:44    if [[ -n $compstate[old_insert] ]]; then
+//! sh:45      compstate[old_list]=keep
+//! sh:46      if [[ $WIDGETSTYLE = *reverse* ]]; then
+//! sh:47        compstate[insert]=$(( compstate[old_insert] - 1 ))
+//! sh:48      else
+//! sh:49        compstate[insert]=$(( compstate[old_insert] + 1 ))
+//! sh:50      fi
+//! sh:51    else
+//! sh:52      return 1
+//! sh:53    fi
+//! sh:54    return 0
+//! sh:55  fi
 //! sh:57  return 1
 //! ```
 
@@ -93,28 +93,28 @@ pub fn _oldlist() -> i32 {
     let lastwidget = getsparam("LASTWIDGET").unwrap_or_default();
     let widgetstyle = getsparam("WIDGETSTYLE").unwrap_or_default();
 
-    // sh:14
+    // sh:16
     if !old_list.is_empty()
         && list != "never"
         && lastwidget != "_complete_help"
         && widget != "_complete_help"
     {
-        // sh:16
+        // sh:18
         let style_force_list = list == "always" || list != "shown";
         if widgetstyle.contains("list") && style_force_list {
             set_compstate_str("old_list", "keep");
             return 0;
         }
-        // sh:19
+        // sh:21
         let completer = lastcomp_get("completer").unwrap_or_default();
         if !completer.is_empty() && list.contains(&completer) {
-            // sh:20
+            // sh:22
             let insert_kind = lastcomp_get("insert").unwrap_or_default();
             if insert_kind.starts_with("unambig") {
                 set_compstate_str("to_end", "single");
             }
             set_compstate_str("old_list", "keep");
-            // sh:22-26
+            // sh:24-28
             if isset(AUTOMENU) {
                 set_compstate_str("insert", "menu");
             } else {
@@ -127,7 +127,7 @@ pub fn _oldlist() -> i32 {
         }
     }
 
-    // sh:34
+    // sh:37
     let old_insert = get_compstate_str("old_insert").unwrap_or_default();
     if old_insert.is_empty()
         && !old_list.is_empty()
@@ -139,7 +139,7 @@ pub fn _oldlist() -> i32 {
         return 0;
     }
 
-    // sh:39
+    // sh:42
     let widget_is_complete = widgetstyle.contains("complete")
         || widgetstyle.contains("complete-prefix")
         || widgetstyle.contains("complete-word");
@@ -148,7 +148,7 @@ pub fn _oldlist() -> i32 {
         if !old_insert.is_empty() {
             set_compstate_str("old_list", "keep");
             let oi: i64 = old_insert.parse().unwrap_or(0);
-            // sh:43
+            // sh:46
             if widgetstyle.contains("reverse") {
                 set_compstate_str("insert", &(oi - 1).to_string());
             } else {

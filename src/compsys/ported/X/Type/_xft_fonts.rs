@@ -18,12 +18,12 @@
 //! sh:17        _wanted value expl 'value' compadd "$suf[@]" \
 //! sh:18            ${${(f)"$(_call_program font-attrs
 //! sh:19            fc-list $font $attr 2>/dev/null)"//,/$'\n'}##*=} && ret=0
-//! sh:22      esac
-//! sh:23    else
-//! sh:24      _tags elements {weight,slant}-constants
-//! sh:25      while _tags; do
-//! sh:26        _requested elements expl element compadd -qS= hintstyle hinting autohint \
-//! sh:27            size ${${(u)${(M)${(f)"$(_call_program elements
+//! sh:21      esac
+//! sh:22    else
+//! sh:23      _tags elements {weight,slant}-constants
+//! sh:24      while _tags; do
+//! sh:25        _requested elements expl element compadd -qS= hintstyle hinting autohint \
+//! sh:26            size ${${(u)${(M)${(f)"$(_call_program elements
 //! sh:27            fc-list -v $font 2>/dev/null)"}:#	[a-z]*}%%:*}#?} && ret=0
 //! sh:28        _requested weight-constants expl 'weight constant' compadd "$suf[@]" \
 //! sh:29            thin bold regular medium semibold heavy roman && ret=0
@@ -48,10 +48,10 @@
 //! transforms the upstream expansions perform.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -238,7 +238,7 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
                             .iter()
                             .map(|s| s.to_string()),
                     );
-                    if wanted_byname(&w) == 0 {
+                    if _wanted(&w) == 0 {
                         ret = 0;
                     }
                 }
@@ -252,21 +252,21 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
                     ];
                     w.extend(suf.clone());
                     w.extend(font_attr_values(&font, &attr));
-                    if wanted_byname(&w) == 0 {
+                    if _wanted(&w) == 0 {
                         ret = 0;
                     }
                 }
             }
         } else {
-            // sh:24 — register the tag set.
-            let _ = tags_byname(&[
+            // sh:23 — register the tag set.
+            let _ = _tags(&[
                 "elements".to_string(),
                 "weight-constants".to_string(),
                 "slant-constants".to_string(),
             ]);
             // sh:25-34
-            while tags_byname(&[]) == 0 {
-                // sh:26-27
+            while _tags(&[]) == 0 {
+                // sh:25-26
                 let mut r1: Vec<String> = vec![
                     "elements".to_string(),
                     "expl".to_string(),
@@ -279,7 +279,7 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
                     "size".to_string(),
                 ];
                 r1.extend(compute_elements(&font));
-                if requested_byname(&r1) == 0 {
+                if _requested(&r1) == 0 {
                     ret = 0;
                 }
                 // sh:28-29
@@ -297,7 +297,7 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
                     .iter()
                     .map(|s| s.to_string()),
                 );
-                if requested_byname(&r2) == 0 {
+                if _requested(&r2) == 0 {
                     ret = 0;
                 }
                 // sh:30-31
@@ -309,7 +309,7 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
                 ];
                 r3.extend(suf.clone());
                 r3.extend(["roman", "italic", "oblique"].iter().map(|s| s.to_string()));
-                if requested_byname(&r3) == 0 {
+                if _requested(&r3) == 0 {
                     ret = 0;
                 }
                 // sh:33
@@ -320,7 +320,7 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
         }
     } else if compset(&["-P", r"*[^\\]-"]) == 0 {
         // sh:36-37
-        if message_byname(&[
+        if _message(&[
             "-e".to_string(),
             "size".to_string(),
             "point size".to_string(),
@@ -338,7 +338,7 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
         ];
         w.extend(suf.clone());
         w.extend(compute_fonts());
-        if wanted_byname(&w) == 0 {
+        if _wanted(&w) == 0 {
             ret = 0;
         }
     }

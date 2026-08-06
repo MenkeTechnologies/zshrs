@@ -4,15 +4,15 @@
 //! ```text
 //! sh: 1  #autoload
 //! sh: 6  local classpath i expl; local -a c; local method type
-//! sh: 9  zparseopts -D -E -a classpath t:=type m:=method cp: classpath:
-//! sh:11  classpath="${${classpath[2]:-${CLASSPATH:-.}}//\\:/:}"
-//! sh:14  for i in "${(s.:.)classpath}"; do
-//! sh:15    [[ -z $i ]] && i=.
-//! sh:16    if [[ -f $i ]] && [[ "$i" == *.(jar|zip|war|ear) ]]; then
+//! sh:10  zparseopts -D -E -a classpath t:=type m:=method cp: classpath:
+//! sh:12  classpath="${${classpath[2]:-${CLASSPATH:-.}}//\\:/:}"
+//! sh:15  for i in "${(s.:.)classpath}"; do
+//! sh:16    [[ -z $i ]] && i=.
+//! sh:17    if [[ -f $i ]] && [[ "$i" == *.(jar|zip|war|ear) ]]; then
 //! sh:17      c+=( ${${${(M)$(_call_program jar_classes jar -tf $i)##*.class}%%.class}:gs#/#.#} )
-//! sh:18    elif [[ -d $i ]]; then
-//! sh:19      c+=( $i/**/*.class(.:r:s/.class//:s#$i/##:gs#/#.#) )
-//! sh:23  _wanted classes expl 'java class' compadd "$@" -M 'r:|.=* r:|=*' -a - c
+//! sh:19    elif [[ -d $i ]]; then
+//! sh:20      c+=( $i/**/*.class(.:r:s/.class//:s#$i/##:gs#/#.#) )
+//! sh:24  _wanted classes expl 'java class' compadd "$@" -M 'r:|.=* r:|=*' -a - c
 //! ```
 //!
 //! sh:17/19 approx — class enumeration is done in Rust: jars via
@@ -20,7 +20,7 @@
 //! walk; both strip the `.class` suffix and map `/` → `.` to package form.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 use std::path::Path;
 
@@ -51,7 +51,7 @@ fn parse_opts(args: &[String]) -> (Option<String>, Vec<String>) {
     (cp, rest)
 }
 
-/// sh:19 — recursively collect `*.class` files under `dir`, returning the
+/// sh:20 — recursively collect `*.class` files under `dir`, returning the
 /// package-dotted class names (`$dir/` stripped, `.class` stripped, `/`→`.`).
 fn walk_classes(dir: &Path, base: &str, out: &mut Vec<String>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -107,12 +107,12 @@ pub fn _java_class(args: &[String]) -> i32 {
                 }
             }
         } else if p.is_dir() {
-            // sh:19
+            // sh:20
             walk_classes(p, i, &mut c);
         }
     }
 
-    // sh:23 — _wanted classes expl 'java class' compadd "$@" -M … -a - c
+    // sh:24 — _wanted classes expl 'java class' compadd "$@" -M … -a - c
     setaparam("c", c);
     let mut w = vec![
         "classes".to_string(),
@@ -126,7 +126,7 @@ pub fn _java_class(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("c".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

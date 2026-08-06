@@ -6,7 +6,7 @@
 //! sh: 1  #autoload
 //! sh:    # Returns arrays net_intf_disp and net_intf_list which the
 //! sh:    # caller should make local.
-//! sh:14  case $OSTYPE in
+//! sh:13  case $OSTYPE in
 //! sh:     aix*)    lsdev -C -c if -F 'name:description'  (+ verbose disp)
 //! sh:     darwin|freebsd|dragonfly)  ifconfig -l
 //! sh:     irix*)   netstat -i
@@ -51,7 +51,7 @@ fn dir_basenames(path: &str) -> Vec<String> {
 /// `$net_intf_list`.
 pub fn _find_net_interfaces(_args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_find_net_interfaces");
-    // sh:14 — dispatch on $OSTYPE.
+    // sh:13 — dispatch on $OSTYPE.
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let list: Vec<String> = if ostype.starts_with("darwin")
         || ostype.starts_with("freebsd")

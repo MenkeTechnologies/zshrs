@@ -4,24 +4,24 @@
 //! ```text
 //! sh: 1  #autoload
 //! sh: 3  # -d strip /dev/;  -D allow with/without /dev/;  -o only attached ttys
-//! sh: 8  local -a ttys expl pre
-//! sh: 9  local stripdev optdev open
-//! sh:11  zparseopts -D -K -E d=stripdev D=optdev o=open
-//! sh:13  if [[ -n $open ]]; then
-//! sh:14    ttys=( ${(u)${${(f)"$(_call_program open-ttys ps -Ao tty=)"}:#\?*}%% *} )
-//! sh:15    _description open-ttys expl 'open tty'
-//! sh:16  else
-//! sh:17    ttys=( /dev/tty?*(N) /dev/pts/^ptmx(N) )
-//! sh:18    ttys=( ${ttys#/dev/} )
-//! sh:19    _description ttys expl 'tty'
-//! sh:20  fi
-//! sh:21  [[ -z $stripdev ]] && pre=( -p /dev/ )
-//! sh:23  [[ -n $optdev ]] && compadd "$@" "$expl[@]" -M 'r:|/=* r:|=*' -a ttys && return
-//! sh:24  compadd "$@" "$expl[@]" "$pre[@]" -M 'r:|/=* r:|=*' -a ttys
+//! sh: 9  local -a ttys expl pre
+//! sh: 10  local stripdev optdev open
+//! sh:12  zparseopts -D -K -E d=stripdev D=optdev o=open
+//! sh:14  if [[ -n $open ]]; then
+//! sh:15    ttys=( ${(u)${${(f)"$(_call_program open-ttys ps -Ao tty=)"}:#\?*}%% *} )
+//! sh:16    _description open-ttys expl 'open tty'
+//! sh:17  else
+//! sh:18    ttys=( /dev/tty?*(N) /dev/pts/^ptmx(N) )
+//! sh:19    ttys=( ${ttys#/dev/} )
+//! sh:20    _description ttys expl 'tty'
+//! sh:21  fi
+//! sh:22  [[ -z $stripdev ]] && pre=( -p /dev/ )
+//! sh:24  [[ -n $optdev ]] && compadd "$@" "$expl[@]" -M 'r:|/=* r:|=*' -a ttys && return
+//! sh:25  compadd "$@" "$expl[@]" "$pre[@]" -M 'r:|/=* r:|=*' -a ttys
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -56,7 +56,7 @@ fn glob_n(pat: &str) -> Vec<String> {
 /// `_ttys` — complete terminal device names.
 pub fn _ttys(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ttys");
-    // sh:11  zparseopts -D -K -E d=stripdev D=optdev o=open
+    // sh:12  zparseopts -D -K -E d=stripdev D=optdev o=open
     let stripdev = args.iter().any(|a| a == "-d");
     let optdev = args.iter().any(|a| a == "-D");
     let open = args.iter().any(|a| a == "-o");
@@ -66,9 +66,9 @@ pub fn _ttys(args: &[String]) -> i32 {
         .cloned()
         .collect();
 
-    // sh:13-20
+    // sh:14-21
     let ttys: Vec<String> = if open {
-        // sh:14 — ps -Ao tty=, drop `?*` (no-tty) lines, strip trailing
+        // sh:15 — ps -Ao tty=, drop `?*` (no-tty) lines, strip trailing
         //   fields, unique.
         let _ = _call_program(&[
             "open-ttys".to_string(),
@@ -87,21 +87,21 @@ pub fn _ttys(args: &[String]) -> i32 {
                 seen.push(name);
             }
         }
-        let _ = description_byname(&[
+        let _ = _description(&[
             "open-ttys".to_string(),
             "expl".to_string(),
             "open tty".to_string(),
         ]);
         seen
     } else {
-        // sh:17-18 — /dev/tty?*(N) /dev/pts/^ptmx(N), strip /dev/.
+        // sh:18-19 — /dev/tty?*(N) /dev/pts/^ptmx(N), strip /dev/.
         let mut t = glob_n("/dev/tty?*");
         t.extend(
             glob_n("/dev/pts/*")
                 .into_iter()
                 .filter(|p| p.rsplit('/').next().map(|b| b != "ptmx").unwrap_or(true)),
         );
-        let _ = description_byname(&["ttys".to_string(), "expl".to_string(), "tty".to_string()]);
+        let _ = _description(&["ttys".to_string(), "expl".to_string(), "tty".to_string()]);
         t.into_iter()
             .map(|p| p.strip_prefix("/dev/").unwrap_or(&p).to_string())
             .collect()
@@ -110,7 +110,7 @@ pub fn _ttys(args: &[String]) -> i32 {
     setaparam("_ttys_list", ttys);
     let expl = getaparam("expl").unwrap_or_default();
 
-    // sh:23 — -D: allow with/without /dev/ prefix, no -p.
+    // sh:24 — -D: allow with/without /dev/ prefix, no -p.
     if optdev {
         let mut cadd: Vec<String> = rest;
         cadd.extend(expl);
@@ -121,7 +121,7 @@ pub fn _ttys(args: &[String]) -> i32 {
         return bin_compadd("compadd", &cadd, &make_ops(), 0);
     }
 
-    // sh:21,24 — default: prefix with /dev/ unless -d given.
+    // sh:22,25 — default: prefix with /dev/ unless -d given.
     let mut cadd: Vec<String> = rest;
     cadd.extend(expl);
     if !stripdev {

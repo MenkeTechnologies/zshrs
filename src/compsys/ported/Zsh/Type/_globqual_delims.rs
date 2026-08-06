@@ -4,22 +4,22 @@
 //! Full upstream body (24 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 5  # Helper for _globquals.  Sets delim to delimiter to match.
-//! sh: 7  # don't restore special parameters
-//! sh: 8  compstate[restore]=no
-//! sh:10  delim=$PREFIX[1]
-//! sh:11  compset -p 1
-//! sh:13  # One of matching brackets?
-//! sh:15  local matchl="<({[" matchr=">)}]"
-//! sh:16  integer ind=${matchl[(I)$delim]}
-//! sh:18  (( ind )) && delim=$matchr[ind]
-//! sh:20  if compset -P "[^$delim]#$delim"; then
-//! sh:22    # Completely matched.
-//! sh:23    return 0
-//! sh:24  else
-//! sh:25    # Still in delimiter
-//! sh:26    return 1
-//! sh:27  fi
+//! sh: 3  # Helper for _globquals.  Sets delim to delimiter to match.
+//! sh: 5  # don't restore special parameters
+//! sh: 6  compstate[restore]=no
+//! sh: 8  delim=$PREFIX[1]
+//! sh: 9  compset -p 1
+//! sh:11  # One of matching brackets?
+//! sh:13  local matchl="<({[" matchr=">)}]"
+//! sh:14  integer ind=${matchl[(I)$delim]}
+//! sh:16  (( ind )) && delim=$matchr[ind]
+//! sh:18  if compset -P "[^$delim]#$delim"; then
+//! sh:19    # Completely matched.
+//! sh:20    return 0
+//! sh:21  else
+//! sh:22    # Still in delimiter
+//! sh:23    return 1
+//! sh:24  fi
 //! ```
 //!
 //! Helper for `_globquals` — derives the closing delimiter from the
@@ -43,32 +43,36 @@ fn make_ops() -> options {
 /// Reach `_globqual_delims` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `elif ! _globqual_delims; then` (Completion/Zsh/Type/_globquals sh:28) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn globqual_delims_byname() -> i32 {
-    crate::compsys::ported::shared::call_compfn("_globqual_delims", &[], || _globqual_delims())
+/// [`_globqual_delims_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _globqual_delims() -> i32 {
+    crate::compsys::ported::shared::call_compfn("_globqual_delims", &[], || _globqual_delims_impl())
 }
 
 /// `_globqual_delims` — set `$delim` to the closing delimiter for
 /// the current glob-qualifier region; return 0 if fully matched, 1
 /// if still inside.
-pub fn _globqual_delims() -> i32 {
+pub fn _globqual_delims_impl() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_globqual_delims");
-    // sh:8
+    // sh:6
     set_compstate_str("restore", "no");
 
     // sh:10
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let mut delim = prefix.chars().next().unwrap_or(' ').to_string();
 
-    // sh:11
+    // sh: 9
     let _ = bin_compset(
         "compset",
         &["-p".to_string(), "1".to_string()],
@@ -76,7 +80,7 @@ pub fn _globqual_delims() -> i32 {
         0,
     );
 
-    // sh:13-18  bracket-pair mirror
+    // sh:11-16  bracket-pair mirror
     let matchl = "<({[";
     let matchr = ">)}]";
     if let Some(idx) = matchl.find(delim.as_str()) {
@@ -89,13 +93,13 @@ pub fn _globqual_delims() -> i32 {
     //   scoping in shell; we use the shell-side param table).
     let _ = setsparam("delim", &delim);
 
-    // sh:20  compset -P "[^$delim]#$delim"
+    // sh:18  compset -P "[^$delim]#$delim"
     let pat = format!("[^{}]#{}", delim, delim);
     if bin_compset("compset", &["-P".to_string(), pat], &make_ops(), 0) == 0 {
-        // sh:23
+        // sh:20
         0
     } else {
-        // sh:26
+        // sh:23
         1
     }
 }
@@ -109,16 +113,16 @@ mod tests {
         // sh:18 — `(` should map to `)` via the bracket-pair table.
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "(foo");
-        let _ = _globqual_delims();
+        let _ = _globqual_delims_impl();
         assert_eq!(getsparam("delim").as_deref(), Some(")"));
     }
 
     #[test]
     fn non_bracket_delim_stays_as_first_char() {
-        // sh:10 — for non-bracket delim (e.g. `:`), stays as-is.
+        // sh: 8 — for non-bracket delim (e.g. `:`), stays as-is.
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", ":foo");
-        let _ = _globqual_delims();
+        let _ = _globqual_delims_impl();
         assert_eq!(getsparam("delim").as_deref(), Some(":"));
     }
 }

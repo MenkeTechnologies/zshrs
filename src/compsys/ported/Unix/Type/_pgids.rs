@@ -11,7 +11,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::getsparam;
 
 /// `_pgids` — complete process-group IDs (`ps -A -o pgid=`).
@@ -40,7 +40,7 @@ pub fn _pgids(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.extend(ids);
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

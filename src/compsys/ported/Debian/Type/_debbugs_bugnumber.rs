@@ -10,7 +10,7 @@
 //! sh:11  _wanted -x bugnum expl 'bug number' compadd -- $^cachedirs/<->.(html|mbox)(N:t:r)
 //! ```
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::getsparam;
 
 /// sh:6 — `$PREFIX$SUFFIX == [0-9]#`: the whole prefix+suffix must be
@@ -95,7 +95,7 @@ pub fn _debbugs_bugnumber(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("--".to_string());
     w.extend(bugnums);
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

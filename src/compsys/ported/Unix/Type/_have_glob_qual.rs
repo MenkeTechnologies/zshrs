@@ -5,18 +5,18 @@
 //! sh: 1  #autoload
 //! sh:    # Test if $1 has glob qualifiers … sets match/mbegin/mend.
 //! sh:    # $2 == "complete" tests the qualifiers reach the ")".
-//! sh:13  local complete
-//! sh:15  [[ $2 = complete ]] && complete=")"
-//! sh:17  [[ -z $compstate[quote] &&
-//! sh:18    ( $_comp_caller_options[bareglobqual] == on &&
-//! sh:19        $1 = (#b)(((*[^\\\$]|)(\\\\)#)\()([^\)\|\~]#)$complete &&
-//! sh:20        ${#match[1]} -gt 1 ||
-//! sh:21      $_comp_caller_options[extendedglob] == on &&
-//! sh:22        $1 = (#b)(((*[^\\\$]|)(\\\\)#)"(#q")([^\)]#)$complete
-//! sh:23    ) ]]
+//! sh:14  local complete
+//! sh:16  [[ $2 = complete ]] && complete=")"
+//! sh:18  [[ -z $compstate[quote] &&
+//! sh:19    ( $_comp_caller_options[bareglobqual] == on &&
+//! sh:20        $1 = (#b)(((*[^\\\$]|)(\\\\)#)\()([^\)\|\~]#)$complete &&
+//! sh:21        ${#match[1]} -gt 1 ||
+//! sh:22      $_comp_caller_options[extendedglob] == on &&
+//! sh:23        $1 = (#b)(((*[^\\\$]|)(\\\\)#)"(#q")([^\)]#)$complete
+//! sh:24    ) ]]
 //! ```
 //!
-//! sh:19/22 approx — the two `(#b)` backreference patterns are matched
+//! sh:20/22 approx — the two `(#b)` backreference patterns are matched
 //! with a hand scanner (the pattern engine has no backref capture that
 //! sets `$match`). Semantics preserved: pattern A locates the rightmost
 //! UNESCAPED `(` opening bare glob qualifiers (even backslash run
@@ -115,7 +115,7 @@ pub fn _have_glob_qual(args: &[String]) -> i32 {
     let s = args.first().cloned().unwrap_or_default();
     let complete = args.get(1).map(|x| x == "complete").unwrap_or(false);
 
-    // sh:17 — inside a quote, never treat as glob qualifiers.
+    // sh:18 — inside a quote, never treat as glob qualifiers.
     if let Some(q) = assoc_get("compstate", "quote") {
         if !q.is_empty() {
             return 1;
@@ -140,7 +140,7 @@ pub fn _have_glob_qual(args: &[String]) -> i32 {
         }
     };
 
-    // sh:18-20 — pattern A (bare glob qualifiers), rightmost unescaped `(`.
+    // sh:19-21 — pattern A (bare glob qualifiers), rightmost unescaped `(`.
     if bareglob {
         for i in (1..n).rev() {
             if chars[i] != '(' || !unescaped_open(&chars, i) {
@@ -161,7 +161,7 @@ pub fn _have_glob_qual(args: &[String]) -> i32 {
         }
     }
 
-    // sh:21-22 — pattern B (`(#q` extended glob), rightmost unescaped `(`.
+    // sh:22-23 — pattern B (`(#q` extended glob), rightmost unescaped `(`.
     if extglob {
         for i in (0..n).rev() {
             if chars[i] != '('
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(_have_glob_qual(&["*(-/".to_string()]), 1);
     }
 
-    /// sh:18-19 — `$_comp_caller_options[bareglobqual]` must be read from
+    /// sh:19-20 — `$_comp_caller_options[bareglobqual]` must be read from
     /// the REAL associative parameter. `_main_complete` publishes it with
     /// `sethparam` (PM_HASHED), and `getaparam` only ever yields PM_ARRAY
     /// values, so a flat-array-only lookup silently saw `off` for every

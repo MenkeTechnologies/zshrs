@@ -25,7 +25,7 @@
 //! trailing whitespace, drop the leading keyword up to the first
 //! whitespace, then IFS-split the remainder) is done with string ops.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -80,7 +80,7 @@ pub fn _domains(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("domains".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

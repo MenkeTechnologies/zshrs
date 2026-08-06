@@ -2,30 +2,30 @@
 //!
 //! Full upstream body (37 lines, abridged):
 //! ```text
-//! sh: 1  #autoload
-//! sh: 5  local -a … copts=( "${@}" ) privs
-//! sh: 8  privs=( 'r[read]' 'w[write]' 'x[execute]' 's[set uid/gid]'
+//! sh:1  #autoload
+//! sh:5  local -a … copts=( "${@}" ) privs
+//! sh:8  privs=( 'r[read]' 'w[write]' 'x[execute]' 's[set uid/gid]'
 //! sh:        't[sticky]' 'X[…]' 'u[…]' 'g[…]' 'o[…]' )
 //! sh:17  [[ $OSTYPE == solaris* ]] && privs+=( 'l[mandatory locking]' )
-//! sh:20  compset -P '*,'
-//! sh:21  compset -S ',*'
-//! sh:23  if [[ -prefix [0-7] ]]; then
-//! sh:24    _message -e number 'numeric mode'
-//! sh:25  elif compset -P '[a-z]#[+-=]'; then
-//! sh:26    _values -O copts -S '' privilege $privs && return 0
-//! sh:27  else
-//! sh:28    compset -P '*'
-//! sh:29    copts=( -S '' )
-//! sh:30    _alternative -O copts \
-//! sh:31      'who:who:((a\:all u\:owner g\:group o\:others))' \
-//! sh:32      'operators:operator:(+ - =)' \
-//! sh:33    && return 0
-//! sh:34  fi
-//! sh:36  return 1
+//! sh:21  compset -P '*,'
+//! sh:22  compset -S ',*'
+//! sh:24  if [[ -prefix [0-7] ]]; then
+//! sh:25    _message -e number 'numeric mode'
+//! sh:26  elif compset -P '[a-z]#[+-=]'; then
+//! sh:27    _values -O copts -S '' privilege $privs && return 0
+//! sh:28  else
+//! sh:29    compset -P '*'
+//! sh:30    copts=( -S '' )
+//! sh:31    _alternative -O copts \
+//! sh:32      'who:who:((a\:all u\:owner g\:group o\:others))' \
+//! sh:33      'operators:operator:(+ - =)' \
+//! sh:34    && return 0
+//! sh:35  fi
+//! sh:37  return 1
 //! ```
 
-use crate::compsys::ported::_alternative::alternative_byname;
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_alternative::_alternative;
+use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_values::_values;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::zle::complete::bin_compset;
@@ -71,15 +71,15 @@ pub fn _file_modes(args: &[String]) -> i32 {
         privs.push("l[mandatory locking]".to_string());
     }
 
-    // sh:20-21
+    // sh:21-22
     let _ = compset(&["-P", "*,"]);
     let _ = compset(&["-S", ",*"]);
 
-    // sh:23 — [[ -prefix [0-7] ]]: PREFIX begins with an octal digit.
+    // sh:24 — [[ -prefix [0-7] ]]: PREFIX begins with an octal digit.
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if prefix.starts_with(|c: char| ('0'..='7').contains(&c)) {
-        // sh:24
-        let _ = message_byname(&[
+        // sh:25
+        let _ = _message(&[
             "-e".to_string(),
             "number".to_string(),
             "numeric mode".to_string(),
@@ -87,9 +87,9 @@ pub fn _file_modes(args: &[String]) -> i32 {
         return 1;
     }
 
-    // sh:25 — compset -P '[a-z]#[+-=]' consumed a `u+`/`g-`/`=`… prefix.
+    // sh:26 — compset -P '[a-z]#[+-=]' consumed a `u+`/`g-`/`=`… prefix.
     if compset(&["-P", "[a-z]#[+-=]"]) == 0 {
-        // sh:26 — copts stays the passed-through args.
+        // sh:27 — copts stays the passed-through args.
         setaparam("copts", args.to_vec());
         let mut v: Vec<String> = vec![
             "-O".to_string(),
@@ -107,10 +107,10 @@ pub fn _file_modes(args: &[String]) -> i32 {
             return 0;
         }
     } else {
-        // sh:28-33
+        // sh:29-34
         let _ = compset(&["-P", "*"]);
         setaparam("copts", vec!["-S".to_string(), "".to_string()]);
-        let r = alternative_byname(&[
+        let r = _alternative(&[
             "-O".to_string(),
             "copts".to_string(),
             "who:who:((a\\:all u\\:owner g\\:group o\\:others))".to_string(),

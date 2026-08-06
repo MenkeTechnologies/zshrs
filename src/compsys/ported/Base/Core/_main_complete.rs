@@ -35,7 +35,7 @@
 //!   * sh:407-417 `_lastcomp` snapshot
 //!   * sh:384-396 ZLS_COLORS save/restore
 
-use crate::compsys::ported::_setup::setup_byname;
+use crate::compsys::ported::_setup::_setup;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
@@ -678,7 +678,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
 
     // sh:110  _setup default — propagate the default-tag styles
     //   (list-packed, accept-exact, …) into compstate.
-    let _ = setup_byname(&["default".to_string()]);
+    let _ = _setup(&["default".to_string()]);
 
     // sh:122-133  list-prompt / select-prompt / select-scroll styles
     let ctx_default = format!(":completion:{}:default", curcontext);
@@ -1125,7 +1125,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
                     format!("{}, or {}", init, quoted[quoted.len() - 1])
                 }
             };
-            let _ = setup_byname(&["warnings".to_string()]);
+            let _ = _setup(&["warnings".to_string()]);
             let zf_argv = vec![
                 "-f".to_string(),
                 "mesg".to_string(),

@@ -6,28 +6,28 @@
 //! sh: 5  [[ _matcher_num -gt 1 || $compstate[ignored] -eq 0 ]] && return 1
 //! sh: 7  local comp; integer ind
 //! sh: 9  if ! zstyle -a … completer comp; then
-//! sh:10    comp=( "${(@)_completers[1,_completer_num-1]}" )
-//! sh:11    ind=${comp[(I)_ignored(|:*)]}
-//! sh:12    (( ind )) && comp=("${(@)comp[ind,-1]}")
-//! sh:13  fi
+//! sh:11    comp=( "${(@)_completers[1,_completer_num-1]}" )
+//! sh:12    ind=${comp[(I)_ignored(|:*)]}
+//! sh:13    (( ind )) && comp=("${(@)comp[ind,-1]}")
+//! sh:14  fi
 //! sh:15  local _comp_no_ignore=yes …
 //! sh:20  for tmp in "$comp[@]"; do … completer chain dispatch …
 //! sh:39      if zstyle -s … single-ignored tmp && … single match …; then
-//! sh:42        case "$tmp" in
-//! sh:43          show) compstate[insert]='' compstate[list]='list force' tmp='' ;;
-//! sh:46          menu)
-//! sh:47            compstate[insert]=menu
-//! sh:48            _description original expl original
-//! sh:49            compadd "$expl[@]" -S '' - "$PREFIX$SUFFIX"
-//! sh:50            ;;
-//! sh:51        esac
-//! sh:55      return 0
-//! sh:57    done
-//! sh:59  done
-//! sh:64  return 1
+//! sh:49        case "$tmp" in
+//! sh:50          show) compstate[insert]='' compstate[list]='list force' tmp='' ;;
+//! sh:51          menu)
+//! sh:52            compstate[insert]=menu
+//! sh:53            _description original expl original
+//! sh:54            compadd "$expl[@]" -S '' - "$PREFIX$SUFFIX"
+//! sh:55            ;;
+//! sh:56        esac
+//! sh:59      return 0
+//! sh:63    done
+//! sh:66  done
+//! sh:68  return 1
 //! ```
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
@@ -107,7 +107,7 @@ pub fn _ignored() -> i32 {
                     }
                     "menu" => {
                         set_compstate_str("insert", "menu");
-                        let _ = description_byname(&[
+                        let _ = _description(&[
                             "original".to_string(),
                             "expl".to_string(),
                             "original".to_string(),
@@ -125,13 +125,13 @@ pub fn _ignored() -> i32 {
                     _ => {}
                 }
             }
-            // sh:55 — restore + return success
+            // sh:59 — restore + return success
             let _ = setsparam("_comp_no_ignore", &saved_no_ignore);
             return 0;
         }
     }
 
-    // sh:64 restore + fail
+    // sh:68 restore + fail
     let _ = setsparam("_comp_no_ignore", &saved_no_ignore);
     1
 }

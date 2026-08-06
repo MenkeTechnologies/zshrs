@@ -4,18 +4,18 @@
 //! ```text
 //! sh: 1  #autoload
 //! sh: 3  local -a config_hosts; local config; integer ind
-//! sh: 7  if [[ "$IPREFIX" == *@ ]]; then
-//! sh: 8    _combination -s '[:@]' my-accounts users-hosts "users=${IPREFIX/@}" hosts "$@" && return
-//! sh: 9  else
+//! sh: 8  if [[ "$IPREFIX" == *@ ]]; then
+//! sh: 9    _combination -s '[:@]' my-accounts users-hosts "users=${IPREFIX/@}" hosts "$@" && return
+//! sh:10  else
 //! sh:10    _combination -s '[:@]' my-accounts users-hosts ${opt_args[-l]:+"users=${opt_args[-l]:q}"} hosts "$@" && return
-//! sh:11  fi
+//! sh:13  fi
 //! sh:12  if (( ind = ${words[(I)-F]} )); then config=${~words[ind+1]}
 //! sh:14  else config="$HOME/.ssh/config"; fi
-//! sh:16  if [[ -r $config ]]; then
+//! sh:19  if [[ -r $config ]]; then
 //! sh:17    … parse Host/Hostname (and Match host…, Include) lines …
-//! sh:45    _wanted hosts expl 'remote host name' \
-//! sh:46      compadd -M 'm:{a-zA-Z}={A-Za-z} r:|.=* r:|=*' "$@" $config_hosts
-//! sh:48  fi
+//! sh:48    _wanted hosts expl 'remote host name' \
+//! sh:49      compadd -M 'm:{a-zA-Z}={A-Za-z} r:|.=* r:|=*' "$@" $config_hosts
+//! sh:50  fi
 //! ```
 //!
 //! sh:17-44 the ssh_config parser (Match keyword rewrite, Include, the
@@ -23,8 +23,8 @@
 //! (`// sh:17 approx`); Host/Hostname and Include are handled, Match is
 //! reduced to its `host`/`canonical`/`final` host list.
 
-use crate::compsys::ported::_combination::combination_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_combination::_combination;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam};
 
 /// sh:17 approx — collect non-glob host names from an ssh_config file
@@ -109,7 +109,7 @@ pub fn _ssh_hosts(args: &[String]) -> i32 {
     }
     comb.push("hosts".to_string());
     comb.extend(args.iter().cloned());
-    if combination_byname(&comb) == 0 {
+    if _combination(&comb) == 0 {
         return 0;
     }
 
@@ -121,7 +121,7 @@ pub fn _ssh_hosts(args: &[String]) -> i32 {
         None => format!("{}/.ssh/config", home),
     };
 
-    // sh:16-46 — parse the config and offer the host names.
+    // sh:19-49 — parse the config and offer the host names.
     let mut config_hosts: Vec<String> = Vec::new();
     parse_config_hosts(&config, &home, 0, &mut config_hosts);
     if config_hosts.is_empty() {
@@ -137,7 +137,7 @@ pub fn _ssh_hosts(args: &[String]) -> i32 {
     ];
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.extend(config_hosts);
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

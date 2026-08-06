@@ -74,7 +74,7 @@ pub fn _vcs_info(_args: &[String]) -> i32 {
     // sh:28-31 — by NAME so `_arguments` runs under its own `comp_wrapper`
     // frame (c:1556); that frame contains its `compstate[restore]=''`
     // (`_arguments.rs:1130`).
-    crate::compsys::ported::shared::call_compfn("_arguments", &call, || _arguments(&call))
+    _arguments(&call)
 }
 
 #[cfg(test)]

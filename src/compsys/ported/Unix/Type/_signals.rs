@@ -8,29 +8,29 @@
 //! sh:12  local first last
 //! sh:14  zparseopts -D -K -E 'p=minus' 'a=last' 's=pre'
 //! sh:15  if [[ -z "$last" ]]; then first=2; last=-3; else first=1; last=-1; fi
-//! sh:20  [[ -n "$minus" ]] && minus='-'
-//! sh:22  [[ "$1" = -(|-) ]] && shift
-//! sh:24  if [[ -z "$minus" ]] ||
-//! sh:25     ! zstyle -T ":completion:${curcontext}:signals" prefix-needed ||
-//! sh:26     [[ -prefix -* ]]; then
+//! sh:22  [[ -n "$minus" ]] && minus='-'
+//! sh:24  [[ "$1" = -(|-) ]] && shift
+//! sh:26  if [[ -z "$minus" ]] ||
+//! sh:27     ! zstyle -T ":completion:${curcontext}:signals" prefix-needed ||
+//! sh:28     [[ -prefix -* ]]; then
 //! sh:29    if zstyle -t …:signals prefix-hidden; then
 //! sh:30      tmp=( "${(@)signals[first,last]}" );  disp=(-d tmp)
 //! sh:32    else disp=(); fi
-//! sh:35    if [[ -n "$pre" && $PREFIX = ${minus}S* ]]; then
-//! sh:36      sigs=( "${minus}SIG${(@)^${(@)signals[first,last]:#<->}}" )
-//! sh:37      (( $#disp )) && tmp=( "$tmp[@]" "${(@)signals[first,last]}" )
+//! sh:38    if [[ -n "$pre" && $PREFIX = ${minus}S* ]]; then
+//! sh:39      sigs=( "${minus}SIG${(@)^${(@)signals[first,last]:#<->}}" )
+//! sh:40      (( $#disp )) && tmp=( "$tmp[@]" "${(@)signals[first,last]}" )
 //! sh:38    else sigs=(); fi
-//! sh:41    _wanted signals expl signal \
-//! sh:42      compadd "$@" "$disp[@]" -M 'm:{a-z}={A-Z}' - \
-//! sh:43              "${minus}${(@)^signals[first,last]}" "$sigs[@]"
-//! sh:44  fi
+//! sh:45    _wanted signals expl signal \
+//! sh:46      compadd "$@" "$disp[@]" -M 'm:{a-z}={A-Z}' - \
+//! sh:47              "${minus}${(@)^signals[first,last]}" "$sigs[@]"
+//! sh:48  fi
 //! ```
 //!
-//! sh:43 `"${minus}${(@)^signals[first,last]}"` is the plan9 cross-product
+//! sh:47 `"${minus}${(@)^signals[first,last]}"` is the plan9 cross-product
 //! that prefixes EVERY signal name with `minus` — ported by iterating the
 //! signal slice and prepending `minus` per element (not shell expansion).
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -83,7 +83,7 @@ pub fn _signals(args: &[String]) -> i32 {
 
     // sh:15 — index range (skip EXIT + trailing pseudo-signals unless -a).
     let (first, last) = if !has_a { (2, -3) } else { (1, -1) };
-    // sh:20
+    // sh:22
     let minus = if has_p { "-" } else { "" };
     // sh:22  drop a leading bare `-` / `--`.
     if matches!(rest.first().map(|s| s.as_str()), Some("-") | Some("--")) {
@@ -94,7 +94,7 @@ pub fn _signals(args: &[String]) -> i32 {
     let sig_ctx = format!(":completion:{}:signals", curcontext);
     let prefix = getsparam("PREFIX").unwrap_or_default();
 
-    // sh:24-26 — gate.
+    // sh:26-28 — gate.
     let proceed = minus.is_empty()
         || !zstyle_t_default_true(&sig_ctx, "prefix-needed")
         || prefix.starts_with('-');
@@ -121,7 +121,7 @@ pub fn _signals(args: &[String]) -> i32 {
             .filter(|s| !(!s.is_empty() && s.chars().all(|c| c.is_ascii_digit())))
             .map(|s| format!("{}SIG{}", minus, s))
             .collect();
-        // sh:37 — when displaying, also show the plain names for the SIG set.
+        // sh:40 — when displaying, also show the plain names for the SIG set.
         if !disp_flag.is_empty() {
             disp_list.extend(range.clone());
         }
@@ -133,10 +133,10 @@ pub fn _signals(args: &[String]) -> i32 {
         setaparam("_signals_disp", disp_list);
     }
 
-    // sh:43 — prefix EVERY signal name with `minus` (plan9 cross-product).
+    // sh:47 — prefix EVERY signal name with `minus` (plan9 cross-product).
     let prefixed: Vec<String> = range.iter().map(|s| format!("{}{}", minus, s)).collect();
 
-    // sh:41-43  _wanted signals expl signal compadd "$@" "$disp[@]"
+    // sh:45-47  _wanted signals expl signal compadd "$@" "$disp[@]"
     //   -M 'm:{a-z}={A-Z}' - <prefixed> <sigs>
     let mut wanted_argv: Vec<String> = vec![
         "signals".to_string(),
@@ -151,7 +151,7 @@ pub fn _signals(args: &[String]) -> i32 {
     wanted_argv.push("-".to_string());
     wanted_argv.extend(prefixed);
     wanted_argv.extend(sigs);
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

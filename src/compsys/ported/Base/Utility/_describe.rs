@@ -49,8 +49,8 @@
 //! sh: 140 return 1
 //! ```
 
-use crate::compsys::ported::_next_label::next_label_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -159,17 +159,21 @@ fn resolve_array_arg(arg: &str) -> Vec<String> {
 /// writes it — `_describe \` (Completion/Unix/Command/_7zip sh:132) — so the
 /// normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn describe_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_describe", args, || _describe(args))
+/// [`_describe_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _describe(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_describe", args, || _describe_impl(args))
 }
 
 /// `_describe` — add options or values with descriptions as matches.
@@ -177,7 +181,7 @@ pub fn describe_byname(args: &[String]) -> i32 {
 /// `-t TAG`, `-1/-2/-J/-V/-x` forwarded to `_next_label`.
 ///
 /// Signature preserved for callers (`_arguments`, `_alternative`).
-pub fn _describe(args: &[String]) -> i32 {
+pub fn _describe_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_describe");
     // sh:12-17 — `local _opt _expl _tmpm _tmpd _mlen _noprefix`,
     // `local _type=values _descr _ret=1 _showd _nm _hide _args _grp
@@ -325,20 +329,20 @@ pub fn _describe(args: &[String]) -> i32 {
     }
 
     // sh:64 — request the tag.
-    let _ = tags_byname(&[_type.clone()]);
+    let _ = _tags(&[_type.clone()]);
 
     let csl = get_compstate_str("list").unwrap_or_default();
     let mut _try = 0i32;
 
     // sh:65 — while _tags; do
-    while tags_byname(&[]) == 0 {
+    while _tags(&[]) == 0 {
         // sh:66 — while _next_label $_jvx12 "$_type" _expl "$_descr"; do
         loop {
             let mut nl_args = _jvx12.clone();
             nl_args.push(_type.clone());
             nl_args.push("_expl".to_string());
             nl_args.push(_descr.clone());
-            if next_label_byname(&nl_args) != 0 {
+            if _next_label(&nl_args) != 0 {
                 break;
             }
 
@@ -531,7 +535,7 @@ mod tests {
     fn returns_one_for_empty_args() {
         let _g = crate::test_util::global_state_lock();
         // No `_descr` arg ⇒ sh:51 early return 1.
-        assert_eq!(_describe(&[]), 1);
+        assert_eq!(_describe_impl(&[]), 1);
     }
 
     #[test]
@@ -540,7 +544,7 @@ mod tests {
         // `_tags` reports no requested tag ⇒ the outer while never runs
         // and _ret stays 1 (sh:65/sh:134).
         assert_eq!(
-            _describe(&[
+            _describe_impl(&[
                 "-t".to_string(),
                 "mytag".to_string(),
                 "description".to_string(),

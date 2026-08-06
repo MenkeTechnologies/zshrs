@@ -29,7 +29,7 @@
 //!
 //! Calls real `bin_comptags` + `bin_zformat` + `bin_zparseopts` and
 //! reads `FUNCSTACK` for the `(( $#funcstack > _tags_level ))` guard.
-//! Reaches `_description` BY NAME (`description_byname` →
+//! Reaches `_description` BY NAME (`_description` →
 //! [`crate::compsys::ported::shared::call_compfn`]) for the per-spec format
 //! step, matching the sh body's bare `_description …` command word: a
 //! user's own copy earlier on `$fpath` wins, and the call gets its own
@@ -38,7 +38,7 @@
 //! The self-call at the `_next_tags` tag-filter branch below stays a DIRECT
 //! Rust call — see the comment there.
 
-use super::_description::description_byname;
+use super::_description::_description;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
@@ -97,24 +97,28 @@ fn funcstack_depth() -> usize {
 /// writes it — `while _next_label hosts expl host; do`
 /// (Completion/Unix/Type/_urls sh:130) — so the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn next_label_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_next_label", args, || _next_label(args))
+/// [`_next_label_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _next_label(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_next_label", args, || _next_label_impl(args))
 }
 
 /// `_next_label` — advance to the next tag-spec in the current
 /// `_tags` round, format its description, and call `_description`
 /// to emit the per-tag option array. Returns 0 on advance, 1 when
 /// no specs remain.
-pub fn _next_label(args: &[String]) -> i32 {
+pub fn _next_label_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_next_label");
     // sh:3  local __gopt __descr __spec
     crate::compsys::ported::shared::declare_locals(&["__gopt", "__descr", "__spec"], 0);
@@ -176,10 +180,10 @@ pub fn _next_label(args: &[String]) -> i32 {
     //   `_next_tags_not` makes this branch dead, matching the unshadowed
     //   body exactly.
     //
-    //   DELIBERATELY a direct Rust self-call, NOT `next_label_byname`. This
-    //   recursion stands in for sh `continue`, which is control flow, not a
-    //   function call — zsh pushes no frame for it. `next_label_byname`
-    //   would route through `doshfunc`, whose `inc_locallevel()`
+    //   DELIBERATELY the raw body `_next_label_impl`, NOT the dispatching
+    //   `_next_label`. This recursion stands in for sh `continue`, which is
+    //   control flow, not a function call — zsh pushes no frame for it.
+    //   `_next_label` would route through `doshfunc`, whose `inc_locallevel()`
     //   (exec.rs:6131) and `FUNCSTACK` push both feed the sh:9 guard
     //   `(( $#funcstack > _tags_level ))` two lines above: each skipped spec
     //   would deepen `$#funcstack`, so the guard would fire on every
@@ -189,7 +193,7 @@ pub fn _next_label(args: &[String]) -> i32 {
     //   not this port), so a by-name re-entry could only land back on this
     //   same fn.
     if spec_in_not_list(&spec, &getsparam("_next_tags_not").unwrap_or_default()) {
-        return _next_label(args);
+        return _next_label_impl(args);
     }
     let mut comp_tags = getsparam("_comp_tags").unwrap_or_default();
     comp_tags.push_str(&format!(" {} ", spec));
@@ -228,7 +232,7 @@ pub fn _next_label(args: &[String]) -> i32 {
         desc_argv.push(tag_lhs);
         desc_argv.push(name.clone());
         desc_argv.push(descr);
-        let _ = description_byname(&desc_argv);
+        let _ = _description(&desc_argv);
 
         // sh:16  set -A $2 "${(P@)2}" "${(@)argv[4,-1]}"
         let mut prev = getaparam(&name).unwrap_or_default();
@@ -240,7 +244,7 @@ pub fn _next_label(args: &[String]) -> i32 {
         desc_argv.push(curtag);
         desc_argv.push(name.clone());
         desc_argv.push(descr_arg);
-        let _ = description_byname(&desc_argv);
+        let _ = _description(&desc_argv);
 
         // sh:19  set -A $2 "${(@)argv[4,-1]}" "${(P@)2}"
         let mut new_arr = extras;
@@ -324,7 +328,7 @@ mod tests {
         // sh:8 — comptags -A on an unregistered tag returns non-zero
         //   → _next_label returns 1 (sh:25).
         let r = with_incompfunc(|| {
-            _next_label(&[
+            _next_label_impl(&[
                 "unregistered_tag".to_string(),
                 "name".to_string(),
                 "descr".to_string(),
@@ -370,7 +374,7 @@ mod tests {
         //   body (here: unregistered tag → 1).
         let r = with_incompfunc(|| {
             setsparam("_next_tags_not", "").unwrap();
-            _next_label(&[
+            _next_label_impl(&[
                 "unregistered_tag".to_string(),
                 "name".to_string(),
                 "descr".to_string(),

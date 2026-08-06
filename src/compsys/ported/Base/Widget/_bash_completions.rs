@@ -13,7 +13,7 @@
 //! sh:38    '@') _main_complete _hosts ;;
 //! sh:40    '/') _main_complete _files ;;
 //! sh:42    '~') _main_complete _users ;;
-//! sh:44  esac
+//! sh:46  esac
 //! ```
 //!
 //! Dispatches `_main_complete` with a key-specific completer chain

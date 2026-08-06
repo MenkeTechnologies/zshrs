@@ -6,12 +6,12 @@
 //! sh: 1  #compdef popd
 //! sh: 3  # This just completes the numbers after +, showing the full
 //! sh: 4  # directory list with numbers.
-//! sh: 9  setopt localoptions nonomatch
-//! sh:11  local expl list lines revlines disp sep
-//! sh:14  [[ $PREFIX = [-+]* ]] || return 1
-//! sh:16  zstyle -s ":completion:${curcontext}:directory-stack" list-separator sep || sep=--
-//! sh:18  if zstyle -T ":completion:${curcontext}:directory-stack" verbose; then
-//! sh:21    lines=("${(D)dirstack[@]}")
+//! sh: 8  setopt localoptions nonomatch
+//! sh:10  local expl list lines revlines disp sep
+//! sh:15  [[ $PREFIX = [-+]* ]] || return 1
+//! sh:17  zstyle -s ":completion:${curcontext}:directory-stack" list-separator sep || sep=--
+//! sh:19  if zstyle -T ":completion:${curcontext}:directory-stack" verbose; then
+//! sh:22    lines=("${(D)dirstack[@]}")
 //! sh:24    if [[ ( $PREFIX[1] = - && ! -o pushdminus ) ||
 //! sh:25          ( $PREFIX[1] = + && -o pushdminus ) ]]; then
 //! sh:27      revlines=( $lines )
@@ -33,7 +33,7 @@
 //! sh:45      compadd "$@" "$disp[@]" -Q -a list
 //! ```
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{isset, PUSHDMINUS};
@@ -57,7 +57,7 @@ pub fn _directory_stack(args: &[String]) -> i32 {
         .cloned()
         .unwrap_or_else(|| "--".to_string());
 
-    // sh:18 — verbose default-on (`-T` returns true when unset OR true)
+    // sh:19 — verbose default-on (`-T` returns true when unset OR true)
     let verbose_vals = lookupstyle(&ctx, "verbose");
     let verbose = verbose_vals.is_empty()
         || verbose_vals
@@ -70,7 +70,7 @@ pub fn _directory_stack(args: &[String]) -> i32 {
 
     // sh:18-41 — build list (numeric indices) and optional disp lines
     let (list, disp): (Vec<String>, Vec<String>) = if verbose {
-        // sh:21
+        // sh:22
         let lines = dirstack.clone();
         // sh:24-35  number lines with reverse logic when appropriate
         let mut indexed: Vec<String> = Vec::with_capacity(lines.len());
@@ -118,7 +118,7 @@ pub fn _directory_stack(args: &[String]) -> i32 {
     wanted_argv.push("-Q".to_string());
     wanted_argv.push("-a".to_string());
     wanted_argv.push("list".to_string());
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn returns_compadd_status_for_minus_prefix() {
-        // sh:14 — `-` prefix triggers the wanted/compadd path; with
+        // sh:15 — `-` prefix triggers the wanted/compadd path; with
         //   no registered tags it returns 1.
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "-");

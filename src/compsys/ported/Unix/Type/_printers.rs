@@ -29,7 +29,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::findcmd;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, unsetparam};
@@ -203,7 +203,7 @@ pub fn _printers(args: &[String]) -> i32 {
         w.extend(args.iter().cloned());
         w.push("-".to_string());
         w.extend(out.split_whitespace().map(String::from));
-        return wanted_byname(&w);
+        return _wanted(&w);
     }
 
     // sh:12 — list-separator style (default `--`).
@@ -262,7 +262,7 @@ pub fn _printers(args: &[String]) -> i32 {
             w2.push("-".to_string());
             w2.extend(names);
             // sh:33  `… && return` — return only if _wanted succeeded.
-            if wanted_byname(&w2) == 0 {
+            if _wanted(&w2) == 0 {
                 return 0;
             }
         }
@@ -306,7 +306,7 @@ pub fn _printers(args: &[String]) -> i32 {
     w.extend(disp.clone());
     w.push("-".to_string());
     w.extend(names);
-    if wanted_byname(&w) == 0 {
+    if _wanted(&w) == 0 {
         return 0;
     }
 
@@ -331,7 +331,7 @@ pub fn _printers(args: &[String]) -> i32 {
     w2.extend(disp2);
     w2.push("-".to_string());
     w2.extend(anames);
-    if wanted_byname(&w2) == 0 {
+    if _wanted(&w2) == 0 {
         return 0;
     }
     1

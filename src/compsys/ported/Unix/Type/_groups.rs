@@ -9,22 +9,22 @@
 //! sh: 8    (( $+_cache_groups )) ||
 //! sh: 9      if [[ $OSTYPE = darwin* ]]; then
 //! sh:10-13     lookupd / dscacheutil -q group  → names after "name: "
-//! sh:14      elif (( ${+commands[getent]} )); then
+//! sh:15      elif (( ${+commands[getent]} )); then
 //! sh:15        getent group            → ${…%%:*}
-//! sh:16      else
+//! sh:17      else
 //! sh:17        </etc/group             → ${${…%%:*}:#+}   (+ ypcat)
 //! sh:      fi
-//! sh:24    groups=( "$_cache_groups[@]" )
-//! sh:25  fi
-//! sh:27  _wanted groups expl group compadd -a "$@" - groups
+//! sh:25    groups=( "$_cache_groups[@]" )
+//! sh:26  fi
+//! sh:28  _wanted groups expl group compadd -a "$@" - groups
 //! ```
 //!
 //! sh:8 approx — the `$+_cache_groups` presence check maps to
 //! `getaparam("_cache_groups").is_none()`.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_tags::tags_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -42,7 +42,7 @@ fn parse_dscacheutil(out: &str) -> Vec<String> {
 pub fn _groups(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_groups");
     // sh:5
-    if tags_byname(&["groups".to_string()]) != 0 {
+    if _tags(&["groups".to_string()]) != 0 {
         return 1;
     }
 
@@ -107,7 +107,7 @@ pub fn _groups(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("groups".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

@@ -54,8 +54,8 @@
 //! sibling ports. Reads/writes `$compstate[insert]`/`[nmatches]`
 //! through `get_compstate_str`/`set_compstate_str`.
 
-use super::_next_label::_next_label;
-use super::_tags::_tags;
+use super::_next_label::_next_label_impl;
+use super::_tags::_tags_impl;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -105,17 +105,21 @@ fn run_gopt_message(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// writes it — `_message kind` (Completion/Unix/Command/_ctags sh:44) — so
 /// the normal function lookup runs.
 ///
-/// A plain Rust call to the sibling port skips both of
-/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
-/// shfunc arbitration (the user's own copy of the function is inert) and
-/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
-/// `declare_locals` land in the CALLER's param scope instead of its own).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (the user's own copy of the function wins instead of being
+/// inert) and the `doshfunc` frame (a `FUNCSTACK` entry, and the callee's
+/// `declare_locals` landing in its OWN param scope rather than the caller's).
 ///
-/// The direct call stays as the fallback: it runs only when neither a shell
-/// function nor a registered port claims the name — i.e. in unit tests with
-/// no executor installed.
-pub fn message_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_message", args, || _message(args))
+/// [`_message_impl`] is the raw body, reserved for the two callers that must not
+/// re-enter dispatch: this wrapper's own fallback (it runs only when neither
+/// a shell function nor a registered port claims the name — i.e. unit tests
+/// with no executor installed), and the `compsys::router` arm, which has to
+/// target the body or dispatch would re-enter this wrapper forever.
+pub fn _message(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_message", args, || _message_impl(args))
 }
 
 /// `_message` — render a static message into the current completion
@@ -124,7 +128,7 @@ pub fn message_byname(args: &[String]) -> i32 {
 ///     `_next_label` loop (sh:5-25).
 ///   * default — pull message format from `messages` zstyle and emit
 ///     via `compadd -x` (sh:27-45).
-pub fn _message(args: &[String]) -> i32 {
+pub fn _message_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_message");
     // sh:5  -e mode
     if args.first().map(|s| s == "-e").unwrap_or(false) {
@@ -166,9 +170,10 @@ pub fn _message(args: &[String]) -> i32 {
         // _requested.rs. The `_next_label` loop must run INSIDE the nested
         // level, where the tags were registered.
         //
-        // These two calls are deliberately NOT routed through the `_byname`
-        // wrappers (unlike the `_description` calls in `_next_label` /
-        // `_all_labels` / `_requested`). Doing so replaces this hand-rolled
+        // These two calls deliberately name the raw bodies `_tags_impl` /
+        // `_next_label_impl` rather than the dispatching `_tags` /
+        // `_next_label` (unlike the `_description` calls in `_next_label` /
+        // `_all_labels` / `_requested`). Dispatching replaces this hand-rolled
         // depth with `doshfunc`'s own `inc_locallevel`
         // (`src/ported/exec.rs:6131`) — arguably the faithful arrangement,
         // since `_tags` and `_next_label` are real shell functions in zsh —
@@ -180,11 +185,11 @@ pub fn _message(args: &[String]) -> i32 {
         // shell; that was not obtained, so this is left as-is rather than
         // landed on a guess.
         crate::ported::utils::inc_locallevel();
-        let tags_rc = _tags(&[tag.clone()]);
+        let tags_rc = _tags_impl(&[tag.clone()]);
         if tags_rc == 0 {
             loop {
                 let nl_args = vec![tag.clone(), "expl".to_string(), descr.clone()];
-                if _next_label(&nl_args) != 0 {
+                if _next_label_impl(&nl_args) != 0 {
                     break;
                 }
                 // sh:17  compadd ${expl:/-X/-x}
@@ -234,7 +239,7 @@ pub fn _message(args: &[String]) -> i32 {
     // nested level, so each return path drops it again. Left direct for the
     // same reason as the `-e` branch — see the comment there.
     crate::ported::utils::inc_locallevel();
-    if _tags(&["messages".to_string()]) != 0 {
+    if _tags_impl(&["messages".to_string()]) != 0 {
         crate::ported::utils::dec_locallevel();
         return 1;
     }
@@ -338,7 +343,7 @@ mod tests {
         // which was the signature of the missing inc_locallevel: `_tags`
         // clobbered the CALLER's registration and reported failure.
         let r = with_incompfunc(|| {
-            _message(&[
+            _message_impl(&[
                 "-e".to_string(),
                 "unregistered_tag".to_string(),
                 "descr".to_string(),
@@ -352,7 +357,7 @@ mod tests {
         // sh:8 — `_comp_mesg=yes` is set unconditionally in -e mode.
         let _ = with_incompfunc(|| {
             let _ = setsparam("_comp_mesg", "");
-            _message(&["-e".to_string(), "tag".to_string(), "descr".to_string()])
+            _message_impl(&["-e".to_string(), "tag".to_string(), "descr".to_string()])
         });
         assert_eq!(getsparam("_comp_mesg").as_deref(), Some("yes"));
     }
@@ -364,7 +369,7 @@ mod tests {
         // `zsh -f` + compinit: a completer body of `_message -r 'raw text';
         // print rc=$?` prints `rc=0`. (Asserted 1 before the missing
         // inc_locallevel around this `_tags` call was added.)
-        let r = with_incompfunc(|| _message(&["my message".to_string()]));
+        let r = with_incompfunc(|| _message_impl(&["my message".to_string()]));
         assert_eq!(r, 0);
     }
 

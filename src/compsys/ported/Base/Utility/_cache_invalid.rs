@@ -70,22 +70,30 @@ fn call_cache_policy(policy: &str, cache_path: &str) -> i32 {
 /// `_cache_invalid $cache_id`, `_python_modules` sh:25) — so the normal
 /// function lookup runs.
 ///
-/// Six ports called the Rust fn directly instead, which skipped
-/// [`crate::compsys::ported::shared::call_compfn`]'s two effects: `$fpath` /
-/// shfunc arbitration (a user's own `_cache_invalid` earlier on `$fpath` was
-/// inert) and the `doshfunc` frame (no `FUNCSTACK` entry, so `$funcstack`
-/// inside the `cache-policy` hook read `zpwrDailyCachingPolicy _retrieve_cache
-/// __fasd_files_comp …` where zsh reads `… _cache_invalid _retrieve_cache …`).
+/// This is the DEFAULT entry point for the port, and the one a sibling port
+/// should call. It goes through
+/// [`crate::compsys::ported::shared::call_compfn`], which supplies both of
+/// the things a bare Rust call to the body would skip: `$fpath` / shfunc
+/// arbitration (a user's own `_cache_invalid` earlier on `$fpath` stays live
+/// instead of being inert) and the `doshfunc` frame. Without that frame
+/// `$funcstack` inside the `cache-policy` hook read `zpwrDailyCachingPolicy
+/// _retrieve_cache __fasd_files_comp …` where zsh reads `… _cache_invalid
+/// _retrieve_cache …`.
 ///
-/// One wrapper rather than eleven inline `call_compfn` calls: the callee name
-/// and its fallback are identical at every site.
-pub fn cache_invalid_byname(args: &[String]) -> i32 {
-    crate::compsys::ported::shared::call_compfn("_cache_invalid", args, || _cache_invalid(args))
+/// [`_cache_invalid_impl`] is the raw body, reserved for the two callers that
+/// must not re-enter dispatch: this wrapper's own fallback (it runs only when
+/// neither a shell function nor a registered port claims the name — i.e. unit
+/// tests with no executor installed), and the `compsys::router` arm, which
+/// has to target the body or dispatch would re-enter this wrapper forever.
+pub fn _cache_invalid(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_cache_invalid", args, || {
+        _cache_invalid_impl(args)
+    })
 }
 
 /// `_cache_invalid` — query the cache-policy hook for tag `$1`.
 /// Returns 0 (cache stale) or 1 (cache fresh / disabled / no policy).
-pub fn _cache_invalid(args: &[String]) -> i32 {
+pub fn _cache_invalid_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_cache_invalid");
     // sh:6
     let cache_ident = args.first().cloned().unwrap_or_default();
@@ -131,6 +139,6 @@ mod tests {
     fn returns_one_when_use_cache_disabled() {
         // sh:10 — without use-cache style set, returns 1.
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_cache_invalid(&["my-cache".to_string()]), 1);
+        assert_eq!(_cache_invalid_impl(&["my-cache".to_string()]), 1);
     }
 }

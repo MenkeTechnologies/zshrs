@@ -28,8 +28,8 @@
 //! sh:28    fi
 //! sh:29  fi
 //! sh:33  # Don't insert TAB in first column.
-//! sh:34  compstate[insert]="${compstate[insert]//tab /}"
-//! sh:36  _dispatch "$also" "$also"
+//! sh:33  compstate[insert]="${compstate[insert]//tab /}"
+//! sh:35  _dispatch "$also" "$also"
 //! ```
 
 use crate::ported::exec::dispatch_function_call;
@@ -80,7 +80,7 @@ pub fn _in_vared() -> i32 {
     let cleaned = insert.replace("tab ", "");
     set_compstate_str("insert", &cleaned);
 
-    // sh:36
+    // sh:35
     dispatch_function_call("_dispatch", &[also.clone(), also]).unwrap_or(1)
 }
 
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn insert_field_has_tab_token_stripped() {
-        // sh:34  insert="${insert//tab /}" — every "tab " run drops.
+        // sh:33  insert="${insert//tab /}" — every "tab " run drops.
         let _g = crate::test_util::global_state_lock();
         set_compstate_str("vared", "");
         set_compstate_str("insert", "tab menu");

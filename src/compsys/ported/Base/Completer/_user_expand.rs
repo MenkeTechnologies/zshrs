@@ -4,22 +4,22 @@
 //! Full upstream body (147 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh:14  [[ _matcher_num -gt 1 ]] && return 1
+//! sh:13  [[ _matcher_num -gt 1 ]] && return 1
 //! sh:18  if [[ "$funcstack[2]" = _prefix ]]; then word="$IPREFIX$PREFIX$SUFFIX"
 //! sh:21    else word="$IPREFIX$PREFIX$SUFFIX$ISUFFIX"
-//! sh:25  exp=("$word")
+//! sh:26  exp=("$word")
 //! sh:30  zstyle -a … user-expand specs || return 1
 //! sh:32  for spec in $specs; do
 //! sh:34    case $spec in
 //! sh:36    ($IDENT) eval tmp='${'$spec[2,-1]'[$word]}' …  # assoc lookup
 //! sh:42    (_*) reply=(); $spec $word; if reply nonempty: exp=("$reply[@]"); break
-//! sh:50    esac
-//! sh:51  done
-//! sh:54  [[ $#exp -eq 1 && "$exp[1]" = "$word" ]] && return 1
-//! sh:80  compadd "$expl[@]" -UQ -qS "$suf" -a exp
+//! sh:54    esac
+//! sh:55  done
+//! sh:57  [[ $#exp -eq 1 && "$exp[1]" = "$word" ]] && return 1
+//! sh:94  compadd "$expl[@]" -UQ -qS "$suf" -a exp
 //! ```
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
@@ -79,14 +79,14 @@ pub fn _user_expand() -> i32 {
         }
     }
 
-    // sh:54
+    // sh:57
     if exp.len() == 1 && exp[0] == word {
         return 1;
     }
 
     // Emit matches via compadd
     setaparam("exp", exp);
-    let _ = description_byname(&[
+    let _ = _description(&[
         "-V".to_string(),
         "expansions".to_string(),
         "expl".to_string(),

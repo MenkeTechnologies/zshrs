@@ -18,7 +18,7 @@
 //! spliced in) and hand it to `_wanted` as trailing args, mirroring how
 //! sibling ports (`_baudrates`) pass a literal action tail through.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::getsparam;
 
 /// sh:6 — `${ODMDIR:-/etc/objrepos}`.
@@ -46,7 +46,7 @@ pub fn _object_classes(args: &[String]) -> i32 {
     ];
     wanted_args.extend(args.iter().cloned());
     wanted_args.push("-".to_string());
-    wanted_byname(&wanted_args)
+    _wanted(&wanted_args)
 }
 
 #[cfg(test)]

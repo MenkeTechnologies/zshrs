@@ -12,24 +12,24 @@
 //! sh:22    [[ -z $update_policy ]] && zstyle … cache-policy _python_module_caching_policy
 //! sh:25    if ( [[ ${(P)+array_name} -eq 0 ]] || _cache_invalid $cache_id ) && ! _retrieve_cache $cache_id; then
 //! sh:28      local script='import pkgutil\nfor …: print(name)'
-//! sh:31      typeset -agU $array_name
+//! sh:32      typeset -agU $array_name
 //! sh:32      set -A $array_name $(_call_program modules $python -c ${(q)script} 2>/dev/null)
-//! sh:34      _store_cache $cache_id $array_name
-//! sh:35    fi
-//! sh:37    _wanted modules expl module compadd "$@" -a -- $array_name
-//! sh:38  }
-//! sh:40  _python_modules "$@"
+//! sh:36      _store_cache $cache_id $array_name
+//! sh:37    fi
+//! sh:39    _wanted modules expl module compadd "$@" -a -- $array_name
+//! sh:40  }
+//! sh:42  _python_modules "$@"
 //! ```
 //!
 //! sh:21-22 the cache-policy zstyle registration is a no-op here (the
 //! caching-policy predicate is a shell fn); the cache read/write path
 //! (`_cache_invalid` / `_retrieve_cache` / `_store_cache`) is preserved.
 
-use crate::compsys::ported::_cache_invalid::cache_invalid_byname;
+use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_retrieve_cache::retrieve_cache_byname;
-use crate::compsys::ported::_store_cache::store_cache_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
+use crate::compsys::ported::_store_cache::_store_cache;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
 const SCRIPT: &str =
@@ -62,8 +62,8 @@ pub fn _python_modules(args: &[String]) -> i32 {
 
     // sh:25-35 — populate the cache if missing/invalid and not retrievable.
     let present = getaparam(&array_name).is_some();
-    if (!present || cache_invalid_byname(&[cache_id.clone()]) != 0)
-        && retrieve_cache_byname(&[cache_id.clone()]) != 0
+    if (!present || _cache_invalid(&[cache_id.clone()]) != 0)
+        && _retrieve_cache(&[cache_id.clone()]) != 0
     {
         // sh:32 — set -A $array_name $(python -c $script)
         let _ = _call_program(&[
@@ -85,11 +85,11 @@ pub fn _python_modules(args: &[String]) -> i32 {
             }
         }
         setaparam(&array_name, seen);
-        // sh:34 — persist.
-        let _ = store_cache_byname(&[cache_id.clone(), array_name.clone()]);
+        // sh:36 — persist.
+        let _ = _store_cache(&[cache_id.clone(), array_name.clone()]);
     }
 
-    // sh:37 — _wanted modules expl module compadd "$@" -a -- $array_name
+    // sh:39 — _wanted modules expl module compadd "$@" -a -- $array_name
     let mut wanted_argv: Vec<String> = vec![
         "modules".to_string(),
         "expl".to_string(),
@@ -100,7 +100,7 @@ pub fn _python_modules(args: &[String]) -> i32 {
     wanted_argv.push("-a".to_string());
     wanted_argv.push("--".to_string());
     wanted_argv.push(array_name);
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

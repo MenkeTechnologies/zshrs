@@ -13,8 +13,8 @@
 //! ignored-character (`-r`) separator so completion doesn't stop at
 //! the trailing colon.
 
-use crate::compsys::ported::_hosts::hosts_byname;
-use crate::compsys::ported::_tags::{_tags, tags_byname};
+use crate::compsys::ported::_hosts::_hosts;
+use crate::compsys::ported::_tags::{_tags, _tags_impl};
 
 /// `_x_display` — complete an X `DISPLAY` value (`host:0`) via `_hosts`,
 /// gated on the `displays` tag being accepted by `_tags`.
@@ -23,11 +23,11 @@ pub fn _x_display(args: &[String]) -> i32 {
     let _ = args; // sh: the shell fn body never references "$@".
 
     // sh:3  _tags displays && _hosts -S ':0 ' -r :
-    let tags_ret = tags_byname(&["displays".to_string()]);
+    let tags_ret = _tags(&["displays".to_string()]);
     if tags_ret != 0 {
         return tags_ret;
     }
-    hosts_byname(&[
+    _hosts(&[
         "-S".to_string(),
         ":0 ".to_string(),
         "-r".to_string(),
@@ -64,7 +64,7 @@ mod tests {
         // guard/context state.
         let (x_display_ret, tags_ret) = with_incompfunc(|| {
             let x = _x_display(&[]);
-            let t = _tags(&["displays".to_string()]);
+            let t = _tags_impl(&["displays".to_string()]);
             (x, t)
         });
         assert_eq!(x_display_ret, tags_ret);

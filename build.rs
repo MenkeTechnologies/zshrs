@@ -80,6 +80,10 @@ fn main() {
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,0x10000000");
 
+    // Emit the `config.h` values that C's ./configure derives on the
+    // build host rather than hard-codes. See `emit_config_h_env`.
+    emit_config_h_env();
+
     let ported_root = manifest_dir.join("src/ported");
     let c_index_path = manifest_dir.join("tests/data/zsh_c_fn_names.txt");
     let allowlist_path = manifest_dir.join("tests/data/fake_fn_allowlist.txt");
@@ -183,6 +187,198 @@ fn main() {
             violations.len(),
             violations.join("\n")
         );
+    }
+}
+
+/// Emit the `config.h` constants that C's `./configure` *derives* on the
+/// build host, as `cargo:rustc-env` values consumed by
+/// `src/ported/config_h.rs` via `env!()`.
+///
+/// C computes these once, at configure time, and freezes the result into
+/// `config.h`; `Src/params.c:989-992` is the only reader for the host-triple
+/// three. Freezing them as Rust literals reproduces one specific machine's
+/// `./configure` run forever, which is wrong on every other machine and on
+/// every other target.
+///
+/// Emitted here (each with its C derivation):
+///   * `ZSHRS_CONFIG_OSTYPE`       — `configure.ac:47`  `AC_DEFINE_UNQUOTED(OSTYPE,   "$host_os", ...)`
+///   * `ZSHRS_CONFIG_VENDOR`       — `configure.ac:45`  `AC_DEFINE_UNQUOTED(VENDOR,   "$host_vendor", ...)`
+///   * `ZSHRS_CONFIG_DEFAULT_PATH` — `configure.ac:1954 AC_DEFINE_UNQUOTED(DEFAULT_PATH, "$zsh_cv_cs_path", ...)`
+///   * `ZSHRS_CONFIG_PATH_DEV_FD`  — `configure.ac:1973 AC_DEFINE_UNQUOTED(PATH_DEV_FD, "$zsh_cv_sys_path_dev_fd")`
+///
+/// `MACHTYPE` (`configure.ac:43`, `"$host_cpu"`) is already derived in
+/// `config_h.rs` from `std::env::consts::ARCH` and stays there — it needs no
+/// build-script input.
+fn emit_config_h_env() {
+    let target = env::var("TARGET").unwrap_or_default();
+    let host = env::var("HOST").unwrap_or_default();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+
+    println!(
+        "cargo:rustc-env=ZSHRS_CONFIG_OSTYPE={}",
+        config_guess_host_os(&target, &host, &target_os, &target_env)
+    );
+    println!(
+        "cargo:rustc-env=ZSHRS_CONFIG_VENDOR={}",
+        config_guess_host_vendor(&target_os, &target_arch)
+    );
+    println!("cargo:rustc-env=ZSHRS_CONFIG_DEFAULT_PATH={}", cs_path());
+    println!(
+        "cargo:rustc-env=ZSHRS_CONFIG_PATH_DEV_FD={}",
+        // configure.ac:1969 probes `/proc/self/fd` first, then `/dev/fd`.
+        // Linux always satisfies the first (procfs); Darwin has no procfs
+        // and satisfies the second.
+        if target_os == "linux" || target_os == "android" {
+            "/proc/self/fd"
+        } else {
+            "/dev/fd"
+        }
+    );
+}
+
+/// `$host_os` — the third field of the canonical triple that
+/// `AC_CANONICAL_HOST` obtains from `config.guess` (then `config.sub`,
+/// which is the identity on every triple zshrs targets).
+///
+/// The shape is *platform-specific*, which is why a bare `uname -r` is the
+/// wrong derivation:
+///
+///   * Darwin — `config.guess:1463` `GUESS=aarch64-apple-darwin$UNAME_RELEASE`
+///     and `config.guess:1500` `GUESS=$UNAME_PROCESSOR-apple-darwin$UNAME_RELEASE`,
+///     with `config.guess:148` `UNAME_RELEASE=`(uname -r) 2>/dev/null``.
+///     So `$host_os` is `darwin` immediately followed by the kernel release:
+///     `darwin25.5.0`.
+///   * Linux — `config.guess:1222` `GUESS=$CPU-pc-linux-$LIBCABI` (x86_64),
+///     `config.guess:1009` `GUESS=$CPU-unknown-linux-$LIBCABI` (aarch64),
+///     `config.guess:1177` `GUESS=$UNAME_MACHINE-unknown-linux-$LIBC`
+///     (riscv32/riscv64). `$host_os` is `linux-$LIBC` — the C *library*, never
+///     the kernel version. `$LIBC` is `gnu` (`config.guess:167`), `musl`
+///     (`:176`, `:188`), `uclibc` (`:163`), or `android` (`:159`), and
+///     `config.guess:193-195` falls back to `gnu` when it cannot tell.
+///
+/// Cross-compilation: `configure --host=aarch64-apple-darwin23` bypasses
+/// `config.guess` entirely and takes `$host_os` straight from the triple, so
+/// a versioned `darwinNN` suffix in `$TARGET` wins. The `uname -r` probe is
+/// used only when the build host is itself Darwin, i.e. exactly the native
+/// case `config.guess` handles.
+fn config_guess_host_os(target: &str, host: &str, target_os: &str, target_env: &str) -> String {
+    match target_os {
+        "macos" => {
+            // `aarch64-apple-darwin23` → "darwin23"; `aarch64-apple-darwin`
+            // (Rust's unversioned spelling) → fall through to the probe.
+            if let Some(rel) = target.rsplit('-').next().and_then(|f| f.strip_prefix("darwin")) {
+                if !rel.is_empty() {
+                    return format!("darwin{rel}");
+                }
+            }
+            if host.contains("-darwin") {
+                if let Some(rel) = uname_release() {
+                    return format!("darwin{rel}");
+                }
+            }
+            // Cross-compiled to macOS from a non-Darwin host with no version
+            // in the triple: there is nothing to read a kernel release from.
+            // Emit the un-suffixed name rather than a fabricated version.
+            "darwin".to_string()
+        }
+        "linux" => format!(
+            "linux-{}",
+            match target_env {
+                // Rust spells the glibc environment `gnu`, musl `musl`,
+                // uClibc `uclibc` — the same tokens config.guess uses.
+                "" => "gnu", // config.guess:193-195 — default to glibc
+                other => other,
+            }
+        ),
+        // config.guess:158-159 — `#if defined(__ANDROID__) LIBC=android`,
+        // fed into the same `linux-$LIBC` shape as the branches above.
+        "android" => "linux-android".to_string(),
+        // Any other target: emit the triple's OS field verbatim. config.guess
+        // appends a release number for several of these (`freebsd14.0`), which
+        // is not recoverable from the Rust triple, so the value is the OS name
+        // without a version rather than a fabricated one.
+        "" => "unknown".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// `$host_vendor` — the second field of the canonical triple. It is a
+/// function of (OS, CPU), not of the OS alone, so it cannot be derived from
+/// `uname -s`:
+///
+///   * Darwin → `apple` (`config.guess:1463`, `config.guess:1500`).
+///   * Linux x86_64 → `pc` (`config.guess:1222` `GUESS=$CPU-pc-linux-$LIBCABI`);
+///     Linux i386..i686 → `pc` (`config.guess:1067`
+///     `GUESS=$UNAME_MACHINE-pc-linux-$LIBC`).
+///   * Linux s390/s390x → `ibm` (`config.guess:1180`
+///     `GUESS=$UNAME_MACHINE-ibm-linux-$LIBC`).
+///   * Linux aarch64 → `unknown` (`config.guess:1009`); Linux riscv32/riscv64
+///     → `unknown` (`config.guess:1177`); Linux arm* → `unknown`
+///     (`config.guess:1037`).
+///
+/// So on Linux the answer differs between the two architectures zshrs ships:
+/// `x86_64-pc-linux-gnu` but `aarch64-unknown-linux-gnu`.
+fn config_guess_host_vendor(target_os: &str, target_arch: &str) -> &'static str {
+    match (target_os, target_arch) {
+        ("macos" | "ios" | "tvos" | "watchos" | "visionos", _) => "apple",
+        ("linux" | "android", "x86_64" | "x86") => "pc",
+        ("linux" | "android", "s390x") => "ibm",
+        // config.guess's dominant vendor field for every other Linux CPU,
+        // and the safe default elsewhere.
+        _ => "unknown",
+    }
+}
+
+/// `$zsh_cv_cs_path` — `configure.ac:1944-1953`:
+///
+/// ```text
+/// AC_CACHE_VAL(zsh_cv_cs_path,
+/// [if getconf _CS_PATH >/dev/null 2>&1; then
+///   zsh_cv_cs_path=`getconf _CS_PATH`
+/// elif getconf CS_PATH >/dev/null 2>&1; then
+///   zsh_cv_cs_path=`getconf CS_PATH`
+/// elif getconf PATH >/dev/null 2>&1; then
+///   zsh_cv_cs_path=`getconf PATH`
+/// else
+///   zsh_cv_cs_path="/bin:/usr/bin"
+/// fi])
+/// ```
+///
+/// This is a build-host probe in C as well (autoconf runs `getconf` on the
+/// build machine even under `--host=`), so running it here reproduces C's
+/// behaviour including its cross-compilation limitation. On macOS the first
+/// two names are rejected (`getconf: no such configuration parameter
+/// '_CS_PATH'`, exit 64) and `getconf PATH` answers
+/// `/usr/bin:/bin:/usr/sbin:/sbin`.
+fn cs_path() -> String {
+    for name in ["_CS_PATH", "CS_PATH", "PATH"] {
+        if let Ok(out) = std::process::Command::new("getconf").arg(name).output() {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return s;
+                }
+            }
+        }
+    }
+    "/bin:/usr/bin".to_string()
+}
+
+/// `config.guess:148` — ``UNAME_RELEASE=`(uname -r) 2>/dev/null` ||
+/// UNAME_RELEASE=unknown``. Returns `None` on the failure branch so the
+/// caller can decide what to emit instead.
+fn uname_release() -> Option<String> {
+    let out = std::process::Command::new("uname").arg("-r").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
     }
 }
 

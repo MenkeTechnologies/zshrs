@@ -27,7 +27,7 @@
 //! (`#* XC_`), then strip the shortest ` *` suffix off each (`% *`) —
 //! turning `#define XC_X_cursor 0` into `X_cursor`.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, setaparam};
 use std::path::Path;
 
@@ -117,7 +117,7 @@ pub fn _x_cursor(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("_cursor_cache".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

@@ -5,16 +5,16 @@
 //! sh: 1  #autoload
 //! sh: 3  local -a expl attrs
 //! sh: 9  attrs=( associatedDomain authenticationMethod … userSMIMECertificate )
-//! sh:26  _description ldap-attributes expl "ldap attribute"
-//! sh:27  compadd "${@:/-X/-x}" "${expl[@]:/-X/-x}" \
-//! sh:28      -M 'm:{a-zA-Z}={A-Za-z} r:[^A-Z]||[A-Z]=* r:|=*' -a attrs
+//! sh:25  _description ldap-attributes expl "ldap attribute"
+//! sh:26  compadd "${@:/-X/-x}" "${expl[@]:/-X/-x}" \
+//! sh:27      -M 'm:{a-zA-Z}={A-Za-z} r:[^A-Z]||[A-Z]=* r:|=*' -a attrs
 //! ```
 //!
-//! sh:27 — `${@:/-X/-x}` / `${expl[@]:/-X/-x}` rewrite any `-X` (exclusive
+//! sh:26 — `${@:/-X/-x}` / `${expl[@]:/-X/-x}` rewrite any `-X` (exclusive
 //! description) to `-x` (informational message): a custom attribute is always
 //! allowed, so the offered list is advisory, not exhaustive.
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -113,13 +113,13 @@ fn x_to_lower(v: &[String]) -> Vec<String> {
 /// `_ldap_attributes` — complete LDAP attribute names (non-exhaustive).
 pub fn _ldap_attributes(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ldap_attributes");
-    // sh:26
-    let _ = description_byname(&[
+    // sh:25
+    let _ = _description(&[
         "ldap-attributes".to_string(),
         "expl".to_string(),
         "ldap attribute".to_string(),
     ]);
-    // sh:27-28
+    // sh:26-27
     setaparam("attrs", ATTRS.iter().map(|s| s.to_string()).collect());
     let expl = getaparam("expl").unwrap_or_default();
     let mut cadd = x_to_lower(args);

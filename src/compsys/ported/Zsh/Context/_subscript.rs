@@ -22,14 +22,14 @@
 //! word to `bin_compadd` internally). Scratch by-name arrays (`keys`,
 //! `ind`, `list`) are unset after use.
 
-use crate::compsys::ported::_all_labels::all_labels_byname;
-use crate::compsys::ported::_dynamic_directory_name::dynamic_directory_name_byname;
-use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_all_labels::_all_labels;
+use crate::compsys::ported::_dynamic_directory_name::_dynamic_directory_name;
+use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_parameters::call_parameters;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_values::_values;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
@@ -217,7 +217,7 @@ pub fn _subscript(args: &[String]) -> i32 {
                                 .map(|c| c.is_whitespace() || c == ':' || c == '=')
                                 .unwrap_or(false);
                         if ok {
-                            return dynamic_directory_name_byname();
+                            return _dynamic_directory_name();
                         }
                     }
                 }
@@ -227,7 +227,7 @@ pub fn _subscript(args: &[String]) -> i32 {
 
     // sh:25-28  :class:  — character-class completion (literal compadd args)
     if prefix.starts_with(':') {
-        return wanted_byname(&[
+        return _wanted(&[
             s("characters"),
             s("expl"),
             s("character class"),
@@ -290,7 +290,7 @@ pub fn _subscript(args: &[String]) -> i32 {
             // sh:36
             if d.is_empty() {
                 // sh:37  _message -e delimiters 'delimiter'; return
-                return message_byname(&[s("-e"), s("delimiters"), s("delimiter")]);
+                return _message(&[s("-e"), s("delimiters"), s("delimiter")]);
             } else {
                 // sh:40-44  case $d
                 match d.as_str() {
@@ -305,13 +305,13 @@ pub fn _subscript(args: &[String]) -> i32 {
                     match f {
                         's' => {
                             // sh:47  _message 'separator string'
-                            let _ = message_byname(&[s("separator string")]);
+                            let _ = _message(&[s("separator string")]);
                         }
                         'b' | 'n' => {
                             // sh:48  [[ $v = <-># ]] && _message 'number' || return 1
                             //   <-># matches zero or more integers → all digits (or empty).
                             if v.chars().all(|c| c.is_ascii_digit()) {
-                                let _ = message_byname(&[s("number")]);
+                                let _ = _message(&[s("number")]);
                             } else {
                                 return 1;
                             }
@@ -323,7 +323,7 @@ pub fn _subscript(args: &[String]) -> i32 {
                     let isuffix2 = getsparam("ISUFFIX").unwrap_or_default();
                     let combined = format!("{}{}", suffix, isuffix2);
                     if !v.is_empty() && !combined.contains(&e) {
-                        let _ = message_byname(&[s("delimiter")]);
+                        let _ = _message(&[s("delimiter")]);
                     }
                     // sh:51  return 0
                     return 0;
@@ -436,7 +436,7 @@ pub fn _subscript(args: &[String]) -> i32 {
         // sh:91-92  _wanted association-keys expl 'association key'
         //           compadd -Q -S "$suf" -a keys
         setaparam("keys", keys);
-        let r = wanted_byname(&[
+        let r = _wanted(&[
             s("association-keys"),
             s("expl"),
             s("association key"),
@@ -457,16 +457,16 @@ pub fn _subscript(args: &[String]) -> i32 {
         let mut ret: i32 = 1;
 
         // sh:96  _tags indexes parameters
-        let _ = tags_byname(&[s("indexes"), s("parameters")]);
+        let _ = _tags(&[s("indexes"), s("parameters")]);
 
         // sh:98  while _tags; do
         loop {
-            if tags_byname(&[]) != 0 {
+            if _tags(&[]) != 0 {
                 break;
             }
 
             // sh:99  if _requested indexes; then
-            if requested_byname(&[s("indexes")]) == 0 {
+            if _requested(&[s("indexes")]) == 0 {
                 // sh:100  ind=( {1..${#${(P)compstate[parameter]}}} )
                 //   `getaparam` reads `pm.u_arr` only (params.rs:5275-5281),
                 //   which is `None` on the `PM_SPECIAL` stub seeded for a
@@ -521,7 +521,7 @@ pub fn _subscript(args: &[String]) -> i32 {
                     } else {
                         s("--")
                     };
-                    // sh:111  zformat -a list " $sep " "$list[@]"
+                    // sh:114  zformat -a list " $sep " "$list[@]"
                     let mut zf: Vec<String> = vec![s("-a"), s("list"), format!(" {} ", sep)];
                     zf.extend(list);
                     let _ = bin_zformat("zformat", &zf, &make_ops(), 0);
@@ -551,19 +551,19 @@ pub fn _subscript(args: &[String]) -> i32 {
                 la.extend(disp); // "$disp[@]"
                 la.push(s("-a"));
                 la.push(s("ind"));
-                if all_labels_byname(&la) == 0 {
+                if _all_labels(&la) == 0 {
                     ret = 0;
                 }
                 unsetparam("list");
                 unsetparam("sep");
             }
 
-            // sh:125  _requested parameters && _parameters && ret=0
-            if requested_byname(&[s("parameters")]) == 0 && call_parameters(&[]) == 0 {
+            // sh:128  _requested parameters && _parameters && ret=0
+            if _requested(&[s("parameters")]) == 0 && call_parameters(&[]) == 0 {
                 ret = 0;
             }
 
-            // sh:127  (( ret )) || return 0
+            // sh:130  (( ret )) || return 0
             if ret == 0 {
                 unsetparam("ind");
                 return 0;
@@ -571,7 +571,7 @@ pub fn _subscript(args: &[String]) -> i32 {
         }
 
         unsetparam("ind");
-        // sh:130  return 1
+        // sh:133  return 1
         return 1;
     }
 

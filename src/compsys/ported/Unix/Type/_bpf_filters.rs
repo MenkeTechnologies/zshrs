@@ -6,7 +6,7 @@
 //! ```text
 //! sh:  6  networks=( … )   subtypes=( mgt … )   flags=( len … tcp … icmp … )
 //! sh: 33  case $OSTYPE in solaris*|*bsd*) fields/protos/dirs/relop … esac
-//! sh: 63  compquote suf
+//! sh: 58  compquote suf
 //! sh: 70  _regex_arguments _bpf /$'[^\0]#\0'/ \( … full spec … \) \#
 //! sh:217  _bpf "$@"
 //! ```
@@ -20,7 +20,6 @@
 //! for the regex engine. Shell `$'…'` NUL bytes map to `\u{0}`; `\(`/`\)`/`\|`/
 //! `\#` grouping tokens become the words `(`/`)`/`|`/`#`.
 
-use crate::compsys::ported::_regex_arguments::regex_arguments_byname;
 use crate::compsys::ported::_regex_arguments::{_regex_arguments, dispatch_registered};
 use crate::ported::params::{getsparam, setaparam};
 
@@ -118,7 +117,7 @@ pub fn bpf_tables(ostype: &str) -> BpfTables {
 /// element `_bpf` (the generated matcher name).
 fn build_bpf_spec(t: &BpfTables) -> Vec<String> {
     let nul = "\u{0}";
-    // sh:16  local WORD=$'[^ \0]##[ \0]##'
+    // sh:10  local WORD=$'[^ \0]##[ \0]##'
     let word = format!("/[^ {n}]##[ {n}]##/", n = nul);
     // `[ \0]` char class (space or NUL) used throughout the `$'…'` patterns.
     let sp = format!("[ {n}]", n = nul);
@@ -474,7 +473,7 @@ pub fn _bpf_filters(args: &[String]) -> i32 {
 
     // sh:70-216 — register the `_bpf` matcher with the full spec.
     let spec = build_bpf_spec(&tables);
-    let _ = regex_arguments_byname(&spec);
+    let _ = _regex_arguments(&spec);
 
     // sh:217 — `_bpf "$@"`.
     setaparam("_bpf_argv", args.to_vec());

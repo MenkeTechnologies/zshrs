@@ -1,5 +1,20 @@
-//! Direct port of `src/zsh/config.h` (1276 lines, 271 #defines,
-//! 135 #undefs at autoconf-generation time on darwin23.6.0 arm).
+//! Direct port of zsh's generated `config.h` (1276 lines, 271 #defines,
+//! 135 #undefs as autoconf emitted them on an `aarch64-apple-darwin` host).
+//!
+//! **Configure-derived vs. genuinely constant.** C computes this whole file
+//! on the build host, so a Rust literal is only faithful for the values
+//! `./configure` would compute identically everywhere. The five that are
+//! genuinely host- or target-shaped and are read by zshrs — `OSTYPE`,
+//! `VENDOR`, `MACHTYPE`, `DEFAULT_PATH`, `PATH_DEV_FD` — are derived instead
+//! (the first four via `build.rs`'s `cargo:rustc-env`, `MACHTYPE` from
+//! `std::env::consts::ARCH`); each carries its `configure.ac` /
+//! `config.guess` citation at its definition. Everything else below is a
+//! literal, which is correct for the `--enable-*` defaults (`DEFAULT_HISTSIZE`,
+//! `MAX_FUNCTION_DEPTH`, `PASSWD_FILE`, …) and is *unread dead code* for the
+//! `HAVE_*` / `RLIMIT_*` / struct-member feature sentinels — Rust expresses
+//! those as `cfg!`/`libc` at the use site, so the frozen macOS answers below
+//! are a record of one autoconf run, not a switch anything reads. Do not wire
+//! a `HAVE_*` constant into live code without deriving it first.
 //!
 //! Every C #define is mirrored as a `pub const` with the same name.
 //! Boolean-style `#define X 1` becomes `pub const X: i32 = 1;`.
@@ -71,7 +86,14 @@ pub const CONFIG_LOCALE: i32 = 1;
 // Define to 1 if you want to debug zsh.
 // /* #undef DEBUG */
 /// The default path; used when running commands with command -p
-pub const DEFAULT_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+///
+/// C: `configure.ac:1954 AC_DEFINE_UNQUOTED(DEFAULT_PATH, "$zsh_cv_cs_path", ...)`
+/// where `$zsh_cv_cs_path` is the build host's `getconf _CS_PATH` /
+/// `getconf CS_PATH` / `getconf PATH`, falling back to `/bin:/usr/bin`
+/// (`configure.ac:1944-1953`). That answer is OS-specific —
+/// `/usr/bin:/bin:/usr/sbin:/sbin` on macOS, a shorter list on Linux — so the
+/// probe is re-run at build time in `build.rs::cs_path` rather than frozen.
+pub const DEFAULT_PATH: &str = env!("ZSHRS_CONFIG_DEFAULT_PATH");
 
 /// Define default pager used by readnullcmd
 pub const DEFAULT_READNULLCMD: &str = "more";
@@ -996,7 +1018,21 @@ pub const MULTIBYTE_SUPPORT: i32 = 1;
 // Define to 1 if off_t is 64 bit (for large file support)
 // /* #undef OFF_T_IS_64_BIT */
 /// Define to be the name of the operating system.
-pub const OSTYPE: &str = "darwin23.6.0";
+///
+/// C: `configure.ac:47 AC_DEFINE_UNQUOTED(OSTYPE, "$host_os", ...)`, read
+/// once at `Src/params.c:990 setsparam("OSTYPE", ztrdup_metafy(OSTYPE))`.
+/// `$host_os` is the third field of the triple `AC_CANONICAL_HOST` takes
+/// from `config.guess`, so its *shape is platform-specific*: `darwin25.5.0`
+/// on Darwin (`config.guess:1463`, kernel release appended) but `linux-gnu`
+/// on Linux (`config.guess:1009/1222`, C library appended, never a kernel
+/// version). A `uname -r` derivation would therefore be right on this Mac
+/// and wrong on every Linux box. Derived per-target in `build.rs`
+/// (`config_guess_host_os`); see that function for the full citation set.
+///
+/// Load-bearing for completion parity — the compsys corpus branches on it,
+/// e.g. `Completion/Unix/Type/_file_systems` and `_file_flags` switch on
+/// `case $OSTYPE in darwin*|freebsd*|linux*)`.
+pub const OSTYPE: &str = env!("ZSHRS_CONFIG_OSTYPE");
 
 /// Define to the address where bug reports for this package should be sent.
 pub const PACKAGE_BUGREPORT: &str = "";
@@ -1017,7 +1053,12 @@ pub const PACKAGE_URL: &str = "";
 pub const PACKAGE_VERSION: &str = "";
 
 /// Define to the path of the /dev/fd filesystem.
-pub const PATH_DEV_FD: &str = "/dev/fd";
+///
+/// C: `configure.ac:1973 AC_DEFINE_UNQUOTED(PATH_DEV_FD, "$zsh_cv_sys_path_dev_fd")`.
+/// The probe at `configure.ac:1969` tries `/proc/self/fd` **first**, then
+/// `/dev/fd`, so a Linux build resolves to `/proc/self/fd` and a Darwin build
+/// (no procfs) to `/dev/fd`. Derived per-target in `build.rs`.
+pub const PATH_DEV_FD: &str = env!("ZSHRS_CONFIG_PATH_DEV_FD");
 
 /// Define to be location of utmpx file.
 pub const PATH_UTMPX_FILE: &str = "/var/run/utmpx";
@@ -1105,7 +1146,15 @@ pub const USE_LSEEK: i32 = 1;
 // Define to 1 if you want to allocate stack memory e.g. with `alloca'.
 // /* #undef USE_STACK_ALLOCATION */
 /// Define to be a string corresponding the vendor of the machine.
-pub const VENDOR: &str = "apple";
+///
+/// C: `configure.ac:45 AC_DEFINE_UNQUOTED(VENDOR, "$host_vendor", ...)`,
+/// read once at `Src/params.c:992 setsparam("VENDOR", ztrdup_metafy(VENDOR))`.
+/// `$host_vendor` is a function of (OS, CPU) rather than of the OS alone:
+/// `config.guess:1222` emits `$CPU-pc-linux-$LIBCABI` for x86_64 Linux while
+/// `config.guess:1009` emits `$CPU-unknown-linux-$LIBCABI` for aarch64 Linux,
+/// so the two Linux targets zshrs ships disagree (`pc` vs `unknown`).
+/// Derived per-target in `build.rs` (`config_guess_host_vendor`).
+pub const VENDOR: &str = env!("ZSHRS_CONFIG_VENDOR");
 
 // Define if your should include sys/stream.h and sys/ptem.h.
 // /* #undef WINSIZE_IN_PTEM */
@@ -1835,7 +1884,97 @@ mod tests {
         );
     }
 
-    /// c:979 — OSTYPE is non-empty ASCII string (e.g. "darwin23.6.0").
+    /// c:979 — `$OSTYPE` must have the *shape* `config.guess` gives
+    /// `$host_os` on this target, not the shape of any one build host.
+    ///
+    /// Darwin (`config.guess:1463` `GUESS=aarch64-apple-darwin$UNAME_RELEASE`,
+    /// `config.guess:148` `UNAME_RELEASE=`(uname -r)``): `darwin` immediately
+    /// followed by the kernel release, so a digit must follow `darwin`.
+    ///
+    /// Linux (`config.guess:1009` `$CPU-unknown-linux-$LIBCABI`,
+    /// `config.guess:1222` `$CPU-pc-linux-$LIBCABI`): `linux-$LIBC` — the C
+    /// library, never a kernel version. This is the case a naive `uname -r`
+    /// derivation gets wrong, and the case that cannot be checked on this
+    /// Mac, so assert it structurally: no digits at all.
+    #[test]
+    fn ostype_matches_config_guess_host_os_shape() {
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                OSTYPE.starts_with("darwin"),
+                "config.guess:1463 spells Darwin's $host_os `darwin<release>`, got {OSTYPE:?}"
+            );
+            let rel = &OSTYPE["darwin".len()..];
+            assert!(
+                rel.starts_with(|c: char| c.is_ascii_digit()),
+                "$host_os on Darwin carries uname -r; {OSTYPE:?} has no release suffix"
+            );
+            assert!(
+                !OSTYPE.contains('-'),
+                "Darwin's $host_os is a single token, got {OSTYPE:?}"
+            );
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert!(
+                matches!(OSTYPE, "linux-gnu" | "linux-musl" | "linux-uclibc"),
+                "config.guess emits `linux-$LIBC` for $host_os on Linux, got {OSTYPE:?}"
+            );
+            assert!(
+                !OSTYPE.contains(|c: char| c.is_ascii_digit()),
+                "a kernel version in {OSTYPE:?} means the derivation used `uname -r`, \
+                 which config.guess never does on Linux"
+            );
+        }
+    }
+
+    /// c:1088 — `$VENDOR` is `$host_vendor`, which depends on the CPU as
+    /// well as the OS: `config.guess:1222` emits `$CPU-pc-linux-$LIBCABI`
+    /// for x86_64 Linux but `config.guess:1009` emits
+    /// `$CPU-unknown-linux-$LIBCABI` for aarch64 Linux. Anything derived
+    /// from `uname -s` alone collapses that distinction and answers
+    /// `unknown` on the x86_64 servers.
+    #[test]
+    fn vendor_matches_config_guess_host_vendor() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            VENDOR, "apple",
+            "config.guess:1463/1500 — Darwin's $host_vendor is `apple`"
+        );
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        assert_eq!(
+            VENDOR, "pc",
+            "config.guess:1222 — x86_64 Linux is `x86_64-pc-linux-gnu`"
+        );
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        assert_eq!(
+            VENDOR, "unknown",
+            "config.guess:1009 — aarch64 Linux is `aarch64-unknown-linux-gnu`"
+        );
+        #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
+        assert_eq!(
+            VENDOR, "unknown",
+            "config.guess:1177 — riscv64 Linux is `riscv64-unknown-linux-gnu`"
+        );
+    }
+
+    /// c:1000 / `configure.ac:1954` — `DEFAULT_PATH` is the build host's
+    /// `getconf _CS_PATH`/`CS_PATH`/`PATH`. `Src/exec.c` substitutes it for
+    /// `$PATH` under `command -p`, so every entry has to be a directory that
+    /// actually exists on this machine; a value copied from another OS
+    /// silently makes `command -p` resolve nothing.
+    #[test]
+    fn default_path_entries_exist_on_this_host() {
+        for seg in DEFAULT_PATH.split(':') {
+            assert!(
+                std::path::Path::new(seg).is_dir(),
+                "DEFAULT_PATH entry {seg:?} is not a directory here — \
+                 `command -p` would find nothing in it (full value {DEFAULT_PATH:?})"
+            );
+        }
+    }
+
+    /// c:979 — OSTYPE is non-empty ASCII string (e.g. "darwin25.5.0").
     #[test]
     fn ostype_non_empty_ascii() {
         assert!(!OSTYPE.is_empty(), "OSTYPE must be non-empty");
@@ -1849,9 +1988,19 @@ mod tests {
         assert!(VENDOR.is_ascii(), "VENDOR must be ASCII");
     }
 
-    /// c:1000 — PATH_DEV_FD = "/dev/fd" (canonical fd file system path).
+    /// c:1000 — PATH_DEV_FD is whatever `configure.ac:1969`'s probe finds
+    /// *first*: `for zsh_cv_sys_path_dev_fd in /proc/self/fd /dev/fd no`.
+    /// Linux always satisfies `/proc/self/fd`; Darwin has no procfs and
+    /// falls to `/dev/fd`. Pinning the Darwin answer unconditionally would
+    /// have made a Linux build disagree with the zsh it must match.
     #[test]
     fn path_dev_fd_is_canonical() {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert_eq!(
+            PATH_DEV_FD, "/proc/self/fd",
+            "configure.ac:1969 probes /proc/self/fd before /dev/fd"
+        );
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         assert_eq!(
             PATH_DEV_FD, "/dev/fd",
             "canonical fd filesystem path per POSIX"
@@ -2107,12 +2256,20 @@ mod tests {
         }
     }
 
-    /// c:1000 — `PATH_DEV_FD` is `/dev/fd` (canonical fd-as-path, alt).
+    /// c:1000 — `PATH_DEV_FD` names a real fd-as-path directory on the
+    /// target, since `Src/exec.c::getproc` opens `$PATH_DEV_FD/N` for every
+    /// `<(cmd)` / `>(cmd)`. Same per-target split as
+    /// `path_dev_fd_is_canonical`, asserted from the opposite direction:
+    /// the path must be absolute and must actually exist here.
     #[test]
     fn path_dev_fd_is_canonical_alt() {
-        assert_eq!(
-            PATH_DEV_FD, "/dev/fd",
-            "PATH_DEV_FD must be /dev/fd for process substitution"
+        assert!(
+            PATH_DEV_FD.starts_with('/'),
+            "PATH_DEV_FD must be absolute, got {PATH_DEV_FD:?}"
+        );
+        assert!(
+            std::path::Path::new(PATH_DEV_FD).is_dir(),
+            "PATH_DEV_FD = {PATH_DEV_FD:?} does not exist — process substitution would break"
         );
     }
 

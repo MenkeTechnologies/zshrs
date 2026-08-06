@@ -9,11 +9,11 @@
 //! sh:12  elif [[ -z $SUFFIX ]];        then dictwords=( ${(z)${(f)"$(_call_program words dict $args -m -s prefix $PREFIX)"}} )
 //! sh:14  elif [[ -z $PREFIX ]];        then dictwords=( ${(z)${(f)"$(_call_program words dict $args -m -s suffix $SUFFIX)"}} )
 //! sh:16  else                               dictwords=( ${(z)${(f)"$(_call_program words dict $args -m -s regexp $PREFIX.\*$SUFFIX)"}} )
-//! sh:18  fi
+//! sh:19  fi
 //! sh:20  dictwords=( ${${dictwords#\"}%\"} )      # strip surrounding quotes
 //! sh:21  dicts=( ${${(M)dictwords:#*:}%:} )       # section headers (`name:`)
 //! sh:23  if zstyle -t …:words separate-sections; then
-//! sh:24    _tags words.$^dicts; while _tags; do for dict in $dicts; do
+//! sh:26    _tags words.$^dicts; while _tags; do for dict in $dicts; do
 //! sh:26      _requested words.$dict expl "word from $dict" && { slice dictwords, compadd }
 //! sh:38  else _wanted words expl word compadd -M '…' "$@" - ${dictwords:#*:}; fi
 //! ```
@@ -23,10 +23,10 @@
 //! — the `${(z)${(f)…}}` line-then-word split uses whitespace splitting.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_requested::requested_byname;
-use crate::compsys::ported::_tags::tags_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -105,7 +105,7 @@ pub fn _dict_words(args: &[String]) -> i32 {
 
     if cur_word.is_empty() {
         // sh:10-11
-        let _ = message_byname(&[
+        let _ = _message(&[
             "-e".to_string(),
             "dict".to_string(),
             "dictionary word".to_string(),
@@ -156,16 +156,16 @@ pub fn _dict_words(args: &[String]) -> i32 {
         Some("yes") | Some("true") | Some("on") | Some("1")
     );
     if separate {
-        // sh:24  _tags words.$^dicts
+        // sh:25  _tags words.$^dicts
         let tag_names: Vec<String> = dicts.iter().map(|d| format!("words.{}", d)).collect();
-        let _ = tags_byname(&tag_names);
+        let _ = _tags(&tag_names);
         let mut ret = 1;
-        // sh:24  while _tags; do
-        while tags_byname(&[]) == 0 {
+        // sh:26  while _tags; do
+        while _tags(&[]) == 0 {
             // sh:25  for dict in $dicts
             for dict in &dicts {
                 // sh:26  _requested words.$dict expl "word from $dict"
-                if requested_byname(&[
+                if _requested(&[
                     format!("words.{}", dict),
                     "expl".to_string(),
                     format!("word from {}", dict),
@@ -193,7 +193,7 @@ pub fn _dict_words(args: &[String]) -> i32 {
                     }
                 }
             }
-            // sh:34  (( ret )) || break
+            // sh:36  (( ret )) || break
             if ret == 0 {
                 break;
             }
@@ -220,7 +220,7 @@ pub fn _dict_words(args: &[String]) -> i32 {
     wanted_argv.push("-".to_string());
     wanted_argv.push("-a".to_string());
     wanted_argv.push("dictwords".to_string());
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

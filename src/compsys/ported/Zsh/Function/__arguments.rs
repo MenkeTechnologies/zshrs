@@ -101,7 +101,7 @@ pub fn __arguments(_args: &[String]) -> i32 {
         // sh:28  (TODO upstream: no support for multiple argument sets)
         flag_branch_specs()
     };
-    crate::compsys::ported::shared::call_compfn("_arguments", &specs, || _arguments(&specs))
+    _arguments(&specs)
 }
 
 #[cfg(test)]

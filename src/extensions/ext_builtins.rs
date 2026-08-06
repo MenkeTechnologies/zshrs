@@ -1998,6 +1998,99 @@ impl ShellExecutor {
         crate::compsys::ported::compinit::compdef(args)
     }
 
+    /// Fill in bytecode blobs for autoload bodies the rkyv shard has not
+    /// compiled yet, on the worker pool.
+    ///
+    /// Runs on every `-C` early-return path (dump-sourced and SQLite
+    /// cache-hit alike). It publishes no shell state; it only warms
+    /// `~/.zshrs/autoloads.rkyv` so the next `_<completer>` call skips
+    /// parse+compile.
+    fn spawn_autoload_bytecode_backfill(&self) {
+        // Background: fill bytecode blobs for any autoloads that have body but no chunk.
+        // Sources of missing entries: (1) brand-new SQLite cache, (2) zshrs binary
+        // mtime advanced and invalidated previously-cached chunks. The rkyv shard
+        // at ~/.zshrs/autoloads.rkyv is additive — we compute the delta and
+        // merge_in once at the end (single read + single write of the shard,
+        // even for 16k entries).
+        if let Some(ref cache) = self.compsys_cache {
+            if let Ok(total_with_body) = cache.count_autoloads_with_body() {
+                let cached_now = crate::autoload_cache::entry_count();
+                let missing = total_with_body.saturating_sub(cached_now);
+                if missing > 0 {
+                    tracing::info!(
+                        count = missing,
+                        "compinit: backfilling bytecode blobs on worker pool"
+                    );
+                    let cache_path = crate::compsys::cache::default_cache_path();
+                    let total_missing = missing;
+                    self.worker_pool.submit(move || {
+                        let cache = match crate::compsys::cache::CompsysCache::open(&cache_path) {
+                            Ok(c) => c,
+                            Err(_) => return,
+                        };
+                        // One pass: pull every body whose name isn't already in
+                        // the rkyv shard, parse+compile, accumulate into a
+                        // HashMap, merge_in once at the end.
+                        let exclude = crate::autoload_cache::cached_names();
+                        let bodies = match cache.get_autoload_bodies_excluding(&exclude, usize::MAX) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "compinit: body fetch failed");
+                                return;
+                            }
+                        };
+                        let mut batch: std::collections::HashMap<String, Vec<u8>> =
+                            std::collections::HashMap::with_capacity(bodies.len());
+                        // Mirror C's `strinbeg()` (hist.c:1033) input-side
+                        // gate for the whole batch: parsing a STRING must
+                        // report EOF when the lexer buffer drains, never
+                        // fall through to `inputline()`. `input::strin` is
+                        // thread-local, so this bumps only this worker; the
+                        // history half of strinbeg (hbegin/hend, global) is
+                        // deliberately NOT run here — these parses must not
+                        // touch the interactive history.
+                        crate::ported::input::strin.with(|s| s.set(s.get() + 1));
+                        for (name, body) in &bodies {
+                            // Mirror Src/init.c errflag save/clear/check around parse.
+                            let saved_errflag = errflag.load(Ordering::Relaxed);
+                            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+                            crate::ported::parse::parse_init(body);
+                            let program = crate::ported::parse::parse();
+                            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+                            errflag.store(saved_errflag, Ordering::Relaxed);
+                            if parse_failed {
+                                continue;
+                            }
+                            if !program.lists.is_empty() {
+                                // ksh_autoload_body stub (deleted with the
+                                // old exec.c port) returned `Some(program)`
+                                // unchanged — same observable behavior as
+                                // using `&program` directly.
+                                let target = &program;
+                                let _ = name;
+                                let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
+                                if let Ok(blob) = bincode::serialize(&chunk) {
+                                    batch.insert(name.clone(), blob);
+                                }
+                            }
+                        }
+                        // Mirror `strinend()` (hist.c:1049) — input side only.
+                        crate::ported::input::strin.with(|s| s.set(s.get() - 1));
+                        let cached = batch.len();
+                        if let Err(e) = crate::autoload_cache::try_merge_in(batch) {
+                            tracing::warn!(error = %e, "compinit: rkyv merge_in failed");
+                        }
+                        tracing::info!(
+                            cached,
+                            total = total_missing,
+                            "compinit: bytecode backfill complete"
+                        );
+                    });
+                }
+            }
+        }
+    }
+
     /// compinit - initialize the completion system
     /// Scans fpath for completion functions and registers them
     #[tracing::instrument(level = "info", skip(self))]
@@ -2140,6 +2233,7 @@ impl ShellExecutor {
         // So on the dump path the dump is the SOLE source of names; anything
         // else that contributes is a zshrs-only divergence.
         let mut dump_sourced = false;
+        let mut dump_tables = None;
         if use_cache {
             if let Some(dump) = crate::ported::params::getsparam("_comp_dumpfile") {
                 let dump = std::path::PathBuf::from(dump);
@@ -2153,6 +2247,16 @@ impl ShellExecutor {
                         dump = %dump.display(),
                         "compinit: autoload stubs from dump"
                     );
+                    // The other half of sh:494: the five association tables.
+                    // Same `_i_done` argument as the autoload names above —
+                    // sh:501 skips the $fpath scan, so the dump alone defines
+                    // `$_comps` and friends. Reading them from zshrs's SQLite
+                    // cache instead let a partially-built cache silently
+                    // replace the dump (1849 `_comps` keys vs the dump's
+                    // 51745 on this host), which drops `$_comps[zpwr]`,
+                    // `$_comps[cargo]`, … and routes those commands to
+                    // `-default-` file completion.
+                    dump_tables = crate::compsys::ported::compinit::dump_assoc_tables(&dump);
                 }
             }
         }
@@ -2209,6 +2313,35 @@ impl ShellExecutor {
         crate::compsys::ported::compinit::install_standard_complete_widgets();
         crate::compsys::ported::compinit::maybe_rebind_tab_for_expand();
         crate::compsys::ported::compinit::install_standard_comp_keybindings();
+
+        // sh:493-496 + sh:501 — `-C` with an existing dump: `builtin .
+        // "$_comp_dumpfile"` then `_i_done=yes`, and `if [[ -z "$_i_done" ]]`
+        // skips the entire sh:504-528 `$fpath` scan. The dump is the ONLY
+        // thing that defines the five association tables on this path, so it
+        // takes precedence over zshrs's SQLite cache — which tracks a
+        // different refresh schedule and can hold a partial scan.
+        //
+        // This branch precedes the cache branch deliberately: an
+        // out-of-date-but-`cache_is_valid` cache must not shadow the dump,
+        // and a cache that fails `cache_is_valid` must not fall through to
+        // the worker-pool rescan sh:501 says never happens.
+        if let Some(tables) = dump_tables {
+            tracing::info!(
+                comps = tables.comps.len(),
+                services = tables.services.len(),
+                patcomps = tables.patcomps.len(),
+                postpatcomps = tables.postpatcomps.len(),
+                compautos = tables.compautos.len(),
+                "compinit: association tables from dump"
+            );
+            self.set_assoc("_comps".to_string(), tables.comps);
+            self.set_assoc("_services".to_string(), tables.services);
+            self.set_assoc("_patcomps".to_string(), tables.patcomps);
+            self.set_assoc("_postpatcomps".to_string(), tables.postpatcomps);
+            self.set_assoc("_compautos".to_string(), tables.compautos);
+            self.spawn_autoload_bytecode_backfill();
+            return 0;
+        }
 
         // Try to use existing cache if -C and cache is valid
         if use_cache {
@@ -2280,89 +2413,7 @@ impl ShellExecutor {
                             result.compautos.into_iter().collect(),
                         );
 
-                        // Background: fill bytecode blobs for any autoloads that have body but no chunk.
-                        // Sources of missing entries: (1) brand-new SQLite cache, (2) zshrs binary
-                        // mtime advanced and invalidated previously-cached chunks. The rkyv shard
-                        // at ~/.zshrs/autoloads.rkyv is additive — we compute the delta and
-                        // merge_in once at the end (single read + single write of the shard,
-                        // even for 16k entries).
-                        if let Some(ref cache) = self.compsys_cache {
-                            if let Ok(total_with_body) = cache.count_autoloads_with_body() {
-                                let cached_now = crate::autoload_cache::entry_count();
-                                let missing = total_with_body.saturating_sub(cached_now);
-                                if missing > 0 {
-                                    tracing::info!(
-                                        count = missing,
-                                        "compinit: backfilling bytecode blobs on worker pool"
-                                    );
-                                    let cache_path = crate::compsys::cache::default_cache_path();
-                                    let total_missing = missing;
-                                    self.worker_pool.submit(move || {
-                                        let cache = match crate::compsys::cache::CompsysCache::open(&cache_path) {
-                                            Ok(c) => c,
-                                            Err(_) => return,
-                                        };
-                                        // One pass: pull every body whose name isn't already in
-                                        // the rkyv shard, parse+compile, accumulate into a
-                                        // HashMap, merge_in once at the end.
-                                        let exclude = crate::autoload_cache::cached_names();
-                                        let bodies = match cache.get_autoload_bodies_excluding(&exclude, usize::MAX) {
-                                            Ok(b) => b,
-                                            Err(e) => {
-                                                tracing::warn!(error = %e, "compinit: body fetch failed");
-                                                return;
-                                            }
-                                        };
-                                        let mut batch: std::collections::HashMap<String, Vec<u8>> =
-                                            std::collections::HashMap::with_capacity(bodies.len());
-                                        // Mirror C's `strinbeg()` (hist.c:1033) input-side
-                                        // gate for the whole batch: parsing a STRING must
-                                        // report EOF when the lexer buffer drains, never
-                                        // fall through to `inputline()`. `input::strin` is
-                                        // thread-local, so this bumps only this worker; the
-                                        // history half of strinbeg (hbegin/hend, global) is
-                                        // deliberately NOT run here — these parses must not
-                                        // touch the interactive history.
-                                        crate::ported::input::strin.with(|s| s.set(s.get() + 1));
-                                        for (name, body) in &bodies {
-                                            // Mirror Src/init.c errflag save/clear/check around parse.
-                                            let saved_errflag = errflag.load(Ordering::Relaxed);
-                                            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                                            crate::ported::parse::parse_init(body);
-                                            let program = crate::ported::parse::parse();
-                                            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-                                            errflag.store(saved_errflag, Ordering::Relaxed);
-                                            if parse_failed {
-                                                continue;
-                                            }
-                                            if !program.lists.is_empty() {
-                                                // ksh_autoload_body stub (deleted with the
-                                                // old exec.c port) returned `Some(program)`
-                                                // unchanged — same observable behavior as
-                                                // using `&program` directly.
-                                                let target = &program;
-                                                let _ = name;
-                                                let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
-                                                if let Ok(blob) = bincode::serialize(&chunk) {
-                                                    batch.insert(name.clone(), blob);
-                                                }
-                                            }
-                                        }
-                                        // Mirror `strinend()` (hist.c:1049) — input side only.
-                                        crate::ported::input::strin.with(|s| s.set(s.get() - 1));
-                                        let cached = batch.len();
-                                        if let Err(e) = crate::autoload_cache::try_merge_in(batch) {
-                                            tracing::warn!(error = %e, "compinit: rkyv merge_in failed");
-                                        }
-                                        tracing::info!(
-                                            cached,
-                                            total = total_missing,
-                                            "compinit: bytecode backfill complete"
-                                        );
-                                    });
-                                }
-                            }
-                        }
+                        self.spawn_autoload_bytecode_backfill();
 
                         return 0;
                     }

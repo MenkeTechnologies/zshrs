@@ -19,8 +19,8 @@
 //! makes the array globally-scoped and duplicate-suppressing.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_tags::tags_byname;
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
 /// sh:12  `${(f)"$(...)"}` split + sh:10 `typeset -gU` dedupe —
@@ -49,7 +49,7 @@ fn build_font_cache() -> Vec<String> {
 pub fn _x_font(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_font");
     // sh:5  _tags fonts || return 1
-    if tags_byname(&["fonts".to_string()]) != 0 {
+    if _tags(&["fonts".to_string()]) != 0 {
         return 1;
     }
 
@@ -72,7 +72,7 @@ pub fn _x_font(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("_font_cache".to_string());
-    wanted_byname(&w)
+    _wanted(&w)
 }
 
 #[cfg(test)]

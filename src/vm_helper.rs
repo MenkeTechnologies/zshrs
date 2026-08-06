@@ -2439,7 +2439,6 @@ impl ShellExecutor {
         };
         let cputype = to_str(&uname_buf.machine);
         crate::ported::params::setsparam("CPUTYPE", &cputype); // c:961
-        let sysname = to_str(&uname_buf.sysname).to_lowercase();
         // OSTYPE: configure's `$host_os`, resolved on the build host and
         // frozen into config.h — C never re-derives it from uname() at
         // startup. Deriving it here made the two writers disagree, so the
@@ -2453,12 +2452,13 @@ impl ShellExecutor {
                                                                                      // `aarch64`), and zsh reports the latter. Single source of
                                                                                      // truth: config_h::MACHTYPE (= build target arch).
         crate::ported::params::setsparam("MACHTYPE", crate::ported::config_h::MACHTYPE); // c:967
-        let vendor = if sysname == "darwin" {
-            "apple"
-        } else {
-            "unknown"
-        };
-        crate::ported::params::setsparam("VENDOR", vendor); // c:970
+        // VENDOR: configure's `$host_vendor`. Deriving it from uname's
+        // `sysname` here was a second, non-C writer that disagreed with
+        // `config_h::VENDOR` off Darwin: config.guess emits `pc` for x86_64
+        // Linux (config.guess:1222) and `unknown` for aarch64 Linux
+        // (config.guess:1009), a distinction `sysname` cannot make. Single
+        // source of truth, exactly as OSTYPE/MACHTYPE above.
+        crate::ported::params::setsparam("VENDOR", crate::ported::config_h::VENDOR); // c:992
 
         // c:Src/params.c:878-882 — `setsparam("LOGNAME", getlogin() ?:
         // cached_username);`. C's createparamtable also assigns
@@ -2784,6 +2784,26 @@ impl ShellExecutor {
     /// bookkeeping. A temp file, not a pipe, receives the output: with no
     /// concurrent reader, a pipe deadlocks the moment a script writes past the
     /// 64 KiB buffer.
+    ///
+    /// # Concurrency contract
+    ///
+    /// **While a capture is in flight, no other thread in the process may write
+    /// fd 1 or fd 2.** POSIX has no per-thread fd table, so pointing fd 1 at the
+    /// capture points it there for every thread at once; any byte another thread
+    /// writes during the window lands in the returned `String` instead of on the
+    /// terminal. The `CAPTURE_LOCK` below excludes a second *capture*, which is
+    /// all a lock can do — a thread that never calls this function (a logger, a
+    /// progress meter, a test harness's own reporter) is not excluded by
+    /// anything, and its output is silently absorbed.
+    ///
+    /// This is not a gap that a different capture mechanism closes. C zsh dodges
+    /// it for `$(…)` by forking: `getoutput` (`Src/exec.c:4816`) calls `zfork`
+    /// and only the child does `redup(pipes[1], 1)` (`Src/exec.c:4837`), so the
+    /// parent's fd 1 is never touched — but the child then runs `entersubsh`
+    /// (`Src/exec.c:4838`) and a variable it sets is gone. Forking here would
+    /// throw away the one property this call exists to provide (state persists
+    /// on THIS VM across captured runs), so the cost is paid as a contract
+    /// instead: **capture from one thread, and quiesce the rest.**
     pub fn execute_script_captured(&mut self, script: &str) -> (i32, String) {
         use std::io::{Read, Seek, SeekFrom};
         use std::os::unix::io::AsRawFd;
@@ -2792,6 +2812,8 @@ impl ShellExecutor {
         /// not to a `ShellExecutor`, so two threads capturing at once would
         /// restore each other's fds mid-run and each would read back an empty
         /// file. An embedder that evaluates on one thread never contends here.
+        /// It excludes another *capture* and nothing else: see the concurrency
+        /// contract on this function for what remains the caller's problem.
         static CAPTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = CAPTURE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -2807,22 +2829,44 @@ impl ShellExecutor {
         // (the same ordering bug `run_command_substitution` documents).
         let _ = io::stdout().flush();
 
+        /// Puts fds 1 and 2 back on the way out, including when the run
+        /// unwinds. A panic anywhere under `execute_script` would otherwise
+        /// leave the whole PROCESS writing into a temp file that is already
+        /// unlinked — every later write vanishes, starting with the one
+        /// reporting the panic, which turns a localized bug into a silent one.
+        struct RestoreFds {
+            saved_out: i32,
+            saved_err: i32,
+        }
+        impl Drop for RestoreFds {
+            fn drop(&mut self) {
+                let _ = io::stdout().flush();
+                unsafe {
+                    libc::dup2(self.saved_out, libc::STDOUT_FILENO);
+                    libc::dup2(self.saved_err, libc::STDERR_FILENO);
+                }
+                crate::ported::utils::zclose(self.saved_out);
+                crate::ported::utils::zclose(self.saved_err);
+            }
+        }
+
         let saved_out = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDOUT_FILENO) });
         let saved_err = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDERR_FILENO) });
         unsafe {
             libc::dup2(tmp.as_raw_fd(), libc::STDOUT_FILENO);
             libc::dup2(tmp.as_raw_fd(), libc::STDERR_FILENO);
         }
+        let restore = RestoreFds {
+            saved_out,
+            saved_err,
+        };
 
         let status = self.execute_script(script);
 
-        let _ = io::stdout().flush();
-        unsafe {
-            libc::dup2(saved_out, libc::STDOUT_FILENO);
-            libc::dup2(saved_err, libc::STDERR_FILENO);
-        }
-        crate::ported::utils::zclose(saved_out);
-        crate::ported::utils::zclose(saved_err);
+        // Explicit, not end-of-scope: the temp file must be read back only
+        // after the real fds are restored, or a diagnostic emitted while
+        // reading would land in the very buffer being read.
+        drop(restore);
 
         let mut output = String::new();
         let _ = tmp.seek(SeekFrom::Start(0));

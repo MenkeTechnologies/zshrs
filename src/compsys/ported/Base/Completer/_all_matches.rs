@@ -14,17 +14,17 @@
 //! sh:12        compstate[old_list]=keep
 //! sh:13        return 0
 //! sh:14      fi
-//! sh:15      [[ "$old" = *only* ]] && return 1
-//! sh:16    fi
-//! sh:18    (( $comppostfuncs[(I)_all_matches_end] )) ||
-//! sh:19        comppostfuncs=( "$comppostfuncs[@]" _all_matches_end )
-//! sh:21    _all_matches_context=":completion:${curcontext}:"
-//! sh:22    return 1
-//! sh:23  }
-//! sh:25  _all_matches_end() {
-//! sh:28    zstyle -s "$_all_matches_context" avoid-completer not ||
+//! sh:16      [[ "$old" = *only* ]] && return 1
+//! sh:17    fi
+//! sh:19    (( $comppostfuncs[(I)_all_matches_end] )) ||
+//! sh:20        comppostfuncs=( "$comppostfuncs[@]" _all_matches_end )
+//! sh:22    _all_matches_context=":completion:${curcontext}:"
+//! sh:24    return 1
+//! sh:25  }
+//! sh:27  _all_matches_end() {
+//! sh:30    zstyle -s "$_all_matches_context" avoid-completer not ||
 //! sh:29        not=( _expand _old_list _correct _approximate )
-//! sh:31    if [[ "$compstate[nmatches]" -gt 1 && $not[(I)(|_)$_completer] -eq 0 ]]; then
+//! sh:33    if [[ "$compstate[nmatches]" -gt 1 && $not[(I)(|_)$_completer] -eq 0 ]]; then
 //! sh:34      local expl
 //! sh:36      if zstyle -t "$_all_matches_context" insert; then
 //! sh:37        compstate[insert]=all
@@ -38,7 +38,7 @@
 //! sh:47  _all_matches "$@"
 //! ```
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -82,7 +82,7 @@ pub fn _all_matches() -> i32 {
         }
     }
 
-    // sh:18-19
+    // sh:19-20
     let mut postfuncs = getaparam("comppostfuncs").unwrap_or_default();
     if !postfuncs.iter().any(|f| f == "_all_matches_end") {
         postfuncs.push("_all_matches_end".to_string());
@@ -92,7 +92,7 @@ pub fn _all_matches() -> i32 {
     // sh:21
     let _ = setsparam("_all_matches_context", &ctx);
 
-    // sh:22
+    // sh:24
     1
 }
 
@@ -112,7 +112,7 @@ pub fn _all_matches_end() -> i32 {
         ];
     }
 
-    // sh:31
+    // sh:33
     let nmatches: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
@@ -132,7 +132,7 @@ pub fn _all_matches_end() -> i32 {
             set_compstate_str("insert", "all");
         } else {
             // sh:39-40
-            let _ = description_byname(&[
+            let _ = _description(&[
                 "all-matches".to_string(),
                 "expl".to_string(),
                 "all matches".to_string(),

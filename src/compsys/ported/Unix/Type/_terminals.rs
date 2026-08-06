@@ -1,6 +1,15 @@
 //! Port of `_terminals` from `Completion/Unix/Type/_terminals`.
 //!
-//! Full upstream body (8 lines verbatim):
+//! STALE TRANSCRIPT — DO NOT FEED THESE NUMBERS TO `set_sh_lineno`.
+//! The block below transcribes an OLDER `_terminals`. The shipped 5.9.2 and
+//! master file is 37 lines and a different implementation: it collects into
+//! `terms=( $desc/*/^*+?*(N:t) )`, parses `/etc/termcap` on FreeBSD/DragonFly
+//! and `/usr/share/misc/terminfo` on NetBSD, and ends at line 37 with
+//! `_describe -t terminals 'terminal name' terms "$@"` — not `_wanted` +
+//! `compadd`. No line of today's file corresponds to sh:5 or sh:7-8, so the
+//! numbers cannot be corrected without re-porting the function.
+//!
+//! Transcript of the older upstream this port was translated from (8 lines):
 //! ```text
 //! sh:1  #compdef infocmp -value-,TERM,-default-
 //! sh:3  local desc expl
@@ -13,7 +22,7 @@
 //! directory list; sh:8 globs `dir/*/*` two levels deep with the `N`
 //! (nullglob) qualifier and takes the basename (`:t`) of each match.
 
-use crate::compsys::ported::_wanted::wanted_byname;
+use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::getsparam;
 
@@ -79,7 +88,7 @@ pub fn _terminals(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
     wanted_argv.extend(names);
-    wanted_byname(&wanted_argv)
+    _wanted(&wanted_argv)
 }
 
 #[cfg(test)]

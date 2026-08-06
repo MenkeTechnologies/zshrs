@@ -3,7 +3,7 @@
 //! Full upstream body (104 lines, abridged):
 //! ```text
 //! sh:  1  #autoload
-//! sh: 15  zparseopts -D -E e:=expl_type_arr p=paths_allowed r1=rsrc r2=rdst t+:=type
+//! sh: 16  zparseopts -D -E e:=expl_type_arr p=paths_allowed r1=rsrc r2=rdst t+:=type
 //! sh: 17  suf=( -r '\n\t\- @\#' )
 //! sh: 18-25  build $typearg from -t types (fs/vol/snap/share/bookmark) + $implementation
 //! sh: 27-30  if paths_allowed && PREFIX == /* → _path_files; return
@@ -13,18 +13,18 @@
 //! sh: 68-82  openzfs snapshot-range (%,) completion via compset + compadd
 //! sh: 84-92  $expl_type from typearg; mtpt adds mountpoints
 //! sh: 94-96  -e override of $expl_type
-//! sh: 98  _description datasets expl "$expl_type"
-//! sh: 99  _multi_parts $suf "$@" "$expl[@]" -q / datasetlist
+//! sh:103  _description datasets expl "$expl_type"
+//! sh:104  _multi_parts $suf "$@" "$expl[@]" -q / datasetlist
 //! ```
 //!
 //! `$words`/`$CURRENT`/`$implementation`/`$opt_args` are read from the
 //! completion params; the `${(f)"$(zfs list …)"}:#no … available` filters
 //! (sh:60-66) drop the tool's "no datasets available" sentinel lines.
 
-use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_files::_files;
-use crate::compsys::ported::_message::message_byname;
-use crate::compsys::ported::_multi_parts::multi_parts_byname;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_multi_parts::_multi_parts;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -194,7 +194,7 @@ pub fn _zfs_dataset(args: &[String]) -> i32 {
     if opts.rdst {
         if prev_word.contains('@') {
             // sh:48
-            return message_byname(&[
+            return _message(&[
                 "-e".to_string(),
                 "snapshot name (beginning with \"@\")".to_string(),
             ]);
@@ -276,7 +276,7 @@ pub fn _zfs_dataset(args: &[String]) -> i32 {
                 suf = vec!["-qS,".to_string()];
                 expl_pfx = "end ".to_string();
             }
-            let _ = description_byname(&[
+            let _ = _description(&[
                 "snapshots".to_string(),
                 "expl".to_string(),
                 format!("{}snapshot", expl_pfx),
@@ -289,7 +289,7 @@ pub fn _zfs_dataset(args: &[String]) -> i32 {
             cadd.push("datasetlist".to_string());
             return bin_compadd("compadd", &cadd, &make_ops(), 0);
         } else {
-            return message_byname(&[
+            return _message(&[
                 "-e".to_string(),
                 "snapshots".to_string(),
                 "snapshot".to_string(),
@@ -314,8 +314,8 @@ pub fn _zfs_dataset(args: &[String]) -> i32 {
     }
 
     // sh:98
-    let _ = description_byname(&["datasets".to_string(), "expl".to_string(), expl_type]);
-    // sh:99  _multi_parts $suf "$@" "$expl[@]" -q / datasetlist
+    let _ = _description(&["datasets".to_string(), "expl".to_string(), expl_type]);
+    // sh:104  _multi_parts $suf "$@" "$expl[@]" -q / datasetlist
     setaparam("datasetlist", datasetlist);
     let expl = getaparam("expl").unwrap_or_default();
     let mut mp: Vec<String> = suf;
@@ -324,7 +324,7 @@ pub fn _zfs_dataset(args: &[String]) -> i32 {
     mp.push("-q".to_string());
     mp.push("/".to_string());
     mp.push("datasetlist".to_string());
-    multi_parts_byname(&mp)
+    _multi_parts(&mp)
 }
 
 #[cfg(test)]

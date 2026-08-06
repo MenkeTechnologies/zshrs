@@ -134,8 +134,7 @@ pub fn _deb_codenames(args: &[String]) -> i32 {
         ];
         // sh:9 is a bare command word — reach it by name so `$fpath`/shfunc
         // arbitration runs and `_describe`'s locals land in its own scope.
-        let rc =
-            crate::compsys::ported::shared::call_compfn("_describe", &dargv, || _describe(&dargv));
+        let rc = _describe(&dargv);
         if rc == 0 {
             ret = 0;
         }
