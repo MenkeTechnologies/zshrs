@@ -32,7 +32,7 @@
 //! status. This is faithful to upstream — `_normal` is invoked for its
 //! completion side effects and its return value is discarded.
 
-use crate::compsys::ported::_arguments::_arguments;
+use crate::compsys::ported::_arguments::arguments_byname;
 use crate::compsys::ported::_files::_files;
 use crate::compsys::ported::shared::glob_matches;
 use crate::ported::exec::dispatch_function_call;
@@ -186,7 +186,7 @@ pub fn _zargs(_args: &[String]) -> i32 {
             // `compstate[restore]=''` (`_arguments.rs:1130`), which would
             // otherwise cancel the restore owed to `_zargs`' caller.
             if crate::compsys::ported::shared::call_compfn("_arguments", &call, || {
-                _arguments(&call)
+                arguments_byname(&call)
             }) == 0
             {
                 ret = 0; // sh:34  && ret=0

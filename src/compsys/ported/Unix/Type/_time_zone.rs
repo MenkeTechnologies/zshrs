@@ -15,7 +15,7 @@
 //! patterns; each is glob-qualified `(/)` (directories only) via
 //! tokenize + zglob (same idiom as `_files`'s `glob_subdirs`).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::{getaparam, setaparam};
 
@@ -72,7 +72,7 @@ pub fn _time_zone(args: &[String]) -> i32 {
     ];
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

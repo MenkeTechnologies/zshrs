@@ -33,7 +33,7 @@
 //! sh:45      compadd "$@" "$disp[@]" -Q -a list
 //! ```
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{isset, PUSHDMINUS};
@@ -118,7 +118,7 @@ pub fn _directory_stack(args: &[String]) -> i32 {
     wanted_argv.push("-Q".to_string());
     wanted_argv.push("-a".to_string());
     wanted_argv.push("list".to_string());
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

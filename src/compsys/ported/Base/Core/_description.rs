@@ -215,6 +215,23 @@ fn run_zparseopts(
     (remaining, nopt, gropt, ign, xopt)
 }
 
+/// Reach `_description` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_description ttys expl 'tty'` (Completion/Unix/Type/_ttys
+/// sh:20) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn description_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_description", args, || _description(args))
+}
+
 /// `_description` — build the option array for a `compadd`/`compgen`
 /// call against tag `$1`, store under array-named-by-`$2`, with
 /// description `$3` and optional extra match-specs `$4..`.

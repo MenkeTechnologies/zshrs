@@ -52,7 +52,7 @@
 //! temp file across the dispatch, so any stderr the run emits lands in
 //! the file, the file is real, and the message truthfully points at it.
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::builtin::bin_print;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::hashtable_h::BIN_PRINT;
@@ -162,7 +162,7 @@ pub fn _complete_debug(args: &[String]) -> i32 {
         let _ = bin_print("print", &[cmd], &ops, BIN_PRINT);
 
         // sh:32  gated user-facing trace pointer message
-        let _ = _message(&[
+        let _ = message_byname(&[
             "-r".to_string(),
             format!("Trace output left in {} (up-history to view)", tmp),
         ]);

@@ -24,7 +24,7 @@
 //! Scans peer-zsh `cwd` per-OS. Linux uses `/proc/<pid>/cwd`; other
 //! UNIX falls back to `lsof -d cwd -c zsh -F n` parse.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;
@@ -128,7 +128,7 @@ pub fn _external_pwds() -> i32 {
     setaparam("dirs", dirs);
 
     // sh:42
-    _wanted(&[
+    wanted_byname(&[
         "directories".to_string(),
         "expl".to_string(),
         "current directory from other shell".to_string(),

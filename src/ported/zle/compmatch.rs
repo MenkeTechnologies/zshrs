@@ -570,6 +570,12 @@ pub fn start_match() {
         .lock()
         .unwrap()
         .clear();
+    // c:304 — `matchbufadded = 0`. Omitted, so the counter accumulated across
+    // every candidate in a completion run (68 → 96 → 184 → 273 on `jot -`'s
+    // filtered menu) instead of describing the CURRENT match. It is what C
+    // uses for the brace positions at c:583/850/982/1010 and for `wpl` at
+    // c:1182, so a running total makes every one of those land off the end.
+    MATCHBUFADDED.store(0, std::sync::atomic::Ordering::Relaxed);
     // c:305 — `matchparts = matchlastpart = matchsubs = matchlastsub = NULL`.
     // All FOUR must reset. Omitting MATCHLASTPART/MATCHLASTSUB left them stale
     // across matches: the next add_match_part read a Some MATCHLASTPART and took
@@ -771,36 +777,75 @@ pub fn add_match_part(
     };
 
     // c:392 — `p = bld_parts(s, sl, osl, &lp, &lprem)`.
+    //
+    // C's `lp` and `lprem` are POINTERS INTO the chain `p`. Every write
+    // through them — the CLF_SUF swap at c:394-396 and the argument store at
+    // c:421-431 — mutates a node that is ALREADY linked into `p`, and
+    // `matchlastpart = lp` (c:438) leaves a live alias on the tail of
+    // `matchparts` so the NEXT call's `matchlastpart->next = p` (c:434-435)
+    // appends to the accumulated list.
+    //
+    // This port's out-params hand back detached CLONES, so all three of those
+    // effects were silently dropped: the argument node was never appended, and
+    // `matchlastpart->next = p` wrote into a copy nothing else could reach, so
+    // `matchparts` never grew past the FIRST call's parts. Measured against an
+    // instrumented 5.9.x on `jot -<TAB><TAB>s` under scripts/parity_zstyle.zsh
+    // (matcher-list contains `r:|?=**`, so bld_parts emits one anchor node per
+    // character): zsh ends `match_str` with `matchparts` = 80 nodes spelling
+    // the whole candidate, this port ended with 22 — only the last
+    // `add_match_part` call's parts. Everything downstream inherited that:
+    // comp_match's `*clp`, `ainfo->line`, and finally `cline_str` rendered a
+    // one-character unambiguous string, which `do_ambiguous`'s c:794 fallback
+    // then rolled back to the typed word — printing `interactive: -s[]` where
+    // zsh prints the completed match.
+    //
+    // `lp` is invariably the LAST top-level node of `p` (bld_parts c:1707-1711;
+    // and after the c:400 reversal C's `lp = p` is the pre-reversal head, which
+    // IS the post-reversal tail), and `lprem` is either NULL or that very same
+    // node (c:1695/1701 set it to `n`, c:1703 clears it). So both aliases are
+    // recovered by walking `p` to its tail — no clone can stand in for them.
     let mut lp: Option<Box<Cline>> = None;
     let mut lprem: Option<Box<Cline>> = None;
     let mut p = bld_parts(s, sl, osl, Some(&mut lp), Some(&mut lprem));
+    let has_tail = lp.is_some();
+    let tail_is_rem = lprem.is_some();
 
-    // c:394 — `if (lprem && m && (m->flags & CLF_LEFT))`.
-    if let Some(rem) = lprem.as_mut() {
-        if m.map(|mat| (mat.flags & CMF_LEFT) != 0).unwrap_or(false) {
+    // c:394-396 — `if (lprem && m && (m->flags & CMF_LEFT))`. Applied to the
+    // live tail node, BEFORE the c:400 reversal, exactly where C applies it.
+    if tail_is_rem && m.map(|mat| (mat.flags & CMF_LEFT) != 0).unwrap_or(false) {
+        let mut cur = p.as_deref_mut();
+        while cur.as_ref().is_some_and(|n| n.next.is_some()) {
+            cur = cur.unwrap().next.as_deref_mut();
+        }
+        if let Some(rem) = cur {
             rem.flags |= CLF_SUF; // c:395
             rem.suffix = rem.prefix.take(); // c:396 swap
         }
     }
 
-    // c:402 — `if (sfx) p = revert_cline(lp = p)`.
+    // c:399-400 — `if (sfx) p = revert_cline(lp = p)`.
     if sfx != 0 {
         if let Some(chain) = p.take() {
             p = revert_cline(Some(chain));
         }
     }
 
-    // c:405-419 — merge MATCHSUBS into the head/tail.
+    // c:402-419 — merge MATCHSUBS into the tail (sfx) or the head (prefix).
     let subs = MATCHSUBS
         .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
         .and_then(|mut g| g.take());
     if let Some(subs_chain) = subs {
-        // c:405
-        if let Some(lp_node) = lp.as_mut() {
-            if sfx != 0 {
-                // c:407 lp->prefix tail-append
+        // c:402
+        if sfx != 0 {
+            // c:406-411 — `q = lp->prefix; while (q->next) q = q->next;
+            //               q->next = matchsubs;` (else `lp->prefix = matchsubs`).
+            let mut cur = p.as_deref_mut();
+            while cur.as_ref().is_some_and(|n| n.next.is_some()) {
+                cur = cur.unwrap().next.as_deref_mut();
+            }
+            if let Some(lp_node) = cur {
                 let mut tail_ref: *mut Option<Box<Cline>> = &mut lp_node.prefix;
                 unsafe {
                     while let Some(ref mut next_node) = *tail_ref {
@@ -808,75 +853,117 @@ pub fn add_match_part(
                     }
                     *tail_ref = Some(subs_chain);
                 }
-            } else if let Some(ref mut p_node) = p {
-                // c:415 p->prefix prepend
-                let old_prefix = p_node.prefix.take();
-                let mut new_head = subs_chain;
-                {
-                    let mut tail_ref: *mut Option<Box<Cline>> = &mut new_head.next;
-                    unsafe {
-                        while let Some(ref mut nn) = *tail_ref {
-                            tail_ref = &mut nn.next as *mut _;
-                        }
-                        *tail_ref = old_prefix;
-                    }
-                }
-                p_node.prefix = Some(new_head);
             }
+        } else if let Some(ref mut p_node) = p {
+            // c:415-416 — `matchlastsub->next = p->prefix; p->prefix = matchsubs`.
+            let old_prefix = p_node.prefix.take();
+            let mut new_head = subs_chain;
+            {
+                let mut tail_ref: *mut Option<Box<Cline>> = &mut new_head.next;
+                unsafe {
+                    while let Some(ref mut nn) = *tail_ref {
+                        tail_ref = &mut nn.next as *mut _;
+                    }
+                    *tail_ref = old_prefix;
+                }
+            }
+            p_node.prefix = Some(new_head);
         }
-        // c:417 — `matchsubs = matchlastsub = NULL`.
+        // c:418 — `matchsubs = matchlastsub = NULL`.
         if let Ok(mut g) = MATCHLASTSUB.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
     }
 
-    // c:421-435 — store args in the last part-cline.
-    if let Some(lp_node) = lp.as_mut() {
-        if lp_node.llen != 0 || lp_node.wlen != 0 {
-            // c:421
-            let next = get_cline(
-                l_eff.clone(),
-                wl,
-                Some(w.to_string()),
-                wl,
-                o.map(|s| s.to_string()),
-                ol,
-                CLF_NEW,
-            );
-            lp_node.next = Some(next); // c:423
-        } else {
-            // c:425
-            lp_node.line = l_eff.clone(); // c:426
-            lp_node.llen = wl;
-            lp_node.word = Some(w.to_string()); // c:428
-            lp_node.wlen = wl;
-            lp_node.orig = o.map(|s| s.to_string()); // c:430
-            lp_node.olen = ol;
+    // c:421-431 — store the arguments in the last part-cline, growing the
+    // chain by one node when that tail already carries a string.
+    if has_tail {
+        let mut cur = p.as_deref_mut();
+        while cur.as_ref().is_some_and(|n| n.next.is_some()) {
+            cur = cur.unwrap().next.as_deref_mut();
         }
-        if o.is_some() || ol != 0 {
-            // c:432
-            lp_node.flags &= !CLF_NEW;
+        if let Some(lp_node) = cur {
+            if lp_node.llen != 0 || lp_node.wlen != 0 {
+                // c:421
+                let next = get_cline(
+                    l_eff.clone(),
+                    wl,
+                    Some(w.to_string()),
+                    wl,
+                    o.map(|s| s.to_string()),
+                    ol,
+                    CLF_NEW,
+                );
+                lp_node.next = Some(next); // c:422-423 `lp = lp->next`
+                                           // c:430-431 — `if (o || ol) lp->flags &= ~CLF_NEW`. C has already
+                                           // advanced `lp` onto the node it just created, so the flag clear
+                                           // lands on the NEW node; this port cleared it on the OLD tail.
+                if o.is_some() || ol != 0 {
+                    if let Some(added) = lp_node.next.as_deref_mut() {
+                        added.flags &= !CLF_NEW;
+                    }
+                }
+            } else {
+                // c:425-428
+                lp_node.line = l_eff.clone(); // c:425
+                lp_node.llen = wl;
+                lp_node.word = Some(w.to_string()); // c:426
+                lp_node.wlen = wl;
+                lp_node.orig = o.map(|s| s.to_string()); // c:428
+                lp_node.olen = ol;
+                if o.is_some() || ol != 0 {
+                    // c:430-431
+                    lp_node.flags &= !CLF_NEW;
+                }
+            }
         }
     }
 
-    // c:439-444 — append `p` to MATCHPARTS via MATCHLASTPART.
+    // c:434-438 — `if (matchlastpart) matchlastpart->next = p;
+    //              else matchparts = p; matchlastpart = lp;`
+    // `matchlastpart` is by construction the tail of `matchparts` (it is only
+    // ever assigned the tail of a chain that was just linked in), so C's
+    // pointer write is exactly "append `p` to `matchparts`" — done here by
+    // walking the owned chain instead of through a dangling clone.
     let last_present = MATCHLASTPART
         .get()
         .and_then(|c| c.lock().ok().map(|g| g.is_some()))
         .unwrap_or(false);
-    if last_present {
-        // c:440
-        if let Ok(mut tail) = MATCHLASTPART.get_or_init(|| Mutex::new(None)).lock() {
-            if let Some(t) = tail.as_mut() {
-                t.next = p.clone();
+    let new_tail: Option<Box<Cline>> = {
+        let mut cur = p.as_deref();
+        let mut last = None;
+        while let Some(n) = cur {
+            if n.next.is_none() {
+                last = Some(Box::new(n.clone()));
             }
+            cur = n.next.as_deref();
         }
-    } else if let Ok(mut head) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
-        *head = p.clone(); // c:442
+        last
+    };
+    if let Ok(mut head) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
+        if last_present && head.is_some() {
+            // c:434-435
+            let mut tail_ref: *mut Option<Box<Cline>> = &mut *head;
+            unsafe {
+                while let Some(ref mut n) = *tail_ref {
+                    if n.next.is_none() {
+                        break;
+                    }
+                    tail_ref = &mut n.next as *mut _;
+                }
+                if let Some(n) = (*tail_ref).as_mut() {
+                    n.next = p;
+                }
+            }
+        } else {
+            *head = p; // c:437
+        }
     }
-    if let Some(lp_node) = lp {
+    // c:438 — `matchlastpart = lp`. Kept as a marker of "the accumulated list
+    // has a tail"; the append above no longer dereferences it.
+    if new_tail.is_some() {
         if let Ok(mut tail) = MATCHLASTPART.get_or_init(|| Mutex::new(None)).lock() {
-            *tail = Some(lp_node); // c:443
+            *tail = new_tail;
         }
     }
 }
@@ -2519,6 +2606,18 @@ pub fn bld_parts(
                     ..Default::default()
                 }));
             }
+            // c:1658 — `*q = n = get_cline(...)`. `n` is the FUNCTION-scope
+            // loop variable in C, so it survives every iteration and is what
+            // `*lp = n` (c:1710-1711) hands back when the string ends ON an
+            // anchor (the `else if (lprem) *lprem = NULL` arm at c:1703).
+            // Tracking it only in the two trailing-remainder arms left `*lp`
+            // unset for anchor-terminated chains — and with `r:|?=**` in the
+            // matcher-list every character IS an anchor, so `*lp` came back
+            // None for every candidate. add_match_part then skipped both its
+            // c:421-431 arg-store and its `matchlastpart = lp` update, so the
+            // next call overwrote `matchparts` instead of appending to it and
+            // the per-match Cline collapsed to the last part only.
+            last_n = Some(node.clone());
             unsafe {
                 *tail_ref = Some(node);
                 tail_ref = &mut (*tail_ref).as_mut().unwrap().next;

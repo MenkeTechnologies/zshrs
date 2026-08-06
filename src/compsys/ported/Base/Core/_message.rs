@@ -101,6 +101,23 @@ fn run_gopt_message(args: &[String]) -> (Vec<String>, Vec<String>) {
     (remaining, gopt)
 }
 
+/// Reach `_message` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_message kind` (Completion/Unix/Command/_ctags sh:44) — so
+/// the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn message_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_message", args, || _message(args))
+}
+
 /// `_message` — render a static message into the current completion
 /// listing. Two modes:
 ///   * `-e <tag>? <description>` — emit per-spec messages via
@@ -148,6 +165,20 @@ pub fn _message(args: &[String]) -> i32 {
         // every other such spec silently completed nothing. Same guard as
         // _requested.rs. The `_next_label` loop must run INSIDE the nested
         // level, where the tags were registered.
+        //
+        // These two calls are deliberately NOT routed through the `_byname`
+        // wrappers (unlike the `_description` calls in `_next_label` /
+        // `_all_labels` / `_requested`). Doing so replaces this hand-rolled
+        // depth with `doshfunc`'s own `inc_locallevel`
+        // (`src/ported/exec.rs:6131`) — arguably the faithful arrangement,
+        // since `_tags` and `_next_label` are real shell functions in zsh —
+        // but it also drops the level for everything AFTER the loop, and it
+        // flips `dash_e_registers_its_own_tag_level`,
+        // `default_mode_registers_the_messages_tag` and eleven downstream
+        // `_x_*` `routes_to_message_*` tests. Which answer matches zsh needs
+        // a live completion-context run of `_message` in the reference
+        // shell; that was not obtained, so this is left as-is rather than
+        // landed on a guess.
         crate::ported::utils::inc_locallevel();
         let tags_rc = _tags(&[tag.clone()]);
         if tags_rc == 0 {
@@ -200,7 +231,8 @@ pub fn _message(args: &[String]) -> i32 {
     //
     // Same locallevel guard as the `-e` branch above: this registration
     // must NOT replace the caller's tag sets. Everything below runs at the
-    // nested level, so each return path drops it again.
+    // nested level, so each return path drops it again. Left direct for the
+    // same reason as the `-e` branch — see the comment there.
     crate::ported::utils::inc_locallevel();
     if _tags(&["messages".to_string()]) != 0 {
         crate::ported::utils::dec_locallevel();

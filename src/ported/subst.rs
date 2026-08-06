@@ -6891,6 +6891,36 @@ pub fn paramsubst(
                     {
                         return_key = false;
                     }
+                    // c:Src/params.c:1727 — `pprog = patcompile(s, 0, NULL)`
+                    // runs ONCE, before the table is scanned, and is parked in
+                    // the file-static `scanprog` (c:1733). `scanparamvals` then
+                    // only calls `pattry(scanprog, …)` per node (c:680 for
+                    // MATCHKEY, c:696 for MATCHVAL). The pattern here is the
+                    // SUBSCRIPT, which is the same for every node, so compiling
+                    // it inside the loop re-tokenized the subscript and re-hit
+                    // the pattern cache once per entry — 60% of the samples in a
+                    // 50k-entry `${(k)h[(I)k12345]}` read (glob::tokenize 40%,
+                    // patcompile/pat_cache 20%).
+                    //
+                    // `keymatch` ((k)/(K)) is the one case C also compiles per
+                    // node, because there the KEY is the pattern: c:673-678
+                    // `tmp = dupstring(v.pm->node.nam); tokenize(tmp);
+                    // remnulargs(tmp); patcompile(tmp, 0, NULL)`. It stays in the
+                    // loop below. c:1729 leaves `pprog = NULL` for that case, and
+                    // `(e)` compares literally, so both skip the compile here.
+                    let scanprog = if exact || (match_against_key && !key_glob) {
+                        None // c:1729
+                    } else {
+                        patcompile(
+                            &{
+                                let mut __pat_tok = pat.clone();
+                                crate::ported::glob::tokenize(&mut __pat_tok);
+                                __pat_tok
+                            },
+                            PAT_HEAPDUP as i32,
+                            None,
+                        )
+                    };
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if match_against_key {
@@ -6923,16 +6953,10 @@ pub fn paramsubst(
                             )
                             .map_or(false, |__p| pattry(&__p, pat.as_str()))
                         } else {
-                            patcompile(
-                                &{
-                                    let mut __pat_tok = (&pat).to_string();
-                                    crate::ported::glob::tokenize(&mut __pat_tok);
-                                    __pat_tok
-                                },
-                                PAT_HEAPDUP as i32,
-                                None,
-                            )
-                            .map_or(false, |__p| pattry(&__p, hay))
+                            // c:680/696 — `pattry(scanprog, …)`; the program was
+                            // compiled once above (c:1727). A compile failure is
+                            // c:1738-1739 `if (!pprog) return 1;` — no match.
+                            scanprog.as_ref().map_or(false, |__p| pattry(__p, hay))
                         };
                         if matched {
                             // c:Src/params.c:665-681 scanparamvals — when
@@ -10784,8 +10808,28 @@ pub fn paramsubst(
                 // docs/BUGS.md. The arrays_get path stays as the
                 // primary check (indexed-array source); split_parts
                 // is the operator-result source.
-                let source_arr: Option<Vec<String>> = arrays_get(&var_name)
-                    .filter(|_| per_element_array)
+                //
+                // c:Src/subst.c:2927 + 3444 — the filter loop runs over
+                // `aval`, and `aval` is `getarrvalue(v)`: the value AFTER the
+                // subscript was applied. C never re-reads the parameter at the
+                // operator. zshrs's `aval` is `split_parts`, which the range
+                // arm (subst.rs:7947 `split_parts = Some(slice.clone()); //
+                // c:2596 (aval)`) seeds with the slice — so when a SUBSCRIPT
+                // produced it, it must win over `arrays_get`. Reading the
+                // backing array first threw the slice away and filtered the
+                // WHOLE array:
+                //     a=(-M spec -- d2 a2)
+                //     ${(@)a[1,(i)--]:#--}   zsh: -M spec
+                //                          zshrs: -M spec d2 a2
+                // which is `_describe`'s c:102 `_opts=( "${(@)argv[1,(i)--]:#--}" )`.
+                // With the slice discarded, `shift $#_opts` over-shifted and
+                // the following `eval local "_a_…"'=( "${'$1'[@]}" )'` (c:95)
+                // interpolated a match-spec as a parameter NAME, printing
+                // `not an identifier: [_-]=* r:|=*[@]` / `bad substitution`.
+                let source_arr: Option<Vec<String>> = split_parts
+                    .clone()
+                    .filter(|_| per_element_array && subscript.is_some())
+                    .or_else(|| arrays_get(&var_name).filter(|_| per_element_array))
                     .or_else(|| {
                         if per_element_array {
                             split_parts.clone()
@@ -11669,7 +11713,10 @@ pub fn paramsubst(
                     SKIP_FILESUB.with(|c| c.set(saved_skip));
                     s
                 };
-                let eval_repl_for_match = |span_text: &str, span_start_byte: usize| -> String {
+                // `span_start_units` is C's `patoffset` for this match, already
+                // in `iincchar` units (bytes without MULTIBYTE, characters
+                // with it) — see `pattern::ioff_of_char`.
+                let eval_repl_for_match = |span_text: &str, span_start_units: i32| -> String {
                     if !pat_needs_per_match {
                         return repl.clone();
                     }
@@ -11681,10 +11728,22 @@ pub fn paramsubst(
                     } else {
                         1
                     };
-                    crate::ported::params::setiparam("MBEGIN", span_start_byte as i64 + base);
+                    // c:Src/pattern.c:2543-2546 — `setiparam("MBEGIN",
+                    // patoffset + !isset(KSHARRAYS))` and `setiparam("MEND",
+                    // mlen + patoffset + !isset(KSHARRAYS) - 1)` where
+                    // `mlen = CHARSUB(patinstart, patinput)` (c:1997) and
+                    // `patoffset` are BOTH in `iincchar` units: characters
+                    // under MULTIBYTE, bytes without it (c:Src/utils.c:5795).
+                    // `chars().count()` here was unconditionally character-
+                    // based, which mismatched the byte-based `patoffset` C
+                    // produces with MULTIBYTE unset.
+                    crate::ported::params::setiparam("MBEGIN", span_start_units as i64 + base);
                     crate::ported::params::setiparam(
                         "MEND",
-                        (span_start_byte as i64 + span_text.len() as i64 + base).saturating_sub(1),
+                        (span_start_units as i64
+                            + crate::ported::pattern::charsub(span_text, span_text.len()) as i64
+                            + base)
+                            .saturating_sub(1),
                     );
                     let saved_skip = SKIP_FILESUB.with(|c| c.get());
                     SKIP_FILESUB.with(|c| c.set(true));
@@ -11702,7 +11761,7 @@ pub fn paramsubst(
                 // subst.c's getmatcharr path that calls getmatch on
                 // each element separately. Single-shot helper to
                 // avoid duplicating the sliding-window logic.
-                let gms = |s_: &str, p_: &str| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — tokenize +
                     // patcompile + pattry. Captures, (#b) $match
                     // arrays and (#m) $MATCH now publish INSIDE
@@ -11711,6 +11770,16 @@ pub fn paramsubst(
                     // former vm_helper::glob_match_static wrapper is
                     // gone. Silent false on bad pattern (caller arms
                     // pre-validate where C zerrs).
+                    //
+                    // c:Src/glob.c:2964/3034 igetmatch — the substitution
+                    // scan calls `pattrylen(p, t, umlen, 0, &patstralloc,
+                    // ioff)`, where `ioff` is the CHARACTER offset of the
+                    // trial slice `t` within the whole subject. pattryrefs
+                    // adds it to every reported $match/$mbegin/$mend and to
+                    // $MBEGIN/$MEND (c:2543-2546, c:2596-2610), which is what
+                    // makes those offsets string-relative rather than
+                    // match-relative. `pattry` (c:2223) hardcodes offset 0 and
+                    // is only correct for a slice that starts at position 0.
                     match crate::ported::pattern::patcompile(
                         &{
                             let mut t_ = p_.to_string();
@@ -11720,7 +11789,14 @@ pub fn paramsubst(
                         crate::ported::zsh_h::PAT_HEAPDUP,
                         None,
                     ) {
-                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        Some(pr_) => crate::ported::pattern::pattrylen(
+                            &pr_,
+                            s_,
+                            s_.len() as i32,
+                            -1,
+                            None,
+                            off_,
+                        ),
                         None => false,
                     }
                 };
@@ -11728,6 +11804,23 @@ pub fn paramsubst(
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
                     let mut o = String::with_capacity(val.len());
+                    // c:Src/glob.c:2818-2825 `iincchar` — C's `ioff` (the
+                    // `patoffset` every scan hands to `pattrylen`) is stepped by
+                    // `mb_charlenconv`, which returns 1 unconditionally when the
+                    // MULTIBYTE option is unset (c:Src/utils.c:5795). So a step
+                    // covers ONE BYTE without MULTIBYTE and one character with
+                    // it — exactly `charsub`'s rule (c:Src/pattern.c:2008), which
+                    // is what makes `CHARSUB(patinstart, *sp) + patoffset`
+                    // (c:Src/pattern.c:2561) add two values in one unit. Convert
+                    // this scan's character index accordingly.
+                    let ioff = |ci: usize| -> i32 {
+                        let b = val
+                            .char_indices()
+                            .nth(ci)
+                            .map(|(x, _)| x)
+                            .unwrap_or(val.len());
+                        crate::ported::pattern::charsub(val, b) as i32
+                    };
                     // c:Src/subst.c — `#` anchor: match only at
                     // start; `%` anchor: match only at end (longest
                     // tail). Without an anchor, the global sliding
@@ -11743,7 +11836,7 @@ pub fn paramsubst(
                         // the whole val and replace iff successful.
                         // Bug #355 in docs/BUGS.md.
                         let whole: String = cv.iter().collect();
-                        if gms(&whole, &pat) {
+                        if gms(&whole, &pat, 0) {
                             o.push_str(&eval_repl_for_match(&whole, 0));
                         } else {
                             o.push_str(val);
@@ -11785,12 +11878,12 @@ pub fn paramsubst(
                         } else {
                             (0..=nn)
                                 .rev()
-                                .find(|&end| gms(&cv[..end].iter().collect::<String>(), &pat))
+                                .find(|&end| gms(&cv[..end].iter().collect::<String>(), &pat, 0))
                         };
                         if let Some(e) = matched {
                             if pat_needs_per_match {
                                 let span: String = cv[..e].iter().collect();
-                                let _ = gms(&span, &pat);
+                                let _ = gms(&span, &pat, 0);
                             }
                             let span: String = cv[..e].iter().collect();
                             o.push_str(&eval_repl_for_match(&span, 0));
@@ -11804,16 +11897,18 @@ pub fn paramsubst(
                         let mut matched: Option<usize> = None;
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if gms(&cand, &pat) {
+                            if gms(&cand, &pat, ioff(start)) {
                                 matched = Some(start);
                                 break;
                             }
                         }
                         if let Some(s) = matched {
                             let span_text: String = cv[s..].iter().collect();
-                            let span_byte = cv[..s].iter().map(|c| c.len_utf8()).sum();
                             o.push_str(&cv[..s].iter().collect::<String>());
-                            o.push_str(&eval_repl_for_match(&span_text, span_byte));
+                            // c:2543 — patoffset is a CHARACTER offset, so `s`
+                            // (the char index the tail match starts at) goes in
+                            // directly; the old byte sum was wrong under UTF-8.
+                            o.push_str(&eval_repl_for_match(&span_text, ioff(s)));
                         } else {
                             o.push_str(val);
                         }
@@ -11850,7 +11945,7 @@ pub fn paramsubst(
                     // still records [0,0): `${v//a#/X}` with v=""
                     // yields "X".
                     if nn == 0 {
-                        if gms("", &pat) {
+                        if gms("", &pat, 0) {
                             o.push_str(&eval_repl_for_match("", 0));
                         }
                         return o;
@@ -11916,7 +12011,7 @@ pub fn paramsubst(
                                     continue;
                                 }
                                 let c: String = cv[q..e].iter().collect();
-                                if gms(&c, &pat) {
+                                if gms(&c, &pat, ioff(q)) {
                                     m = Some(e);
                                     break;
                                 }
@@ -11986,7 +12081,7 @@ pub fn paramsubst(
                                     // publication the old scan did via gms, once
                                     // per real match instead of per position.
                                     let span: String = cv[q..e].iter().collect();
-                                    let _ = gms(&span, &pat);
+                                    let _ = gms(&span, &pat, ioff(q));
                                 }
                                 m = Some(e);
                             }
@@ -11998,7 +12093,7 @@ pub fn paramsubst(
                                     continue;
                                 }
                                 let c: String = cv[q..e].iter().collect();
-                                if gms(&c, &pat) {
+                                if gms(&c, &pat, ioff(q)) {
                                     m = Some(e);
                                     break;
                                 }
@@ -12007,10 +12102,11 @@ pub fn paramsubst(
                         if let Some(e) = m {
                             just_matched = true;
                             let span_text: String = cv[q..e].iter().collect();
-                            let span_byte = cv[..q].iter().map(|c| c.len_utf8()).sum::<usize>();
                             match_count += 1; // c:3057
                             if match_count >= target_global {
-                                o.push_str(&eval_repl_for_match(&span_text, span_byte));
+                                // c:3034 — `ioff` (== `q` here) is the CHARACTER
+                                // offset of the trial slice, per c:2285-2286.
+                                o.push_str(&eval_repl_for_match(&span_text, ioff(q)));
                             } else {
                                 // Before the Nth match — copy the matched
                                 // span verbatim (no replacement, no
@@ -12066,7 +12162,7 @@ pub fn paramsubst(
                                 prog.0.globflags,
                             ) == Some(0)
                         } else {
-                            gms("", &pat)
+                            gms("", &pat, ioff(nn))
                         };
                         // anchor_ok(nn, nn): a start-ONLY anchor can't match at
                         // the end (unless the whole string is empty); an end
@@ -12077,9 +12173,11 @@ pub fn paramsubst(
                             match_count += 1; // c:3057
                             if match_count >= target_global {
                                 if pat_needs_per_match {
-                                    let _ = gms("", &pat);
+                                    let _ = gms("", &pat, ioff(nn));
                                 }
-                                o.push_str(&eval_repl_for_match("", byte_off[nn]));
+                                // c:3034 — `ioff` at the end position is `nn`,
+                                // the CHARACTER count of the subject.
+                                o.push_str(&eval_repl_for_match("", ioff(nn)));
                             }
                         }
                     }
@@ -12401,7 +12499,10 @@ pub fn paramsubst(
                 };
                 let raw_repl_clone = raw_repl.clone();
                 let repl_default = repl.clone();
-                let resolve_repl = move |span_text: &str, span_start_byte: usize| -> String {
+                // `span_start_units` is C's `patoffset` for this match, already
+                // in `iincchar` units (bytes without MULTIBYTE, characters
+                // with it) — see `pattern::ioff_of_char`.
+                let resolve_repl = move |span_text: &str, span_start_units: i32| -> String {
                     if !pat_has_m_one {
                         return repl_default.clone();
                     }
@@ -12411,10 +12512,19 @@ pub fn paramsubst(
                     } else {
                         1
                     };
-                    crate::ported::params::setiparam("MBEGIN", span_start_byte as i64 + base);
+                    // c:Src/pattern.c:2543-2546 — MBEGIN/MEND are built from
+                    // `patoffset` and `CHARSUB(patinstart, patinput)`, which are
+                    // BOTH in `iincchar` units (c:Src/glob.c:2818-2825):
+                    // characters under MULTIBYTE, bytes without it
+                    // (c:Src/utils.c:5795). `chars().count()` here was
+                    // unconditionally character-based.
+                    crate::ported::params::setiparam("MBEGIN", span_start_units as i64 + base);
                     crate::ported::params::setiparam(
                         "MEND",
-                        (span_start_byte as i64 + span_text.len() as i64 + base).saturating_sub(1),
+                        (span_start_units as i64
+                            + crate::ported::pattern::charsub(span_text, span_text.len()) as i64
+                            + base)
+                            .saturating_sub(1),
                     );
                     let saved_skip = SKIP_FILESUB.with(|c| c.get());
                     SKIP_FILESUB.with(|c| c.set(true));
@@ -12467,7 +12577,7 @@ pub fn paramsubst(
                 // c:Src/pattern.c:2570-2621 — `(#b)` array
                 // publication lives inside pattryrefs now; plain
                 // pattry via `gms` carries it. Bug #590 history.
-                let gms = |s_: &str, p_: &str| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — tokenize +
                     // patcompile + pattry. Captures, (#b) $match
                     // arrays and (#m) $MATCH now publish INSIDE
@@ -12476,6 +12586,11 @@ pub fn paramsubst(
                     // former vm_helper::glob_match_static wrapper is
                     // gone. Silent false on bad pattern (caller arms
                     // pre-validate where C zerrs).
+                    //
+                    // c:Src/glob.c:2964/3034 — the substitution scan calls
+                    // `pattrylen(..., ioff)` with the CHARACTER offset of the
+                    // trial slice, which pattryrefs folds into every reported
+                    // $mbegin/$mend (c:2596-2610). `pattry` hardcodes 0.
                     match crate::ported::pattern::patcompile(
                         &{
                             let mut t_ = p_.to_string();
@@ -12485,11 +12600,31 @@ pub fn paramsubst(
                         crate::ported::zsh_h::PAT_HEAPDUP,
                         None,
                     ) {
-                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        Some(pr_) => crate::ported::pattern::pattrylen(
+                            &pr_,
+                            s_,
+                            s_.len() as i32,
+                            -1,
+                            None,
+                            off_,
+                        ),
                         None => false,
                     }
                 };
                 let replace_one = |val: &str| -> String {
+                    // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
+                    // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
+                    // one character when it is set, i.e. `charsub`'s unit
+                    // (c:Src/pattern.c:2008). Convert the scan's character index
+                    // before it becomes `patoffset`.
+                    let ioff = |ci: usize| -> i32 {
+                        let b = val
+                            .char_indices()
+                            .nth(ci)
+                            .map(|(x, _)| x)
+                            .unwrap_or(val.len());
+                        crate::ported::pattern::charsub(val, b) as i32
+                    };
                     // c:Src/glob.c getmatch → Src/pattern.c patmatch — the
                     // ENGINE's leftmost match at char position `start` (greedy
                     // length, but FIRST-BRANCH alternation: `(a|ab)` matches
@@ -12538,7 +12673,7 @@ pub fn paramsubst(
                             Some(ci)
                         };
                     if let Some(whole_pat) = both_anchor_pat {
-                        if gms(val, whole_pat) {
+                        if gms(val, whole_pat, 0) {
                             let dyn_repl = resolve_repl(val, 0);
                             return dyn_repl;
                         }
@@ -12554,7 +12689,7 @@ pub fn paramsubst(
                         if let Some(end) = match_end_at(anchor_pat, 0, &cv) {
                             let cand: String = cv[..end].iter().collect();
                             if anchor_pat.contains("(#b)") || anchor_pat.contains("(#m)") {
-                                let _ = gms(&cand, anchor_pat);
+                                let _ = gms(&cand, anchor_pat, 0);
                             }
                             let dyn_repl = resolve_repl(&cand, 0);
                             return format!("{}{}", dyn_repl, cv[end..].iter().collect::<String>());
@@ -12565,10 +12700,10 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if gms(&cand, anchor_pat) {
-                                let span_byte: usize =
-                                    cv[..start].iter().map(|c| c.len_utf8()).sum();
-                                let dyn_repl = resolve_repl(&cand, span_byte);
+                            if gms(&cand, anchor_pat, ioff(start)) {
+                                // c:2543 — patoffset (`ioff`) is a CHARACTER
+                                // offset, so `start` goes in unconverted.
+                                let dyn_repl = resolve_repl(&cand, ioff(start));
                                 return format!(
                                     "{}{}",
                                     cv[..start].iter().collect::<String>(),
@@ -12622,7 +12757,7 @@ pub fn paramsubst(
                         // "Xbc"). set_pat_start sets PAT_NOTSTART when
                         // l != 0, so (#s) fails the pre-check on
                         // non-empty input — gate it the same way.
-                        if substr_short && (!has_start_anchor || nn == 0) && gms("", &pat) {
+                        if substr_short && (!has_start_anchor || nn == 0) && gms("", &pat, 0) {
                             let dyn_repl = resolve_repl("", 0);
                             return format!("{}{}", dyn_repl, val);
                         }
@@ -12658,16 +12793,15 @@ pub fn paramsubst(
                                     if count < target {
                                         continue;
                                     }
-                                    let span_byte: usize =
-                                        cv[..start].iter().map(|c| c.len_utf8()).sum();
                                     let cand: String = cv[start..end].iter().collect();
                                     // Publish (#b)/(#m) $match/$MATCH captures for
                                     // the committed span before evaluating the
                                     // replacement (patmatch above didn't set them).
                                     if pat.contains("(#b)") || pat.contains("(#m)") {
-                                        let _ = gms(&cand, &pat);
+                                        let _ = gms(&cand, &pat, ioff(start));
                                     }
-                                    let dyn_repl = resolve_repl(&cand, span_byte);
+                                    // c:3034 — `ioff` is the CHARACTER offset.
+                                    let dyn_repl = resolve_repl(&cand, ioff(start));
                                     let mut out = String::with_capacity(val.len());
                                     out.extend(cv[..start].iter());
                                     out.push_str(&dyn_repl);
@@ -12697,16 +12831,15 @@ pub fn paramsubst(
                             };
                             for end in end_iter {
                                 let cand: String = cv[start..end].iter().collect();
-                                if gms(&cand, &pat) {
+                                if gms(&cand, &pat, ioff(start)) {
                                     count += 1; // c:3057 `--n`
                                     if count < target {
                                         // c:3063-3071 — not the Nth match
                                         // yet: continue from the next start.
                                         break;
                                     }
-                                    let span_byte: usize =
-                                        cv[..start].iter().map(|c| c.len_utf8()).sum();
-                                    let dyn_repl = resolve_repl(&cand, span_byte);
+                                    // c:3034 — `ioff` is the CHARACTER offset.
+                                    let dyn_repl = resolve_repl(&cand, ioff(start));
                                     let mut out = String::with_capacity(val.len());
                                     out.extend(cv[..start].iter());
                                     out.push_str(&dyn_repl);
@@ -12855,7 +12988,7 @@ pub fn paramsubst(
                 // relevant here when B/E/N suppress the implied
                 // SUB_REST, c:Src/subst.c:3176-3177).
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
-                let gms = |s_: &str, p_: &str| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — tokenize +
                     // patcompile + pattry. Captures, (#b) $match
                     // arrays and (#m) $MATCH now publish INSIDE
@@ -12873,13 +13006,37 @@ pub fn paramsubst(
                         crate::ported::zsh_h::PAT_HEAPDUP,
                         None,
                     ) {
-                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        // c:Src/glob.c:2964 igetmatch — the tail/suffix scan passes
+                        // `ioff`, the CHARACTER offset of the trial slice, so
+                        // pattryrefs reports $mbegin/$mend relative to the WHOLE
+                        // string (c:2596-2610). `pattry` hardcodes offset 0.
+                        Some(pr_) => crate::ported::pattern::pattrylen(
+                            &pr_,
+                            s_,
+                            s_.len() as i32,
+                            -1,
+                            None,
+                            off_,
+                        ),
                         None => false,
                     }
                 };
                 let strip_one = |val: &str, op: u8| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
+                    // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
+                    // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
+                    // one character when it is set, i.e. `charsub`'s unit
+                    // (c:Src/pattern.c:2008). Convert the scan's character index
+                    // before it becomes `patoffset`.
+                    let ioff = |ci: usize| -> i32 {
+                        let b = val
+                            .char_indices()
+                            .nth(ci)
+                            .map(|(x, _)| x)
+                            .unwrap_or(val.len());
+                        crate::ported::pattern::charsub(val, b) as i32
+                    };
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = match op {
                         1 => {
@@ -12890,7 +13047,7 @@ pub fn paramsubst(
                                     for k in (0..=(nn - start)).rev() {
                                         let candidate: String =
                                             cv[start..start + k].iter().collect();
-                                        if gms(&candidate, &p) {
+                                        if gms(&candidate, &p, ioff(start)) {
                                             found = Some((start, start + k));
                                             break 'outer;
                                         }
@@ -12909,7 +13066,7 @@ pub fn paramsubst(
                                     // the captures from the matched prefix. No-op
                                     // for patterns without (#b) (GF_BACKREF gate
                                     // inside the helper).
-                                    if gms(&prefix, &p) {
+                                    if gms(&prefix, &p, 0) {
                                         found = Some((0, k));
                                         break;
                                     }
@@ -13060,7 +13217,7 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
-                let gms = |s_: &str, p_: &str| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — tokenize +
                     // patcompile + pattry. Captures, (#b) $match
                     // arrays and (#m) $MATCH now publish INSIDE
@@ -13078,12 +13235,36 @@ pub fn paramsubst(
                         crate::ported::zsh_h::PAT_HEAPDUP,
                         None,
                     ) {
-                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        // c:Src/glob.c:2964 igetmatch — the tail/suffix scan passes
+                        // `ioff`, the CHARACTER offset of the trial slice, so
+                        // pattryrefs reports $mbegin/$mend relative to the WHOLE
+                        // string (c:2596-2610). `pattry` hardcodes offset 0.
+                        Some(pr_) => crate::ported::pattern::pattrylen(
+                            &pr_,
+                            s_,
+                            s_.len() as i32,
+                            -1,
+                            None,
+                            off_,
+                        ),
                         None => false,
                     }
                 };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
+                    // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
+                    // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
+                    // one character when it is set, i.e. `charsub`'s unit
+                    // (c:Src/pattern.c:2008). Convert the scan's character index
+                    // before it becomes `patoffset`.
+                    let ioff = |ci: usize| -> i32 {
+                        let b = val
+                            .char_indices()
+                            .nth(ci)
+                            .map(|(x, _)| x)
+                            .unwrap_or(val.len());
+                        crate::ported::pattern::charsub(val, b) as i32
+                    };
                     let total = cv.len();
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = (|| {
@@ -13100,7 +13281,7 @@ pub fn paramsubst(
                             for start in 0..=total {
                                 for k in 0..=(total - start) {
                                     let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, &p) {
+                                    if gms(&candidate, &p, ioff(start)) {
                                         count += 1; // c:3057 `--n`
                                         if count >= target {
                                             return Some((start, start + k));
@@ -13117,7 +13298,7 @@ pub fn paramsubst(
                         for k in 0..=total {
                             let prefix: String = cv[..k].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if gms(&prefix, &p) {
+                            if gms(&prefix, &p, 0) {
                                 return Some((0, k));
                             }
                         }
@@ -13261,7 +13442,7 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
-                let gms = |s_: &str, p_: &str| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — see the
                     // sibling closure above (captures/(#b)/(#m) now
                     // publish inside pattryrefs).
@@ -13274,22 +13455,62 @@ pub fn paramsubst(
                         crate::ported::zsh_h::PAT_HEAPDUP,
                         None,
                     ) {
-                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        // c:Src/glob.c:2964 igetmatch — the suffix scan passes `ioff`,
+                        // the CHARACTER offset of the trial slice, so pattryrefs
+                        // reports $mbegin/$mend relative to the WHOLE string
+                        // (c:2596-2610). `pattry` hardcodes offset 0.
+                        Some(pr_) => crate::ported::pattern::pattrylen(
+                            &pr_,
+                            s_,
+                            s_.len() as i32,
+                            -1,
+                            None,
+                            off_,
+                        ),
                         None => false,
                     }
                 };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
+                    // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
+                    // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
+                    // one character when it is set, i.e. `charsub`'s unit
+                    // (c:Src/pattern.c:2008). Convert the scan's character index
+                    // before it becomes `patoffset`.
+                    let ioff = |ci: usize| -> i32 {
+                        let b = val
+                            .char_indices()
+                            .nth(ci)
+                            .map(|(x, _)| x)
+                            .unwrap_or(val.len());
+                        crate::ported::pattern::charsub(val, b) as i32
+                    };
                     let total = cv.len();
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = (|| {
                         if substr_mode {
+                            // c:Src/glob.c:3110-3116 — `case (SUB_END|SUB_SUBSTR)`
+                            // and `case (SUB_END|SUB_LONG|SUB_SUBSTR)` share this
+                            // opening probe:
+                            //   `pattrylen(p, send, 0, 0, &patstralloc, umltot)`
+                            // The EMPTY trial at the end of the subject carries
+                            // `umltot` as its `patoffset`, and `umltot` is
+                            // `ztrlen(*sp)` (c:Src/glob.c:2845) — unmetafied
+                            // BYTES (c:Src/utils.c:5136), never characters, even
+                            // under MULTIBYTE. On success C returns at once with
+                            // `get_match_ret(&imd, umltot, umltot)`, the empty
+                            // span at the end. Plain `%%` (no SUB_SUBSTR) has no
+                            // such probe — its arm at c:3186 walks `ioff` all the
+                            // way to `send` instead — hence the substr_mode gate.
+                            if gms("", &p, val.len() as i32) {
+                                return Some((total, total));
+                            }
                             // Rightmost longest substring match.
                             let mut best: Option<(usize, usize)> = None;
                             for start in 0..=total {
                                 for k in (0..=(total - start)).rev() {
                                     let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, &p) {
+                                    if gms(&candidate, &p, ioff(start)) {
                                         best = Some((start, start + k));
                                         break;
                                     }
@@ -13302,43 +13523,15 @@ pub fn paramsubst(
                             let suffix_start_char = total - k;
                             let suffix: String = cv[suffix_start_char..].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if gms(&suffix, &p) {
-                                // c:Src/pattern.c:2425 `setiparam("MBEGIN",
-                                // patoffset + !isset(KSHARRAYS))` — captures
-                                // come back relative to the matched substring;
-                                // user expects offsets in the ORIGINAL string,
-                                // so add the suffix's start byte offset to
-                                // every $mbegin / $mend slot.
-                                let suffix_byte_off: usize =
-                                    cv[..suffix_start_char].iter().map(|c| c.len_utf8()).sum();
-                                if suffix_byte_off > 0 {
-                                    if let Some(b) = crate::ported::params::getaparam("mbegin") {
-                                        let shifted: Vec<String> = b
-                                            .iter()
-                                            .map(|s| {
-                                                s.parse::<i64>()
-                                                    .map(|n| {
-                                                        (n + suffix_byte_off as i64).to_string()
-                                                    })
-                                                    .unwrap_or_else(|_| s.clone())
-                                            })
-                                            .collect();
-                                        crate::ported::params::setaparam("mbegin", shifted);
-                                    }
-                                    if let Some(e) = crate::ported::params::getaparam("mend") {
-                                        let shifted: Vec<String> = e
-                                            .iter()
-                                            .map(|s| {
-                                                s.parse::<i64>()
-                                                    .map(|n| {
-                                                        (n + suffix_byte_off as i64).to_string()
-                                                    })
-                                                    .unwrap_or_else(|_| s.clone())
-                                            })
-                                            .collect();
-                                        crate::ported::params::setaparam("mend", shifted);
-                                    }
-                                }
+                            // c:Src/glob.c:2964 — `pattrylen(p, t, umlen, 0,
+                            // &patstralloc, ioff)`: the suffix's CHARACTER
+                            // start is handed to the matcher as `patoffset`,
+                            // and pattryrefs (c:2596-2610) folds it into every
+                            // $mbegin/$mend slot itself. The former post-hoc
+                            // shift of the published arrays added a BYTE offset
+                            // instead, so any non-ASCII prefix reported the
+                            // wrong positions.
+                            if gms(&suffix, &p, ioff(suffix_start_char)) {
                                 return Some((suffix_start_char, total));
                             }
                             if k == 0 {
@@ -13476,7 +13669,7 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
-                let gms = |s_: &str, p_: &str| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — see the
                     // sibling closure above (captures/(#b)/(#m) now
                     // publish inside pattryrefs).
@@ -13489,33 +13682,112 @@ pub fn paramsubst(
                         crate::ported::zsh_h::PAT_HEAPDUP,
                         None,
                     ) {
-                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        // c:Src/glob.c:2964 igetmatch — the suffix scan passes `ioff`,
+                        // the CHARACTER offset of the trial slice, so pattryrefs
+                        // reports $mbegin/$mend relative to the WHOLE string
+                        // (c:2596-2610). `pattry` hardcodes offset 0.
+                        Some(pr_) => crate::ported::pattern::pattrylen(
+                            &pr_,
+                            s_,
+                            s_.len() as i32,
+                            -1,
+                            None,
+                            off_,
+                        ),
                         None => false,
                     }
                 };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
+                    // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
+                    // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
+                    // one character when it is set, i.e. `charsub`'s unit
+                    // (c:Src/pattern.c:2008). Convert the scan's character index
+                    // before it becomes `patoffset`.
+                    let ioff = |ci: usize| -> i32 {
+                        let b = val
+                            .char_indices()
+                            .nth(ci)
+                            .map(|(x, _)| x)
+                            .unwrap_or(val.len());
+                        crate::ported::pattern::charsub(val, b) as i32
+                    };
                     let total = cv.len();
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = (|| {
+                        // c:Src/glob.c:2957 (SUB_END) and c:Src/glob.c:3111
+                        // (SUB_END|SUB_SUBSTR) both open with
+                        //   `pattrylen(p, send, 0, 0, &patstralloc, umltot)`
+                        // — the EMPTY trial at the end of the subject, whose
+                        // `patoffset` is `umltot`, not `ioff`. `umltot` is
+                        // `ztrlen(*sp)` (c:Src/glob.c:2845), which counts
+                        // unmetafied BYTES (c:Src/utils.c:5136) with no
+                        // MULTIBYTE test, so this one offset is byte-based even
+                        // when every other offset in the function is a
+                        // character count. When it matches, C returns
+                        // immediately with `get_match_ret(&imd, umltot,
+                        // umltot)` — the empty span at the end.
+                        if gms("", &p, val.len() as i32) {
+                            return Some((total, total));
+                        }
                         if substr_mode {
                             // Rightmost shortest substring match.
                             let mut best: Option<(usize, usize)> = None;
                             for start in 0..=total {
                                 for k in 0..=(total - start) {
                                     let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, &p) {
+                                    if gms(&candidate, &p, ioff(start)) {
                                         best = Some((start, start + k));
                                         break;
                                     }
                                 }
+                            }
+                            // c:Src/glob.c:3156-3167 — after the scan loop picks
+                            // `tmatch`, the SHORTEST-match refinement re-runs the
+                            // matcher over growing prefixes of the match:
+                            //   `for (t = tmatch, umlen = 0; t < mpos; ) {
+                            //        if (pattrylen(p, tmatch, umlen, 0,
+                            //                      &patstralloc, ioff)) { … } }`
+                            // That `ioff` is NOT `tmatch`'s offset — it is the
+                            // counter left over from the scan loop at c:3130
+                            // (`for (ioff = 0, t = s, umlen = umltot; t < send;
+                            // ioff++)`), so it holds the subject's FULL size in
+                            // `iincchar` units. When the refinement succeeds it
+                            // is the last call to publish $match/$mbegin/$mend,
+                            // so those come out shifted by the whole string
+                            // length. Reproduce it: the refinement only succeeds
+                            // when some prefix shorter than the longest match at
+                            // this position also matches, i.e. when the longest
+                            // match here is strictly longer than the shortest one
+                            // already chosen. (c:3158 skips the refinement for
+                            // SUB_LONG — plain `%%` — and for PAT_PURES literals,
+                            // both of which have shortest == longest anyway.)
+                            if let Some((b, e)) = best {
+                                let mut longest = e;
+                                for k in (0..=(total - b)).rev() {
+                                    let candidate: String = cv[b..b + k].iter().collect();
+                                    if gms(&candidate, &p, ioff(b)) {
+                                        longest = b + k;
+                                        break;
+                                    }
+                                }
+                                // Re-publish the chosen span last so the probes
+                                // above don't leave stale capture arrays behind.
+                                let span: String = cv[b..e].iter().collect();
+                                let off = if longest > e {
+                                    // c:3130 leftover `ioff` == whole-subject size.
+                                    crate::ported::pattern::charsub(val, val.len()) as i32
+                                } else {
+                                    ioff(b)
+                                };
+                                let _ = gms(&span, &p, off);
                             }
                             return best;
                         }
                         for k in 0..=total {
                             let suffix: String = cv[total - k..].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if gms(&suffix, &p) {
+                            if gms(&suffix, &p, ioff(total - k)) {
                                 return Some((total - k, total));
                             }
                         }
@@ -21124,64 +21396,102 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
     if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
         return None;
     }
-    if let Some(mut m) = paramtab_hashed_storage()
-        .lock()
-        .ok()
-        .and_then(|s| s.get(resolved.as_str()).cloned())
-    {
-        // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
-        // integer, never stored data; splice the current value in so whole-map
-        // reads (`${(kv)compstate}`, `${compstate[@]}`) see it like C's getter.
-        if resolved == "compstate" {
-            m.insert(
-                "nmatches".to_string(),
-                crate::ported::zle::compcore::get_compstate_str("nmatches")
-                    .unwrap_or_else(|| "0".to_string()),
-            );
-        }
-        // c:Src/hashtable.c scanhashtable — an associative array enumerates
-        // in zsh hash-bucket order, not insertion order. The store keeps an
-        // insertion-ordered IndexMap, so rebuild zsh's bucket layout to
-        // recover the visit order before any whole-map consumer
-        // ((k)/(v)/(kv)/[@]/[*]/(r)/(R)/(i)/(I)) iterates it. Single-key
-        // `.get()` is order-independent and unaffected. Inlined composite of
-        // addhashnode2 front insertion (c:217), expandhashtable ×4 growth
-        // (c:457), and scanmatchtable's unsorted bucket walk (c:426).
-        let keys: Vec<String> = m.keys().cloned().collect();
-        let mut hsize = 17usize; // c:Src/params.c:1602 newparamtable(17, …)
-        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); hsize];
-        let mut ct = 0usize; // c:Src/hashtable.c:118 ct = 0
-        for (i, k) in keys.iter().enumerate() {
-            let hv = (crate::ported::hashtable::hasher(k) as usize) % hsize; // c:176
-            buckets[hv].insert(0, i); // c:217 prepend to bucket chain
-            ct += 1; // c:219 ++ht->ct
-            if ct >= hsize * 2 {
-                // c:219 → expandhashtable
-                let new_size = hsize * 4; // c:466 hsize = osize * 4
-                let old = std::mem::replace(&mut buckets, vec![Vec::new(); new_size]);
-                hsize = new_size;
-                ct = 0; // c:468
-                for chain in old {
-                    // c:472 walk old buckets in order, chain head→tail
-                    for idx in chain {
-                        let hv = (crate::ported::hashtable::hasher(&keys[idx]) as usize) % hsize;
-                        buckets[hv].insert(0, idx); // c:475 addnode (front insert)
-                        ct += 1;
+    // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
+    // integer, never stored data; splice the current value in so whole-map
+    // reads (`${(kv)compstate}`, `${compstate[@]}`) see it like C's getter.
+    // Taken BEFORE the store lock so the getter can never re-enter it.
+    let live_nmatches = if resolved == "compstate" {
+        Some(
+            crate::ported::zle::compcore::get_compstate_str("nmatches")
+                .unwrap_or_else(|| "0".to_string()),
+        )
+    } else {
+        None
+    };
+    if let Some(store) = paramtab_hashed_storage().lock().ok() {
+        if let Some(stored) = store.get(resolved.as_str()) {
+            // Only `compstate` needs a mutated copy; every other assoc is
+            // read straight out of the store with no whole-map clone.
+            let spliced;
+            let m: &indexmap::IndexMap<String, String> = match live_nmatches {
+                Some(v) => {
+                    let mut t = stored.clone();
+                    t.insert("nmatches".to_string(), v);
+                    spliced = t;
+                    &spliced
+                }
+                None => stored,
+            };
+            // c:Src/hashtable.c scanhashtable — an associative array
+            // enumerates in zsh hash-bucket order, not insertion order. The
+            // store keeps an insertion-ordered IndexMap, so rebuild zsh's
+            // bucket layout to recover the visit order before any whole-map
+            // consumer ((k)/(v)/(kv)/[@]/[*]/(r)/(R)/(i)/(I)) iterates it.
+            // Single-key `.get()` is order-independent and unaffected.
+            // Inlined composite of addhashnode2's front insertion (c:217),
+            // expandhashtable's ×4 growth (c:457), and scanmatchtable's
+            // unsorted bucket walk (c:426).
+            //
+            // The chains are held the way C holds them: an intrusive
+            // singly-linked list (`head[bucket]` = first index, `next[i]` =
+            // following index, -1 = NULL), so a prepend is two stores exactly
+            // like C's `hn->next = ht->nodes[hashval]`. Each key is hashed
+            // ONCE (c:86 hasher is a pure function of the string); growth only
+            // re-takes the modulo. The earlier `Vec<Vec<usize>>` +
+            // `insert(0, …)` shape cloned the whole key list and re-hashed
+            // every key on every ×4 growth — on the 51,709-entry `$_comps`
+            // that is ~98k hash calls and ~103k String allocations per read.
+            let keys: Vec<&str> = m.keys().map(String::as_str).collect();
+            let n = keys.len();
+            let hashes: Vec<u32> = keys
+                .iter()
+                .map(|k| crate::ported::hashtable::hasher(k)) // c:86
+                .collect();
+            let mut hsize = 17usize; // c:Src/params.c:1602 newparamtable(17, …)
+            let mut head: Vec<i32> = vec![-1; hsize];
+            let mut next: Vec<i32> = vec![-1; n];
+            let mut ct = 0usize; // c:118 ct = 0
+            for i in 0..n {
+                let hv = (hashes[i] as usize) % hsize; // c:176
+                next[i] = head[hv]; // c:217 prepend to bucket chain
+                head[hv] = i as i32; // c:218
+                ct += 1; // c:219 ++ht->ct
+                if ct >= hsize * 2 {
+                    // c:219 → expandhashtable
+                    let osize = hsize; // c:463
+                    hsize = osize * 4; // c:466
+                    let old_head = std::mem::replace(&mut head, vec![-1; hsize]); // c:464/467
+                    ct = 0; // c:468
+                    for b in 0..osize {
+                        // c:472 walk old buckets in index order
+                        let mut p = old_head[b];
+                        while p >= 0 {
+                            // c:473 chain head→tail
+                            let idx = p as usize;
+                            let nxt = next[idx]; // c:474 hp = hn->next, saved before relink
+                            let hv = (hashes[idx] as usize) % hsize;
+                            next[idx] = head[hv]; // c:475 addnode → front insert
+                            head[hv] = idx as i32;
+                            ct += 1;
+                            p = nxt; // c:476
+                        }
                     }
                 }
             }
-        }
-        let mut reordered = indexmap::IndexMap::with_capacity(m.len());
-        for chain in &buckets {
-            // c:426 buckets 0..hsize
-            for &i in chain {
-                // c:427 chain head→tail
-                if let Some((k, v)) = m.get_index(i) {
-                    reordered.insert(k.clone(), v.clone());
+            let mut reordered = indexmap::IndexMap::with_capacity(n);
+            for b in 0..hsize {
+                // c:426 buckets 0..hsize
+                let mut p = head[b];
+                while p >= 0 {
+                    // c:427 chain head→tail
+                    if let Some((k, v)) = m.get_index(p as usize) {
+                        reordered.insert(k.clone(), v.clone());
+                    }
+                    p = next[p as usize];
                 }
             }
+            return Some(reordered);
         }
-        return Some(reordered);
     }
     // c:Src/Modules/parameter.c:2235+ — PM_HASHED magic assocs
     // (functions/aliases/commands/builtins/…): materialize via the
@@ -21274,42 +21584,58 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
     if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
         return None;
     }
-    if let Some(m) = paramtab_hashed_storage()
-        .lock()
-        .ok()
-        .and_then(|s| s.get(resolved.as_str()).cloned())
-    {
-        // Same hash-bucket reorder as assoc_get (see there for the C
-        // provenance), but collect only keys.
-        let keys: Vec<String> = m.keys().cloned().collect();
-        let mut hsize = 17usize;
-        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); hsize];
-        let mut ct = 0usize;
-        for (i, k) in keys.iter().enumerate() {
-            let hv = (crate::ported::hashtable::hasher(k) as usize) % hsize;
-            buckets[hv].insert(0, i);
-            ct += 1;
-            if ct >= hsize * 2 {
-                let new_size = hsize * 4;
-                let old = std::mem::replace(&mut buckets, vec![Vec::new(); new_size]);
-                hsize = new_size;
-                ct = 0;
-                for chain in old {
-                    for idx in chain {
-                        let hv = (crate::ported::hashtable::hasher(&keys[idx]) as usize) % hsize;
-                        buckets[hv].insert(0, idx);
-                        ct += 1;
+    if let Some(store) = paramtab_hashed_storage().lock().ok() {
+        if let Some(m) = store.get(resolved.as_str()) {
+            // Same hash-bucket reorder as assoc_get (see there for the C
+            // provenance: c:217 front insert, c:457 ×4 growth, c:426 walk),
+            // but collect only keys.
+            let keys: Vec<&str> = m.keys().map(String::as_str).collect();
+            let n = keys.len();
+            let hashes: Vec<u32> = keys
+                .iter()
+                .map(|k| crate::ported::hashtable::hasher(k)) // c:86
+                .collect();
+            let mut hsize = 17usize; // c:Src/params.c:1602
+            let mut head: Vec<i32> = vec![-1; hsize];
+            let mut next: Vec<i32> = vec![-1; n];
+            let mut ct = 0usize; // c:118
+            for i in 0..n {
+                let hv = (hashes[i] as usize) % hsize; // c:176
+                next[i] = head[hv]; // c:217
+                head[hv] = i as i32; // c:218
+                ct += 1; // c:219
+                if ct >= hsize * 2 {
+                    let osize = hsize; // c:463
+                    hsize = osize * 4; // c:466
+                    let old_head = std::mem::replace(&mut head, vec![-1; hsize]); // c:467
+                    ct = 0; // c:468
+                    for b in 0..osize {
+                        // c:472
+                        let mut p = old_head[b];
+                        while p >= 0 {
+                            let idx = p as usize;
+                            let nxt = next[idx]; // c:474
+                            let hv = (hashes[idx] as usize) % hsize;
+                            next[idx] = head[hv]; // c:475
+                            head[hv] = idx as i32;
+                            ct += 1;
+                            p = nxt; // c:476
+                        }
                     }
                 }
             }
-        }
-        let mut out: Vec<String> = Vec::with_capacity(keys.len());
-        for chain in &buckets {
-            for &i in chain {
-                out.push(keys[i].clone());
+            let mut out: Vec<String> = Vec::with_capacity(n);
+            for b in 0..hsize {
+                // c:426
+                let mut p = head[b];
+                while p >= 0 {
+                    // c:427
+                    out.push(keys[p as usize].to_string());
+                    p = next[p as usize];
+                }
             }
+            return Some(out);
         }
-        return Some(out);
     }
     // Fast direct read for `functions`/`dis_functions`, bypassing the
     // scanfn indirection below. The generic PARTAB path boxes a
@@ -22937,6 +23263,57 @@ mod tests {
         }
     }
 
+    /// `${(@)a[1,3]:#--}` must filter the SLICE, not the whole array.
+    ///
+    /// c:Src/subst.c:2927 sets `aval = getarrvalue(v)` — the value with the
+    /// subscript already applied — and c:3444 `getmatcharr(&aval, …)` filters
+    /// exactly that. zshrs re-read the backing array at the operator, so the
+    /// range was discarded and elements past the slice leaked through.
+    ///
+    /// This is `_describe`'s option-group scan, verbatim:
+    ///     _opts=( "${(@)argv[1,(i)--]:#--}" )
+    ///     shift "$#_opts"
+    /// With four elements instead of two, `shift` over-ran the `--` and the
+    /// next iteration eval'd a compadd match-spec as a parameter NAME:
+    ///     (eval):1: not an identifier: [_-]=* r:|=*[@]
+    /// Reference zsh 5.9.2:
+    ///     % a=(-M spec -- d2 a2); print -r -- "<${(@)a[1,3]:#--}>"
+    ///     <-M spec>
+    #[test]
+    fn paramsubst_arr_filter_hash_honors_the_range_subscript() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PSD2R",
+            &["-M", "spec", "--", "d2", "a2"],
+            "${(@)PSD2R[1,3]:#--}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["-M", "spec"]);
+        } else {
+            assert_eq!(out, "-M spec", "zsh: ${{(@)a[1,3]:#--}} → '-M spec'");
+        }
+    }
+
+    /// The `[@]` splat has no slice to preserve, so the same code path must
+    /// still filter the FULL array — the guard above must not starve it.
+    /// Reference zsh 5.9.2:
+    ///     % a=(-M spec -- d2 a2); print -r -- "<${(@)a[@]:#--}>"
+    ///     <-M spec d2 a2>
+    #[test]
+    fn paramsubst_arr_filter_hash_at_splat_still_sees_whole_array() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PSD2S",
+            &["-M", "spec", "--", "d2", "a2"],
+            "${(@)PSD2S[@]:#--}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["-M", "spec", "d2", "a2"]);
+        } else {
+            assert_eq!(out, "-M spec d2 a2");
+        }
+    }
+
     // ── Per-element strip ${arr[@]%pat} ────────────────────────────
     /// `${files[@]%.txt}` strips .txt suffix from each element.
     /// zsh: foo.txt bar.txt baz.md → foo bar baz.md (md unaffected).
@@ -23652,6 +24029,69 @@ mod tests {
             e.as_deref(),
             Some(&["16".to_string()][..]),
             "Test/D04parameter.ztst:1251 — $mend[1]=16"
+        );
+    }
+
+    /// `Src/glob.c:2818-2825` — `igetmatch` steps its `ioff` counter (the
+    /// `patoffset` handed to `pattrylen`) with `iincchar`, which returns
+    /// `mb_charlenconv()`, and `mb_charlenconv` returns 1 unconditionally
+    /// when the MULTIBYTE option is unset (`Src/utils.c:5795`). So with
+    /// MULTIBYTE off the offsets fed into `$mbegin`/`$mend` are BYTE
+    /// offsets, matching `charsub` (`Src/pattern.c:2008-2009`).
+    ///
+    /// `v=αβγδε; : ${v/(#b)(γδ)/X}` with `unsetopt multibyte`:
+    /// `γ` starts at byte 4, the match is 4 bytes long, so zsh 5.9.2
+    /// reports `$mbegin=(5)` / `$mend=(8)` — not the character-based
+    /// `(3)`/`(6)` that a unit-blind port produces.
+    #[test]
+    fn paramsubst_pound_b_offsets_are_bytes_without_multibyte() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+        crate::ported::options::opt_state_set("multibyte", false);
+        let _ = psubst_one("ZP_MBU1", "αβγδε", "${ZP_MBU1/(#b)(γδ)/X}");
+        let b = crate::ported::params::getaparam("mbegin");
+        let e = crate::ported::params::getaparam("mend");
+        crate::ported::options::opt_state_set("multibyte", saved);
+        assert_eq!(
+            b.as_deref(),
+            Some(&["5".to_string()][..]),
+            "c:Src/glob.c:2818 — ioff is a BYTE offset without MULTIBYTE"
+        );
+        assert_eq!(
+            e.as_deref(),
+            Some(&["8".to_string()][..]),
+            "c:Src/pattern.c:2008 — CHARSUB counts bytes without MULTIBYTE"
+        );
+    }
+
+    /// `Src/glob.c:2957` — the `SUB_END` (`%`) arm opens with
+    /// `pattrylen(p, send, 0, 0, &patstralloc, umltot)`: the empty trial at
+    /// the end of the subject carries `umltot` as its `patoffset`, and
+    /// `umltot` is `ztrlen(*sp)` (`Src/glob.c:2845`) which counts unmetafied
+    /// BYTES (`Src/utils.c:5136`) with no MULTIBYTE test. So this single
+    /// offset stays byte-based even when MULTIBYTE is ON and every other
+    /// offset in the function is a character count.
+    ///
+    /// `v=αβγδε; : ${v%(#b)()}` with `setopt multibyte`: zsh 5.9.2 reports
+    /// `$mbegin=(11)` / `$mend=(10)` — 10 bytes, not 5 characters.
+    #[test]
+    fn paramsubst_percent_empty_end_offset_is_bytes_even_with_multibyte() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+        crate::ported::options::opt_state_set("multibyte", true);
+        let _ = psubst_one("ZP_MBU2", "αβγδε", "${ZP_MBU2%(#b)()}");
+        let b = crate::ported::params::getaparam("mbegin");
+        let e = crate::ported::params::getaparam("mend");
+        crate::ported::options::opt_state_set("multibyte", saved);
+        assert_eq!(
+            b.as_deref(),
+            Some(&["11".to_string()][..]),
+            "c:Src/glob.c:2957 — patoffset is umltot (BYTES), not the char count"
+        );
+        assert_eq!(
+            e.as_deref(),
+            Some(&["10".to_string()][..]),
+            "c:Src/glob.c:2957 — umltot = ztrlen (c:Src/utils.c:5136), 10 bytes"
         );
     }
 

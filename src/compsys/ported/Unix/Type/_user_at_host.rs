@@ -23,7 +23,7 @@
 //! The `[[ -prefix 1 *@ ]]` compsys condition (sh:19) — "the word before
 //! the cursor matches `*@`" — is rendered as `PREFIX contains '@'`.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -92,7 +92,7 @@ pub fn _user_at_host(args: &[String]) -> i32 {
         ];
         w.extend(rest);
         w.push("-".to_string());
-        _wanted(&w)
+        wanted_byname(&w)
     } else {
         // sh:26-29 — user branch.
         // sh:27  compset -S '@*' || suf="@"
@@ -117,7 +117,7 @@ pub fn _user_at_host(args: &[String]) -> i32 {
         ];
         w.extend(rest);
         w.push("-".to_string());
-        _wanted(&w)
+        wanted_byname(&w)
     }
 }
 

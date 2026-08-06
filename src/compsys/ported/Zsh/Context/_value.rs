@@ -40,8 +40,8 @@
 //! sh:50  fi
 //! ```
 
-use crate::compsys::ported::_default::_default;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_default::default_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
@@ -100,7 +100,7 @@ pub fn _value(args: &[String]) -> i32 {
         let current = getiparam("CURRENT");
         if current & 1 == 1 {
             // sh:29
-            return _wanted(&[
+            return wanted_byname(&[
                 "association-keys".to_string(),
                 "expl".to_string(),
                 "association key".to_string(),
@@ -166,9 +166,9 @@ pub fn _value(args: &[String]) -> i32 {
         );
         let mut a: Vec<String> = vec!["-r".to_string(), "\\-\\n\\t /:".to_string()];
         a.extend(args.iter().cloned());
-        _default(&a)
+        default_byname(&a)
     } else {
-        _default(args)
+        default_byname(args)
     }
 }
 

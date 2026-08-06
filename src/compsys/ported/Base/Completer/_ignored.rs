@@ -27,7 +27,7 @@
 //! sh:64  return 1
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
@@ -107,7 +107,7 @@ pub fn _ignored() -> i32 {
                     }
                     "menu" => {
                         set_compstate_str("insert", "menu");
-                        let _ = _description(&[
+                        let _ = description_byname(&[
                             "original".to_string(),
                             "expl".to_string(),
                             "original".to_string(),

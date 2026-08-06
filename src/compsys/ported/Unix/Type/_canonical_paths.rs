@@ -40,7 +40,7 @@
 //!  * `-ef` (sh:110) — same-file test via `(dev, ino)` comparison
 //!    (`same_file`).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::module::bin_zmodload;
 use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, unsetparam};
@@ -337,7 +337,7 @@ pub fn _canonical_paths(args: &[String]) -> i32 {
         ];
         wargv.extend(__gopts.iter().cloned());
         wargv.extend(positional.iter().cloned());
-        let ret = _wanted(&wargv);
+        let ret = wanted_byname(&wargv);
         unsetparam("__gopts");
         unsetparam("__opts");
         return ret; // sh:76
@@ -404,7 +404,7 @@ pub fn _canonical_paths(args: &[String]) -> i32 {
     wargv.push("-U".to_string());
     wargv.push("-a".to_string());
     wargv.push("matches".to_string());
-    let ret = _wanted(&wargv); // sh:117-119
+    let ret = wanted_byname(&wargv); // sh:117-119
 
     // Tear down transient by-name arrays used to bridge compadd/_wanted.
     unsetparam("files");

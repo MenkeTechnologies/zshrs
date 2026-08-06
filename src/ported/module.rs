@@ -1570,15 +1570,10 @@ impl modulestab {
                     // for the native binary. A pre-existing value (exported
                     // WATCHFMT, or a real `zmodload zsh/watch` later on)
                     // is left untouched.
-                    let seeded_watchfmt = crate::ported::params::getsparam("WATCHFMT").is_none();
-                    let seeded_logcheck = crate::ported::params::getsparam("LOGCHECK").is_none();
+                    // `boot_` no longer seeds WATCHFMT/LOGCHECK when `m` is
+                    // null (watch.rs's `mid_load` gate), so there is nothing
+                    // left to undo here.
                     crate::ported::modules::watch::boot_(std::ptr::null());
-                    if seeded_watchfmt {
-                        crate::ported::params::unsetparam("WATCHFMT"); // c:756-757
-                    }
-                    if seeded_logcheck {
-                        crate::ported::params::unsetparam("LOGCHECK"); // c:758-759
-                    }
                 }
                 // c:Src/Zle/compctl.c:4016 setup_ — seed the hardwired
                 // default compctls (cc_compos/cc_default/cc_first) the

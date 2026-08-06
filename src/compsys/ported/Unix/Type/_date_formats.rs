@@ -24,7 +24,7 @@
 //! real `bin_compset`. sh:60 uses `$OSTYPE` (via the `OSTYPE` parameter).
 
 use crate::compsys::ported::_describe::_describe;
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -202,13 +202,21 @@ pub fn _date_formats(args: &[String]) -> i32 {
         String::new(),
     ];
     let mut ret = 1;
-    if _describe(&d) == 0 {
+    // sh:108 is a bare command word (`_describe -t date-format-specifier …`),
+    // so it must be reached BY NAME: a user's own `_describe` earlier in
+    // `$fpath` (or defined outright) has to win, and only
+    // `dispatch_function_call` -> `compsys::router::try_rust_dispatch`
+    // consults that. A plain `_describe(&d)` also ran `_describe`'s
+    // `declare_locals` list (_describe.rs:160-192 — 26 unprefixed names
+    // including `csl`, `_opt`, `_i`, `OPTIND`) inside THIS function's
+    // param scope instead of its own.
+    if crate::compsys::ported::shared::call_compfn("_describe", &d, || _describe(&d)) == 0 {
         ret = 0;
     }
 
     // sh:107
     if is_zsh {
-        let _ = _message(&[
+        let _ = message_byname(&[
             "-e".to_string(),
             "date-format-precision".to_string(),
             "precision for %. (1-9)".to_string(),

@@ -24,8 +24,8 @@
 //! sh:36  return 1
 //! ```
 
-use crate::compsys::ported::_alternative::_alternative;
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_alternative::alternative_byname;
+use crate::compsys::ported::_message::message_byname;
 use crate::compsys::ported::_values::_values;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::zle::complete::bin_compset;
@@ -79,7 +79,7 @@ pub fn _file_modes(args: &[String]) -> i32 {
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if prefix.starts_with(|c: char| ('0'..='7').contains(&c)) {
         // sh:24
-        let _ = _message(&[
+        let _ = message_byname(&[
             "-e".to_string(),
             "number".to_string(),
             "numeric mode".to_string(),
@@ -110,7 +110,7 @@ pub fn _file_modes(args: &[String]) -> i32 {
         // sh:28-33
         let _ = compset(&["-P", "*"]);
         setaparam("copts", vec!["-S".to_string(), "".to_string()]);
-        let r = _alternative(&[
+        let r = alternative_byname(&[
             "-O".to_string(),
             "copts".to_string(),
             "who:who:((a\\:all u\\:owner g\\:group o\\:others))".to_string(),

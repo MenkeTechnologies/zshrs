@@ -21,6 +21,25 @@
 //! (value-taking `-C <subcontext>` flag stored in `__targs`).
 //! Delegates to sibling ports `_tags::_tags` and
 //! `_all_labels::_all_labels` for the iteration.
+//!
+//! NOT converted to the `_byname` wrappers, unlike the `_description` calls
+//! in `_next_label` / `_all_labels` / `_requested`. Both callees drive
+//! `comptags`, which is indexed by `locallevel` (`Src/Zle/computil.c:3782`
+//! "Array of tag-set infos. Index is the locallevel", `:3873` `level =
+//! locallevel - (args[0][2] ? 1 : 0)`). Routing them through
+//! `dispatch_function_call` adds `doshfunc`'s `inc_locallevel`
+//! (`src/ported/exec.rs:6131`), moving BOTH the `comptags -i` in `_tags`
+//! and the `comptags -A` in `_all_labels` from `_wanted`'s own level to one
+//! below it. That is what zsh does — `_tags` and `_all_labels` are real
+//! shell functions there — but it flips this module's
+//! `no_matching_tagset_returns_one` test and nine downstream `_hosts` /
+//! `_limits` / `_x_*` `returns_one_without_registered_tags` tests from 1 to
+//! 0, and the flip persists even when the `call_compfn` fallback is made to
+//! carry the same bump (so it is the level shift itself, not the missing
+//! frame). Establishing which answer matches zsh needs a live
+//! completion-context run of `_wanted` in the reference shell; that was not
+//! obtained, so the conversion is deliberately left undone rather than
+//! landed on a guess.
 
 use super::_all_labels::_all_labels;
 use super::_tags::_tags;
@@ -70,6 +89,23 @@ fn run_zparseopts_wanted(args: &[String]) -> (Vec<String>, Vec<String>, Vec<Stri
     // real zsh identifier; zsh operates on positional $argv). Bug #657.
     crate::ported::params::unsetparam(src);
     (remaining, targs, gopt)
+}
+
+/// Reach `_wanted` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_wanted fonts expl font \` (Completion/X/Type/_x_font sh:15)
+/// — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn wanted_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_wanted", args, || _wanted(args))
 }
 
 /// `_wanted` — register tag `$1` and (if requested) loop through

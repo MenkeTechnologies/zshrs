@@ -18,7 +18,7 @@
 //! if absent. When present, the element immediately following `-X` is
 //! forwarded verbatim as the raw message text to `_message -r`.
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 
 /// sh:3 — `$argv[(I)-X]`: highest 1-based index of the literal `-X` in
 /// `args`, or `None` if absent (zsh: `0`, falsy in `(( x ))`).
@@ -39,10 +39,10 @@ pub fn _x_selection_timeout(args: &[String]) -> i32 {
     if let Some(i) = x {
         // sh:6  _message -r "$argv[x + 1]"
         let msg = args.get(i + 1).cloned().unwrap_or_default();
-        _message(&["-r".to_string(), msg])
+        message_byname(&["-r".to_string(), msg])
     } else {
         // sh:8  _message -e values 'selection timeout'
-        _message(&[
+        message_byname(&[
             "-e".to_string(),
             "values".to_string(),
             "selection timeout".to_string(),

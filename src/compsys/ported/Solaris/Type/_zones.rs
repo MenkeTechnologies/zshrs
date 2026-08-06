@@ -12,7 +12,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -91,7 +91,7 @@ pub fn _zones(args: &[String]) -> i32 {
     let zones: Vec<String> = out.split_whitespace().map(String::from).collect();
 
     // sh:10  _description zones expl zone
-    let _ = _description(&["zones".to_string(), "expl".to_string(), "zone".to_string()]);
+    let _ = description_byname(&["zones".to_string(), "expl".to_string(), "zone".to_string()]);
 
     // sh:11  compadd "$@" "$expl[@]" - ${=...}
     let mut cadd: Vec<String> = rest;

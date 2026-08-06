@@ -3434,7 +3434,12 @@ pub fn pattryrefs(
             for i in 0..n {
                 let close_bit = 1u32 << (i + NSUBEXP);
                 let val = if (state.captures_set & close_bit) != 0 {
-                    state.patbeginp[i] as i32 + patoffset
+                    // c:2556-2558 — `CHARSUB(patinstart, *sp)` counts
+                    // CHARACTERS, not bytes (c:1997 charsub honours the
+                    // MULTIBYTE option). `patbeginp[i]` is a byte offset into
+                    // `trial`, so convert before adding the (already
+                    // character-based, c:2285-2286) `patoffset`.
+                    charsub(trial, state.patbeginp[i]) as i32 + patoffset
                 } else {
                     -1 // c:2563-2566 — unset group (unmatched alternation branch)
                 };
@@ -3449,7 +3454,23 @@ pub fn pattryrefs(
             for i in 0..n {
                 let close_bit = 1u32 << (i + NSUBEXP);
                 let val = if (state.captures_set & close_bit) != 0 {
-                    state.patendp[i] as i32 + patoffset
+                    // c:2562-2564 — `*endp++ = CHARSUB(patinstart, *ep) +
+                    // patoffset - 1;`. The reported end is the index of the LAST
+                    // matched character, not one past it; `patendp[i]` is the
+                    // exclusive end, hence the `- 1`.
+                    //
+                    // Load-bearing for the only consumer of these arrays,
+                    // complist's putmatchcol (c:Src/Zle/complist.c:889).
+                    // `doiscol`'s finished-empty test at complist.c:646 is
+                    // `endpos[i] < begpos[i]`, which an empty capture can only
+                    // satisfy when the end is INCLUSIVE (b, b-1). With the
+                    // exclusive value (b, b) an empty `(#b)` group consumed a
+                    // colour AND painted a character, and every non-empty group
+                    // stayed coloured one character too long.
+                    //
+                    // `CHARSUB` counts characters (c:1997), so the byte offset
+                    // in `patendp[i]` converts through `charsub` first.
+                    charsub(trial, state.patendp[i]) as i32 + patoffset - 1
                 } else {
                     -1 // c:2565
                 };
@@ -3484,10 +3505,15 @@ pub fn pattryrefs(
                     let lo = b.min(trial.len());
                     let hi = e.min(trial.len()).max(lo);
                     match_arr.push(trial[lo..hi].to_string()); // c:2587 metafy(*sp..*ep)
-                    begin_arr.push((b as i32 + patoffset + base).to_string()); // c:2596-2599
-                                                                               // c:2601-2604 — mend = last matched char index
-                                                                               // (inclusive): end + offset + base - 1.
-                    end_arr.push((e as i32 + patoffset + base - 1).to_string());
+                                                               // c:2596-2599 — `CHARSUB(patinstart, *sp) + patoffset +
+                                                               // !isset(KSHARRAYS)`. CHARSUB (c:1997) counts CHARACTERS;
+                                                               // `patbeginp`/`patendp` hold BYTE offsets into `trial`, so
+                                                               // convert through charsub before adding the (already
+                                                               // character-based, c:2285-2286) patoffset.
+                    begin_arr.push((charsub(trial, b) as i32 + patoffset + base).to_string()); // c:2596-2599
+                                                                                               // c:2601-2604 — mend = last matched char index
+                                                                                               // (inclusive): end + offset + base - 1.
+                    end_arr.push((charsub(trial, e) as i32 + patoffset + base - 1).to_string());
                 } else {
                     // c:2607-2613 — unmatched branch / hashed paren.
                     match_arr.push(String::new());

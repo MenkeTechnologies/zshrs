@@ -14,7 +14,7 @@
 //! description) to `-x` (informational message): a custom attribute is always
 //! allowed, so the offered list is advisory, not exhaustive.
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -114,7 +114,7 @@ fn x_to_lower(v: &[String]) -> Vec<String> {
 pub fn _ldap_attributes(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ldap_attributes");
     // sh:26
-    let _ = _description(&[
+    let _ = description_byname(&[
         "ldap-attributes".to_string(),
         "expl".to_string(),
         "ldap attribute".to_string(),

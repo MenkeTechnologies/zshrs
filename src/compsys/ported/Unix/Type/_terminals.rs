@@ -13,7 +13,7 @@
 //! directory list; sh:8 globs `dir/*/*` two levels deep with the `N`
 //! (nullglob) qualifier and takes the basename (`:t`) of each match.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::getsparam;
 
@@ -79,7 +79,7 @@ pub fn _terminals(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
     wanted_argv.extend(names);
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

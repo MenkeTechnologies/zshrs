@@ -19,7 +19,7 @@
 //! shell array named `_options_set` (populated by `_main_complete`
 //! at engine startup).
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 
 /// `_options_set` — complete names of zsh options that are currently
 /// set. Returns `_wanted`'s exit code.
@@ -38,7 +38,7 @@ pub fn _options_set(args: &[String]) -> i32 {
     wanted_argv.push("-a".to_string());
     wanted_argv.push("-".to_string());
     wanted_argv.push("_options_set".to_string());
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

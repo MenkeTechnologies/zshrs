@@ -30,12 +30,30 @@
 //! sh:28  fi
 //! ```
 
-use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_next_label::_next_label;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_next_label::next_label_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::utils::getshfunc;
+
+/// Reach `_dynamic_directory_name` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_dynamic_directory_name` (Completion/Zsh/Context/_subscript sh:24) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn dynamic_directory_name_byname() -> i32 {
+    crate::compsys::ported::shared::call_compfn("_dynamic_directory_name", &[], || {
+        _dynamic_directory_name()
+    })
+}
 
 /// `_dynamic_directory_name` — `~[name]` lookup via user-defined
 /// `zsh_directory_name` function + `$zsh_directory_name_functions`.
@@ -64,19 +82,19 @@ pub fn _dynamic_directory_name() -> i32 {
         };
 
         // sh:16
-        let _ = _tags(&[tag.clone()]);
+        let _ = tags_byname(&[tag.clone()]);
         let mut ret: i32 = 1;
 
         // sh:17-24
         loop {
-            if _tags(&[]) != 0 {
+            if tags_byname(&[]) != 0 {
                 break;
             }
             // sh:18
             loop {
                 let mut nl_args = vec![tag.clone(), "expl".to_string(), descr.to_string()];
                 nl_args.extend(suf.iter().cloned());
-                if _next_label(&nl_args) != 0 {
+                if next_label_byname(&nl_args) != 0 {
                     break;
                 }
                 // sh:19-21
@@ -95,7 +113,7 @@ pub fn _dynamic_directory_name() -> i32 {
         ret
     } else {
         // sh:27
-        _message(&[format!("{}: implement as zsh_directory_name c", descr)])
+        message_byname(&[format!("{}: implement as zsh_directory_name c", descr)])
     }
 }
 

@@ -23,7 +23,7 @@
 //! entries) is reproduced with string ops.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam};
 
 /// `:t` — the basename (last path component).
@@ -124,7 +124,7 @@ pub fn _process_names(args: &[String]) -> i32 {
     w.push("-a".to_string());
     w.push("-".to_string());
     w.push("names".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 /// sh:23/29/37 — `_call_program $tagname ps $opts 2>/dev/null`, returning

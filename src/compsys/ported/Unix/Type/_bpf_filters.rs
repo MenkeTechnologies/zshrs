@@ -20,6 +20,7 @@
 //! for the regex engine. Shell `$'…'` NUL bytes map to `\u{0}`; `\(`/`\)`/`\|`/
 //! `\#` grouping tokens become the words `(`/`)`/`|`/`#`.
 
+use crate::compsys::ported::_regex_arguments::regex_arguments_byname;
 use crate::compsys::ported::_regex_arguments::{_regex_arguments, dispatch_registered};
 use crate::ported::params::{getsparam, setaparam};
 
@@ -473,7 +474,7 @@ pub fn _bpf_filters(args: &[String]) -> i32 {
 
     // sh:70-216 — register the `_bpf` matcher with the full spec.
     let spec = build_bpf_spec(&tables);
-    let _ = _regex_arguments(&spec);
+    let _ = regex_arguments_byname(&spec);
 
     // sh:217 — `_bpf "$@"`.
     setaparam("_bpf_argv", args.to_vec());

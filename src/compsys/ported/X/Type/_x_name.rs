@@ -19,7 +19,7 @@
 //! raw `_message -r` format string; otherwise fall back to the
 //! `names` tag with description `name` via `_message -e`.
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 
 /// sh:3 — 0-based Rust index of the last `"-X"` element in `args`
 /// (mirrors zsh's 1-based `(I)` reverse-search subscript, minus one).
@@ -37,11 +37,11 @@ pub fn _x_name(args: &[String]) -> i32 {
         Some(i) => {
             // sh:6  _message -r "$argv[x + 1]"
             let fmt = args.get(i + 1).cloned().unwrap_or_default();
-            _message(&["-r".to_string(), fmt])
+            message_byname(&["-r".to_string(), fmt])
         }
         None => {
             // sh:8  _message -e names 'name'
-            _message(&["-e".to_string(), "names".to_string(), "name".to_string()])
+            message_byname(&["-e".to_string(), "names".to_string(), "name".to_string()])
         }
     }
 }

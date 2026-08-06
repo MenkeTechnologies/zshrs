@@ -91,6 +91,23 @@ fn make_ops() -> options {
     }
 }
 
+/// Reach `_tags` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_tags maps` (Completion/Unix/Command/_yp sh:94) — so the
+/// normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn tags_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_tags", args, || _tags(args))
+}
+
 /// `_tags` — register / iterate completion tag sets for the current
 /// context. Returns the underlying `comptags` exit code:
 ///   * with args (registration mode): `comptags -T$prev` (0 → "at
@@ -125,6 +142,7 @@ pub fn _tags(args: &[String]) -> i32 {
     // sh:15  if (( $# ))
     if argv.is_empty() {
         // sh:67  comptags "-N$prev"
+        crate::compsys::ported::shared::set_sh_lineno(67);
         return bin_comptags("comptags", &[format!("-N{}", prev)], &make_ops(), 0);
     }
 
@@ -168,12 +186,14 @@ pub fn _tags(args: &[String]) -> i32 {
     let ctx = format!(":completion:{}:", curcontext);
     let order = lookupstyle(&ctx, "group-order");
     if !order.is_empty() {
+        crate::compsys::ported::shared::set_sh_lineno(32);
         let _ = bin_compgroups("compgroups", &order, &make_ops(), 0);
     }
 
     // sh:36  comptags "-i$prev" "$curcontext" "$@"
     let mut comptags_i: Vec<String> = vec![format!("-i{}", prev), curcontext.clone()];
     comptags_i.extend(argv.iter().cloned());
+    crate::compsys::ported::shared::set_sh_lineno(36);
     let _ = bin_comptags("comptags", &comptags_i, &make_ops(), 0);
 
     // sh:40  if [[ -n "$_sort_tags" ]]; then
@@ -192,6 +212,7 @@ pub fn _tags(args: &[String]) -> i32 {
     }
 
     // sh:60  comptags "-T$prev"
+    crate::compsys::ported::shared::set_sh_lineno(60);
     bin_comptags("comptags", &[format!("-T{}", prev)], &make_ops(), 0)
 }
 
@@ -243,10 +264,12 @@ fn run_default_sort(ctx: &str, argv: &[String]) {
                 .filter(|a| !pats.iter().any(|p| zsh_glob_match(p, a)))
                 .cloned()
                 .collect();
+            crate::compsys::ported::shared::set_sh_lineno(50);
             let _ = bin_comptry("comptry", &filtered, &make_ops(), 0);
         } else if !tag.is_empty() {
             // sh:51  ?*)    comptry -m "$tag"  — the WHOLE element; comptry
             //   splits its space-separated tags into one set.
+            crate::compsys::ported::shared::set_sh_lineno(51);
             let _ = bin_comptry(
                 "comptry",
                 &["-m".to_string(), tag.to_string()],
@@ -258,6 +281,7 @@ fn run_default_sort(ctx: &str, argv: &[String]) {
 
     // sh:55  [[ -z "$nodef" ]] && comptry "$@"
     if !nodef {
+        crate::compsys::ported::shared::set_sh_lineno(55);
         let _ = bin_comptry("comptry", argv, &make_ops(), 0);
     }
     tracing::debug!(target: "compsys_args", ?order, ?argv, nodef, %ctx, "_tags default sort done");

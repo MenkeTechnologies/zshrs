@@ -20,8 +20,8 @@
 //! The shell runs `$ARCHCMD <sub>` via backticks; the port captures that
 //! stdout with a `sh -c` runner (backtick-equivalent, whitespace-split).
 
-use crate::compsys::ported::_arch_archives::_arch_archives;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_arch_archives::arch_archives_byname;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -138,7 +138,7 @@ fn arch_namespace(ctx: &Ctx, count: i64) -> i32 {
             .map(|(a, _)| a)
             .unwrap_or(&iprefix)
             .to_string();
-        let _ = _description(&[
+        let _ = description_byname(&[
             "-V".to_string(),
             "categories".to_string(),
             "expl".to_string(),
@@ -169,7 +169,7 @@ fn arch_namespace(ctx: &Ctx, count: i64) -> i32 {
             }
         }
         if !archive.is_empty() {
-            let _ = _description(&[
+            let _ = description_byname(&[
                 "-V".to_string(),
                 "categories".to_string(),
                 "expl".to_string(),
@@ -189,7 +189,7 @@ fn arch_namespace(ctx: &Ctx, count: i64) -> i32 {
         if !ctx.library.is_empty() {
             aa.push("--library".to_string());
         }
-        let _ = _arch_archives(&aa);
+        let _ = arch_archives_byname(&aa);
     }
 
     // sh:40-43 — descend to branches once past the category.
@@ -209,7 +209,7 @@ fn arch_namespace_branches(ctx: &Ctx, count: i64) -> i32 {
             .unwrap_or_default()
             .trim_end_matches("--")
             .to_string();
-        let _ = _description(&[
+        let _ = description_byname(&[
             "-V".to_string(),
             "branches".to_string(),
             "expl".to_string(),
@@ -243,7 +243,7 @@ fn arch_namespace_versions(ctx: &Ctx, count: i64) -> i32 {
         .unwrap_or_default()
         .trim_end_matches("--")
         .to_string();
-    let _ = _description(&[
+    let _ = description_byname(&[
         "-V".to_string(),
         "versions".to_string(),
         "expl".to_string(),
@@ -276,7 +276,7 @@ fn arch_namespace_revisions(ctx: &Ctx) -> i32 {
         .unwrap_or_default()
         .trim_end_matches("--")
         .to_string();
-    let _ = _description(&[
+    let _ = description_byname(&[
         "-V".to_string(),
         "revisions".to_string(),
         "expl".to_string(),

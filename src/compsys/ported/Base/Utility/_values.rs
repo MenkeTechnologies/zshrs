@@ -33,12 +33,12 @@
 //! `_describe` port, which currently reads the group array names and
 //! ignores the per-group `-S`/`-qS`/`-r` flags.
 
-use crate::compsys::ported::_all_labels::_all_labels;
-use crate::compsys::ported::_describe::_describe;
-use crate::compsys::ported::_description::_description;
-use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_next_label::_next_label;
-use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_all_labels::all_labels_byname;
+use crate::compsys::ported::_describe::{_describe, describe_byname};
+use crate::compsys::ported::_description::description_byname;
+use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_next_label::next_label_byname;
+use crate::compsys::ported::_tags::tags_byname;
 use crate::ported::exec::{dispatch_function_call, execute_script};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -214,7 +214,7 @@ fn values_impl(args: &[String]) -> i32 {
     // sh:19 — `if ! compvalues -D descr action` → completing value NAMES.
     if compvalues(&["-D", "descr", "action"]) != 0 {
         // sh:21
-        if _tags(&["values".to_string()]) != 0 {
+        if tags_byname(&["values".to_string()]) != 0 {
             return 1;
         }
         // sh:23
@@ -329,9 +329,36 @@ fn values_impl(args: &[String]) -> i32 {
             // NOTE: the `_describe` port reads the group array names but
             // ignores the per-group `-S`/`-qS`/`-r`/`--` flags; the value
             // names are still emitted (behavioral approximation).
-            let r = _describe(&dargv);
+            // sh:60-63 — reached BY NAME, not as a direct Rust call. Upstream
+            // writes `_describe "$descr" …` as a bare command word, so (a) a
+            // user's own `_describe` earlier in `$fpath` autoloads instead of
+            // the port, and (b) the call gets its own `doshfunc` frame. A plain
+            // `_describe(&dargv)` skipped both: the fpath copy was inert, and
+            // `_describe`'s `declare_locals` list (`_opt … OPTIND OPTARG`,
+            // _describe.rs:160-192) landed in _values' OWN param scope, so
+            // doshfunc's `zoptind = funcsave->zoptind` restore (c:Src/exec.c:6060,
+            // exec.rs:6283) wrote into that shadow and `endparamscope` then put
+            // the caller's OPTIND back to the 1 doshfunc had stamped on entry
+            // (exec.rs:6016) — `local OPTIND=9; _values …` returned OPTIND=1
+            // where zsh returns 9.
+            let _ = crate::compsys::ported::shared::call_compfn("_describe", &dargv, || {
+                describe_byname(&dargv)
+            });
             let _ = setsparam("curcontext", &oldcontext); // sh:65
-            return r; // sh:67 — `return` yields _describe's status.
+                                                          // sh:67 is a BARE `return`, so it yields `$?` of the LAST command
+                                                          // executed — the plain assignment at sh:65, not the `_describe` at
+                                                          // sh:60-63. A simple command consisting only of assignments always
+                                                          // exits 0, so zsh's value-name arm returns 0 even when `_describe`
+                                                          // matched nothing.
+                                                          //
+                                                          // Propagating `_describe`'s status instead made `_values` fail
+                                                          // whenever the value-name list came back empty. That escaped through
+                                                          // `_tar`'s CURRENT==2 branch (`_values -s '' 'tar function' …`,
+                                                          // _tar:169) into `_complete`, so the user's `_megacomplete`
+                                                          // completer took its `ret == 1` arm and built a `last args` group out
+                                                          // of shell history — zshrs listed history matches on `tar -<TAB>`
+                                                          // where zsh shows "No Matches for `tar function'".
+            return 0; // sh:67
         }
     } else {
         // sh:69-72 — completing the ARGUMENT of an already-recognized value.
@@ -342,14 +369,14 @@ fn values_impl(args: &[String]) -> i32 {
     }
 
     // sh:74 — arguments dispatch (reached with descr/action set for a value).
-    if _tags(&["arguments".to_string()]) != 0 {
+    if tags_byname(&["arguments".to_string()]) != 0 {
         let _ = setsparam("curcontext", &oldcontext); // sh:75
         return 1;
     }
 
     let descr = getsparam("descr").unwrap_or_default();
     // sh:79
-    let _ = _description(&["arguments".to_string(), "expl".to_string(), descr.clone()]);
+    let _ = description_byname(&["arguments".to_string(), "expl".to_string(), descr.clone()]);
 
     // sh:84-86 — append the list separator as an autoremovable suffix
     // unless exactly one value remains. `snames`/`names`/`onames` are not
@@ -394,7 +421,7 @@ fn values_impl(args: &[String]) -> i32 {
 
     if action.trim().is_empty() {
         // sh:104-109 — empty action: just show the description.
-        let _ = _message(&["-e".to_string(), "arguments".to_string(), descr.clone()]);
+        let _ = message_byname(&["-e".to_string(), "arguments".to_string(), descr.clone()]);
         return 1;
     } else if action.starts_with("((") && action.ends_with("))") {
         // sh:111-118 — ((val:descr …)) literal set with descriptions.
@@ -409,7 +436,8 @@ fn values_impl(args: &[String]) -> i32 {
         ];
         d.extend(subopts.iter().cloned());
         d.extend(sep_group.iter().cloned());
-        let _ = _describe(&d);
+        // sh:118 — same by-name contract as sh:60-63 above.
+        let _ = crate::compsys::ported::shared::call_compfn("_describe", &d, || _describe(&d));
     } else if action.starts_with('(') && action.ends_with(')') {
         // sh:120-126 — (val …) added directly.
         let body = &action[1..action.len() - 1];
@@ -424,12 +452,13 @@ fn values_impl(args: &[String]) -> i32 {
         a.extend(subopts.iter().cloned());
         a.extend(sep_group.iter().cloned());
         a.extend(["-a".to_string(), "-".to_string(), "ws".to_string()]);
-        let _ = _all_labels(&a);
+        let _ = all_labels_byname(&a);
     } else if action.starts_with('{') && action.ends_with('}') {
         // sh:127-133 — {body} evaluated per label.
         let body = &action[1..action.len() - 1];
         loop {
-            if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {
+            if next_label_byname(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0
+            {
                 break;
             }
             let _ = execute_script(body);
@@ -438,7 +467,8 @@ fn values_impl(args: &[String]) -> i32 {
         // sh:138 — `eval "action=( $action )"; "$action[@]"` (quote-respecting).
         let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
         loop {
-            if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {
+            if next_label_byname(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0
+            {
                 break;
             }
             if let Some((cmd, rest)) = parts.split_first() {
@@ -454,7 +484,9 @@ fn values_impl(args: &[String]) -> i32 {
         let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
         if let Some((cmd, rest)) = parts.split_first() {
             loop {
-                if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {
+                if next_label_byname(&["arguments".to_string(), "expl".to_string(), descr.clone()])
+                    != 0
+                {
                     break;
                 }
                 let expl_now = getaparam("expl").unwrap_or_default();

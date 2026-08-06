@@ -30,7 +30,7 @@
 //! std::fs scan of the directory implied by `$match[1]$match[2]`
 //! and extract extensions from filenames in that dir.
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -141,7 +141,7 @@ pub fn _extensions() -> i32 {
     };
 
     // sh:27
-    let _ = _description(&[
+    let _ = description_byname(&[
         "extensions".to_string(),
         "expl".to_string(),
         "file extension".to_string(),

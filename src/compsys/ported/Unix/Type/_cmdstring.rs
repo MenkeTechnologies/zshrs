@@ -23,6 +23,22 @@ fn make_ops() -> options {
     }
 }
 
+/// Reach `_cmdstring` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_cmdstring` (Completion/Unix/Type/_cmdambivalent sh:7) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn cmdstring_byname() -> i32 {
+    crate::compsys::ported::shared::call_compfn("_cmdstring", &[], || _cmdstring())
+}
+
 /// `_cmdstring` — completion for a quoted shell command argument.
 /// Calls real `bin_compset -q` (unquote the current word into its
 /// own context), then dispatches `_normal` (sibling shell fn).

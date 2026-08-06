@@ -35,7 +35,7 @@
 //!   * sh:407-417 `_lastcomp` snapshot
 //!   * sh:384-396 ZLS_COLORS save/restore
 
-use crate::compsys::ported::_setup::_setup;
+use crate::compsys::ported::_setup::setup_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
@@ -678,7 +678,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
 
     // sh:110  _setup default — propagate the default-tag styles
     //   (list-packed, accept-exact, …) into compstate.
-    let _ = _setup(&["default".to_string()]);
+    let _ = setup_byname(&["default".to_string()]);
 
     // sh:122-133  list-prompt / select-prompt / select-scroll styles
     let ctx_default = format!(":completion:{}:default", curcontext);
@@ -848,13 +848,39 @@ pub fn _main_complete(args: &[String]) -> i32 {
             }
             let _ = setsparam("_matcher", combined_matcher.trim());
 
-            if dispatch_function_call(&bare, &[]).unwrap_or(1) == 0 {
-                ret = 0;
-                break;
+            // sh:212 — `_comp_mesg=` clears the flag before every completer
+            // call, so the sh:224 test below sees only what THIS completer set.
+            let _ = setsparam("_comp_mesg", "");
+
+            // sh:218 — `elif "$tmp"; then`. `$tmp` is an ordinary command
+            // word, so a completer named by the `completer` style but never
+            // defined is a plain command-not-found: zsh prints
+            // `_main_complete:218: command not found: NAME` on stderr and the
+            // call yields 127, which just moves the chain along. `None` here
+            // is that case (undefined, or `disable -f`'d — C's lookupshfunc
+            // returns NULL for both and falls through to PATH). The port
+            // folded `None` into a silent non-zero, so a typo in the
+            // `completer` style produced no diagnostic whatsoever.
+            match dispatch_function_call(&bare, &[]) {
+                Some(0) => {
+                    ret = 0;
+                    break;
+                }
+                Some(_) => {}
+                None => eprintln!("_main_complete:218: command not found: {}", bare),
             }
             matcher_num += 1;
         }
         if ret == 0 {
+            break;
+        }
+        // sh:224 — `[[ -n "$_comp_mesg" ]] && break`. A completer that emitted
+        // a message (`_message` sets `_comp_mesg=yes`, sh:8/sh:44) ends the
+        // chain even though it returned non-zero: the message IS the result,
+        // and later completers must not append to it. The port omitted this,
+        // so `_approximate` still ran after a message-producing completer and
+        // added a `corrections` group zsh never shows.
+        if !getsparam("_comp_mesg").unwrap_or_default().is_empty() {
             break;
         }
         completer_num += 1;
@@ -1099,7 +1125,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
                     format!("{}, or {}", init, quoted[quoted.len() - 1])
                 }
             };
-            let _ = _setup(&["warnings".to_string()]);
+            let _ = setup_byname(&["warnings".to_string()]);
             let zf_argv = vec![
                 "-f".to_string(),
                 "mesg".to_string(),

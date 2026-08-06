@@ -13,7 +13,23 @@
 //! a sibling shell fn (not ported); dispatches via `_wanted`'s
 //! action-chunk path which routes through `exec accessors`.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
+
+/// Reach `_directories` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_directories "${suf[@]}" && ret=0` (Completion/bashcompinit sh:38) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn directories_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_directories", args, || _directories(args))
+}
 
 /// `_directories` — directory-only completion via `_files -/`.
 pub fn _directories(args: &[String]) -> i32 {
@@ -28,7 +44,7 @@ pub fn _directories(args: &[String]) -> i32 {
     ];
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

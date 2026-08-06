@@ -29,7 +29,7 @@
 //! sh:39            "$_comp_command1" "$_comp_command2" -default-
 //! ```
 
-use crate::compsys::ported::_set_command::_set_command;
+use crate::compsys::ported::_set_command::set_command_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
@@ -44,6 +44,22 @@ fn make_ops() -> options {
         argscount: 0,
         argsalloc: 0,
     }
+}
+
+/// Reach `_normal` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_normal -p $service` (Completion/BSD/Command/_jexec sh:9) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn normal_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_normal", args, || _normal(args))
 }
 
 /// `_normal` — `-command-line-` context entry. Strips precommands,
@@ -183,7 +199,7 @@ pub fn _normal(args: &[String]) -> i32 {
     }
 
     // sh:36
-    let _ = _set_command();
+    let _ = set_command_byname();
 
     // sh:38-39
     let mut dispatch_argv: Vec<String> = Vec::new();

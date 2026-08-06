@@ -12,7 +12,7 @@
 //! sh:14  _files "$@" "$expl[@]" -g "*.(#i)(ps|eps)$ext(-.)"
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::compsys::ported::_files::_files;
 use crate::ported::params::getaparam;
 
@@ -26,7 +26,7 @@ pub fn _postscript(args: &[String]) -> i32 {
         ("", args)
     };
     // sh:13
-    let _ = _description(&[
+    let _ = description_byname(&[
         "files".to_string(),
         "expl".to_string(),
         "PostScript file".to_string(),

@@ -10994,12 +10994,20 @@ function-exit trap dispatch pipeline:
    Relaxed gate to `sig >= 0`.
 3. **`endparamscope` ran AFTER `endtrapscope`**, leaving locallevel
    at the function's level when the SAVETRAPS pop loop ran. C runs
-   endparamscope FIRST (inside `runshfunc`, c:6200), then
-   endtrapscope (in doshfunc, c:6114) — so the pop comparison
-   `local > locallevel` does fire. Wrapped the endtrapscope call
-   with a pre-decrement/post-restore of `locallevel` so the existing
-   `endparamscope` site below stays in place but the pop comparison
-   sees the post-decrement state.
+   endparamscope FIRST (inside `runshfunc`, c:6260), then
+   endtrapscope (in doshfunc, c:6174) — so the pop comparison
+   `local > locallevel` does fire. Originally worked around by
+   bracketing the endtrapscope call with a pre-decrement/post-restore
+   of `locallevel` while leaving `endparamscope` at the tail of the
+   epilogue. **Superseded 2026-08-05** (see the second correction in
+   #513): the bracket is gone and `endparamscope()` now runs at its
+   real C position, immediately after the body, so the pop loop sees
+   the genuine post-decrement level. The workaround only faked the
+   locallevel; the param scope itself was still live, so the trap
+   body ran inside the callee's locals instead of the caller's —
+   `X=5; f(){ local X=1; trap 'print IN=$X; X=99' EXIT }; f` printed
+   `IN=1` and left the outer `X` at 5 where zsh prints `IN=5` and
+   leaves `X` at 99.
 4. **`savetrap` didn't snapshot the body string.** C stores trap
    bodies in `siglists[sig]` (an Eprog) and the save/restore loop
    covers that. zshrs stores bodies in `traps_table` (a flat
@@ -47801,6 +47809,83 @@ through the canonical `getsparam` / `setiparam` pair.
   → `got a x / OPTIND=5` (getopts loop inside the function
   uses its own counter; caller's stays at 5).
 - zshrs_shell baseline 953/99 preserved.
+
+**Correction (2026-08-05)** — the fix above was right about
+OPTIND but wrong in two ways, both since repaired in
+`src/ported/exec.rs::doshfunc`:
+
+1. *There is no `funcsave->zoptarg`.* The struct is
+   `Src/exec.c:44-52` — `char opts[OPT_SIZE]; char *argv0;
+   int zoptind, lastval, optcind, numpipestats; …` — and
+   `grep -n zoptarg Src/exec.c` returns nothing. C saves
+   `zoptind`/`optcind` only (c:5964-5965, restored at
+   c:6121-6122), so a callee's OPTARG is *supposed* to reach
+   its caller. The invented OPTARG save/restore was
+   observable:
+
+   ```
+   g() { OPTARG=inner; }; h() { local OPTARG=Z; g; print $OPTARG }
+   zsh -> inner      zshrs (before) -> Z
+   g() { getopts "a:" o -a VAL; }
+   k() { local OPTARG=Z OPTIND=1; g; print $OPTARG }
+   zsh -> VAL        zshrs (before) -> Z
+   ```
+
+   The OPTARG snapshot is gone; `optcind` is now snapshotted
+   and restored in its place, and the restore is guarded by
+   `!isset(POSIXBUILTINS)` as C is at c:6119.
+
+2. *The restore was on the wrong side of `endparamscope`.*
+   It sat next to the pparams/argv0 restore (c:6115-6119),
+   i.e. BEFORE the param scope was popped. C can put it
+   there because `zoptind` is a plain global int (c:47) and
+   `runshfunc`'s `startparamscope()`/`endparamscope()` pair
+   (c:6254/6260) has already closed by the time doshfunc
+   reaches c:6121. zshrs has no such global — `$OPTIND` is an
+   ordinary paramtab entry — so the early write landed in the
+   CALLEE's own `local OPTIND` shadow whenever the callee
+   declared one, and `endparamscope` then discarded it,
+   re-exposing the caller's parameter that the c:5967 entry
+   reset had already clobbered to 1:
+
+   ```
+   g() { local OPTIND OPTARG; }
+   f() { local OPTIND=9; g; print $OPTIND }
+   zsh -> 9          zshrs (before) -> 1
+   ```
+
+   A callee without `local OPTIND` was unaffected, which is
+   why this survived #513's verification. It hit every
+   compsys port that declares OPTIND local — `_describe`
+   (`src/compsys/ported/Base/Utility/_describe.rs:160-192`)
+   and therefore every completer reaching it, e.g.
+   `f() { local OPTIND=9; _date_formats; print $OPTIND }`
+   returned 1 against zsh's 9.
+
+**Correction 2 (2026-08-05)** — the fix for (2) parked the
+restore at the *tail* of `doshfunc`, after `endtrapscope()`
+instead of before it, which silently broke a function-scoped
+EXIT trap that assigns OPTIND — the restore overwrote the
+trap's value:
+
+```
+t1(){ trap 'OPTIND=99' EXIT }; OPTIND=5; t1; print $OPTIND
+zsh -> 99         zshrs (with the tail restore) -> 5
+t1(){ trap 'OPTIND=99' EXIT }
+t2(){ local OPTIND=9; t1; print $OPTIND }; t2
+zsh -> 99         zshrs (with the tail restore) -> 9
+```
+
+Both constraints are satisfiable only in C's own order —
+`endparamscope` (c:6260, inside `runshfunc`) → OPTIND/optcind
+restore (c:6120-6123) → `endtrapscope` (c:6174) — so
+`endparamscope()` moved up to its C position right after the
+body runs, and the restore now sits at c:6120's slot between
+the pparams/argv0 restore and the option restore. Placing it
+before the option restore also matches C's evaluation of
+`isset(POSIXBUILTINS)` inside the callee's option scope:
+`OPTIND=5; f(){ setopt localoptions posixbuiltins; OPTIND=42 }; f`
+leaves `$OPTIND` at 42 in zsh, and now in zshrs.
 
 **Original report:**
 

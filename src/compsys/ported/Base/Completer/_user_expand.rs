@@ -19,7 +19,7 @@
 //! sh:80  compadd "$expl[@]" -UQ -qS "$suf" -a exp
 //! ```
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
@@ -86,7 +86,7 @@ pub fn _user_expand() -> i32 {
 
     // Emit matches via compadd
     setaparam("exp", exp);
-    let _ = _description(&[
+    let _ = description_byname(&[
         "-V".to_string(),
         "expansions".to_string(),
         "expl".to_string(),

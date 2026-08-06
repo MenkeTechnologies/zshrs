@@ -21,12 +21,12 @@
 //! `_delimiters` / `_message` / `_describe` exactly as the source
 //! does. The scratch `flags` by-name array is unset after each use.
 
-use crate::compsys::ported::_arrays::_arrays;
-use crate::compsys::ported::_delimiters::_delimiters;
-use crate::compsys::ported::_describe::_describe;
-use crate::compsys::ported::_globqual_delims::_globqual_delims;
-use crate::compsys::ported::_history_modifiers::_history_modifiers;
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_arrays::arrays_byname;
+use crate::compsys::ported::_delimiters::delimiters_byname;
+use crate::compsys::ported::_describe::{_describe, describe_byname};
+use crate::compsys::ported::_globqual_delims::globqual_delims_byname;
+use crate::compsys::ported::_history_modifiers::history_modifiers_byname;
+use crate::compsys::ported::_message::message_byname;
 use crate::compsys::ported::_parameters::call_parameters;
 use crate::ported::params::{getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::complete::bin_compset;
@@ -59,7 +59,7 @@ fn first_char() -> String {
 /// `flags` scratch array pre-populated; unsets it afterwards.
 fn describe_format(specs: &[&str]) -> i32 {
     setaparam("flags", specs.iter().map(|x| s(x)).collect());
-    let r = _describe(&[
+    let dargv = vec![
         s("-t"),
         s("format"),
         s("format option"),
@@ -67,7 +67,11 @@ fn describe_format(specs: &[&str]) -> i32 {
         s("-Q"),
         s("-S"),
         s(""),
-    ]);
+    ];
+    // sh:42/60 are bare command words — reach `_describe` by name so
+    // `$fpath`/shfunc arbitration runs and its `declare_locals` list
+    // (_describe.rs:160-192) lands in its own param scope, not ours.
+    let r = crate::compsys::ported::shared::call_compfn("_describe", &dargv, || _describe(&dargv));
     unsetparam("flags");
     r
 }
@@ -129,8 +133,8 @@ pub fn _brace_parameter() -> i32 {
                     // sh:33
                     if getsparam("PREFIX").unwrap_or_default().is_empty() {
                         // sh:34  _delimiters qualifier-$char ; return
-                        return _delimiters(&[format!("qualifier-{}", char)]);
-                    } else if _globqual_delims() != 0 {
+                        return delimiters_byname(&[format!("qualifier-{}", char)]);
+                    } else if globqual_delims_byname() != 0 {
                         // sh:36  still completing argument
                         match char {
                             // sh:40-42
@@ -144,11 +148,11 @@ pub fn _brace_parameter() -> i32 {
                             }
                             // sh:45
                             'I' => {
-                                return _message(&[s("integer expression")]);
+                                return message_byname(&[s("integer expression")]);
                             }
                             // sh:49
                             'j' | 's' => {
-                                return _message(&[s("separator")]);
+                                return message_byname(&[s("separator")]);
                             }
                             // sh:53-60
                             'Z' => {
@@ -161,7 +165,7 @@ pub fn _brace_parameter() -> i32 {
                             }
                             // sh:63
                             '_' => {
-                                return _message(&[s("no useful values")]);
+                                return message_byname(&[s("no useful values")]);
                             }
                             _ => unreachable!(),
                         }
@@ -175,30 +179,30 @@ pub fn _brace_parameter() -> i32 {
                     // sh:73
                     if getsparam("PREFIX").unwrap_or_default().is_empty() {
                         // sh:74  _delimiters qualifier-$char ; return
-                        return _delimiters(&[format!("qualifier-{}", char)]);
+                        return delimiters_byname(&[format!("qualifier-{}", char)]);
                     } else {
                         // sh:77  delim=$PREFIX[1]
                         let _ = setsparam("delim", &first_char());
                         // sh:78  if ! _globqual_delims
-                        if _globqual_delims() != 0 {
+                        if globqual_delims_byname() != 0 {
                             // sh:80  _message "padding width" ; return
-                            return _message(&[s("padding width")]);
+                            return message_byname(&[s("padding width")]);
                         }
                         // `_globqual_delims` has rewritten $delim to the
                         //   closing delimiter (dynamic scope in the shell).
                         // sh:88  if [[ $delim = $PREFIX[1] ]]
                         if getsparam("delim").unwrap_or_default() == first_char() {
                             // sh:90  second argument
-                            if _globqual_delims() != 0 {
+                            if globqual_delims_byname() != 0 {
                                 // sh:92  _message "repeated padding" ; return
-                                return _message(&[s("repeated padding")]);
+                                return message_byname(&[s("repeated padding")]);
                             }
                             // sh:94  if [[ $delim = $PREFIX[1] ]]
                             if getsparam("delim").unwrap_or_default() == first_char() {
                                 // sh:95  if ! _globqual_delims
-                                if _globqual_delims() != 0 {
+                                if globqual_delims_byname() != 0 {
                                     // sh:97  _message "one-off padding" ; return
-                                    return _message(&[s("one-off padding")]);
+                                    return message_byname(&[s("one-off padding")]);
                                 }
                             }
                         }
@@ -307,7 +311,7 @@ pub fn _brace_parameter() -> i32 {
 
         // sh:190  _describe -t flags "parameter flag" flags -Q -S ''
         setaparam("flags", flags);
-        let r = _describe(&[
+        let dargv = vec![
             s("-t"),
             s("flags"),
             s("parameter flag"),
@@ -315,7 +319,10 @@ pub fn _brace_parameter() -> i32 {
             s("-Q"),
             s("-S"),
             s(""),
-        ]);
+        ];
+        // sh:190 — bare command word; see `describe_format` above.
+        let r =
+            crate::compsys::ported::shared::call_compfn("_describe", &dargv, || _describe(&dargv));
         unsetparam("flags");
         // sh:191  return
         return r;
@@ -330,7 +337,7 @@ pub fn _brace_parameter() -> i32 {
     ) == 0
     {
         // sh:193  _arrays ; return
-        return _arrays(&[]);
+        return arrays_byname(&[]);
     }
 
     // sh:195  elif compset -P '*:'  → operators + history modifiers
@@ -353,7 +360,8 @@ pub fn _brace_parameter() -> i32 {
             ],
         );
         // sh:209  _describe -t flags "operator" flags -Q -S ''
-        let _ = _describe(&[
+        // Bare command word; see `describe_format` above.
+        let dargv = vec![
             s("-t"),
             s("flags"),
             s("operator"),
@@ -361,10 +369,13 @@ pub fn _brace_parameter() -> i32 {
             s("-Q"),
             s("-S"),
             s(""),
-        ]);
+        ];
+        let _ = crate::compsys::ported::shared::call_compfn("_describe", &dargv, || {
+            describe_byname(&dargv)
+        });
         unsetparam("flags");
         // sh:210  _history_modifiers p ; return
-        return _history_modifiers(&[s("p")]);
+        return history_modifiers_byname(&[s("p")]);
     }
 
     // sh:214  _parameters -e

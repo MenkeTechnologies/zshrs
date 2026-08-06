@@ -1814,7 +1814,7 @@ pub fn get_comp_string() -> Option<String> {
             // c:1197 — linredir = (inredir && !ins)
             linredir = (inredir() && ins == 0) as i32;
             LINREDIR.store(linredir, Ordering::SeqCst); // c:1197
-            // c:1198-1202 — lincmd command-position determination.
+                                                        // c:1198-1202 — lincmd command-position determination.
             let lincmd_val = (!inredir()
                 && ((incmdpos() && ins == 0 && incond() == 0)
                     || (oins == 2 && wordpos == 2)
@@ -1858,12 +1858,12 @@ pub fn get_comp_string() -> Option<String> {
             if tokv == ENVARRAY {
                 linarr = 1;
                 LINARR.store(1, Ordering::SeqCst); // c:1231
-                // c:1232-1233 — `zsfree(varname); varname = ztrdup(tokstr);`.
-                // The mirror into the VARNAME global was missing, so the
-                // IN_ENV arm's `compparameter = varname` (compcore.c:607)
-                // published EMPTY for an array assignment: `myarr=(/tm<TAB>`
-                // reported `$compstate[parameter]=''` and `_value` built
-                // `-value-,,-default-` where zsh builds `-value-,myarr,`.
+                                                   // c:1232-1233 — `zsfree(varname); varname = ztrdup(tokstr);`.
+                                                   // The mirror into the VARNAME global was missing, so the
+                                                   // IN_ENV arm's `compparameter = varname` (compcore.c:607)
+                                                   // published EMPTY for an array assignment: `myarr=(/tm<TAB>`
+                                                   // reported `$compstate[parameter]=''` and `_value` built
+                                                   // `-value-,,-default-` where zsh builds `-value-,myarr,`.
                 varname = tokstr().map(|s| ztrdup(&s));
                 if let Ok(mut g) = VARNAME.get_or_init(|| Mutex::new(None)).lock() {
                     *g = varname.clone();
@@ -2709,14 +2709,23 @@ pub fn inststrlen(
         // we splice directly into ZLEMETALINE.
         if let Some(m) = ZLEMETALINE.get() {
             if let Ok(mut g) = m.lock() {
-                let cs = ZLEMETACS.load(Ordering::SeqCst) as usize;
-                let cs = cs.min(g.len());
+                let mut cs = (ZLEMETACS.load(Ordering::SeqCst) as usize).min(g.len());
+                // C indexes `zlemetaline` by byte, but a Rust `String` can
+                // only be split on a char boundary, so back off to the
+                // nearest one. (The previous `from_utf8_lossy` split
+                // silently rewrote a straddled character as U+FFFD.)
+                while cs > 0 && !g.is_char_boundary(cs) {
+                    cs -= 1;
+                }
                 let take = (len as usize).min(str.len());
-                let bytes = g.as_bytes();
-                let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
-                    + &str[..take]
-                    + &String::from_utf8_lossy(&bytes[cs..]);
-                *g = new_line;
+                // c:2238-2239 — `spaceinline(len)` grows the line and shifts
+                // only the bytes from the cursor onwards; `strncpy` then
+                // drops `str` into the hole. `String::insert_str` is exactly
+                // that pair: amortised growth plus one memmove of the tail.
+                // Rebuilding the whole line instead made every insert copy
+                // the entire buffer, so splicing n expansions into the line
+                // (`ls **/<TAB>`) cost O(n^2) bytes copied.
+                g.insert_str(cs, &str[..take]);
                 ZLEMETALL.store(g.len() as i32, Ordering::SeqCst); // c:2239 spaceinline updates ZLEMETALL
                 if move_cursor {
                     // c:2240

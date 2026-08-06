@@ -38,7 +38,7 @@
 //! sh:37  esac
 //! ```
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::complete::bin_compset;
@@ -96,7 +96,7 @@ pub fn _tilde_files(args: &[String]) -> i32 {
         } else if let Some(v) = assoc_get("nameddirs", &user) {
             v
         } else {
-            let _ = _message(&[format!("unknown user `{}'", user)]);
+            let _ = message_byname(&[format!("unknown user `{}'", user)]);
             return 1;
         };
         let user_trim = resolved.trim_end_matches('/').to_string();

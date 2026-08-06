@@ -32,6 +32,22 @@ use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
+/// Reach `_setup` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_setup "$1" "${gname:--default-}"` (Completion/Base/Core/_description sh:19) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn setup_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_setup", args, || _setup(args))
+}
+
 /// `_setup` — apply per-tag style settings to compstate. Args:
 ///   `[$tag, $group_name?]`. If group_name omitted, equals $1.
 pub fn _setup(args: &[String]) -> i32 {

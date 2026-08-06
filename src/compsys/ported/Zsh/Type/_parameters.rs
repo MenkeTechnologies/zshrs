@@ -32,7 +32,7 @@
 //! filters values, `$~pfilt` excludes names matching that pattern,
 //! `*local*` exclusion stops local-scoped names from leaking.
 
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, paramtab, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
@@ -126,7 +126,7 @@ pub fn _parameters(args: &[String]) -> i32 {
     }
 
     // sh:20
-    let _ = _description(&[
+    let _ = description_byname(&[
         "parameters".to_string(),
         "expl".to_string(),
         "parameter".to_string(),

@@ -44,8 +44,8 @@
 //! `std::process::Command`, mirroring `_bsd_disks`'s bare-`$(cmd)`
 //! convention (the upstream uses bare `$(xdpyinfo)`, not `_call_program`).
 
-use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_tags::tags_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getaparam, setaparam};
 use std::process::Command;
 
@@ -110,7 +110,7 @@ fn run_capture(cmd: &str, args: &[&str]) -> String {
 pub fn _x_extension(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_extension");
     // sh:5  _tags extensions || return 1
-    if _tags(&["extensions".to_string()]) != 0 {
+    if tags_byname(&["extensions".to_string()]) != 0 {
         return 1;
     }
 
@@ -142,7 +142,7 @@ pub fn _x_extension(args: &[String]) -> i32 {
         wanted_argv.push("-".to_string());
         wanted_argv.push("all".to_string());
         wanted_argv.extend(xe_cache);
-        _wanted(&wanted_argv)
+        wanted_byname(&wanted_argv)
     } else {
         // sh:15  [[ "$1" = - ]] && shift
         if !argv.is_empty() && argv[0] == "-" {
@@ -163,7 +163,7 @@ pub fn _x_extension(args: &[String]) -> i32 {
         wanted_argv.push("-a".to_string());
         wanted_argv.push("-".to_string());
         wanted_argv.push("_xe_cache".to_string());
-        _wanted(&wanted_argv)
+        wanted_byname(&wanted_argv)
     }
 }
 

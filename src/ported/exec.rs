@@ -5992,26 +5992,38 @@ pub fn doshfunc(
         crate::ported::utils::set_scriptname(Some(dupstring(&name))); // c:5903
     }
 
-    // c:5904-5908 — `funcsave->zoptind = zoptind; ...` snapshot.
-    // C zsh saves zoptind (the canonical OPTIND counter) and
-    // zoptarg into the funcsave struct so OPTIND is implicitly
-    // function-local: a `getopts` loop inside the function gets
-    // its own counter that snaps back to the caller's on
-    // function return. zshrs stores OPTIND/OPTARG in paramtab
-    // as regular int/string params; snapshot them here and
-    // restore at scope end. Bug #513.
+    // c:5964-5965 — `funcsave->zoptind = zoptind; funcsave->optcind
+    // = optcind;`. C makes OPTIND implicitly function-local: a
+    // `getopts` loop inside the function gets its own counter that
+    // snaps back to the caller's on return. zshrs keeps the counter
+    // in the `$OPTIND` param plus the ZOPTIND/OPTCIND trackers
+    // `getopts` syncs against, so all three are snapshotted here.
+    //
+    // OPTARG is deliberately NOT snapshotted. The funcsave struct
+    // (c:44-52) is `char opts[OPT_SIZE]; char *argv0; int zoptind,
+    // lastval, optcind, numpipestats; …` — there is no `zoptarg`
+    // member, and `grep -n zoptarg Src/exec.c` returns nothing, so C
+    // lets a callee's OPTARG leak to its caller. Bug #513 added an
+    // OPTARG save/restore citing "C's `funcsave->zoptind / zoptarg`
+    // save/restore pair"; that field does not exist. The extra
+    // restore was observable:
+    //     g() { OPTARG=inner; }; h() { local OPTARG=Z; g; print $OPTARG }
+    //     zsh   -> inner        zshrs (before) -> Z
+    //     g() { getopts "a:" o -a VAL; }
+    //     k() { local OPTARG=Z OPTIND=1; g; print $OPTARG }
+    //     zsh   -> VAL          zshrs (before) -> Z
     let funcsave_optind: Option<String> = crate::ported::params::getsparam("OPTIND");
-    let funcsave_optarg: Option<String> = crate::ported::params::getsparam("OPTARG");
-    // c:5966-5969 — `if (!isset(POSIXBUILTINS)) { zoptind = 1; optcind = 0; }`.
-    // The snapshot above is only half the contract: C also RESETS the
-    // counter on entry so an inner `getopts` loop starts fresh at the
-    // first positional, independent of the caller's OPTIND. Without
-    // this, a function whose body runs `getopts` after the caller
-    // advanced OPTIND mis-parses its own args — e.g. `add-zsh-hook`
-    // (which `getopts`-parses `precmd func`) printed its usage and
-    // failed when invoked from a config that had run getopts earlier.
-    // zshrs keeps the counter in the $OPTIND param plus the ZOPTIND/
-    // OPTCIND trackers getopts syncs against; reset all three.
+    let funcsave_optcind = crate::ported::builtin::OPTCIND.load(Ordering::Relaxed); // c:5965
+                                                                                    // c:5966-5969 — `if (!isset(POSIXBUILTINS)) { zoptind = 1; optcind = 0; }`.
+                                                                                    // The snapshot above is only half the contract: C also RESETS the
+                                                                                    // counter on entry so an inner `getopts` loop starts fresh at the
+                                                                                    // first positional, independent of the caller's OPTIND. Without
+                                                                                    // this, a function whose body runs `getopts` after the caller
+                                                                                    // advanced OPTIND mis-parses its own args — e.g. `add-zsh-hook`
+                                                                                    // (which `getopts`-parses `precmd func`) printed its usage and
+                                                                                    // failed when invoked from a config that had run getopts earlier.
+                                                                                    // zshrs keeps the counter in the $OPTIND param plus the ZOPTIND/
+                                                                                    // OPTCIND trackers getopts syncs against; reset all three.
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) {
         crate::ported::params::setiparam("OPTIND", 1); // c:5967 zoptind = 1
         crate::ported::builtin::ZOPTIND.store(1, Ordering::Relaxed);
@@ -6249,6 +6261,33 @@ pub fn doshfunc(
         let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
         stack.pop();
     }
+    // c:Src/exec.c:6260 — `endparamscope();` inside `runshfunc`, i.e.
+    // BEFORE control returns to doshfunc's epilogue at c:6103. zshrs
+    // hoists runshfunc's `startparamscope()` (c:6254) up to
+    // `inc_locallevel()` above because the body arrives as a closure,
+    // so its partner must be dropped here — at the same point in the
+    // sequence C reaches it — not at the tail of the epilogue.
+    //
+    // The whole epilogue below therefore runs with the callee's locals
+    // already popped, which is what C's own comment at c:6195-6196
+    // asserts ("The endparamscope() has already happened, hence the
+    // `+1` here" for the exit_pending test at c:6201). Three orderings
+    // depend on it and all three were wrong while this call sat at the
+    // tail:
+    //   * `endtrapscope()` (c:6174) dispatches a function-scoped EXIT
+    //     trap. In C the trap body runs in the CALLER's param scope:
+    //       X=5; f(){ local X=1; trap 'print IN=$X; X=99' EXIT; }; f
+    //       zsh -> IN=5 then X==99 outside
+    //     With endparamscope last, zshrs printed `IN=1` and the trap's
+    //     `X=99` landed in the doomed local shadow (outer X stayed 5).
+    //   * the OPTIND/optcind restore (c:6120-6122) must write the
+    //     CALLER's parameter, so it has to follow this pop — see the
+    //     restore site below.
+    //   * `foo() { exit 7; }; foo` needs the decrement before the
+    //     exit_pending comparison or `exit_level >= locallevel+1` is
+    //     off by one and the shell exits 0.
+    endparamscope();
+
     // c:6045 — `undoshfunc:` label. Reached either by fall-through
     // from c:6044 or by `goto undoshfunc;` from the FUNCNEST check
     // at c:6003. Tail epilogue follows.
@@ -6276,19 +6315,53 @@ pub fn doshfunc(
         crate::ported::utils::set_argzero(Some(saved)); // c:6057
     }
 
-    // c:Src/exec.c:6060-6062 — `zoptind = funcsave->zoptind;
-    // zoptarg = funcsave->zoptarg;`. Restore OPTIND/OPTARG so
-    // an inner getopts loop's counter mutations don't leak to
-    // the caller. Bug #513.
-    if let Some(saved) = funcsave_optind {
-        if let Ok(n) = saved.parse::<i64>() {
-            crate::ported::params::setiparam("OPTIND", n);
-        } else {
-            crate::ported::params::setsparam("OPTIND", &saved);
+    // c:6120-6123 — `if (!isset(POSIXBUILTINS)) { zoptind =
+    // funcsave->zoptind; optcind = funcsave->optcind; }`.
+    //
+    // Placement is load-bearing in both directions, which is why this
+    // sits exactly where C has it — after the pparams/argv0 restore
+    // (c:6114-6119) and before the option restore (c:6129-6162):
+    //
+    //  * AFTER `endparamscope()` (already run above). In C `zoptind`
+    //    is a plain global int (c:47); in zshrs `$OPTIND` is an
+    //    ordinary paramtab entry, so "restore OPTIND" means "write the
+    //    visible parameter". Written before the scope pop it landed in
+    //    the CALLEE's own `local OPTIND` shadow, which the pop then
+    //    discarded — re-exposing the caller's parameter that the entry
+    //    reset at c:5967 had already clobbered to 1:
+    //        g() { local OPTIND OPTARG; }
+    //        f() { local OPTIND=9; g; print $OPTIND }
+    //        zsh -> 9        zshrs (before) -> 1
+    //    A callee with no `local OPTIND` was unaffected, which is why
+    //    it hid for so long; it reached every compsys port that
+    //    declares OPTIND local (`_describe` and thus every completer
+    //    calling it).
+    //
+    //  * BEFORE `endtrapscope()` (c:6174). A function-scoped EXIT trap
+    //    that assigns OPTIND must win, because in C it runs after the
+    //    restore:
+    //        t1(){ trap 'OPTIND=99' EXIT; }; OPTIND=5; t1; print $OPTIND
+    //        zsh -> 99
+    //    Restoring after endtrapscope clobbered the trap's write to 5.
+    //
+    //  * BEFORE the option restore (c:6129-6162), so `isset(POSIXBUILTINS)`
+    //    reads the CALLEE's setting, matching the entry-side reset at
+    //    c:5966 which is likewise evaluated inside the function's option
+    //    scope:
+    //        OPTIND=5; f(){ setopt localoptions posixbuiltins; OPTIND=42 }
+    //        f; print $OPTIND    zsh -> 42
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) {
+        if let Some(saved) = funcsave_optind {
+            // c:6121 `zoptind = funcsave->zoptind;`
+            if let Ok(n) = saved.parse::<i64>() {
+                crate::ported::params::setiparam("OPTIND", n);
+                crate::ported::builtin::ZOPTIND.store(n as i32, Ordering::Relaxed);
+            } else {
+                crate::ported::params::setsparam("OPTIND", &saved);
+            }
         }
-    }
-    if let Some(saved) = funcsave_optarg {
-        crate::ported::params::setsparam("OPTARG", &saved);
+        // c:6122 `optcind = funcsave->optcind;`
+        crate::ported::builtin::OPTCIND.store(funcsave_optcind, Ordering::Relaxed);
     }
 
     // c:6064 — `scriptname = funcsave->scriptname;`
@@ -6341,39 +6414,19 @@ pub fn doshfunc(
         LOOPS.store(funcsave_loops, Ordering::SeqCst); // c:6111
     }
 
-    // c:Src/exec.c:6195-6200 — C's runshfunc calls endparamscope()
-    // BEFORE returning to doshfunc, which then calls endtrapscope()
-    // at c:6114. So locallevel is ALREADY one less by the time
-    // endtrapscope's pop loop compares saved local > current.
+    // c:6174 — `endtrapscope();`
     //
-    // Bug #80 in docs/BUGS.md: zshrs had endtrapscope FIRST (here at
-    // line 5774), endparamscope LATER. That left locallevel at the
-    // function's own level when endtrapscope ran, so saved entries
-    // tagged with `local == current_function_level` failed the
-    // `local > locallevel` pop condition. Nested EXIT traps
-    // (saved at deeper level) never restored at the outer fn's
-    // endtrapscope — outer EXIT traps fired at script exit instead.
-    //
-    // Decrement locallevel via a peer-of-endparamscope locallevel
-    // bookkeeping call before endtrapscope, then leave the real
-    // endparamscope at its current site below so the param scope
-    // unwind still happens after the exit_pending check.
-    {
-        use crate::ported::params::locallevel as ll;
-        let prev = ll.load(Ordering::Relaxed);
-        if prev > 0 {
-            ll.store(prev - 1, Ordering::Relaxed);
-        }
-        crate::ported::signals::endtrapscope();
-        // Re-bump so the existing endparamscope() call below sees the
-        // same pre-decrement state and its own internal decrement
-        // lands at the right value (mirrors C's "endparamscope already
-        // happened" comment at c:6135-6136 — the C order is endparam
-        // (inside runshfunc) → endtrap (in doshfunc); we keep that
-        // logical ordering for endtrapscope only, without disturbing
-        // the rest of the epilogue's level math).
-        ll.store(prev, Ordering::Relaxed);
-    }
+    // Bug #80 in docs/BUGS.md: zshrs used to run endtrapscope while
+    // locallevel was still at the function's own level, so savetrap
+    // entries tagged `local == current_function_level` failed the
+    // `local > locallevel` pop condition and nested EXIT traps never
+    // restored — outer EXIT traps fired at script exit instead. That
+    // was worked around by bracketing this call with a manual
+    // decrement/re-bump of locallevel. The workaround is gone: the
+    // real `endparamscope()` now runs at its C position above, so the
+    // pop loop observes the genuine post-decrement level, and the
+    // trap body executes in the caller's param scope as C does.
+    crate::ported::signals::endtrapscope();
 
     // c:6116-6117 — TRAP_STATE_PRIMED branch: bump trap_return back.
     if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {
@@ -6408,24 +6461,6 @@ pub fn doshfunc(
             }
         }
     }
-
-    // c:Src/exec.c doshfunc → endparamscope — restore local-typeset
-    // params installed during the body. In C, this is called inside
-    // runshfunc (c:6200) BEFORE control returns to doshfunc's tail —
-    // so by the time the exit_pending check runs at c:6141,
-    // locallevel has ALREADY been decremented. The c:6135-6136
-    // comment explicitly states "The endparamscope() has already
-    // happened, hence the +1 here."
-    //
-    // The previous Rust ordering placed endparamscope AFTER the
-    // exit_pending check, which compared exit_level against the
-    // un-decremented locallevel. For `foo() { exit 7; }; foo`:
-    //   exit_level=1, cur_locallevel=1 (pre-decrement)
-    //   check: exit_level >= cur_locallevel + 1 ⟹ 1 >= 2 = false
-    // The function returned cleanly without triggering zexit, and
-    // the shell exited 0 instead of 7. Moving endparamscope before
-    // the check matches C and makes the off-by-one resolve.
-    endparamscope();
 
     // c:6128 — `unqueue_signals();`
     unqueue_signals();

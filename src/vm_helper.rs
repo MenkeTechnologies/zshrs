@@ -1389,6 +1389,28 @@ impl ShellExecutor {
         // run, so TIMEFMT only existed via the lookup_special_var
         // fallback, which scanpmparameters can't see).
         setsparam("TIMEFMT", crate::ported::zsh_system_h::DEFAULT_TIMEFMT);
+        // c:Src/params.c:892 — `setsparam("TMPPREFIX",
+        // ztrdup_metafy(DEFAULT_TMPPREFIX));`, the line immediately
+        // before the TIMEFMT seed above. `DEFAULT_TMPPREFIX` is
+        // "/tmp/zsh" (c:configure.ac:3030 → config.h). Same reason as
+        // TIMEFMT: createparamtable() is not reached from this bin
+        // entry, so without this seed `$TMPPREFIX` existed only when
+        // the environment happened to export it — every scrubbed-env
+        // launch (cron, launchd/systemd unit, container entrypoint,
+        // `env -i`) left it unset and every temp-file path derived
+        // from it fell back per-call-site.
+        //
+        // Guarded on the environment for the same reason NULLCMD /
+        // READNULLCMD below are guarded: C seeds BEFORE the import loop
+        // (c:892 vs c:893+) so an exported $TMPPREFIX overwrites the
+        // default, but zshrs's import (further down in this fn) only
+        // writes an existing entry while it is still PM_UNSET — an
+        // unconditional seed here clears that bit and would make the
+        // default beat the environment. `var_os` is the same
+        // "was it in the environment" test the import loop keys off.
+        if std::env::var_os("TMPPREFIX").is_none() {
+            setsparam("TMPPREFIX", crate::ported::config_h::DEFAULT_TMPPREFIX);
+        }
         // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
         // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Real paramtab
         // seeds (NOT read-time fallbacks) so `unset NULLCMD` truly
@@ -2186,6 +2208,92 @@ impl ShellExecutor {
                 }
             }
         }
+
+        // c:Src/params.c:960-965 — HOME wiring, which C runs right
+        // after the environment-import loop:
+        //     pm = (Param) realparamtab->getnode2(realparamtab, "HOME");
+        //     if (EMULATION(EMULATE_ZSH))
+        //     {
+        //         pm->node.flags &= ~PM_UNSET;
+        //         if (!(pm->node.flags & PM_EXPORTED))
+        //             addenv(pm, home);
+        //     } else if (!home)
+        //         pm->node.flags |= PM_UNSET;
+        // `home` itself was synthesised from the password database
+        // back in setupvals (c:Src/init.c:1237-1250) BEFORE the import
+        // loop, so an inherited $HOME wins: the import calls
+        // `homesetfn` and overwrites the synthesised value.
+        //
+        // zshrs reaches neither of those C sites from this bin entry,
+        // so `$HOME` was whatever the environment supplied and nothing
+        // else — a scrubbed launch (cron, launchd/systemd unit,
+        // container entrypoint, `env -i`) got no $HOME at all, and
+        // every `~`, rc-file path and cache path derived from it
+        // silently resolved to "" (`~/x` expanded to `/x`).
+        //
+        // Ordering is preserved by only synthesising when the import
+        // produced nothing: `var_os` is the exact "was it in the
+        // environment" test C's loop keys off, so an explicitly empty
+        // `HOME=` still stays empty (reference binary: `env -i … HOME=
+        // zsh -f -c 'print -r -- "[${HOME-UNSET}]"'` prints `[]`).
+        //
+        // `home` itself comes from c:Src/init.c:1237-1250, inlined here
+        // because C has no function to port — it is straight-line code
+        // inside `setupvals()`:
+        //     #ifdef USE_GETPWUID
+        //         if ((pswd = getpwuid(cached_uid))) {
+        //             if (EMULATION(EMULATE_ZSH))
+        //                 home = ztrdup_metafy(pswd->pw_dir);
+        //             cached_username = ztrdup_metafy(pswd->pw_name);
+        //         }
+        //         else
+        //     #endif /* USE_GETPWUID */
+        //         {
+        //             if (EMULATION(EMULATE_ZSH))
+        //                 home = ztrdup("/");
+        //             cached_username = ztrdup("");
+        //         }
+        // Both arms are guarded on EMULATE_ZSH: under sh/ksh emulation
+        // the C global stays NULL and `$HOME` can only come from the
+        // environment. Reference binary agrees — `env -i TERM=dumb
+        // PATH=/usr/bin:/bin zsh --emulate sh -f -c 'echo
+        // "HOME=${HOME-UNSET}"'` prints `HOME=UNSET`, while the same
+        // command without `--emulate sh` prints the password-database
+        // home. `cached_username` is seeded separately (see the
+        // getlogin() block below), so only the `home` half is here.
+        if std::env::var_os("HOME").is_none()
+            && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH)
+        {
+            // c:Src/init.c:1239 — `getpwuid(cached_uid)`, cached_uid
+            // being `getuid()` from c:1235.
+            let pswd = unsafe { libc::getpwuid(libc::getuid()) };
+            let pw_dir = if pswd.is_null() {
+                std::ptr::null()
+            } else {
+                unsafe { (*pswd).pw_dir }
+            };
+            let h = if pw_dir.is_null() {
+                // c:1248 — password lookup failed: `home = ztrdup("/")`.
+                // A NULL `pw_dir` on a present entry is the same
+                // "no usable home" case.
+                "/".to_string()
+            } else {
+                // c:1241 — `home = ztrdup_metafy(pswd->pw_dir)`.
+                crate::ported::utils::metafy(
+                    &unsafe { std::ffi::CStr::from_ptr(pw_dir) }.to_string_lossy(),
+                )
+            };
+            // Routes through `homesetfn`, so the `home` global and the
+            // paramtab entry agree (c:Src/params.c:5118).
+            crate::ported::params::setsparam("HOME", &h);
+            // c:964-965 — the param is not PM_EXPORTED (it was not
+            // imported), so C addenv's it. The reference binary
+            // confirms the synthesised value reaches children:
+            // `env -i TERM=dumb PATH=/usr/bin:/bin zsh -f -c
+            // '/usr/bin/env'` lists `HOME=/Users/…`.
+            crate::ported::params::addenv("HOME", &h);
+        }
+
         // NOT DONE HERE: c:Src/params.c:951 `addenv(pm, buf)`, which zputenv's
         // the INCREMENTED SHLVL into the process environment so a forked child
         // sees 6 for `SHLVL=5 zsh -fc 'printenv SHLVL; true'`. zshrs still
@@ -2309,11 +2417,11 @@ impl ShellExecutor {
         crate::ported::utils::set_scriptname(Some("zsh".to_string()));
         crate::ported::utils::set_scriptfilename(Some("zsh".to_string()));
 
-        // c:Src/params.c:961-970 — uname-derived host/arch
-        // identification params: MACHTYPE / CPUTYPE / OSTYPE /
-        // VENDOR. C zsh reads from compile-time `#define`s (set by
-        // ./configure) for MACHTYPE / OSTYPE / VENDOR, and from
-        // uname().machine at runtime for CPUTYPE.
+        // c:Src/params.c:975-992 — host/arch identification params:
+        // CPUTYPE / MACHTYPE / OSTYPE / VENDOR. C zsh reads from
+        // compile-time `#define`s (set by ./configure) for MACHTYPE /
+        // OSTYPE / VENDOR, and from uname().machine at runtime for
+        // CPUTYPE.
         //
         // Rust port: probe uname() at startup for CPUTYPE, and use
         // const strings parameterized by build-target for the
@@ -2332,14 +2440,18 @@ impl ShellExecutor {
         let cputype = to_str(&uname_buf.machine);
         crate::ported::params::setsparam("CPUTYPE", &cputype); // c:961
         let sysname = to_str(&uname_buf.sysname).to_lowercase();
-        let release = to_str(&uname_buf.release);
-        let ostype = format!("{}{}", sysname, release); // c:968 (OSTYPE)
-        crate::ported::params::setsparam("OSTYPE", &ostype);
-        // MACHTYPE: configure's `$host_cpu`, i.e. the config.guess
-        // canonical arch name — NOT uname's `machine`. The two differ
-        // on Apple Silicon (uname says `arm64`, config.guess says
-        // `aarch64`), and zsh reports the latter. Single source of
-        // truth: config_h::MACHTYPE (= build target arch).
+        // OSTYPE: configure's `$host_os`, resolved on the build host and
+        // frozen into config.h — C never re-derives it from uname() at
+        // startup. Deriving it here made the two writers disagree, so the
+        // same binary answered `darwin25.5.0` under -c and `darwin23.6.0`
+        // under -i. Single source of truth: config_h::OSTYPE, exactly as
+        // MACHTYPE below.
+        crate::ported::params::setsparam("OSTYPE", crate::ported::config_h::OSTYPE); // c:990
+                                                                                     // MACHTYPE: configure's `$host_cpu`, i.e. the config.guess
+                                                                                     // canonical arch name — NOT uname's `machine`. The two differ
+                                                                                     // on Apple Silicon (uname says `arm64`, config.guess says
+                                                                                     // `aarch64`), and zsh reports the latter. Single source of
+                                                                                     // truth: config_h::MACHTYPE (= build target arch).
         crate::ported::params::setsparam("MACHTYPE", crate::ported::config_h::MACHTYPE); // c:967
         let vendor = if sysname == "darwin" {
             "apple"
@@ -2863,21 +2975,46 @@ impl ShellExecutor {
                     let loaded_dir = crate::ported::utils::getshfunc(name)
                         .and_then(|f| f.filename)
                         .filter(|d| d != "zsh");
+                    // c:Src/exec.c:5682-5760 — C loads the body IN PLACE on the
+                    // existing Shfunc, so every stub flag except PM_UNDEFINED
+                    // survives. See the twin site below for why PM_ABSPATH_USED
+                    // in particular has to come back.
+                    let abspath_used =
+                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
+                    let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let registered = autoload_register_source(name, &body);
                         let _ = self.execute_script_zsh_pipeline(&registered);
                     }
                     if let Some(dir) = loaded_dir.as_deref() {
-                        if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
-                            if let Some(shf) = tab.get_mut(name) {
-                                crate::ported::exec::loadautofnsetfile(shf, Some(dir));
-                                // c:5735
-                            }
-                        }
+                        restore_loaddir(name, dir, abspath_used, ksh_style);
                     }
                 } else if let Some(body) = stub.body.clone() {
+                    // c:Src/builtin.c:3180 (eval_autoload) — `autoload +X NAME`
+                    // loads the body EAGERLY through `loadautofn`, which sets
+                    // `body` + `filename`/PM_LOADDIR and clears PM_UNDEFINED
+                    // but leaves no compiled chunk behind. The first CALL of
+                    // such a function therefore lands in THIS arm, never the
+                    // PM_UNDEFINED arm above, so it needs the same
+                    // post-registration restore — otherwise `autoload +X
+                    // /abs/dir/NAME` lost the pair before the body ran and a
+                    // sibling `autoload -Uz SIB` inside it failed with
+                    // "function definition file not found" where zsh loads
+                    // /abs/dir/SIB. `functions[name]=body` (parameter.c
+                    // setpmfunction) reaches this arm too and simply has no
+                    // PM_LOADDIR, so the restore is skipped for it.
+                    let loaded_dir = ((stub.node.flags as u32 & crate::ported::zsh_h::PM_LOADDIR)
+                        != 0)
+                        .then(|| stub.filename.clone())
+                        .flatten();
+                    let abspath_used =
+                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
+                    let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     let registered = autoload_register_source(name, &body);
                     let _ = self.execute_script_zsh_pipeline(&registered);
+                    if let Some(dir) = loaded_dir.as_deref() {
+                        restore_loaddir(name, dir, abspath_used, ksh_style);
+                    }
                 }
             }
         }
@@ -3032,7 +3169,30 @@ impl ShellExecutor {
                     let loaded_dir = crate::ported::utils::getshfunc(name)
                         .and_then(|f| f.filename)
                         .filter(|d| d != "zsh");
+                    // c:Src/exec.c:5682-5760 — C loads the body IN PLACE on the
+                    // existing Shfunc: `shf->node.flags &= ~PM_UNDEFINED`
+                    // (c:5751) is the only flag C clears, so PM_ABSPATH_USED —
+                    // stamped by `autoload -Uz /abs/dir/NAME`
+                    // (`add_autoload_function`, Src/builtin.c:3290-3291) —
+                    // survives the load. zshrs re-registers the body through the
+                    // funcdef pipeline, which builds a FRESH node and drops the
+                    // whole flag word; `loadautofnsetfile` below puts filename +
+                    // PM_LOADDIR back, and PM_ABSPATH_USED has to come back with
+                    // them. It is read by `add_autoload_function`'s sibling arm
+                    // (Src/builtin.c:3310-3323): when a function loaded by
+                    // absolute path autoloads a sibling with a bare name, C
+                    // inherits the CALLER's load directory — `if ((shf2 = ...
+                    // getnode2(shfunctab, calling_f)) && (shf2->node.flags &
+                    // PM_LOADDIR) && (shf2->node.flags & PM_ABSPATH_USED) && ...`
+                    // Without the restore that test never fired, so
+                    // `autoload -Uz $D/wrapper; wrapper` → `autoload -Uz sibling`
+                    // failed with "function definition file not found" (zsh runs
+                    // $D/sibling), and compsys `_`-names fell through to the Rust
+                    // port instead of the user's file.
+                    let abspath_used =
+                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
+                        let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                         let registered = autoload_register_source(name, &body);
                         // c:Src/exec.c:5739 — the ksh-autoload body runs via
                         // `execode(prog, 1, 0, "evalautofunc")` at the function
@@ -3091,13 +3251,7 @@ impl ShellExecutor {
                             SHELL_EXITING.store(saved_shell_exiting, Relaxed);
                         }
                         if let Some(dir) = loaded_dir.as_deref() {
-                            if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write()
-                            {
-                                if let Some(shf) = tab.get_mut(name) {
-                                    crate::ported::exec::loadautofnsetfile(shf, Some(dir));
-                                    // c:5735
-                                }
-                            }
+                            restore_loaddir(name, dir, abspath_used, ksh_style);
                         }
                         if !self.functions_compiled.contains_key(name) {
                             // c:Src/exec.c:5742-5745 — ksh-style load ran
@@ -3136,8 +3290,31 @@ impl ShellExecutor {
                     // not a fusevm Chunk). Lazy-compile here by feeding
                     // the body through the standard funcdef pipeline so
                     // the next CallFunction op finds the chunk.
+                    //
+                    // c:Src/builtin.c:3180 (eval_autoload) — `autoload +X NAME`
+                    // reaches this arm as well: it loads the body EAGERLY via
+                    // `loadautofn`, which sets `body` + `filename`/PM_LOADDIR
+                    // and clears PM_UNDEFINED but leaves no compiled chunk, so
+                    // the first CALL never sees the PM_UNDEFINED arm above.
+                    // Restore the load directory after re-registration exactly
+                    // as that arm does — otherwise `autoload +X /abs/dir/NAME`
+                    // dropped PM_LOADDIR|PM_ABSPATH_USED before the body ran
+                    // and a sibling `autoload -Uz SIB` inside it failed with
+                    // "function definition file not found" where zsh loads
+                    // /abs/dir/SIB. The `functions[name]=body` case has no
+                    // PM_LOADDIR, so the restore is skipped for it.
+                    let loaded_dir = ((stub.node.flags as u32 & crate::ported::zsh_h::PM_LOADDIR)
+                        != 0)
+                        .then(|| stub.filename.clone())
+                        .flatten();
+                    let abspath_used =
+                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
+                    let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     let registered = autoload_register_source(name, &body);
                     let _ = self.execute_script_zsh_pipeline(&registered);
+                    if let Some(dir) = loaded_dir.as_deref() {
+                        restore_loaddir(name, dir, abspath_used, ksh_style);
+                    }
                 }
             }
         }
@@ -4666,28 +4843,88 @@ impl Drop for NoAliasesRestore {
     }
 }
 
-fn autoload_register_source(name: &str, body: &str) -> String {
-    // c:Src/exec.c:5725 — `if (ksh == 2 || (ksh == 1 && isset(KSHAUTOLOAD)))`
-    // — the ksh-style load branch. ksh derives from the stub's
-    // stored-style bits per c:5708-5709 (`PM_KSHSTORED ? 2 :
-    // PM_ZSHSTORED ? 0 : 1`; a decisive `.zwc` header flag was
-    // already folded into these bits by loadautofn). A ksh-style
-    // load executes the file contents at top level (c:5740-5746
-    // `execode(prog, 1, 0, "evalautofunc")`) and expects the file
-    // itself to define the function — so the body goes through the
-    // pipeline VERBATIM, never wrapped.
+/// c:Src/exec.c:5735 `loadautofnsetfile(shf, fdir)` + c:5751 — put the load
+/// directory (and the absolute-path marker) back on a function whose body
+/// zshrs just re-registered through the funcdef pipeline.
+///
+/// C loads an autoloaded body IN PLACE on the existing `Shfunc`, so
+/// `filename`, PM_LOADDIR and PM_ABSPATH_USED all survive the load:
+/// `shf->node.flags &= ~PM_UNDEFINED` (c:5751) is the only flag C clears.
+/// zshrs re-registers the body as SOURCE through the WC_FUNCDEF pipeline,
+/// which builds a FRESH node whose `filename` is the enclosing script and
+/// whose flag word starts at zero. Both have to be reinstated, or `whence -v`
+/// names the calling script instead of the definition file, and the
+/// PM_LOADDIR|PM_ABSPATH_USED pair that `add_autoload_function`
+/// (Src/builtin.c:3310-3323) tests — to hand a sibling `autoload -Uz NAME`
+/// the caller's directory — is gone.
+///
+/// One helper rather than four inline copies: all four
+/// `autoload_register_source` call sites need the identical restore.
+///
+/// `ksh_style` must be sampled BEFORE the re-registration (the fresh node's
+/// flag word no longer carries PM_KSHSTORED / PM_ZSHSTORED, so re-deriving it
+/// here would read the wrong answer): c:Src/exec.c:5792-5806 is the one arm
+/// where C does NOT reload the body in place. It runs the whole FILE at top
+/// level (`execode(prog, 1, 0, "evalautofunc")`, c:5795) and then REFETCHES
+/// the node (`shf = shfunctab->getnode(shfunctab, n)`, c:5797) because the
+/// file's own `NAME() { … }` created a brand-new Shfunc. There is no
+/// `loadautofnsetfile` call on that arm, so zsh itself loses `filename`,
+/// PM_LOADDIR and PM_ABSPATH_USED there. Verified against the reference shell:
+///
+/// ```text
+/// $ zsh -f -c 'autoload -k /D/kw; kw'
+/// ksh-kw ran
+/// kw: ksib: function definition file not found
+/// $ zsh -f -c 'autoload -k /D/kw; kw >/dev/null; whence -v kw'
+/// kw is a shell function from zsh
+/// ```
+///
+/// Restoring on that arm would make a ksh-autoloaded function inherit its
+/// directory to siblings where zsh does not.
+fn restore_loaddir(name: &str, dir: &str, abspath_used: bool, ksh_style: bool) {
+    if ksh_style {
+        return; // c:5792-5806 — no loadautofnsetfile on the ksh arm
+    }
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+        if let Some(shf) = tab.get_mut(name) {
+            crate::ported::exec::loadautofnsetfile(shf, Some(dir)); // c:5735
+            if abspath_used {
+                shf.node.flags |= crate::ported::zsh_h::PM_ABSPATH_USED as i32; // c:5751
+            }
+        }
+    }
+}
+
+/// c:Src/exec.c:5781 — `if (ksh == 2 || (ksh == 1 && isset(KSHAUTOLOAD)))`,
+/// the ksh-style load branch. `ksh` derives from the stub's stored-style bits
+/// per c:5762-5766 (`PM_KSHSTORED ? 2 : PM_ZSHSTORED ? 0 : 1`; a decisive
+/// `.zwc` header flag was already folded into these bits by `loadautofn`).
+///
+/// Two zshrs steps need the same answer — `autoload_register_source` (wrap vs
+/// verbatim) and `restore_loaddir` (whether the load kept the original node)
+/// — so the decision lives in one place.
+fn autoload_is_ksh_style(name: &str) -> bool {
     let flags = crate::ported::utils::getshfunc(name)
         .map(|f| f.node.flags as u32)
         .unwrap_or(0);
     let ksh = if flags & crate::ported::zsh_h::PM_KSHSTORED != 0 {
-        2
+        2 // c:5765
     } else if flags & crate::ported::zsh_h::PM_ZSHSTORED != 0 {
-        0
+        0 // c:5766
     } else {
-        1
+        1 // c:5766
     };
-    if ksh == 2 || (ksh == 1 && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHAUTOLOAD)) {
-        return body.to_string(); // c:5746 execode(prog, ..., "evalautofunc")
+    ksh == 2 || (ksh == 1 && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHAUTOLOAD))
+    // c:5781
+}
+
+fn autoload_register_source(name: &str, body: &str) -> String {
+    // c:Src/exec.c:5781 — a ksh-style load executes the file contents at top
+    // level (c:5795 `execode(prog, 1, 0, "evalautofunc")`) and expects the
+    // file itself to define the function — so the body goes through the
+    // pipeline VERBATIM, never wrapped.
+    if autoload_is_ksh_style(name) {
+        return body.to_string(); // c:5795 execode(prog, ..., "evalautofunc")
     }
     let stripped = crate::ported::exec::parse_string(body, 0)
         .map(|prog| {
@@ -5497,78 +5734,23 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     ) else {
         return false;
     };
-    // (#b) (GF_BACKREF) — capture-aware path. Use pattryrefs so the
-    // per-group begin/end offsets surface, then write $match /
-    // $mbegin / $mend (c:Src/pattern.c GF_BACKREF handling at
-    // c:775 + c:2417). Falls through to the basic pattry path when
-    // (#b) isn't on — that matches the previous behaviour exactly
-    // and avoids the small extra cost (state clone + Vec<i32> alloc)
-    // for the (#b)-free common case.
-    // c:Src/pattern.c:2543 / 2570 — the C gate for capture reporting is
-    // `prog->patnpar` (count of NUMBERED groups), not a globflags bit.
-    // patcomppiece (pattern.rs, c:775 arm) only numbers a group when
-    // GF_BACKREF was live at the point the `(` compiled, so patnpar>0
-    // ⇔ the pattern had an effective `(#b)` REGARDLESS of position.
-    // The old `globflags & GF_BACKREF` gate only saw flags hoisted from
-    // a LEADING `(#...)` spec, so `"%"(#b)(test)*` (literal prefix
-    // before the flag) never populated $match. Bug: gap #1 2026-06-12.
-    let has_backref = prog.0.patnpar > 0;
-    let matched;
-    if has_backref {
-        let mut nump: i32 = 0;
-        let mut begp: Vec<i32> = Vec::new();
-        let mut endp: Vec<i32> = Vec::new();
-        matched = crate::ported::pattern::pattryrefs(
-            &prog,
-            s,
-            s.len() as i32,
-            -1,
-            None,
-            0,
-            Some(&mut nump),
-            Some(&mut begp),
-            Some(&mut endp),
-        );
-        if matched {
-            let n = (nump as usize).min(begp.len()).min(endp.len());
-            let mut match_arr: Vec<String> = Vec::with_capacity(n);
-            let mut begin_arr: Vec<String> = Vec::with_capacity(n);
-            let mut end_arr: Vec<String> = Vec::with_capacity(n);
-            // KSHARRAYS off → 1-based; on → 0-based. C path:
-            // `setiparam("MBEGIN", patoffset + !isset(KSHARRAYS))`
-            // — so the base offset added to each begin/end index.
-            let ksharrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
-            let base = if ksharrays { 0 } else { 1 };
-            for i in 0..n {
-                // c:2607-2613 — unset group (unmatched alternation
-                // branch / hashed paren): matcharr[i]="",
-                // mbeginarr[i]="-1", mendarr[i]="-1". pattryrefs
-                // reports these as begp/endp = -1 (c:2563-2566).
-                if begp[i] < 0 || endp[i] < 0 {
-                    match_arr.push(String::new());
-                    begin_arr.push("-1".to_string());
-                    end_arr.push("-1".to_string());
-                    continue;
-                }
-                let b = begp[i] as usize;
-                let e = endp[i] as usize;
-                let lo = b.min(s.len());
-                let hi = e.min(s.len()).max(lo);
-                match_arr.push(s[lo..hi].to_string());
-                begin_arr.push((b + base).to_string());
-                // mend is the INDEX of the last matched char (inclusive),
-                // so end - 1 + base. For an empty span use the begin
-                // offset (zsh's setiparam("MEND", mlen + patoffset + ...
-                // - 1) shape from c:2444-2446).
-                end_arr.push(((e + base).saturating_sub(1)).to_string());
-            }
-            crate::ported::params::setaparam("match", match_arr);
-            crate::ported::params::setaparam("mbegin", begin_arr);
-            crate::ported::params::setaparam("mend", end_arr);
-        }
-    } else {
-        matched = pattry(&prog, s);
-    }
+    // c:Src/pattern.c:2570-2621 — `else if (prog->patnpar && !(patflags &
+    // PAT_FILE))`: when the caller passes NO nump/begp/endp, `pattryrefs`
+    // ITSELF publishes $match / $mbegin / $mend. That arm is ported in
+    // pattern.rs, so this layer must not re-derive them from begp/endp.
+    //
+    // Re-deriving required compensating for the EXCLUSIVE end index
+    // `pattryrefs` used to return, and the compensation was wrong twice over:
+    //   * it would double-correct the c:2562-2564 `- 1` now applied there, and
+    //     collide with the `endp[i] < 0` unset-group sentinel — an empty
+    //     capture at offset 0 reports (0, -1) and was misread as an UNMATCHED
+    //     alternation branch;
+    //   * `saturating_sub(1)` clamped at 0, so under KSHARRAYS an empty capture
+    //     at offset 0 gave `mend=0` where C computes `0 + 0 + 0 - 1` = -1.
+    //     Measured: `setopt ksharrays; [[ abc = (#b)(x#)abc ]]` → zsh mend=-1,
+    //     zshrs mend=0, while the substitution path (which already uses the
+    //     c:2570-2621 arm) printed -1 correctly.
+    let matched = pattry(&prog, s);
     // $MATCH / $MBEGIN / $MEND are set by the MATCHER (pattern.rs, c:2526),
     // which is where C decides it — gated on the GLOBAL patglobflags so a later
     // `(#M)` can turn GF_MATCHREF back off (c:1099-1100).

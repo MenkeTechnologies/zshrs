@@ -30,7 +30,7 @@
 //! (`$compstate[quote]` empty). `print -v disp` (sh:49) builds the operator
 //! display array directly.
 
-use crate::compsys::ported::_regex_arguments::_regex_arguments;
+use crate::compsys::ported::_regex_arguments::regex_arguments_byname;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -192,7 +192,7 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
     let mut argv = vec!["_ldap_search_filters".to_string()];
     argv.extend(build_query());
     // sh:114
-    let _ = _regex_arguments(&argv);
+    let _ = regex_arguments_byname(&argv);
     // sh:115
     dispatch_function_call("_ldap_search_filters", &[]).unwrap_or(1)
 }

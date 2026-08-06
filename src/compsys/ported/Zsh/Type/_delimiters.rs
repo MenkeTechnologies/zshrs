@@ -20,10 +20,26 @@
 //! sh:16  fi
 //! ```
 
-use crate::compsys::ported::_message::_message;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_message::message_byname;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getsparam, setaparam};
+
+/// Reach `_delimiters` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_delimiters qualifier-$char` (Completion/Zsh/Context/_brace_parameter sh:34) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn delimiters_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_delimiters", args, || _delimiters(args))
+}
 
 /// `_delimiters` — offer the delimiter chars used in modifiers /
 /// qualifiers. Reads the `delimiters` style for the caller's tag
@@ -53,7 +69,7 @@ pub fn _delimiters(args: &[String]) -> i32 {
         //   The `-a list` flag tells compadd to read from a shell
         //   array named `list`; publish ours under that name.
         setaparam("list", list);
-        _wanted(&[
+        wanted_byname(&[
             "delimiters".to_string(),
             "expl".to_string(),
             "delimiter".to_string(),
@@ -65,7 +81,7 @@ pub fn _delimiters(args: &[String]) -> i32 {
         ])
     } else {
         // sh:15  _message delimiter
-        _message(&["delimiter".to_string()])
+        message_byname(&["delimiter".to_string()])
     }
 }
 

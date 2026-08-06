@@ -21,7 +21,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -87,7 +87,7 @@ pub fn _ttys(args: &[String]) -> i32 {
                 seen.push(name);
             }
         }
-        let _ = _description(&[
+        let _ = description_byname(&[
             "open-ttys".to_string(),
             "expl".to_string(),
             "open tty".to_string(),
@@ -101,7 +101,7 @@ pub fn _ttys(args: &[String]) -> i32 {
                 .into_iter()
                 .filter(|p| p.rsplit('/').next().map(|b| b != "ptmx").unwrap_or(true)),
         );
-        let _ = _description(&["ttys".to_string(), "expl".to_string(), "tty".to_string()]);
+        let _ = description_byname(&["ttys".to_string(), "expl".to_string(), "tty".to_string()]);
         t.into_iter()
             .map(|p| p.strip_prefix("/dev/").unwrap_or(&p).to_string())
             .collect()

@@ -7,14 +7,14 @@
 //! sh: 3  _message -e ids 'session ID'
 //! ```
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 
 /// `_xt_session_id` — complete an X toolkit session-management ID:
 /// unconditionally delegates to `_message -e ids 'session ID'` (sh:3).
 pub fn _xt_session_id(_args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_xt_session_id");
     // sh:3
-    _message(&[
+    message_byname(&[
         "-e".to_string(),
         "ids".to_string(),
         "session ID".to_string(),

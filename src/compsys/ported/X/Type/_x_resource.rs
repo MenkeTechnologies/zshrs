@@ -20,7 +20,7 @@
 //! straight through to `_message -r`. Otherwise fall back to the
 //! `resources` tag's default `'resource'` message.
 
-use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_message::message_byname;
 
 /// sh:3 — `$argv[(I)-X]`: 1-based index of the *last* `-X` element in
 /// `args`, or `None` if absent (mirrors zsh's `0` == "not found").
@@ -44,11 +44,11 @@ pub fn _x_resource(args: &[String]) -> i32 {
             // sh:6  _message -r "$argv[x + 1]"
             //   0-based: the element right after the found `-X`.
             let msg = args.get(idx + 1).cloned().unwrap_or_default();
-            _message(&["-r".to_string(), msg])
+            message_byname(&["-r".to_string(), msg])
         }
         None => {
             // sh:8  _message -e resources 'resource'
-            _message(&[
+            message_byname(&[
                 "-e".to_string(),
                 "resources".to_string(),
                 "resource".to_string(),

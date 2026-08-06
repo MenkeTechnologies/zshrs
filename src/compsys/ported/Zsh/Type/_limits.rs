@@ -14,7 +14,7 @@
 //! (`known_resources`) the real `bin_limit` consults — see
 //! `src/ported/builtins/rlimits.rs:92`.
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::builtins::rlimits::known_resources;
 
 /// `_limits` — `unlimit` command completion: list process-resource
@@ -33,7 +33,7 @@ pub fn _limits(args: &[String]) -> i32 {
     wanted_argv.extend(args.iter().cloned());
     wanted_argv.push("-".to_string());
     wanted_argv.extend(names);
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 #[cfg(test)]

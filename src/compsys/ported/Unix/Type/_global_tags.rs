@@ -9,7 +9,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam};
 
 /// `_global_tags` — complete GNU GLOBAL tags via `global --completion`.
@@ -43,7 +43,7 @@ pub fn _global_tags(args: &[String]) -> i32 {
     w.extend(args.iter().cloned());
     w.push("-".to_string());
     w.push("tags".to_string());
-    _wanted(&w)
+    wanted_byname(&w)
 }
 
 #[cfg(test)]

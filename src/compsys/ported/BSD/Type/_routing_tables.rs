@@ -9,7 +9,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -40,7 +40,7 @@ fn strip_routing_tables_header(line: &str) -> Option<&str> {
 pub fn _routing_tables(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_routing_tables");
     // sh:5  _description routing-tables expl 'routing table'
-    let _ = _description(&[
+    let _ = description_byname(&[
         "routing-tables".to_string(),
         "expl".to_string(),
         "routing table".to_string(),

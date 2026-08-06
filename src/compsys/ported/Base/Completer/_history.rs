@@ -21,7 +21,7 @@
 //! sh:61  (( $compstate[nmatches] ))
 //! ```
 
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -91,7 +91,7 @@ pub fn _history() -> i32 {
             Vec::new()
         };
         setaparam("hslice", hslice);
-        let _ = _wanted(&[
+        let _ = wanted_byname(&[
             opt.clone(),
             "history-words".to_string(),
             "expl".to_string(),

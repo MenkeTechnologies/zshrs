@@ -25,7 +25,7 @@
 //! run) rather than the zsh `${(@M)…##…}` engine.
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::_wanted::wanted_byname;
 use crate::ported::params::{getsparam, setaparam};
 
 /// sh:23-25 approx — pull the address token out of one `ifconfig`/`ip` line.
@@ -129,7 +129,7 @@ pub fn _bind_addresses(args: &[String]) -> i32 {
     wanted_argv.extend(rest);
     wanted_argv.push("-".to_string());
     wanted_argv.push("tmp".to_string());
-    _wanted(&wanted_argv)
+    wanted_byname(&wanted_argv)
 }
 
 /// `(( $+commands[ip] ))` — is `ip` on $PATH.

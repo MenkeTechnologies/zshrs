@@ -1843,9 +1843,39 @@ pub fn zshrs_main() {
         }
     }
 
+    // c:Src/init.c parseargs — options are scanned in order, and `-c` takes
+    // the NEXT word as the command string. It is not required to be the
+    // first option: `zsh -i -c 'print hi'`, `zsh -l -c …`, and the clumped
+    // `zsh -fi -c …` all run the command. The filter above only consumes a
+    // fixed set of flags (`-f`, `-x`, `-v`, `--no-rcs`, the emulation modes,
+    // `-o NAME`), so any other option — `-i`, `-l`, `-m`, … — survives into
+    // `args` and pushed `-c` off index 1. The old positional `args[1] ==
+    // "-c"` test then failed and the binary exited 0 with the command never
+    // run and nothing printed on stderr.
+    //
+    // Scan only the leading option words: stop at `--` or at the first
+    // non-option, so a literal `-c` appearing among the operands after the
+    // command string (`zsh -c 'print $1' zero -c`) is not mistaken for the
+    // flag.
+    let cmd_idx = {
+        let mut found = None;
+        let mut i = 1;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" || !a.starts_with('-') {
+                break;
+            }
+            if a == "-c" {
+                found = Some(i);
+                break;
+            }
+            i += 1;
+        }
+        found
+    };
     // Handle -c 'command' syntax
-    if args.len() >= 3 && args[1] == "-c" {
-        let code = &args[2];
+    if let Some(ci) = cmd_idx.filter(|ci| ci + 1 < args.len()) {
+        let code = &args[ci + 1];
 
         let mut executor = ShellExecutor::new();
         apply_cli_flags(
@@ -1909,16 +1939,17 @@ pub fn zshrs_main() {
         // When no name is supplied, $0 falls back to argv[0] (the
         // binary path) — matching `zsh -c '...'`'s behavior of
         // exposing the full path of the shell binary.
-        let zero = if args.len() > 3 {
-            // `zshrs -c 'cmd' name args...` — args layout after the
-            // --zsh / -f / -x filter at line 684 is:
-            //   args[0] = binary path
-            //   args[1] = "-c"
-            //   args[2] = the command string
-            //   args[3] = $0 name
-            //   args[4..] = $1, $2, …
-            executor.set_pparams(args[4..].to_vec());
-            args[3].clone()
+        let zero = if args.len() > ci + 2 {
+            // `zshrs [opts] -c 'cmd' name args...` — layout relative to the
+            // `-c` found above (`ci`), since the --zsh / -f / -x filter does
+            // not necessarily leave `-c` at index 1:
+            //   args[0]      = binary path
+            //   args[ci]     = "-c"
+            //   args[ci + 1] = the command string
+            //   args[ci + 2] = $0 name
+            //   args[ci + 3..] = $1, $2, …
+            executor.set_pparams(args[ci + 3..].to_vec());
+            args[ci + 2].clone()
         } else {
             // c:Src/init.c:271 — `posixzero = ztrdup(argv[0])`: `$0`
             // in `-c` mode is the kernel-supplied argv[0] of THIS

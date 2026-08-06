@@ -29,10 +29,16 @@
 //!
 //! Calls real `bin_comptags` + `bin_zformat` + `bin_zparseopts` and
 //! reads `FUNCSTACK` for the `(( $#funcstack > _tags_level ))` guard.
-//! Delegates to `super::_description::_description` for the per-spec
-//! format step.
+//! Reaches `_description` BY NAME (`description_byname` →
+//! [`crate::compsys::ported::shared::call_compfn`]) for the per-spec format
+//! step, matching the sh body's bare `_description …` command word: a
+//! user's own copy earlier on `$fpath` wins, and the call gets its own
+//! `doshfunc` frame.
+//!
+//! The self-call at the `_next_tags` tag-filter branch below stays a DIRECT
+//! Rust call — see the comment there.
 
-use super::_description::_description;
+use super::_description::description_byname;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
@@ -85,6 +91,23 @@ fn run_gopt(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// global the C `funcstack` linked list maps to).
 fn funcstack_depth() -> usize {
     FUNCSTACK.lock().map(|s| s.len()).unwrap_or(0)
+}
+
+/// Reach `_next_label` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `while _next_label hosts expl host; do`
+/// (Completion/Unix/Type/_urls sh:130) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn next_label_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_next_label", args, || _next_label(args))
 }
 
 /// `_next_label` — advance to the next tag-spec in the current
@@ -152,6 +175,19 @@ pub fn _next_label(args: &[String]) -> i32 {
     //   next spec, preserving the 0/1 return contract. Empty
     //   `_next_tags_not` makes this branch dead, matching the unshadowed
     //   body exactly.
+    //
+    //   DELIBERATELY a direct Rust self-call, NOT `next_label_byname`. This
+    //   recursion stands in for sh `continue`, which is control flow, not a
+    //   function call — zsh pushes no frame for it. `next_label_byname`
+    //   would route through `doshfunc`, whose `inc_locallevel()`
+    //   (exec.rs:6131) and `FUNCSTACK` push both feed the sh:9 guard
+    //   `(( $#funcstack > _tags_level ))` two lines above: each skipped spec
+    //   would deepen `$#funcstack`, so the guard would fire on every
+    //   iteration and strip a word off `$_comp_tags` that zsh keeps.
+    //   Arbitration is not lost either — the outer call already resolved
+    //   `_next_label` (a user's own copy would be running its own body here,
+    //   not this port), so a by-name re-entry could only land back on this
+    //   same fn.
     if spec_in_not_list(&spec, &getsparam("_next_tags_not").unwrap_or_default()) {
         return _next_label(args);
     }
@@ -192,7 +228,7 @@ pub fn _next_label(args: &[String]) -> i32 {
         desc_argv.push(tag_lhs);
         desc_argv.push(name.clone());
         desc_argv.push(descr);
-        let _ = _description(&desc_argv);
+        let _ = description_byname(&desc_argv);
 
         // sh:16  set -A $2 "${(P@)2}" "${(@)argv[4,-1]}"
         let mut prev = getaparam(&name).unwrap_or_default();
@@ -204,7 +240,7 @@ pub fn _next_label(args: &[String]) -> i32 {
         desc_argv.push(curtag);
         desc_argv.push(name.clone());
         desc_argv.push(descr_arg);
-        let _ = _description(&desc_argv);
+        let _ = description_byname(&desc_argv);
 
         // sh:19  set -A $2 "${(@)argv[4,-1]}" "${(P@)2}"
         let mut new_arr = extras;

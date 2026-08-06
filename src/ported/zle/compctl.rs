@@ -2199,7 +2199,9 @@ pub(crate) fn getreal(str_in: &str) -> String {
     // c:2132
     // c:2134 — LinkList l = newlinklist();
     // c:2135 — int ne = noerrs;
-    let mut ne_guard = NOERRS.lock().expect("NOERRS poisoned");
+    let mut ne_guard = crate::ported::utils::noerrs_lock()
+        .lock()
+        .expect("NOERRS poisoned");
     let ne = *ne_guard;
     // c:2137 — noerrs = 1;
     *ne_guard = 1;
@@ -2211,7 +2213,9 @@ pub(crate) fn getreal(str_in: &str) -> String {
     // expanded form when non-empty.
     let s = crate::ported::subst::singsub(str_in);
     // c:2140 — noerrs = ne;
-    *NOERRS.lock().expect("NOERRS poisoned") = ne;
+    *crate::ported::utils::noerrs_lock()
+        .lock()
+        .expect("NOERRS poisoned") = ne;
     // c:2141-2143 — if (!errflag && nonempty(l) && first non-empty) → use expanded.
     if errflag.load(std::sync::atomic::Ordering::Relaxed) == 0 && !s.is_empty() {
         return s;
@@ -3113,7 +3117,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let ois = *INSTRING.lock().unwrap();
     let oib = *INBACKT.lock().unwrap();
     let ona = *NOALIASES.lock().unwrap();
-    let ne = *NOERRS.lock().unwrap();
+    let ne = *crate::ported::utils::noerrs_lock().lock().unwrap();
     let ol = LINE_G
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
@@ -3138,7 +3142,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     // C: c:2823-2832 — build the temp buffer with cursor `x` marker.
     // tmp = ss + " " + s[..noffs] + 'x' + s[noffs..]
     *ADDEDX.lock().unwrap() = 1;
-    *NOERRS.lock().unwrap() = 1;
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
     *LEXFLAGS.lock().unwrap() = LEXFLAGS_ZLE;
     let mut tmp = String::with_capacity(ss.len() + 3 + s.len());
     tmp.push_str(ss);
@@ -3234,7 +3238,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     }
 
     *NOALIASES.lock().unwrap() = ona;
-    *NOERRS.lock().unwrap() = ne;
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = ne;
     crate::ported::zle::compcore::WB.store(owb, std::sync::atomic::Ordering::Relaxed);
     crate::ported::zle::compcore::WE.store(owe, std::sync::atomic::Ordering::Relaxed);
     CS_G.store(ocs, Ordering::Relaxed);
@@ -4640,7 +4644,14 @@ static PATCOMPS: std::sync::RwLock<Vec<(String, Arc<Compctl>)>> =
 // module static shadow. Same C variable, same meaning.
 
 /// `noerrs` / `noaliases` — lexer error/alias-suppression flags.
-static NOERRS: Mutex<i32> = Mutex::new(0);
+// `noerrs` is ONE variable in C (`mod_export int noerrs;`, Src/exec.c:117).
+// This file used to declare a THIRD private copy of it, which meant
+// `getreal`'s suppression window (c:Src/Zle/compctl.c:2144, whose comment at
+// c:2135 is "During this errors are not reported") wrote a cell nothing read:
+// `zerr`/`zwarn`/`zerrnam`/`zwarnnam` all consult
+// `crate::ported::utils::noerrs_lock()` (utils.rs:221/244/262/279). A
+// diagnostic raised by the expansion inside `getreal` therefore printed where
+// zsh is silent. Every use below now goes to the single shared storage.
 static NOALIASES: Mutex<i32> = Mutex::new(0);
 static INSTRING: Mutex<i32> = Mutex::new(QT_NONE);
 
@@ -5572,7 +5583,7 @@ mod tests {
         *INSTRING.lock().unwrap() = QT_DOUBLE;
         *INBACKT.lock().unwrap() = 1;
         *NOALIASES.lock().unwrap() = 1;
-        *NOERRS.lock().unwrap() = 0;
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = 0;
         *LINE_G
             .get_or_init(|| Mutex::new(String::new()))
             .lock()
@@ -5591,7 +5602,7 @@ mod tests {
         assert_eq!(*INSTRING.lock().unwrap(), QT_DOUBLE);
         assert_eq!(*INBACKT.lock().unwrap(), 1);
         assert_eq!(*NOALIASES.lock().unwrap(), 1);
-        assert_eq!(*NOERRS.lock().unwrap(), 0);
+        assert_eq!(*crate::ported::utils::noerrs_lock().lock().unwrap(), 0);
         assert_eq!(
             *LINE_G
                 .get_or_init(|| Mutex::new(String::new()))

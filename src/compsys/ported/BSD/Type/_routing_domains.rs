@@ -9,7 +9,7 @@
 //! ```
 
 use crate::compsys::ported::_call_program::_call_program;
-use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_description::description_byname;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -37,7 +37,7 @@ fn rdomain_lines(out: &str) -> Vec<String> {
 pub fn _routing_domains(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_routing_domains");
     // sh:5  _description routing-domains expl 'routing domain'
-    let _ = _description(&[
+    let _ = description_byname(&[
         "routing-domains".to_string(),
         "expl".to_string(),
         "routing domain".to_string(),

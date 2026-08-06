@@ -57,6 +57,24 @@ fn compset(argv: &[&str]) -> bool {
     bin_compset("compset", &owned, &make_ops(), 0) == 0
 }
 
+/// Reach `_history_modifiers` as a BARE COMMAND WORD, the way every upstream caller
+/// writes it — `_history_modifiers p` (Completion/Zsh/Context/_brace_parameter sh:210) — so the normal function lookup runs.
+///
+/// A plain Rust call to the sibling port skips both of
+/// [`crate::compsys::ported::shared::call_compfn`]'s effects: `$fpath` /
+/// shfunc arbitration (the user's own copy of the function is inert) and
+/// the `doshfunc` frame (no `FUNCSTACK` entry, and the callee's
+/// `declare_locals` land in the CALLER's param scope instead of its own).
+///
+/// The direct call stays as the fallback: it runs only when neither a shell
+/// function nor a registered port claims the name — i.e. in unit tests with
+/// no executor installed.
+pub fn history_modifiers_byname(args: &[String]) -> i32 {
+    crate::compsys::ported::shared::call_compfn("_history_modifiers", args, || {
+        _history_modifiers(args)
+    })
+}
+
 /// `_history_modifiers` — complete history modifier letters.
 /// `$1` is the context (`h`=history, `q`=glob qualifier,
 /// `p`=parameter).

@@ -581,6 +581,12 @@ impl ZshCompiler {
             self.errexit_suppress_depth += 1;
         }
         self.compile_pipe(pipes[0]);
+        // c:Src/exec.c:1489-1492 — the FIRST chain element's own
+        // sublist code. Emitted before the `!` negation because C
+        // applies WC_SUBLIST_NOT inside execpline AFTER waitonejob has
+        // stored the status, so `! [[ -z x ]]` records the pre-negation
+        // 1 while `$?` is 0.
+        self.emit_sublist_finish(pipes[0], pipe_nots[0]);
         if sublist.flags.not {
             self.emit_negate_status();
         }
@@ -603,6 +609,11 @@ impl ZshCompiler {
                 SublistOp::Or => self.builder.emit(Op::JumpIfTrue(0), 0),
             };
             self.compile_pipe(pipes[i + 1]);
+            // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
+            // (WC_SUBLIST_OR) re-read WC_SUBLIST_SIMPLE per chain
+            // element, so each RHS gets its own sublist code — and,
+            // like the head above, before its `!` is applied.
+            self.emit_sublist_finish(pipes[i + 1], pipe_nots[i + 1]);
             // Apply this pipe's `!` flag (parser nested it on the next
             // ZshSublist). `true && ! false` parses as
             //   ZshSublist{ true, And, ZshSublist{ !false, not=true } }
@@ -803,6 +814,55 @@ impl ZshCompiler {
         self.builder.emit(Op::SetStatus, 0);
         let e = self.builder.current_pos();
         self.builder.patch_jump(end, e);
+    }
+
+    /// Close one element of a sublist's `&&` / `||` chain the way
+    /// `execpline` does — `Src/exec.c:1489-1492` picks `execsimple` or
+    /// `execpline` from the parse-time `WC_SUBLIST_SIMPLE` flag, and
+    /// only the `execpline` arm reaches `waitonejob` (`Src/jobs.c:1748`),
+    /// which is the sole writer of `$pipestatus` for in-shell code.
+    ///
+    /// Two compile-time conditions gate the marker, both of which C
+    /// resolves at parse time as well:
+    ///
+    /// * `cmplx` — a simple sublist goes to `execsimple`, which the C
+    ///   comment at `Src/exec.c:1284-1286` describes as bypassing job
+    ///   handling entirely. No job, no `waitonejob`, no `$pipestatus`
+    ///   update. `[[ -z x ]]`, `(( 1 ))`, `x=1`, a bare funcdef and any
+    ///   compound whose whole body is likewise simple all land here.
+    ///
+    /// * a multi-stage pipeline — `waitonejob` takes its `jn->procs`
+    ///   branch (`Src/jobs.c:1750-1751`) into `zwaitjob`, whose
+    ///   `storepipestats` (`Src/jobs.c:420`) publishes the per-stage
+    ///   array. In zshrs `BUILTIN_RUN_PIPELINE` already does exactly
+    ///   that, so the no-procs marker must not run and clobber it back
+    ///   to a single entry.
+    ///
+    /// A single-stage element that forks an external is deliberately
+    /// NOT excluded: C's job then holds one proc and `storepipestats`
+    /// yields `[status]`, which is the same one-element array
+    /// `pipestats[0] = lastval` produces (`0200|sig` and `128+sig`
+    /// agree for the signalled case), so the two branches coincide.
+    fn emit_sublist_finish(&mut self, pipe: &ZshPipe, negated: bool) {
+        // c:Src/parse.c:878 — BANG sets `*cmplx = 1` in par_sublist2.
+        if !(negated || pipe_is_cmplx(pipe)) {
+            return;
+        }
+        // c:Src/parse.c:906/930 — BAR/BARAMP. Handled by RUN_PIPELINE.
+        if pipe.next.is_some() {
+            return;
+        }
+        // Hand the live `$?` over as the argument. C's `waitonejob`
+        // reads the single `lastval` global; zshrs keeps the VM status
+        // cell and `builtin::LASTVAL` separately and only the former is
+        // maintained by the compound-command emitters, so the marker
+        // has to carry the authoritative one across.
+        self.builder.emit(Op::GetStatus, 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_SUBLIST_FINISH, 1),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
     }
 
     fn compile_pipe(&mut self, pipe: &ZshPipe) {
@@ -3660,6 +3720,10 @@ impl ZshCompiler {
                         0,
                     );
                     self.builder.emit(Op::Pop, 0);
+                    // Same c:3442-3451 record as the arm's normal exit below —
+                    // this early return must not skip it.
+                    self.last_assign_had_cmd_subst =
+                        elements.iter().any(|e| scalar_rhs_has_cmd_subst(e));
                     return;
                 }
                 // arr=(a b c) / arr+=(d e). Direct port of
@@ -3823,6 +3887,21 @@ impl ZshCompiler {
                 };
                 self.builder.emit(Op::CallBuiltin(bid, argc), 0);
                 self.builder.emit(Op::Pop, 0);
+                // c:Src/exec.c:3442-3451 / :4032 — `lastval = errflag ? errflag :
+                // cmdoutval`, where `cmdoutval` is the exit of the last command
+                // substitution performed while building the assignment (set at
+                // c:Src/subst.c:2006,2049, zeroed at c:Src/exec.c:2796). The
+                // Scalar arm records this at :3609; the Array arm never did, so
+                // `compile_simple`'s walk left `chain_had_cmd_subst` false and
+                // BUILTIN_ASSIGN_ONLY_STATUS took its `else { 0 }` branch. An
+                // array-literal RHS therefore SWALLOWED the status:
+                //     a=("$(exit 7)"); print $?    zsh 7, zshrs 0
+                // while the scalar form `b=$(exit 7)` was already correct. That
+                // also stopped `set -e; a=("$(exit 7)")` aborting, and is what
+                // made _git:7640's `__git_command_successful $pipestatus` treat
+                // a failed `git rev-list` as success.
+                self.last_assign_had_cmd_subst =
+                    elements.iter().any(|e| scalar_rhs_has_cmd_subst(e));
             }
         }
     }
@@ -9819,6 +9898,224 @@ fn meta_encode_byte(out: &mut String, b: u8) {
         out.push(char::from(b ^ 32));
     }
 }
+// ---------------------------------------------------------------------
+// Parse-time `cmplx` flag.
+//
+// Port of the `int *cmplx` out-parameter that `Src/parse.c` threads
+// through `par_list` (c:769) → `par_sublist` (c:825) → `par_sublist2`
+// (c:869) → `par_pline` (c:894) → `par_cmd` (c:958) → `par_simple`
+// (c:1836). C folds the result into the wordcode at
+// `set_sublist_code` (c:755):
+//
+// ```c
+// if (cmplx) ecbuf[p] = WCB_SUBLIST(type, flags, skip);
+// else       ecbuf[p] = WCB_SUBLIST(type, flags | WC_SUBLIST_SIMPLE, skip);
+// ```
+//
+// and `execlist` (c:1489) routes on it — `WC_SUBLIST_SIMPLE` goes to
+// `execsimple`, which the C comment at c:1284 describes as "used to
+// execute things that will run completely in the shell, so that we can
+// by-pass all that nasty job-handling", while everything else goes to
+// `execpline`, which builds a job and ends in `waitonejob`. That job is
+// the only thing that writes `$pipestatus` for an in-shell command, so
+// this flag is precisely what decides whether a sublist publishes one.
+//
+// zshrs parses to an AST rather than to wordcode, and the ported
+// wordcode emitters (`parse.rs::set_sublist_code`) are not on the live
+// execution path, so the same predicate is recomputed here over the AST
+// at compile time. The C call graph maps one-to-one onto the functions
+// below; each carries the c: line that sets `*cmplx = 1`.
+// ---------------------------------------------------------------------
+
+/// c:Src/parse.c:769 `par_list` — `*cmplx |= c` per sublist (c:784),
+/// plus `if (tok != SEPER) *cmplx = 1` (c:786-787), i.e. a list
+/// terminated by `&` / `&|` rather than `;` is cmplx.
+fn list_is_cmplx(list: &ZshList) -> bool {
+    list.flags.async_ || list.flags.disown || sublist_is_cmplx(&list.sublist)
+}
+
+/// c:Src/parse.c:769 `par_list` — a program's complexity is the OR over
+/// its lists, matching C's shared `cmplx` pointer across the `rec:` loop.
+fn program_is_cmplx(program: &ZshProgram) -> bool {
+    program.lists.iter().any(list_is_cmplx)
+}
+
+/// c:Src/parse.c:825 `par_sublist` — the `&&` / `||` chain shares one
+/// `cmplx` pointer (c:834 `*cmplx |= c`, c:843 `par_sublist(cmplx)`), so
+/// the whole chain is cmplx if ANY element is. Used when a compound
+/// command's body is being folded into its parent's flag.
+fn sublist_is_cmplx(sublist: &ZshSublist) -> bool {
+    if sublist_elem_is_cmplx(sublist) {
+        return true;
+    }
+    match &sublist.next {
+        Some((_, next)) => sublist_is_cmplx(next),
+        None => false,
+    }
+}
+
+/// c:Src/parse.c:869 `par_sublist2` — ONE element of the `&&` / `||`
+/// chain: `COPROC` (c:874) and `BANG` (c:878) each set `*cmplx = 1`,
+/// then `par_pline` contributes the rest.
+///
+/// This is the granularity C records the flag at: `set_sublist_code`
+/// (c:844, c:854) is called once per chain element with that element's
+/// own local `c`, and `execlist` re-reads it per element at c:1489
+/// (`WC_SUBLIST_END`), c:1502 (`WC_SUBLIST_AND`) and c:1536
+/// (`WC_SUBLIST_OR`). So `true && [[ -z x ]]` publishes `$pipestatus`
+/// for `true` and not for the cond.
+fn sublist_elem_is_cmplx(sublist: &ZshSublist) -> bool {
+    sublist.flags.coproc || sublist.flags.not || pipe_is_cmplx(&sublist.pipe)
+}
+
+/// c:Src/parse.c:894 `par_pline` — `BAR` (c:906) and `BARAMP` (c:930)
+/// set `*cmplx = 1` and recurse, so any multi-stage pipeline is cmplx;
+/// a single stage defers to `par_cmd`.
+fn pipe_is_cmplx(pipe: &ZshPipe) -> bool {
+    pipe.next.is_some() || command_is_cmplx(&pipe.cmd)
+}
+
+/// c:Src/parse.c:958 `par_cmd`.
+///
+/// Sets `*cmplx = 1` for: a leading redirection (c:964-965), `SELECT`
+/// (c:982), `INPAR` — a `( … )` subshell (c:1011), `TIME` (c:1041), a
+/// trailing redirection (c:1067-1068), and `par_simple` reporting added
+/// redirections (c:1059-1060).
+///
+/// Leaves it untouched — so the construct is only as cmplx as its body —
+/// for `FOR`/`FOREACH` (c:971-979), `CASE` (c:987), `IF` (c:992),
+/// `WHILE`/`UNTIL` (c:995-1002), `REPEAT` (c:1005), `INBRACE` — a
+/// `{ … }` group and its optional `always` block (c:1016), and `FUNC`
+/// (c:1021). Each recurses through `par_save_list(cmplx)` on its body
+/// lists, which is why `if [[ -z x ]]; then [[ -z y ]]; fi` stays
+/// simple while `if [[ -z x ]]; then :; fi` does not.
+///
+/// `DINBRACK` — `[[ … ]]` (c:1026) and `DINPAR` — `(( … ))` (c:1031)
+/// never set it and have no body: they are the leaf simple commands.
+fn command_is_cmplx(cmd: &ZshCommand) -> bool {
+    match cmd {
+        // c:1050-1064 default arm → par_simple.
+        ZshCommand::Simple(simple) => simple_is_cmplx(simple),
+        // c:1011 `case INPAR: *cmplx = 1;`
+        ZshCommand::Subsh(_) => true,
+        // c:1016 `case INBRACE:` — par_subsh(cmplx) at c:1628 parses the
+        // body with the caller's pointer, so `{ … }` inherits its body.
+        ZshCommand::Cursh(body) => program_is_cmplx(body),
+        // c:1636-1649 `par_subsh` always-block — `par_list(cmplx)` for
+        // the try block (c:1628) and `par_save_list(cmplx)` for the
+        // always block (c:1649) share the one pointer.
+        ZshCommand::Try(t) => program_is_cmplx(&t.try_block) || program_is_cmplx(&t.always),
+        // c:981-985 `case SELECT: *cmplx = 1; par_for(cmplx);` vs
+        // c:971-979 FOR/FOREACH which only inherit the body. Both the
+        // word-list forms and the C-style `for ((;;))` (c:1087 par_for)
+        // take the body-only path.
+        ZshCommand::For(f) => f.is_select || program_is_cmplx(&f.body),
+        // c:987-990 `case CASE: par_case(cmplx);` — c:1380
+        // `par_save_list(cmplx)` per arm body.
+        ZshCommand::Case(c) => c.arms.iter().any(|arm| program_is_cmplx(&arm.body)),
+        // c:992-994 `case IF: par_if(cmplx);` — c:1438/1453/1462/1494/
+        // 1500 `par_save_list(cmplx)` over every condition and branch.
+        ZshCommand::If(i) => {
+            program_is_cmplx(&i.cond)
+                || program_is_cmplx(&i.then)
+                || i.elif
+                    .iter()
+                    .any(|(c, b)| program_is_cmplx(c) || program_is_cmplx(b))
+                || i.else_.as_ref().is_some_and(|e| program_is_cmplx(e))
+        }
+        // c:995-1003 `case WHILE:`/`case UNTIL: par_while(cmplx);` —
+        // c:1528/1534/1541/1547 `par_save_list(cmplx)` over the
+        // condition and the body.
+        ZshCommand::While(w) | ZshCommand::Until(w) => {
+            program_is_cmplx(&w.cond) || program_is_cmplx(&w.body)
+        }
+        // c:1005-1008 `case REPEAT: par_repeat(cmplx);` — c:1583/1590/
+        // 1596 `par_save_list(cmplx)` over the body. The count word is
+        // a wordlist, not a list, and contributes nothing.
+        ZshCommand::Repeat(r) => program_is_cmplx(&r.body),
+        // c:1021-1024 `case FUNC: par_funcdef(cmplx);` — par_funcdef
+        // (c:1672) declares its OWN `int c = 0` (c:1674) and parses the
+        // body with it, so a function BODY never reaches the caller's
+        // flag: `function f { true }` is simple. Only extra names after
+        // the first set it (c:1773-1774 `if (num > 0) *cmplx = 1`), and
+        // the anonymous-function call form carries argument words that
+        // do the same at c:2168-2169.
+        ZshCommand::FuncDef(f) => {
+            f.names.len() > 1 || f.auto_call_args.as_ref().is_some_and(|a| !a.is_empty())
+        }
+        // c:1036-1046 `case TIME: *cmplx = 1;`
+        ZshCommand::Time(_) => true,
+        // c:1026-1030 `case DINBRACK:` — par_dinbrack() takes no cmplx
+        // argument at all, and c:1031-1035 `case DINPAR:` just emits
+        // WCB_ARITH(). These two are the leaf simple commands.
+        ZshCommand::Cond(_) | ZshCommand::Arith(_) => false,
+        // c:964-965 / c:1067-1068 — redirections around a compound
+        // command set `*cmplx = 1` regardless of what they wrap.
+        ZshCommand::Redirected(_, _) => true,
+    }
+}
+
+/// c:Src/parse.c:1836 `par_simple`.
+///
+/// Sets `*cmplx = 1` for: `NOCORRECT` (c:1846), a scalar assignment
+/// whose value contains a process substitution (c:1867-1878), `ENVARRAY`
+/// — an `arr=(…)` array assignment, which C marks because "it can
+/// contain process substitutions, which need a valid job" (c:1886-1890),
+/// any redirection (c:1909-1910, c:1998-1999, c:2158-2159), and — the
+/// case that covers every ordinary command — `tok == STRING || tok ==
+/// TYPESET` at c:1924-1928, i.e. the presence of a command word.
+///
+/// So a simple command is simple only when it is pure scalar
+/// assignments: `x=1` and `x=1 y=2` publish no `$pipestatus`, while
+/// `true`, `typeset x=1` and `x=1 >/dev/null` all do.
+fn simple_is_cmplx(simple: &ZshSimple) -> bool {
+    // c:1928 — a command word (STRING/TYPESET) in command position.
+    if !simple.words.is_empty() {
+        return true;
+    }
+    // c:1910 / c:1999 / c:2159 — `*cmplx = c = 1;` on IS_REDIROP.
+    if !simple.redirs.is_empty() {
+        return true;
+    }
+    simple.assigns.iter().any(|a| match &a.value {
+        // c:1890 — ENVARRAY.
+        ZshAssignValue::Array(_) => true,
+        // c:1873-1877 — `if (ptr[1] == Inpar && (*ptr == Equals ||
+        // *ptr == Inang || *ptr == OutangProc)) { *cmplx = 1; break; }`
+        // over the whole value: `=(…)`, `<(…)`, `>(…)`.
+        ZshAssignValue::Scalar(v) => value_has_procsubst(v),
+    })
+}
+
+/// c:Src/parse.c:1867-1878 — scan an assignment value for a process
+/// substitution introducer immediately followed by `(`:
+///
+/// ```c
+/// for (ptr = str; *ptr; ptr++) {
+///     if (ptr[1] == Inpar &&
+///         (*ptr == Equals || *ptr == Inang || *ptr == OutangProc)) {
+///         *cmplx = 1;
+///         break;
+///     }
+/// }
+/// ```
+///
+/// C scans the TOKENIZED value, which is what makes the test precise:
+/// the lexer only emits `Inang`/`OutangProc`/`Equals` for an unquoted
+/// introducer, so `x='<(a)'` keeps a literal `<` and stays simple.
+/// Matching the same token chars here inherits that precision.
+fn value_has_procsubst(value: &str) -> bool {
+    use crate::ported::zsh_h::{Equals, Inang, Inpar, OutangProc};
+    let mut prev: Option<char> = None;
+    for c in value.chars() {
+        if c == Inpar && matches!(prev, Some(Equals | Inang | OutangProc)) {
+            return true;
+        }
+        prev = Some(c);
+    }
+    false
+}
+
 fn render_list_for_debug(list: &crate::parse::ZshList) -> String {
     render_sublist_for_debug(&list.sublist)
 }
