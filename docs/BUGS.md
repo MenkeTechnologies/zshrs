@@ -19,6 +19,144 @@ CI green pending the underlying fix.
 
 ---
 
+## #1071 — `zstyle -g` returned its contexts in HashMap order (nondeterministic) — fixed
+
+**Status:** `fixed` 2026-08-08.
+
+```
+$ zsh   -fc 'zstyle ":x" s v; zstyle ":y" t w; zstyle ":z" a q; zstyle -g o; print -r -- "[$o]"'
+                                        → [:z :x :y]   (every run)
+$ zshrs -c  '…same…'                    → [:z :x :y]   ✗ one run
+                                        → [:y :x :z]   ✗ the next
+```
+
+Every listing consumer in C reaches the style table through
+`scanhashtable(zstyletab, 1, …)` — `printstyle` for the plain / `-L` listing
+(`Src/Modules/zutil.c:558`) and `scanpatstyles` for both `-g` shapes
+(`c:751` for `-g NAME PATTERN`, `c:756` for bare `-g NAME`). That leading `1`
+is the SORTED flag, so the table is walked in strcmp order of the style NAME,
+and the contexts come out in a stable order. Only the deletion scan
+(`c:613`) passes 0.
+
+zshrs's `style_table::list` iterated the backing `HashMap` directly, so the
+order changed run to run. `-L` was unaffected only because it sorts its own
+output afterwards. Fixed by sorting the style names before the walk, matching
+the sorted scan; `-g` output is now byte-identical to zsh, including the
+sort key being the STYLE name while the VALUES printed are the contexts.
+
+---
+
+## #1074 — bracket-delimited flag/qualifier arguments failed once the word was tokenized — fixed
+
+**Status:** `fixed` 2026-08-08.
+
+`get_strarg` (`Src/subst.c:1348`) reads the character after a flag as the
+opening delimiter, and its switch at `c:1366-1391` maps the four bracket
+families to their closing partner — TWICE: once for the raw ASCII characters
+(`c:1367-1378`) and once for the lexer's token forms `Inpar` / `Inang` /
+`Inbrace` / `Inbrack` (`c:1379-1390`). Everything else closes itself
+(`c:1391`).
+
+zshrs had the raw half only, in the three flag arms that carry their own
+scanner, and no mapping at all in `(Z…)`, `(g…)` and the `(e…)` / `(u…)` /
+`(g…)` glob qualifiers. Which half is needed depends on whether the word went
+through the lexer, so the same flag passed one shape and failed the other:
+
+```
+$ zsh   -fc 's=aXbXc; print -r -- ${(s(X))s}'    → a b c
+$ zshrs -c  '…same…'                              → a b c                 (raw parens)
+$ zsh   -fc 's=aXbXc; print -r -- ${(s(X))#s}'   → 3
+$ zshrs -c  '…same…'   → zsh:1: error in flags near position 5 in '${sXs}'   ✗
+```
+
+The trailing `#` (also `^`, `=`) forces the lexed path, so the parens arrive as
+`Inpar`/`Outpar` and the raw-only map fell through to "delimiter closes itself",
+scanned for a second `Inpar`, ran off the end and reported flagerr. Every
+argument-taking flag was affected in that shape — `(l…)`, `(r…)`, `(s…)`,
+`(j…)`, `(I…)` — plus `(Z…)` and `(g…)` in BOTH shapes, since those two arms
+had no bracket mapping whatsoever:
+
+```
+$ zsh   -fc "v='a b'; print -rl -- \${(Z(c))v}"  → a⏎b
+$ zshrs -c  '…same…'   → zsh:1: error in flags near position 7 in '${(Z(c))v}'  ✗
+$ zsh   -fc "v='a\\tb'; print -r -- \${(g(o))v}"  → a⇥b
+$ zshrs -c  '…same…'                              → zsh:1: bad substitution      ✗
+```
+
+Same hole on the glob side, where `(e…)` goes through `glob_exec_string`
+(`Src/glob.c:1085` → `get_strarg`) and `(u…)` / `(g…)` call `get_strarg`
+directly (`c:1474` / `c:1516`):
+
+```
+$ zsh   -fc "print -l *(.e{'[[ \$REPLY == *.txt ]]'})"  → a.txt
+$ zshrs -c  '…same…'                        → zsh:1: missing end of string   ✗
+$ zsh   -fc 'print -l *(u{0})'              → zsh:1: unknown username '0'
+$ zshrs -c  '…same…'                        → zsh:1: unknown username '0}'   ✗
+```
+
+Fixed by giving every one of those scanners the full `c:1366-1391` switch
+(`src/ported/subst.rs` `get_strarg` + the `l|r`, `s|j`, `I`, `Z`, `g` arms;
+`src/ported/glob.rs` `parse_uid_gid` + the `e` qualifier arm). The flagerr
+diagnostic now also runs the body through `untokenize` first, matching
+`c:2289` — it previously printed the raw token bytes, which rendered as
+`'${sXs}'` with the parens invisible.
+
+**Still open (needs substrate):** a bracket delimiter whose CONTENT contains
+the same bracket inside quotes — `*(.e['[[ $REPLY == a* ]]'])` — works in zsh
+because the qualifier string is tokenized, so the quoted `]` stays a literal
+byte while the real closer is `Outbrack`; the string reaching zshrs's
+qualifier parser is untokenized, so the two are indistinguishable and the scan
+stops at the first quoted `]`. The `{`-delimited spelling of the same body
+works in both.
+
+---
+
+## #1073 — `(Z)` forced `LEXFLAGS_ACTIVE`, so `${(Z::)v}` split — fixed
+
+**Status:** `fixed` 2026-08-08.
+
+```
+$ zsh   -fc "v='a b'; print -rl -- \${(Z::)v}"   → a b
+$ zshrs -c  '…same…'                             → a⏎b     ✗
+```
+
+C's `case 'Z'` (`Src/subst.c:2206-2237`) ONLY ORs the sub-flag bits
+(`LEXFLAGS_COMMENTS_KEEP` / `LEXFLAGS_COMMENTS_STRIP` / `LEXFLAGS_NEWLINE`);
+assigning `LEXFLAGS_ACTIVE` is the separate `case 'z'` at `c:2203`. The split
+is then gated on `if (shsplit)` at `c:3906` — ANY bit, not that one. So an
+empty sub-flag list leaves `shsplit == 0` and `(Z::)` does not split at all,
+while `(Z:c:)` splits on the comment bit alone.
+
+zshrs tested `shsplit & LEXFLAGS_ACTIVE` at the split site, which forced the
+`Z` arm to set that bit unconditionally to make `(Z:c:)` work — and that in
+turn made the empty form split. Fixed both halves: the split test is now
+`shsplit != 0` (`c:3906`) and the `Z` arm no longer assigns `LEXFLAGS_ACTIVE`.
+
+---
+
+## #1072 — `${(l:N:)#var}` dropped the padding — fixed
+
+**Status:** `fixed` 2026-08-08.
+
+```
+$ zsh   -fc 'foo=ab; print -r -- "${(l:5:)#foo}"'      → "    2"
+$ zshrs -c  '…same…'                                    → "2"        ✗
+$ zsh   -fc 'foo=ab; print -r -- "${(l:5::y:)#foo}"'   → "yyyy2"
+$ zshrs -c  '…same…'                                    → "2"        ✗
+```
+
+C's `getlen` block (`Src/subst.c:3584-3615`) replaces the value with the
+decimal length and then FALLS THROUGH; the padding blocks at
+`c:4061/4109/4128/4148/4187` therefore pad that decimal string. zshrs returned
+early from the length path, so `prenum`/`postnum` never reached it.
+
+Fixed by applying `dopadding` (`c:4061`, same argument set as the scalar pad
+site) to the length string before the early return. Affects every length
+shape, since `getlen` covers `${#s}`, `${(c)#a}`, `${(w)#s}` and `${(W)#s}`
+alike.
+
+---
+
 ## #1053 — glob metacharacters in a default/alternate word were not globbed — A fixed, B open
 
 **Status:** A `fixed` 2026-07-18; B `port-bug`. Surfaced by the `emulate … -c` fuzz bodies.

@@ -404,7 +404,17 @@ impl style_table {
     /// (Src/Modules/zutil.c:487 -L/-a arms).
     pub fn list(&self, context: Option<&str>) -> Vec<(String, String, Vec<String>)> {
         let mut result = Vec::new();
-        for (style, patterns) in &self.styles {
+        // c:Src/Modules/zutil.c:558 / :751 / :756 — every listing consumer
+        // (`printstyle` for the plain/`-L` listing, `scanpatstyles` for both
+        // `-g` shapes) calls `scanhashtable(zstyletab, 1, …)`, and that
+        // leading `1` is the SORTED flag: the style table is walked in
+        // strcmp order of the style NAME. `zstyle -g out` therefore returns
+        // its contexts in a stable order in zsh, while iterating the Rust
+        // HashMap directly produced a different order on every run.
+        let mut style_names: Vec<&String> = self.styles.keys().collect();
+        style_names.sort(); // c:hashtable.c scanhashtable sorted arm
+        for style in style_names {
+            let patterns = &self.styles[style];
             for pat in patterns {
                 if let Some(ctx) = context {
                     let matches = if pat.pat == "*" {
