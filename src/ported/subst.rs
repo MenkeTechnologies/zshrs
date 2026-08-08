@@ -2678,16 +2678,19 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {
 
     // Get delimiter (and its byte width).
     let (_, del) = iter.next()?;
+    // c:1366-1391 — bracket families close with their partner; every
+    // other delimiter closes itself. BOTH the raw-ASCII form
+    // (c:1367-1378) and the tokenized form (c:1379-1390) are mapped.
     let close_del = match del {
-        '(' => ')',
-        '[' => ']',
-        '{' => '}',
-        '<' => '>',
-        Inpar => Outpar,
-        Inbrack => Outbrack,
-        Inbrace => Outbrace,
-        Inang => Outang,
-        _ => del,
+        '(' => ')',          // c:1367-1369
+        '[' => ']',          // c:1370-1372
+        '{' => '}',          // c:1373-1375
+        '<' => '>',          // c:1376-1378
+        Inpar => Outpar,     // c:1379-1381
+        Inang => Outang,     // c:1382-1384
+        Inbrace => Outbrace, // c:1385-1387
+        Inbrack => Outbrack, // c:1388-1390
+        _ => del,            // c:1391
     };
 
     // Collect content until closing delimiter.
@@ -4112,11 +4115,15 @@ pub fn paramsubst(
                                                    // the (l)/(r) parser scanned for a second `[`
                                                    // and bailed with "bad substitution".
                         let close_del = match del {
-                            '(' => ')',
-                            '[' => ']',
-                            '{' => '}',
-                            '<' => '>',
-                            other => other,
+                            '(' => ')',          // c:1367-1369
+                            '[' => ']',          // c:1370-1372
+                            '{' => '}',          // c:1373-1375
+                            '<' => '>',          // c:1376-1378
+                            Inpar => Outpar,     // c:1379-1381
+                            Inang => Outang,     // c:1382-1384
+                            Inbrace => Outbrace, // c:1385-1387
+                            Inbrack => Outbrack, // c:1388-1390
+                            _ => del,            // c:1391
                         };
                         idx += 1; // get_strarg(s) advances past opening del
                                   // c:Src/subst.c:1428-1454 — `get_intarg`
@@ -4174,7 +4181,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 pos_1based,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4271,7 +4278,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 pos_1based,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4328,7 +4335,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 pos_1based,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4390,7 +4397,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 idx + 1 + 2,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4407,7 +4414,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 inner_start + 1 + 2,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4442,18 +4449,22 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 pos_1based,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
                         let del = body_chars[idx]; // c:1431 get_strarg del
                         let close_del = match del {
-                            '(' => ')',
-                            '[' => ']',
-                            '{' => '}',
-                            '<' => '>',
-                            other => other,
+                            '(' => ')',          // c:1367-1369
+                            '[' => ']',          // c:1370-1372
+                            '{' => '}',          // c:1373-1375
+                            '<' => '>',          // c:1376-1378
+                            Inpar => Outpar,     // c:1379-1381
+                            Inang => Outang,     // c:1382-1384
+                            Inbrace => Outbrace, // c:1385-1387
+                            Inbrack => Outbrack, // c:1388-1390
+                            _ => del,            // c:1391
                         };
                         idx += 1; // get_strarg(s) past opening delimiter
                         let n_start = idx;
@@ -4492,7 +4503,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 pos_1based,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4510,7 +4521,7 @@ pub fn paramsubst(
                                     zerr(&format!(
                                         "error in flags near position {} in '${{{}}}'",
                                         pos_1based,
-                                        body.as_str()
+                                        crate::ported::lex::untokenize(&body) // c:2289
                                     ));
                                     errflag_set_error();
                                     return (String::new(), new_pos, vec![]);
@@ -4593,7 +4604,12 @@ pub fn paramsubst(
                         // delimiter; `if (*t)` else `goto flagerr`. Bare
                         // `(Z)` (no `(Z:xxx:)`-form arg) and `(Z+)` etc.
                         // land on `)` immediately and must flagerr.
-                        shsplit = LEXFLAGS_ACTIVE; // c:2443 (implicit from Z arm)
+                        // c:Src/subst.c:2206-2237 — the C `Z` arm ONLY ORs
+                        // the sub-flag bits; it never assigns
+                        // LEXFLAGS_ACTIVE (that is the `z` arm, c:2203).
+                        // The split test downstream is `if (shsplit)`
+                        // (c:3906), so `${(Z::)v}` (no sub-flags) must NOT
+                        // split.
                         idx += 1; // c:2444 ++s
                                   // c:2445 `if (*t)` else flagerr (`*t == 0`).
                                   // get_strarg returns end-of-string when no
@@ -4610,16 +4626,31 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 pos_1based,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
                         let del = body_chars[idx]; // c:2446 sav = *t
+                                                   // c:Src/subst.c:2207 — the arg is read with
+                                                   // `get_strarg`, so a bracket delimiter closes
+                                                   // with its partner: `${(Z(c))v}` / `${(Z[c])v}`
+                                                   // / `${(Z{c})v}` are all valid.
+                        let close_del = match del {
+                            '(' => ')',          // c:1367-1369
+                            '[' => ']',          // c:1370-1372
+                            '{' => '}',          // c:1373-1375
+                            '<' => '>',          // c:1376-1378
+                            Inpar => Outpar,     // c:1379-1381
+                            Inang => Outang,     // c:1382-1384
+                            Inbrace => Outbrace, // c:1385-1387
+                            Inbrack => Outbrack, // c:1388-1390
+                            _ => del,            // c:1391
+                        };
                         idx += 1; // c:2448 while (*++s)
                         let mut found_close = false;
                         while idx < body_chars.len()                     // c:2448
-                            && body_chars[idx] != del
+                            && body_chars[idx] != close_del
                         {
                             // c:2448
                             let ch = body_chars[idx]; // c:2449 switch (*s)
@@ -4635,14 +4666,14 @@ pub fn paramsubst(
                                 zerr(&format!(
                                     "error in flags near position {} in '${{{}}}'",
                                     pos_1based,
-                                    body.as_str()
+                                    crate::ported::lex::untokenize(&body) // c:2289
                                 ));
                                 errflag_set_error();
                                 return (String::new(), new_pos, vec![]);
                             }
                             idx += 1; // c:2448
                         }
-                        if idx < body_chars.len() && body_chars[idx] == del {
+                        if idx < body_chars.len() && body_chars[idx] == close_del {
                             found_close = true;
                             idx += 1; // c:2444 past close delim
                         }
@@ -4651,7 +4682,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 pos_1based,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4682,9 +4713,23 @@ pub fn paramsubst(
                         if idx < body_chars.len() {
                             // c:2413 if (*t)
                             let del = body_chars[idx]; // c:2414 sav = *t
+                                                       // c:Src/subst.c:2173 — `get_strarg(++s)`, so a
+                                                       // bracket delimiter closes with its partner:
+                                                       // `${(g(o))v}` / `${(g[o])v}` / `${(g{o})v}`.
+                            let close_del = match del {
+                                '(' => ')',          // c:1367-1369
+                                '[' => ']',          // c:1370-1372
+                                '{' => '}',          // c:1373-1375
+                                '<' => '>',          // c:1376-1378
+                                Inpar => Outpar,     // c:1379-1381
+                                Inang => Outang,     // c:1382-1384
+                                Inbrace => Outbrace, // c:1385-1387
+                                Inbrack => Outbrack, // c:1388-1390
+                                _ => del,            // c:1391
+                            };
                             idx += 1; // c:2416 while (*++s)
                             while idx < body_chars.len()                     // c:2416
-                                && body_chars[idx] != del
+                                && body_chars[idx] != close_del
                             {
                                 // c:2416
                                 match body_chars[idx] {
@@ -4749,7 +4794,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 idx + 1 + 2,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4762,11 +4807,15 @@ pub fn paramsubst(
                                                    // open. Previously `${(j[, ])arr}` errored
                                                    // because the loop searched for another `[`.
                         let close_del = match del {
-                            '(' => ')',
-                            '[' => ']',
-                            '{' => '}',
-                            '<' => '>',
-                            other => other,
+                            '(' => ')',          // c:1367-1369
+                            '[' => ']',          // c:1370-1372
+                            '{' => '}',          // c:1373-1375
+                            '<' => '>',          // c:1376-1378
+                            Inpar => Outpar,     // c:1379-1381
+                            Inang => Outang,     // c:1382-1384
+                            Inbrace => Outbrace, // c:1385-1387
+                            Inbrack => Outbrack, // c:1388-1390
+                            _ => del,            // c:1391
                         };
                         idx += 1; // c:2303
                         let s_start = idx;
@@ -4782,7 +4831,7 @@ pub fn paramsubst(
                             zerr(&format!(
                                 "error in flags near position {} in '${{{}}}'",
                                 del_idx + 1 + 2,
-                                body.as_str()
+                                crate::ported::lex::untokenize(&body) // c:2289
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -4813,7 +4862,7 @@ pub fn paramsubst(
                         zerr(&format!(
                             "error in flags near position {} in '${{{}}}'",
                             pos_1based,
-                            body.as_str()
+                            crate::ported::lex::untokenize(&body) // c:2289
                         ));
                         errflag_set_error();
                         return (String::new(), new_pos, vec![]);
@@ -10102,7 +10151,29 @@ pub fn paramsubst(
                         .max(0) as usize
                 }
             };
-            let n_str = n.to_string();
+            let mut n_str = n.to_string(); // c:3611-3612 sprintf(buf,"%ld",len)
+                                           // c:Src/subst.c:3584-3615 runs the `getlen` block and
+                                           // then FALLS THROUGH to the padding blocks at
+                                           // c:4061/4109/4128/4148/4187, which pad whatever `val`
+                                           // now holds — here the decimal length string. zshrs
+                                           // returns early from the length path, so the `(l)`/`(r)`
+                                           // width never reached the count: `${(l:5:)#foo}` gave
+                                           // "2" instead of zsh's "    2".
+            if prenum > 0 || postnum > 0 {
+                // c:4060 `if (prenum || postnum)`
+                let mul_default = " ".to_string(); // c:907 (def = " ")
+                n_str = dopadding(
+                    // c:4061
+                    &n_str,
+                    prenum.max(0) as usize,
+                    postnum.max(0) as usize,
+                    preone.as_deref(),
+                    postone.as_deref(),
+                    premul.as_deref().unwrap_or(&mul_default),
+                    postmul.as_deref().unwrap_or(&mul_default),
+                    multi_width as i32, // c:2376 (m)
+                );
+            }
             let prefix: String = chars[..start_pos].iter().collect();
             let suffix: String = if new_pos < chars.len() {
                 chars[new_pos..].iter().collect()
@@ -16646,8 +16717,15 @@ pub fn paramsubst(
         // reentry is deferred — this covers the common idioms
         // \${(z)cmdline} (split a command into words) and
         // \${(Zn)multiline} (newlines act like spaces).
-        if (shsplit & LEXFLAGS_ACTIVE) != 0 {
-            // c:2439
+        // c:Src/subst.c:3906 — `if (shsplit)`, i.e. ANY bit, not just
+        // LEXFLAGS_ACTIVE. C's `(Z)` arm (c:2206-2237) only ORs the
+        // sub-flag bits and never sets LEXFLAGS_ACTIVE, so `${(Z::)v}`
+        // (empty sub-flag list) leaves shsplit == 0 and does NOT split,
+        // while `${(Z:c:)v}` splits on LEXFLAGS_COMMENTS_KEEP alone.
+        // Testing `& LEXFLAGS_ACTIVE` here forced the `(Z)` arm to set
+        // that bit unconditionally, which made `${(Z::)v}` split.
+        if shsplit != 0 {
+            // c:3906
             let mut words: Vec<String> = Vec::new(); // c:2439
             let mut cur = String::new(); // c:2439
             let mut in_sq = false; // c:2439

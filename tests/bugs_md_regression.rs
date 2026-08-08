@@ -1372,3 +1372,110 @@ fn bug652_process_substitution_still_works() {
     assert!(out.contains("SAME"), "diff of identical proc-subs: {out:?}");
     assert!(out.contains("hello"), "cat proc-sub: {out:?}");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1072 — `${(l:N:)#var}` dropped the padding.
+// C runs the getlen block (Src/subst.c:3584-3615) and FALLS THROUGH to
+// the padding blocks (c:4061+), so the decimal length gets padded.
+// Fix: src/ported/subst.rs, getlen early-return path.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug1072_left_pad_applies_to_length() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, stdout, err) = run_zshrs(r#"foo=ab; print -r -- "${(l:5:)#foo}""#);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert_eq!(stdout, "    2\n", "length padded to width 5");
+}
+
+#[test]
+fn bug1072_right_pad_with_fill_applies_to_length() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, stdout, err) = run_zshrs(r#"foo=ab; print -r -- "${(l:5::y:)#foo}""#);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert_eq!(stdout, "yyyy2\n", "length padded with the fill string");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1073 — `(Z)` forced LEXFLAGS_ACTIVE so `${(Z::)v}` split.
+// C's Z arm (c:2206-2237) only ORs sub-flag bits; the split test is
+// `if (shsplit)` at c:3906.
+// Fix: src/ported/subst.rs, `Z` flag arm + the split gate.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug1073_Z_empty_subflags_does_not_split() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, stdout, err) = run_zshrs(r#"v='a b'; print -rl -- ${(Z::)v}"#);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert_eq!(stdout, "a b\n", "empty (Z::) sub-flag list must not split");
+}
+
+#[test]
+fn bug1073_Z_comment_subflag_still_splits() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, stdout, err) = run_zshrs(r#"v='a b'; print -rl -- ${(Z:c:)v}"#);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert_eq!(stdout, "a\nb\n", "a non-empty sub-flag list splits");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1074 — bracket-delimited flag/qualifier arguments failed
+// once the word was tokenized. get_strarg's delimiter switch
+// (Src/subst.c:1366-1391) maps BOTH the raw ASCII brackets and the
+// lexer's Inpar/Inang/Inbrace/Inbrack tokens.
+// Fix: src/ported/subst.rs (get_strarg + l|r, s|j, I, Z, g arms),
+//      src/ported/glob.rs (parse_uid_gid + the `e` qualifier arm).
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug1074_split_paren_delim_under_length_operator() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, stdout, err) = run_zshrs(r#"s=aXbXc; print -r -- ${(ws(X))#s}"#);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert_eq!(stdout, "3\n", "tokenized (X) must close on Outpar");
+}
+
+#[test]
+fn bug1074_Z_flag_paren_delim() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, stdout, err) = run_zshrs(r#"v='a b'; print -rl -- ${(Z(c))v}"#);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert_eq!(stdout, "a\nb\n", "(Z(c)) closes on `)`");
+}
+
+#[test]
+fn bug1074_g_flag_bracket_delim() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, stdout, err) = run_zshrs(r#"v='a\tb'; print -r -- ${(g[o])v}"#);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert_eq!(stdout, "a\tb\n", "(g[o]) closes on `]`");
+}
+
+#[test]
+fn bug1074_flagerr_message_untokenizes_the_body() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // c:2289 — flagerr untokenizes its copy before printing, so the
+    // parens are visible rather than raw token bytes.
+    let (_, _, err) = run_zshrs(r#"foo=ab; print -r -- ${(_(x))#foo}"#);
+    assert!(
+        err.contains("in '${(_(x))#foo}'"),
+        "flagerr body must be untokenized, got {err:?}"
+    );
+}

@@ -856,3 +856,133 @@ mod round_pins {
         assert_parity("cd /tmp; x=./x/../y; print -r ${x:a}");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Parameter-expansion flag ARGUMENTS delimited by bracket pairs.
+//
+// `get_strarg` (Src/subst.c:1348) reads the char after the flag as the
+// opening delimiter and maps the four bracket families to their closing
+// partner (c:1366-1391) — in BOTH the raw-ASCII form (c:1367-1378) and the
+// TOKENIZED form (c:1379-1390). Which form the flag parser sees depends on
+// whether the expansion went through the lexer: `${(s(X))var}` arrives raw,
+// but `${(s(X))#var}` arrives with the parens already tokenized because the
+// `#`/`^`/`=` after the flag block forces the lexed path. A raw-ASCII-only
+// map therefore passed the first shape and failed the second.
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod flag_arg_delimiters {
+    use super::*;
+
+    #[test]
+    fn split_paren_delim() {
+        assert_parity("s=aXbXc; print -rl -- ${(s(X))s}");
+    }
+
+    #[test]
+    fn split_paren_delim_under_length() {
+        assert_parity("s=aXbXc; print -r -- ${(s(X))#s}");
+    }
+
+    #[test]
+    fn join_bracket_delim_under_length() {
+        assert_parity("a=(x y); print -r -- ${(j[X])#a}");
+    }
+
+    #[test]
+    fn wordcount_split_brace_delim_under_length() {
+        assert_parity("s=aXbXc; print -r -- ${(ws{X})#s}");
+    }
+
+    #[test]
+    fn pad_paren_delim_under_length() {
+        assert_parity("foo=ab; print -r -- \"${(l(5))#foo}\"");
+    }
+
+    #[test]
+    fn pad_paren_delim_two_args_under_length() {
+        assert_parity("foo=ab; print -r -- \"${(l(5)(y))#foo}\"");
+    }
+
+    /// `(Z...)` reads its sub-flag list with `get_strarg` (c:2207), so a
+    /// bracket delimiter closes with its partner.
+    #[test]
+    #[allow(non_snake_case)]
+    fn Z_flag_paren_delim() {
+        assert_parity("v='a b'; print -rl -- ${(Z(c))v}");
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn Z_flag_bracket_delim() {
+        assert_parity("v='a b'; print -rl -- ${(Z[c])v}");
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn Z_flag_brace_delim() {
+        assert_parity("v='a b'; print -rl -- ${(Z{c})v}");
+    }
+
+    /// C's `Z` arm (c:2206-2237) ONLY ORs the sub-flag bits — it never sets
+    /// `LEXFLAGS_ACTIVE` (that is the `z` arm, c:2203) — and the split test
+    /// downstream is `if (shsplit)` (c:3906). So an EMPTY sub-flag list
+    /// leaves shsplit == 0 and does not split at all.
+    #[test]
+    #[allow(non_snake_case)]
+    fn Z_flag_empty_subflags_does_not_split() {
+        assert_parity("v='a b'; print -rl -- ${(Z::)v}");
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn Z_flag_comment_subflag_splits() {
+        assert_parity("v='a b'; print -rl -- ${(Z:c:)v}");
+    }
+
+    /// `(g...)` also reads its sub-flags via `get_strarg` (c:2173).
+    #[test]
+    fn g_flag_paren_delim() {
+        assert_parity("v='a\\tb'; print -r -- ${(g(o))v}");
+    }
+
+    #[test]
+    fn g_flag_bracket_delim() {
+        assert_parity("v='a\\tb'; print -r -- ${(g[o])v}");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// `${(l:N:)#var}` — the `getlen` block (c:3584-3615) turns the value into
+// the decimal length and then FALLS THROUGH to the padding blocks
+// (c:4061/4109/4128/4148/4187), which pad that decimal string. Returning
+// early from the length path skipped the pad entirely.
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod length_with_padding {
+    use super::*;
+
+    #[test]
+    fn left_pad_scalar_length() {
+        assert_parity("foo=ab; print -r -- \"${(l:5:)#foo}\"");
+    }
+
+    #[test]
+    fn right_pad_scalar_length() {
+        assert_parity("foo=ab; print -r -- \"${(r:5:)#foo}\"");
+    }
+
+    #[test]
+    fn left_pad_with_fill_scalar_length() {
+        assert_parity("foo=ab; print -r -- \"${(l:5::y:)#foo}\"");
+    }
+
+    #[test]
+    fn left_pad_array_element_count() {
+        assert_parity("a=(x y z); print -r -- \"${(l:5:)#a}\"");
+    }
+
+    #[test]
+    fn left_pad_word_count() {
+        assert_parity("s='a b c'; print -r -- \"${(wl:5:)#s}\"");
+    }
+}

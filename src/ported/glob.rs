@@ -4823,10 +4823,27 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                         return qs;
                     }
                 };
+                // c:Src/subst.c:1366-1391 — `get_strarg` maps the four
+                // bracket families to their closing partner (raw ASCII at
+                // c:1367-1378, tokenized at c:1379-1390); anything else
+                // closes itself (c:1391). Without the map, `*(e[CODE])` /
+                // `*(e{CODE})` scanned for a second `[` / `{` and aborted
+                // with "missing end of string".
+                let close_delim = match delim {
+                    '(' => ')',                                                      // c:1367-1369
+                    '[' => ']',                                                      // c:1370-1372
+                    '{' => '}',                                                      // c:1373-1375
+                    '<' => '>',                                                      // c:1376-1378
+                    crate::ported::zsh_h::Inpar => crate::ported::zsh_h::Outpar,     // c:1379-1381
+                    crate::ported::zsh_h::Inang => crate::ported::zsh_h::Outang,     // c:1382-1384
+                    crate::ported::zsh_h::Inbrace => crate::ported::zsh_h::Outbrace, // c:1385-1387
+                    crate::ported::zsh_h::Inbrack => crate::ported::zsh_h::Outbrack, // c:1388-1390
+                    _ => delim,                                                      // c:1391
+                };
                 let mut body = String::new();
                 let mut closed = false;
                 while let Some(&pc) = chars.peek() {
-                    if pc == delim {
+                    if pc == close_delim {
                         chars.next();
                         closed = true;
                         break;
@@ -5071,9 +5088,25 @@ fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>, is_group: boo
             return 0;
         }
     };
+    // c:Src/subst.c:1366-1391 — `get_strarg` maps the four bracket families
+    // to their closing partner (raw ASCII at c:1367-1378, tokenized at
+    // c:1379-1390); every other delimiter closes itself (c:1391). Scanning
+    // for a repeat of the OPENING char left the close bracket unconsumed,
+    // so `*(u{0})` resolved the name "0}" instead of "0".
+    let close_delim = match delim {
+        '(' => ')',                                                      // c:1367-1369
+        '[' => ']',                                                      // c:1370-1372
+        '{' => '}',                                                      // c:1373-1375
+        '<' => '>',                                                      // c:1376-1378
+        crate::ported::zsh_h::Inpar => crate::ported::zsh_h::Outpar,     // c:1379-1381
+        crate::ported::zsh_h::Inang => crate::ported::zsh_h::Outang,     // c:1382-1384
+        crate::ported::zsh_h::Inbrace => crate::ported::zsh_h::Outbrace, // c:1385-1387
+        crate::ported::zsh_h::Inbrack => crate::ported::zsh_h::Outbrack, // c:1388-1390
+        _ => delim,                                                      // c:1391
+    };
     let mut name = String::new();
     for c in chars.by_ref() {
-        if c == delim {
+        if c == close_delim {
             break;
         }
         name.push(c);

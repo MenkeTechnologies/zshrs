@@ -692,6 +692,38 @@ print -- "$out""#,
         ));
     }
 
+    /// `zstyle -g NAME` (no pattern) enumerates every defined context.
+    /// C reaches it through `scanhashtable(zstyletab, 1, …)`
+    /// (`zutil.c:756`) — the leading `1` is the SORTED flag, so the style
+    /// table is walked in strcmp order of the style NAME and the context
+    /// list comes out in a stable, reproducible order. Iterating the Rust
+    /// HashMap directly gave a different order on every run.
+    #[test]
+    fn zstyle_g_all_contexts_sorted_by_style_name() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"zstyle ':x' s v
+zstyle ':y' t w
+zstyle ':z' a q
+zstyle -g out
+print -r -- "$out""#,
+        ));
+    }
+
+    /// Same enumeration one level down: `zstyle -g NAME PATTERN` lists the
+    /// STYLE names attached to that pattern, also via the sorted scan
+    /// (`zutil.c:751`).
+    #[test]
+    fn zstyle_g_style_names_for_pattern_sorted() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"zstyle ':x' sb v
+zstyle ':x' sa w
+zstyle -g out ':x'
+print -r -- "$out""#,
+        ));
+    }
+
     /// `zstyle -t CONTEXT STYLE [VAL ...]` is a 2-arg-min test. Direct
     /// test of `zutil.c:712-725`.
     #[test]

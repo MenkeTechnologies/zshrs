@@ -369,3 +369,79 @@ mod numeric_sort_qualifier {
         assert_order(d.path(), "unsetopt numericglobsort; print -l *(n)");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Qualifier ARGUMENTS delimited by bracket pairs.
+//
+// `(e...)` routes through `glob_exec_string` (Src/glob.c:1085) and `(u...)`
+// / `(g...)` read the name directly (c:1474 / c:1516) — all three call
+// `get_strarg` (Src/subst.c:1348), whose delimiter switch (c:1366-1391) maps
+// `(`→`)`, `[`→`]`, `{`→`}`, `<`→`>` and leaves anything else closing
+// itself. Scanning for a REPEAT of the opening char instead left the closing
+// bracket in the stream, so `*(e[CODE])` aborted with "missing end of
+// string" and `*(u{0})` resolved the username "0}".
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod qualifier_arg_delimiters {
+    use super::*;
+
+    fn setup_txt_dir() -> tempfile::TempDir {
+        let d = tempfile::tempdir().expect("tempdir");
+        std::fs::write(d.path().join("a.txt"), b"").unwrap();
+        std::fs::write(d.path().join("b.dat"), b"").unwrap();
+        d
+    }
+
+    #[test]
+    fn eval_qualifier_colon_delim() {
+        let d = setup_txt_dir();
+        assert_parity_sorted(d.path(), "print -l *(.e:'[[ $REPLY == *.txt ]]':)");
+    }
+
+    #[test]
+    fn eval_qualifier_brace_delim() {
+        let d = setup_txt_dir();
+        assert_parity_sorted(d.path(), "print -l *(.e{'[[ $REPLY == *.txt ]]'})");
+    }
+
+    #[test]
+    fn eval_qualifier_bracket_delim() {
+        let d = setup_txt_dir();
+        assert_parity_sorted(d.path(), "print -l *(.e[true])");
+    }
+
+    #[test]
+    fn eval_qualifier_brace_delim_bare_word() {
+        let d = setup_txt_dir();
+        assert_parity_sorted(d.path(), "print -l *(.e{true})");
+    }
+
+    /// `u` with a non-numeric name and a bracket delimiter: the name must
+    /// stop at the CLOSING bracket, so the diagnostic names `0`, not `0}`.
+    /// Compared on stderr because both shells fail the lookup.
+    #[test]
+    fn uid_qualifier_brace_delim_name_excludes_closer() {
+        if !zsh_available() {
+            return;
+        }
+        let d = setup_txt_dir();
+        let script = "print -l *(u{0})";
+        let z = Command::new(zsh_path())
+            .args(["-fc", script])
+            .current_dir(d.path())
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .current_dir(d.path())
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        let zs = String::from_utf8_lossy(&z.stderr).into_owned();
+        let rs = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(
+            zs.contains("unknown username '0'") && rs.contains("unknown username '0'"),
+            "u-qualifier delimiter divergence:\n--- zsh ---\n{zs}\n--- zshrs ---\n{rs}"
+        );
+    }
+}
