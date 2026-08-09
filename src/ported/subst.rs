@@ -3156,6 +3156,42 @@ pub fn paramsubst(
             && isset(crate::ported::zsh_h::MULTIBYTE)
             && !isset(crate::ported::zsh_h::POSIXIDENTIFIERS)
     };
+    // c:Src/params.c:2099-2104 — inside getindex's `if (inv)` branch:
+    //     if (*s == ',') {
+    //         zerr("invalid subscript");
+    //         *tbrack = ']';
+    //         *pptr = tbrack+1;
+    //         return 1;
+    //     }
+    // An INVERSE subscript (one that yields an INDEX rather than a
+    // value) cannot be the start bound of a range, so `${v[(i)c,-1]}`
+    // and `${a[(I)b,3]}` are errors while `${v[(r)c,-1]}` (a VALUE
+    // flag) and `${v[1,(i)c]}` (inverse in the SECOND bound) are fine.
+    //
+    // `inv` is C's `ind`, set by the SEQUENTIAL flag switch at
+    // c:1390-1483 where every direction arm resets the others, so only
+    // the LAST direction letter decides: `(Ir)` ends on `r` and leaves
+    // ind=0, which zsh accepts as a bound (Bug #1050).
+    //
+    // Shared by the ARRAY slice arm and the SCALAR char-slice arm —
+    // both reach C through the same getindex call, and the scalar arm
+    // previously omitted the check entirely, so `v=abcabc;
+    // ${v[(i)c,-1]}` returned `cabc` where zsh errors.
+    let subscript_start_is_inv = |bound: &str| -> bool {
+        let t = bound.trim();
+        t.starts_with('(')
+            && t.find(')').is_some_and(|c| {
+                let mut ind = false;
+                for ch in t[1..c].chars() {
+                    match ch {
+                        'i' | 'I' => ind = true, // c:1411-1420
+                        'r' | 'R' | 'k' | 'K' => ind = false, // c:1390-1410
+                        _ => {}
+                    }
+                }
+                ind
+            })
+    };
     // c:Src/lex.c:1546 + Src/lex.c:1565 — C's lex emits Stringg/Qstring
     // followed by Inbrace at every `${` opener and the matching Outbrace
     // at the closer; paramsubst sees only the token form. Rust bridges
@@ -7688,7 +7724,39 @@ pub fn paramsubst(
                                 _ => return None,
                             }
                         }
-                        crate::ported::math::mathevali(rest[close + 1..].trim()).ok()
+                        // c:Src/params.c:1419-1484 getarg — once the flag
+                        // block has been consumed, `s` points PAST the
+                        // closing paren and the REMAINDER alone goes to
+                        // mathevalarg. Its error is the error: C does not
+                        // re-parse the whole subscript. `.ok()` swallowed it
+                        // and let the chain fall through to the
+                        // whole-subscript fallback below, which evaluated
+                        // `(n:2:)*` and reported the operand position inside
+                        // the flag block — `operand expected at `)*'` where
+                        // zsh says `operand expected at `*''`. Propagate the
+                        // diagnostic here, exactly as the final fallback
+                        // does, so the reported offset is the one C produces.
+                        match crate::ported::math::mathevali(rest[close + 1..].trim()) {
+                            Ok(n) => Some(n),
+                            Err(e) => {
+                                // mathevali errors already carry the
+                                // "bad math expression:" prefix; don't
+                                // double it (zsh emits it once).
+                                if e.starts_with("bad math expression") {
+                                    crate::ported::utils::zerr(&e);
+                                } else {
+                                    crate::ported::utils::zerr(&format!(
+                                        "bad math expression: {}",
+                                        e
+                                    ));
+                                }
+                                crate::ported::utils::errflag.fetch_or(
+                                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                None
+                            }
+                        }
                     })
                     .or_else(|| {
                         // c:Src/params.c:1419-1432 — getindex(sub) finally
@@ -7916,34 +7984,13 @@ pub fn paramsubst(
                     // → ok). Reached for BOTH quoted and unquoted forms
                     // since raw_value is computed before the auto-splat
                     // override. Bug: array index-flag-start slices.
-                    {
-                        let t = start_str.trim();
-                        // `inv` is C's `ind`, set by the SEQUENTIAL switch where
-                        // each direction arm resets the others (c:1390-1483), so
-                        // only the LAST direction letter decides. An
-                        // `any(i|I)` test rejected `(Ir)`/`(ir)` — whose final
-                        // arm is `r`, leaving ind=0 — which zsh accepts as a
-                        // bound. Bug #1050.
-                        let start_is_inv = t.starts_with('(')
-                            && t.find(')').map_or(false, |c| {
-                                let mut ind = false;
-                                for ch in t[1..c].chars() {
-                                    match ch {
-                                        'i' | 'I' => ind = true,
-                                        'r' | 'R' | 'k' | 'K' => ind = false,
-                                        _ => {}
-                                    }
-                                }
-                                ind
-                            });
-                        if start_is_inv {
-                            zerr("invalid subscript"); // c:2121
-                            errflag.fetch_or(
-                                crate::ported::zsh_h::ERRFLAG_ERROR,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            return (String::new(), 0, Vec::new()); // c:2124
-                        }
+                    if subscript_start_is_inv(&start_str) {
+                        zerr("invalid subscript"); // c:2100
+                        errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return (String::new(), 0, Vec::new()); // c:2103
                     }
                     // c:Src/math.c:1521-1531 — a range BOUND is evaluated via
                     // `mathevalarg` → `mathevall(…, MPREC_ARG, …)`, whose entry
@@ -9191,6 +9238,20 @@ pub fn paramsubst(
                             let expanded = singsub(e);
                             crate::ported::math::mathevali(&expanded).unwrap_or(default)
                         };
+                        // c:Src/params.c:2099-2104 — getindex rejects a range
+                        // whose START bound is an INVERSE subscript. The array
+                        // slice arm already applied this; the scalar char-slice
+                        // arm reaches the same C code and must too, or
+                        // `v=abcabc; ${v[(i)c,-1]}` yields `cabc` where zsh
+                        // errors "invalid subscript".
+                        if subscript_start_is_inv(&lo) {
+                            zerr("invalid subscript"); // c:2100
+                            errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return (String::new(), 0, Vec::new()); // c:2103
+                        }
                         let lo: i64 = bound_idx(&lo, false, 1);
                         let hi: i64 = bound_idx(&hi, true, s_chars.len() as i64);
                         // c:Src/params.c — KSH_ARRAYS shifts scalar slice
