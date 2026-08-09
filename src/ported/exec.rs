@@ -6406,9 +6406,17 @@ pub fn doshfunc(
     FUNC_OFLAGS.store(oflags_prev, Ordering::Relaxed);
 
     // c:6104-6112 — LOCALLOOPS warn-on-active-continue/break + restore
-    // breaks/contflag/loops snapshot. Skip the warn lines for now;
-    // restore the bookkeeping.
+    // breaks/contflag/loops snapshot.
     if crate::ported::options::opt_state_get("localloops").unwrap_or(false) {
+        // c:6106-6108 —
+        //     if (contflag) zwarn("`continue' active at end of function scope");
+        //     if (breaks)   zwarn("`break' active at end of function scope");
+        if CONTFLAG.load(Ordering::SeqCst) != 0 {
+            crate::ported::utils::zwarn("`continue' active at end of function scope"); // c:6106
+        }
+        if BREAKS.load(Ordering::SeqCst) != 0 {
+            crate::ported::utils::zwarn("`break' active at end of function scope"); // c:6107
+        }
         BREAKS.store(funcsave_breaks, Ordering::SeqCst); // c:6109
         CONTFLAG.store(funcsave_contflag, Ordering::SeqCst); // c:6110
         LOOPS.store(funcsave_loops, Ordering::SeqCst); // c:6111

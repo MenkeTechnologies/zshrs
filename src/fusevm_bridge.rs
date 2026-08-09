@@ -7671,6 +7671,69 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Int(0)
         }
     });
+    // c:Src/loop.c — `loops++` / `loops--` bracket every iterative
+    // construct: execfor c:114/188, execwhile c:427/491, execrepeat
+    // c:523/546. `loops` is a GLOBAL, not a per-frame counter, and
+    // `bin_break` reads it (`if (!loops)`) to decide whether `break` /
+    // `continue` is legal. Because doshfunc does NOT reset it (only
+    // restores it under LOCAL_LOOPS, c:6104-6112), a function called
+    // from inside a loop sees the CALLER's count and its `break` ends
+    // the caller's loop. zshrs's compiled for/while/until/repeat lower
+    // to raw jumps, so without these two ops the counter stayed 0 and
+    // every such `break` errored out instead.
+    vm.register_builtin(BUILTIN_LOOP_ENTER, |_vm, _argc| {
+        crate::ported::builtin::LOOPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:114
+        Value::Int(0)
+    });
+    vm.register_builtin(BUILTIN_LOOP_EXIT, |_vm, _argc| {
+        use std::sync::atomic::Ordering::SeqCst;
+        // Saturating: a chunk aborted mid-loop (errflag, `return`)
+        // unwinds through `run_chunk`'s restore rather than this op, so
+        // never let a stray decrement drive the count negative.
+        let _ = crate::ported::builtin::LOOPS.fetch_update(SeqCst, SeqCst, |n| {
+            Some(if n > 0 { n - 1 } else { 0 })
+        }); // c:188
+        Value::Int(0)
+    });
+
+    // c:Src/loop.c:529-534 (execwhile), :180-185 (execfor), :540-545
+    // (execrepeat) — the identical post-body drain every loop runs:
+    //     if (breaks) {
+    //         breaks--;
+    //         if (breaks || !contflag) break;
+    //         contflag = 0;
+    //     }
+    // Returns Int(1) when this loop must terminate, Int(0) when it
+    // should proceed to the next iteration. Only a `break`/`continue`
+    // executed in a DIFFERENT chunk (a called function, `eval`, a
+    // sourced file) reaches here — an in-chunk `break` compiles to a
+    // direct jump and never touches the counter.
+    vm.register_builtin(BUILTIN_LOOP_BREAK_DRAIN, |_vm, _argc| {
+        use std::sync::atomic::Ordering::SeqCst;
+        let breaks = crate::ported::builtin::BREAKS.load(SeqCst);
+        if breaks == 0 {
+            return Value::Int(0);
+        }
+        let remaining = breaks - 1;
+        crate::ported::builtin::BREAKS.store(remaining, SeqCst); // c:530
+        let contflag = crate::ported::builtin::CONTFLAG.load(SeqCst);
+        if remaining != 0 || contflag == 0 {
+            return Value::Int(1); // c:532 — `break`
+        }
+        crate::ported::builtin::CONTFLAG.store(0, SeqCst); // c:533
+        Value::Int(0)
+    });
+
+    // c:Src/exec.c:1370 execlist — `while (wc_code(code) == WC_LIST &&
+    // !breaks && !retflag && !errflag)`. A pending `breaks` stops the
+    // CURRENT list at the next statement boundary WITHOUT consuming it,
+    // so the flag keeps travelling outward until a loop's drain eats it.
+    // Non-consuming by design: the drain above is the only consumer.
+    vm.register_builtin(BUILTIN_BREAKS_PENDING, |_vm, _argc| {
+        let b = crate::ported::builtin::BREAKS.load(std::sync::atomic::Ordering::SeqCst);
+        Value::Int(if b != 0 { 1 } else { 0 })
+    });
+
     vm.register_builtin(BUILTIN_NOEXEC_CHECK, |_vm, _argc| {
         // c:Src/exec.c:1390 — `set -n` / `noexec` option: parse but
         // don't execute. Returns Int(1) when noexec is set so the
@@ -11182,6 +11245,18 @@ pub const BUILTIN_RETFLAG_CHECK: u16 = 600;
 pub const BUILTIN_BREAKS_CHECK: u16 = 601;
 /// `BUILTIN_CONTFLAG_CHECK` constant.
 pub const BUILTIN_CONTFLAG_CHECK: u16 = 602;
+/// `loops++` on entry to a compiled for/while/until/repeat
+/// (c:Src/loop.c:114/427/523).
+pub const BUILTIN_LOOP_ENTER: u16 = 656;
+/// `loops--` on exit from a compiled for/while/until/repeat
+/// (c:Src/loop.c:188/491/546).
+pub const BUILTIN_LOOP_EXIT: u16 = 657;
+/// Post-body `if (breaks) { breaks--; … }` drain (c:Src/loop.c:529-534).
+/// Int(1) = terminate this loop, Int(0) = next iteration.
+pub const BUILTIN_LOOP_BREAK_DRAIN: u16 = 658;
+/// Non-consuming `breaks != 0` probe for execlist's per-statement gate
+/// (c:Src/exec.c:1370).
+pub const BUILTIN_BREAKS_PENDING: u16 = 659;
 /// Fire the DEBUG trap (SIGDEBUG) before each statement.
 /// c:Src/exec.c:1357-1500 DEBUGBEFORECMD — when a "DEBUG" entry is
 /// installed via `trap '...' DEBUG`, run the body just before the
@@ -12447,7 +12522,16 @@ impl fusevm::ShellHost for ZshrsHost {
                 .ok()
                 .map(|m| m.clone())
                 .unwrap_or_default();
+            let loop_flags_snap = {
+                use std::sync::atomic::Ordering::SeqCst;
+                (
+                    crate::ported::builtin::LOOPS.load(SeqCst),
+                    crate::ported::builtin::BREAKS.load(SeqCst),
+                    crate::ported::builtin::CONTFLAG.load(SeqCst),
+                )
+            };
             exec.subshell_snapshots.push(SubshellSnapshot {
+                loop_flags: loop_flags_snap,
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
                 special_globals: special_globals_snap,
@@ -12719,6 +12803,18 @@ impl fusevm::ShellHost for ZshrsHost {
         }
         with_executor(|exec| {
             if let Some(snap) = exec.subshell_snapshots.pop() {
+                // c:Src/exec.c::entersubsh fork semantics — `loops` /
+                // `breaks` / `contflag` are process globals the child
+                // owns a private copy of, so `(break)` inside a loop
+                // cannot end the PARENT's loop. See
+                // SubshellSnapshot::loop_flags.
+                {
+                    use std::sync::atomic::Ordering::SeqCst;
+                    let (loops, breaks, contflag) = snap.loop_flags;
+                    crate::ported::builtin::LOOPS.store(loops, SeqCst);
+                    crate::ported::builtin::BREAKS.store(breaks, SeqCst);
+                    crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);
+                }
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.
