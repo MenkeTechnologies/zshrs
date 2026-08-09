@@ -6520,13 +6520,9 @@ pub fn metafy(buf: &str) -> String {
     // pattern compile / display) but breaks byte-round-trip with
     // `unmetafy`.
     //
-    // This note used to direct byte-round-trip callers to a
-    // `metafy_bytes` "which preserves the metafied byte sequence
-    // verbatim". No such function exists anywhere in the tree — the
-    // reference was dangling. Callers that need a round-trippable
-    // metafied form build it as `char`s (`'\u{83}'` then
-    // `char::from(b ^ 32)`), which is what `mb_metachar_units` and the
-    // `$'…'` decoder do; `unmetafy_str` decodes exactly that shape.
+    // Callers that need the bytes back unchanged go through
+    // `mb_metacharlenconv`, which hands back each unit in a recoverable form
+    // instead of falling back to lossy.
     String::from_utf8(out.clone()).unwrap_or_else(|_| String::from_utf8_lossy(&out).into_owned())
 }
 
@@ -7342,30 +7338,86 @@ pub fn mb_metacharlenconv_r(s: &str, pos: usize) -> (usize, Option<char>) {
 
 /// Multibyte-aware metafied-string char advance.
 /// Port of `mb_metacharlenconv(const char *s, wint_t *wcp)` from Src/utils.c:5611. Returns
-/// `(bytes_consumed, scalar_char)` for the next char in `s`. C
-/// source dispatches to `mb_metacharlenconv_r()` for true
-/// multibyte; we use Rust's UTF-8 char iterator which already
-/// handles multi-byte correctly. ASCII fast-path: `Meta+X` is 2
-/// bytes consumed → `(2, X^32)`; bare ASCII is `(1, c)`.
+/// `(bytes_consumed, scalar_char)` for the next character of `s`.
+///
+/// `s` is the DEMETAFIED byte stream, not the port's `String` form. C
+/// takes a metafied `char *` and un-metafies inline as it walks (c:5616
+/// `*s == Meta ? s[1] ^ 32 : *s`, c:5562-5563 in the `_r` guts); the port
+/// hoists that one step to the caller, which reaches this function via
+/// `unmetafy_str`. The hoist is forced, not stylistic: with the MULTIBYTE
+/// option off a unit is a single BYTE, so a caller must be able to cut
+/// mid-character — and a Rust `String` cannot be sliced there. Working on
+/// the byte stream is also what makes a `Meta`+byte pair and a literal
+/// high byte the same input, exactly as they are to C. A demetafied
+/// stream contains no `Meta` bytes to re-interpret, so a literal 0x83 in
+/// a value (`$'\x83'`) stays one byte here instead of being mistaken for
+/// an escape prefix.
+///
+/// c:5613 is the guard that makes byte mode work: with MULTIBYTE unset —
+/// or for any 7-bit byte — the answer is one byte, no decoding. Without
+/// it every caller silently kept counting characters in a mode where zsh
+/// counts bytes.
+///
+/// The third return value has no counterpart in C's signature: it is the
+/// unit itself, back in the port's `String` form. C needs no such thing —
+/// its caller just slices the `char *` it already holds at the returned
+/// length. A Rust caller cannot, because in byte mode the unit can be half
+/// a character, so the re-encode has to happen where the boundary is known.
+/// Returning it here is what keeps that one rule in one place: every
+/// subscript, slice, split and quote walk re-encodes identically, and
+/// concatenating any run of units reproduces exactly the bytes C would have
+/// copied.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, wcp)
-pub fn mb_metacharlenconv(s: &str) -> (usize, Option<char>) {
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return (0, None);
+pub fn mb_metacharlenconv(s: &[u8]) -> (usize, Option<char>, String) {
+    if s.is_empty() {
+        // c:5594-5595 — nothing left to decode.
+        return (0, None, String::new());
     }
-    if bytes[0] == 0x83 && bytes.len() >= 2 {
-        // Meta+X pair → unescape.
-        let raw = bytes[1] as u32 ^ 32;
-        return (2, char::from_u32(raw));
+    // The unit in the port's `String` form: well-formed text verbatim,
+    // anything else escaped as `Meta` + `byte ^ 32` — the representation
+    // `unmetafy_str` decodes. C's own metafication (c:4869 `metafy`) escapes
+    // the `imeta` set for the same reason; Rust's `String` additionally
+    // cannot hold a byte that is not part of a valid sequence, so the escape
+    // covers those too.
+    let encode = |chunk: &[u8]| -> String {
+        match std::str::from_utf8(chunk) {
+            Ok(v) => v.to_string(),
+            Err(_) => {
+                let mut v = String::with_capacity(2 * chunk.len());
+                for &b in chunk {
+                    if b < 0x80 {
+                        v.push(b as char);
+                    } else {
+                        v.push(char::from(Meta));
+                        v.push(char::from(b ^ 32));
+                    }
+                }
+                v
+            }
+        }
+    };
+    // c:5613 — `if (!isset(MULTIBYTE) || (unsigned char) *s <= 0x7f)`:
+    // treat as a single byte. The option is read from the live slot with
+    // its declared default (on, c:Src/options.c:197) rather than through
+    // `isset()`, which maps a never-written slot to false and would invert
+    // the default in any context that skips init's `emulate()`.
+    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) || s[0] <= 0x7f {
+        // c:5616 — the byte itself is the scalar.
+        return (1, Some(s[0] as char), encode(&s[..1]));
     }
-    if bytes[0] <= 0x7f {
-        return (1, Some(bytes[0] as char));
+    // c:5635 → mb_metacharlenconv_r: feed bytes to mbrtowc until one
+    // character completes (c:5577-5585). Rust's UTF-8 validation is the
+    // mbrtowc analogue — the shortest valid prefix is one character.
+    let hi = (s.len()).min(4);
+    for end in 1..=hi {
+        if let Ok(v) = std::str::from_utf8(&s[..end]) {
+            if let Some(c) = v.chars().next() {
+                return (end, Some(c), v.to_string());
+            }
+        }
     }
-    // Multi-byte UTF-8 — let Rust decode.
-    if let Some(c) = s.chars().next() {
-        return (c.len_utf8(), Some(c));
-    }
-    (1, None)
+    // c:5592-5593 — no valid multibyte sequence: treat as a single byte.
+    (1, None, encode(&s[..1]))
 }
 
 /// Multibyte metastring length to end (from utils.c mb_metastrlenend)
@@ -14071,6 +14123,48 @@ mod tests {
         assert_eq!(zwcwidth('a'), 1, "ASCII width is 1");
         assert_eq!(zwcwidth('字'), 2, "c:740 — CJK width 2 under multibyte");
         // Restore prior state.
+        dosetopt(MULTIBYTE, if saved { 1 } else { 0 }, 1);
+    }
+
+    /// `Src/utils.c:5613` — `if (!isset(MULTIBYTE) || (unsigned char) *s <=
+    /// 0x7f)` returns a SINGLE byte. The port had only the multibyte arm, so
+    /// every walk built on this function kept stepping whole characters in a
+    /// mode where zsh steps bytes — `${gr[2]}`, `${(s::)v}` and `$(( ##c ))`
+    /// all read the wrong unit.
+    ///
+    /// Both the length and the returned unit are asserted: a version that
+    /// fixed the length but re-encoded the unit as UTF-8 would still emit
+    /// `c3 8e` where zsh emits the single byte `ce`.
+    #[test]
+    fn mb_metacharlenconv_steps_bytes_when_multibyte_unset() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = isset(MULTIBYTE);
+        // `α` is ce b1 — one character, two bytes.
+        let alpha: &[u8] = &[0xce, 0xb1];
+
+        dosetopt(MULTIBYTE, 1, 1);
+        let (n, wc, unit) = mb_metacharlenconv(alpha);
+        assert_eq!(n, 2, "c:5635 — multibyte on: the whole character");
+        assert_eq!(wc, Some('α'));
+        assert_eq!(unit.as_bytes(), alpha, "the unit is the character verbatim");
+
+        dosetopt(MULTIBYTE, 0, 1);
+        let (n, wc, unit) = mb_metacharlenconv(alpha);
+        assert_eq!(n, 1, "c:5613 — multibyte off: one byte");
+        assert_eq!(wc, Some('\u{ce}'), "c:5616 — the byte value is the scalar");
+        assert_eq!(
+            crate::ported::utils::unmetafy_str(&unit),
+            vec![0xceu8],
+            "the unit must decode back to the single byte 0xce, not to U+00CE's \
+             UTF-8 (c3 8e) — half a character cannot be held verbatim"
+        );
+
+        // ASCII takes the same one-byte path in either mode (c:5613).
+        dosetopt(MULTIBYTE, 1, 1);
+        assert_eq!(mb_metacharlenconv(b"abc").0, 1);
+        dosetopt(MULTIBYTE, 0, 1);
+        assert_eq!(mb_metacharlenconv(b"abc").0, 1);
+
         dosetopt(MULTIBYTE, if saved { 1 } else { 0 }, 1);
     }
 

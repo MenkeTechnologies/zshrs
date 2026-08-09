@@ -781,7 +781,7 @@ jobs:
       - name: Fuzz — prompt
         run: ./target/debug/parity-fuzz --mode prompt --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/prompt.txt --out target/parity-fuzz/ci-prompt.txt
       # Informational. Every divergence this mode still reports is under
-      # `unsetopt multibyte` -- measured, not assumed: 49/49 at --count 400
+      # `unsetopt multibyte` -- measured, not assumed: 30/30 at --count 400
       # carry the `unsetopt multibyte` line, 0 occur with the option on.
       #
       # The byte-mode rule is that with MULTIBYTE off the length / index /
@@ -802,26 +802,50 @@ jobs:
       #   ${#$'\xe6'} returned 4 where zsh gives 1 under `unsetopt multibyte`
       #     (the metafied String's UTF-8 length, not C's demetafied ztrlen).
       #
-      # Remaining at --count 400 (49 total), by measured root cause:
-      #   13  subscript/slice  ${v[2]} ${v[1,-2]} -- index must be a BYTE
-      #    8  ${v/[[:alpha:]]/X}   (first-match substitution)
-      #    6  ${v//[[:alpha:]]/X}  (global substitution)
-      #    6  split ${(s::)v}
+      # Same shape closed four more groups (49 -> 30 of 400, no new seeds).
+      # c:5613's guard now lives in mb_metacharlenconv, which also returns the
+      # unit in the port's String form so a byte-mode cut can be represented at
+      # all, and the scalar-subscript, `${(s::)}` split, `##` char-literal,
+      # `${(#)}` and casemodify walks step THAT unit instead of a Rust `char`:
+      #   subscript/slice 13 -> 0   split 6 -> 0   $(( ##c )) 4 -> 0
+      #   ${(#)N} 3 -> 0            case 5 -> 4
+      # casemodify had no byte arm at all (C forks the whole function at
+      # c:Src/hist.c:2203); `${(#)}` had lost BOTH halves of c:Src/subst.c:1508
+      # `isset(MULTIBYTE) && ires > 127`, so it UTF-8-encoded every value and
+      # `${(#)206}` emitted `c3 8e` where zsh emits the single byte `ce`.
+      #
+      # Remaining at --count 400 (30 total), by measured root cause:
+      #   11  ${v/[[:alpha:]]/X}   (first-match substitution)
+      #    7  ${v//[[:alpha:]]/X}  (global substitution)
+      #    6  quoting ${(q)} / ${(qq)}
       #    4  case ${(U)} / ${(L)} / ${(C)}
-      #    4  $(( ##${v[1]} ))     -- downstream of the subscript above
-      #    3  quoting ${(q)} / ${(qq)}
-      #    3  ${(#)...}
       #    2  ${(ml:8::.:)j}       -- NOT a port gap; see below
       #
-      # The first eight groups share one blocker: byte-mode ops deliberately
-      # CUT multibyte characters, so zsh emits invalid UTF-8. Verified under
-      # `unsetopt multibyte`:
-      #   acc=$'é'; ${acc[1,-2]} -> zsh `e` + a lone 0xCC
-      #   ${(L)acc} / ${(C)cy} / ${wide/[[:alpha:]]/X} -> all split a UTF-8
-      #   sequence mid-character.
-      # The port CAN hold those bytes (metafied: `v=$'\xe6'` round-trips
-      # byte-exactly), so this is breadth across many sites, not an
-      # impossibility -- it is simply not a local fix.
+      # The 18 substitution cases are an INTERFACE boundary, not a missing
+      # guard. pattern.rs already degrades correctly (`charinc` and
+      # `anyof_membership` gate on GF_MULTIBYTE, `charsub` on the option), but
+      # `patmatch` takes `&str` and the scan feeds it `&val[q_byte..]`. Byte
+      # mode has to probe offsets that fall INSIDE a character, and Rust cannot
+      # take that slice -- so closing these means making the pattern entry
+      # point byte-native, a core-subsystem change rather than a local one.
+      # Flagged rather than papered over.
+      #
+      # The 6 quoting cases need per-BYTE printability. C's WC_ISPRINT is
+      # `iswprint(cc)` (Src/ztype.h:79) and byte mode hands it the raw byte as
+      # a wide char, so 0xd0 (U+00D0) passes through while 0x9f (U+009F, a C1
+      # control) becomes `$'\237'`. quotestring builds a String and would have
+      # to build BYTES to mix the two. Note the oracle dependence: Apple's
+      # /bin/zsh 5.9 escapes EVERY byte of the same input, Homebrew 5.9.2
+      # escapes only the unprintable ones. The fuzz oracle is whatever
+      # `zsh_path()` picks (Homebrew first), so verify against THAT binary.
+      #
+      # The 4 case cases are an upstream artifact, not a fold error -- the fold
+      # itself now matches byte-for-byte. C writes an UNMODIFIED imeta byte RAW
+      # into a metafied buffer (c:2315 re-metafies only when `mod`), so a value
+      # holding 0x9f loses it downstream: `${(L)cy}` returns 11 bytes for a
+      # 12-byte input, and 0x97 (`Quest`) untokenizes into a glob `?`, which is
+      # why `${(C)j}` reports "no matches found" in real zsh. Matching that
+      # means reproducing C's own metafication corruption.
       #
       # The 2 `(ml:` cases are an UPSTREAM zsh out-of-bounds read, not a port
       # gap. Do not "fix" or baseline them. With MULTIBYTE off, c:5662 returns
