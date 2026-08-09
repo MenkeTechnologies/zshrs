@@ -1693,14 +1693,31 @@ fn gen_heredoc(seed: u64) -> Vec<String> {
     vec![preamble, format!("cat {op}{delim}\n{lines}{indent}EOF")]
 }
 
+/// Root for every fixture this RUN creates: `target/parity-fuzz/run-<pid>`.
+///
+/// It used to be the constant `target/parity-fuzz`, and each `setup_*_fixture`
+/// opened with `remove_dir_all` on its own constant subdirectory. Several
+/// agents fuzz this same checkout concurrently, so a second run's setup could
+/// delete the tree the first run was still globbing. That does not surface as
+/// an error: both shells then see an EMPTY directory, produce identical empty
+/// output, and the run reports `divergences : 0` and exits 0. A wiped fixture
+/// read as a clean pass.
+///
+/// The pid keeps concurrent runs off each other's tree. The directory is left
+/// behind on purpose — divergence records cite paths inside it, and it lives
+/// under the gitignored `target/`.
+fn fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("parity-fuzz")
+        .join(format!("run-{}", std::process::id()))
+}
+
 /// Create (idempotently) the glob fixture directory and return its path. Files
 /// have deliberately distinct sizes and staggered mtimes so size/mtime ordering
 /// qualifiers produce a single deterministic order.
 fn setup_glob_fixture() -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("parity-fuzz")
-        .join("glob-fixture");
+    let dir = fixture_root().join("glob-fixture");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create fixture dir");
     std::fs::create_dir_all(dir.join("dir1")).unwrap();
@@ -1760,10 +1777,7 @@ fn setup_glob_fixture() -> PathBuf {
 /// DEFINE the function. `af_ksh` is written to satisfy the ksh contract so the
 /// two loading styles produce visibly different results from the same file.
 fn setup_autoload_fixture() -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("parity-fuzz")
-        .join("autoload-fixture");
+    let dir = fixture_root().join("autoload-fixture");
     let _ = std::fs::remove_dir_all(&dir);
     let fns = dir.join("fns");
     std::fs::create_dir_all(&fns).expect("create autoload fixture dir");
@@ -1801,10 +1815,7 @@ fn setup_autoload_fixture() -> PathBuf {
 /// in the cwd. Without this fixture that file lands in the REPO ROOT. Any mode
 /// whose probes can redirect must run from here, not from the source tree.
 fn setup_scratch_fixture() -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("parity-fuzz")
-        .join("scratch");
+    let dir = fixture_root().join("scratch");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create scratch fixture dir");
     dir
@@ -1821,10 +1832,7 @@ fn setup_scratch_fixture() -> PathBuf {
 /// across the parallel workers and means a minimized probe can never rename a
 /// file out from under the other workers (or into the source tree).
 fn setup_zmv_fixture() -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("parity-fuzz")
-        .join("zmv-fixture");
+    let dir = fixture_root().join("zmv-fixture");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create zmv fixture dir");
     std::fs::create_dir_all(dir.join("sub")).unwrap();
@@ -4685,20 +4693,20 @@ fn gen_cmdsub(seed: u64) -> Vec<String> {
                         // (The "toplevel" arm of that same C line cannot be
                         // fuzzed here — this harness always invokes `-c`, whose
                         // context is "cmdarg"; it is verified manually.)
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; source $d/l.zsh"#,
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; sf(){ source $d/l.zsh }; sf"#,
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; eval "source $d/l.zsh""#,
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; print -r -- $(source $d/l.zsh)"#,
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; source $d/l.zsh; print -r -- "$ZSH_EVAL_CONTEXT""#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src-$$; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; source $d/l.zsh"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src-$$; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; sf(){ source $d/l.zsh }; sf"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src-$$; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; eval "source $d/l.zsh""#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src-$$; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; print -r -- $(source $d/l.zsh)"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-src-$$; mkdir -p $d; print 'print -r -- "$ZSH_EVAL_CONTEXT"' > $d/l.zsh; source $d/l.zsh; print -r -- "$ZSH_EVAL_CONTEXT""#,
                         r#"source /nonexistent-zshrs-fuzz 2>/dev/null; print -r -- "$ZSH_EVAL_CONTEXT""#,
                         // `(e:…:)` glob qualifiers run their body with
                         // "globqual" appended (c:Src/glob.c:3919) and `zstyle -e`
                         // bodies with "style" (c:Src/Modules/zutil.c:419). The
                         // trailing plain-read rows pin the POP. Fixture uses an
                         // absolute path and is never removed. Bug #1069.
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq; mkdir -p $d; : > $d/a; cd $d; print -r -- *(e:'REPLY=$ZSH_EVAL_CONTEXT':N)"#,
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq; mkdir -p $d; : > $d/a; cd $d; gf(){ print -r -- *(e:'REPLY=$ZSH_EVAL_CONTEXT':N) }; gf"#,
-                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq; mkdir -p $d; : > $d/a; cd $d; print -r -- *(N); print -r -- $ZSH_EVAL_CONTEXT"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq-$$; mkdir -p $d; : > $d/a; cd $d; print -r -- *(e:'REPLY=$ZSH_EVAL_CONTEXT':N)"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq-$$; mkdir -p $d; : > $d/a; cd $d; gf(){ print -r -- *(e:'REPLY=$ZSH_EVAL_CONTEXT':N) }; gf"#,
+                        r#"d=${TMPDIR:-/tmp}/zshrs-fuzz-gq-$$; mkdir -p $d; : > $d/a; cd $d; print -r -- *(N); print -r -- $ZSH_EVAL_CONTEXT"#,
                         r#"zmodload zsh/zutil; zstyle -e ':x' k 'reply=($ZSH_EVAL_CONTEXT)'; zstyle -a ':x' k r; print -r -- "$r""#,
                         r#"zmodload zsh/zutil; zstyle -e ':x' k 'reply=($ZSH_EVAL_CONTEXT)'; zstyle -a ':x' k r; print -r -- "$ZSH_EVAL_CONTEXT""#,
                         r#"zmodload zsh/zutil; yf(){ zstyle -e ':y' k 'reply=($ZSH_EVAL_CONTEXT)'; zstyle -a ':y' k r; print -r -- "$r" }; yf"#,
@@ -6576,7 +6584,7 @@ fn gen_extglob(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     // Names chosen so `#`/`##`/`^` have both matches and non-matches to
     // discriminate: `a##` must match aa/aaa but not ab/b.
-    let setup = "d=${TMPDIR:-/tmp}/zshrs-fuzz-extglob; mkdir -p $d; \
+    let setup = "d=${TMPDIR:-/tmp}/zshrs-fuzz-extglob-$$; mkdir -p $d; \
                  touch $d/aa $d/aaa $d/ab $d/b $d/bb; cd $d";
     // Whether EXTENDEDGLOB is on decides literal-vs-pattern. Both legs
     // matter: the fix must not make `#` glob while the option is off.
@@ -11081,5 +11089,46 @@ compared, but not evidence the generator reached anything)",
     }
     if known > 0 {
         println!("all {known} divergences are known (in baseline) — OK");
+    }
+
+    // A clean run has to have RUN. Two ways it could report `divergences : 0`
+    // and exit 0 without having measured anything:
+    //
+    //  - Short run. `checked` falls below `--count` only when `stop` is set,
+    //    which only happens at `--max-report`, which implies divergences —
+    //    so today this cannot fire silently. Assert it anyway: the invariant
+    //    is what makes the number mean something, and it should be checked
+    //    rather than re-derived from the worker loop every time that loop
+    //    changes.
+    //
+    //  - Vanished fixture. The fixture-backed modes (glob, stat, autoload,
+    //    zmv) compare two shells against a directory tree. Delete the tree and
+    //    both shells see nothing, agree perfectly, and the run passes. That is
+    //    the failure this checks for: the fixture created at startup must
+    //    still be there, and still non-empty, at the end.
+    let mut incomplete = false;
+    if checked != args.count {
+        println!(
+            "\nINCOMPLETE: ran {checked} of {} cases — the divergence count above \
+             does not cover the requested corpus",
+            args.count
+        );
+        incomplete = true;
+    }
+    if let Some(dir) = FIXTURE_CWD.get() {
+        let populated = std::fs::read_dir(dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        if !populated {
+            println!(
+                "\nINCOMPLETE: fixture {} is missing or empty at end of run — \
+                 both shells were compared against nothing",
+                dir.display()
+            );
+            incomplete = true;
+        }
+    }
+    if incomplete {
+        std::process::exit(1);
     }
 }
