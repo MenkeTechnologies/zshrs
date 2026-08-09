@@ -4664,34 +4664,38 @@ pub fn MB_METACHARLENCONV(s: &[u8]) -> (usize, Option<char>) {
     }
 }
 
-/// Port of `MB_METASTRLEN(str)` from `Src/zsh.h:3279/3360`. Counts
-/// metafied characters in the string.
+/// Port of `MB_METASTRLEN(str)` from `Src/zsh.h:3279`. Counts
+/// multibyte characters in a metafied string.
+///
+/// C is a one-line delegation — `mb_metastrlenend(str, 0, NULL)` — and
+/// this now delegates too. It previously inlined a `Meta`-pair byte
+/// walk, which is the NON-multibyte build's macro (c:3360 `ztrlen`),
+/// not this one: it counted a real multibyte character once per BYTE
+/// and never consulted the MULTIBYTE option. Nothing in the tree calls
+/// this function directly, but `MB_METASTRWIDTH` below delegated to it,
+/// which is how a display-WIDTH request became a character count.
 #[inline]
 #[allow(non_snake_case)]
 pub fn MB_METASTRLEN(s: &str) -> usize {
-    // c:3279
-    let mut n = 0;
-    let mut i = 0;
-    let bytes = s.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == Meta && i + 1 < bytes.len() {
-            i += 2;
-        } else {
-            i += 1;
-        }
-        n += 1;
-    }
-    n
+    // c:3279 — mb_metastrlenend(str, 0, NULL); NULL eptr ⇒ whole string.
+    crate::ported::utils::mb_metastrlenend(s, false, s.len())
 }
 
-/// Port of `MB_METASTRWIDTH(str)` from `Src/zsh.h:3280/3361`. Counts
-/// display width. In non-multibyte mode this is the same as
-/// `MB_METASTRLEN`; in multibyte mode it accounts for wide chars.
+/// Port of `MB_METASTRWIDTH(str)` from `Src/zsh.h:3280`. Total display
+/// WIDTH (columns) of a metafied string — a wide CJK character counts
+/// 2, a combining character 0.
+///
+/// C: `mb_metastrlenend(str, 1, NULL)`. This used to alias
+/// `MB_METASTRLEN`, returning a character count, so every caller that
+/// asked for columns got characters: the `select` menu laid
+/// `日本語` out as 3 columns instead of 6 and packed rows zsh keeps
+/// separate (c:Src/loop.c:385), and prompt truncation measured the
+/// same way (c:Src/prompt.c:1359).
 #[inline]
 #[allow(non_snake_case)]
 pub fn MB_METASTRWIDTH(s: &str) -> usize {
-    // c:3280
-    MB_METASTRLEN(s)
+    // c:3280 — mb_metastrlenend(str, 1, NULL).
+    crate::ported::utils::mb_metastrlenend(s, true, s.len())
 }
 
 /// Port of `MB_METASTRLEN2(str, widthp)` from `Src/zsh.h:3281/3362`.
@@ -4940,11 +4944,38 @@ mod tests {
     fn mb_metastrlen_counts_meta_pairs() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(MB_METASTRLEN("abc"), 3);
-        // META is char 0x83, but in UTF-8 it encodes as 2 bytes
-        // (0xC2 0x83). The byte-level metafied counter walks the
-        // raw bytes; "abc" has 3 bytes → 3. Just test ASCII here.
         assert_eq!(MB_METASTRLEN("hello"), 5);
         assert_eq!(MB_METASTRLEN(""), 0);
+        // The ASCII cases above are the only thing this test used to
+        // assert, under a name promising meta-pair coverage — they pass
+        // identically whether the body counts characters or bytes, so
+        // they pinned nothing. A `Meta`+byte pair is ONE character
+        // (c:Src/utils.c:5672-5673 un-metafies before counting).
+        assert_eq!(
+            MB_METASTRLEN("\u{83}\u{c6}\u{83}\u{b7}\u{83}\u{85}"),
+            1,
+            "metafied e6 97 a5 is the single character 日"
+        );
+        // A real multibyte character counts once, not once per byte.
+        assert_eq!(MB_METASTRLEN("日本語"), 3);
+        assert_eq!(MB_METASTRLEN("aé漢z"), 4);
+    }
+
+    /// c:Src/zsh.h:3280 — `MB_METASTRWIDTH` is display COLUMNS, which
+    /// is a different number from `MB_METASTRLEN` exactly when the
+    /// string holds wide or combining characters. It aliased
+    /// `MB_METASTRLEN` before, so this discriminates the two.
+    #[test]
+    fn mb_metastrwidth_counts_display_columns_not_chars() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(MB_METASTRLEN("日本語"), 3, "three characters");
+        assert_eq!(MB_METASTRWIDTH("日本語"), 6, "six columns — each is wide");
+        // Combining acute occupies no column of its own.
+        assert_eq!(MB_METASTRLEN("e\u{301}"), 2);
+        assert_eq!(MB_METASTRWIDTH("e\u{301}"), 1);
+        // Pure ASCII: the two agree, which is why ASCII-only cases
+        // cannot tell a width implementation from a length one.
+        assert_eq!(MB_METASTRWIDTH("abc"), 3);
     }
 
     #[test]

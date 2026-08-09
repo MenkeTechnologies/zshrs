@@ -2423,22 +2423,97 @@ pub fn dopadding(
     multi_width: i32,      // c:2376 (m)
 ) -> String {
     // c:893
-    // (m)-aware string-cell counter. With multi_width==0 every
-    // codepoint counts 1 (legacy behavior); otherwise wcpadwidth
-    // gives the wide-char-aware metric. Direct port of zsh's
-    // MULTIBYTE_SUPPORT path which routes the (l)/(r) length
-    // checks through u9_wcwidth() before deciding pad vs truncate.
-    let cells = |t: &str| -> usize {
-        // c:893
-        if multi_width <= 0 {
-            // c:893
-            t.chars().count() // c:893
-        } else {
-            // c:893
-            t.chars().map(|c| wcpadwidth(c, multi_width) as usize).sum() // c:2376
-        } // c:893
+    // c:919-923 — every length here is `MB_METASTRLEN2(str,
+    // multi_width)`, and every copy loop advances by
+    // `MB_METACHARLENCONV` (c:965-1133). The unit of work is therefore
+    // a METAFIED CHARACTER, never a Rust `char`:
+    //
+    //   * a `Meta`+byte pair is ONE unit — `chars()` counted it as two,
+    //     so `${(l:3::x:)$'\xe6'}` padded once instead of twice and
+    //     `${(l:5::x:)$'\xe6\x97\xa5'}` truncated a 1-char value and
+    //     emitted the escape bytes raw (`c3 86 97 a5`) instead of
+    //     `xxxx` + `e6 97 a5`;
+    //   * with the MULTIBYTE option off the unit is a single BYTE
+    //     (c:Src/utils.c:5613), which is what lets this function cut
+    //     mid-character the way C does in that mode.
+    //
+    // (m)-aware cell counting is unchanged: multi_width==0 gives every
+    // unit 1 cell (c:855), otherwise wcpadwidth supplies the
+    // wide-char-aware metric (c:2376) for the scalar the unit encodes.
+    //
+    // C slices its metafied `char *` by the byte count each step
+    // returns; a Rust `String` cannot be sliced mid-character, so a
+    // unit is an owned, still-metafied `String` and concatenating any
+    // subset reproduces exactly the bytes C would have copied.
+    let units = |t: &str| -> Vec<String> {
+        // c:5672 — C walks the DEMETAFIED byte stream, so a `Meta`+byte
+        // pair and a literal high byte are the same input to the step
+        // below. Reducing here is what makes `$'\xe6\x97\xa5'` (three
+        // metafied pairs) one CHARACTER rather than three units.
+        let bytes = crate::ported::utils::unmetafy_str(t);
+        // Read the live slot with the declared default (on,
+        // c:Src/options.c:197): `isset()` maps a never-written slot to
+        // false and would invert the default in contexts that skip
+        // init's `emulate()`.
+        let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+        let mut out: Vec<String> = Vec::new();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            // c:5613 — MULTIBYTE off, or a 7-bit byte: the unit is one
+            // byte. Otherwise mbrtowc assembles one character
+            // (c:5635 → mb_metacharlenconv_r); a byte that begins no
+            // valid sequence stands alone (c:5712).
+            let n = if !mb || bytes[i] <= 0x7f {
+                1
+            } else {
+                let hi = (i + 4).min(bytes.len());
+                let mut k = 1;
+                for end in (i + 1)..=hi {
+                    if std::str::from_utf8(&bytes[i..end]).is_ok() {
+                        k = end - i;
+                        break;
+                    }
+                }
+                k
+            };
+            // Hold the unit as a `String`: valid UTF-8 verbatim,
+            // otherwise re-metafied byte-by-byte — the port's in-
+            // `String` form for bytes that are not valid UTF-8 alone.
+            match std::str::from_utf8(&bytes[i..i + n]) {
+                Ok(v) => out.push(v.to_string()),
+                Err(_) => {
+                    let mut u = String::with_capacity(2 * n);
+                    for &b in &bytes[i..i + n] {
+                        if b < 0x80 {
+                            u.push(b as char);
+                        } else {
+                            u.push('\u{83}');
+                            u.push(char::from(b ^ 32));
+                        }
+                    }
+                    out.push(u);
+                }
+            }
+            i += n;
+        }
+        out
     };
-    let len = cells(s); // c:893
+    // The scalar a unit stands for — C's `wcp` out-param of
+    // `MB_METACHARLENCONV` (c:5616 `*s == Meta ? s[1] ^ 32 : *s`).
+    let width_of = |u: &str| -> usize {
+        if multi_width <= 0 {
+            return 1; // c:855
+        }
+        let mut ch = u.chars();
+        let wc = match (ch.next(), ch.next()) {
+            (Some('\u{83}'), Some(n)) => char::from_u32((n as u32) ^ 32).unwrap_or(n), // c:5616
+            (Some(c), _) => c,
+            _ => '\0',
+        };
+        wcpadwidth(wc, multi_width) as usize // c:2376
+    };
+    let cells = |t: &str| -> usize { units(t).iter().map(|u| width_of(u)).sum() }; // c:919
+    let len = cells(s); // c:919
     let total_width = prenum + postnum; // c:893
 
     if total_width == 0 || total_width == len {
@@ -2456,20 +2531,16 @@ pub fn dopadding(
     if prenum > 0 && postnum > 0 {
         // c:956 — ls2 = ls / 2 (width of the first half).
         let ls2 = len / 2; // c:956
-        let chars: Vec<char> = s.chars().collect();
+        let us = units(s);
         let mut acc = 0usize;
         let mut split_idx = 0usize;
-        // c:1042 — first half spans chars until cumulative width reaches ls2.
-        while split_idx < chars.len() && acc < ls2 {
-            acc += if multi_width <= 0 {
-                1
-            } else {
-                wcpadwidth(chars[split_idx], multi_width) as usize
-            };
+        // c:1042 — first half spans units until cumulative width reaches ls2.
+        while split_idx < us.len() && acc < ls2 {
+            acc += width_of(&us[split_idx]);
             split_idx += 1;
         }
-        let first: String = chars[..split_idx].iter().collect();
-        let second: String = chars[split_idx..].iter().collect();
+        let first: String = us[..split_idx].concat();
+        let second: String = us[split_idx..].concat();
         // c:945-1049 — first half: left pad to prenum (preone/premul).
         let left = dopadding(&first, prenum, 0, preone, None, premul, "", multi_width);
         // c:1051-1109 — second half: right pad to postnum (postone/postmul).
@@ -2482,7 +2553,7 @@ pub fn dopadding(
     // Left padding
     if prenum > 0 {
         // c:893
-        let chars: Vec<char> = s.chars().collect(); // c:893
+        let chars: Vec<String> = units(s); // c:965
 
         if len > prenum {
             // c:Src/subst.c:912-925 — left-pad truncation keeps the RIGHTMOST
@@ -2494,18 +2565,14 @@ pub fn dopadding(
             let mut w = 0usize;
             let mut keep_from = chars.len();
             for i in (0..chars.len()).rev() {
-                let cw = if multi_width <= 0 {
-                    1
-                } else {
-                    wcpadwidth(chars[i], multi_width) as usize
-                };
+                let cw = width_of(&chars[i]);
                 if w + cw > prenum {
                     break;
                 }
                 w += cw;
                 keep_from = i;
             }
-            result = chars[keep_from..].iter().collect(); // c:912
+            result = chars[keep_from..].concat(); // c:912
         } else {
             // c:893
             // Pad on left
@@ -2514,21 +2581,23 @@ pub fn dopadding(
             // Add preone if there's room
             if let Some(pre) = preone {
                 // c:893
-                let pre_len = pre.chars().count(); // c:893
+                let pre_units = units(pre); // c:1074
+                let pre_len = pre_units.len(); // c:921
                 if pre_len <= padding_needed {
                     // c:893
                     // Room for repeated padding first
                     let repeat_len = padding_needed - pre_len; // c:893
                     if !premul.is_empty() {
                         // c:893
-                        let mul_len = premul.chars().count(); // c:893
+                        let mul_units = units(premul); // c:1099
+                        let mul_len = mul_units.len(); // c:922
                         let full_repeats = repeat_len / mul_len; // c:893
                         let partial = repeat_len % mul_len; // c:893
 
                         // Partial repeat
                         if partial > 0 {
                             // c:893
-                            result.extend(premul.chars().skip(mul_len - partial));
+                            result.push_str(&mul_units[mul_len - partial..].concat());
                             // c:893
                         } // c:893
                           // Full repeats
@@ -2541,20 +2610,21 @@ pub fn dopadding(
                 } else {
                     // c:893
                     // Only part of preone fits
-                    result.extend(pre.chars().skip(pre_len - padding_needed)); // c:893
+                    result.push_str(&pre_units[pre_len - padding_needed..].concat()); // c:893
                 } // c:893
             } else {
                 // c:893
                 // Just use premul
                 if !premul.is_empty() {
                     // c:893
-                    let mul_len = premul.chars().count(); // c:893
+                    let mul_units = units(premul); // c:1099
+                    let mul_len = mul_units.len(); // c:922
                     let full_repeats = padding_needed / mul_len; // c:893
                     let partial = padding_needed % mul_len; // c:893
 
                     if partial > 0 {
                         // c:893
-                        result.extend(premul.chars().skip(mul_len - partial)); // c:893
+                        result.push_str(&mul_units[mul_len - partial..].concat()); // c:893
                     } // c:893
                     for _ in 0..full_repeats {
                         // c:893
@@ -2586,16 +2656,12 @@ pub fn dopadding(
             // ≤ postnum — `${(mr:8:)}` on a 14-cell CJK string kept all 7 chars.
             let mut c = postnum as isize; // c:1072
             let mut out = String::new();
-            for ch in result.chars() {
+            for u in units(&result) {
                 if c <= 0 {
                     break;
                 }
-                out.push(ch); // c:1076
-                c -= if multi_width <= 0 {
-                    1
-                } else {
-                    wcpadwidth(ch, multi_width) as isize
-                }; // c:1078
+                out.push_str(&u); // c:1076
+                c -= width_of(&u) as isize; // c:1078
             }
             result = out;
         } else if current_len < postnum {
@@ -2605,14 +2671,16 @@ pub fn dopadding(
 
             if let Some(post) = postone {
                 // c:893
-                let post_len = post.chars().count(); // c:893
+                let post_units = units(post); // c:1276
+                let post_len = post_units.len(); // c:921
                 if post_len <= padding_needed {
                     // c:893
                     result.push_str(post); // c:893
                     let remaining = padding_needed - post_len; // c:893
                     if !postmul.is_empty() {
                         // c:893
-                        let mul_len = postmul.chars().count(); // c:893
+                        let mul_units = units(postmul); // c:1317
+                        let mul_len = mul_units.len(); // c:923
                         let full_repeats = remaining / mul_len; // c:893
                         let partial = remaining % mul_len; // c:893
 
@@ -2622,16 +2690,17 @@ pub fn dopadding(
                         } // c:893
                         if partial > 0 {
                             // c:893
-                            result.extend(postmul.chars().take(partial)); // c:893
+                            result.push_str(&mul_units[..partial].concat()); // c:893
                         } // c:893
                     } // c:893
                 } else {
                     // c:893
-                    result.extend(post.chars().take(padding_needed)); // c:893
+                    result.push_str(&post_units[..padding_needed].concat()); // c:893
                 } // c:893
             } else if !postmul.is_empty() {
                 // c:893
-                let mul_len = postmul.chars().count(); // c:893
+                let mul_units = units(postmul); // c:1317
+                let mul_len = mul_units.len(); // c:923
                 let full_repeats = padding_needed / mul_len; // c:893
                 let partial = padding_needed % mul_len; // c:893
 
@@ -2641,7 +2710,7 @@ pub fn dopadding(
                 } // c:893
                 if partial > 0 {
                     // c:893
-                    result.extend(postmul.chars().take(partial)); // c:893
+                    result.push_str(&mul_units[..partial].concat()); // c:893
                 } // c:893
             } // c:893
         } // c:893
@@ -10177,18 +10246,20 @@ pub fn paramsubst(
                             cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8")
                         }
                     };
-                    // c:Src/utils.c:5662-5663 — `if (!isset(MULTIBYTE)
-                    // || MB_CUR_MAX == 1) return ztrlen(ptr);` — with
-                    // the MULTIBYTE option unset the length op counts
-                    // BYTES regardless of locale. Read the live slot
-                    // directly with the declared default (OPT_ALL,
-                    // c:Src/options.c:197) for a never-written slot —
-                    // `isset()` maps never-written to false, which
-                    // inverts the default-on semantics in contexts
-                    // that skip init's emulate() (unit tests).
-                    let multibyte_on =
-                        crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
-                    if utf8 && multibyte_on {
+                    // The MULTIBYTE check that used to sit here is gone:
+                    // it now lives inside `mb_metastrlenend` where C
+                    // keeps it (c:Src/utils.c:5662-5663), so every
+                    // caller gets it rather than just this one.
+                    //
+                    // Removing the duplicate also FIXES this arm. Its
+                    // `else` returned `raw_value_for_len.len()` — the
+                    // UTF-8 length of the METAFIED `String` — where C
+                    // returns `ztrlen`, the length of the DEMETAFIED
+                    // byte stream. With `unsetopt multibyte`,
+                    // `${#$'\xe6'}` gave 4 (Meta and the escaped byte
+                    // are two `char`s = four UTF-8 bytes) against zsh's
+                    // 1, and `${#$'\xe6\x97\xa5'}` gave 12 against 3.
+                    if utf8 {
                         // c:3867 — `len = MB_METASTRLEN2(val, multi_width)`.
                         // MB_METASTRLEN demetafies then mbrtowc-counts, so
                         // `$'\xc3\xa9'` (metafied é) counts 1 char, not the
