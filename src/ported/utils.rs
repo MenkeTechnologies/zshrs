@@ -6518,8 +6518,15 @@ pub fn metafy(buf: &str) -> String {
     // lossy. The lossy fallback inserts U+FFFD for invalid
     // sequences, which is fine for String-level callers (lexer /
     // pattern compile / display) but breaks byte-round-trip with
-    // `unmetafy`. Byte-round-trip callers should use `metafy_bytes`
-    // (which preserves the metafied byte sequence verbatim).
+    // `unmetafy`.
+    //
+    // This note used to direct byte-round-trip callers to a
+    // `metafy_bytes` "which preserves the metafied byte sequence
+    // verbatim". No such function exists anywhere in the tree — the
+    // reference was dangling. Callers that need a round-trippable
+    // metafied form build it as `char`s (`'\u{83}'` then
+    // `char::from(b ^ 32)`), which is what `mb_metachar_units` and the
+    // `$'…'` decoder do; `unmetafy_str` decodes exactly that shape.
     String::from_utf8(out.clone()).unwrap_or_else(|_| String::from_utf8_lossy(&out).into_owned())
 }
 
@@ -7386,6 +7393,26 @@ pub fn mb_metacharlenconv(s: &str) -> (usize, Option<char>) {
 pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
     // c:5672 — un-metafy the (optionally end-bounded) slice to raw bytes.
     let bytes = unmetafy_str(&ptr[..eptr.min(ptr.len())]);
+    // c:5662-5663 — `if (!isset(MULTIBYTE) || MB_CUR_MAX == 1) return
+    // eptr ? (int)(eptr - ptr) : ztrlen(ptr);`. With the MULTIBYTE
+    // option unset every length op counts BYTES, and `ztrlen` counts a
+    // `Meta`+byte pair as the ONE byte it encodes — which is exactly
+    // the length of the demetafied stream computed above.
+    //
+    // This guard belongs HERE, not at the call sites. It used to live
+    // only in the `${#v}` length arm (subst.rs), so `${#v}` counted
+    // bytes under `unsetopt multibyte` while every other caller of this
+    // function — dopadding's (l)/(r)/(m) widths above all — kept
+    // counting characters.
+    //
+    // The option is read from the live slot with the DECLARED DEFAULT
+    // (on, c:Src/options.c:197) rather than through `isset()`, which
+    // maps a never-written slot to false and would invert the
+    // default-on semantics in any context that skips init's
+    // `emulate()` — unit tests most of all.
+    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) {
+        return bytes.len();
+    }
     let mut num: usize = 0; // c:5658 size_t ret / counter
     let mut i: usize = 0;
     while i < bytes.len() {
