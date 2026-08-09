@@ -139,7 +139,7 @@
           <span class="sep">/</span>
           <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
-        <p class="docs-build-line">zshrs v0.12.29 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 572 regression tests (392 corpus · 172 dispatch · 8 absence) · 19,126 <code>#[test]</code> hooks workspace-wide</p>
+        <p class="docs-build-line">zshrs v0.12.32 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 575 regression tests (393 corpus · 174 dispatch · 8 absence) · 19,259 <code>#[test]</code> hooks workspace-wide</p>
       </div>
       <div class="tutorial-toolbar">
         <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -160,7 +160,7 @@
 
   <main class="tutorial-main">
     <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SHELL REFERENCE</h2>
-    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. <strong>Coverage gate:</strong> 392 construct-corpus tests in <code>tests/zsh_construct_corpus.rs</code> exercise every category below; <strong>19,126 <code>#[test]</code> hooks</strong> (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>, 2026-08-02) span tracked Rust sources. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
+    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. <strong>Coverage gate:</strong> 393 construct-corpus tests in <code>tests/zsh_construct_corpus.rs</code> exercise every category below; <strong>19,259 <code>#[test]</code> hooks</strong> (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>, 2026-08-09) span tracked Rust sources. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
 
     <section class="tutorial-section">
       <h2>Pipeline Architecture</h2>
@@ -1880,7 +1880,7 @@ fi</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-recently-closed">
       <h2>Recently Closed Compat Gaps (eighty-eighth-pass)</h2>
-      <p class="chapter-meta">46 constructs · all verified against <code>src/zsh/Src/</code> via direct C-source ports. Each entry is pinned by at least one assertion in <code>tests/zshrs_shell.rs</code>; workspace-wide test hooks today: 19,126 (see header strip). These were the highest-impact gaps in <code>man zshall</code> coverage that remained after the seventy-seventh pass — most are param expansion, pattern matching, function scoping, and trap behavior.</p>
+      <p class="chapter-meta">46 constructs · all verified against <code>src/zsh/Src/</code> via direct C-source ports. Each entry is pinned by at least one assertion in <code>tests/zshrs_shell.rs</code>; workspace-wide test hooks today: 19,259 (see header strip). These were the highest-impact gaps in <code>man zshall</code> coverage that remained after the seventy-seventh pass — most are param expansion, pattern matching, function scoping, and trap behavior.</p>
 
       <h3>Glob &amp; Pattern</h3>
       <article class="doc-entry" id="doc-gap-glob-tilde-exclude">
@@ -9815,7 +9815,7 @@ echo done
 <!-- END CANONICAL-GRAMMAR -->
 
     <p style="font-size: 11px; color: var(--text-muted); text-align: center; margin: 3rem 0 1rem; font-family: 'Share Tech Mono', monospace;">
-      // generated against fusevm 0.17.0 dispatch · zshrs v0.12.29 · 15 chapters · 19,126 #[test] hooks · MenkeTechnologies
+      // generated against fusevm 0.17.0 dispatch · zshrs v0.12.32 · 15 chapters · 19,259 #[test] hooks · MenkeTechnologies
     </p>
   </main>
   </div>

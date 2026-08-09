@@ -288,7 +288,7 @@ Each phase has its own load-bearing tests added to [`tests/`](./tests/) per [`DE
 The AOT binary must pass every existing zshrs behavioral test that doesn't require interactivity. Specifically:
 
 - **All 160 `no_tree_walker_dispatch` tests** run against an AOT-built `test_runner` binary, not source-mode zshrs.
-- **All 392 corpus tests** (plugin compat, parameter expansion, etc.) run against AOT.
+- **All 393 corpus tests** (plugin compat, parameter expansion, etc.) run against AOT.
 - **All 70 ztst tests** (zsh test suite ports) run against AOT.
 - **New AOT-specific tests:**
   - Build and run the same script under interp and AOT, compare stdout/stderr/exit/side-effects.
