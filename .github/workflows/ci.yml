@@ -651,8 +651,11 @@ jobs:
       # `(P)` named-ref (Src/subst.c aspar) with a following subscript across
       # scalar / array / assoc referents, and subscript-under-length. Fixed
       # this round: `${${(P)assoc}[key]}` key lookup and `${#${subexp}[N]}`.
-      # Known-gap classes baselined: nested bare-assoc value-splat shape and
-      # empty-array slice length.
+      # The baseline file holds ZERO signatures — nested bare-assoc value-splat
+      # shape and empty-array slice length are both FIXED, so any divergence
+      # here is a regression. (The empty-array slice was still live until
+      # LF_ARRAY was stamped before the c:Src/subst.c:3885 collapse; the
+      # baseline file's prose had already been written as if it were done.)
       - name: Fuzz — subexp
         run: ./target/debug/parity-fuzz --mode subexp --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/subexp.txt --out target/parity-fuzz/ci-subexp.txt
       # replace pins the `${name/pat/repl}` / `${name//pat/repl}` substitution
