@@ -2991,20 +2991,22 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
     if bytes.is_empty() {
         bytes.push((ires as u32 & 0xff) as u8); // c:1517
     }
-    // c:1519 — `metafy(ptr, len, META_USEHEAP)`. Well-formed text carrying no
-    // byte that zsh reserves stays verbatim; anything else is escaped as
-    // `Meta` + `byte ^ 32`, the form `unmetafy_str` decodes. The previous
-    // `from_utf8_lossy` on a lone high byte produced U+FFFD, destroying the
-    // value instead of escaping it.
-    let plain = std::str::from_utf8(&bytes)
-        .ok()
-        .filter(|_| !bytes.iter().any(|&b| crate::ported::utils::imeta_byte(b)));
-    Some(match plain {
-        Some(v) => v.to_string(),
-        None => {
+    // c:1519 — `metafy(ptr, len, META_USEHEAP)`. The escape fires ONLY for a
+    // byte a Rust `String` cannot hold; well-formed text stays verbatim, which
+    // is the same rule `mb_metacharlenconv` applies to a unit.
+    //
+    // C escapes its whole `imeta` set here, and copying that is wrong for the
+    // port: `${(#)0}` is a NUL, which C metafies but a `String` holds fine.
+    // Escaping it emitted the pair LITERALLY as `c2 83 20` — the value reaches
+    // `print` already in its final form, so nothing unmetafies it again — where
+    // zsh emits one 0x00 byte. `from_utf8_lossy` was equally wrong in the other
+    // direction: it turned a lone high byte into U+FFFD instead of escaping it.
+    Some(match std::str::from_utf8(&bytes) {
+        Ok(v) => v.to_string(),
+        Err(_) => {
             let mut v = String::with_capacity(2 * bytes.len());
             for &b in &bytes {
-                if b < 0x80 && !crate::ported::utils::imeta_byte(b) {
+                if b < 0x80 {
                     v.push(b as char);
                 } else {
                     v.push(char::from(crate::ported::zsh_h::Meta));
