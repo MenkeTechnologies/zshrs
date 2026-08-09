@@ -3033,14 +3033,38 @@ pub fn remlpaths(s: &str, count: i32) -> String {
 }
 
 /// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
-/// Rust idiom replacement: `chars()` + `to_lowercase`/`to_uppercase`
-/// covers the C `tolower`/`toupper`/`isalpha` per-byte loop; the
-/// CASMOD_CAPS branch tracks word-boundary via the `nextupper` flag.
+/// Rust idiom replacement: `chars()` + `tow_lower`/`tow_upper` covers
+/// the C `iswupper`/`towlower` wide-char loop; the CASMOD_CAPS branch
+/// tracks word-boundary via the `nextupper` flag.
 pub fn casemodify(s: &str, how: i32) -> String {
     // c:2196
     // c:2200 — `int nextupper = 1;`. Start expecting a leading uppercase.
     let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
+    // c:2227 `towlower(wc)` / c:2234 `towupper(wc)` — wide-char mappings:
+    // exactly one scalar in, one scalar out. Rust's `char::to_lowercase` /
+    // `to_uppercase` are the FULL Unicode mappings and can WIDEN (`ß` →
+    // "SS", `ﬁ` → "FI", `İ` → `i` + U+0307). Where the mapping widens,
+    // `towupper`/`towlower` have no single scalar to return and leave the
+    // character alone, so these decline it too. Verified against the oracle:
+    //     zsh -fc 'v=straße; print -r -- ${(U)v}'   → STRAßE
+    //     zsh -fc 'print -r -- ${(U)$(print -n ﬁ)}' → ﬁ
+    // The one residual difference is U+0130, where the platform `towlower`
+    // answers `i` and this answers `İ`; recorded in docs/BUGS.md.
+    let one_or_self = |c: char, mut it: std::vec::IntoIter<char>| -> char {
+        match (it.next(), it.next()) {
+            (Some(one), None) => one,
+            _ => c,
+        }
+    };
+    let tow = |c: char, upper: bool| -> char {
+        let mapped: Vec<char> = if upper {
+            c.to_uppercase().collect()
+        } else {
+            c.to_lowercase().collect()
+        };
+        one_or_self(c, mapped.into_iter())
+    };
     for c in s.chars() {
         // c:2209 `while (*str)`
         // c:2241 — `if (IS_COMBINING(wc)) break;` — combining chars
@@ -3059,7 +3083,7 @@ pub fn casemodify(s: &str, how: i32) -> String {
             x if x == CASMOD_LOWER => {                                       // c:2225
                 // c:2226-2229 — `if (iswupper(wc)) wc = towlower(wc);`.
                 if c.is_uppercase() {
-                    c.to_lowercase().collect::<String>()
+                    tow(c, false).to_string()
                 } else {
                     c.to_string()
                 }
@@ -3067,7 +3091,7 @@ pub fn casemodify(s: &str, how: i32) -> String {
             x if x == CASMOD_UPPER => {                                       // c:2232
                 // c:2233-2236 — `if (iswlower(wc)) wc = towupper(wc);`.
                 if c.is_lowercase() {
-                    c.to_uppercase().collect::<String>()
+                    tow(c, true).to_string()
                 } else {
                     c.to_string()
                 }
@@ -3081,12 +3105,12 @@ pub fn casemodify(s: &str, how: i32) -> String {
                 } else if nextupper {                                         // c:2245-2250
                     nextupper = false;
                     if c.is_lowercase() {                                     // c:2246
-                        c.to_uppercase().collect::<String>()
+                        tow(c, true).to_string()
                     } else {
                         c.to_string()
                     }
                 } else if c.is_uppercase() {                                  // c:2251-2253
-                    c.to_lowercase().collect::<String>()
+                    tow(c, false).to_string()
                 } else {
                     c.to_string()
                 }

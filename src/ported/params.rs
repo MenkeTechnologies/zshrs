@@ -14,7 +14,8 @@ use crate::ported::config_h::{MACHTYPE, OSTYPE, VENDOR};
 use crate::ported::exec::FORKLEVEL;
 use crate::ported::hashtable::emptycmdnamtable;
 use crate::ported::hist::{
-    bangchar, hashchar, hatchar, histsiz, resizehistents, saveandpophiststack, savehistsiz,
+    bangchar, casemodify, hashchar, hatchar, histsiz, resizehistents, saveandpophiststack,
+    savehistsiz,
 };
 use crate::ported::init::SHTTY;
 use crate::ported::lex::untokenize;
@@ -64,6 +65,7 @@ use crate::ported::zsh_h::{
     HashNode, Inbrack, Meta, CBASES, CHASELINKS, HFILE_USE_OPTIONS, INTERACTIVE, OCTALZEROES,
     PM_LOWER, PRIVILEGED, SCANPM_ASSIGNING,
 };
+use crate::ported::zsh_h::{CASMOD_LOWER, CASMOD_UPPER};
 use crate::ported::zsh_system_h::DEFAULT_TIMEFMT;
 use crate::{DPUTS, DPUTS2};
 use fusevm::Value;
@@ -4298,6 +4300,22 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
                 }
             }
         }
+        // c:2497-2506 — still inside the VALFLAG_SUBST block, right after
+        // the padding switch. PM_LOWER / PM_UPPER are READ-time attributes:
+        // storage keeps the value verbatim and only a substitution folds it.
+        // PM_UPPER is skipped for PM_NAMEREF (the string is a target name).
+        match pmflags & (PM_LOWER | PM_UPPER) {
+            f if f == PM_LOWER => {
+                s = casemodify(&s, CASMOD_LOWER); // c:2499
+            }
+            f if f == PM_UPPER => {
+                if (pmflags & PM_NAMEREF) == 0 {
+                    // c:2502
+                    s = casemodify(&s, CASMOD_UPPER); // c:2503
+                }
+            }
+            _ => {}
+        }
     }
 
     s
@@ -4635,20 +4653,17 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
     let mut val = val;
     match PM_TYPE(pm.node.flags as u32) {
         t if t == PM_SCALAR || t == PM_NAMEREF => {
-            let mut v_str = val.take().unwrap_or_default();
-            // c:Src/params.c — PM_LOWER / PM_UPPER case fold on
-            // assignment. zsh applies these flags both when writing
-            // the in-memory scalar and when exporting to env; the
-            // copyenvstr path handles the export side, but the
-            // scalar set path also needs to fold so `echo $X`
-            // reads the lowercased value. Without this, `typeset -l
-            // X; X=MixedCase; echo $X` printed "MixedCase".
-            let pf = pm.node.flags as u32;
-            if pf & PM_LOWER != 0 {
-                v_str = v_str.to_ascii_lowercase();
-            } else if pf & PM_UPPER != 0 {
-                v_str = v_str.to_ascii_uppercase();
-            }
+            let v_str = val.take().unwrap_or_default();
+            // c:2748 — no PM_LOWER / PM_UPPER arm exists in setstrvalue.
+            // The C source folds case in exactly two places, neither of
+            // them a write path: `getstrvalue`'s VALFLAG_SUBST tail
+            // (c:2497-2506 — the READ done for a parameter substitution)
+            // and `copyenvstr` (c:5434-5442 — the env mirror). Storage is
+            // verbatim, so dropping the attribute exposes the original
+            // text again (`typeset -l v=ABC; typeset +l v; print $v` → ABC)
+            // and `typeset -p` — which reads through `printparamvalue`'s
+            // direct `gsu.s->getfn` (c:6049), not getstrvalue — reports
+            // `typeset -l v=ABC`. Folding here made all three wrong.
             if v.start == 0 && v.end == -1 {
                 // c:2748 — `v->pm->gsu.s->setfn(v->pm, val);`. C
                 // dispatches through the param's GSU vtable so
@@ -5486,6 +5501,33 @@ pub fn getsparam(name: &str) -> Option<String> {
                             s = s.chars().skip(skip).collect();
                         }
                     }
+                }
+                // c:2497-2506 — the tail of getstrvalue's VALFLAG_SUBST
+                // block, immediately after the padding switch:
+                //     switch (v->pm->node.flags & (PM_LOWER | PM_UPPER)) {
+                //     case PM_LOWER: s = casemodify(s, CASMOD_LOWER); break;
+                //     case PM_UPPER:
+                //         if (!(v->pm->node.flags & PM_NAMEREF))
+                //             s = casemodify(s, CASMOD_UPPER);
+                //         break;
+                //     }
+                // `switch` on the masked pair means BOTH bits set folds
+                // neither way — bin_typeset clears the opposite bit
+                // (c:Src/builtin.c:2731-2734) so that state is unreachable
+                // from `typeset`, but a raw flag write could produce it.
+                // PM_UPPER is skipped for a nameref because the stored
+                // string is the *target's name*, not a value.
+                match pm.node.flags as u32 & (PM_LOWER | PM_UPPER) {
+                    f if f == PM_LOWER => {
+                        s = casemodify(&s, CASMOD_LOWER); // c:2499
+                    }
+                    f if f == PM_UPPER => {
+                        if (pm.node.flags as u32 & PM_NAMEREF) == 0 {
+                            // c:2502
+                            s = casemodify(&s, CASMOD_UPPER); // c:2503
+                        }
+                    }
+                    _ => {}
                 }
                 return Some(s);
             }
@@ -11182,29 +11224,39 @@ pub fn zgetenv(name: &str) -> Option<String> {
 /// Direct port of `static void copyenvstr(char *s, char *value,
 /// int flags)` from `Src/params.c:5434`. Unmetafies `value`
 /// into `s` (Meta NEXT pairs collapse to NEXT^32) and applies
-/// PM_LOWER / PM_UPPER case folding per byte.
+/// PM_LOWER / PM_UPPER case folding.
+///
+/// Two representation-driven deviations, both deliberate:
+///
+///  1. **No Meta un-escaping.** C param values are metafied byte
+///     strings, so `Meta` (0x83) always introduces an escaped byte.
+///     zshrs stores plain UTF-8 `String`s, where 0x83 is an ordinary
+///     UTF-8 continuation byte — U+2603 SNOWMAN is `e2 98 83`. Treating
+///     it as Meta ate the following byte and truncated the value.
+///
+///  2. **Fold per char, not per byte.** C's `tulower` (c:Src/utils.c:2302)
+///     is `c &= 0xff; isupper(c) ? tolower(c) : c` — a single-byte,
+///     locale-table fold that mangles UTF-8 (real zsh turns `É` = `c3 89`
+///     into `e3 89` on export). Folding ASCII only keeps every byte of a
+///     multibyte character intact. The two agree for every ASCII value;
+///     they differ only where real zsh corrupts the encoding, which is
+///     recorded in docs/BUGS.md rather than reproduced.
 pub fn copyenvstr(buf: &mut String, value: &str, flags: i32) {
     // c:5434
     let flags_u = flags as u32;
-    let mut it = value.bytes();
-    while let Some(b) = it.next() {
+    for ch in value.chars() {
         // c:5436
-        let mut ch = b;
-        if ch == Meta {
-            // c:5437
-            ch = match it.next() {
-                Some(next) => next ^ 32, // c:5438
-                None => break,
-            };
-        }
-        if flags_u & PM_LOWER != 0 {
-            // c:5439
-            ch = ch.to_ascii_lowercase(); // c:5440
+        // `char::to_ascii_*` is the exact ASCII-domain restriction of
+        // `tulower`/`tuupper`: it rewrites A-Z / a-z and returns every
+        // other scalar unchanged.
+        let ch = if flags_u & PM_LOWER != 0 {
+            ch.to_ascii_lowercase() // c:5439-5440
         } else if flags_u & PM_UPPER != 0 {
-            // c:5441
-            ch = ch.to_ascii_uppercase(); // c:5442
-        }
-        buf.push(ch as char);
+            ch.to_ascii_uppercase() // c:5441-5442
+        } else {
+            ch
+        };
+        buf.push(ch);
     }
 }
 

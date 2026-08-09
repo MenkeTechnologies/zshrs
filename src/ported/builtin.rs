@@ -6210,19 +6210,22 @@ pub fn bin_typeset(
                 // c:3010-3030 — `name=value` scalar assign. C-canonical
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
                 // env mirror at `Src/params.c:3024 addenv` follows.
-                // c:Src/params.c PM_LOWER/PM_UPPER setstrvalue arms:
-                // when typeset -l or -u is set, the assigned value is
-                // case-folded BEFORE storage. Without this, `typeset -l
-                // s=HELLO; echo $s` printed `HELLO`. We also mirror to
-                // exec.var_attrs so subsequent plain assigns (`s=NEW`)
-                // pick up the fold via the SET_VAR opcode's attr
-                // check (fusevm_bridge.rs case-fold arm).
-                let lower = (on & PM_LOWER) != 0;
-                let upper = (on & PM_UPPER) != 0;
-                let folded: String = if lower {
-                    raw_v.to_lowercase()
-                } else if upper {
-                    raw_v.to_uppercase()
+                // PM_LOWER / PM_UPPER do NOT fold at assignment. `setstrvalue`
+                // (c:Src/params.c:2677) has no case arm at all — the only two
+                // fold sites in the C source are `getstrvalue`'s VALFLAG_SUBST
+                // tail (c:2497-2506, i.e. READ during substitution) and
+                // `copyenvstr` (c:5434-5442, the env mirror). The stored value
+                // stays verbatim, which is why removing the attribute restores
+                // the original text and why `typeset -p` shows it unfolded:
+                //     typeset -l v=ABC; typeset -p v   → typeset -l v=ABC
+                //     typeset -l v=ABC; typeset +l v; print $v   → ABC
+                // Only the env mirror below folds, per copyenvstr.
+                let env_val: String = if (on & PM_LOWER) != 0 {
+                    // c:5439-5440 — `if (flags & PM_LOWER) *s = tulower(*s)`.
+                    raw_v.to_ascii_lowercase()
+                } else if (on & PM_UPPER) != 0 {
+                    // c:5441-5442 — `else if (flags & PM_UPPER) *s = tuupper(*s)`.
+                    raw_v.to_ascii_uppercase()
                 } else {
                     raw_v.to_string()
                 };
@@ -6369,19 +6372,19 @@ pub fn bin_typeset(
                 // trips WARN_CREATE_GLOBAL. Routing through setsparam here
                 // made zshrs warn where zsh is silent (f-sy-h's
                 // `typeset -g _ZSH_HIGHLIGHT_PRIOR_BUFFER=...`).
-                crate::ported::params::assignsparam(n, &folded, 0); // c:2322
-                                                                    // c:2326-2328 + c:2336-2337 (typeset_single) —
-                                                                    // `if (asg->value.scalar && !(pm = assignsparam(
-                                                                    //     pname, ztrdup(asg->value.scalar), 0)))
-                                                                    //      return NULL;
-                                                                    //  ... if (errflag) return NULL;`
-                                                                    // A readonly rejection inside assignstrvalue
-                                                                    // (c:Src/params.c:2697) sets errflag and the value is
-                                                                    // refused; typeset_single returns NULL and bin_typeset
-                                                                    // records `returnval = 1` (c:3153-3156). Skip the
-                                                                    // attribute stamps — C never reaches them on this path.
-                                                                    // Gated on usepm: the c:2336 check lives ONLY in the
-                                                                    // reuse-existing-pm branch.
+                crate::ported::params::assignsparam(n, raw_v, 0); // c:2322
+                                                                  // c:2326-2328 + c:2336-2337 (typeset_single) —
+                                                                  // `if (asg->value.scalar && !(pm = assignsparam(
+                                                                  //     pname, ztrdup(asg->value.scalar), 0)))
+                                                                  //      return NULL;
+                                                                  //  ... if (errflag) return NULL;`
+                                                                  // A readonly rejection inside assignstrvalue
+                                                                  // (c:Src/params.c:2697) sets errflag and the value is
+                                                                  // refused; typeset_single returns NULL and bin_typeset
+                                                                  // records `returnval = 1` (c:3153-3156). Skip the
+                                                                  // attribute stamps — C never reaches them on this path.
+                                                                  // Gated on usepm: the c:2336 check lives ONLY in the
+                                                                  // reuse-existing-pm branch.
                 if usepm_existing && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
                     returnval = 1; // c:3156
                     continue; // c:2337 return NULL
@@ -6487,7 +6490,7 @@ pub fn bin_typeset(
                 // when PM_EXPORTED is in flags or already-exported.
                 let already_exported = env::var_os(n).is_some();
                 if (on & PM_EXPORTED) != 0 || already_exported {
-                    env::set_var(n, &folded); // c:3024 addenv
+                    env::set_var(n, &env_val); // c:3024 addenv (value via copyenvstr, c:5434)
                 }
             }
         } else if is_hashed || is_array {
@@ -6741,6 +6744,39 @@ pub fn bin_typeset(
             // `typeset +i n` (where n was an integer with value 42)
             // cleared u_str without copying the integer value back —
             // result was `typeset n=''`. Bug #326 in docs/BUGS.md.
+            //
+            // ONLY a real type change migrates the value. C decides that with
+            // `chflags` (c:2117-2119):
+            //     chflags = ((off & pm->flags) | (on & ~pm->flags)) &
+            //         (PM_INTEGER|PM_EFLOAT|PM_FFLOAT|PM_HASHED|
+            //          PM_ARRAY|PM_TIED|PM_AUTOLOAD);
+            //     tc = chflags && chflags != (PM_EFLOAT|PM_FFLOAT);
+            // PM_LOWER / PM_UPPER are absent from that mask, so `typeset -l v`
+            // / `typeset +l v` leave `tc == 0` and fall into the `usepm` arm at
+            // c:2280, which is a pure flag flip:
+            //     pm->node.flags = (pm->node.flags | (on & ~PM_READONLY)) & ~off;
+            // The stored string is never re-read and never rewritten. Migrating
+            // it here re-stored the case-FOLDED read (getsparam applies the
+            // substitution-time fold), so removing the attribute could not
+            // restore the original text.
+            //
+            // The `& pm->flags` / `& ~pm->flags` halves matter as much as the
+            // mask: only bits that actually CHANGE count. `typeset +i v` on a
+            // param that was never an integer leaves `off & pm->flags == 0`,
+            // so `tc == 0` and the value is left alone. PM_NAMEREF is a
+            // zshrs-local addition to the mask (the `+n` conversion at
+            // builtin.rs restores the stored refname); C keeps namerefs out of
+            // chflags, so this stays flagged as a deviation.
+            const TYPE_CONV_BITS: u32 = PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_NAMEREF; // c:2117
+            let cur_flags = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg.as_str()).map(|p| p.node.flags as u32))
+                .unwrap_or(0);
+            // c:2117-2119 — chflags, then `tc = chflags && chflags != (PM_EFLOAT|PM_FFLOAT)`
+            // (a plain E↔F swap keeps the parameter, so it is not a conversion).
+            let chflags = ((off & cur_flags) | (on & !cur_flags)) & TYPE_CONV_BITS;
+            let tc = chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT); // c:2118
             let pre_assign_to_clear = (off
                 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF))
                 as i32;
@@ -6760,21 +6796,34 @@ pub fn bin_typeset(
                 // param has its value as a string (PM_SCALAR
                 // semantics now apply). flags=0 — typeset-internal
                 // restore, never WARN_CREATE_GLOBAL (c:2322).
-                if let Some(ref val) = saved_val {
-                    crate::ported::params::assignsparam(arg, val, 0);
+                if tc {
+                    if let Some(ref val) = saved_val {
+                        crate::ported::params::assignsparam(arg, val, 0);
+                    }
                 }
             }
             if pre_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
-                        pm.node.flags = (pm.node.flags & !pre_assign_mask) | pre_assign_to_set;
+                        // c:2280 — a pure case-attribute change keeps every
+                        // other flag; only a type change rewrites the type
+                        // bits. Masking the whole pre-assign set on `-l`/`-u`
+                        // would silently drop PM_INTEGER from an integer param.
+                        let clear_mask = if tc {
+                            pre_assign_mask
+                        } else {
+                            (PM_LOWER | PM_UPPER) as i32
+                        };
+                        pm.node.flags = (pm.node.flags & !clear_mask) | pre_assign_to_set;
                     }
                 }
                 // c:2372-2378 — re-assign saved value through new type's
                 // setfn so u_val (for PM_INTEGER) or u_dval (for PM_*FLOAT)
                 // catches the value migration from u_str.
-                if let Some(ref val) = saved_val {
-                    setsparam(arg, val);
+                if tc {
+                    if let Some(ref val) = saved_val {
+                        setsparam(arg, val);
+                    }
                 }
             }
             // c:1973-1989 (Src/builtin.c, inside typeset_single):

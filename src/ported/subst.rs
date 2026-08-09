@@ -15786,37 +15786,8 @@ pub fn paramsubst(
         // Case mods operate per-element when array-shaped (so
         // \${(@U)arr} uppercases each element, preserving shape).
         // Direct port of subst.c:3937 casmod arm which iterates aval
-        // when isarr is set.
-        let cap_word = |s: &str| -> String {
-            // c:Src/hist.c:2239-2255 CASMOD_CAPS:
-            //   if (!iswalnum(wc)) nextupper = 1;
-            //   else if (nextupper) { if (iswlower(wc)) { wc = towupper(wc); ... }
-            //                         nextupper = 0; }
-            //   else if (iswupper(wc)) { wc = towlower(wc); ... }
-            // C-faithful: ANY non-alphanumeric char (including
-            // apostrophe, comma, dash, etc.) is a word boundary —
-            // matches `iswalnum`'s Unicode-aware semantic. Previously
-            // checked only a hand-picked subset (whitespace + `-_/.,`)
-            // which missed `'`, so `(C)"l'état"` produced "L'état"
-            // instead of zsh's "L'État".
-            let mut out = String::with_capacity(s.len());
-            let mut next_upper = true;
-            for c in s.chars() {
-                if !c.is_alphanumeric() {
-                    // c:2243 `if (!iswalnum(wc)) nextupper = 1;`
-                    out.push(c);
-                    next_upper = true;
-                } else if next_upper {
-                    // c:2245-2250 — `if (iswlower(wc)) wc = towupper(wc); nextupper = 0;`
-                    out.extend(c.to_uppercase());
-                    next_upper = false;
-                } else {
-                    // c:2251-2254 — `else if (iswupper(wc)) wc = towlower(wc);`
-                    out.extend(c.to_lowercase());
-                }
-            }
-            out
-        };
+        // when isarr is set. The per-element transform is
+        // `hist::casemodify` — see the casmod block below.
         // (#) evalchar — interpret each value as a math expression
         // and emit the char with that codepoint. Direct port of
         // subst.c:1673 evalchar arm + substevalchar.
@@ -16042,17 +16013,16 @@ pub fn paramsubst(
                 // Identity for non-metafied values.
                 let s: String =
                     String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
-                let s = s.as_str();
-                if casmod == CASMOD_LOWER {
-                    // c:3937 CASMOD_LOWER
-                    s.to_lowercase() // c:3937
-                } else if casmod == CASMOD_UPPER {
-                    // c:3937 CASMOD_UPPER
-                    s.to_uppercase() // c:3937
-                } else {
-                    // c:3937 CASMOD_CAPS
-                    cap_word(s) // c:3937
-                } // c:3937
+                // c:Src/subst.c:3960 — `val = casemodify(val, casmod)`. All
+                // three modes go through the ONE canonical helper (the same
+                // one `:l` / `:u` / `:c` history modifiers use), so the
+                // wide-char `towlower` / `towupper` semantics, the
+                // `iswalnum` word boundary and the `IS_COMBINING`
+                // short-circuit are defined in a single place. Reimplementing
+                // the fold here with `str::to_lowercase` applied Unicode FULL
+                // case mapping, which widens: `${(U)straße}` answered
+                // `STRASSE` where zsh answers `STRAßE`.
+                crate::ported::hist::casemodify(s.as_str(), casmod) // c:3960
             }; // c:3937
                // c:Src/subst.c:2915 — `v->scanflags ? 1 : 0`. Any non-splat
                // subscript (single-slot `[N]`, range `[N,M]`) collapses the

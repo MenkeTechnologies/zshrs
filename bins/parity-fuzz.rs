@@ -2617,6 +2617,44 @@ const TS_INT_VALS: &[&str] = &["0", "1", "7", "42", "255", "-7", "1000", "65535"
 const TS_STR_VALS: &[&str] = &["ab", "AbC", "hello", "x", "", "MiXeD", "12"];
 const TS_FLT_VALS: &[&str] = &["0", "1.5", "3.14159", "-2.5", "100", "0.001"];
 
+/// Values for the `typeset -l` / `-u` arm. Every entry above is ASCII, so no
+/// mode could ever produce a character whose Unicode case mapping WIDENS —
+/// `ß` uppercases to "SS" under a full mapping but `towupper` (what zsh calls,
+/// c:Src/hist.c:2234) has no second scalar to return and leaves it alone. The
+/// generator's own blind spot is why `${(U)straße}` answered `STRASSE` for as
+/// long as it did. Titlecase digraphs (`ǳ`, `ǅ`) cover the third case class,
+/// where upper, lower and title are three DIFFERENT scalars.
+///
+/// `İ` (U+0130) is deliberately absent: it is the one character where the
+/// platform `towlower` answers `i` and Rust's mapping widens to `i` + U+0307,
+/// so both shells disagree by design. It is recorded in docs/BUGS.md instead
+/// of being generated as a case this harness would have to allow.
+const TS_CASE_VALS: &[&str] = &[
+    "ab",
+    "AbC",
+    "",
+    "12",
+    "MiXeD",
+    "straße",
+    "ﬁle",
+    "élite",
+    "ÉLITE",
+    "ǳ",
+    "ǅ",
+    "ŉ",
+    "στιγμας",
+    "ΣΤΙΓΜΑΣ",
+];
+
+/// The subset of `TS_CASE_VALS` safe to EXPORT. zsh's env-side fold is
+/// `copyenvstr` → `tulower` (c:Src/utils.c:2302), which is `c &= 0xff` — a
+/// single-BYTE fold that mangles UTF-8: real zsh exports `É` (`c3 89`) as
+/// `e3 89`, which is not valid UTF-8 at all. zshrs folds ASCII only and keeps
+/// multibyte characters intact. The two agree on every ASCII value, so the
+/// export probes use those; the byte-fold difference is documented in
+/// docs/BUGS.md rather than reproduced.
+const TS_CASE_ASCII_VALS: &[&str] = &["ab", "AbC", "", "12", "MiXeD", "hello"];
+
 fn gen_typeset(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts: Vec<String> = Vec::new();
@@ -2814,21 +2852,62 @@ fn gen_typeset(seed: u64) -> Vec<String> {
                     "typeset {fl} {sp} 2>&1; print -r -- \"rc=$? t=${{(t){sp}}}\""
                 ));
             }
-            // Case forcing, and whether it survives reassignment.
+            // Case forcing: where the fold happens, what the STORE keeps, and
+            // whether dropping the attribute gives the original text back.
+            //
+            // c:Src/params.c:2497-2506 — PM_LOWER / PM_UPPER fold on READ, in
+            // `getstrvalue`'s VALFLAG_SUBST tail. Storage is verbatim, so:
+            //   - `typeset -p` (c:6049, reads `gsu.s->getfn` directly, no
+            //     VALFLAG_SUBST) prints the ORIGINAL case;
+            //   - `typeset +l` / `+u` re-expose it, because `chflags`
+            //     (c:2117) does not list the case bits, so the flag flip is
+            //     not a type conversion and never rewrites the value;
+            //   - a later plain assignment stores verbatim too and only the
+            //     read folds;
+            //   - the ENV mirror folds separately, in `copyenvstr` (c:5434).
+            // Each of those is probed below. zshrs used to fold eagerly at
+            // assignment, which got the plain `[$v]` read right and every
+            // other line here wrong — BUGS.md #1019.
             _ => {
                 let case = pick(&mut rng, &["l", "u"]);
-                let val = pick(&mut rng, TS_STR_VALS);
-                stmts.push(format!("typeset -{case} {v}={val}"));
-                // c:Src/params.c:2505 — PM_LOWER/PM_UPPER fold on READ, so the
-                // STORED value keeps its original case: `typeset -p` (raw, no
-                // VALFLAG_SUBST) shows it unfolded, and removing the flag with
-                // `typeset +{case}` re-exposes the original. zshrs currently
-                // folds eagerly at assignment and loses the original — BUGS.md
-                // #1019, tracked via the baseline signatures below. The plain
-                // `[$v]` read (folded) matches on both.
+                // Export forces the ASCII pool: see TS_CASE_ASCII_VALS.
+                let exported = rng.gen_bool(0.4);
+                let pool = if exported {
+                    TS_CASE_ASCII_VALS
+                } else {
+                    TS_CASE_VALS
+                };
+                let val = pick(&mut rng, pool);
+                let decl = if exported {
+                    format!("-{case}x")
+                } else {
+                    format!("-{case}")
+                };
+                stmts.push(format!("typeset {decl} {v}={val}"));
                 stmts.push(format!("typeset -p {v}"));
                 stmts.push(format!("print -r -- \"[${v}]\""));
+                // The substitution case flags share `casemodify` with the
+                // attribute fold (c:Src/subst.c:3960), so probe them on the
+                // same value — this is the only place the generator can reach
+                // a widening case mapping.
+                stmts.push(format!(
+                    "print -r -- \"U=${{(U){v}}} L=${{(L){v}}} C=${{(C){v}}} mu=${{{v}:u}} ml=${{{v}:l}}\""
+                ));
+                if exported {
+                    stmts.push(format!("print -r -- \"env=[$(printenv {v})]\""));
+                }
+                // Assign again WHILE the attribute is live: the store stays
+                // verbatim, only the read folds.
+                let val2 = pick(&mut rng, pool);
+                stmts.push(format!("{v}={val2}"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+                stmts.push(format!("typeset -p {v}"));
+                if exported {
+                    stmts.push(format!("print -r -- \"env2=[$(printenv {v})]\""));
+                }
+                // Dropping the attribute must hand back the stored text.
                 stmts.push(format!("typeset +{case} {v}; print -r -- \"orig=[${v}]\""));
+                stmts.push(format!("typeset -p {v}"));
                 stmts.push(format!("{v}={}", pick(&mut rng, TS_STR_VALS)));
                 stmts.push(format!("print -r -- \"[${v}]\""));
             }

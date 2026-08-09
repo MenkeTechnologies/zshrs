@@ -3050,89 +3050,181 @@ reproduces 168+ divergences per 800-case seed.
 
 ---
 
-## #1019 — `typeset -l`/`-u` case-fold applied at ASSIGNMENT instead of on READ — port-bug
+## #1019 — `typeset -l`/`-u` case-fold applied at ASSIGNMENT instead of on READ — fixed
 
-**Status:** `port-bug` 2026-07-18 — surfaced probing `typeset -p` output; NOT
-fixed (an attempted fix regressed a normal case, reverted — see below).
+**Status:** `fixed` 2026-08-09. Two earlier passes located every site and were
+reverted because a partial fix regresses a different case each time; this one
+lands all of them together, plus the `chflags` gate the earlier fix maps had
+identified as the reason `typeset +l` could not work even with a correct read.
 
-**Repro**
+**Repro (before)**
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -l x=Hi; typeset -p x'
 typeset -l x=Hi                       # original case PRESERVED in storage
 $ zshrs --zsh -c 'typeset -l x=Hi; typeset -p x'
 typeset -l x=hi                       # eagerly lowercased at assignment
 
-# Also observable when the flag is REMOVED (the original is gone in zshrs):
 $ /opt/homebrew/bin/zsh -fc 'typeset -l x=Hi; typeset +l x; print -r -- $x'
 Hi
 $ zshrs --zsh -c 'typeset -l x=Hi; typeset +l x; print -r -- $x'
 hi
 ```
 
-**Analysis** — C stores the ORIGINAL value and folds case on READ: `getstrvalue`
-(params.c:2505-2513) applies `PM_LOWER`/`PM_UPPER` inside the `VALFLAG_SUBST`
-block (parameter substitution), and `copyenvstr` (c:5439) folds on the export
-side. `typeset -p` reads WITHOUT `VALFLAG_SUBST`, so it shows the unfolded
-original. zshrs instead folds eagerly at assignment (params.rs setstrvalue,
-PM_SCALAR arm), destroying the original — wrong for `typeset -p`, for
-`typeset +l`/`+u` (flag cleared → should re-expose the original), and for a
-re-read after the fold is dropped. The plain read (`$x`) matches because the
-stored value is already folded. `-L`/`-R` (justify) are correctly lazy (`-p`
-shows the original), which is the model `-l`/`-u` should follow.
+**Analysis** — the C source folds case in exactly TWO places, neither of them a
+write path:
 
-**Fix map (from two investigation passes; both reverted).** The correct fix has
-two independent halves and must land BOTH at once — a half-fix makes
-`typeset -l x=Hi` and `typeset -l x; x=Hi` disagree, which is worse than the
-current consistent-wrong state:
+- `getstrvalue`, c:Src/params.c:2497-2506 — inside the `if (v->valflags &
+  VALFLAG_SUBST)` block, immediately after the justify/padding switch. That
+  flag means "this read is a parameter substitution", which is why `typeset -p`
+  (which reads through `printparamvalue`'s direct `gsu.s->getfn`, c:6049) shows
+  the value unfolded.
+- `copyenvstr`, c:5434-5442 — the env mirror, reached via `mkenvstr` (c:5463)
+  from `addenv` (c:5448).
 
-1. READ side — SOLVED, verified. rs uses `getsparam` (params.rs ~4835) as its
-   substitution-read path and already reimplements the justify padding there
-   (C does justify in `getstrvalue`'s `VALFLAG_SUBST` block; rs inlines it in
-   `getsparam`). Adding the `PM_LOWER`/`PM_UPPER` `casemodify` fold right after
-   that padding, plus removing the eager `setstrvalue` fold (params.rs PM_SCALAR
-   arm ~4113), makes ALL reads correct — including `typeset -l x; x=WORLD;
-   print $x` → `world` — with the whole params/typeset unit suite (283+10) and
-   the special/paramod/assign/posparam fuzz modes all green. `getstrvalue`
-   alone is NOT enough because the plain `$x` read goes through `getsparam`, not
-   `getstrvalue`.
+`setstrvalue` (c:2677) has no case arm at all, so the stored string is always
+verbatim and removing the attribute re-exposes it.
 
-2. STORE side — the combined `typeset -l x=Hi` fold was LOCATED: `bin_typeset`'s
-   scalar-assign arm builds `folded = raw_v.to_lowercase()` (builtin.rs, the
-   `if let Some(eq) = arg.find('=')` block, ~line 6040) and stores that. There is
-   also a `PM_LOWER`/`PM_UPPER` entry in the `pre_assign_mask` (~line 5524) that
-   stamps the flag before the assign.
+**Fix — four sites, all required**
 
-**Complete site map (all found; a fix must land ALL of them at once — a partial
-fix regresses a different case each time, which is why this stays reverted):**
+1. `params.rs::assignstrvalue` PM_SCALAR arm — REMOVED the eager fold. It had a
+   comment claiming a "PM_LOWER/PM_UPPER setstrvalue arm" in C; there is none.
+2. `params.rs::getsparam` — ADDED the fold after the justify padding it already
+   inlines. getsparam is zshrs's substitution-read path (`$x` does not go
+   through `getstrvalue`), so this is where C's VALFLAG_SUBST tail belongs.
+   Also added to `getstrvalue` itself, in the same position relative to the
+   padding, for the callers that do use it.
+3. `builtin.rs::bin_typeset` scalar-assign arm — stores `raw_v`; the env mirror
+   keeps its own fold, per copyenvstr.
+4. `builtin.rs::bin_typeset` attribute arm — this is the one the earlier fix
+   maps had flagged as unexplained. It treated PM_LOWER/PM_UPPER as type
+   conversions: it read the value with `getsparam` (which now folds) and wrote
+   it straight back, so `typeset +l` re-stored the FOLDED text and no read-side
+   fix could have survived it. C decides "is this a type conversion?" with
+   `chflags` (c:Src/builtin.c:2117-2119):
 
-- REMOVE the eager STORE folds: `setstrvalue` PM_SCALAR arm (params.rs ~4113)
-  and `bin_typeset`'s `folded` (builtin.rs ~6040 — change to `raw_v.to_string()`).
-- REMOVE `PM_LOWER | PM_UPPER` from `bin_typeset`'s `pre_assign_mask`
-  (builtin.rs ~5524) — the fold is read-time, not a value-affecting store flag.
-- ADD the READ fold in `getsparam` (params.rs ~4866, right after the justify
-  padding, using `casemodify`) — verified: fixes ALL reads incl.
-  `typeset -l x; x=WORLD; print $x` → `world`.
-- ADD an EXPORT fold at `bin_typeset`'s `env::set_var(n, &folded)` (builtin.rs
-  ~6275) since the stored value is now unfolded — verified: `typeset -lx v=HeLLo`
-  → env `hello`.
-- FIX the exec plain-assign EXPORT: `v=HeLLo` for an exported `-l` var goes
-  through `exec.rs` `assignsparam` → `setstrvalue` → `addenv` → `mkenvstr` →
-  `copyenvstr` (which DOES fold on `flags`), yet exports `HeLLo`. This is the one
-  remaining unverified path — `copyenvstr`'s fold isn't reaching the env write
-  for the exec assign; needs one more trace (`zputenv`/`setstrvalue`'s addenv
-  gate).
-- FIX `typeset +l x` (flag removal) / any type-change that RE-STORES: it reads
-  the current value via the now-folding `getsparam` and writes it back folded, so
-  `typeset -l x=Hi; typeset +l x; print $x` shows `hi`. This was already
-  divergent before (baselined), so it is not a regression, but the complete fix
-  must make the re-store use the RAW value.
+   ```c
+   chflags = ((off & pm->node.flags) | (on & ~pm->node.flags)) &
+       (PM_INTEGER|PM_EFLOAT|PM_FFLOAT|PM_HASHED|PM_ARRAY|PM_TIED|PM_AUTOLOAD);
+   tc = chflags && chflags != (PM_EFLOAT|PM_FFLOAT);
+   ```
 
-With the read fold + the two store-fold removals + the pre_assign_mask change +
-the bin_typeset export fold, the core cases (`typeset -p`, combined-vs-separate
-consistency, all reads, combined export) ALL pass and the full params/typeset
-unit suite (283+10) plus the typeset/assign/special fuzz modes stay green; only
-the exec-plain-assign export and the `+l` re-store remain. Ship all sites
-together or none.
+   The case bits are not in that mask, so `tc == 0` and the c:2280 arm runs —
+   a pure flag flip that never touches the value. The port now computes
+   `chflags`/`tc` the same way and gates BOTH value migrations on it. The
+   `& pm->flags` / `& ~pm->flags` halves matter too: `typeset +i v` on a param
+   that was never an integer changes nothing, where the port previously
+   re-stored a folded value for it.
+
+5. `fusevm_bridge.rs` BUILTIN_SET_VAR / setloopvar env mirrors — these formatted
+   `name=value` by hand and skipped `mkenvstr`, so `typeset -lx v; v=HeLLo`
+   exported `HeLLo`. They now build through `mkenvstr` with the param's flags.
+   This is the "one remaining unverified path" the previous investigation left
+   open; it was never in `setstrvalue`'s addenv gate at all.
+
+**Measurement** — probe of 50 `-l`/`-u` shapes, byte-compared against
+`/bin/zsh` 5.9: 13 divergences before, 0 after. A second probe of 42 shapes
+(export mirror, attribute flips, justify+case, locals, arrays, `${(t)}`):
+20 before, 1 after — the remaining one is `typeset v+=DEF`, an unrelated gap
+recorded below. The `typeset` fuzz mode, with the widened generator described
+below, reports 160 divergences per 1000 cases against the pre-fix binary and
+0 per 4000 against the fixed one.
+
+**Generator reach** — the old `typeset` case arm could not have caught half of
+this: it only assigned AFTER removing the attribute, never combined `-l`/`-u`
+with `-x`, and drew from an ASCII-only value pool. It now probes the
+live-attribute assignment, the export mirror, and a pool containing widening
+case mappings, and it forwards the same value through `${(U)}` / `${(L)}` /
+`${(C)}` / `:u` / `:l`. The four allowed signatures in
+`.github/fuzz-baseline/typeset.txt` were deleted, so any recurrence fails CI.
+
+---
+
+## #1076 — `casemodify` applied Rust's FULL Unicode case mapping instead of `towlower`/`towupper` — fixed
+
+**Status:** `fixed` 2026-08-09 — found while closing #1019, since the read-time
+fold routes through `casemodify`.
+
+**Repro (before)**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'v=straße; print -r -- ${(U)v}'
+STRAßE
+$ zshrs --zsh -c 'v=straße; print -r -- ${(U)v}'
+STRASSE
+```
+
+**Analysis** — `casemodify` (c:Src/hist.c:2196) is a wide-character loop:
+`if (iswlower(wc)) wc = towupper(wc)`. One scalar in, one scalar out. Rust's
+`char::to_uppercase` / `to_lowercase` are the FULL Unicode mappings and can
+widen (`ß` → "SS", `ﬁ` → "FI", `İ` → `i` + U+0307), which `towupper` cannot do
+and therefore does not. `str::to_lowercase` additionally applies the
+contextual final-sigma rule, so `${(L)ΣΤΙΓΜΑΣ}` answered `στιγμας` where zsh
+answers `στιγμασ` — `towlower(Σ)` is `σ` wherever it appears.
+
+Separately, `${(U)}` / `${(L)}` / `${(C)}` had their own inline reimplementation
+in `subst.rs` rather than calling `casemodify`, which is what C does
+(c:Src/subst.c:3960 `val = casemodify(val, casmod)`). The copy was missing the
+`IS_COMBINING` short-circuit (c:2241), so `${(C)}` on an NFD-decomposed word
+treated the combining mark as a word boundary: `${(C)áb}` → `ÁB` instead of
+`Áb`. The unit test pinning that guard existed — against the `casemodify` copy
+that `${(C)}` did not use.
+
+**Fix** — `casemodify` folds through a local `tow` helper that declines a
+mapping which does not produce exactly one scalar, and `subst.rs`'s casmod arm
+now calls `casemodify` for all three modes (the inline `cap_word` closure is
+gone). Probe of 35 case-flag/modifier shapes: 7 divergences before, 0 after.
+
+**Still open (deliberately not reproduced):** `İ` (U+0130). The platform
+`towlower` answers `i`; Rust's mapping widens to `i` + U+0307, so the helper
+declines it and leaves `İ`. Matching zsh here needs a libc `towlower` FFI call,
+which is locale-dependent and would need `setlocale` wired into the unit-test
+harness. It is excluded from the fuzz value pool rather than allowed as a
+baseline signature.
+
+---
+
+## #1077 — env export of a `-l`/`-u` parameter folds per CHARACTER, not per BYTE — open (deliberate)
+
+**Status:** `open`, deliberate deviation, 2026-08-09.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -lx v=ÉÀ☃; printenv v' | od -An -tx1
+   e3 89 e3 80 e2 98 83 0a
+$ zshrs --zsh -c 'typeset -lx v=ÉÀ☃; printenv v' | od -An -tx1
+   c3 89 c3 80 e2 98 83 0a
+```
+
+**Analysis** — `copyenvstr` (c:Src/params.c:5434) folds with `tulower`
+(c:Src/utils.c:2302), which is `c &= 0xff; isupper(c) ? tolower(c) : c` — a
+single-BYTE fold over the metafied string. On a UTF-8 value that rewrites lead
+bytes: `É` is `c3 89` and zsh exports `e3 89`, which is not valid UTF-8. zshrs
+stores plain UTF-8 `String`s (0x83 is an ordinary continuation byte, not
+`Meta`), so reproducing the byte fold would mean deliberately emitting invalid
+UTF-8 from a `String`.
+
+zshrs folds ASCII only. The two shells agree on every ASCII value, which is
+what the fuzz pool is restricted to (`TS_CASE_ASCII_VALS` in
+`bins/parity-fuzz.rs`). Recorded rather than fixed: matching it needs a
+byte-oriented env representation and a locale-aware `isupper`, and the
+behaviour being matched corrupts the value.
+
+---
+
+## #1078 — `typeset name+=value` accepted instead of rejected — open
+
+**Status:** `open` 2026-08-09 — seen while probing #1019, unrelated to it.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -l v=ABC; typeset v+=DEF; typeset -p v'
+zsh:typeset:1: not valid in this context: v+
+$ zshrs --zsh -c 'typeset -l v=ABC; typeset v+=DEF; typeset -p v'
+typeset -l v=DEF
+```
+
+zsh rejects `+=` in a `typeset` operand: the name scan stops at `+` and the
+word is not a valid identifier. zshrs parses it as an assignment to a param
+called `v` and drops the append. Not a case-attribute bug — the same happens
+without `-l`.
 
 ---
 
