@@ -52,6 +52,24 @@ pub struct ZshCompiler {
     break_patches: Vec<Vec<usize>>,
     /// `continue_patches` field.
     continue_patches: Vec<Vec<usize>>,
+    /// Per-open-loop jump list for the mid-body escape check
+    /// (`emit_break_escape_check`). A `break`/`continue` that ran in
+    /// ANOTHER chunk (called function, `eval`, sourced file) sets the
+    /// global BREAKS counter; c:Src/exec.c:1370's `!breaks` gate stops
+    /// the rest of the body and control lands on the loop's post-body
+    /// drain — these jumps are what carry it there.
+    body_end_patches: Vec<Vec<usize>>,
+    /// `cmd_stack_depth` recorded when each loop scope opened, so a
+    /// mid-body escape drains only the pushes made INSIDE the body and
+    /// leaves the loop's own CS_FOR/CS_WHILE/CS_REPEAT push for the
+    /// loop's own `emit_cmd_pop`.
+    loop_cmd_depth: Vec<u32>,
+    /// Suppresses `emit_break_escape_check` inside the try-block
+    /// epilogue, where BUILTIN_RESTORE_TRY_BLOCK_STATUS has just
+    /// re-armed BREAKS/CONTFLAG for the dedicated re-jump probes that
+    /// follow. Without it the generic check would eat the escape first
+    /// and bypass the level-accurate try landing.
+    break_escape_suppress: u32,
     /// `return_patches` field.
     return_patches: Vec<usize>,
     /// Depth tracker for errexit (`set -e`) suppression. Incremented
@@ -212,6 +230,9 @@ impl ZshCompiler {
             next_slot: 0,
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
+            body_end_patches: Vec::new(),
+            loop_cmd_depth: Vec::new(),
+            break_escape_suppress: 0,
             return_patches: Vec::new(),
             errexit_suppress_depth: 0,
             dq_context_depth: 0,
@@ -279,7 +300,9 @@ impl ZshCompiler {
     fn emit_errexit_check(&mut self) {
         if self.errexit_suppress_depth > 0 {
             // Suppressed for errexit/ZERR — but a fatal errflag still ends
-            // the list, so keep that half of the check.
+            // the list, so keep that half of the check. A pending `breaks`
+            // is not a status either and no connector consumes it, so the
+            // execlist gate applies here too.
             self.emit_fatal_abort_check();
             return;
         }
@@ -333,6 +356,103 @@ impl ZshCompiler {
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_POP, 0), 0);
             self.builder.emit(Op::Pop, 0);
         }
+    }
+
+    /// Emit `loops++` (c:Src/loop.c:114/427/523). Call immediately
+    /// BEFORE the `loop_top` label so it runs once per construct, not
+    /// once per iteration.
+    fn emit_loop_enter(&mut self) {
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_ENTER, 0), 0);
+        self.builder.emit(Op::Pop, 0);
+    }
+
+    /// Emit `n` × `loops--` (c:Src/loop.c:188/491/546).
+    fn emit_loop_exit(&mut self, n: usize) {
+        for _ in 0..n {
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_EXIT, 0), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
+    }
+
+    /// Open a loop scope: the break/continue/body-end patch lists plus
+    /// the cmd_stack watermark. Pairs with [`Self::close_loop_scope`].
+    fn open_loop_scope(&mut self) {
+        self.break_patches.push(Vec::new());
+        self.continue_patches.push(Vec::new());
+        self.body_end_patches.push(Vec::new());
+        self.loop_cmd_depth.push(self.cmd_stack_depth);
+    }
+
+    /// Land the mid-body escape jumps and emit the post-body drain —
+    /// c:Src/loop.c:529-534's `if (breaks) { breaks--; if (breaks ||
+    /// !contflag) break; contflag = 0; }`. Call immediately after the
+    /// body, before the loop's `continue` label. A drain verdict of
+    /// "terminate" joins the loop's own break patch list so it lands on
+    /// `loop_exit` and runs the matching `loops--`.
+    fn emit_loop_body_end(&mut self) {
+        let ends = self.body_end_patches.pop().unwrap_or_default();
+        let pos = self.builder.current_pos();
+        for e in ends {
+            self.builder.patch_jump(e, pos);
+        }
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_BREAK_DRAIN, 0),
+            0,
+        );
+        let j = self.builder.emit(Op::JumpIfTrue(0), 0);
+        if let Some(breaks) = self.break_patches.last_mut() {
+            breaks.push(j);
+        }
+    }
+
+    /// Close a loop scope at its `loop_exit` label: patch the break
+    /// jumps, then emit the construct's single `loops--`.
+    fn close_loop_scope(&mut self, loop_exit: usize) {
+        if let Some(breaks) = self.break_patches.pop() {
+            for bp in breaks {
+                self.builder.patch_jump(bp, loop_exit);
+            }
+        }
+        self.loop_cmd_depth.pop();
+        self.emit_loop_exit(1);
+    }
+
+    /// c:Src/exec.c:1370 execlist — `while (… && !breaks && …)`. Emitted
+    /// after every statement: when a called function / `eval` / sourced
+    /// file left BREAKS set, stop this list. Inside a loop in THIS chunk
+    /// control goes to the loop's post-body drain; with no enclosing
+    /// loop here it unwinds the chunk so the flag reaches the caller,
+    /// exactly as RETFLAG does.
+    fn emit_break_escape_check(&mut self) {
+        if self.break_escape_suppress > 0 {
+            return;
+        }
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_BREAKS_PENDING, 0),
+            0,
+        );
+        let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+        match self.body_end_patches.len() {
+            0 => {
+                self.emit_cmd_stack_drain();
+                let j = self.builder.emit(Op::Jump(0), 0);
+                self.return_patches.push(j);
+            }
+            _ => {
+                let entry = self.loop_cmd_depth.last().copied().unwrap_or(0);
+                for _ in entry..self.cmd_stack_depth {
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_POP, 0), 0);
+                    self.builder.emit(Op::Pop, 0);
+                }
+                let j = self.builder.emit(Op::Jump(0), 0);
+                self.body_end_patches.last_mut().unwrap().push(j);
+            }
+        }
+        let after = self.builder.current_pos();
+        self.builder.patch_jump(skip, after);
     }
 
     /// Compile a parsed `ZshProgram` to a runnable Chunk.
@@ -506,6 +626,14 @@ impl ZshCompiler {
         // Patch the noexec skip to land here (past the statement body).
         let after = self.builder.current_pos();
         self.builder.patch_jump(noexec_skip, after);
+        // c:Src/exec.c:1370 — execlist's own loop condition,
+        // `while (wc_code(code) == WC_LIST && !breaks && !retflag &&
+        // !errflag)`. A `break`/`continue` that ran in a called
+        // function / `eval` / sourced file left `breaks` set; the rest
+        // of THIS list must not run. Per-list (not per-pipe) matches C:
+        // an `&&`/`||` chain is one sublist and is not interrupted
+        // mid-chain.
+        self.emit_break_escape_check();
     }
 
     fn compile_sublist(&mut self, sublist: &ZshSublist) {
@@ -1022,12 +1150,39 @@ impl ZshCompiler {
                 // dropping the push.
                 self.builder.emit(Op::SubshellBegin, 0);
                 let saved = std::mem::take(&mut self.return_patches);
+                // Same containment for the execlist `!breaks` gate: C
+                // forks for `(...)`, so a `break` inside ends the CHILD's
+                // list and never reaches the parent's loop. Landing these
+                // jumps on SubshellEnd (which restores the parent's
+                // loops/breaks/contflag) reproduces that; letting them
+                // reach the loop's drain would skip SubshellEnd entirely
+                // and leave the whole subshell scope unpopped.
+                let saved_body_ends: Vec<Vec<usize>> =
+                    self.body_end_patches.iter().cloned().collect();
+                for v in self.body_end_patches.iter_mut() {
+                    v.clear();
+                }
                 self.compile_program(prog);
                 let inner_patches = std::mem::take(&mut self.return_patches);
                 self.return_patches = saved;
+                let inner_body_ends: Vec<Vec<usize>> = self
+                    .body_end_patches
+                    .iter_mut()
+                    .map(std::mem::take)
+                    .collect();
+                for (i, v) in saved_body_ends.into_iter().enumerate() {
+                    if i < self.body_end_patches.len() {
+                        self.body_end_patches[i] = v;
+                    }
+                }
                 let landing = self.builder.current_pos();
                 for patch in inner_patches {
                     self.builder.patch_jump(patch, landing);
+                }
+                for vec in inner_body_ends {
+                    for patch in vec {
+                        self.builder.patch_jump(patch, landing);
+                    }
                 }
                 self.builder.emit(Op::SubshellEnd, 0);
                 // c:Src/exec.c — after a WC_SUBSH child exits, the
@@ -1226,10 +1381,15 @@ impl ZshCompiler {
                 // Replace the per-loop lists with fresh inner copies
                 // so escapes captured inside the try-block don't fire
                 // the outer loop's break/continue.
+                let saved_body_ends: Vec<Vec<usize>> =
+                    self.body_end_patches.iter().cloned().collect();
                 for v in self.break_patches.iter_mut() {
                     v.clear();
                 }
                 for v in self.continue_patches.iter_mut() {
+                    v.clear();
+                }
+                for v in self.body_end_patches.iter_mut() {
                     v.clear();
                 }
                 // c:Src/loop.c:746 — `cmdpush(CS_CURSH);` wraps the
@@ -1254,6 +1414,15 @@ impl ZshCompiler {
                     .continue_patches
                     .iter_mut()
                     .map(|v| std::mem::take(v))
+                    .collect();
+                // A `break` executed in a function CALLED from the try
+                // body escapes via the execlist gate, not an in-chunk
+                // jump. Those jumps must land on the always-arm too, or
+                // the finally clause is skipped.
+                let inner_body_ends: Vec<Vec<usize>> = self
+                    .body_end_patches
+                    .iter_mut()
+                    .map(std::mem::take)
                     .collect();
                 // Track whether this try-block was escaped via
                 // return/break/continue so we know to re-jump after
@@ -1281,6 +1450,11 @@ impl ZshCompiler {
                         self.builder.patch_jump(*p, always_entry);
                     }
                 }
+                for vec in &inner_body_ends {
+                    for p in vec {
+                        self.builder.patch_jump(*p, always_entry);
+                    }
+                }
                 // Restore the outer escape lists so any escapes the
                 // always-arm itself emits go to the surrounding scope.
                 self.return_patches = saved_return;
@@ -1292,6 +1466,11 @@ impl ZshCompiler {
                 for (i, v) in saved_continues.into_iter().enumerate() {
                     if i < self.continue_patches.len() {
                         self.continue_patches[i] = v;
+                    }
+                }
+                for (i, v) in saved_body_ends.into_iter().enumerate() {
+                    if i < self.body_end_patches.len() {
+                        self.body_end_patches[i] = v;
                     }
                 }
                 // c:Src/exec.c — TRY_BLOCK_ERROR snapshot fires BEFORE
@@ -1320,7 +1499,12 @@ impl ZshCompiler {
                 // emit, `setopt err_exit; { false } always { :; };
                 // echo after` printed `after`. Bug #240 in
                 // docs/BUGS.md.
+                // RESTORE_TRY_BLOCK_STATUS has just re-armed BREAKS for
+                // the level-accurate probes below; the generic execlist
+                // gate must not eat it first.
+                self.break_escape_suppress += 1;
                 self.emit_errexit_check();
+                self.break_escape_suppress -= 1;
                 // If the try-block fired a return/break/continue, the
                 // canonical RETFLAG / BREAKS / CONTFLAG atomics are
                 // restored by RESTORE_TRY_BLOCK_STATUS. Emit one
@@ -1356,6 +1540,9 @@ impl ZshCompiler {
                         .rposition(|v| !v.is_empty())
                         .unwrap_or(0);
                     self.emit_cmd_stack_drain();
+                    if lvl < self.continue_patches.len() {
+                        self.emit_loop_exit(self.continue_patches.len() - 1 - lvl);
+                    }
                     let j = self.builder.emit(Op::Jump(0), 0);
                     if lvl < self.continue_patches.len() {
                         self.continue_patches[lvl].push(j);
@@ -1377,11 +1564,34 @@ impl ZshCompiler {
                         .rposition(|v| !v.is_empty())
                         .unwrap_or(0);
                     self.emit_cmd_stack_drain();
+                    if lvl < self.break_patches.len() {
+                        self.emit_loop_exit(self.break_patches.len() - 1 - lvl);
+                    }
                     let j = self.builder.emit(Op::Jump(0), 0);
                     if lvl < self.break_patches.len() {
                         self.break_patches[lvl].push(j);
                     } else {
                         self.return_patches.push(j);
+                    }
+                    let after = self.builder.current_pos();
+                    self.builder.patch_jump(skip, after);
+                }
+                // Foreign break/continue (set by a called function) that
+                // was parked at the always-arm: re-arm it now that the
+                // finally clause has run. Non-consuming — the enclosing
+                // loop's drain is the only consumer, and `break 2` needs
+                // the count intact.
+                if inner_body_ends.iter().any(|v| !v.is_empty()) {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BREAKS_PENDING, 0),
+                        0,
+                    );
+                    let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+                    self.emit_cmd_stack_drain();
+                    let j = self.builder.emit(Op::Jump(0), 0);
+                    match self.body_end_patches.last_mut() {
+                        Some(v) => v.push(j),
+                        None => self.return_patches.push(j),
                     }
                     let after = self.builder.current_pos();
                     self.builder.patch_jump(skip, after);
@@ -1847,7 +2057,7 @@ impl ZshCompiler {
             self.emit_cmd_stack_drain();
             if depth > 0 && runtime_count {
                 self.emit_runtime_loop_level(&simple.words[1], "break", false);
-            } else if depth > 0 && !nonpositive_literal {
+            } else if depth >= levels && !nonpositive_literal {
                 // Inside try-block: also bump BREAKS atomic so the
                 // always-arm post-restore can detect the escape and
                 // re-emit the loop-end jump.
@@ -1857,6 +2067,12 @@ impl ZshCompiler {
                     self.builder.emit(Op::Pop, 0);
                 }
                 let idx = depth.saturating_sub(levels);
+                // `break N` jumps straight to the N-th enclosing loop's
+                // exit, skipping the `loops--` of every loop in between
+                // (the target's own still runs at its exit label). Emit
+                // the skipped decrements so the global count stays exact
+                // for a later `break` in a called function.
+                self.emit_loop_exit(depth - 1 - idx);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.break_patches[idx].push(j);
             } else {
@@ -1868,6 +2084,18 @@ impl ZshCompiler {
                 // Previously the no-loop arm emitted SET_BREAK + Pop
                 // + Jump-to-script-end, which silently exited without
                 // any error message. Bug #285.
+                //
+                // Also taken when `break N` names MORE loops than this
+                // chunk has open. c:5837 clamps with `num.min(loops)`
+                // against the RUNTIME global, which counts the caller's
+                // loops too — a compile-time clamp to the outermost
+                // in-chunk loop is only right when the chunk is the
+                // whole story. `f(){ for k in x y; do break 2; done;
+                // print f_end }` must break f's loop AND the caller's
+                // (skipping f_end) when called from a loop, but break
+                // only f's (printing f_end) when called from top level.
+                // One compiled body, two behaviours — so the count has
+                // to be resolved at runtime.
                 for word in &simple.words[1..] {
                     self.compile_word_str(word);
                 }
@@ -1921,7 +2149,7 @@ impl ZshCompiler {
             self.emit_cmd_stack_drain();
             if depth > 0 && runtime_count {
                 self.emit_runtime_loop_level(&simple.words[1], "continue", true);
-            } else if depth > 0 && !nonpositive_literal {
+            } else if depth >= levels && !nonpositive_literal {
                 // Inside try-block: bump BREAKS + CONTFLAG so the
                 // always-arm post-restore can detect the escape.
                 if self.try_block_depth > 0 {
@@ -1938,6 +2166,10 @@ impl ZshCompiler {
                 // to the outer continue target (the loop will then
                 // re-enter from the top of the body).
                 let idx = depth.saturating_sub(levels);
+                // Same skipped-`loops--` compensation as the break arm:
+                // `continue N` leaves the N-1 inner loops for good, and
+                // the target loop stays open (no decrement for it).
+                self.emit_loop_exit(depth - 1 - idx);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.continue_patches[idx].push(j);
             } else {
@@ -3945,29 +4177,51 @@ impl ZshCompiler {
         let cnt_slot = self.next_slot;
         self.next_slot += 1;
         self.builder.emit(Op::SetSlot(cnt_slot), 0);
-        // N == L → jump to the L-th enclosing loop's target.
+        // Route to the `idx`-th enclosing loop's target, first emitting
+        // the `loops--` of every loop skipped on the way out (the target
+        // loop's own decrement runs at its exit label, or not at all for
+        // a `continue`, which leaves it open). The JumpIfTrue can't carry
+        // those ops, so each arm is inverted into
+        // `JumpIfFalse(next) … Jump(target)`.
+        let mut route = |c: &mut Self, idx: usize| {
+            let skip = c.builder.emit(Op::JumpIfFalse(0), 0);
+            c.emit_loop_exit(depth - 1 - idx);
+            let j = c.builder.emit(Op::Jump(0), 0);
+            if is_continue {
+                c.continue_patches[idx].push(j);
+            } else {
+                c.break_patches[idx].push(j);
+            }
+            let after = c.builder.current_pos();
+            c.builder.patch_jump(skip, after);
+        };
+        // N == L → the L-th enclosing loop.
         for l in 1..=depth {
             self.builder.emit(Op::GetSlot(cnt_slot), 0);
             self.builder.emit(Op::LoadInt(l as i64), 0);
             self.builder.emit(Op::NumEq, 0);
-            let j = self.builder.emit(Op::JumpIfTrue(0), 0);
-            let idx = depth - l;
-            if is_continue {
-                self.continue_patches[idx].push(j);
-            } else {
-                self.break_patches[idx].push(j);
-            }
+            route(self, depth - l);
         }
-        // N > depth → clamp to the outermost loop (zsh clamps).
+        // N > depth → more levels than this chunk has open. c:5837's
+        // `num.min(loops)` clamps against the RUNTIME global, which
+        // counts the caller's loops as well, so hand the count to
+        // `bin_break` and let the per-list `!breaks` gate carry the
+        // remainder outward. (Same reasoning as the literal arm in
+        // compile_simple.)
         self.builder.emit(Op::GetSlot(cnt_slot), 0);
         self.builder.emit(Op::LoadInt(depth as i64), 0);
         self.builder.emit(Op::NumGt, 0);
-        let j = self.builder.emit(Op::JumpIfTrue(0), 0);
-        if is_continue {
-            self.continue_patches[0].push(j);
+        let no_overflow = self.builder.emit(Op::JumpIfFalse(0), 0);
+        self.compile_word_str(count_word);
+        let bin = if is_continue {
+            fusevm::shell_builtins::BUILTIN_CONTINUE
         } else {
-            self.break_patches[0].push(j);
-        }
+            fusevm::shell_builtins::BUILTIN_BREAK
+        };
+        self.builder.emit(Op::CallBuiltin(bin, 1), 0);
+        self.builder.emit(Op::SetStatus, 0);
+        let after_overflow = self.builder.current_pos();
+        self.builder.patch_jump(no_overflow, after_overflow);
         // N <= 0: BREAK_COUNT_VALIDATE already emitted the error and set
         // errflag; no table entry matches Int(0), so control falls
         // through here and the VM aborts on errflag.
@@ -7327,6 +7581,7 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(status_slot), 0);
 
+        self.emit_loop_enter(); // c:Src/loop.c:427 — `loops++;`
         let loop_top = self.builder.current_pos();
         // The while/until test is errexit-suppressed.
         self.errexit_suppress_depth += 1;
@@ -7340,14 +7595,14 @@ impl ZshCompiler {
             self.builder.emit(Op::JumpIfFalse(0), 0)
         };
 
-        self.break_patches.push(Vec::new());
-        self.continue_patches.push(Vec::new());
+        self.open_loop_scope();
 
         self.compile_program(&w.body);
         // Capture body's last status into status_slot so the loop's exit
         // status reflects the body, not the (failing) condition probe.
         self.builder.emit(Op::GetStatus, 0);
         self.builder.emit(Op::SetSlot(status_slot), 0);
+        self.emit_loop_body_end(); // c:Src/loop.c:529-534
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -7361,11 +7616,7 @@ impl ZshCompiler {
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
 
-        if let Some(breaks) = self.break_patches.pop() {
-            for bp in breaks {
-                self.builder.patch_jump(bp, loop_exit);
-            }
-        }
+        self.close_loop_scope(loop_exit); // c:Src/loop.c:491 — `loops--;`
 
         // Restore loop's exit status from the body's last-status slot.
         self.builder.emit(Op::GetSlot(status_slot), 0);
@@ -7520,6 +7771,7 @@ impl ZshCompiler {
         let after_reset = self.builder.current_pos();
         self.builder.patch_jump(skip_reset_jump, after_reset);
 
+        self.emit_loop_enter(); // c:Src/loop.c:114 — `loops++;`
         let loop_top = self.builder.current_pos();
         self.builder.emit(Op::GetSlot(i_slot), 0);
         self.builder.emit(Op::GetSlot(len_slot), 0);
@@ -7561,10 +7813,10 @@ impl ZshCompiler {
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
 
-        self.break_patches.push(Vec::new());
-        self.continue_patches.push(Vec::new());
+        self.open_loop_scope();
 
         self.compile_program(body);
+        self.emit_loop_body_end(); // c:Src/loop.c:180-185
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -7580,11 +7832,7 @@ impl ZshCompiler {
         self.builder.patch_jump(exit_jump, loop_exit);
         self.builder.patch_jump(loop_var_abort, loop_exit);
 
-        if let Some(breaks) = self.break_patches.pop() {
-            for bp in breaks {
-                self.builder.patch_jump(bp, loop_exit);
-            }
-        }
+        self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
     }
 
     fn compile_for_words(&mut self, var: &str, words: &[String], body: &crate::parse::ZshProgram) {
@@ -7722,6 +7970,7 @@ impl ZshCompiler {
         let after_reset = self.builder.current_pos();
         self.builder.patch_jump(skip_reset_jump, after_reset);
 
+        self.emit_loop_enter(); // c:Src/loop.c:114 — `loops++;`
         let loop_top = self.builder.current_pos();
         self.builder.emit(Op::GetSlot(i_slot), 0);
         self.builder.emit(Op::GetSlot(len_slot), 0);
@@ -7794,10 +8043,10 @@ impl ZshCompiler {
             self.builder.emit(Op::Pop, 0);
         }
 
-        self.break_patches.push(Vec::new());
-        self.continue_patches.push(Vec::new());
+        self.open_loop_scope();
 
         self.compile_program(body);
+        self.emit_loop_body_end(); // c:Src/loop.c:180-185
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -7822,11 +8071,7 @@ impl ZshCompiler {
             self.builder.patch_jump(aj, loop_exit);
         }
 
-        if let Some(breaks) = self.break_patches.pop() {
-            for bp in breaks {
-                self.builder.patch_jump(bp, loop_exit);
-            }
-        }
+        self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
     }
 
     fn compile_for_arith(
@@ -7899,6 +8144,7 @@ impl ZshCompiler {
         // now so cond / body / step all see the for-tag.
         self.emit_cmd_push(crate::ported::zsh_h::CS_FOR as u8);
 
+        self.emit_loop_enter(); // c:Src/loop.c:114 — `loops++;`
         let loop_top = self.builder.current_pos();
         // c:Src/loop.c::execfor — cond xtrace re-restores LINENO
         // to the for-header line (matches execlist save/restore)
@@ -7939,10 +8185,10 @@ impl ZshCompiler {
         }
         let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-        self.break_patches.push(Vec::new());
-        self.continue_patches.push(Vec::new());
+        self.open_loop_scope();
 
         self.compile_program(body);
+        self.emit_loop_body_end(); // c:Src/loop.c:180-185
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -7972,11 +8218,7 @@ impl ZshCompiler {
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
 
-        if let Some(breaks) = self.break_patches.pop() {
-            for bp in breaks {
-                self.builder.patch_jump(bp, loop_exit);
-            }
-        }
+        self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
         // Pair with the cmdpush we did after init.
         self.emit_cmd_pop();
     }
@@ -8413,16 +8655,17 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
 
+        self.emit_loop_enter(); // c:Src/loop.c:523 — `loops++;`
         let loop_top = self.builder.current_pos();
         self.builder.emit(Op::GetSlot(i_slot), 0);
         self.builder.emit(Op::GetSlot(count_slot), 0);
         self.builder.emit(Op::NumLt, 0);
         let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-        self.break_patches.push(Vec::new());
-        self.continue_patches.push(Vec::new());
+        self.open_loop_scope();
 
         self.compile_program(&r.body);
+        self.emit_loop_body_end(); // c:Src/loop.c:540-545
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -8435,11 +8678,7 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
-        if let Some(breaks) = self.break_patches.pop() {
-            for bp in breaks {
-                self.builder.patch_jump(bp, loop_exit);
-            }
-        }
+        self.close_loop_scope(loop_exit); // c:Src/loop.c:546 — `loops--;`
         self.emit_cmd_pop();
     }
 

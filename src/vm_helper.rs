@@ -342,6 +342,13 @@ pub struct SubshellSnapshot {
     /// in the parent silently used it. Same fork-copy reasoning as `opts` /
     /// `umask` / `aliases` above.
     pub special_globals: Vec<(String, String)>,
+    /// `loops` / `breaks` / `contflag` at subshell entry
+    /// (c:Src/loop.c, c:Src/builtin.c bin_break). C forks for `(...)`,
+    /// so a `break` executed inside dies with the child and the parent's
+    /// loop runs on: `for i in 1 2; do (break); print after; done` prints
+    /// `after` twice. zshrs runs subshells in-process, so the three
+    /// counters have to be restored by hand at the boundary.
+    pub loop_flags: (i32, i32, i32),
     /// Process working directory at subshell entry. `cd` inside the
     /// subshell shouldn't leak to the parent; we restore on End.
     pub cwd: Option<PathBuf>,
@@ -2593,7 +2600,16 @@ impl ShellExecutor {
         // 0 back into LASTVAL on the first `$?` read.
         vm.last_status = self.last_status();
         let _ctx = ExecutorContext::enter(self);
-        match vm.run() {
+        // c:Src/loop.c — `loops` is bracketed by the C interpreter's own
+        // recursion, so a `return` or an errflag abort out of a loop
+        // unwinds it for free. A compiled chunk instead jumps straight to
+        // its end, skipping the loop's `loops--`. Restoring the count the
+        // chunk started with makes that structurally impossible to leak:
+        // whatever loops this chunk opened are closed when it finishes.
+        let loops_entry = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
+        let result = vm.run();
+        crate::ported::builtin::LOOPS.store(loops_entry, Ordering::Relaxed);
+        match result {
             fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
                 self.set_last_status(vm.last_status);
             }

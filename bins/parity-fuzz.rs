@@ -4772,7 +4772,59 @@ fn gen_loop(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec!["items=(p q r); nums=(1 2 3 4)".to_string()];
     for _ in 0..rng.gen_range(1..=3) {
-        let stmt = match rng.gen_range(0..11) {
+        let stmt = match rng.gen_range(0..12) {
+            // Cross-chunk `break`/`continue`: the keyword runs in a
+            // DIFFERENT compiled chunk from the loop it must end — a
+            // called function, a function calling that function, `eval`,
+            // a subshell, a pipeline stage, a try-block. Arm 9 below
+            // covers the bare `f` call; this arm is what reaches the
+            // rest, and each leg is a different unwind path:
+            //   - `print after` AFTER the call proves the rest of the
+            //     body is abandoned (c:Src/exec.c:1370's `!breaks`), not
+            //     merely that the loop ends one iteration late.
+            //   - `(f)` / `f | cat` must NOT end the caller's loop at
+            //     all: C forks, so the child's `breaks` dies with it.
+            //   - `break 2` from two loops deep has to unwind BOTH, so
+            //     the count must survive the first loop's drain.
+            //   - the loop-inside-`f` leg pins the opposite direction:
+            //     `f`'s own loop consumes the break, and `f` runs on.
+            11 => {
+                let body = *pick(&mut rng, &["break", "continue", "break 2", "continue 2"]);
+                let shape = rng.gen_range(0..9);
+                match shape {
+                    0 => format!(
+                        "f(){{ {body}; print inner; }}; for i in 1 2; do print $i; f; print after; done; print -r -- \"rc=$?\""
+                    ),
+                    1 => format!(
+                        "f(){{ {body}; }}; g(){{ f; print g_after; }}; for i in 1 2; do print $i; g; print after; done; print -r -- \"rc=$?\""
+                    ),
+                    2 => format!(
+                        "f(){{ {body}; }}; for i in 1 2; do for j in a b; do print $i$j; f; print ia; done; print oa; done; print -r -- \"rc=$?\""
+                    ),
+                    3 => format!(
+                        "f(){{ {body}; }}; for i in 1 2; do print $i; (f; print sub_after); print after; done; print -r -- \"rc=$?\""
+                    ),
+                    4 => format!(
+                        "f(){{ {body}; }}; for i in 1 2; do print $i; f | cat; print after; done; print -r -- \"rc=$?\""
+                    ),
+                    5 => format!(
+                        "for i in 1 2; do print $i; eval '{body}'; print after; done; print -r -- \"rc=$?\""
+                    ),
+                    6 => format!(
+                        "f(){{ {body}; }}; for i in 1 2; do print $i; {{ f }} always {{ print alw }}; print after; done; print -r -- \"rc=$?\""
+                    ),
+                    7 => format!(
+                        "f(){{ for k in x y; do print k=$k; {body}; done; print f_end; }}; for i in 1 2; do print $i; f; print after; done; print -r -- \"rc=$?\""
+                    ),
+                    // The sharpest shape: an unbounded loop whose ONLY
+                    // exit is the function's `break`. A frontend that
+                    // drops the escape hangs here instead of printing a
+                    // wrong value, so the timeout counter catches it.
+                    _ => format!(
+                        "f(){{ {body}; }}; i=0; while true; do print $i; (( i++ )); (( i > 4 )) && break; f; print after; done; print -r -- \"rc=$?\""
+                    ),
+                }
+            }
             // Nested loops with a multi-level break: `break 2` leaves BOTH.
             0 => {
                 let lvl = rng.gen_range(1..=2);
@@ -10820,6 +10872,16 @@ fn main() {
     let next = AtomicU64::new(0);
     let checked = AtomicU64::new(0);
     let timeouts = AtomicU64::new(0);
+    // Cases where the ORACLE produced no usable signal: empty stdout AND
+    // a non-zero exit, i.e. real zsh rejected the generated program too.
+    // Those cases still get compared (zshrs emitting output where zsh
+    // emitted none IS a gap, and suppressing them would hide it), but
+    // they are not evidence the generator reached the feature it was
+    // aiming at. Reported alongside the divergence count so a `0` can be
+    // read against how many cases actually exercised anything: a mode
+    // whose no-signal share is high is measuring its own reach, not
+    // zshrs's correctness.
+    let no_oracle_signal = AtomicU64::new(0);
     let stop = AtomicBool::new(false);
     let divergences: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
     let start = Instant::now();
@@ -10845,6 +10907,9 @@ fn main() {
                     let done = checked.fetch_add(1, Ordering::Relaxed) + 1;
                     if z.timed_out || r.timed_out {
                         timeouts.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if !z.timed_out && z.stdout.is_empty() && z.exit != 0 {
+                        no_oracle_signal.fetch_add(1, Ordering::Relaxed);
                     }
                     // zsh-side timeout ⇒ pathological case; not a parity gap.
                     if !z.timed_out && differs(&z, &r) {
@@ -10963,7 +11028,9 @@ fn main() {
         "\nfuzzed {checked} cases in {:.1}s ({:.0}/s)\n\
          oracle      : {}\n\
          divergences : {} ({} known / {} new)\n\
-         timeouts    : {}",
+         timeouts    : {}\n\
+         no-signal   : {} (oracle exited non-zero with empty stdout — \
+compared, but not evidence the generator reached anything)",
         elapsed.as_secs_f64(),
         checked as f64 / elapsed.as_secs_f64().max(0.001),
         oracle,
@@ -10971,6 +11038,7 @@ fn main() {
         known,
         new_records.len(),
         timeouts,
+        no_oracle_signal.load(Ordering::Relaxed),
     );
 
     if !divergences.is_empty() {

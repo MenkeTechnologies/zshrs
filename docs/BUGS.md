@@ -46,6 +46,64 @@ sort key being the STYLE name while the VALUES printed are the contexts.
 
 ---
 
+## #1075 — `break`/`continue` inside a function never reached the caller's loop — fixed
+
+**Status:** `fixed` 2026-08-09.
+
+`loops` is a process GLOBAL in C, not a per-frame counter. `bin_break`
+gates on it (`if (!loops)`, `Src/builtin.c:5832`) and `doshfunc` restores
+it only under `LOCAL_LOOPS` (`Src/exec.c:6104-6112`, default off), so a
+function called from inside a loop sees the CALLER's count and its
+`break` ends the caller's loop. zshrs's compiled `for`/`while`/`until`/
+`repeat` lower to raw jumps and never touched the counter, so `bin_break`
+always read `loops == 0`.
+
+Blast radius was output-swallowing, not just a wrong message: the loop
+kept running, the rest of the script was abandoned on the errflag, and
+`while true; do f; done` never terminated at all.
+
+```sh
+$ zsh   -fc 'f(){ break; }; for i in 1 2 3; do print $i; f; done; print rc=$?'
+1
+rc=0
+$ zshrs --zsh -fc '…same…'            # before
+1
+f:break: not in while, until, select, or repeat loop     # exit 1, no rc line
+```
+
+**Fix** — the VM was given a real loop scope instead of a counter bolted
+onto the jumps:
+
+- `BUILTIN_LOOP_ENTER` / `BUILTIN_LOOP_EXIT` (`src/fusevm_bridge.rs`)
+  bracket each construct — `c:Src/loop.c:114/188` (for), `:427/491`
+  (while/until), `:523/546` (repeat) — emitted once before `loop_top`
+  and once at `loop_exit`, so every in-chunk exit passes exactly one
+  decrement. `break N` / `continue N` that jump past inner loops emit
+  the skipped decrements first, and `run_chunk` restores the count the
+  chunk started with so a `return` or errflag abort cannot leak it.
+- `BUILTIN_LOOP_BREAK_DRAIN` after each body is `c:Src/loop.c:529-534`'s
+  `if (breaks) { breaks--; if (breaks || !contflag) break; contflag = 0; }`.
+- `BUILTIN_BREAKS_PENDING` after each list is `c:Src/exec.c:1370`'s
+  `while (… && !breaks && …)` gate, so the rest of the body — and of any
+  intermediate function — is abandoned rather than run on.
+- `(…)` and pipeline stages contain the escape at `SubshellEnd`, which
+  now restores `loops`/`breaks`/`contflag`: C forks, so a `break` inside
+  a subshell dies with the child and the caller's loop runs on.
+- `break N` naming more levels than the current chunk has open routes
+  through `bin_break`, whose `num.min(loops)` (`c:5837`) clamps against
+  the runtime global. One compiled function body has to break its own
+  loop only when called from the top level, and its own AND the caller's
+  when called from a loop — no compile-time clamp can express that.
+- `LOCAL_LOOPS`' two `zwarn` lines (`c:6106-6107`) are in `doshfunc`.
+
+**Verify** — `parity-fuzz --mode loop` went from 684/3000 divergences to
+0/5000 (0 timeouts) against `zsh 5.9.2`, with the generator extended to
+cover the cross-chunk shapes it had been missing: the statement after the
+call, an intermediate function, `eval`, `(…)`, a pipeline stage, an
+`always` block, and a `break 2` from two loops deep.
+
+---
+
 ## #1074 — bracket-delimited flag/qualifier arguments failed once the word was tokenized — fixed
 
 **Status:** `fixed` 2026-08-08.
