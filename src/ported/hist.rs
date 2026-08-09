@@ -3065,6 +3065,103 @@ pub fn casemodify(s: &str, how: i32) -> String {
         };
         one_or_self(c, mapped.into_iter())
     };
+    // c:2202-2203 — `#ifdef MULTIBYTE_SUPPORT / if (isset(MULTIBYTE))`. C
+    // forks the WHOLE function here: the wide-char loop below is only the
+    // `if` arm. The port had no `else` arm at all, so `unsetopt multibyte`
+    // still folded Unicode scalars where zsh folds single BYTES through the
+    // locale's one-byte ctype table.
+    //
+    // The option is read from the live slot with its declared default (on,
+    // c:Src/options.c:197); `isset()` maps a never-written slot to false and
+    // would invert that default wherever init's `emulate()` is skipped.
+    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) {
+        // c:2276-2320 — the byte loop. C calls the C library's single-byte
+        // `isupper`/`tolower`/`islower`/`toupper` directly, so this calls the
+        // same functions: they are locale state, not a property anything here
+        // could re-derive, and zshrs already runs C's `setlocale(LC_ALL, "")`
+        // (c:Src/init.c:1208) at startup, so both shells read one table.
+        //
+        // Those calls are why byte mode is not just "the same fold on smaller
+        // units". Under en_US.UTF-8 on macOS `toupper(0xb5)` answers 0x39c —
+        // wider than the `char` C stores it in — so `${(U)}` on a value ending
+        // `ce b5` emits `ce 9c`. That truncation is upstream behavior, and
+        // storing the low byte reproduces it rather than papering over it.
+        let bytes = crate::ported::utils::unmetafy_str(s);
+        let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+        // c:2276 — `while (*str)`. The stream is already demetafied, which is
+        // C's c:2279-2281 `if (*str == Meta) { c = str[1] ^ 32; str += 2; }`.
+        for &b in &bytes {
+            let mut c = b as i32;
+            let mut modified = false; // c:2278 `int mod = 0;`
+            match how {
+                x if x == CASMOD_LOWER => {
+                    // c:2285-2290 — `if (isupper(c)) { c = tolower(c); mod = 1; }`
+                    if unsafe { libc::isupper(c) } != 0 {
+                        c = unsafe { libc::tolower(c) };
+                        modified = true;
+                    }
+                }
+                x if x == CASMOD_UPPER => {
+                    // c:2292-2297 — `if (islower(c)) { c = toupper(c); mod = 1; }`
+                    if unsafe { libc::islower(c) } != 0 {
+                        c = unsafe { libc::toupper(c) };
+                        modified = true;
+                    }
+                }
+                x if x == CASMOD_CAPS => {
+                    // c:2299-2313 — word-boundary tracking on zsh's own
+                    // `ialnum` typtab (c:2301), not the libc class.
+                    if !crate::ported::ztype_h::ialnum(b) {
+                        nextupper = true;
+                    } else if nextupper {
+                        if unsafe { libc::islower(c) } != 0 {
+                            c = unsafe { libc::toupper(c) };
+                            modified = true;
+                        }
+                        nextupper = false;
+                    } else if unsafe { libc::isupper(c) } != 0 {
+                        c = unsafe { libc::tolower(c) };
+                        modified = true;
+                    }
+                }
+                _ /* CASMOD_NONE */ => {}
+            }
+            // c:2315-2319 — `if (mod && imeta(c)) { *ptr2++ = Meta; *ptr2++ =
+            // c ^ 32; } else *ptr2++ = c;`. C is re-establishing METAFICATION
+            // on the byte it just folded, because its output buffer is a
+            // metafied `char *`. This buffer is the LOGICAL byte stream, so
+            // the escape is applied once, at the conversion below — emitting
+            // the pair here as well would metafy it twice and leak `83 bc`
+            // where zsh prints `9c`.
+            //
+            // C stores the int into a `char`, so a mapping that answers wider
+            // than a byte keeps only its low byte (`toupper(0xb5)` → 0x39c →
+            // 0x9c); the mask reproduces that.
+            let _ = modified; // c:2315 `mod` gates only C's re-metafication
+            out.push((c & 0xff) as u8);
+        }
+        // c:2321-2322 — `*ptr2 = '\0'; return str2;`. Back to the port's
+        // `String` form: well-formed text verbatim, anything else escaped as
+        // `Meta` + `byte ^ 32`, the representation `unmetafy_str` decodes.
+        // This is a whole-buffer conversion, not a per-unit one, so it cannot
+        // come from `mb_metacharlenconv` — C has the same split, building the
+        // buffer byte-by-byte in the loop and returning it once here.
+        return match String::from_utf8(out.clone()) {
+            Ok(v) => v,
+            Err(_) => {
+                let mut v = String::with_capacity(2 * out.len());
+                for &b in &out {
+                    if b < 0x80 {
+                        v.push(b as char);
+                    } else {
+                        v.push(char::from(crate::ported::zsh_h::Meta));
+                        v.push(char::from(b ^ 32));
+                    }
+                }
+                v
+            }
+        };
+    }
     for c in s.chars() {
         // c:2209 `while (*str)`
         // c:2241 — `if (IS_COMBINING(wc)) break;` — combining chars

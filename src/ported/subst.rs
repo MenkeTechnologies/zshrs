@@ -2967,21 +2967,53 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
         return Some(String::new()); // c:1506
     } // c:1507
 
-    // C: MULTIBYTE arm — `if (isset(MULTIBYTE) && ires > 127)` use
-    // ucs4tomb to encode as multibyte. Rust uses char::from_u32
-    // which handles all valid Unicode scalar values uniformly.
-    if let Some(ch) = char::from_u32(ires as u32) {
-        // c:1509
-        let mut buf = [0u8; 4]; // c:1510
-        return Some(ch.encode_utf8(&mut buf).to_string()); // c:1510
-    } // c:1510
-
-    // C fallback: `sprintf(ptr, "%c", (int)ires);` — single byte.
-    // Rust falls back to a single byte when char::from_u32 rejects
-    // (surrogate range or out-of-range value). Render as Latin-1
-    // byte for compatibility with C'ptr `(char)ires` cast.
-    let byte = (ires as u32 & 0xFF) as u8; // c:1517
-    Some(String::from_utf8_lossy(&[byte]).into_owned()) // c:1517
+    // c:1508 — `else if (isset(MULTIBYTE) && ires > 127)`. BOTH conditions
+    // are load-bearing and both had been dropped: the port encoded every
+    // value as UTF-8 unconditionally, so `unsetopt multibyte; ${(#)206}`
+    // emitted `c3 8e` (U+00CE encoded) where zsh emits the single byte `ce`.
+    //
+    // The option is read from the live slot with its declared default (on,
+    // c:Src/options.c:197); `isset()` maps a never-written slot to false and
+    // would invert that default wherever init's `emulate()` is skipped.
+    let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+    let mut bytes: Vec<u8> = Vec::new();
+    if mb && ires > 127 {
+        // c:1510 — `len = ucs4tomb(ires & 0xffffffff, ptr)`.
+        if let Some(ch) = char::from_u32(ires as u32) {
+            let mut buf = [0u8; 4];
+            bytes = ch.encode_utf8(&mut buf).as_bytes().to_vec();
+        }
+    }
+    // c:1512-1518 — `if (len <= 0) { len = 1; sprintf(ptr, "%c", (int)ires); }`.
+    // `%c` takes an int and prints one character, so the value is truncated to
+    // its low byte; that truncation is reachable in multibyte mode too, when
+    // ucs4tomb declines the value (surrogates, out of range).
+    if bytes.is_empty() {
+        bytes.push((ires as u32 & 0xff) as u8); // c:1517
+    }
+    // c:1519 — `metafy(ptr, len, META_USEHEAP)`. Well-formed text carrying no
+    // byte that zsh reserves stays verbatim; anything else is escaped as
+    // `Meta` + `byte ^ 32`, the form `unmetafy_str` decodes. The previous
+    // `from_utf8_lossy` on a lone high byte produced U+FFFD, destroying the
+    // value instead of escaping it.
+    let plain = std::str::from_utf8(&bytes)
+        .ok()
+        .filter(|_| !bytes.iter().any(|&b| crate::ported::utils::imeta_byte(b)));
+    Some(match plain {
+        Some(v) => v.to_string(),
+        None => {
+            let mut v = String::with_capacity(2 * bytes.len());
+            for &b in &bytes {
+                if b < 0x80 && !crate::ported::utils::imeta_byte(b) {
+                    v.push(b as char);
+                } else {
+                    v.push(char::from(crate::ported::zsh_h::Meta));
+                    v.push(char::from(b ^ 32));
+                }
+            }
+            v
+        }
+    })
 } // c:1521
 
 /// Untokenize and escape string for flag argument
@@ -8522,7 +8554,27 @@ pub fn paramsubst(
                     }
                     scalar
                 } else {
-                    let s_chars: Vec<char> = scalar.chars().collect();
+                    // c:Src/params.c:1634-1663 — every scalar subscript walks
+                    // the value with `t += MB_METACHARLEN(t)` and sizes it with
+                    // `MB_METASTRLEN(s)` (c:1650), so the unit is a METAFIED
+                    // CHARACTER, not a Rust `char`. The two differ in both
+                    // directions: a `Meta`+byte pair is two `char`s but one
+                    // unit, and with the MULTIBYTE option off a unit is a
+                    // single BYTE (c:Src/utils.c:5613) — which is why
+                    // `unsetopt multibyte; ${gr[2]}` must answer the byte 0xb1,
+                    // not the character `β`. A byte-mode unit can be half a
+                    // character, so a unit is an owned `String`.
+                    let s_chars: Vec<String> = {
+                        let ub = crate::ported::utils::unmetafy_str(&scalar);
+                        let mut v: Vec<String> = Vec::new();
+                        let mut i = 0usize;
+                        while i < ub.len() {
+                            let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&ub[i..]);
+                            v.push(unit);
+                            i += n.max(1);
+                        }
+                        v
+                    };
                     // Pattern-subscript on scalar: (i)pat / (I)pat
                     // returns 1-based char position of first/last match;
                     // (r)pat / (R)pat returns the matched substring.
@@ -8786,7 +8838,7 @@ pub fn paramsubst(
                         // for r/i, backward for R/I, returning the nth match's
                         // start position.
                         let is_match = |start: usize, len: usize| -> bool {
-                            let cand: String = s_chars[start..start + len].iter().collect();
+                            let cand: String = s_chars[start..start + len].concat();
                             if exact {
                                 cand == pat
                             } else {
@@ -8843,7 +8895,7 @@ pub fn paramsubst(
                                 // vs /opt/homebrew/bin/zsh:
                                 //   s="barfooxyz"; ${s[(r)foo]} → "f"
                                 //   (the first char of "foo" at position 4)
-                                s_chars.get(s).map(|c| c.to_string()).unwrap_or_default()
+                                s_chars.get(s).cloned().unwrap_or_default()
                             }
                             (None, true) => {
                                 // Direct port of Src/params.c getindex.
@@ -8874,7 +8926,7 @@ pub fn paramsubst(
                                     && scalar_is_set
                                     && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) =>
                             {
-                                s_chars.first().map(|c| c.to_string()).unwrap_or_default()
+                                s_chars.first().cloned().unwrap_or_default()
                                 // c:2140
                             }
                             (None, false) => String::new(),
@@ -9053,7 +9105,7 @@ pub fn paramsubst(
                             idx_n - 1
                         };
                         if i >= 0 && (i as usize) < s_chars.len() {
-                            s_chars[i as usize].to_string()
+                            s_chars[i as usize].clone()
                         } else {
                             String::new()
                         }
@@ -9217,8 +9269,7 @@ pub fn paramsubst(
                                             if start + len > n {
                                                 return false;
                                             }
-                                            let cand: String =
-                                                s_chars[start..start + len].iter().collect();
+                                            let cand: String = s_chars[start..start + len].concat();
                                             if exact {
                                                 cand == pat
                                             } else {
@@ -9335,8 +9386,7 @@ pub fn paramsubst(
                         } else {
                             (lo, hi)
                         };
-                        let chars_arr: Vec<String> =
-                            s_chars.iter().map(|c| c.to_string()).collect();
+                        let chars_arr: Vec<String> = s_chars.clone();
                         getarrvalue(&chars_arr, lo, hi).concat()
                     } else {
                         String::new()
@@ -16335,18 +16385,30 @@ pub fn paramsubst(
             // zsh's `"he  o"` (the joined-with-IFS space-pair).
             let split_one = |s: &str| -> Vec<String> {
                 if sp.is_empty() {
-                    // c:581 — `l = MB_METACHARLENCONV(x, &c)`: split into
-                    // multibyte CHARACTERS. zshrs stores `$'\xNN'` escapes
-                    // metafied (Meta + byte^32), so demetafy to the raw
-                    // byte stream first, then iterate real chars — without
-                    // this a metafied multibyte char splits one-element-
-                    // per-byte (`$'\xc3\xa9'` → 4 not 1). Identity for
-                    // non-metafied strings (unmetafy round-trips them).
+                    // c:581 — `l = MB_METACHARLENCONV(x, &c)`: one element
+                    // per metafied CHARACTER. zshrs stores `$'\xNN'` escapes
+                    // metafied (Meta + byte^32), so demetafy to the raw byte
+                    // stream first — without that a metafied multibyte char
+                    // splits one-element-per-byte (`$'\xc3\xa9'` → 4 not 1).
+                    //
+                    // The step itself has to be MB_METACHARLENCONV and not
+                    // `chars()`, because that macro is where the MULTIBYTE
+                    // option is consulted (c:Src/utils.c:5613): with it off a
+                    // unit is a single BYTE, so `unsetopt multibyte;
+                    // ${(s::)gr}` yields ten one-byte elements, not five
+                    // characters. `from_utf8_lossy` also had to go — it
+                    // replaced any byte that is not valid UTF-8 on its own
+                    // with U+FFFD, which is exactly every element byte mode
+                    // produces.
                     let bytes = crate::ported::utils::unmetafy_str(s);
-                    String::from_utf8_lossy(&bytes)
-                        .chars()
-                        .map(|c| c.to_string())
-                        .collect()
+                    let mut out: Vec<String> = Vec::new();
+                    let mut i = 0usize;
+                    while i < bytes.len() {
+                        let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&bytes[i..]);
+                        out.push(unit);
+                        i += n.max(1);
+                    }
+                    out
                 } else {
                     s.split(sp.as_str()).map(String::from).collect()
                 }

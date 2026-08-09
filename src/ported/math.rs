@@ -671,6 +671,25 @@ fn decode_math_keychar(s: &str) -> Option<(i64, usize)> {
         return None;
     }
     if cs[0] != '\\' {
+        // c:Src/utils.c:7198-7207 — the wide-character arm is reached ONLY
+        // when `isset(MULTIBYTE)`; a byte above 127 otherwise falls past it.
+        // c:7209-7210 — `else if (*s == Meta) *t++ = *++s ^ 32;` decodes the
+        // escaped byte, and c:7211 takes any remaining byte as itself. So
+        // `##` answers a CHARACTER code in multibyte mode and a BYTE value in
+        // byte mode: `unsetopt multibyte; $(( ##${gr[1]} ))` is 206 (0xce),
+        // not 945 (`α`).
+        if cs[0] == char::from(crate::ported::zsh_h::Meta) {
+            if let Some(&n) = cs.get(1) {
+                return Some((((n as u32) ^ 32) as i64, 2));
+            }
+        }
+        let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+        if !mb && (cs[0] as u32) > 127 {
+            // c:7211 — one raw byte, which for text held as UTF-8 is the
+            // lead byte of the character at the cursor.
+            let mut buf = [0u8; 4];
+            return Some((cs[0].encode_utf8(&mut buf).as_bytes()[0] as i64, 1));
+        }
         return Some((cs[0] as i64, 1));
     }
     // `\X` escape — `\` plus at least one more char.
