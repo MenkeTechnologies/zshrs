@@ -6299,6 +6299,19 @@ const QUOTE_SUBJECTS: &[&str] = &[
 ];
 
 /// `$'…'` escape bodies. Every one has a single, defined byte expansion.
+///
+/// The `\xNN`-spelled MULTIBYTE sequences at the end are load-bearing and were
+/// the gap that let this mode report clean while `${(q)}` was wrong. Every
+/// non-ASCII body above is either a literal (`é`, `日本` — the source file
+/// already holds valid UTF-8, so nothing has to be re-assembled) or a byte that
+/// begins no valid sequence (`\M-a` = 0xE1, `\x7f`). Neither shape exercises
+/// C's `MB_METACHARLENCONV` (Src/utils.c:5611) actually JOINING escaped bytes
+/// into one character. `$'\xce\xb1'` does: it is two `\x` escapes that spell
+/// `α`, so quotestring must decode them together and pass the character
+/// through, and a port that walks byte-at-a-time emits `$'\316'$'\261'`
+/// instead. `\xc2\xa0` (NBSP) adds a character that is printable but not
+/// graphic; `\xe6\x97\xa5` a three-byte one; `\xce` alone is the same lead byte
+/// WITHOUT its continuation, so the invalid-sequence arm stays covered.
 const QUOTE_ESCAPES: &[&str] = &[
     r"\x41\x42",
     r"\101\102",
@@ -6314,6 +6327,11 @@ const QUOTE_ESCAPES: &[&str] = &[
     r"\C-a\C-z",
     r"\x7f",
     r"\0101",
+    r"\xce\xb1",
+    r"\xe6\x97\xa5",
+    r"\xc2\xa0",
+    r"\xce",
+    r"\xe6\x97\xa5\x97",
 ];
 
 fn gen_quote(seed: u64) -> Vec<String> {
