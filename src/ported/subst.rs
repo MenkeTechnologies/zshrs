@@ -17325,6 +17325,22 @@ pub fn paramsubst(
         // still reaches the whole-word deletion at c:4362; and `isarr > 0`
         // (not `!= 0`), so the `[@]`/`[*]` splat shape (isarr == -1, c:2916
         // SCANPM_ISVAR_AT) keeps its zero-word result.
+        // c:Src/subst.c:3881-3884 —
+        //     if (isarr) l->list.flags |= LF_ARRAY;
+        //     else       l->list.flags &= ~LF_ARRAY;
+        // This is the FIRST of only two LF_ARRAY stamps in paramsubst, and it
+        // runs BEFORE the c:3885 empty-array scalarization directly below.
+        // C's own comment calls the collapse "turning our value into a scalar
+        // for convenience sake WITHOUT AFFECTING THE ARRAYNESS of the
+        // resulting value" — the arrayness has already been recorded here.
+        // The port stamped PARAMSUBST_LF_ARRAY from the POST-collapse `isarr`
+        // instead, so `arr=()` reached multsub (c:632) with LF_ARRAY clear and
+        // came back a SCALAR, and every outer operator then char-indexed an
+        // empty string: `${#${arr}[1,2]}` gave 0 where zsh gives 1 (the
+        // getarrvalue nular pad, c:params.c:2582, on the empty temp array).
+        // Capture the pre-collapse bit; the second stamp (c:3929-3932) is
+        // re-applied at the LF_ARRAY set site below for the split/join block.
+        let lf_array_c3882 = isarr != 0; // c:3881-3884
         let mut empty_arr_scalarized = false; // c:3885
         if isarr > 0 && !plan9 {
             // c:3885
@@ -18136,7 +18152,25 @@ pub fn paramsubst(
                 || split_parts.is_some()))); // c:3950 ((s::) made an array)
                                              // c:3932 — `else l->list.flags &= ~LF_ARRAY;` (the non-array default;
                                              // the array case overrides it below, once `parts` is known).
-        PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
+        //
+        // c:Src/subst.c:3897 — the SECOND LF_ARRAY stamp (c:3929-3932) is
+        // reached only from inside `if (ssub || spbreak || spsep || sep ||
+        // quoted_array_with_offset)`. When none of those hold, the c:3881-3884
+        // stamp is final, so it must survive to multsub (c:632) even on the
+        // paths that do NOT splat.
+        let split_join_block_ran =
+            sep.is_some() || spsep.is_some() || force_split || pf_flags & PREFORK_SINGLE != 0; // c:3897
+        // The zero-element array is exactly that case: c:3885 turned it into
+        // the empty SCALAR (so `auto_splat` above is false by construction and
+        // the array-shaped stamp below never runs), yet C recorded its
+        // arrayness one line earlier. Without carrying the bit here, multsub
+        // hands the outer expansion a SCALAR and every outer operator
+        // char-indexes an empty string — `${#${arr}[1,2]}` gave 0 where zsh
+        // gives 1, and `${#${(q)arr}[1,2]}` gave 2 (the two chars of `''`)
+        // where zsh gives 1. `(j)`/`(f)`/`(s)` re-enter the c:3897 block and
+        // correctly come back scalar.
+        PARAMSUBST_LF_ARRAY
+            .with(|c| c.set(empty_arr_scalarized && lf_array_c3882 && !split_join_block_ran));
         if (nojoin == 2) || auto_splat {
             // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
@@ -18487,7 +18521,23 @@ pub fn paramsubst(
             // A genuine 1-element array keeps isarr≠0 here (c:3903 stays array even
             // at length 1); only a forced (s)/(f) split that collapses to one field
             // clears it (c:3924). Gating on `isarr != 0` reproduces both.
-            PARAMSUBST_LF_ARRAY.with(|c| c.set(isarr != 0 && !forced_split_to_one));
+            //
+            // c:Src/subst.c:3929-3932 — the SECOND (and last) LF_ARRAY stamp
+            // lives INSIDE `if (ssub || spbreak || spsep || sep ||
+            // quoted_array_with_offset) { … }` (c:3897, c:3929). Only when
+            // that join/split block runs does the FINAL `isarr` overwrite the
+            // c:3882 stamp; with no join/split flag the c:3882 value is what
+            // multsub (c:632) sees. `lf_array_c3882` carries the pre-collapse
+            // bit, so an EMPTY array keeps its arrayness through the c:3885
+            // scalarization — `${#${arr}[1,2]}` is 1, `${#${(o)arr}[1,2]}` is
+            // 1, `${#${(q)arr}[1,2]}` is 1 — while `(j)`/`(f)`/`(s)` re-enter
+            // the block and correctly come back 0.
+            let lf_array = if split_join_block_ran {
+                isarr != 0 && !forced_split_to_one // c:3929-3932
+            } else {
+                isarr != 0 || lf_array_c3882 // c:3881-3884
+            };
+            PARAMSUBST_LF_ARRAY.with(|c| c.set(lf_array));
 
             // c:Src/subst.c:4316-4324 — the plan9 (RC_EXPAND_PARAM / `${^a}`)
             // cross product substitutes the TRAILING text ONCE, up front:
