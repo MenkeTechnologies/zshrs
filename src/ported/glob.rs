@@ -742,6 +742,28 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
     let hash_c = zpc[crate::ported::zsh_h::ZPC_HASH as usize] as char;
     drop(zpc);
 
+    // c:746-748 tests `*instr == zpc_special[ZPC_INPAR]` and `*str ==
+    // zpc_special[ZPC_HASH]`, and C's `zpc_chars` (Src/pattern.c:248)
+    // stores the TOKENS there — `Inpar` and `Pound`, not `(` and `#` —
+    // because everything reaching patcompile in C is lexer-tokenized.
+    // zshrs's `patcompcharsset` deliberately stores the RAW spelling
+    // instead (see its note there: patcompile is reachable with
+    // untokenized patterns and ~80 tests depend on a raw `|`
+    // alternating), so a straight comparison against the table never
+    // matches the tokenized input `parsecomplist` actually receives
+    // from `globdata_glob`.
+    //
+    // Accept either spelling, but keep the option masking: when a slot
+    // is disabled (EXTENDEDGLOB off, SHGLOB on, `disable -p`)
+    // `patcompcharsset` overwrites it with `Marker`, and then NEITHER
+    // spelling may match — which is what keeps `setopt noextendedglob;
+    // (sub/)#end` a literal.
+    let marker_c = crate::ported::zsh_h::Marker;
+    let is_inpar =
+        |c: char| c == inpar_c || (c == crate::ported::zsh_h::Inpar && inpar_c != marker_c);
+    let is_hash =
+        |c: char| c == hash_c || (c == crate::ported::zsh_h::Pound && hash_c != marker_c);
+
     // c:746-748 — `if (*(str = instr) == zpc_special[ZPC_INPAR] &&
     //               !skipparens(Inpar, Outpar, (char **)&str) &&
     //               *str == zpc_special[ZPC_HASH] && str[-2] == '/')`.
@@ -759,14 +781,14 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
         char::from_u32(outpar_byte).unwrap_or(')'),
         &mut cursor,
     );
-    let str_after_parens: Option<usize> = if chars.first() == Some(&inpar_c) {
+    let str_after_parens: Option<usize> = if chars.first().copied().is_some_and(is_inpar) {
         Some(instr_chars.chars().count() - cursor.chars().count())
     } else {
         None
     };
-    let parens_balanced = chars.first() == Some(&inpar_c) && skip_level == 0; // c:746-747 `!skipparens(...)`
+    let parens_balanced = chars.first().copied().is_some_and(is_inpar) && skip_level == 0; // c:746-747 `!skipparens(...)`
     let after_paren_idx = str_after_parens.unwrap_or(0);
-    let str_at_hash = parens_balanced && chars.get(after_paren_idx) == Some(&hash_c); // c:748 `*str == Pound`
+    let str_at_hash = parens_balanced && chars.get(after_paren_idx).copied().is_some_and(is_hash); // c:748 `*str == Pound`
                                                                                       // c:748 `str[-2] == '/'` — `str` is past `)`, so `str[-2]` is char
                                                                                       // before `)`. In chars, that's `chars[after_paren_idx - 2]`.
     let preceded_by_slash =
@@ -1430,43 +1452,94 @@ pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {
     }
 }
 
-/// Port of `checkglobqual(char *str, int sl, int nobareglob, char **sp)` from Src/glob.c:1158.
+/// Port of `checkglobqual(char *str, int sl, int nobareglob, char **sp)` from Src/glob.c:1160.
 /// C: `int checkglobqual(char *str, int sl, int nobareglob, char **sp)` —
-///   confirm the trailing `(...)` is a glob qualifier (not literal).
-///   Sets `*sp` to the qualifier start position. Returns 0 if not a
-///   qualifier, non-zero if it is.
-/// WARNING: param names don't match C — Rust=(str, sl, _nobareglob) vs C=(str, sl, nobareglob, sp)
+///   confirm the trailing `(...)` is a glob qualifier (not a set of
+///   alternatives or an exclusion). Returns 1 for a bare qualifier
+///   list, 2 for the explicit `(#q…)` form, 0 otherwise, and writes the
+///   index of the opening parenthesis to `*sp` (C: the pointer itself).
+///
+/// `str` must be in LEXER-TOKENIZED form. EVERY test in the C body is
+/// against a TOKEN, never the raw ASCII byte — `Outpar` at c:1163,
+/// `Inpar` at c:1170/1189/1183, `Bar` at c:1175, `Tilde` at c:1179,
+/// `Pound` at c:1192. That is exactly what stops a QUOTED `)`, which
+/// reaches here as the plain byte, from closing the qualifier block:
+/// in `*(.e['[[ $REPLY == a* ]]'])` the quoted `]` bytes are ordinary
+/// text while the real closer is `Outbrack`.
+///
+/// The previous body here scanned raw ASCII `(`/`)`, dropped
+/// `nobareglob` on the floor, and had no `#q` / `Bar` / `Tilde` arms,
+/// so it could not distinguish a quoted delimiter from an active one.
 pub fn checkglobqual(
-    str: &str,
+    str: &[char],
     sl: i32,
-    _nobareglob: i32, // c:1158
+    nobareglob: i32, // c:1160
     sp: &mut Option<usize>,
 ) -> i32 {
-    // c:1163-1164 — `if (str[sl-1] != Outpar) return 0;`
-    let bytes = str.as_bytes();
+    use crate::ported::zsh_h::{Bar, Inpar, Outpar, Pound, Tilde};
+
+    let mut nobareglob = nobareglob;
+    let mut ret = 1i32; // c:1162 `int paren, ret = 1;`
     let sl = sl as usize;
-    if sl == 0 || bytes[sl - 1] != b')' {
-        // c:1164
+    // c:1163-1164 — `if (str[sl - 1] != Outpar) return 0;`
+    if sl < 2 || str[sl - 1] != Outpar {
         return 0;
     }
-    // c:1167-1212 — walk backwards counting parens to find matching `(`.
-    let mut paren = 1i32;
-    let mut i = sl - 1;
-    while i > 0 {
-        i -= 1;
-        match bytes[i] {
-            b')' => paren += 1,
-            b'(' => {
-                paren -= 1;
-                if paren == 0 {
-                    *sp = Some(i);
-                    return 1; // c:1209
-                }
+
+    // c:1169-1187 — walk back from `str + sl - 2` to the matching
+    // `Inpar`, tracking nesting in `paren`. `Outpar` falls THROUGH to
+    // the `Bar` arm, so a nested group, an alternation, or an
+    // EXTENDEDGLOB exclusion each force `nobareglob`.
+    let mut paren = 0i32; // c:1169
+    let mut start: Option<usize> = None;
+    let mut i = sl - 2;
+    loop {
+        // c:1170 loop condition — `*s && (*s != Inpar || paren)`
+        if str[i] == Inpar && paren == 0 {
+            start = Some(i);
+            break;
+        }
+        match str[i] {
+            // c:1172-1174 `case Outpar: paren++; /*FALLTHROUGH*/`
+            Outpar => {
+                paren += 1;
+                nobareglob = 1; // c:1175-1177 via the fallthrough into Bar
             }
+            // c:1175-1178 `case Bar:` — an alternation.
+            Bar => nobareglob = 1,
+            // c:1179-1182 `case Tilde:` — EXTENDEDGLOB exclusion.
+            Tilde if glob_isset(EXTENDEDGLOB) => nobareglob = 1,
+            // c:1183-1185 `case Inpar: paren--;`
+            Inpar => paren -= 1,
             _ => {}
         }
+        // c:1186-1187 `if (s == str) break;`
+        if i == 0 {
+            break;
+        }
+        i -= 1;
     }
-    0 // c:1212
+    // c:1189-1190 `if (*s != Inpar) return 0;`
+    let start = match start {
+        Some(v) => v,
+        None => return 0,
+    };
+
+    // c:1191-1198 — under EXTENDEDGLOB a leading `Pound` marks the
+    // explicit `(#q…)` qualifier; any other `(#X…)` is an inline
+    // pattern flag, not a qualifier block.
+    if glob_isset(EXTENDEDGLOB) && str.get(start + 1) == Some(&Pound) {
+        if str.get(start + 2) != Some(&'q') {
+            return 0; // c:1193-1194
+        }
+        ret = 2; // c:1195
+    } else if nobareglob != 0 {
+        return 0; // c:1197-1198
+    }
+
+    // c:1200-1201 `if (sp) *sp = s;`
+    *sp = Some(start);
+    ret // c:1203
 }
 
 /// Port of `zglob(LinkList list, LinkNode np, int nountok)` from
@@ -1594,7 +1667,14 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
             }
             if isset(crate::ported::zsh_h::NOMATCH) {
                 // c:1876-1880 — `else if (isset(NOMATCH)) { zerr; return; }`
-                crate::ported::utils::zerr(&format!("no matches found: {}", ostr));
+                // c:1877 — `ostr` is tokenized; zerrmsg's `%s` renders
+                // via nicezputs → sb_niceformat → `untokenize(ums)`
+                // (Src/utils.c), so the message shows the source
+                // spelling rather than raw token bytes.
+                crate::ported::utils::zerr(&format!(
+                    "no matches found: {}",
+                    crate::ported::lex::untokenize(&ostr)
+                ));
                 // c:1878 — `zfree(matchbuf, 0);` (Rust drop handles it)
                 // c:1879 — `restore_globstate(saved);` (handled by guard)
                 return; // c:1880
@@ -3910,6 +3990,18 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // faithful `scanner`. parsecomplist consumes TOKENIZED input (it tests
     // for the `Star` token and hands segments to patcompile), so feed it
     // `pat_tok` (already tokenized above; tokenize is idempotent).
+    // c:Src/glob.c:796 — `patcompstart();` is the FIRST statement of
+    // parsepat, before the pathbuf setup and parsecomplist below. It
+    // runs patcompcharsset (c:464), which fills `zpc_special` from
+    // `zpc_chars` and marks the option-disabled entries. This inlined
+    // copy of parsepat's body (c:809-820) omitted it, so `zpc_special`
+    // stayed all-zero on this path and every gate that compares against
+    // it was dead: `parsecomplist`'s `(dir/)#` branch (c:746-748) tests
+    // `*instr == zpc_special[ZPC_INPAR]` and `*str ==
+    // zpc_special[ZPC_HASH]`, both of which compared Inpar/Pound against
+    // NUL and never fired. `(sub/)#end` therefore matched only the
+    // zero-repetition case (`end`), not `sub/end`, `sub/sub/end`, …
+    crate::ported::pattern::patcompstart(); // c:796
     state.pathbufcwd = 0; // c:812 — `DPUTS(pathbufcwd, ...)` invariant
     let parse_src = if let Some(rest) = pat_tok.strip_prefix('/') {
         // c:813-816 — absolute path.
@@ -4181,6 +4273,46 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
 /// shape when porting parsepat for real.
 pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
     // RUST-ONLY
+    // c:Src/glob.c:1158-1202 `checkglobqual` — C decides where the
+    // qualifier block starts by testing the LEXER TOKENS `Outpar` /
+    // `Inpar` (c:1163 `if (str[sl - 1] != Outpar) return 0;`, c:1170
+    // `*s != Inpar`, c:1189), never the raw ASCII bytes. That is the
+    // whole mechanism by which a QUOTED metachar stays literal: in
+    // `*(.e['[[ $REPLY == a* ]]'])` the body's `]` bytes are raw ASCII
+    // while the qualifier's real closer is `Outbrack`, so the scan
+    // walks straight past the quoted ones.
+    //
+    // zshrs's glob layer is reachable BOTH ways: `zglob` (c:1221) and
+    // the fusevm word path hand it the tokenized word, while
+    // programmatic callers (compsys `glob_path`, `builtin.rs`,
+    // `subst.rs`) hand it an untokenized string. Pick the scanner off
+    // the terminator so both keep working — token mode is the faithful
+    // c:1163 test, raw mode is the untokenized-caller fallback that
+    // reconstructs "was this escaped" from backslashes instead.
+    if pattern.ends_with(crate::ported::zsh_h::Outpar) {
+        // c:1296-1310 — zglob calls checkglobqual, then cuts the block
+        // out at the returned `Inpar` (`*s++ = 0`) and steps over the
+        // `#q` when qualsfound == 2 (c:1310 `s += 2`).
+        let cv: Vec<char> = pattern.chars().collect();
+        let mut sp: Option<usize> = None;
+        // c:1226 `nobareglob = !isset(BAREGLOBQUAL);`
+        let nobareglob = i32::from(!glob_isset(BAREGLOBQUAL));
+        let qualsfound = checkglobqual(&cv, cv.len() as i32, nobareglob, &mut sp);
+        let start = match sp {
+            Some(v) if qualsfound != 0 => v,
+            _ => return (pattern.to_string(), None),
+        };
+        let body_start = if qualsfound == 2 { start + 3 } else { start + 1 };
+        let qual_content: String = cv[body_start..cv.len() - 1].iter().collect();
+        let byte_start: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
+        let qs = parse_qualifier_string(&qual_content);
+        return (pattern[..byte_start].to_string(), Some(qs));
+    }
+
+    // Untokenized fallback, for the programmatic `glob_path` callers
+    // that never went through the lexer (compsys, `builtin.rs`,
+    // `subst.rs`). No `Bnull` tokens are present to carry escaping, so
+    // it is recovered from literal backslashes instead.
     if !pattern.ends_with(')') {
         return (pattern.to_string(), None);
     }
@@ -4292,13 +4424,32 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
 fn parse_qualifier_string(s: &str) -> qualifier_set {
     // RUST-ONLY
     let mut qs = qualifier_set::default();
+    // c:Src/glob.c:1312-1314 — `for (ptr = s; *ptr; ptr++) if (*ptr ==
+    // Dash) *ptr = '-';`. The qualifier body arrives in LEXER-TOKENIZED
+    // form, and C normalises the one token it rewrites wholesale before
+    // the switch runs. Every OTHER token that can appear here (`Star`,
+    // `Hat`, `Equals`, `Inbrack`) keeps its token spelling and is
+    // matched by a dedicated `case` in the switch below — see c:1343,
+    // c:1358, c:1385, c:1723. Untokenized callers reach here with no
+    // tokens at all, so this pass is a no-op for them.
+    let s: String = s
+        .chars()
+        .map(|c| {
+            if c == crate::ported::zsh_h::Dash {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
     let mut chars = s.chars().peekable();
     let mut negated = false;
     let mut follow = false;
 
     while let Some(c) = chars.next() {
         match c {
-            '^' => {
+            // c:1343-1344 `case Hat: case '^':`
+            '^' | crate::ported::zsh_h::Hat => {
                 // c:1346 — `sense ^= 1`. Keep the running `negated` for
                 // the flag qualifiers (N/D/M/T) that read it, AND emit a
                 // marker so the per-qualifier sense reaches the list walk.
@@ -4324,7 +4475,8 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             '/' => qs.qualifiers.push(qualifier::IsDirectory),
             '.' => qs.qualifiers.push(qualifier::IsRegular),
             '@' => qs.qualifiers.push(qualifier::IsSymlink),
-            '=' => qs.qualifiers.push(qualifier::IsSocket),
+            // c:1358-1359 `case Equals: case '=':`
+            '=' | crate::ported::zsh_h::Equals => qs.qualifiers.push(qualifier::IsSocket),
             'p' => qs.qualifiers.push(qualifier::IsFifo),
             '%' => match chars.peek() {
                 Some('b') => {
@@ -4337,7 +4489,11 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 }
                 _ => qs.qualifiers.push(qualifier::IsDevice),
             },
-            '*' => qs.qualifiers.push(qualifier::IsExecutable),
+            // c:1385 `case Star:` — C matches ONLY the token, since an
+            // unquoted `*` in a qualifier list always reaches the glob
+            // layer tokenized. The raw spelling is kept alongside it for
+            // the untokenized programmatic `glob_path` callers.
+            '*' | crate::ported::zsh_h::Star => qs.qualifiers.push(qualifier::IsExecutable),
             // Permission qualifiers
             'r' => qs.qualifiers.push(qualifier::Readable),
             'w' => qs.qualifiers.push(qualifier::Writable),
@@ -4732,8 +4888,8 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                     }
                 }
             }
-            // Subscript
-            '[' => {
+            // Subscript — c:1723-1724 `case '[': case Inbrack:`
+            '[' | crate::ported::zsh_h::Inbrack => {
                 let (first, last) = parse_subscript(&mut chars);
                 qs.first = first;
                 qs.last = last;
@@ -5266,9 +5422,12 @@ fn parse_subscript(
 
     while let Some(&c) = chars.peek() {
         chars.next();
-        if c == ']' {
+        // The subscript body reaches `getindex` (c:1735) still tokenized,
+        // so the terminator is `Outbrack` on the lexed path and a raw `]`
+        // on the untokenized programmatic one. Accept both.
+        if c == ']' || c == crate::ported::zsh_h::Outbrack {
             break;
-        } else if c == ',' {
+        } else if c == ',' || c == crate::ported::zsh_h::Comma {
             in_last = true;
         } else if in_last {
             last_str.push(c);

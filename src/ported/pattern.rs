@@ -616,6 +616,19 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     //   raw ASCII glob metachar              -> \X                  (literal)
     // `/`, `+`, `!`, `@` stay verbatim — C's zpc_chars keeps those
     // slots RAW (path split + ksh-glob triggers fire on raw bytes).
+    // c:Src/pattern.c:751 — C sets `*endexp = patparse`, a POINTER INTO
+    // the caller's own tokenized buffer, so the remainder keeps its exact
+    // original bytes. zshrs normalizes the input below, so record for each
+    // NORMALIZED char the index of the ORIGINAL char it came from; the
+    // endexp sites then slice the ORIGINAL string instead of re-tokenizing
+    // the normalized suffix. That round-trip was lossy: parsecomplist
+    // strips the leading `(` of `(sub/)#end` before calling patcompile, so
+    // the normalizer saw the group's `Outpar` as UNBALANCED and demoted it
+    // to a literal `\)`, and re-tokenizing produced `Bnull )` where C still
+    // has `Outpar`. The `(dir/)#` branch's c:752 test
+    // `instr[1] == Outpar` then failed and the closure never formed.
+    let exp_tokenized: Vec<char> = exp.chars().collect();
+    let mut norm_to_orig: Vec<usize> = Vec::with_capacity(exp.len());
     let exp: String = {
         let ztokens: Vec<char> = crate::ported::glob::ZTOKENS.chars().collect();
         let chars: Vec<char> = exp.chars().collect();
@@ -641,6 +654,21 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         // pattern) into a "bad pattern". Track Inbrack(0x91)/Outbrack(0x92).
         let mut in_bracket = false;
         let mut i = 0;
+        // Emit one normalized char and record which ORIGINAL char it came
+        // from, so `endexp` can be sliced out of the untouched tokenized
+        // input the way C's `*endexp = patparse` pointer is. Indexed by
+        // BYTE offset into `out`, because both endexp sites slice the
+        // normalized string by byte offset. Defined after `i` so
+        // macro_rules definition-site hygiene resolves it to the cursor.
+        macro_rules! opush {
+            ($c:expr) => {{
+                let before = out.len();
+                out.push($c);
+                for _ in before..out.len() {
+                    norm_to_orig.push(i);
+                }
+            }};
+        }
         while i < chars.len() {
             let c = chars[i];
             let cu = c as u32;
@@ -652,7 +680,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             if cu == 0x88 && !in_bracket {
                 // Inpar — opens a group.
                 open_paren += 1;
-                out.push('(');
+                opush!('(');
                 i += 1;
                 continue;
             }
@@ -660,10 +688,10 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 // Outpar — closes an open group, else literal `)`.
                 if open_paren > 0 {
                     open_paren -= 1;
-                    out.push(')');
+                    opush!(')');
                 } else {
-                    out.push('\\');
-                    out.push(')');
+                    opush!('\\');
+                    opush!(')');
                 }
                 i += 1;
                 continue;
@@ -678,11 +706,11 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 // `\payload` form dropped the Meta char and never
                 // matched a metafied subject — `[[ $'\xff' ==
                 // $'\xff' ]]` failed. Bug #127.
-                out.push('\\');
-                out.push(c);
+                opush!('\\');
+                opush!(c);
                 if i + 1 < chars.len() {
-                    out.push('\\');
-                    out.push(chars[i + 1]);
+                    opush!('\\');
+                    opush!(chars[i + 1]);
                     i += 2;
                 } else {
                     i += 1;
@@ -692,8 +720,8 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             if cu == 0x9f || cu == 0xa0 {
                 // Bnull / Bnullkeep — payload is a literal.
                 if i + 1 < chars.len() {
-                    out.push('\\');
-                    out.push(chars[i + 1]);
+                    opush!('\\');
+                    opush!(chars[i + 1]);
                     i += 2;
                 } else {
                     i += 1;
@@ -707,7 +735,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             }
             if (0x84..=0x9e).contains(&cu) {
                 // Token -> the raw metachar the parser dispatches on.
-                out.push(ztokens[(cu - 0x84) as usize]);
+                opush!(ztokens[(cu - 0x84) as usize]);
                 i += 1;
                 continue;
             }
@@ -715,9 +743,9 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 // Raw `\X` — Bnull-equivalent quoting marker in the
                 // zshrs pipeline; pass both through to the parser's
                 // `\X` literal arm. Trailing lone `\` stays itself.
-                out.push('\\');
+                opush!('\\');
                 if i + 1 < chars.len() {
-                    out.push(chars[i + 1]);
+                    opush!(chars[i + 1]);
                     i += 2;
                 } else {
                     i += 1;
@@ -726,15 +754,24 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             }
             if matches!(c, '*' | '?' | '[' | '(' | ')' | '|' | '~' | '^' | '#' | '<') {
                 // Untokenized ASCII metachar — literal per zpc_chars.
-                out.push('\\');
-                out.push(c);
+                opush!('\\');
+                opush!(c);
                 i += 1;
                 continue;
             }
-            out.push(c);
+            opush!(c);
             i += 1;
         }
         out
+    };
+    // c:751 — resolve a byte offset in the NORMALIZED string back to the
+    // corresponding suffix of the ORIGINAL tokenized input, which is what
+    // C's `*endexp = patparse` yields for free (it is a pointer into the
+    // caller's own buffer). An offset past the last recorded char means
+    // the whole pattern was consumed, so the remainder is empty.
+    let orig_remainder = |orig: &[char], map: &[usize], norm_byte_off: usize| -> String {
+        let start = map.get(norm_byte_off).copied().unwrap_or(orig.len());
+        orig[start.min(orig.len())..].iter().collect()
     };
     let exp = exp.as_str();
     *patstart.lock().unwrap() = exp.to_string();
@@ -924,17 +961,14 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         // c:610 — pure iff we stopped at end or '/', not at a glob meta.
         if !at_token {
             let literal = s[..cut].as_bytes().to_vec();
-            let remainder = s[cut..].to_string();
             drop(p);
             let mlen = literal.len() as i64;
             if let Some(end) = endexp.as_deref_mut() {
-                // c:751 *endexp = patparse (at '/'). patparse is normalized
-                // (untokenized); re-tokenize so parsecomplist's recursion
-                // feeds the NEXT patcompile a tokenized segment (else raw
-                // '*' gets re-escaped to `\*`, losing the Star meaning).
-                let mut rem = remainder;
-                crate::ported::glob::tokenize(&mut rem);
-                *end = rem;
+                // c:751 `*endexp = patparse` — a pointer INTO the caller's
+                // tokenized buffer. Map the normalized cut back to the
+                // original char index and slice the untouched tokenized
+                // input, so the remainder keeps its exact original tokens.
+                *end = orig_remainder(&exp_tokenized, &norm_to_orig, cut);
             }
             let prog: Patprog = Box::new((
                 patprog {
@@ -969,14 +1003,10 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     let code = patout.lock().unwrap().clone();
     let consumed_off = patparse_off.load(Ordering::Relaxed);
     if let Some(end) = endexp.as_deref_mut() {
-        let parse = patparse.lock().unwrap();
-        // c:751 *endexp = patparse. patparse is normalized (untokenized);
-        // re-tokenize so parsecomplist's recursion feeds the next
-        // patcompile a tokenized segment (raw '*' would re-escape to `\*`).
-        let mut rem = parse[consumed_off..].to_string();
-        drop(parse);
-        crate::ported::glob::tokenize(&mut rem);
-        *end = rem;
+        // c:751 `*endexp = patparse` — a pointer INTO the caller's
+        // tokenized buffer. Map the normalized consume-point back to the
+        // original char index and slice the untouched tokenized input.
+        *end = orig_remainder(&exp_tokenized, &norm_to_orig, consumed_off);
     }
 
     let prog: Patprog = Box::new((

@@ -9751,6 +9751,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // multibyte text (`↔`) never matches a token
                         // codepoint — bug #627.
                         let is_glob_pre = !noglob && crate::ported::pattern::haswilds(&s);
+                        // c:Src/glob.c:1230 — zglob receives the word in
+                        // LEXER-TOKENIZED form and only untokenizes it when
+                        // it declines to glob (c:1232) or falls back to the
+                        // literal (c:1884). The token form is what makes a
+                        // QUOTED metachar distinguishable from an active one:
+                        // in `*(.e['[[ $REPLY == a* ]]'])` the body's `]`
+                        // bytes are raw ASCII while the qualifier's real
+                        // closer is `Outbrack`, which is exactly how
+                        // checkglobqual (c:1163/1170, testing Outpar/Inpar)
+                        // and get_strarg's tokenized delimiter half
+                        // (Src/subst.c:1379-1390) find the true end. zshrs
+                        // untokenized here, one line before the glob layer,
+                        // so every quoted metachar became indistinguishable
+                        // from an active one and the qualifier parser closed
+                        // on the first quoted `]`. Keep the tokenized word
+                        // for the glob call; the untokenized form still
+                        // drives the non-glob arms below.
+                        let s_tok = s.clone();
                         let s = crate::lex::untokenize(&s);
                         // Skip glob expansion for assignment-shaped
                         // words (`NAME=value`). zsh doesn't expand the
@@ -9788,7 +9806,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // `$'…'`-decoded `[abc]` carries bare `[` so
                         // stays literal. Bug #625.
                         if is_glob_pre && !is_assignment_shape {
-                            exec.expand_glob(&s)
+                            exec.expand_glob(&s_tok)
                         } else if is_assignment_shape
                             && crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
                         {

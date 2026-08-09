@@ -5129,7 +5129,16 @@ impl ShellExecutor {
             // immediately after zerr, making `echo /never/*` print
             // the literal and exit 0 instead of erroring like zsh —
             // parity bug #13).
-            zerr(&format!("no matches found: {}", pattern)); // c:1877
+            // c:1877 `zerr("no matches found: %s", ostr);` — `ostr` is
+            // the TOKENIZED word, and zerrmsg's `%s` arm renders it
+            // through `nicezputs` → `sb_niceformat`, which calls
+            // `untokenize(ums)` (Src/utils.c). Without that step the
+            // token bytes are dropped by the terminal and the message
+            // reads `no matches found: /tmp/nope_.txt`.
+            zerr(&format!(
+                "no matches found: {}",
+                crate::ported::lex::untokenize(pattern)
+            )); // c:1877
             self.current_command_glob_failed.set(true);
             // c:Src/glob.c:1876-1880 — zerr sets ERRFLAG_ERROR and
             // glob_failed cell carries the signal. The ERRFLAG_ERROR
@@ -5141,7 +5150,13 @@ impl ShellExecutor {
             return Vec::new(); // c:1880 return
         }
         // Pattern has no glob meta — pass through literally.
-        vec![pattern.to_string()]
+        // c:Src/glob.c:1882-1886 — `/* treat as an ordinary string */
+        // untokenize(matchptr->name = dupstring(ostr));`. The word
+        // arrives here in LEXER-TOKENIZED form (c:1221 `ostr =
+        // getdata(np)`), so the literal fallback MUST untokenize or the
+        // raw token bytes reach stdout: `unsetopt nomatch; echo
+        // /tmp/nope_*.txt` printed `/tmp/nope_\u{87}.txt`.
+        vec![crate::ported::lex::untokenize(pattern)]
     }
     /// True iff the literal `pattern` actually contains a glob metachar
     /// in a position that would have triggered globbing. Used to avoid

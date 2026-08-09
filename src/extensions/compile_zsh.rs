@@ -12168,8 +12168,29 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         }
     }
     if name_end == 0 {
-        // Special single-char name? Not handled here.
-        return None;
+        // `${:-word}` / `${:+word}` / `${:?word}` — the EMPTY-name
+        // default family. C reaches these through the ordinary
+        // paramsubst operator dispatch (Src/subst.c:3193 `case '-'`);
+        // the name simply resolves unset. They are unambiguous because
+        // the operator is spelled with a leading colon, unlike the
+        // no-colon `${-x}` / `${+x}` / `${?x}` which collide with the
+        // special parameters `$-` / `$?`, so only the colon forms are
+        // admitted here.
+        //
+        // Routing them through this modifier path is what brackets the
+        // word with BUILTIN_DEFAULT_WORD_GLOB_RESET/…GLOB, so a SOURCE
+        // glob in the default word drives filename generation:
+        // `${:-*}` expands to the directory listing in zsh. Bailing
+        // here sent the word down the generic text path, which sets
+        // DEFAULT_WORD_GLOB_PENDING in paramsubst but has nothing to
+        // consume it, so `${:-*}` came out as the literal `*` while the
+        // named form `${u:-*}` globbed correctly.
+        let is_empty_name_default = bytes.first() == Some(&b':')
+            && matches!(bytes.get(1), Some(b'-') | Some(b'+') | Some(b'?'));
+        if !is_empty_name_default {
+            // Special single-char name? Not handled here.
+            return None;
+        }
     }
     let name = inner[..name_end].to_string();
     // Optional `[@]` / `[*]` subscript suffix — for arrays and assocs
