@@ -5878,8 +5878,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
-                // c:Src/params.c:5354
+                // c:Src/params.c:3024 — the env mirror is `addenv(pm, value)`,
+                // and addenv builds its string with `mkenvstr(nam, value,
+                // pm->flags)` (c:5463) so `copyenvstr` (c:5434) can apply the
+                // PM_LOWER / PM_UPPER fold. Formatting `name=value` by hand
+                // skipped that: `typeset -lx v; v=HeLLo` exported `HeLLo`
+                // where zsh exports `hello`. The fold has to happen HERE
+                // because the paramtab now stores the value verbatim.
+                let envstr = crate::ported::params::mkenvstr(
+                    &name,
+                    &value,
+                    exec.param_flags(&name), // c:5463 pm->flags
+                );
+                let _ = crate::ported::params::zputenv(&envstr); // c:Src/params.c:5354
             }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled()
@@ -5930,8 +5941,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
-                // c:Src/params.c:5354
+                // c:Src/params.c:3024 — the env mirror is `addenv(pm, value)`,
+                // and addenv builds its string with `mkenvstr(nam, value,
+                // pm->flags)` (c:5463) so `copyenvstr` (c:5434) can apply the
+                // PM_LOWER / PM_UPPER fold. Formatting `name=value` by hand
+                // skipped that: `typeset -lx v; v=HeLLo` exported `HeLLo`
+                // where zsh exports `hello`. The fold has to happen HERE
+                // because the paramtab now stores the value verbatim.
+                let envstr = crate::ported::params::mkenvstr(
+                    &name,
+                    &value,
+                    exec.param_flags(&name), // c:5463 pm->flags
+                );
+                let _ = crate::ported::params::zputenv(&envstr); // c:Src/params.c:5354
             }
         });
         Value::Bool(true)

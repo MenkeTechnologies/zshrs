@@ -895,3 +895,168 @@ mod local_dash_p_handler_swap {
         );
     }
 }
+
+/// `typeset -l` / `-u` — the fold is a READ-time attribute, not a store
+/// transform (c:Src/params.c:2497-2506, inside `getstrvalue`'s VALFLAG_SUBST
+/// block). Everything in this module is the observable consequence of that:
+/// the stored text stays verbatim, so `typeset -p` shows the original case
+/// and dropping the attribute hands it back.
+///
+/// These assert on RAW BYTES, not `String::from_utf8_lossy` like
+/// `assert_parity` above. Lossy conversion maps every invalid sequence to
+/// U+FFFD, so two DIFFERENT byte strings compare EQUAL — and the values here
+/// are exactly the multibyte ones where a wrong fold produces different bytes
+/// (`ß` → "SS" widens; a byte-wise fold turns `c3 89` into `e3 89`). Byte
+/// comparison is the whole point of the module.
+mod case_attributes {
+    use super::{zsh_available, zsh_path, zshrs_bin};
+    use std::process::Command;
+
+    /// Byte-exact stdout+status comparison. Strictly stronger than the
+    /// module-level `assert_parity`, which compares lossy Strings.
+    fn assert_bytes(s: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fc", s])
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", s])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            z.stdout, r.stdout,
+            "stdout bytes diverge on:\n{s}\n--- zsh   ---\n{:02x?}\n--- zshrs ---\n{:02x?}",
+            z.stdout, r.stdout
+        );
+        assert_eq!(
+            z.status.code(),
+            r.status.code(),
+            "exit status diverges on:\n{s}"
+        );
+    }
+
+    /// The store keeps the original case; only a substitution folds.
+    /// `typeset -p` reads through `printparamvalue` (c:6049), which calls
+    /// `gsu.s->getfn` directly and never sets VALFLAG_SUBST.
+    #[test]
+    fn store_is_verbatim_read_is_folded() {
+        assert_bytes(r#"typeset -l v=ABC; print -r -- "$v"; typeset -p v"#);
+        assert_bytes(r#"typeset -u v=abc; print -r -- "$v"; typeset -p v"#);
+    }
+
+    /// Dropping the attribute re-exposes the stored text. `chflags`
+    /// (c:Src/builtin.c:2117) does not list the case bits, so `typeset +l`
+    /// is not a type conversion and must not rewrite the value.
+    #[test]
+    fn removing_attribute_restores_original() {
+        assert_bytes(r#"typeset -l v=ABC; typeset +l v; print -r -- "$v""#);
+        assert_bytes(r#"typeset -u v=abc; typeset +u v; print -r -- "$v""#);
+        assert_bytes(r#"typeset -l v=MiXeD; typeset +l v; typeset -p v"#);
+    }
+
+    /// A plain assignment made WHILE the attribute is live also stores
+    /// verbatim — the declare-then-assign path has to agree with the
+    /// declare-with-value path or the two forms disagree.
+    #[test]
+    fn plain_assign_under_attribute_stores_verbatim() {
+        assert_bytes(r#"typeset -l v; v=MiXeD; print -r -- "$v"; typeset +l v; print -r -- "$v""#);
+        assert_bytes(r#"typeset -u v; v=MiXeD; print -r -- "$v"; typeset +u v; print -r -- "$v""#);
+        assert_bytes(r#"v=ABC; typeset -l v; print -r -- "$v"; typeset +l v; print -r -- "$v""#);
+    }
+
+    /// `+=` appends to the stored (verbatim) value, and the append is
+    /// folded only on the way out.
+    #[test]
+    fn augment_assign_appends_to_stored_value() {
+        assert_bytes(
+            r#"typeset -l v=ABC; v+=DEF; print -r -- "$v"; typeset +l v; print -r -- "$v""#,
+        );
+        assert_bytes(
+            r#"typeset -u v=abc; v+=def; print -r -- "$v"; typeset +u v; print -r -- "$v""#,
+        );
+    }
+
+    /// The env mirror folds independently, in `copyenvstr` (c:5434) — the
+    /// paramtab copy stays verbatim, so the two must be checked separately.
+    #[test]
+    fn export_mirror_folds_while_store_does_not() {
+        assert_bytes(r#"typeset -lx v=HeLLo; print -r -- "env=[$(printenv v)]"; typeset -p v"#);
+        assert_bytes(r#"typeset -lx v; v=HeLLo; print -r -- "env=[$(printenv v)]""#);
+        assert_bytes(r#"typeset -ux v; v=HeLLo; print -r -- "env=[$(printenv v)]""#);
+        assert_bytes(r#"typeset -lx v=HeLLo; typeset +l v; print -r -- "env=[$(printenv v)]""#);
+    }
+
+    /// A case flag is not a type conversion, so it must not disturb the
+    /// numeric type bits — and `typeset +i` on a param that was never an
+    /// integer changes nothing at all (`off & pm->flags == 0`).
+    #[test]
+    fn case_flag_does_not_clobber_numeric_type() {
+        assert_bytes(r#"typeset -i n=42; typeset -l n; typeset -p n; print -r -- "${(t)n}""#);
+        assert_bytes(
+            r#"typeset -i16 n=255; typeset -l n; print -r -- "$n"; print -r -- "${(t)n}""#,
+        );
+        assert_bytes(r#"typeset -l v=ABC; typeset +i v; typeset -p v; print -r -- "${(t)v}""#);
+    }
+
+    /// Justification runs BEFORE the fold — c:2497 sits after the padding
+    /// switch, both inside the same VALFLAG_SUBST block.
+    #[test]
+    fn padding_applies_before_case_fold() {
+        assert_bytes(r#"typeset -Ll4 v=ABCDEFG; print -r -- "[$v]"; typeset -p v"#);
+        assert_bytes(r#"typeset -Ru3 v=abcdefg; print -r -- "[$v]"; typeset -p v"#);
+        assert_bytes(r#"typeset -Zl6 v=AB; print -r -- "[$v]"; typeset -p v"#);
+    }
+
+    /// Arrays and associations have no case attribute: C folds only in
+    /// `getstrvalue`'s scalar path, so `typeset -l` on an array is inert.
+    #[test]
+    fn arrays_are_not_case_folded() {
+        assert_bytes(r#"typeset -a a=(AB Cd); typeset -l a 2>&1; print -rl -- "$a[@]""#);
+        assert_bytes(r#"typeset -A h=(k VAL); typeset -l h 2>&1; print -r -- "$h[k]""#);
+    }
+
+    /// `casemodify` (c:Src/hist.c:2196) is a WIDE-CHAR loop: `iswlower(wc)`
+    /// then `towupper(wc)`, one scalar in and one scalar out. Rust's
+    /// `to_uppercase` is the full Unicode mapping and WIDENS `ß` to "SS" and
+    /// `ﬁ` to "FI", which `towupper` cannot do and therefore does not.
+    #[test]
+    fn case_fold_uses_single_scalar_mapping() {
+        assert_bytes(r#"typeset -u v=straße; print -r -- "$v"; typeset +u v; print -r -- "$v""#);
+        assert_bytes(r#"typeset -u v=ﬁle; print -r -- "$v""#);
+        assert_bytes(r#"v=straße; print -r -- "${(U)v}""#);
+        assert_bytes(r#"v=ﬁle; print -r -- "${(U)v}" "${(C)v}""#);
+        assert_bytes(r#"v=ǅ; print -r -- "${(U)v}" "${(C)v}" "${(L)v}""#);
+        assert_bytes(r#"v=ŉ; print -r -- "${(U)v}""#);
+    }
+
+    /// `${(L)}` folds per character, so a final sigma is NOT special-cased —
+    /// `towlower(Σ)` is `σ` wherever it appears. Rust's string-level
+    /// `to_lowercase` applies the contextual final-sigma rule and answers
+    /// `ς` for the last one.
+    #[test]
+    fn lowercase_does_not_apply_final_sigma_rule() {
+        assert_bytes(r#"v=ΣΤΙΓΜΑΣ; print -r -- "${(L)v}""#);
+    }
+
+    /// `${(C)}` short-circuits on combining marks (`IS_COMBINING`,
+    /// c:Src/hist.c:2241) so they do not reset the word boundary. An
+    /// NFD-decomposed accented word is one word, not two.
+    #[test]
+    fn capitalise_treats_combining_mark_as_mid_word() {
+        assert_bytes("v=$'a\\u0301b'; print -r -- \"${(C)v}\"");
+        assert_bytes(r#"v=áb; print -r -- "${(C)v}""#);
+    }
+
+    /// The history-style `:u` / `:l` modifiers share the same helper as
+    /// `${(U)}` / `${(L)}` (c:Src/subst.c:3960 → `casemodify`), so they must
+    /// agree with each other on the same input.
+    #[test]
+    fn modifier_and_flag_forms_agree() {
+        assert_bytes(r#"v=straße; print -r -- "${v:u}" "${(U)v}""#);
+        assert_bytes(r#"v=ÉLITE; print -r -- "${v:l}" "${(L)v}""#);
+    }
+}

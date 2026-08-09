@@ -2,17 +2,29 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode typeset --count N --verify 3  (copy NEW-signature lines).
 #
-# KNOWN GAP — `typeset -l`/`-u` case fold applied at ASSIGNMENT, not on READ
-# (docs/BUGS.md #1019). C stores the ORIGINAL value and folds on read
-# (getstrvalue, c:params.c:2505) / export (copyenvstr, c:5439), so `typeset +l`
-# re-exposes the original case. zshrs folds eagerly at assignment and loses it,
-# so removing the flag shows the folded value. The plain `[$v]` read matches
-# (both folded). The `_` arm now generates the `typeset -p` + flag-removal forms
-# that surface this; the four signatures below are the KNOWN divergence and are
-# expected until #1019 is fixed (a multi-path change — route PM_LOWER/PM_UPPER
-# scalars through getstrvalue and drop the eager assignment fold). When fixed,
-# delete these four lines.
-typeset +l v0; print -r -- "orig=[$v0]"
-typeset +l W; print -r -- "orig=[$W]"
-typeset +u v0; print -r -- "orig=[$v0]"
-typeset +u W; print -r -- "orig=[$W]"
+# EMPTY — the mode has no allowed gaps. Every divergence fails.
+#
+# It used to carry four signatures for `typeset -l` / `-u` (docs/BUGS.md
+# #1019): the fold was applied at ASSIGNMENT, so the original text was gone
+# and `typeset +l` handed back the folded value. Three sites were wrong at
+# once, which is why partial attempts kept regressing a different case:
+#   - `setstrvalue` (params.rs) folded on store; C's setstrvalue
+#     (c:Src/params.c:2677) has no case arm at all.
+#   - `bin_typeset`'s scalar-assign arm folded before `assignsparam`.
+#   - `bin_typeset`'s attribute arm treated PM_LOWER / PM_UPPER as type
+#     conversions and re-stored the value it had just read back FOLDED, so
+#     even a correct read fold could not have restored the original.
+# The fold now lives where C puts it: `getstrvalue`'s VALFLAG_SUBST tail
+# (c:2497-2506) and `getsparam` (zshrs's substitution-read path, which
+# already inlined that block's justify padding), plus `copyenvstr` (c:5434)
+# for the env mirror. `chflags` (c:2117) decides what counts as a type
+# conversion, and the case bits are not in it.
+#
+# The generator arm was widened at the same time, because the old one could
+# not have caught the other half of the bug: it only assigned AFTER removing
+# the attribute, never exported, and drew from an ASCII-only value pool. It
+# now probes the live-attribute assignment, the `-x` env mirror, and a pool
+# with widening case mappings (`ß`, `ﬁ`, titlecase digraphs) that reaches
+# `casemodify` through `${(U)}` / `${(L)}` / `${(C)}` / `:u` / `:l`.
+#
+# Any divergence at all is a regression.
