@@ -7908,30 +7908,79 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // — Meta (0x83) then `byte ^ 32` — so a naive `.chars()` walk sees two
     // innocuous characters where the shell means one raw byte and passes them
     // straight through. That is C's WEOF case, and it must reach addunprintable.
+    //
+    // The walk is `mb_metacharlenconv` (c:Src/utils.c:5611) over the DEMETAFIED
+    // byte stream, which is the input C's macro actually sees. The port used to
+    // decode each `Meta`+byte pair to its own `Raw` unit and stop there, so a
+    // pair of pairs that spells ONE character never got assembled: `${(q)v}` for
+    // `v=$'\xce\xb1'` emitted `$'\316'$'\261'` where zsh emits the two bytes of
+    // `α` verbatim (`ce b1`), because C's mbrtowc joins them into a printable
+    // wide character at c:6422 and copies the unit whole (c:6431-6433).
+    let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
     let meta_chars = |s: &str| -> Vec<MetaChar> {
-        let mut out = Vec::with_capacity(s.len());
-        let mut it = s.chars().peekable();
-        while let Some(c) = it.next() {
-            if c as u32 == Meta as u32 {
-                if let Some(&n) = it.peek() {
-                    let nu = n as u32;
-                    if (0x80..=0xff).contains(&nu) {
-                        it.next();
-                        out.push(MetaChar::Raw((nu as u8) ^ 32));
-                        continue;
-                    }
+        // c:5672 — the byte stream is what mbrtowc consumes; a `Meta`+byte pair
+        // and a literal high byte are the same input to the step below.
+        let bytes = unmetafy_str(s);
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
+            // c:5613 — `if (!isset(MULTIBYTE) || (unsigned char) *s <= 0x7f)`:
+            // one byte, and `*wcp` is that byte widened. With the option off
+            // that is EVERY byte, which is why `unsetopt multibyte;
+            // ${(q)$'\xe6\x97\xa5'}` comes out as `e6` `$'\227'` `a5` in zsh —
+            // 0xe6 and 0xa5 are printable Latin-1, 0x97 is a C1 control.
+            if !mb || b <= 0x7f {
+                out.push(if b <= 0x7f {
+                    MetaChar::Ch(b as char)
+                } else {
+                    MetaChar::Raw(b)
+                });
+                i += 1;
+                continue;
+            }
+            // c:5635 → mb_metacharlenconv_r: shortest valid multibyte prefix.
+            let hi = (i + 4).min(bytes.len());
+            let mut n = 0usize;
+            for end in (i + 1)..=hi {
+                if let Some(c) = std::str::from_utf8(&bytes[i..end])
+                    .ok()
+                    .and_then(|v| v.chars().next())
+                {
+                    out.push(MetaChar::Ch(c));
+                    n = end - i;
+                    break;
                 }
             }
-            out.push(MetaChar::Ch(c));
+            if n == 0 {
+                // c:5592-5593 — no valid sequence: WEOF, one byte.
+                out.push(MetaChar::Raw(b));
+                n = 1;
+            }
+            i += n;
         }
         out
     };
-    // c:6212 — `cc != WEOF && WC_ISPRINT(cc)`. A raw byte is never printable: it
-    // IS the WEOF case.
+    // c:6212 / c:6424 — `cc != WEOF && WC_ISPRINT(cc)`.
     let mc_printable = |mc: MetaChar| -> bool {
         match mc {
             MetaChar::Ch(c) => !c.is_control(),
-            MetaChar::Raw(_) => false,
+            // With MULTIBYTE on an undecodable byte IS the WEOF case, so the
+            // `cc != WEOF` conjunct short-circuits. With it off there is no
+            // WEOF at all (c:5615-5617 always sets `*wcp` to the byte), so the
+            // test is `WC_ISPRINT` of that Latin-1 scalar.
+            MetaChar::Raw(b) => !mb && !(b as char).is_control(),
+        }
+    };
+    // c:6431-6433 — `while (u < uend) { if (*u == Meta) *v++ = *u++; *v++ = *u++; }`
+    // copies a printable unit through STILL METAFIED. A raw byte therefore has
+    // to go back out as `Meta` + `byte ^ 32`; pushing `b as char` would emit the
+    // UTF-8 encoding of U+00`b` instead of the one byte the shell holds.
+    let push_metachar = |out: &mut String, mc: MetaChar| match mc {
+        MetaChar::Ch(c) => out.push(c),
+        MetaChar::Raw(b) => {
+            out.push(char::from(Meta));
+            out.push(char::from(b ^ 32));
         }
     };
     // c:6082-6124 addunprintable — emit a non-printable element BYTE by byte, so
@@ -8067,7 +8116,8 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 push_unprintable(&mut result, mc, mcs.get(i + 1).copied());
                 result.push('\'');
             } else {
-                result.push(c);
+                // c:6431-6433 — printable unit copied through as-is.
+                push_metachar(&mut result, mc);
             }
             prev = c;
         }
@@ -8201,15 +8251,20 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         let bang = crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
         for i in 0..mcs.len() {
             let mc = mcs[i];
-            if let (true, MetaChar::Ch(c)) = (mc_printable(mc), mc) {
-                // c:6214-6224
-                if c == '\\'
-                    || c == '\''
-                    || (isset(BANGHIST) && bang != 0 && c as u32 == bang as u32)
-                {
-                    result.push('\\');
+            if mc_printable(mc) {
+                // c:6214-6224. The escape test looks at the DECODED character
+                // (`cc`), so a raw byte — which only reaches here with MULTIBYTE
+                // off — can never be `\`, `'` or the history bang, all ASCII.
+                if let MetaChar::Ch(c) = mc {
+                    if c == '\\'
+                        || c == '\''
+                        || (isset(BANGHIST) && bang != 0 && c as u32 == bang as u32)
+                    {
+                        result.push('\\');
+                    }
                 }
-                result.push(c);
+                // c:6224-6225 — `while (u < uend) *v++ = *u++;`
+                push_metachar(&mut result, mc);
             } else {
                 // c:6226-6229
                 push_unprintable(&mut result, mc, mcs.get(i + 1).copied());
