@@ -780,29 +780,60 @@ jobs:
       # the harness must NOT export COLUMNS to dodge it.
       - name: Fuzz — prompt
         run: ./target/debug/parity-fuzz --mode prompt --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/prompt.txt --out target/parity-fuzz/ci-prompt.txt
-      # Informational — the remaining unicode divergences are the byte-mode
-      # class: when the MULTIBYTE option is OFF (`unsetopt multibyte`) the
-      # length / index / slice / pad / split / char-class sites must count
-      # BYTES, but the port always counts characters (C gates them behind
-      # Src/utils.c:5611 mb_metacharlenconv / :5654 mb_metastrlenend, which
-      # short-circuit to byte length when MULTIBYTE is unset). That is a broad
-      # structural change across many sites for a rarely-used option, so it
-      # stays informational.
+      # Informational. Every divergence this mode still reports is under
+      # `unsetopt multibyte` -- measured, not assumed: 49/49 at --count 400
+      # carry the `unsetopt multibyte` line, 0 occur with the option on.
       #
-      # The blocker is representational, not just breadth: byte-mode ops
-      # deliberately CUT multibyte characters, so zsh emits invalid UTF-8 and
-      # the port's String-typed values cannot hold the result. Verified —
+      # The byte-mode rule is that with MULTIBYTE off the length / index /
+      # slice / pad / split / char-class sites must count BYTES. C does that
+      # by short-circuiting INSIDE two shared helpers -- Src/utils.c:5613
+      # mb_metacharlenconv and :5662 mb_metastrlenend.
+      #
+      # The port had copied that guard to ONE call site (the `${#v}` arm) and
+      # left it out of the helpers, so `${#v}` counted bytes while every other
+      # caller kept counting characters. The guard now lives in
+      # mb_metastrlenend where C keeps it, and dopadding iterates C's
+      # MB_METACHARLENCONV units instead of Rust `char`s. That closed the
+      # padding class (18 -> 2 of 400) and fixed two DEFAULT-mode (multibyte
+      # ON) bugs this mode never generated:
+      #   ${(l:5::x:)$'\xe6\x97\xa5'} emitted `c3 86 97 a5` (corrupt) where
+      #     zsh gives `xxxx` + `e6 97 a5` -- a metafied pair counted as 2
+      #     units by chars(), so the value was truncated instead of padded;
+      #   ${#$'\xe6'} returned 4 where zsh gives 1 under `unsetopt multibyte`
+      #     (the metafied String's UTF-8 length, not C's demetafied ztrlen).
+      #
+      # Remaining at --count 400 (49 total), by measured root cause:
+      #   13  subscript/slice  ${v[2]} ${v[1,-2]} -- index must be a BYTE
+      #    8  ${v/[[:alpha:]]/X}   (first-match substitution)
+      #    6  ${v//[[:alpha:]]/X}  (global substitution)
+      #    6  split ${(s::)v}
+      #    4  case ${(U)} / ${(L)} / ${(C)}
+      #    4  $(( ##${v[1]} ))     -- downstream of the subscript above
+      #    3  quoting ${(q)} / ${(qq)}
+      #    3  ${(#)...}
+      #    2  ${(ml:8::.:)j}       -- NOT a port gap; see below
+      #
+      # The first eight groups share one blocker: byte-mode ops deliberately
+      # CUT multibyte characters, so zsh emits invalid UTF-8. Verified under
       # `unsetopt multibyte`:
-      #   cy=Привет; ${(l:8::.:)cy}  → zsh `ивет`   (last 8 BYTES of 12)
-      #   acc=$'é'; ${acc[1,-2]} → zsh `e` + a lone 0xCC
-      #   ${(L)acc} / ${(C)cy} / ${wide/[[:alpha:]]/X} → all split a UTF-8
+      #   acc=$'é'; ${acc[1,-2]} -> zsh `e` + a lone 0xCC
+      #   ${(L)acc} / ${(C)cy} / ${wide/[[:alpha:]]/X} -> all split a UTF-8
       #   sequence mid-character.
-      # Closing it means carrying these values as bytes (or metafied) through
-      # every length/index/slice/pad/case/char-class site — not a local fix.
+      # The port CAN hold those bytes (metafied: `v=$'\xe6'` round-trips
+      # byte-exactly), so this is breadth across many sites, not an
+      # impossibility -- it is simply not a local fix.
       #
-      # FIXED: the `(m)` display-cell padding TRUNCATION
-      # now counts wide chars in cells on both sides (c:Src/subst.c:912-1080),
-      # so `${(ml:8:)日本語テキスト}` keeps the last 8 CELLS, not 8 chars.
+      # The 2 `(ml:` cases are an UPSTREAM zsh out-of-bounds read, not a port
+      # gap. Do not "fix" or baseline them. With MULTIBYTE off, c:5662 returns
+      # before the `width` argument is consulted, so `ls` is a BYTE COUNT
+      # while the c:Src/subst.c:1072 copy loop decrements by WCPADWIDTH
+      # (display CELLS); the two metrics disagree and the walk runs past the
+      # terminator. Proof it reads adjacent memory -- identical input, output
+      # changes with the process environment:
+      #   zsh -f -c 'unsetopt multibyte; j=<CJK>; print -r -- "[${(ml:8::.:)j}]"'
+      # prints `[=/Users/]` in one environment and `[?:(?:25[]` in another.
+      # Neither string occurs anywhere in the input, so matching it would mean
+      # reproducing zsh's heap layout.
       - name: Fuzz — unicode (informational)
         continue-on-error: true
         run: ./target/debug/parity-fuzz --mode unicode --count 3000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-unicode.txt
