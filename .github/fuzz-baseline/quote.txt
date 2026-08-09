@@ -5,7 +5,25 @@
 # (V) meta-byte render and (Q) bang-unescape are FIXED. Remaining: the (z)
 # shell-word split of a (q)-quoted backslash string, and (q+)/(qq) rendering
 # of an undecodable byte.
+#
+# U+00A0 (the last three entries) is NOT a quoting gap. zshrs stores decoded
+# Rust `char`s where C stores metafied BYTES, and the token constants occupy
+# U+0080..U+00A2 (zsh_h.rs:180-206 — Bnull U+009F, Bnullkeep U+00A0, Nularg
+# U+00A1, Marker U+00A2). A user character in that range therefore IS a token
+# to every consumer. In C the collision cannot happen: the byte 0xA0 in a
+# metafied string is always the token, and the user's U+00A0 is the two bytes
+# `c2 a0`. Reproduce with ANY parenthesised flag, not just the quoting ones:
+#   v=$' '; print -rn -- ${(Q)v}   -> zsh c2a0, zshrs c2a1 (Nularg)
+#   v=$'¡'; print -rn -- ${(Q)v}   -> zsh c2a1, zshrs empty (elided)
+#   v=$''; print -rn -- ${(Q)v}   -> zsh c288, zshrs 28    (Inpar -> '(')
+# Fixing it means changing how zshrs represents a shell word, so it is
+# baselined here rather than patched at the three sites that happen to expose
+# it. The sibling shapes stay STRICTLY gated: \xce\xb1 / \xe6\x97\xa5 /
+# \xe6\x97\xa5\x97 / \xce are all in the corpus and all must match.
 v="${(q)$(print -rn -- 'a\$b')}"; print -rl -- ${(z)v}; print -r -- END
 v=$'\M-\C-a'; print -r -- "[${(q+)v}]" | od -An -tW | tr -s ' '
 v=$'\M-\C-a'; print -r -- "[${(qq)v}]" | od -An -tW | tr -s ' '
 v=$'\M-a'; print -r -- "[${(q+)v}]" | od -An -tW | tr -s ' '
+v=$'\xc2\xa0'; print -r -- "[${(V)v}]"
+v=$'\xc2\xa0'; print -r -- "[${(q)v}]" | od -An -tW | tr -s ' '
+v=$'\xc2\xa0'; print -r -- "[${(qqqq)v}]" | od -An -tW | tr -s ' '
