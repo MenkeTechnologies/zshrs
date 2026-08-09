@@ -20,7 +20,7 @@
 
 ## `[PATENT PENDING]`
 
-The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **842k lines, 820 source files** across a 3-crate workspace (`zshrs` runtime + `zshrs-daemon` + `znative`, the published plugin-ABI SDK; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 89 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search — on by default), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add znative`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md).
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **856k lines, 824 source files** across a 3-crate workspace (`zshrs` runtime + `zshrs-daemon` + `znative`, the published plugin-ABI SDK; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 91 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search — on by default), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add znative`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
 ### [`Read the Docs`](https://menketechnologies.github.io/zshrs/index.html) &middot; [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](src/compsys/)
 
@@ -505,14 +505,14 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
-| `zsh_construct_corpus` | 392 | Every sh/zsh construct outside modules |
-| `zsh_corpus_via_new_pipeline` | 124 | Native lex+parse+ZshCompiler path |
-| `no_tree_walker_dispatch` | 160 | Behavioral pins for the no-tree-walker invariant |
+| `zsh_construct_corpus` | 393 | Every sh/zsh construct outside modules |
+| `zsh_corpus_via_new_pipeline` | 123 | Native lex+parse+ZshCompiler path |
+| `no_tree_walker_dispatch` | 174 | Behavioral pins for the no-tree-walker invariant |
 | `compile_zsh_smoke` | 28 | Per-construct bytecode-level smoke |
 | `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
 | `zsh_parser_probe` | 87 | AST-shape probes for every construct |
 | `ztst_runner` | 70 | Real `.ztst` files from upstream zsh |
-| **Total** | **869** | All green on the new (default) pipeline |
+| **Total** | **883** | All green on the new (default) pipeline |
 
 ---
 
@@ -523,9 +523,9 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 ```
                   ┌────────────────────────────────────────────────────────────────┐
                   │                        zshrs workspace                         │
-                  │             3 crates · 820 .rs files · 842k lines              │
+                  │             3 crates · 824 .rs files · 856k lines              │
                   ├──────────────────────────────────────────┬─────────────────────┤
-                  │      src/ (460 .rs — runtime crate)      │  vendor/fish/ (157) │
+                  │      src/ (462 .rs — runtime crate)      │  vendor/fish/ (157) │
                   │  ┌────────────────────────────────────┐  │  reader / line edit │
                   │  │  src/ported/  (106 — STRICT PORT)  │  │  syntax highlight   │
                   │  │  every .rs ↔ a real Src/<x>.c file │  │  autosuggest        │
@@ -537,7 +537,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │  │  prompt · utils · init · …         │  ├─────────────────────┤
                   │  └────────────────────────────────────┘  │  parse + lex now    │
                   │  ┌────────────────────────────────────┐  │  live IN-RUNTIME    │
-                  │  │  src/extensions/  (89 — NON-PORT)  │  │  (folded from the   │
+                  │  │  src/extensions/  (91 — NON-PORT)  │  │  (folded from the   │
                   │  │  features zsh C does NOT have:     │  │  old parse crate)   │
                   │  │  AOT · plugin/script/autoload      │  ├─────────────────────┤
                   │  │  cache · fish_features · worker    │  │  daemon/ (41 .rs)   │
