@@ -3355,7 +3355,20 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
     // is why `zsh -f -c "print -P 'abcdefghij%2(l.X.Y)'"` prints `Y`: t0 is
     // 1, not 10. Substituting 80 here (the previous port) made every `%(l…)`
     // and `%-N<` compare against a width zsh never computes.
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    //
+    // `adjustcolumns()` (c:Src/utils.c:1856) is NOT that value: it re-probes
+    // the tty and then applies the `tccolumns > 0 ? tccolumns : 80` fallback
+    // (c:1866-1870), so it can never return 0. That fallback belongs to
+    // `adjustwinsize`, which C reaches only when `SHTTY != -1`. Reading it
+    // here handed countprompt a fabricated 80-column terminal and re-broke
+    // the two call sites (c:460 `%(l…)`, c:668 `%-N<`) that were already
+    // converted to the `zterm_columns` global — both funnel their width
+    // through THIS function, so the invariant has to live here too.
+    // `IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu)` (c:Src/params.c:355)
+    // aliases the global to `$COLUMNS`, so `getiparam` is the port's
+    // equivalent; `adjustwinsize(0)` at init (vm_helper.rs:2352) keeps it
+    // equal to the true width whenever there IS a terminal.
+    let zterm_columns = crate::ported::params::getiparam("COLUMNS") as i32;
     let mut w: i32 = 0; // c:1142
     let mut h: i32 = 1;
     let multi = 0i32; // c:1142
