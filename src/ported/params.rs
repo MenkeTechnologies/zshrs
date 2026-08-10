@@ -3099,7 +3099,7 @@ pub(crate) fn getarg<'a>(
             // and scalar callers are both served: `Value::Array::to_str`
             // (fusevm value.rs:149-151) joins with " ", the exact string this
             // used to return.
-            return Some(getarg_out::Value(Value::Array(
+            return Some(getarg_out::Value(Value::array(
                 out.into_iter().map(Value::str).collect(),
             )));
         }

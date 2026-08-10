@@ -580,8 +580,8 @@ pub(crate) fn consume_tilde_globsubst_carrier() {
 fn flatten_array_value(v: Value, out: &mut Vec<String>) {
     match v {
         Value::Array(items) => {
-            for it in items {
-                flatten_array_value(it, out);
+            for it in items.iter() {
+                flatten_array_value(it.clone(), out);
             }
         }
         other => out.push(other.to_str()),
@@ -2198,7 +2198,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_MAGIC_EQUALS_PREFORK, |vm, _argc| {
         let raw = vm.pop();
         let inputs: Vec<String> = match raw {
-            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+            Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
             other => vec![other.to_str()],
         };
         let mut as_linklist: crate::ported::linklist::LinkList<String> = Default::default();
@@ -2220,7 +2220,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if expanded.len() == 1 {
             Value::str(expanded.into_iter().next().unwrap())
         } else {
-            Value::Array(expanded.into_iter().map(Value::str).collect())
+            Value::array(expanded.into_iter().map(Value::str).collect())
         }
     });
 
@@ -2339,7 +2339,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // Array → splice items as separate elements (splat);
                 // empty array contributes nothing (empty elision).
                 Value::Array(items) => {
-                    for item in items {
+                    for item in items.iter() {
                         out.push('\u{1f}');
                         out.push_str(&item.to_str());
                     }
@@ -3543,7 +3543,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         for v in popped.into_iter().rev() {
             match v {
                 Value::Array(items) => {
-                    for item in items {
+                    for item in items.iter() {
                         words.push(item.to_str());
                     }
                 }
@@ -3880,7 +3880,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if out.len() == 1 {
             return out.pop().unwrap();
         }
-        Value::Array(out)
+        Value::array(out)
     });
     // BUILTIN_ASSOC_HAS_KEY — `${(k)assoc[name]}` key-existence query.
     // Pops [assoc_name, key]; returns key (Str) if present in the
@@ -4291,12 +4291,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         match v {
             Value::Array(items) => {
                 let filtered: Vec<Value> = items
-                    .into_iter()
+                    .iter()
                     .filter(|x| !x.to_str().is_empty())
+                    .cloned()
                     .collect();
-                Value::Array(filtered)
+                Value::array(filtered)
             }
-            Value::Str(s) if s.is_empty() => Value::Array(Vec::new()),
+            Value::Str(s) if s.is_empty() => Value::array(Vec::new()),
             other => other,
         }
     });
@@ -4420,7 +4421,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `v=""; x${=v}y` are each the single word `xy`, not zero words.
         if parts.len() == 1 && parts[0].is_empty() {
             note_empty_is_scalar(true);
-            return Value::Array(Vec::new());
+            return Value::array(Vec::new());
         }
         // Zero parts is the same story reached by a different route: an empty
         // command substitution splits to nothing at all rather than to one
@@ -4474,7 +4475,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Value::str(String::new());
             }
             note_empty_is_scalar(true);
-            return Value::Array(Vec::new());
+            return Value::array(Vec::new());
         }
         if out.len() == 1 {
             // c:3924 — `else if (!aval[1]) val = aval[0];` — a one-field
@@ -4483,7 +4484,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::str(out.into_iter().next().unwrap());
         }
         // c:3927 — `isarr = nojoin ? 1 : 2;`
-        Value::Array(out.into_iter().map(Value::str).collect())
+        Value::array(out.into_iter().map(Value::str).collect())
     });
 
     vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
@@ -4516,7 +4517,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let brace_expand = opt_state_get("braceexpand").unwrap_or(true);
         let brace_ccl = opt_state_get("braceccl").unwrap_or(false);
         let inputs: Vec<String> = match raw {
-            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+            Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
             other => vec![other.to_str()],
         };
         if !brace_expand {
@@ -4667,7 +4668,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // Collect input strings (Str → vec![s]; Array → multiple).
         let inputs: Vec<String> = match raw {
-            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+            Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
             other => vec![other.to_str()],
         };
         // Run expand_glob on each. Empty matches collapse to a
@@ -4703,7 +4704,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if out.len() == 1 {
             Value::str(out.into_iter().next().unwrap())
         } else {
-            Value::Array(out.into_iter().map(Value::str).collect())
+            Value::array(out.into_iter().map(Value::str).collect())
         }
     });
 
@@ -4819,7 +4820,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::str(joined);
         }
         if joined.is_empty() {
-            return Value::Array(Vec::new());
+            return Value::array(Vec::new());
         }
         // IFS word-split — every IFS char is a separator. Empty
         // resulting fields are dropped (the canonical
@@ -4831,11 +4832,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             .map(String::from)
             .collect();
         if parts.is_empty() {
-            Value::Array(Vec::new())
+            Value::array(Vec::new())
         } else if parts.len() == 1 {
             Value::str(parts.into_iter().next().unwrap())
         } else {
-            Value::Array(parts.into_iter().map(Value::str).collect())
+            Value::array(parts.into_iter().map(Value::str).collect())
         }
     });
 
@@ -4861,12 +4862,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // bash `"${PIPESTATUS[@]}"` / `"${FUNCNAME[@]}"` / `"${BASH_VERSINFO[@]}"`
             // splat — alias the zsh-native special. No-op in --zsh.
             if let Some(v) = crate::dash_mode::bash_special_array(&name) {
-                return Value::Array(v.into_iter().map(Value::str).collect());
+                return Value::array(v.into_iter().map(Value::str).collect());
             }
             with_executor(|exec| {
                 // Special positional names — splice the positional list.
                 if name == "@" || name == "*" || name == "argv" {
-                    return Value::Array(exec.pparams().iter().map(Value::str).collect());
+                    return Value::array(exec.pparams().iter().map(Value::str).collect());
                 }
                 // c:Src/Modules/parameter.c — funcstack/funcfiletrace/
                 // funcsourcetrace/functrace are PM_ARRAY|PM_READONLY
@@ -4882,7 +4883,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // arrangement as the FUNCSTACK-backed specials below.
                 if name == "epochtime" {
                     let arr = crate::ported::modules::datetime::getcurrenttime();
-                    return Value::Array(arr.into_iter().map(Value::str).collect());
+                    return Value::array(arr.into_iter().map(Value::str).collect());
                 }
                 if matches!(
                     name.as_str(),
@@ -4911,7 +4912,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             crate::ported::modules::parameter::functracegetfn(std::ptr::null_mut())
                         }
                     };
-                    return Value::Array(vals.into_iter().map(Value::str).collect());
+                    return Value::array(vals.into_iter().map(Value::str).collect());
                 }
                 // c:Src/params.c — `${assoc[@]}` enumerates VALUES (per
                 // params.c:1696-1750 hashparam splat). Check assoc
@@ -4925,7 +4926,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // name), and returned `Array(vec![])`. zsh's expected
                 // behavior is to enumerate values.
                 if let Some(assoc_map) = exec.assoc(&name) {
-                    return Value::Array(assoc_map.values().cloned().map(Value::str).collect());
+                    return Value::array(assoc_map.values().cloned().map(Value::str).collect());
                 }
                 match exec.array(&name) {
                     Some(v) => {
@@ -4933,7 +4934,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // elements, dropping hole slots (`a[5]=q` padding,
                         // `unset a[i]`). No-op in --zsh (no holes tracked).
                         let v = crate::bash_arrays::compact(&name, v);
-                        Value::Array(v.iter().map(Value::str).collect())
+                        Value::array(v.iter().map(Value::str).collect())
                     }
                     None => {
                         // c:Src/Modules/parameter.c:2235-2298 partab[] — the
@@ -4962,10 +4963,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // special, so `${reswords[@]}` splatted nothing. Route
                         // through the canonical `arrays_get` getfn dispatch.
                         if let Some(arr) = crate::ported::subst::arrays_get(&name) {
-                            return Value::Array(arr.into_iter().map(Value::str).collect());
+                            return Value::array(arr.into_iter().map(Value::str).collect());
                         }
                         if let Some(map) = crate::ported::subst::assoc_get(&name) {
-                            return Value::Array(map.values().cloned().map(Value::str).collect());
+                            return Value::array(map.values().cloned().map(Value::str).collect());
                         }
                         // Fall back to scalar lookup. zsh (unlike bash)
                         // does NOT IFS-split a scalar variable in a for
@@ -5001,7 +5002,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // `Some(vec![])` arm above), which sets isarr and gets
                             // the word deleted at c:4362.
                             note_empty_is_scalar(true);
-                            Value::Array(vec![])
+                            Value::array(vec![])
                         } else if opt_state_get("shwordsplit").unwrap_or(false) {
                             // c:3921 `aval = sepsplit(val, spsep, 0, 1)` — same
                             // splitter as `${=name}` (Src/utils.c:3711 spacesplit),
@@ -5023,9 +5024,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                         }
                                     })
                                     .collect();
-                            Value::Array(parts)
+                            Value::array(parts)
                         } else {
-                            Value::Array(vec![Value::str(val)])
+                            Value::array(vec![Value::str(val)])
                         }
                     }
                 }
@@ -5233,7 +5234,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut flat: Vec<Value> = Vec::with_capacity(raw.len());
         for v in raw {
             match v {
-                Value::Array(items) => flat.extend(items),
+                Value::Array(items) => flat.extend(items.iter().cloned()),
                 other => flat.push(other),
             }
         }
@@ -5241,7 +5242,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Push the array first; the Int(len) becomes the builtin's return
         // value (which CallBuiltin already pushes). Caller consumes in
         // reverse: SetSlot(len_slot) pops Int, SetSlot(arr_slot) pops Array.
-        vm.push(Value::Array(flat));
+        vm.push(Value::array(flat));
         Value::Int(len)
     });
 
@@ -5284,7 +5285,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // GET_VAR directly without an EXPAND_TEXT wrapper).
             return with_executor(|exec| {
                 sync_status(exec);
-                Value::Array(exec.pparams().iter().map(Value::str).collect())
+                Value::array(exec.pparams().iter().map(Value::str).collect())
             });
         }
         // RC_EXPAND_PARAM: when the option is set and `name` refers to
@@ -5342,7 +5343,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if arr.is_empty() {
                     note_empty_is_scalar(false);
                 }
-                return Value::Array(arr.into_iter().map(Value::str).collect());
+                return Value::array(arr.into_iter().map(Value::str).collect());
             }
         }
         // Magic-assoc fallback FIRST — `${aliases}` / `${functions}`
@@ -5386,7 +5387,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if opt_state_get("ksharrays").unwrap_or(false) {
                 return Value::str(vals.into_iter().next().unwrap_or_default());
             }
-            return Value::Array(vals.into_iter().map(Value::str).collect());
+            return Value::array(vals.into_iter().map(Value::str).collect());
         }
         // Indexed-array path: return Value::Array so pop_args splats
         // each element into its own argv slot. Direct port of zsh's
@@ -5475,7 +5476,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if items.is_empty() {
                 note_empty_is_scalar(false);
             }
-            return Value::Array(items.into_iter().map(Value::str).collect());
+            return Value::array(items.into_iter().map(Value::str).collect());
         }
         let (val, in_dq, is_known) = with_executor(|exec| {
             sync_status(exec);
@@ -5541,7 +5542,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // v=; print -rl -- x$v y` still emits `x` (only an empty
             // ARRAY deletes the word).
             note_empty_is_scalar(true);
-            return Value::Array(Vec::new());
+            return Value::array(Vec::new());
         }
         // c:Src/subst.c:1759 SH_WORD_SPLIT — when shwordsplit is set and
         // we're in unquoted command-arg position (not DQ), split scalar
@@ -5579,12 +5580,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:3922 — `val = dupstring("")`: an empty SCALAR, not an
                 // empty array (see EMPTY_EXPANSION_IS_SCALAR).
                 note_empty_is_scalar(true);
-                return Value::Array(Vec::new());
+                return Value::array(Vec::new());
             } else if parts.len() == 1 {
                 // c:3924 — `else if (!aval[1]) val = aval[0];`
                 return parts.into_iter().next().unwrap();
             } else {
-                return Value::Array(parts); // c:3927
+                return Value::array(parts); // c:3927
             }
         }
         Value::str(val)
@@ -6780,7 +6781,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         for v in popped {
             match v {
                 Value::Array(items) => {
-                    for it in items {
+                    for it in items.iter() {
                         values.push(it.to_str());
                     }
                 }
@@ -7115,9 +7116,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::Array(ra);
                 }
                 let mut out = Vec::with_capacity(la.len() * ra.len());
-                for a in &la {
+                for a in la.iter() {
                     let a_s = a.as_str_cow();
-                    for b in &ra {
+                    for b in ra.iter() {
                         let b_s = b.as_str_cow();
                         let mut s = String::with_capacity(a_s.len() + b_s.len());
                         s.push_str(&a_s);
@@ -7125,7 +7126,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         out.push(Value::str(s));
                     }
                 }
-                Value::Array(out)
+                Value::array(out)
             }
             (Value::Array(la), rhs_scalar) => {
                 // An EMPTY array contributes nothing to a concatenated
@@ -7143,7 +7144,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 let r = rhs_scalar.as_str_cow();
                 let out: Vec<Value> = la
-                    .into_iter()
+                    .iter()
                     .map(|a| {
                         let a_s = a.as_str_cow();
                         let mut s = String::with_capacity(a_s.len() + r.len());
@@ -7152,7 +7153,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Value::str(s)
                     })
                     .collect();
-                Value::Array(out)
+                Value::array(out)
             }
             (lhs_scalar, Value::Array(ra)) => {
                 // Symmetric empty-array-contributes-nothing rule; see
@@ -7162,7 +7163,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 let l = lhs_scalar.as_str_cow();
                 let out: Vec<Value> = ra
-                    .into_iter()
+                    .iter()
                     .map(|b| {
                         let b_s = b.as_str_cow();
                         let mut s = String::with_capacity(l.len() + b_s.len());
@@ -7171,7 +7172,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Value::str(s)
                     })
                     .collect();
-                Value::Array(out)
+                Value::array(out)
             }
             (lhs_s, rhs_s) => {
                 let l = lhs_s.as_str_cow();
@@ -7204,16 +7205,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // IFS default. c:Src/utils.c:3936-3945 — set-but-empty IFS
             // joins with "" (`IFS=""; echo "x$*y"` → `xabcy`); only
             // unset / space-leading IFS yields " ".
-            let join_arr = |arr: Vec<Value>| -> String {
+            let join_arr = |arr: &[Value]| -> String {
                 let strs: Vec<String> = arr.iter().map(|v| v.as_str_cow().into_owned()).collect();
                 crate::ported::utils::sepjoin(&strs, None)
             };
             let l = match lhs {
-                Value::Array(a) => join_arr(a),
+                Value::Array(a) => join_arr(&a),
                 other => other.as_str_cow().into_owned(),
             };
             let r = match rhs {
-                Value::Array(a) => join_arr(a),
+                Value::Array(a) => join_arr(&a),
                 other => other.as_str_cow().into_owned(),
             };
             let mut s = String::with_capacity(l.len() + r.len());
@@ -7470,7 +7471,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let mut line = String::with_capacity(prefix.len() + 16);
             line.push_str(&prefix);
             if let Value::Array(items) = arr {
-                for it in items {
+                for it in items.iter() {
                     line.push_str(&crate::ported::utils::quotedzputs(&it.to_str()));
                     line.push(' ');
                 }
@@ -7496,7 +7497,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             items.push(vm.pop());
         }
         items.reverse();
-        Value::Array(items)
+        Value::array(items)
     });
 
     // BUILTIN_ARGV_RFLATTEN — recursively flatten a MakeArray-packed argv
@@ -7508,7 +7509,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let v = vm.pop();
         let mut out: Vec<String> = Vec::new();
         flatten_array_value(v, &mut out);
-        Value::Array(out.into_iter().map(Value::str).collect())
+        Value::array(out.into_iter().map(Value::str).collect())
     });
 
     // Like XTRACE_LINE but reads the top `argc - 1` values from the
@@ -7546,7 +7547,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 for v in &vm.stack[len - n_args..] {
                     match v {
                         Value::Array(items) => {
-                            for item in items {
+                            for item in items.iter() {
                                 out.push(quotedzputs(&item.to_str()));
                             }
                         }
@@ -7846,7 +7847,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Bug #185 in docs/BUGS.md.
     fn run_cond_str_empty(v: Value, op: &str) -> Value {
         let words: Vec<String> = match v {
-            Value::Array(arr) => arr.into_iter().map(|x| x.to_str()).collect(),
+            Value::Array(arr) => arr.iter().map(|x| x.to_str()).collect(),
             Value::Str(s) => vec![s.to_string()],
             other => vec![other.to_str()],
         };
@@ -7973,7 +7974,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         for (op_byte, target) in pairs {
             match target {
                 Value::Array(items) => {
-                    for item in items {
+                    for item in items.iter() {
                         entries.push((op_byte, item.to_str()));
                     }
                 }
@@ -8290,7 +8291,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         for (op_byte, source) in pairs {
             match source {
                 Value::Array(items) => {
-                    for item in items {
+                    for item in items.iter() {
                         entries.push((op_byte, item.to_str()));
                     }
                 }
@@ -9630,13 +9631,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // surfaced as ONE empty arg. Bug #120 in
                     // docs/BUGS.md.
                     if nodes.is_empty() {
-                        Value::Array(Vec::new())
+                        Value::array(Vec::new())
                     } else if nodes.len() == 1 {
                         Value::str(crate::ported::lex::untokenize(
                             &nodes.into_iter().next().unwrap(),
                         ))
                     } else {
-                        Value::Array(
+                        Value::array(
                             nodes
                                 .into_iter()
                                 .map(|n| Value::str(crate::ported::lex::untokenize(&n)))
@@ -9691,7 +9692,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     } else if parts.len() == 1 {
                         parts.into_iter().next().unwrap()
                     } else {
-                        Value::Array(parts)
+                        Value::array(parts)
                     }
                 }
             }
@@ -10005,13 +10006,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // with no output — takes c:4438's scalar arm and
                             // keeps the word.
                             note_empty_is_scalar(!(seg_zero_words && seg_is_array));
-                            Value::Array(Vec::new())
+                            Value::array(Vec::new())
                         }
                     } else {
                         Value::str(only)
                     }
                 } else {
-                    Value::Array(parts.into_iter().map(Value::str).collect())
+                    Value::array(parts.into_iter().map(Value::str).collect())
                 }
             }
         });
@@ -10525,7 +10526,7 @@ fn restore_empty_shape(v: Value, was_scalar: bool) -> Value {
 /// That is what the empty-Array arms below reproduce.
 fn concat_splice(lhs: Value, rhs: Value) -> Value {
     match (lhs, rhs) {
-        (Value::Array(mut la), Value::Array(ra)) => {
+        (Value::Array(la), Value::Array(ra)) => {
             if la.is_empty() {
                 return Value::Array(ra);
             }
@@ -10533,8 +10534,9 @@ fn concat_splice(lhs: Value, rhs: Value) -> Value {
                 return Value::Array(la);
             }
             // Last of la merges with first of ra; rest unchanged.
+            let mut la = la.to_vec();
             let last_l = la.pop().unwrap();
-            let mut ra_iter = ra.into_iter();
+            let mut ra_iter = ra.iter().cloned();
             let first_r = ra_iter.next().unwrap();
             let l_s = last_l.as_str_cow();
             let r_s = first_r.as_str_cow();
@@ -10543,36 +10545,38 @@ fn concat_splice(lhs: Value, rhs: Value) -> Value {
             merged.push_str(&r_s);
             la.push(Value::str(merged));
             la.extend(ra_iter);
-            Value::Array(la)
+            Value::array(la)
         }
-        (Value::Array(mut la), rhs_scalar) => {
+        (Value::Array(la), rhs_scalar) => {
             // c:4261 — empty array + empty surrounding text is zero
             // words, not one empty word. Bug #120 in docs/BUGS.md:
             // `b=("${a[@]:0:-1}")` gave len=1 instead of zsh's len=0.
             let rhs_s = rhs_scalar.as_str_cow();
             if la.is_empty() {
                 if rhs_s.is_empty() {
-                    return Value::Array(Vec::new());
+                    return Value::array(Vec::new());
                 }
                 return Value::str(rhs_s.to_string());
             }
+            let mut la = la.to_vec();
             let last = la.pop().unwrap();
             let l_s = last.as_str_cow();
             let mut s = String::with_capacity(l_s.len() + rhs_s.len());
             s.push_str(&l_s);
             s.push_str(&rhs_s);
             la.push(Value::str(s));
-            Value::Array(la)
+            Value::array(la)
         }
-        (lhs_scalar, Value::Array(mut ra)) => {
+        (lhs_scalar, Value::Array(ra)) => {
             let lhs_s = lhs_scalar.as_str_cow();
             if ra.is_empty() {
                 // Symmetric c:4261 empty-array rule; see the arm above.
                 if lhs_s.is_empty() {
-                    return Value::Array(Vec::new());
+                    return Value::array(Vec::new());
                 }
                 return Value::str(lhs_s.to_string());
             }
+            let mut ra = ra.to_vec();
             let first = ra.remove(0);
             let r_s = first.as_str_cow();
             let mut s = String::with_capacity(lhs_s.len() + r_s.len());
@@ -10581,7 +10585,7 @@ fn concat_splice(lhs: Value, rhs: Value) -> Value {
             let mut out = Vec::with_capacity(ra.len() + 1);
             out.push(Value::str(s));
             out.extend(ra);
-            Value::Array(out)
+            Value::array(out)
         }
         (lhs_s, rhs_s) => {
             let l = lhs_s.as_str_cow();
@@ -10623,24 +10627,24 @@ fn concat_plan9(lhs: Value, rhs: Value) -> Value {
             if scalar_empty {
                 // Empty scalar prefix: "" + rhs (c:4437 strcatsub).
                 return match rhs_v {
-                    Value::Array(ra) if ra.is_empty() => Value::Array(Vec::new()),
+                    Value::Array(ra) if ra.is_empty() => Value::array(Vec::new()),
                     other => other,
                 };
             }
-            Value::Array(Vec::new())
+            Value::array(Vec::new())
         }
         (lhs_v, Value::Array(ra)) if ra.is_empty() => {
             if scalar_empty {
                 // Empty scalar suffix: lhs + "" (c:4437 strcatsub).
                 return lhs_v;
             }
-            Value::Array(Vec::new())
+            Value::array(Vec::new())
         }
         (Value::Array(la), Value::Array(ra)) => {
             let mut out = Vec::with_capacity(la.len() * ra.len());
-            for a in &la {
+            for a in la.iter() {
                 let a_s = a.as_str_cow();
-                for b in &ra {
+                for b in ra.iter() {
                     let b_s = b.as_str_cow();
                     let mut s = String::with_capacity(a_s.len() + b_s.len());
                     s.push_str(&a_s);
@@ -10648,12 +10652,12 @@ fn concat_plan9(lhs: Value, rhs: Value) -> Value {
                     out.push(Value::str(s));
                 }
             }
-            Value::Array(out)
+            Value::array(out)
         }
         (Value::Array(la), rhs_scalar) => {
             let r = rhs_scalar.as_str_cow();
             let out: Vec<Value> = la
-                .into_iter()
+                .iter()
                 .map(|a| {
                     let a_s = a.as_str_cow();
                     let mut s = String::with_capacity(a_s.len() + r.len());
@@ -10662,12 +10666,12 @@ fn concat_plan9(lhs: Value, rhs: Value) -> Value {
                     Value::str(s)
                 })
                 .collect();
-            Value::Array(out)
+            Value::array(out)
         }
         (lhs_scalar, Value::Array(ra)) => {
             let l = lhs_scalar.as_str_cow();
             let out: Vec<Value> = ra
-                .into_iter()
+                .iter()
                 .map(|b| {
                     let b_s = b.as_str_cow();
                     let mut s = String::with_capacity(l.len() + b_s.len());
@@ -10676,7 +10680,7 @@ fn concat_plan9(lhs: Value, rhs: Value) -> Value {
                     Value::str(s)
                 })
                 .collect();
-            Value::Array(out)
+            Value::array(out)
         }
         (lhs_s, rhs_s) => {
             // Both scalar: nothing to distribute (c:4444 scalar branch).
@@ -10722,7 +10726,7 @@ fn word_assemble_plan9(segments: &[Value], plan9_flags: &[bool]) -> Value {
         let elems = word_seg_elems(seg);
         if plan9 && elems.is_empty() {
             // c:4362-4365 — plan9 empty array deletes the whole word.
-            return Value::Array(Vec::new());
+            return Value::array(Vec::new());
         }
         if !started {
             started = true;
@@ -10769,9 +10773,9 @@ fn word_assemble_plan9(segments: &[Value], plan9_flags: &[bool]) -> Value {
         }
     }
     match words.len() {
-        0 => Value::Array(Vec::new()),
+        0 => Value::array(Vec::new()),
         1 => Value::str(words.pop().unwrap()),
-        _ => Value::Array(words.into_iter().map(Value::str).collect()),
+        _ => Value::array(words.into_iter().map(Value::str).collect()),
     }
 }
 
@@ -10795,7 +10799,7 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
         // (empty array splat, empty slice). c:4245 `if (isarr)` holds, so
         // plan9 deletes the surrounding word (c:4362).
         note_empty_is_scalar(false);
-        Value::Array(Vec::new())
+        Value::array(Vec::new())
     } else if stripped.len() == 1 {
         let only = stripped.into_iter().next().unwrap();
         // c:Src/subst.c:183-186 — `else if (!(flags & PREFORK_SINGLE)
@@ -10820,12 +10824,12 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
                 // One empty node = a SCALAR-shaped empty result (c:4437),
                 // not an empty array — see EMPTY_EXPANSION_IS_SCALAR.
                 note_empty_is_scalar(true);
-                return Value::Array(Vec::new());
+                return Value::array(Vec::new());
             }
         }
         Value::str(only)
     } else {
-        Value::Array(stripped.into_iter().map(Value::str).collect())
+        Value::array(stripped.into_iter().map(Value::str).collect())
     }
 }
 
@@ -10839,7 +10843,7 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     for v in popped {
         match v {
             Value::Array(items) => {
-                for item in items {
+                for item in items.iter() {
                     args.push(item.to_str());
                 }
             }
@@ -11671,16 +11675,16 @@ pub const BUILTIN_TYPESET_PAREN_CLOSE: u16 = 631;
 /// `unsetopt multios`).
 fn glob_expand_word_value(raw: Value, skip_glob: bool) -> Value {
     let patterns: Vec<String> = match raw {
-        Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+        Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
         other => vec![other.to_str()],
     };
     if skip_glob {
         return if patterns.is_empty() {
-            Value::Array(Vec::new())
+            Value::array(Vec::new())
         } else if patterns.len() == 1 {
             Value::str(patterns.into_iter().next().unwrap())
         } else {
-            Value::Array(patterns.into_iter().map(Value::str).collect())
+            Value::array(patterns.into_iter().map(Value::str).collect())
         };
     }
     let mut out: Vec<String> = Vec::with_capacity(patterns.len());
@@ -11715,14 +11719,14 @@ fn glob_expand_word_value(raw: Value, skip_glob: bool) -> Value {
         }
     }
     if out.is_empty() {
-        return Value::Array(Vec::new());
+        return Value::array(Vec::new());
     }
     if patterns.len() == 1 && out.len() == 1 && out[0] == patterns[0] {
         // No real matches; expand_glob returned the literal. Pass
         // back as scalar so downstream ops don't re-flatten.
         return Value::str(out.into_iter().next().unwrap());
     }
-    Value::Array(out.into_iter().map(Value::str).collect())
+    Value::array(out.into_iter().map(Value::str).collect())
 }
 
 /// Push a `CmdState` token onto the command-context stack. Direct
@@ -14568,7 +14572,7 @@ mod word_assemble_tests {
     use super::{word_assemble_plan9, Value};
 
     fn arr(xs: &[&str]) -> Value {
-        Value::Array(xs.iter().map(|s| Value::str(*s)).collect())
+        Value::array(xs.iter().map(|s| Value::str(*s)).collect())
     }
     fn out(v: Value) -> Vec<String> {
         match v {
@@ -14624,7 +14628,7 @@ mod word_assemble_tests {
     #[test]
     fn empty_plan9_array_deletes_word() {
         // "${(@)^a}${(@)b}" with a=() -> word deleted
-        let r = word_assemble_plan9(&[Value::Array(vec![]), arr(&["A", "B"])], &[true, false]);
+        let r = word_assemble_plan9(&[Value::array(vec![]), arr(&["A", "B"])], &[true, false]);
         assert!(out(r).is_empty(), "plan9 empty array deletes the word");
     }
     #[test]

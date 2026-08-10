@@ -3999,7 +3999,7 @@ impl ZshCompiler {
                 };
                 let batched = literal_vals.is_some();
                 if let Some(vals) = literal_vals {
-                    let ac = self.builder.add_constant(Value::Array(vals));
+                    let ac = self.builder.add_constant(Value::array(vals));
                     self.builder.emit(Op::LoadConst(ac), 0);
                 }
                 let mut stack_values = 0usize;
