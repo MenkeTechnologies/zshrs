@@ -6819,6 +6819,10 @@ pub fn paramsubst(
                         None => true,
                     })
                     .map(|e_| {
+                        // c:Src/params.c:589-594 getparamnode → c:563-585
+                        // loadparamnode — resolving the CONTAINER name clears its
+                        // PM_AUTOLOAD regardless of subscript.
+                        crate::vm_helper::mark_module_param_used(&var_name);
                         (e_.getfn)(std::ptr::null_mut(), sub)
                             .and_then(|p_| p_.u_str)
                             .unwrap_or_default()
@@ -8543,6 +8547,11 @@ pub fn paramsubst(
                                 return None;
                             }
                         }
+                        // c:Src/params.c:589-594 getparamnode → c:563-585
+                        // loadparamnode — resolving the CONTAINER name runs
+                        // ensurefeature(mn, "p:", nam), clearing its PM_AUTOLOAD
+                        // regardless of subscript. Mirrors vm_helper::partab_get.
+                        crate::vm_helper::mark_module_param_used(&var_name);
                         // c:99-110 — a single-key read RESOLVES the autoload stub, so later
                         // enumerations report its real type (see assoc_get).
                         if e_.name == "parameters" {
@@ -8575,6 +8584,11 @@ pub fn paramsubst(
                                 return None;
                             }
                         }
+                        // c:Src/params.c:589-594 getparamnode → c:563-585
+                        // loadparamnode — resolving the CONTAINER name runs
+                        // ensurefeature(mn, "p:", nam), clearing its PM_AUTOLOAD
+                        // regardless of subscript. Mirrors vm_helper::partab_get.
+                        crate::vm_helper::mark_module_param_used(&var_name);
                         // c:99-110 — a single-key read RESOLVES the autoload stub, so later
                         // enumerations report its real type (see assoc_get).
                         if e_.name == "parameters" {
@@ -9933,6 +9947,10 @@ pub fn paramsubst(
                             return None;
                         }
                     }
+                    // c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode —
+                    // resolving the CONTAINER name clears its PM_AUTOLOAD regardless
+                    // of subscript. Mirrors vm_helper::partab_get.
+                    crate::vm_helper::mark_module_param_used(&var_name);
                     // c:99-110 — a single-key read RESOLVES the autoload stub, so later
                     // enumerations report its real type (see assoc_get).
                     if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
@@ -19322,6 +19340,11 @@ pub fn paramsubst(
                                 return None;
                             }
                         }
+                        // c:Src/params.c:589-594 getparamnode → c:563-585
+                        // loadparamnode — resolving the CONTAINER name runs
+                        // ensurefeature(mn, "p:", nam), clearing its PM_AUTOLOAD
+                        // regardless of subscript. Mirrors vm_helper::partab_get.
+                        crate::vm_helper::mark_module_param_used(&var_name);
                         // c:99-110 — a single-key read RESOLVES the autoload stub, so later
                         // enumerations report its real type (see assoc_get).
                         if e_.name == "parameters" {
@@ -21641,6 +21664,11 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     // `$dirstack` / `${#dirstack}` / `${dirstack[N]}` read live.
     if !magic_shadowed && name == "dirstack" {
         if let Ok(d) = crate::ported::modules::parameter::DIRSTACK.lock() {
+            // c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode —
+            // ANY resolution of the NAME runs ensurefeature(mn, "p:", nam),
+            // clearing PM_AUTOLOAD so paramtypestr (c:Src/Modules/parameter.c:48-50)
+            // stops reporting "undefined". The subscript is irrelevant.
+            crate::vm_helper::mark_module_param_used(name);
             return Some(d.clone());
         }
     }
@@ -21649,6 +21677,8 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     // etc. zsh exposes this as a special parameter via PM_ARRAY
     // (Src/Modules/parameter.c).
     if !magic_shadowed && name == "signals" {
+        // c:Src/params.c:589-594 — resolving the name materializes the stub.
+        crate::vm_helper::mark_module_param_used(name);
         return Some(crate::ported::jobs::sig_names_for_signals_param());
     }
     // c:Src/Modules/parameter.c — `funcstack` PM_SPECIAL array
@@ -21657,6 +21687,8 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     // FUNCSTACK holds funcstack structs; surface the .name field.
     if !magic_shadowed && name == "funcstack" {
         if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+            // c:Src/params.c:589-594 — resolving the name materializes the stub.
+            crate::vm_helper::mark_module_param_used(name);
             // c:Src/Modules/parameter.c — `$funcstack` exposes the
             // call-stack in INNERMOST-first order (funcstack[1] is
             // the most-recently-called function). zshrs's FUNCSTACK
@@ -21673,6 +21705,8 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     // is always linkable since the module is statically compiled
     // in.
     if !magic_shadowed && name == "epochtime" {
+        // c:Src/params.c:589-594 — resolving the name materializes the stub.
+        crate::vm_helper::mark_module_param_used(name);
         return Some(crate::ported::modules::datetime::getcurrenttime());
     }
     // c:Src/Zle/zleparameter.c:132 — `keymaps` PM_ARRAY|PM_READONLY
@@ -22059,7 +22093,15 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
         // `${(@k)parameters[(R)a*]}` matched 56 names against zsh's 18 —
         // which is what put `unset <TAB>`'s candidates in the wrong
         // `_parameters -g` bucket.
-        let v = if entry.name == "parameters" && crate::vm_helper::module_param_is_autoload_stub(&k)
+        // c:Src/params.c:1157-1166 createparam — a `local NAME` allocates a
+        // FRESH node, pushes the PM_AUTOLOAD stub onto `pm->old` and makes the
+        // plain node the visible binding. c:136-146 scanpmparameters types
+        // whatever node it iterates, so the visible LOCAL is typed, never
+        // "undefined". zshrs keeps the two in separate tables, hence the
+        // explicit shadow test.
+        let v = if entry.name == "parameters"
+            && crate::vm_helper::module_param_is_autoload_stub(&k)
+            && !crate::vm_helper::magic_special_shadowed(&k)
         {
             "undefined".to_string() // c:50
         } else {

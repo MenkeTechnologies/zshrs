@@ -5296,10 +5296,68 @@ static MATERIALIZED_MODULE_PARAMS: std::sync::OnceLock<Mutex<HashSet<String>>> =
 /// as an unmaterialized autoload stub. See [`MATERIALIZED_MODULE_PARAMS`].
 pub fn mark_module_param_used(name: &str) {
     let set = MATERIALIZED_MODULE_PARAMS.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut g = set.lock();
-    if !g.contains(name) {
-        g.insert(name.to_string());
+    let first_touch = {
+        let mut g = set.lock();
+        // Drop the guard before the module load below — `boot_` runs shell
+        // code (setsparam/setiparam) that can re-enter this function.
+        g.insert(name.to_string())
+    };
+    if first_touch {
+        materialize_module_param(name);
     }
+}
+
+/// The side effect C's `loadparamnode` (`Src/params.c:563-585`) has beyond
+/// clearing PM_AUTOLOAD: `(void)ensurefeature(mn, "p:", nam)`
+/// (`Src/module.c:3419-3432`) actually LOADS the owning module, running its
+/// `setup_`/`boot_`. `zsh/watch`'s `boot_` (`Src/Modules/watch.c:750-753`)
+/// seeds `WATCHFMT`/`LOGCHECK` when absent, so in zsh
+/// `${parameters[watch]}` leaves `${parameters[LOGCHECK]}` == "integer".
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C has no separate function: `loadparamnode` calls `ensurefeature`
+/// inline. zshrs models PM_AUTOLOAD as a side-set rather than a node flag
+/// (see [`MATERIALIZED_MODULE_PARAMS`]), so the load side effect needs its
+/// own hook off the marking point. The `try_lock` and the re-entrancy guard
+/// are also Rust-only: C serialises on `queue_signals`, whereas zshrs's
+/// `MODULESTAB` is a real mutex that several callers of
+/// `mark_module_param_used` already hold.
+fn materialize_module_param(name: &str) {
+    use std::cell::Cell;
+    thread_local! {
+        static LOADING: Cell<bool> = const { Cell::new(false) };
+    }
+    // c:Src/params.c:566 — only PM_AUTOLOAD stubs carry `pm->u.str` (the
+    // owning module name); anything else falls straight through.
+    let Some((_, modname)) = AUTOLOAD_PARAMS.iter().find(|(p, _)| *p == name) else {
+        return;
+    };
+    if LOADING.with(|f| f.get()) {
+        return;
+    }
+    // The whole load chain wants `&mut modulestab`. Every other caller takes
+    // the same lock for a moment; if one of them is mid-flight (or is our own
+    // caller), skip rather than deadlock — the mark itself already landed.
+    let Ok(mut tab) = crate::ported::module::MODULESTAB.try_lock() else {
+        return;
+    };
+    // c:Src/module.c:2352 — require_module short-circuits on an already
+    // booted module, but check first so the common case never pays for the
+    // find_module/alias walk.
+    if tab
+        .modules
+        .get(*modname)
+        .is_some_and(|m| (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0)
+    {
+        return;
+    }
+    LOADING.with(|f| f.set(true));
+    // c:3419-3432 ensurefeature(mn, "p:", nam) — `silent` is 0 in C, but a
+    // failure here is not user-visible in the autoload path (c:571-580 only
+    // errors when the parameter is still undefined afterwards), and zshrs's
+    // require_module warns on any module it cannot static-link.
+    let _ = crate::ported::module::ensurefeature(&mut tab, modname, "p:", Some(name)); // c:3419
+    LOADING.with(|f| f.set(false));
 }
 
 /// True when `name` is still an untouched module-parameter stub — i.e. zsh
@@ -5548,6 +5606,19 @@ pub fn init_partab_params() {
         // wrong `_parameters -g '^*(readonly|association)*'` bucket and
         // added one candidate zsh does not offer.
         "funcstack", // c:2279
+        // Same argument as `funcstack` above, for the three sibling trace
+        // arrays: `SPECIALPMDEF(..., PM_ARRAY|PM_READONLY_SPECIAL, ...)` in C
+        // and `setfn: None` in PARTAB_ARRAY (parameter.rs:4717/4725/4741), so
+        // they are getfn-computed with no internal-write path to protect.
+        "funcfiletrace",   // c:2275
+        "funcsourcetrace", // c:2277
+        "functrace",       // c:2285
+        // c:Src/Modules/termcap.c:312 / Src/Modules/terminfo.c:305 —
+        // `SPECIALPMDEF("termcap", PM_READONLY, NULL, gettermcap, scantermcap)`
+        // and the terminfo twin: NULL gsu, value produced entirely by the
+        // getnode/scan fns, so the readonly bit has nothing to fight.
+        "termcap",  // c:Src/Modules/termcap.c:312
+        "terminfo", // c:Src/Modules/terminfo.c:305
     ];
     let mk_pm = |name: &str, flags: i32| -> Param {
         let keep_readonly = user_protected.contains(&name);

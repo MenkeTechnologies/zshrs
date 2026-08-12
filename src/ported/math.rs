@@ -433,7 +433,11 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                         .unwrap_or(false),
                     None => true,
                 };
-                if module_ok {
+                if module_ok && !crate::vm_helper::magic_special_shadowed(arr_name) {
+                    // c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode —
+                    // an arithmetic read of `special[key]` resolves the CONTAINER
+                    // name, clearing its PM_AUTOLOAD; the subscript is irrelevant.
+                    crate::vm_helper::mark_module_param_used(arr_name);
                     if let Some(v) =
                         (e_.getfn)(std::ptr::null_mut(), idx_str).and_then(|p_| p_.u_str)
                     {

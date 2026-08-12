@@ -3710,9 +3710,15 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
             && (slash_pos == 1 || (arg0.len() > 2 && &arg0[..2] == ".." && slash_pos == 2));
         if slash_pos == 0 || unset(PATHDIRS) || is_dot {
             // c:794
+            // c:797 — `zerr("%e: %s", lerrno, arg0)`. `%e` is zerrmsg's
+            // errno arm (Src/utils.c:348-365): strerror with the first
+            // letter lowercased, NOT Rust's `io::Error` Display (which
+            // appends " (os error N)" and keeps the capital, so `~`
+            // printed `Permission denied (os error 13): /Users/wizard`
+            // where zsh prints `permission denied: /Users/wizard`).
             zerr(&format!(
                 "{}: {}",
-                std::io::Error::from_raw_os_error(lerrno),
+                crate::ported::utils::zsh_errno_msg(lerrno),
                 arg0
             )); // c:797
             let code = if lerrno == libc::EACCES || lerrno == libc::ENOEXEC {
@@ -3804,9 +3810,11 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     // c:871-881 — final error reporting.
     if eno != 0 {
         // c:871
+        // c:872 — `zerr("%e: %s", eno, arg0)`; same `%e` (Src/utils.c:
+        // 348-365) rendering as the slash-in-arg0 branch above.
         zerr(&format!(
             "{}: {}",
-            std::io::Error::from_raw_os_error(eno),
+            crate::ported::utils::zsh_errno_msg(eno),
             arg0
         )); // c:872
     } else if commandnotfound(&arg0, args) == 0 {
@@ -7861,8 +7869,17 @@ pub fn execode(
     program: &crate::parse::ZshProgram,
     _dont_change_job: i32,
     _exiting: i32,
-    _context: &str,
+    context: &str,
 ) -> i32 {
+    // c:1319 — `zsh_eval_context_push(context)`. The wordcode twin
+    // (`execode_wordcode`) already does this; this fusevm variant is the
+    // one `loop()` (Src/init.c:220) calls with "toplevel", so dropping the
+    // push left `$zsh_eval_context` / `$ZSH_EVAL_CONTEXT` empty for the
+    // whole interactive session (a `-c` shell got "cmdarg" from its own
+    // caller and looked correct, hiding this).
+    // c:1334 — the matching `zsh_eval_context_pop()` runs when this
+    // guard drops, i.e. after execution, exactly as in C.
+    let _ctx_frame = EvalContextFrame::push(context); // c:1319
     SESSION_EXECUTOR.with(|c| match c.get() {
         // SAFETY: set by install_session_executor to an executor that
         // lives for the whole single-threaded interactive session;

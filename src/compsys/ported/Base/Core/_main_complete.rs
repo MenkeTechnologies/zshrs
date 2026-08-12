@@ -476,6 +476,14 @@ pub fn _main_complete(args: &[String]) -> i32 {
     // extendedglob-gated `_path_files` branches were dead. zsh makes it `local
     // -A`; the global here is re-snapshotted every completion, so no staleness.
     {
+        // sh:25's `${(kv)options[@]}` is a real read of the `options` magic
+        // assoc, so it resolves that PM_AUTOLOAD stub
+        // (c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode).
+        // Rebuilding the value from the internal option table skips the read,
+        // which left `options` typed "undefined"
+        // (c:Src/Modules/parameter.c:48-50) and made `_parameters` offer it as
+        // a candidate zsh does not offer.
+        crate::vm_helper::mark_module_param_used("options");
         use crate::ported::options::{opt_state_get, ZSH_OPTIONS_SET};
         let mut kv: Vec<String> = Vec::with_capacity(ZSH_OPTIONS_SET.len() * 2);
         for name in ZSH_OPTIONS_SET.iter() {

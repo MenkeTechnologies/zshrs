@@ -551,7 +551,13 @@ pub fn scanpmparameters(
                                                               // and `_parameters -g '^a*'` / `-g 'a*'` bucketed them the
                                                               // opposite way from zsh.
                 let val = if want_val {
-                    if crate::vm_helper::module_param_is_autoload_stub(name) {
+                    // c:Src/params.c:1157-1166 createparam — a `local NAME`
+                    // pushes the PM_AUTOLOAD stub onto `pm->old` and makes a
+                    // fresh plain node visible; c:144 types the node it
+                    // ITERATED, so a shadowed name never reports "undefined".
+                    if crate::vm_helper::module_param_is_autoload_stub(name)
+                        && !crate::vm_helper::magic_special_shadowed(name)
+                    {
                         "undefined".to_string() // c:50
                     } else {
                         paramtypestr(p)
