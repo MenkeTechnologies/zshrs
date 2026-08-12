@@ -5536,6 +5536,18 @@ pub fn init_partab_params() {
         "userdirs",             // c:2296
         "usergroups",           // c:2297
         "widgets",              // c:Src/Zle/zleparameter.c:133
+        // c:2279-2280 — `SPECIALPMDEF("funcstack", PM_ARRAY|
+        // PM_READONLY_SPECIAL, &funcstack_gsu, NULL, NULL)`. The bit was
+        // being stripped here on the theory that the runtime writes
+        // `funcstack`'s `u_arr`; it does not — `funcstackgetfn`
+        // (PARTAB_ARRAY, parameter.rs:4726-4732) computes the value from
+        // the `FUNCSTACK` global on every read and the row's `setfn` is
+        // `None`, so there is nothing to protect against. Without the bit
+        // `${(t)funcstack}` read `array-hide-hideval-special` where zsh
+        // reads `array-readonly-hide-hideval-special`, which put it in the
+        // wrong `_parameters -g '^*(readonly|association)*'` bucket and
+        // added one candidate zsh does not offer.
+        "funcstack", // c:2279
     ];
     let mk_pm = |name: &str, flags: i32| -> Param {
         let keep_readonly = user_protected.contains(&name);

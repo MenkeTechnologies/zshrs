@@ -5228,6 +5228,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_ARRAY_FLATTEN, |vm, argc| {
+        // `${~spec}` carrier: a `for`/`select` WORD LIST is a word-
+        // pipeline boundary too. In C the `globsubst` flag is a
+        // paramsubst-LOCAL int (Src/subst.c:1671 `int globsubst =
+        // isset(GLOBSUBST);`, forced to 2 by `${~…}` at
+        // Src/subst.c:2603) whose only lasting effect is the
+        // `shtokenize` of that substitution's own result — it never
+        // reaches the option table, so `execfor`'s list prefork
+        // (Src/loop.c:196-235) cannot leak it into the loop BODY.
+        // zshrs carries the flag through the global option table so
+        // the compile-emitted glob ops of the SAME word can see it
+        // (documented deviation at subst.rs:3190), and restores it at
+        // command-dispatch boundaries — but a `for` list has no
+        // trailing dispatch of its own, so `for i in "${a:#${~p}*}"`
+        // left GLOB_SUBST ON and filename-generated the FIRST body
+        // command's words (`_parameters:34` → `ary+=($i:"$v")` glob-
+        // erroring "bad pattern: HISTCHARS:!^#", which aborted the
+        // whole `pr<TAB>` completion). This builtin ends EVERY for/
+        // select list expansion and runs AFTER each word's
+        // GLOB_SUBST_EXPAND op, so the carrier has been read by then.
+        consume_tilde_globsubst_carrier();
         let n = argc as usize;
         let start = vm.stack.len().saturating_sub(n);
         let raw: Vec<Value> = vm.stack.drain(start..).collect();
@@ -5904,6 +5924,47 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let ctx = exec.recorder_ctx();
                 let attrs = exec.recorder_attrs_for(&name);
                 crate::recorder::emit_assign_typed(&name, &value, attrs, ctx);
+            }
+            // c:Src/exec.c:1367-1370 — `if (code == WC_ASSIGN) { cmdoutval = 0;
+            // addvars(state, state->pc - 1, 0); setunderscore(""); … }`. A
+            // simple command consisting ONLY of scalar assignments clears `$_`;
+            // it never goes through execcmd's c:3545-3547
+            // `setunderscore(lastnode(args))`. src/ported/exec.rs:6946-6950
+            // already ports that arm, but the WC_ASSIGN wordcode never
+            // executes under fusevm — a bare `x=1` arrives here as
+            // BUILTIN_SET_VAR, so `$_` kept the PREVIOUS command's last
+            // argument. Symptom: in the `unset <TAB>` listing (the user's
+            // `_parameters` override runs `maxLen=50` right before the
+            // `$parameters` walk) zsh shows `_` empty while zshrs showed the
+            // completion-internal `^a*` — `_parameters -g '^a*'`'s last arg.
+            //
+            // Two exclusions, both verified against zsh 5.9.2
+            // (`true aa; <form>; print -r -- "[$_]"`):
+            //   * PREFIX assignments (`x=1 true dd` → `dd`) are part of a
+            //     command, so c:3545-3547 owns `$_`. They are exactly the
+            //     assignments recorded into an open inline-env frame above.
+            //   * `(( q = 1 ))` (→ `aa`, unchanged) is WC_ARITH, not
+            //     WC_ASSIGN; the arith paths are the only ones that hand this
+            //     builtin an Int/Float `Value` (see the `int_assign` note).
+            if !int_assign
+                && !float_assign
+                && !exec
+                    .inline_env_stack
+                    .last()
+                    .is_some_and(|frame| frame.recording)
+            {
+                crate::ported::exec::setunderscore(""); // c:1369
+                // !!! DUAL-STATE NOTE (no C counterpart) !!! C has ONE
+                // `zunderscore` (Src/init.c:49). zshrs has two: the canonical
+                // port's `init::zunderscore` (written by `setunderscore`
+                // above) and `params::zunderscore_lock()`, which is what
+                // `underscoregetfn` (params.rs:10893, port of
+                // c:Src/params.c:5152) actually reads and what every live `$_`
+                // writer uses (`set_zunderscore`, e.g. the BUILTIN_TRUE arm at
+                // fusevm_bridge.rs:1415). Clear BOTH or the read still sees the
+                // stale value.
+                crate::ported::params::set_zunderscore(&[]); // c:1369
+                exec.pending_underscore = Some(String::new()); // c:1369
             }
         });
         Value::Status(vm.last_status)
@@ -7790,6 +7851,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // sublist (per C semantics — donetrap is process-global).
         // Bug #303 in docs/BUGS.md.
         crate::ported::exec::DONETRAP.store(0, std::sync::atomic::Ordering::Relaxed);
+        // `${~spec}` carrier: C's `globsubst` is a paramsubst-LOCAL
+        // int (c:Src/subst.c:1671 `int globsubst = isset(GLOBSUBST);`,
+        // set to 2 by `${~}` at c:2597-2603) whose only effect is the
+        // `shtokenize()` of THAT substitution's own result
+        // (c:4419-4420). It can therefore never be observed by a later
+        // statement. zshrs carries the flag on the global option table
+        // (subst.rs:5125-5136) so the compile-emitted glob ops in the
+        // same word pipeline can see it, and restores it at
+        // command-dispatch boundaries — but a `${~}` sitting in a word
+        // that dispatches NO command (a `for`/`select` word list, a
+        // loop/`case` header) had no such boundary before the NEXT
+        // statement's words were expanded, so GLOB_SUBST leaked into
+        // them. This op is emitted exactly once per sublist, in
+        // compile_list's prologue (compile_zsh.rs:557) — i.e. BEFORE
+        // the sublist's words expand — which is the same "state is
+        // gone by the next statement" guarantee C gets for free.
+        // Without it, `_parameters`' `for i in ${…:#${~pfilt}*}` loop
+        // globbed its `ary+=($i:"$val")` body word and died with
+        // "bad pattern: HISTCHARS:!^#", killing `-<TAB>` completion.
+        consume_tilde_globsubst_carrier();
         Value::Status(0)
     });
 

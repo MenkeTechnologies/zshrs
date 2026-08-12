@@ -2138,12 +2138,17 @@ pub fn compprintlist(showall: i32) -> i32 {
     }
 
     // c:1403-1679 — walk amatches groups.
-    let groups: Vec<Cmgroup> = {
+    // c:1403 `for (g = amatches; g; g = g->next)` walks POINTERS. The
+    // snapshot is taken by value (one copy of the chain, as before), then
+    // each group is moved into an `Arc` so `clprintm` can store the same
+    // handle in every `mgtab` cell instead of deep-copying the group per
+    // cell — see the MGTAB doc comment.
+    let groups: Vec<std::sync::Arc<Cmgroup>> = {
         crate::ported::zle::compcore::amatches
             .get_or_init(|| std::sync::Mutex::new(Vec::new()))
             .lock()
             .ok()
-            .map(|g| g.clone())
+            .map(|g| g.iter().cloned().map(std::sync::Arc::new).collect())
             .unwrap_or_default()
     };
 
@@ -2699,7 +2704,10 @@ pub static LAST_NLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// ```
 /// WARNING: param names don't match C — Rust=(g, m, mc, ml, lastc, width) vs C=(g, mp, mc, ml, lastc, width)
 pub fn clprintm(
-    g: Option<&Cmgroup>,
+    // c:1731 `Cmgroup g` — a POINTER in C. The `Arc` is that pointer:
+    // `mgtab[…] = g` below must store a handle, not a deep copy of the
+    // group (see the MGTAB doc comment).
+    g: Option<&std::sync::Arc<Cmgroup>>,
     m: Option<&Cmatch>,
     mc: i32,
     ml: i32,
@@ -4503,7 +4511,7 @@ pub fn domenuselect(
         }
         MTAB.lock().unwrap().get(i as usize).cloned().flatten()
     };
-    let gcell = |i: i32| -> Option<Cmgroup> {
+    let gcell = |i: i32| -> Option<std::sync::Arc<Cmgroup>> {
         if i < 0 {
             return None;
         }
@@ -5000,7 +5008,10 @@ pub fn domenuselect(
                     .lock()
                 {
                     mi.cur = Some(Box::new(c)); // c:2612 minfo.cur = *p
-                    mi.group = g.map(Box::new); // c:2613 minfo.group = *pg
+                    // c:2613 minfo.group = *pg. `Menuinfo::group` owns its
+                    // group, so the mgtab handle is materialised here — once
+                    // per selection move, not once per painted cell.
+                    mi.group = g.map(|grp| Box::new((*grp).clone()));
                                                 // The offsets half of the same assignment. Guarded: a cell
                                                 // whose match is not in `amatches` (stale mtab between
                                                 // rebuilds) must not reset the cursor to group 0 / match 0.
@@ -6651,7 +6662,16 @@ pub static MMTABP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 /// Port of `static Cmgroup *mgtab` from `Src/Zle/complist.c:111`. The
 /// parallel 2-D array of groups: same layout as `mtab`, with each
 /// cell holding the Cmgroup the match-at-that-cell belongs to.
-pub static MGTAB: std::sync::LazyLock<std::sync::Mutex<Vec<Option<Cmgroup>>>> =
+///
+/// C stores a POINTER per cell (`mgtab[mx + mm + i] = g;`, c:1768/1774/
+/// 1824/1830), so filling the table costs one word per cell. The cell
+/// type here is `Arc<Cmgroup>` for the same reason: an owned `Cmgroup`
+/// would DEEP-COPY the group — its whole `matches: Vec<Cmatch>` plus the
+/// boxed `prev`/`next` chain — once per cell, which is quadratic in the
+/// match count. That is exactly what made `ls **/<TAB>` (392 matches)
+/// spend ~2s inside `Cmgroup::clone` under `clprintm` while zsh painted
+/// the same list in 73ms.
+pub static MGTAB: std::sync::LazyLock<std::sync::Mutex<Vec<Option<std::sync::Arc<Cmgroup>>>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new())); // c:111
 
 /// Port of `static Cmgroup *mgtabp` from `Src/Zle/complist.c:111`.

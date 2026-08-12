@@ -350,6 +350,50 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                     }
                 }
             }
+            // c:Src/math.c:337 getmathparam → `getvalue(&vbuf, &s, 1)`
+            // (params.c:2180). C resolves the subscript through the
+            // PARAMETER'S OWN gsu, so a hash whose individual keys are
+            // live gsu cells returns the COMPUTED value in arithmetic
+            // context exactly as it does in string context. The single
+            // case that matters is `compstate[nmatches]`, whose getter
+            // is `get_nmatches` (Src/Zle/complete.c:1411 —
+            // `permmatches(0) ? 0 : nmatches`) and which is never
+            // stored data.
+            //
+            // The port read `paramtab_hashed_storage()` directly here,
+            // which never holds that key, so arithmetic always saw 0
+            // while `${compstate[nmatches]}` (subst.rs:6814) saw the
+            // live count. The compsys idiom
+            //   nm="$compstate[nmatches]" … [[ nm -ne compstate[nmatches] ]]
+            // (`_alternative` sh:63, `_arguments`, `_describe`,
+            // `_parameters`) therefore ALWAYS concluded "this completer
+            // added nothing": `_alternative` returned 1 after adding
+            // 52k matches, so `_complete` returned 1, `_megacomplete`
+            // returned 1, and `_main_complete` re-ran the whole
+            // completer for the next matcher-list entry — doubling the
+            // work on every `_alternative`-based completion.
+            //
+            // `assoc_key_hit` (vm_helper.rs:113) is the existing shared
+            // accessor that already applies C's gsu semantics for this
+            // hash; route through it rather than adding a fourth copy
+            // of the special-case. It falls back to the same store read
+            // below when it declines (name shadowed by a `local`).
+            if let Some((_, Some(v))) = crate::vm_helper::assoc_key_hit(arr_name, idx_str) {
+                if let Ok(n) = v.parse::<i64>() {
+                    return mnumber {
+                        l: n,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    };
+                }
+                if let Ok(f) = v.parse::<f64>() {
+                    return mnumber {
+                        l: 0,
+                        d: f,
+                        type_: MN_FLOAT,
+                    };
+                }
+            }
             // PM_HASHED via paramtab_hashed_storage.
             if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
                 if let Some(map) = m.get(arr_name) {

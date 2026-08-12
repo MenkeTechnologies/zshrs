@@ -961,18 +961,39 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
     // loop. style_table::get_match() encapsulates the pat-walk and also
     // reports whether the matched entry is an `-e` (eval) style; weight
     // order is enforced at insert time so first-match wins.
+    //
+    // c:450-451 + c:459 — the pat-walk is bracketed by
+    // `savematch(&match)` / `restorematch(&match)`. That bracket is NOT
+    // cosmetic: `restorematch` UNSETS `$match`/`$mbegin`/`$mend`
+    // whenever the snapshot came back NULL (zutil.c:57-68), and
+    // `savematch` reads them with `getaparam`, which returns NULL for a
+    // non-array. So a plain `local match` (a scalar — `_main_complete`
+    // declares exactly that at its sh:27 `local` line) is UNSET by the
+    // first zstyle lookup in zsh. Without the bracket zshrs left the
+    // scalar in place and `$parameters` reported one name zsh does not
+    // have.
+    let mut saved = MatchData {
+        r#match: None,
+        mbegin: None,
+        mend: None,
+    };
+    savematch(&mut saved); // c:450
     let matched = match zstyletab.lock() {
         Ok(t) => t.get_match(ctxt, style), // (vals, is_eval)
         Err(_) => None,
     };
     // Lock released before evalstyle so the body can touch zstyle/params
     // without re-entering the table lock.
-    match matched {
-        // c:455-456 — `if (p->eval) return evalstyle(p); return p->vals;`
+    let found = match matched {
+        // c:455-456 — `found = (p->eval ? evalstyle(p) : p->vals);`
+        // C runs evalstyle INSIDE the loop, i.e. BEFORE restorematch, so
+        // the `-e` body still sees the match vars the pattern set.
         Some((vals, true)) => evalstyle(&crate::ported::utils::zjoin(&vals, ' ')),
         Some((vals, false)) => vals,
         None => Vec::new(),
-    }
+    };
+    restorematch(&saved); // c:459
+    found
 }
 
 // =====================================================================
@@ -985,12 +1006,22 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
 #[allow(non_snake_case)]
 pub fn testforstyle(ctxt: &str, style: &str) -> i32 {
     // c:465
-    // c:465-484 — zstyletab lookup + pattern match against ctxt.
+    // c:465-484 — zstyletab lookup + pattern match against ctxt,
+    // bracketed by savematch/restorematch exactly as `lookupstyle` is
+    // (c:473 / c:481). See the note there for why the bracket is
+    // load-bearing rather than cosmetic.
+    let mut saved = MatchData {
+        r#match: None,
+        mbegin: None,
+        mend: None,
+    };
+    savematch(&mut saved); // c:473
     let found = match zstyletab.lock() {
         // c:471
         Ok(t) => t.get(ctxt, style).is_some(), // c:476 pattry
         Err(_) => false,
     };
+    restorematch(&saved); // c:481
     if found {
         0
     } else {

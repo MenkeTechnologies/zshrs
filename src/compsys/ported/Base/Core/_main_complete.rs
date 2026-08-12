@@ -373,6 +373,15 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // compinit sh:180,187-190 — the `_comp_setup` locals.
         declare_locals(&["_comp_caller_options"], PM_HASHED);
         declare_locals(&["REPLY", "REPORTTIME"], 0);
+        // compinit sh:189-190 — `local REPORTTIME;` is immediately
+        // followed by `unset REPORTTIME`, so the name is scoped away
+        // from the caller AND left PM_UNSET for the whole completion.
+        // `scanpmparameters` (Src/Modules/parameter.c:138-139) skips
+        // PM_UNSET nodes, so zsh's `$parameters` does not contain
+        // REPORTTIME during completion. The port declared the local but
+        // dropped the `unset`, leaving a set `scalar-local` behind and
+        // one extra `$parameters` key versus zsh.
+        crate::ported::params::unsetparam("REPORTTIME"); // compinit sh:190
         declare_locals(&["reply"], PM_ARRAY);
         // sh:27-40 — `local func funcs ret=1 tmp _compskip format nm
         // call match min max i num _completers _completer

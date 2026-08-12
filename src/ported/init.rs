@@ -1785,7 +1785,59 @@ pub fn zleentry(cmd: i32) -> Option<String> {
         }
         1 => {
             // c:1776
+            // c:1777 — `ret = zle_entry_ptr(cmd, ap);`. The pointer is
+            // set at Src/Zle/zle_main.c:2248 to `zle_main_entry`, so a
+            // LOADED zle dispatches the command there; the fallback
+            // switch below is skipped (`cmd = -1`).
+            //
+            // This call was MISSING: the arm set `cmd = -1` and returned
+            // None, making `zleentry(ZLE_CMD_TRASH)` a silent no-op. C
+            // relies on it in `zwarning` (Src/utils.c:144-145 `if
+            // (isatty(2)) zleentry(ZLE_CMD_TRASH);`) to park the cursor
+            // past the ZLE display before a diagnostic lands on stderr
+            // and to set `resetneeded` so the editor line is repainted
+            // afterwards. Without it, a warning emitted mid-ZLE (e.g.
+            // `compdescribe`'s "invalid argument" during `pr<TAB>`) was
+            // written INTO the prompt line and the completion list was
+            // then drawn without the prompt being redrawn — 5 rows off
+            // zsh in the comptab parity grid.
+            //
+            // Rust deviation (no C counterpart): C's `zleentry` is
+            // variadic, so it forwards every command's `va_list`
+            // straight through. The Rust signature carries no varargs,
+            // so only the ARGLESS commands can be reconstructed here;
+            // the arg-carrying ones (READ / GET_LINE / ADD_TO_LINE /
+            // SET_KEYMAP / GET_KEY / SET_HIST_LINE) are called through
+            // their own typed paths and still fall through unchanged.
+            use crate::ported::zle::zle_main::zle_main_entry_args;
+            let mut args = match cmd {
+                x if x == crate::ported::zsh_h::ZLE_CMD_TRASH => {
+                    Some(zle_main_entry_args::Trash) // c:2152
+                }
+                x if x == crate::ported::zsh_h::ZLE_CMD_RESET_PROMPT => {
+                    Some(zle_main_entry_args::ResetPrompt) // c:2156
+                }
+                x if x == crate::ported::zsh_h::ZLE_CMD_REFRESH => {
+                    Some(zle_main_entry_args::Refresh) // c:2160
+                }
+                x if x == crate::ported::zsh_h::ZLE_CMD_PREEXEC => {
+                    Some(zle_main_entry_args::Preexec) // c:2187
+                }
+                x if x == crate::ported::zsh_h::ZLE_CMD_POSTEXEC => {
+                    Some(zle_main_entry_args::Postexec) // c:2191
+                }
+                x if x == crate::ported::zsh_h::ZLE_CMD_CHPWD => {
+                    Some(zle_main_entry_args::Chpwd) // c:2195
+                }
+                _ => None,
+            };
+            let ret = args
+                .as_mut()
+                .and_then(|a| crate::ported::zle::zle_main::zle_main_entry(cmd, a)); // c:1777
             cmd = -1; // c:1779
+            if ret.is_some() {
+                return ret; // c:1777
+            }
         }
         2 => { /* fallback */ } // c:1782
         _ => {}
