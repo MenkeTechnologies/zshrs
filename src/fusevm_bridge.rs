@@ -4882,6 +4882,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // PM_READONLY backed by getcurrenttime(). Same parallel
                 // arrangement as the FUNCSTACK-backed specials below.
                 if name == "epochtime" {
+                    // c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode —
+                    // the `[@]` splat resolves the NAME, clearing PM_AUTOLOAD so
+                    // paramtypestr (c:Src/Modules/parameter.c:48-50) reports the real
+                    // type. Mirrors the arrays_get arm in src/ported/subst.rs.
+                    if !crate::vm_helper::magic_special_shadowed(&name) {
+                        crate::vm_helper::mark_module_param_used(&name);
+                    }
                     let arr = crate::ported::modules::datetime::getcurrenttime();
                     return Value::array(arr.into_iter().map(Value::str).collect());
                 }
@@ -4889,6 +4896,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     name.as_str(),
                     "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
                 ) {
+                    // c:Src/params.c:589-594 — see the epochtime arm above.
+                    if !crate::vm_helper::magic_special_shadowed(&name) {
+                        crate::vm_helper::mark_module_param_used(&name);
+                    }
                     // Route the three trace arrays through the canonical
                     // ported getfns (Src/Modules/parameter.c:648/:679/:711)
                     // — the previous inline copy emitted wrong shapes

@@ -31,10 +31,21 @@ use crate::ported::zsh_h::{isset, AUTOCD};
 /// suffix-alias suffix.
 pub fn _suffix_alias_files(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_suffix_alias_files");
-    // saliases is stored as a flat array of key/value pairs in our
-    //   port. Extract every other element (the keys).
-    let saliases = getaparam("saliases").unwrap_or_default();
-    let keys: Vec<&String> = saliases.iter().step_by(2).collect();
+    // sh:7,10,13 read the KEYS of the `saliases` magic assoc
+    // (`${#saliases}`, `${(kq)saliases}`). `getaparam` is the PM_ARRAY
+    // accessor and returns None for a PM_HASHED special
+    // (c:Src/params.c:3108 checks PM_TYPE == PM_ARRAY), so it never yielded
+    // anything here; `gethkparam` is C's `paramvalarr(..., SCANPM_WANTKEYS)`
+    // path (c:3131-3140) and is what the shell line resolves to. It also
+    // materializes the autoload stub (c:Src/params.c:589-594), which the
+    // shell read does and this port did not.
+    let keys: Vec<String> = crate::ported::params::gethkparam("saliases")
+        .or_else(|| {
+            // Fallback for a plain user array shadowing the special: the flat
+            // key/value pair layout the previous read assumed.
+            getaparam("saliases").map(|a| a.iter().step_by(2).cloned().collect())
+        })
+        .unwrap_or_default();
 
     // sh:7
     if keys.is_empty() {

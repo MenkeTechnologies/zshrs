@@ -4037,20 +4037,22 @@ pub fn bin_typeset(
                     if stubs.iter().any(|(n, _)| n == k) {
                         return false;
                     }
-                    // c:Src/Modules/parameter.c — magic-assoc names
-                    // (aliases/builtins/commands/options/functions/
-                    // parameters/etc.) live in a separate PARTAB in
-                    // C, NOT paramtab; the user-space scanhashtable
-                    // never sees them. The Rust port shoves them
-                    // into paramtab via vm_helper::init_partab_params
-                    // as PM_HIDE-tagged placeholders. Mirror the C
-                    // invisibility by skipping PM_HIDE entries here.
-                    // Bug #371 in docs/BUGS.md: `typeset -A`
-                    // (no args) listed all magic-assocs instead of
-                    // only user-defined ones.
-                    if (f & PM_HIDE) != 0 {
-                        return false;
-                    }
+                    // c:Src/builtin.c:2789 — `scanhashtable(paramtab, 1,
+                    // on|roff, exclude, paramtab->printnode, printflags)`.
+                    // The C scan has NO PM_HIDE exclusion: `addparamdef`
+                    // (Src/module.c:1060-1074) inserts every zsh/parameter
+                    // magic assoc into the REAL paramtab via createparam /
+                    // createspecialhash, so once the module has booted zsh
+                    // lists them (`association readonly parameters`,
+                    // `array readonly patchars`, …) — verified against
+                    // `zsh -f -c 'zmodload zsh/parameter; typeset -A'`.
+                    // A blanket PM_HIDE skip used to live here for bug
+                    // #371 (`typeset -A` listing magic-assocs in a shell
+                    // where the module was never loaded); that case is
+                    // already covered by the autoload-stub filter above,
+                    // which drops zshrs's paramtab placeholder for every
+                    // module that has not booted and prints the C
+                    // `undefined NAME` stub instead.
                     on_roff_expanded == 0 || (f & on_roff_expanded) != 0
                 })
                 .map(|(k, _)| k.clone())

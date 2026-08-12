@@ -1717,10 +1717,25 @@ pub fn createparamtable() {
             gsu_f: None,
             gsu_a: None,
             gsu_h: None,
-            base: 0,
+            // c:303/351/360/361/369/413 — every INTEGER IPDEF macro
+            // (IPDEF1, IPDEF4, IPDEF5, IPDEF5U, IPDEF6) writes `10` into
+            // the initparam `base` slot; the scalar/array ones (IPDEF2,
+            // IPDEF7*, IPDEF8, IPDEF9) write `0`. printparamnode's
+            // PMTF_USE_BASE arm (c:6242-6243) prints that base after the
+            // `integer` word, which is why zsh says `integer 10 UID`.
+            // Hardcoding 0 here dropped the base for every special
+            // integer on the createparamtable path (interactive/setupvals);
+            // the `-fc` path seeds it separately, so only the REPL diverged.
+            base: if (ip.pm_type & PM_INTEGER) != 0 { 10 } else { 0 },
             width: 0,
             env: None,
-            ename: None,
+            // c:391/401 — IPDEF9/IPDEF8 pass the tied partner's name as
+            // the `ename` slot (`IPDEF8("PATH", &path, "path", PM_TIED)`).
+            // printparamnode's PM_TIED arm (c:6256-6288) looks the peer up
+            // by `p->ename` and prints its name before this one's, giving
+            // `tied path PATH` / `array tied PATH path`. Leaving it None
+            // made the peer lookup fail, so the partner name vanished.
+            ename: ip.tied_name.map(|s| s.to_string()),
             old: None,
             level: 0,
         });
@@ -5836,6 +5851,15 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
                     fn cb_(node: &crate::ported::zsh_h::HashNode, _f: i32) {
                         KEYS_.with(|k| k.borrow_mut().push(node.nam.clone()));
                     }
+                    // c:Src/params.c:589-594 getparamnode → c:563-585
+                    // loadparamnode — resolving the NAME runs
+                    // ensurefeature(mn, "p:", nam), so a PM_AUTOLOAD stub stops
+                    // reading "undefined" (c:Src/Modules/parameter.c:48-50).
+                    // The non-inlined `vm_helper::partab_scan_keys` marks here;
+                    // this inlined copy dropped it, so `compadd -Qk builtins` /
+                    // `compadd -k functions` (Completion/Zsh/Type/_command_names
+                    // sh:34-35) left both names typed "undefined".
+                    crate::vm_helper::mark_module_param_used(name);
                     KEYS_.with(|k| k.borrow_mut().clear());
                     (e_.scanfn)(std::ptr::null_mut(), Some(cb_), 0);
                     Some(KEYS_.with(|k| k.borrow().clone()))
