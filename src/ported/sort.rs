@@ -152,8 +152,18 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     // numeric-glob-sort. The numeric path therefore keeps its existing
     // behaviour untouched; `SORTIT_NUMERICALLY | SORTIT_IGNORING_BACKSLASHES`
     // together remain an approximation, and knowingly so.
-    let mut a_str = a.to_string();
-    let mut b_str = bs.to_string();
+    // c:120-134 — C advances the `as`/`bs` POINTERS and hands the
+    // remainders straight to `strcoll`; the comparator allocates
+    // nothing. This is a sort comparator, called O(n log n) times (a
+    // 46765-match `compadd -k functions` completion means ~725k calls),
+    // so the port's unconditional `to_string()` pair — plus a second
+    // pair on the strip path — turned every comparison into four heap
+    // allocations. Borrow instead, and own only on the fallback arm
+    // that genuinely rewrites the bytes.
+    let mut a_str: &str = a;
+    let mut b_str: &str = bs;
+    let a_owned: String;
+    let b_owned: String;
     if no_backslash {
         let mut done = false;
         if !numeric {
@@ -179,14 +189,16 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
             // sequence straddled the divergence; slicing there would panic, so
             // fall through to the old whole-string form in that case.
             if let (Some(ar), Some(br)) = (a.get(i..), bs.get(j..)) {
-                a_str = ar.to_string();
-                b_str = br.to_string();
+                a_str = ar;
+                b_str = br;
                 done = true;
             }
         }
         if !done {
-            a_str = a_str.chars().filter(|&c| c != '\\').collect();
-            b_str = b_str.chars().filter(|&c| c != '\\').collect();
+            a_owned = a_str.chars().filter(|&c| c != '\\').collect();
+            b_owned = b_str.chars().filter(|&c| c != '\\').collect();
+            a_str = &a_owned;
+            b_str = &b_owned;
         }
     }
     // NOTE: c:Src/sort.c::zstrcmp does NOT honor SORTIT_IGNORING_CASE.
@@ -207,6 +219,42 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     let strcoll_cmp = |a: &str, b: &str| -> Ordering {
         #[cfg(unix)]
         {
+            // !!! RUST-ONLY ADAPTER — NO C COUNTERPART !!!
+            // c:134 `cmp = strcoll(as, bs)` — C's operands are already
+            // NUL-terminated `char *`, so the collation call copies
+            // nothing. A Rust `&str` is not NUL-terminated, so a copy is
+            // unavoidable; keep it on the STACK for the short strings
+            // that dominate here (match names, filenames, array
+            // elements) and fall back to a heap `CString` only when one
+            // does not fit. zstrcmp is a SORT COMPARATOR — a 46765-entry
+            // `compadd -k functions` completion runs it ~725k times — so
+            // the two `CString::new` allocations this replaces were the
+            // single hottest symbol in the completion profile.
+            const SCRATCH: usize = 256;
+            let mut abuf = [0u8; SCRATCH];
+            let mut bbuf = [0u8; SCRATCH];
+            // C stops at the NUL terminator; mirror that by truncating at
+            // the first embedded 0 byte (same rule the old `cstr_head`
+            // applied) and reject anything too long for the buffer.
+            let fill = |s: &str, buf: &mut [u8; SCRATCH]| -> bool {
+                let sb = s.as_bytes();
+                let n = sb.iter().position(|&x| x == 0).unwrap_or(sb.len());
+                if n >= SCRATCH {
+                    return false;
+                }
+                buf[..n].copy_from_slice(&sb[..n]);
+                buf[n] = 0;
+                true
+            };
+            if fill(a, &mut abuf) && fill(b, &mut bbuf) {
+                let c = unsafe {
+                    libc::strcoll(
+                        abuf.as_ptr() as *const libc::c_char,
+                        bbuf.as_ptr() as *const libc::c_char,
+                    )
+                };
+                return c.cmp(&0);
+            }
             let cstr_head = |s: &str| -> CString {
                 let bs = s.as_bytes();
                 let n = bs.iter().position(|&x| x == 0).unwrap_or(bs.len());
@@ -316,9 +364,9 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     };
 
     if numeric {
-        cmp_numeric(&a_str, &b_str, numeric_signed)
+        cmp_numeric(a_str, b_str, numeric_signed)
     } else {
-        strcoll_cmp(&a_str, &b_str)
+        strcoll_cmp(a_str, b_str)
     }
 }
 

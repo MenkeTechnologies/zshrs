@@ -949,20 +949,185 @@ pub fn is_zsh_compat() -> bool {
     is_zsh_mode()
 }
 
+/// Recovery of the process-entry environment.
+///
+/// zsh reads `extern char **environ` in `createparamtable`
+/// (c:Src/params.c:893) and nothing in the zsh process mutates it before
+/// that point, so the C shell always imports exactly what `execve` passed.
+/// A Rust binary on macOS does not get that for free: dyld runs the
+/// initializers of every linked library before `main`, and CoreFoundation's
+/// initializer calls `setenv("__CF_USER_TEXT_ENCODING", ...)`. CF is linked
+/// transitively (chrono -> iana-time-zone -> core-foundation-sys, and
+/// notify -> fsevent-sys -> CoreServices -> CoreFoundation), neither of
+/// which can be dropped: `cron` pins `chrono` with `features = ["clock"]`
+/// and `notify-debouncer-mini` pins `notify` with default features, so
+/// Cargo's feature unification re-enables both no matter what this crate
+/// requests. The result is one phantom parameter in every environment- or
+/// parameter-enumerating completion.
+///
+/// The fix uses the one copy of the environment that CF's `setenv` cannot
+/// reach. Mach-O `__DATA,__mod_init_func` entries are invoked by dyld with
+/// the C `main` signature plus extras — `(argc, argv, envp, apple, vars)` —
+/// and that `envp` is the array the kernel wrote onto the process stack at
+/// `execve` time, not the `environ` pointer. When `setenv` has to grow the
+/// array (which is what adding a new name always requires) it allocates a
+/// fresh one on the heap and repoints `environ` at it, leaving the stack
+/// array untouched. So a variable that the parent never passed is by
+/// construction absent here, while every variable the parent did pass is
+/// still present.
+///
+/// Verified with a standalone probe binary linking chrono:
+/// `env -i A=1 B=2 C=3 ./probe` reported `orig_n=3 live_n=4`, the single
+/// extra live name being `__CF_USER_TEXT_ENCODING`; with a 409-variable
+/// inherited environment it reported `orig_n=409 live_n=409` with no name
+/// added, dropped, or value-changed. Nothing pre-`main` calls `unsetenv`,
+/// which is the only operation that could shift entries out of the stack
+/// array; if that ever changed, the affected name would be missing from
+/// the live environment too, so the shell cannot end up worse off.
+///
+/// Value-only caveat: when the parent *did* export
+/// `__CF_USER_TEXT_ENCODING`, `setenv` overwrites the array slot in place
+/// (the array is not grown), so the recovered value is CF's rewritten one
+/// rather than the inherited one. That divergence is pre-existing and
+/// already pinned by `export_minus_p_full_dump` in
+/// `tests/parity/zsh_compat_parity_gaps.rs`; only the phantom-name case is
+/// addressed here.
+#[cfg(target_os = "macos")]
+mod initial_env {
+    use std::ffi::CStr;
+    use std::os::raw::{c_char, c_int};
+    use std::sync::atomic::{AtomicPtr, Ordering};
+
+    /// The stack `envp` dyld handed us, or null if the initializer never
+    /// ran (e.g. a future linker drops the section). Null means "fall
+    /// back to the live environment"; a non-null pointer to an
+    /// immediately-NULL-terminated array is a genuinely empty
+    /// environment (`env -i`) and must be honoured as such.
+    static ENTRY_ENVP: AtomicPtr<*const c_char> = AtomicPtr::new(std::ptr::null_mut());
+
+    /// dyld passes `(argc, argv, envp, apple, vars)`; the trailing
+    /// arguments are ignored, which is ABI-safe in both the SysV and
+    /// AAPCS64 C calling conventions.
+    extern "C" fn capture_entry_envp(
+        _argc: c_int,
+        _argv: *const *const c_char,
+        envp: *mut *const c_char,
+        _apple: *const *const c_char,
+    ) {
+        ENTRY_ENVP.store(envp, Ordering::SeqCst);
+    }
+
+    #[link_section = "__DATA,__mod_init_func"]
+    #[used]
+    static MOD_INIT_FUNC: [extern "C" fn(
+        c_int,
+        *const *const c_char,
+        *mut *const c_char,
+        *const *const c_char,
+    ); 1] = [capture_entry_envp];
+
+    /// Walk the captured array. Runs from `main`, after every dyld
+    /// initializer has finished, so the array is stable. Values are
+    /// decoded lossily rather than panicking the way `std::env::vars()`
+    /// does on non-UTF-8 — a shell must not die on a hostile environment.
+    pub fn snapshot() -> Option<Vec<(String, String)>> {
+        let envp = ENTRY_ENVP.load(Ordering::SeqCst);
+        if envp.is_null() {
+            return None;
+        }
+        let mut out = Vec::new();
+        // SAFETY: `envp` is the NULL-terminated array dyld passed at
+        // process entry; it lives on the process stack for the lifetime
+        // of the process and libc never frees or shortens it.
+        unsafe {
+            let mut i = 0isize;
+            loop {
+                let entry = *envp.offset(i);
+                if entry.is_null() {
+                    break;
+                }
+                let s = String::from_utf8_lossy(CStr::from_ptr(entry).to_bytes());
+                if let Some((name, value)) = s.split_once('=') {
+                    out.push((name.to_string(), value.to_string()));
+                }
+                i += 1;
+            }
+        }
+        Some(out)
+    }
+}
+
+/// Delete from the live process environment every name that was injected
+/// after `execve` and before `main` — i.e. every live name absent from the
+/// process-entry `envp`. In practice that set is exactly
+/// `{__CF_USER_TEXT_ENCODING}` (empty when the parent already exported it).
+///
+/// Fixing the parameter-table import alone is not enough. `getsparam` falls
+/// back to the live environment on a table miss
+/// (`src/ported/params.rs:5544-5547`), as do `zgetenv`
+/// (`src/ported/params.rs:11228`) and `findenv`
+/// (`src/ported/params.rs:11212`), so an injected variable stays visible to
+/// `${+name}` and friends however clean the table is. It would also be
+/// exported to every child process, which zsh's children never see. Pruning
+/// the live environment closes all of those at once and leaves the process
+/// environment byte-identical to what zsh would be running with.
+///
+/// Only names the parent provably did not pass are removed, so no
+/// inherited variable can be lost. CoreFoundation reads
+/// `__CF_USER_TEXT_ENCODING` once from its own initializer and only
+/// re-publishes it for child processes, so removing it after `main` starts
+/// does not disturb the frameworks that are already initialised.
+#[cfg(target_os = "macos")]
+fn prune_preinit_env_injections(entry: &[(String, String)]) {
+    use std::collections::HashSet;
+    let entry_names: HashSet<&str> = entry.iter().map(|(k, _)| k.as_str()).collect();
+    let injected: Vec<String> = std::env::vars()
+        .map(|(k, _)| k)
+        .filter(|k| !entry_names.contains(k.as_str()))
+        .collect();
+    for name in injected {
+        tracing::debug!(
+            "pruning pre-main environment injection: {} (absent from process-entry envp)",
+            name
+        );
+        std::env::remove_var(name);
+    }
+}
+
+/// Non-macOS: no pre-`main` initializer rewrites the environment, so the
+/// live one already is the process-entry one and no recovery is needed.
+#[cfg(not(target_os = "macos"))]
+mod initial_env {
+    pub fn snapshot() -> Option<Vec<(String, String)>> {
+        None
+    }
+}
+
 fn main() {
     // c:Src/params.c:893 createparamtable reads `environ` exactly as
     // it was at process entry. Snapshot it as the first statement so
     // nothing later in shell init (setenv from builtins, lazy crate
     // init) skews the import.
     //
-    // Known unfixable artifact: zshrs links CoreFoundation through a
-    // dependency, and CF's dyld initializer runs BEFORE main and may
-    // rewrite __CF_USER_TEXT_ENCODING in the live environment (zsh
-    // has no such initializer, so it imports the original). The
-    // kernel's exec-image copy (sysctl KERN_PROCARGS2) was tried and
-    // REJECTED: it silently truncates large environments (tail vars
-    // vanish), which corrupts far more than the one CF variable.
-    let _ = zsh::ported::params::environ.set(std::env::vars().collect());
+    // On macOS `std::env::vars()` is NOT the process-entry environment:
+    // zshrs links CoreFoundation (chrono -> iana-time-zone ->
+    // core-foundation-sys) and CoreServices (notify -> fsevent-sys), and
+    // CF's dyld initializer runs before `main` and `setenv`s
+    // __CF_USER_TEXT_ENCODING. zsh links neither, so it imports an
+    // environment without that variable. `initial_env::snapshot()`
+    // recovers the real one from the stack `envp` dyld hands to a
+    // `__mod_init_func` entry (see the module below); it returns None on
+    // non-macOS and on any capture failure, in which case the live
+    // environment is used exactly as before. The kernel's exec-image copy
+    // (sysctl KERN_PROCARGS2) was tried earlier and REJECTED: it silently
+    // truncates large environments (tail vars vanish).
+    let entry_env = initial_env::snapshot();
+    #[cfg(target_os = "macos")]
+    if let Some(entry) = entry_env.as_deref() {
+        prune_preinit_env_injections(entry);
+    }
+    let _ = zsh::ported::params::environ
+        .set(entry_env.unwrap_or_else(|| std::env::vars().collect()));
     // Restore default SIGPIPE behavior before anything writes to
     // stdout/stderr. Rust runtime installs SIG_IGN on SIGPIPE in
     // some Linux builds and ignores it on macOS — either way,

@@ -1082,14 +1082,23 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
             // function takes precedence unless a `builtin`/`command`
             // modifier preceded it.
             if (cflags & (BINF_BUILTIN | BINF_COMMAND)) == 0 {
-                // c:3051
+                // c:3106 — `(hn = shfunctab->getnode(shfunctab, cmdarg))`.
+                // `shfunctab->getnode` is `gethashnode`
+                // (Src/hashtable.c:821 in `createshfunctable`), i.e. an
+                // O(1) hash probe that also skips DISABLED nodes. The
+                // previous Rust code walked the whole table with
+                // `iter().any(...)`, which is O(#functions) per command
+                // head AND ignored the DISABLED bit `gethashnode`
+                // honours. With a real `.zcompdump` loaded the table
+                // holds ~50k autoload stubs, so every compiled command
+                // head paid a 50k-entry String scan under the read lock.
                 if shfunctab_lock()
                     .read()
-                    .map(|t| t.iter().any(|(k, _)| k == &cmdarg))
+                    .map(|t| !t.getnode(&cmdarg).is_null())
                     .unwrap_or(false)
                 {
-                    is_shfunc = true; // c:3053
-                    break; // c:3054
+                    is_shfunc = true; // c:3107
+                    break; // c:3108
                 }
             }
             // c:3056 — `builtintab->getnode(builtintab, cmdarg)`.
@@ -10135,10 +10144,15 @@ pub fn execcmd_exec(
             let cmdarg = args.as_ref().unwrap()[0].clone();
 
             // c:3429-3433 — shfunc lookup.
+            // c:3485 — `(hn = shfunctab->getnode(shfunctab, cmdarg))`.
+            // Same misport as the compile-time head walk above: C's
+            // `shfunctab->getnode` is `gethashnode`
+            // (Src/hashtable.c:821), an O(1) probe that skips DISABLED
+            // nodes, not a full-table walk.
             if (cflags & (BINF_BUILTIN | BINF_COMMAND)) == 0 {
                 let in_shfunctab = shfunctab_lock()
                     .read()
-                    .map(|t| t.iter().any(|(k, _)| k.as_str() == cmdarg.as_str()))
+                    .map(|t| !t.getnode(cmdarg.as_str()).is_null())
                     .unwrap_or(false);
                 if in_shfunctab {
                     is_shfunc = 1; // c:3431

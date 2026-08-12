@@ -4064,6 +4064,36 @@ pub fn paramsubst(
         // the joined string. Record the arrayness so the subexp return path
         // can rebuild it.
         let mut subexp_aspar_is_array = false;
+        // c:Src/params.c:724-732 getvaluearr — "Return the full array (no
+        // indexing) referred to by a Value. The array value is cached for the
+        // lifetime of the Value.":
+        //     if (v->arr)
+        //         return v->arr;
+        //     ...
+        //     v->arr = paramvalarr(v->pm->gsu.h->getfn(v->pm), v->scanflags);
+        // One `paramsubst` call owns one `struct value`, so C materialises an
+        // association at most ONCE per expansion and every later arm reads the
+        // cached `v->arr`. zshrs had no such cache: `raw_value`, the `[@]`
+        // splat, the double-quote join and the offset slice each called
+        // `assoc_get`, re-running the whole hash walk (and, for `$functions`,
+        // re-deparsing every function body) once per arm — `${${(P)i}:0:100}`
+        // over `$functions` did SIX full materialisations where C does one.
+        // Keyed by name because the subexp arm rewrites `var_name` from the
+        // `__subexp_arr_N` scratch handle to the referenced parameter.
+        let mut valuearr_assoc: Option<(String, Option<indexmap::IndexMap<String, String>>)> = None;
+        // c:Src/params.c:731 `if (v->arr) return v->arr;` — read the
+        // association through the per-`Value` cache above. Written as a macro
+        // rather than a closure so each use site keeps its own borrow of
+        // `valuearr_assoc` and the surrounding locals stay untouched.
+        macro_rules! getvaluearr_assoc {
+            ($name:expr) => {{
+                let n_: &str = $name;
+                if valuearr_assoc.as_ref().map_or(true, |(k_, _)| k_ != n_) {
+                    valuearr_assoc = Some((n_.to_string(), assoc_get(n_))); // c:736
+                }
+                valuearr_assoc.as_ref().and_then(|(_, v_)| v_.as_ref()) // c:731
+            }};
+        }
         // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
         // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
         // `${(flag)name}` in DQ context and in the new bridge passthru
@@ -5351,7 +5381,14 @@ pub fn paramsubst(
                             // `(P)nm` → nm's VALUE is the referenced param
                             // name; if that names an assoc, remember it.
                             if let Some(refname) = vars_get(&nm) {
-                                if !refname.is_empty() && assoc_get(&refname).is_some() {
+                                // MEMBERSHIP test only — `assoc_contains` is the
+                                // same predicate as `assoc_get(..).is_some()`
+                                // (paramtab_hashed_storage key, else a PARTAB row
+                                // whose module is loaded) without materialising
+                                // the map. C has no probe here at all: the inner
+                                // `(P)` never produces a value (c:Src/subst.c:2757
+                                // MULTSUB_PARAM_NAME), it only splices the NAME.
+                                if !refname.is_empty() && assoc_contains(&refname) {
                                     subexp_passoc_name = Some(refname.clone());
                                 }
                                 // Record the referenced name for the (t)
@@ -5398,6 +5435,40 @@ pub fn paramsubst(
             //   `${(j:-:)${(s: :)a}}` collapsed the inner array to a
             //   scalar via singsub and the outer `(j)` had nothing to
             //   join. Bug #63 in docs/BUGS.md.
+            // c:Src/subst.c:2745-2757 + 2699-2719 — the `${(P)name}` inner.
+            // C never evaluates it to a value: the inner clears `aspar`
+            // (c:2755 `aspar = 0; *ret_flags |= MULTSUB_PARAM_NAME;`) and only
+            // reports the dereferenced NAME, which the outer splices into the
+            // parameter expression (c:2717 `s = dyncat(val, s); subexp = 0;`)
+            // so the OUTER's own fetchvalue/getarrvalue supplies the shape.
+            // That is why the DQ collapse at c:3032 (which fired on the INNER
+            // here) must not flatten it: `"${${(P)k}[2]}"` picks ELEMENT 2 of
+            // the referenced array, while the bare `"${${b}[2]}"` — a real
+            // inner expansion, no (P) — stays a joined scalar and picks
+            // CHARACTER 2. So rebuild the referenced array's element list.
+            //
+            // Resolved BEFORE the inner pass because when it comes back Some
+            // it REPLACES the inner's `arr_parts` and forces `isarr` (see
+            // below), i.e. every result of evaluating the inner is discarded —
+            // and the inner is a bare `${(flags)NAME}` with NAME a plain
+            // identifier, so it has no side effects to preserve either. Running
+            // it anyway materialised the referenced parameter a second time:
+            // `${${(P)i}:0:100}` over `$functions` walked all 46,761 entries
+            // twice per loop iteration where C walks them once.
+            let aspar_arr: Option<Vec<String>> = if subexp_aspar_is_array {
+                match subexp_aspar_name.as_deref() {
+                    Some(n) => arrays_get(n).or_else(|| {
+                        // c:Src/params.c:736 — same `v->arr` slot the outer
+                        // arms read, so the referenced association is walked
+                        // once for the whole expansion.
+                        getvaluearr_assoc!(n)
+                            .map(|m| m.values().cloned().collect::<Vec<String>>())
+                    }),
+                    None => None,
+                }
+            } else {
+                None
+            };
             let expanded = {
                 // c:Src/subst.c:2169 — `sub_flags` is the OUTER
                 // paramsubst's filter-disposition state (SUB_MATCH/M
@@ -5452,7 +5523,14 @@ pub fn paramsubst(
                 if scalar_ctx {
                     SUBEXP_SCALAR_CTX.with(|c| c.set(c.get() + 1));
                 }
-                let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
+                // c:2681 `multsub(&val, PREFORK_SUBEXP, …)` — skipped only for
+                // the `(P)`-name-splice shape above, where C runs no inner
+                // expansion either (c:2717) and every field below is replaced.
+                let (joined, arr_parts, isarr, _) = if aspar_arr.is_some() {
+                    (String::new(), Vec::new(), false, 0)
+                } else {
+                    multsub(&inner, PREFORK_SUBEXP)
+                };
                 if scalar_ctx {
                     SUBEXP_SCALAR_CTX.with(|c| c.set(c.get() - 1));
                 }
@@ -5537,26 +5615,8 @@ pub fn paramsubst(
                     } else {
                         (joined, arr_parts, isarr)
                     };
-                // c:Src/subst.c:2745-2757 + 2703-2709 — the `${(P)name}` inner.
-                // C never evaluates it to a value: the inner sets
-                // MULTSUB_PARAM_NAME and the outer splices the dereferenced
-                // NAME into the parameter expression, so the outer's own
-                // fetchvalue/getarrvalue supplies the shape. That is why the
-                // DQ collapse at c:3032 (which fired on the INNER here) must
-                // not flatten it: `"${${(P)k}[2]}"` picks ELEMENT 2 of the
-                // referenced array, while the bare `"${${b}[2]}"` — a real
-                // inner expansion, no (P) — stays a joined scalar and picks
-                // CHARACTER 2. Rebuild the referenced array's element list so
-                // the temp-array branch below runs for both.
-                let aspar_arr: Option<Vec<String>> = if subexp_aspar_is_array {
-                    subexp_aspar_name.as_ref().and_then(|n| {
-                        arrays_get(n).or_else(|| {
-                            assoc_get(n).map(|m| m.values().cloned().collect::<Vec<String>>())
-                        })
-                    })
-                } else {
-                    None
-                };
+                // c:2709-2716 — the name-splice array resolved above replaces
+                // whatever the inner produced.
                 let isarr = isarr || aspar_arr.is_some();
                 let arr_parts = aspar_arr.unwrap_or(arr_parts);
                 if isarr {
@@ -9446,13 +9506,31 @@ pub fn paramsubst(
                     // interactive-startup hang. PARTAB membership is a tiny
                     // fixed scan; magic assocs fall through to empty (zsh
                     // parity). Regular user assocs still resolve here.
+                    //
+                    // …but ONLY while nothing downstream consumes the scalar.
+                    // c:Src/params.c:2270-2278 — `fetchvalue` gives a bare
+                    // PM_HASHED reference `v->scanflags = SCANPM_ARRONLY`, and
+                    // c:Src/params.c:2343-2361 `getstrvalue` falls the
+                    // PM_HASHED case THROUGH to PM_ARRAY: `ss = getvaluearr(v)`
+                    // then, because scanflags is set, `s = sepjoin(ss, NULL,
+                    // 1)`. So a magic assoc under an operator has the joined
+                    // VALUES as its scalar in C, not "". With `rest` empty
+                    // (bare `${functions}` / a flag-only read) the flag arms
+                    // below own the fetch and the skip above is what keeps
+                    // zinit's snapshots off the O(N) getpermtext path; with an
+                    // operator present (`${aliases:-X}`, `${aliases%%e*}`,
+                    // `${aliases:0:1}`) the operator NEEDS that value and
+                    // returned empty — `${${(P)i}:0:100}` in the user's
+                    // `_parameters` override blanked every magic-assoc row of
+                    // `unset <TAB>` (aliases/commands/functions/options/…).
                     if crate::ported::modules::parameter::PARTAB
                         .iter()
                         .any(|e_| e_.name == var_name.as_str())
+                        && rest.is_empty()
                     {
                         None
                     } else {
-                        assoc_get(&var_name)
+                        getvaluearr_assoc!(&var_name) // c:Src/params.c:736
                             .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
                     }
                 })
@@ -10877,7 +10955,8 @@ pub fn paramsubst(
                         };
                     value = crate::ported::utils::sepjoin(&arr, sep.as_deref());
                 // c:3032
-                } else if let Some(m) = assoc_get(&var_name) {
+                } else if let Some(m) = getvaluearr_assoc!(&var_name) {
+                    // c:Src/params.c:736
                     let vals: Vec<String> = m.values().cloned().collect();
                     value = crate::ported::utils::sepjoin(&vals, sep.as_deref());
                     // c:3032
@@ -15033,7 +15112,28 @@ pub fn paramsubst(
                     let array_source: Option<Vec<String>> = if single_slot_subscript {
                         None // c:2915 (scalar picked → substring on val)
                     } else {
-                        split_parts.clone().or_else(|| arrays_get(&var_name))
+                        split_parts
+                            .clone()
+                            .or_else(|| arrays_get(&var_name))
+                            // c:Src/subst.c:3665-3667 — `if (aval && !isarr)
+                            // quoted_array_with_offset = 1; if (isarr ||
+                            // quoted_array_with_offset) {…}`: an ASSOCIATION is
+                            // array-shaped here too (c:Src/subst.c:2916-2927
+                            // sets `isarr` from `v->scanflags` and takes
+                            // `aval = getarrvalue(v)`, and c:Src/params.c:2343
+                            // routes PM_HASHED through the PM_ARRAY arm), so
+                            // `:OFFSET:LENGTH` indexes the VALUES ARRAY and the
+                            // join happens afterwards — even inside double
+                            // quotes (c:1866-1871 comment). zshrs only offered
+                            // `arrays_get`, so every assoc fell into the scalar
+                            // CHARACTER-substring arm: `typeset -A u=(a aval b
+                            // bval); ${u:0:1}` gave "a" where zsh gives "aval",
+                            // and the magic assocs (behind PARTAB, not
+                            // `arrays_get`) had no source at all.
+                            .or_else(|| {
+                                getvaluearr_assoc!(&var_name) // c:Src/params.c:736
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
                     };
                     let array_applied = array_source.is_some();
                     if let Some(mut arr) = array_source {
@@ -18397,7 +18497,8 @@ pub fn paramsubst(
                 })
             {
                 keys
-            } else if let Some(map) = assoc_get(&var_name) {
+            } else if let Some(map) = getvaluearr_assoc!(&var_name) {
+                // c:Src/params.c:736
                 if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
                     // c:3955 (kv splat — interleaved)
                     let mut out: Vec<String> = Vec::with_capacity(map.len() * 2); // c:3955
@@ -21935,8 +22036,15 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
     }
     PARTAB_SCAN_KEYS.with(|k| k.borrow_mut().clear());
     (entry.scanfn)(std::ptr::null_mut(), Some(partab_scan_cb), 0);
-    let keys = PARTAB_SCAN_KEYS.with(|k| k.borrow().clone());
-    let mut out = indexmap::IndexMap::new();
+    // c:Src/params.c:712-719 paramvalarr — C reads the scan's output buffer in
+    // place (`paramvals` is the collected array itself). Move the collected
+    // names out of the thread-local instead of copying them: a `.clone()` here
+    // re-allocated every name a second time (46,761 `String`s for
+    // `$functions`), and the map was built with no capacity hint so it also
+    // re-hashed the whole table through several growth rounds
+    // (c:715 sizes the result from the counting pass up front).
+    let keys = PARTAB_SCAN_KEYS.with(|k| std::mem::take(&mut *k.borrow_mut()));
+    let mut out = indexmap::IndexMap::with_capacity(keys.len()); // c:715
     for k in keys {
         // c:Src/Modules/parameter.c:49-50 + :126-147 — ENUMERATING
         // `$parameters` runs `scanpmparameters`, which types each node with

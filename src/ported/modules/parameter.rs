@@ -1220,27 +1220,32 @@ pub fn scanfunctions(
     // including disabled ones, so the flag check is what discriminates.
     let names: Vec<String> = if let Ok(g) = shfunctab_lock().read() {
         // c:468-470 — walk all shfunctab entries; filter by DISABLED.
-        g.iter()
-            .filter_map(|(n, shf)| {
-                let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
-                let pass = if dis != 0 { is_disabled } else { !is_disabled };
-                if pass {
-                    Some(n.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut v = Vec::with_capacity(g.len());
+        v.extend(g.iter().filter_map(|(n, shf)| {
+            let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
+            let pass = if dis != 0 { is_disabled } else { !is_disabled };
+            if pass {
+                Some(n.clone())
+            } else {
+                None
+            }
+        }));
+        v
     } else {
         Vec::new()
     };
     if let Some(f) = func {
+        // c:461 `struct param pm;` — ONE node for the whole walk, rebound per
+        // entry by c:472 `pm.node.nam = hn->nam`. The port allocated a fresh
+        // `Box<hashnode>` per entry instead, i.e. one heap allocation for every
+        // shell function on every `${functions}`-style read.
+        let mut node = Box::new(hashnode {
+            next: None,
+            nam: String::new(),
+            flags: 0, // c:463 pm.node.flags = PM_SCALAR (value unused here)
+        });
         for name in names {
-            let node = Box::new(hashnode {
-                next: None,
-                nam: name,
-                flags: 0, // c:472 fresh pm.node.nam
-            });
+            node.nam = name; // c:472 pm.node.nam = hn->nam
             f(&node, flags); // c:514
         }
     }
@@ -1309,10 +1314,23 @@ pub fn getfunction_source(_ht: *mut HashTable, name: &str, dis: i32) -> Option<P
             // skipped the LOADDIR join, so autoloads loaded via fpath
             // dir match had `${functions_source[name]}` reporting the
             // dir instead of the source file path.
-            drop(g); // release shfunctab lock before getshfuncfile re-acquires.
-            let fname = crate::ported::hashtable::getshfuncfile(name).unwrap_or_default();
-            // Re-acquire for the post-block path that needs `g`
-            // again (none currently, but keep the structure clean).
+            //
+            // C passes the NODE (`getshfuncfile(shf)`), not the name: the
+            // lookup at c:547 already resolved it. zshrs's
+            // `hashtable::getshfuncfile` is keyed by NAME, so routing through
+            // it re-acquired the shfunctab lock and re-hashed the name — two
+            // lookups per entry instead of one, i.e. 46k redundant hashes on
+            // every whole-map `${functions_source}` read on this host. Inline
+            // getshfuncfile's body (Src/hashtable.c:1059-1069) against the
+            // node c:547 already gave us, which is what C's call does.
+            let fname = match shf.filename.as_ref() {
+                // c:1061 — PM_LOADDIR: `zhtricat(shf->filename, "/", shf->node.nam)`
+                Some(f) if (shf.node.flags as u32 & crate::ported::zsh_h::PM_LOADDIR) != 0 => {
+                    format!("{}/{}", f, shf.node.nam)
+                }
+                Some(f) => f.clone(),  // c:1063 — `dupstring(shf->filename)`
+                None => String::new(), // c:1065 NULL → c:551 `dupstring("")`
+            };
             (fname, true)
         } else {
             // c:552 — wrong DISABLED parity: pm->u.str stays NULL,
@@ -1387,27 +1405,30 @@ pub fn scanfunctions_source(
     // enabled ones (wrong). Now filters per C's c:572 gate using
     // the live shfunctab entry's node.flags.
     let names: Vec<String> = if let Ok(g) = shfunctab_lock().read() {
-        g.iter()
-            .filter_map(|(n, shf)| {
-                let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
-                let pass = if dis != 0 { is_disabled } else { !is_disabled };
-                if pass {
-                    Some(n.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut v = Vec::with_capacity(g.len());
+        v.extend(g.iter().filter_map(|(n, shf)| {
+            let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
+            let pass = if dis != 0 { is_disabled } else { !is_disabled };
+            if pass {
+                Some(n.clone())
+            } else {
+                None
+            }
+        }));
+        v
     } else {
         Vec::new()
     };
     if let Some(f) = func {
+        // c:565 `struct param pm;` — one node for the whole walk (see the
+        // matching note in `scanfunctions`), rebound per entry at c:573.
+        let mut node = Box::new(hashnode {
+            next: None,
+            nam: String::new(),
+            flags: 0, // c:573
+        });
         for name in names {
-            let node = Box::new(hashnode {
-                next: None,
-                nam: name,
-                flags: 0, // c:573
-            });
+            node.nam = name; // c:573 pm.node.nam = hn->nam
             f(&node, flags); // c:604
         }
     }

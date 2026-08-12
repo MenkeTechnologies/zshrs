@@ -1655,9 +1655,17 @@ pub fn split_env_string(env: &str) -> Option<(String, String)> {
 /// during their lazy init before our import runs (observed on macOS:
 /// CoreFoundation recomputes `__CF_USER_TEXT_ENCODING`, so `export -p`
 /// showed `0x1F5:0x0:0x0` while zsh, inheriting the same env, printed
-/// the original `0x0:0:0`). `main()` snapshots `std::env::vars()` as
-/// its first statement; the import loops below prefer the snapshot and
-/// fall back to the live env (lib tests never run `main`).
+/// the original `0x0:0:0`, and CF *adds* the variable outright when the
+/// parent never exported it). `main()` fills this OnceLock as its first
+/// statement; the import loops below prefer the snapshot and fall back to
+/// the live env (lib tests never run `main`).
+///
+/// On macOS the snapshot is not `std::env::vars()` but the process-entry
+/// `envp` dyld hands to a `__mod_init_func` entry, which CoreFoundation's
+/// `setenv` cannot have grown — see `initial_env` in `bins/zshrs.rs` for
+/// the mechanism, the measurements, and the residual value-only caveat.
+/// Elsewhere it is the live environment, which is already the
+/// process-entry one.
 #[allow(non_upper_case_globals)]
 pub static environ: OnceLock<Vec<(String, String)>> = OnceLock::new();
 

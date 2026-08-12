@@ -7916,7 +7916,17 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // `v=$'\xce\xb1'` emitted `$'\316'$'\261'` where zsh emits the two bytes of
     // `α` verbatim (`ce b1`), because C's mbrtowc joins them into a printable
     // wide character at c:6422 and copies the unit whole (c:6431-6433).
-    let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+    // c:Src/utils.c:5613 — `if (!isset(MULTIBYTE) || …)`. C reads the option
+    // through `isset(X)` = `opts[X]`, a single array load. The port went via
+    // `opt_state_get("multibyte")`, which allocates a lowercased copy of the
+    // name in `optlookup` and then does two String-keyed HashMap lookups
+    // under an RwLock — on EVERY quotestring call. `quotestring` runs once
+    // per completion match (`multiquote` → `quotestring`, compcore.c:1073),
+    // so a 46765-match `compadd -k functions` paid that name lookup 46765
+    // times. Same precedent as options.rs:768-770, which replaced
+    // `isset(optlookup("shoptionletters"))` with the optno constant for
+    // exactly this reason.
+    let mb = isset(crate::ported::zsh_h::MULTIBYTE);
     let meta_chars = |s: &str| -> Vec<MetaChar> {
         // c:5672 — the byte stream is what mbrtowc consumes; a `Meta`+byte pair
         // and a literal high byte are the same input to the step below.

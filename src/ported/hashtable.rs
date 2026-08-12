@@ -2178,6 +2178,13 @@ pub fn printshfuncexpand(hn: &shfunc, printflags: i32, expand: i32) {
 /// PM_LOADDIR branch, so `${functions_source[my_autoload]}`
 /// returned the fpath dir (e.g. `/usr/share/zsh/5.9/functions`)
 /// instead of the real path (`.../functions/my_autoload`).
+/// NOTE ON THE SIGNATURE: C takes the resolved node —
+/// `getshfuncfile(Shfunc shf)` — so callers that already hold it (c:549
+/// `pm->u.str = getshfuncfile(shf)`, c:589 `pm.u.str =
+/// getshfuncfile((Shfunc)hn)`) reach the filename with no lookup at all.
+/// This port is keyed by NAME, so those callers pay a second shfunctab
+/// lock + hash. Callers on a whole-map path therefore inline the c:1061-1063
+/// body against the node they already resolved rather than calling here.
 pub fn getshfuncfile(shf: &str) -> Option<String> {
     let tab = shfunctab_lock().read().expect("shfunctab poisoned");
     let f = tab.get_including_disabled(shf)?;

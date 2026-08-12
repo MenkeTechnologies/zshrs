@@ -213,6 +213,36 @@ pub struct ZshCompiler {
     /// unlike a regular command arg (`foo E=${x:-*file}` DOES glob). Gates
     /// the default-word glob bracket off.
     pub assign_builtin_arg_depth: i32,
+    /// Set by [`ZshCompiler::compile_word_str`] (and its recursive
+    /// segment calls) whenever the word just compiled already ends in an
+    /// UNCONDITIONAL filename-generation op — `BUILTIN_GLOB_EXPAND` or
+    /// its redirect-target variant, both picked by
+    /// [`ZshCompiler::glob_expand_builtin`].
+    ///
+    /// c:Src/exec.c:2611-2613 (`globlist(vl, prefork_ret)` for an
+    /// assignment) and c:Src/exec.c:3757 (`globlist(args, 0)` for a
+    /// command's argv) run filename generation EXACTLY ONCE over a word
+    /// list, after prefork has finished substituting. Whether a metachar
+    /// came from the source text or from a `${~spec}` value makes no
+    /// difference at that point — both are Star / Quest / Inbrack TOKENS
+    /// in the single word C hands to `zglob` (c:Src/subst.c:4419-4420
+    /// `if (globsubst) shtokenize(y)` is what promotes the substituted
+    /// ones). And c:Src/glob.c `globlist` advances past the nodes
+    /// `zglob` produced, so a GENERATED filename is never re-globbed.
+    ///
+    /// zshrs splits that one pass into two ops: the compile-time
+    /// `BUILTIN_GLOB_EXPAND`, emitted when the word's own text carries a
+    /// glob token, and the runtime-gated `BUILTIN_GLOB_SUBST_EXPAND`,
+    /// which exists only to cover the case where the literal text has NO
+    /// metachar and solely the substituted value does. Emitting both
+    /// over one word is a SECOND `zglob` pass over what C already
+    /// considers final output: `pages=( ${^~pages}(N:t) )`
+    /// (Completion/Unix/Type/_man `_man_pages`) re-parsed its own
+    /// produced basename `[.1` — a real page in the macOS man tree — as
+    /// a pattern and died with `bad pattern: [.1`. Callers reset this to
+    /// `false` immediately before `compile_word_str` and skip the
+    /// GLOB_SUBST_EXPAND emit when it comes back `true`.
+    pub word_emitted_glob: bool,
 }
 
 impl Default for ZshCompiler {
@@ -253,6 +283,7 @@ impl ZshCompiler {
             redir_word_depth: 0,
             word_seg_depth: 0,
             assign_builtin_arg_depth: 0,
+            word_emitted_glob: false,
         }
     }
 
@@ -267,6 +298,17 @@ impl ZshCompiler {
         } else {
             crate::vm_helper::BUILTIN_GLOB_EXPAND
         }
+    }
+
+    /// Emit the word's filename-generation op and record that the word
+    /// has now been globbed, so the `BUILTIN_GLOB_SUBST_EXPAND` gate at
+    /// each word-list site does not add a SECOND `zglob` pass over
+    /// results C already treats as final (c:Src/glob.c `globlist` steps
+    /// past the nodes `zglob` produced). See `word_emitted_glob`.
+    fn emit_word_glob_expand(&mut self) {
+        let builtin = self.glob_expand_builtin();
+        self.builder.emit(Op::CallBuiltin(builtin, 0), 0);
+        self.word_emitted_glob = true;
     }
 
     /// Emit a runtime errexit check. The host examines `set -e` and the
@@ -2540,6 +2582,7 @@ impl ZshCompiler {
             if arg_is_assign {
                 self.assign_context_depth += 1;
             }
+            self.word_emitted_glob = false;
             self.compile_word_str(word);
             if arg_is_assign {
                 self.assign_context_depth -= 1;
@@ -2555,7 +2598,14 @@ impl ZshCompiler {
             // The for-loop word arm at compile_zsh.rs:~4426 already
             // gates this; mirror it here for simple-command argv.
             // Bug #329.
-            if has_unquoted_param_or_subst(word) {
+            //
+            // `!word_emitted_glob`: c:Src/exec.c:3755-3758 globs an argv word
+            // list ONCE. When the word's own text already carried a glob
+            // token, compile_word_str emitted BUILTIN_GLOB_EXPAND over
+            // the fully assembled word — which is exactly C's single
+            // `globlist` pass, substituted metachars included — so a
+            // second pass here would re-glob generated filenames.
+            if has_unquoted_param_or_subst(word) && !self.word_emitted_glob {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND, 1),
                     0,
@@ -4046,6 +4096,7 @@ impl ZshCompiler {
                             continue;
                         }
                         self.assign_context_depth += 1;
+                        self.word_emitted_glob = false;
                         self.compile_word_str(elem);
                         self.assign_context_depth -= 1;
                         // Same IFS-split rule as for-list words: unquoted
@@ -4054,6 +4105,46 @@ impl ZshCompiler {
                         if has_unquoted_expansion(elem) {
                             self.builder
                                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
+                        }
+                        // c:Src/exec.c:2611-2613 — after prefork, an ARRAY
+                        // assignment ALWAYS runs its word list through
+                        // globlist():
+                        //     if (!isstr || (isset(GLOBASSIGN) && isstr &&
+                        //                    haswilds(…)))
+                        //         globlist(vl, prefork_ret);
+                        // so a substituted value whose glob metachars were
+                        // promoted to TOKENS by paramsubst (c:Src/subst.c:4419
+                        // `if (globsubst) shtokenize(y)`, set by `${~spec}` at
+                        // c:Src/subst.c:2603 `globsubst = 2` or by the
+                        // GLOB_SUBST option at c:Src/subst.c:1671) takes part
+                        // in filename generation here. zshrs models globsubst
+                        // as a runtime option carrier, so mirror the simple-
+                        // command argv arm (compile_zsh.rs:2558) and the
+                        // for-list arm (compile_zsh.rs:7933): emit the runtime
+                        // gate, which is a no-op when GLOB_SUBST is off.
+                        // Without it only the `${~NAME}` compiler fast path
+                        // (compile_zsh.rs:5597) globbed, so `exp=( ${~exp//…} )`
+                        // in Completion/Base/Completer/_expand:110 kept the
+                        // literal `**/` and `ls **/<TAB>` offered no expansions.
+                        //
+                        // `!word_emitted_glob`: that single `globlist(vl, …)`
+                        // is the WHOLE of C's filename generation for the
+                        // assignment, and c:Src/glob.c `globlist` walks past
+                        // the nodes `zglob` produced — a generated name is
+                        // never re-globbed. When the element's own text had a
+                        // glob token, compile_word_str already emitted
+                        // BUILTIN_GLOB_EXPAND over the assembled word (that IS
+                        // the `globlist` pass, substituted metachars
+                        // included), so adding the GLOB_SUBST pass on top ran
+                        // `zglob` a SECOND time on its own output:
+                        // `pages=( ${^~pages}(N:t) )` in `_man_pages` fed the
+                        // produced basename `[.1` back in as a pattern →
+                        // `bad pattern: [.1`.
+                        if has_unquoted_param_or_subst(elem) && !self.word_emitted_glob {
+                            self.builder.emit(
+                                Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND, 1),
+                                0,
+                            );
                         }
                         stack_values += 1;
                     }
@@ -5491,8 +5582,7 @@ impl ZshCompiler {
                 // the surrounding literal/expansion parts — the parent word's
                 // assembled-scalar glob (driven by needs_glob) owns it.
                 if do_glob && self.word_seg_depth == 0 {
-                    self.builder
-                        .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
+                    self.emit_word_glob_expand();
                 }
                 return;
             }
@@ -5658,8 +5748,7 @@ impl ZshCompiler {
                         && self.scalar_assign_depth == 0
                         && self.word_seg_depth == 0
                     {
-                        self.builder
-                            .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
+                        self.emit_word_glob_expand();
                     }
                     return;
                 }
@@ -7355,8 +7444,7 @@ impl ZshCompiler {
                     // Glob-expand the assembled scalar at runtime. The
                     // builtin pops a Value::Str, runs expand_glob, and
                     // pushes Value::Array (or single-elem when no match).
-                    self.builder
-                        .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
+                    self.emit_word_glob_expand();
                 }
                 // Default-word glob: only when needs_glob didn't already
                 // glob the assembled word (a literal-segment glob covers
@@ -7892,6 +7980,7 @@ impl ZshCompiler {
             if has_cmdsub {
                 self.assign_context_depth += 1;
             }
+            self.word_emitted_glob = false;
             self.compile_word_str(word);
             if has_cmdsub {
                 self.assign_context_depth -= 1;
@@ -7930,7 +8019,15 @@ impl ZshCompiler {
             // also fires for `$VAR` / `${VAR}` references — detect
             // via the lexer's $-token (META-$, Qstring) plus literal
             // `$` outside quotes.
-            if has_unquoted_param_or_subst(word) {
+            //
+            // `!word_emitted_glob`: c:Src/loop.c:98 `execsubst(args)` →
+            // c:Src/exec.c:2744-2746 `prefork(strs, esprefork, NULL)`
+            // then a SINGLE `globlist(strs, 0)` over the whole for-list.
+            // If the word's own text had a glob token, compile_word_str
+            // already emitted that pass over the assembled word; a
+            // second one would re-glob names the first pass generated
+            // (see `word_emitted_glob`).
+            if has_unquoted_param_or_subst(word) && !self.word_emitted_glob {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND, 1),
                     0,
@@ -9174,12 +9271,7 @@ impl ZshCompiler {
                 // under that flag. So a LHS of `a{2,3}` stays ONE literal word;
                 // without the bump it brace-expanded and `[[ a{2,3} ==
                 // 'a{2,3}' ]]` compared `a2 a3` against `a{2,3}` → 1.
-                let left_has_unquoted_glob = !left.contains('\u{9e}')
-                    && !left.contains('\u{9d}')
-                    && (left.contains('\u{87}')
-                        || left.contains('\u{86}')
-                        || left.contains('\u{91}')
-                        || left.contains('\u{8f}'));
+                let left_has_unquoted_glob = Self::cond_operand_suppresses_glob(left);
                 if left_has_unquoted_glob {
                     self.dq_context_depth += 1;
                     self.compile_word_str(left);
@@ -9351,6 +9443,28 @@ impl ZshCompiler {
                         let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
                         self.builder.emit(Op::LoadConst(idx), 0);
                     }
+                } else if Self::cond_operand_suppresses_glob(right) {
+                    // c:Src/cond.c:203-207 — `cond_subst(&right, !fromtest)`.
+                    // C runs the RIGHT operand of every non-pattern binary
+                    // condition through the SAME `cond_subst` as the left
+                    // (c:196-199), and `cond_subst` only reaches `zglob`
+                    // when `checkglobqual` says the word ends in a glob
+                    // QUALIFIER (c:43-51); otherwise it is plain
+                    // `singsub` — substitution with no filename
+                    // generation. The port applied the suppression to the
+                    // LHS only, so an unquoted RHS carrying a glob token
+                    // was filename-globbed: `[[ nm -ne compstate[nmatches] ]]`
+                    // (the `_alternative` sh:63 / `_arguments` /
+                    // `_describe` "did this completer add anything?"
+                    // idiom, where `[`/`]` tokenize as Inbrack) died with
+                    // `no matches found: compstate[nmatches]` instead of
+                    // arithmetic-evaluating the subscript, so every such
+                    // completer reported "added nothing" and the
+                    // `_main_complete` chain re-ran it for the next
+                    // matcher-list entry.
+                    self.dq_context_depth += 1;
+                    self.compile_word_str(right);
+                    self.dq_context_depth -= 1;
                 } else {
                     self.compile_word_str(right);
                 }
@@ -9591,6 +9705,34 @@ impl ZshCompiler {
             }
         };
         self.builder.emit(Op::TestFile(test_byte), 0);
+    }
+
+    /// True when a `[[ … ]]` operand must be expanded with filesystem
+    /// globbing (and brace expansion) SUPPRESSED.
+    ///
+    /// c:Src/cond.c:41-54 `cond_subst` — a cond operand only reaches
+    /// `zglob` when `checkglobqual` reports a trailing glob QUALIFIER;
+    /// every other operand goes through `singsub` (c:53), i.e.
+    /// `prefork(PREFORK_SINGLE)` (subst.c:520), which performs parameter
+    /// / command / arithmetic substitution but neither filename
+    /// generation nor brace expansion (subst.c:170 skips `xpandbraces`
+    /// under that flag). Both operands take the same route
+    /// (c:196-199 left, c:203-207 right), so both call sites share this
+    /// predicate rather than open-coding it — an earlier open-coded copy
+    /// existed for the left operand only.
+    ///
+    /// The check is on the RAW tokenized word: an already-quoted operand
+    /// (Snull `\u{9d}` / Dnull `\u{9e}`) never globs anyway, and bumping
+    /// `dq_context_depth` for it would disturb the DQ handling that path
+    /// already does correctly. Tokens tested: Star `\u{87}`,
+    /// Quest `\u{86}`, Inbrack `\u{91}`, Inbrace `\u{8f}`.
+    fn cond_operand_suppresses_glob(w: &str) -> bool {
+        !w.contains('\u{9e}')
+            && !w.contains('\u{9d}')
+            && (w.contains('\u{87}')
+                || w.contains('\u{86}')
+                || w.contains('\u{91}')
+                || w.contains('\u{8f}'))
     }
 
     fn emit_binary_test(&mut self, op: &str) {

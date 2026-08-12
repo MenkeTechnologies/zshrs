@@ -104,8 +104,11 @@ zleparams_table! {
     "ZLE_RECURSIVE" => PM_INTEGER | PM_READONLY,      // c:185
     "ZLE_STATE" => PM_SCALAR | PM_READONLY,           // c:186
     // c:225-228 — `createspecialhash("registers", …, PM_LOCAL|PM_REMOVABLE)`.
-    // Not published yet (needs the special-hash gsu substrate); listed so
-    // the scope stamp covers it the moment it is.
+    // NOT a `zleparams[]` row: C creates it after the loop, so it carries
+    // neither the row's type word nor the loop's `ro` read-only bit (see
+    // ZLEPARAM_READONLY_EXEMPT). Listed here so the shadow, level-stamp
+    // and teardown passes treat it like the rest of the family;
+    // `makezleparams` publishes its value inline (c:225-228).
     "registers" => PM_HASHED,
 }
 
@@ -123,7 +126,16 @@ zleparams_table! {
 ///
 /// Removing this exemption is gated on `$KEYMAP` growing a real getfn
 /// (owner: params.rs gsu substrate + zle_keymap.rs), not on this file.
-const ZLEPARAM_READONLY_EXEMPT: &[&str] = &["KEYMAP"];
+///
+/// `registers` is exempt for a different, purely structural reason: it
+/// is NOT a `zleparams[]` row. C creates it AFTER the loop, with
+/// `createspecialhash("registers", …, PM_LOCAL|PM_REMOVABLE)`
+/// (c:225-227), so the loop's `ro ? PM_READONLY : 0` (c:200-201) never
+/// reaches it. It is listed in [`ZLEPARAM_TABLE`] only so the shadow /
+/// level / teardown passes cover it; stamping read-only from `ro` would
+/// make `$parameters[registers]` read `association-local-readonly-special`
+/// inside completion where zsh reports `association-local-special`.
+const ZLEPARAM_READONLY_EXEMPT: &[&str] = &["KEYMAP", "registers"];
 
 /// `$BUFFER` accessor — full edited line as a String.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c (the
@@ -273,6 +285,38 @@ pub fn makezleparams(ro: i32) {
     let _ = setsparam("LASTABORTEDSEARCH", &get_lasearch()); // c:156
     let _ = setsparam("LASTSEARCH", &get_lsearch()); // c:158
 
+    // c:225-228 — `reg_param = createspecialhash("registers",
+    // get_registers, &scan_registers, PM_LOCAL|PM_REMOVABLE);
+    // reg_param->gsu.h = &registers_gsu;
+    // reg_param->level = locallevel + 1;`
+    //
+    // C attaches the live scan/get callbacks to the hash. zshrs has no
+    // gsu vtable, so `registers` is published as a real association
+    // snapshotted through the SAME walk C's `scan_registers` does
+    // (c:809-816) and read back by `zle_param_sync`, exactly the way
+    // `$killring` / `$CUTBUFFER` are handled here. Publishing it also
+    // restores its `$parameters` membership: `makezleparams` is the
+    // only place C creates it, so leaving it out made zshrs's
+    // `$parameters` miss a key zsh has (`association-local-special`).
+    //
+    // The walk below is C's `scan_registers` body verbatim (c:809-817):
+    // 36 slots, names `'a'`…`'z'` then `'0'`…`'9'`, each value read
+    // through the `get_registers` getfn (c:822). It is written out here
+    // rather than calling the ported `scan_registers` because that port
+    // keeps C's `ScanFunc` fn-pointer callback signature, which cannot
+    // capture the accumulator.
+    let mut registers_v: Vec<String> = Vec::with_capacity(72);
+    let mut reg_ch: u8 = b'a'; // c:809 `ch = 'a'`
+    for _ in 0..36usize {
+        // c:809 `for (i = 0, ch = 'a'; i < 36; i++)`
+        let nam = (reg_ch as char).to_string(); // c:811-812
+        let val = get_registers(&nam).unwrap_or_default(); // c:813
+        registers_v.push(nam);
+        registers_v.push(val);
+        reg_ch = if reg_ch == b'z' { b'0' } else { reg_ch + 1 }; // c:816-817
+    }
+    let _ = crate::ported::params::sethparam("registers", registers_v.clone());
+
     // c:200-206 + c:221-222 — install C's flags and scope level on
     // everything just published. Runs for BOTH `ro` values: the
     // completion (compcore.c:820) and trap (zle_main.c:2108) call sites
@@ -306,6 +350,7 @@ pub fn makezleparams(ro: i32) {
         region_active,
         cutbuffer,
         killring_v,
+        registers_v,
     );
 
     // RUST-ONLY helpers, nested because they have no C counterpart:

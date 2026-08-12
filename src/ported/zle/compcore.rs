@@ -1908,12 +1908,36 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
 /// compcore.c:1064.
 pub fn multiquote(s: &str, ign: i32) -> String {
     // c:1065
-    let stack = COMPQSTACK // c:1065
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let p_bytes = stack.as_bytes();
+    // c:1067 — `char *p = compqstack;`. C takes the global POINTER and
+    // walks it; nothing is copied. `compqstack` holds one byte per open
+    // quoting level (c:301-308 allocates 2 bytes; c:1853-1859 pushes one
+    // more per nesting level), so it is a handful of bytes at most.
+    // Copying it into a stack buffer keeps the read allocation-free —
+    // `multiquote` runs twice per completion match (compmatch.c:1160 and
+    // c:1172 via `comp_match`), so a 46765-match `compadd -k functions`
+    // was doing ~94k heap clones of a one-byte String.
+    let mut qbuf = [0u8; 32];
+    let mut qspill = String::new();
+    let qlen = match COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock() {
+        Ok(g) => {
+            let b = g.as_bytes();
+            if b.len() <= qbuf.len() {
+                qbuf[..b.len()].copy_from_slice(b);
+                b.len()
+            } else {
+                // Deeper nesting than the buffer holds: fall back to an
+                // owned copy so no level is ever dropped.
+                qspill = g.clone();
+                usize::MAX
+            }
+        }
+        Err(_) => 0,
+    };
+    let p_bytes: &[u8] = if qlen == usize::MAX {
+        qspill.as_bytes()
+    } else {
+        &qbuf[..qlen]
+    };
     if !p_bytes.is_empty() && (ign == 0 || p_bytes.len() > 1) {
         // c:1070
         let start = if ign != 0 { 1 } else { 0 }; // c:1071
@@ -5318,10 +5342,17 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
     let sortdir = if (order & CGF_REVSORT) != 0 { -1 } else { 1 }; // c:3177
 
     let cmp = (b.disp.is_some() as i32) - (a.disp.is_some() as i32); // c:3176
+    // c:3175 — `const char *as, *bs;`. C assigns POINTERS here
+    // (c:3181-3182 / c:3191-3192); the comparator allocates nothing.
+    // The port used `.clone()`, so every one of the O(n log n)
+    // comparisons heap-allocated two Strings — 46765 matches
+    // (`compadd -k functions` under a real .zcompdump) means ~725k
+    // comparisons and ~1.45M allocations per sort. `as_deref()` is
+    // the direct analogue of C's `char *` assignment.
     let (as_, bs) = if (order & CGF_MATSORT) != 0 || (cmp == 0 && a.disp.is_none()) {
         (
-            a.str.clone().unwrap_or_default(), // c:3181
-            b.str.clone().unwrap_or_default(),
+            a.str.as_deref().unwrap_or(""), // c:3181
+            b.str.as_deref().unwrap_or(""),
         ) // c:3182
     } else {
         // c:3183-3184 / c:3186-3188 — C returns these two orderings RAW
@@ -5347,8 +5378,8 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
             };
         }
         (
-            a.disp.clone().unwrap_or_default(), // c:3191
-            b.disp.clone().unwrap_or_default(),
+            a.disp.as_deref().unwrap_or(""), // c:3191
+            b.disp.as_deref().unwrap_or(""),
         ) // c:3192
     };
     // c:3195-3197 — `sortdir * zstrcmp(as, bs, SORTIT_IGNORING_BACKSLASHES |
@@ -5367,7 +5398,7 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
         } else {
             0
         };
-    let base = crate::ported::sort::zstrcmp(&as_, &bs, flags);
+    let base = crate::ported::sort::zstrcmp(as_, bs, flags);
     if sortdir < 0 {
         base.reverse()
     } else {

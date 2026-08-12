@@ -42,6 +42,12 @@ pub struct ZleParamSnapshot {
     /// `$CUTBUFFER` / `$killring` (C zle_params.c:149/155).
     cutbuffer: String,
     killring: Vec<String>,
+    /// `$registers` — the 36 vi registers, flat `key,value,…` in
+    /// `scan_registers` order (C zle_params.c:800-817). C backs the
+    /// hash with live get/scan callbacks (`createspecialhash`,
+    /// zle_params.c:225); the snapshot model diffs it back through
+    /// `set_register` instead.
+    registers: Vec<String>,
 }
 
 static ZLE_PARAM_SNAPSHOT: Mutex<Option<ZleParamSnapshot>> = Mutex::new(None);
@@ -60,6 +66,7 @@ pub fn arm_snapshot(
     region_active: i64,
     cutbuffer: String,
     killring: Vec<String>,
+    registers: Vec<String>,
 ) {
     *ZLE_PARAM_SNAPSHOT.lock().unwrap() = Some(ZleParamSnapshot {
         buffer,
@@ -73,6 +80,7 @@ pub fn arm_snapshot(
         region_active,
         cutbuffer,
         killring,
+        registers,
     });
 }
 
@@ -219,6 +227,29 @@ pub fn sync_from_paramtab() {
     if post_kr != snap.killring {
         crate::ported::zle::zle_params::set_killring(Some(&post_kr));
     }
+    // `$registers` — C's `set_registers` GSU setter (zle_params.c:849)
+    // writes each assigned key straight into `vibuf[]`. Diff the flat
+    // `key,value,…` snapshot and replay only the changed registers
+    // through `set_register` (the c:754 setfn), so a widget doing
+    // `registers[a]=text` reaches the editor's yank buffers.
+    // `gethkparam` / `gethparam` walk the SAME insertion-stable backing
+    // (params.rs:5738/5788), so zipping them rebuilds the flat pairs.
+    let post_keys = crate::ported::params::gethkparam("registers").unwrap_or_default();
+    let post_vals = crate::ported::params::gethparam("registers").unwrap_or_default();
+    let before: std::collections::HashMap<&str, &str> = snap
+        .registers
+        .chunks_exact(2)
+        .map(|kv| (kv[0].as_str(), kv[1].as_str()))
+        .collect();
+    for (k, v) in post_keys.iter().zip(post_vals.iter()) {
+        if before.get(k.as_str()).copied() == Some(v.as_str()) {
+            continue;
+        }
+        if let Some(ch) = k.chars().next() {
+            // c:849-866 — `set_register_buf(v.pm, getstrvalue(&v))`.
+            let _ = crate::ported::zle::zle_params::set_register(ch, v);
+        }
+    }
 }
 
 /// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
@@ -310,6 +341,7 @@ mod tests {
             0,
             0,
             String::new(),
+            Vec::new(),
             Vec::new(),
         );
         let _ = crate::ported::params::assignsparam(

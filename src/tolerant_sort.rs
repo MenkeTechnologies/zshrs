@@ -67,8 +67,34 @@ where
         std::mem::swap(&mut idx, &mut tmp);
         width *= 2;
     }
-    let sorted: Vec<T> = idx.iter().map(|&j| v[j].clone()).collect();
-    v.clone_from_slice(&sorted);
+    // Apply the permutation IN PLACE (`v[i] = old_v[idx[i]]`) by walking each
+    // cycle with `swap`. C's `qsort` permutes fixed-size records and allocates
+    // nothing; the previous code materialised the result with one deep
+    // `clone()` per element and then copied it back, so a 46765-match
+    // completion sort deep-copied 46765 `Cmatch` records (a dozen owned
+    // `String`s each) for nothing. `swap` moves the records bit-for-bit and
+    // touches no heap.
+    // `tmp` is finished as merge scratch — reuse it as the cycle-visited
+    // marker so the in-place pass allocates nothing at all.
+    let visited = &mut tmp;
+    visited.iter_mut().for_each(|s| *s = 0);
+    for start in 0..n {
+        if visited[start] != 0 {
+            continue;
+        }
+        let mut i = start;
+        loop {
+            visited[i] = 1;
+            let j = idx[i];
+            // `j == i` can only happen at a fixed point; `j == start` closes
+            // the cycle. Either way this cycle is done.
+            if j == start || j == i {
+                break;
+            }
+            v.swap(i, j);
+            i = j;
+        }
+    }
 }
 
 #[cfg(test)]
