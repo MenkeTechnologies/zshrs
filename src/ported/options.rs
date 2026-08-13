@@ -98,7 +98,14 @@ pub static zshletters: &[(char, &str, bool)] = &[
     ('h', "histignoredups", false),
     ('i', "interactive", false),
     ('k', "interactivecomments", false),
-    ('l', "login", false),
+    // c:344 — `/* l */ LOGINSHELL`. The name here is the reverse-map
+    // key `optno_by_name` looks up, and that map is built from
+    // `opt_name(idx)` (zsh_h.rs:4112), which spells LOGINSHELL
+    // "loginshell". "login" is only the OPT_SPECIAL alias row at
+    // Src/options.c:193 and is absent from the reverse map, so
+    // `optlookupc('l')` resolved to 0 and `zsh -l` was rejected with
+    // "bad option: -l".
+    ('l', "loginshell", false),
     ('m', "monitor", false),
     ('n', "exec", true),
     ('p', "privileged", false),
@@ -1301,7 +1308,9 @@ pub static KSH_LETTERS: &[(char, &str, bool)] = &[
     ('e', "errexit", false),
     ('f', "glob", true),
     ('i', "interactive", false),
-    ('l', "login", false),
+    // c:434 — `/* l */ LOGINSHELL`. Canonical reverse-map name, see
+    // the note on the `zshletters` entry above.
+    ('l', "loginshell", false),
     ('m', "monitor", false),
     ('n', "exec", true),
     ('p', "privileged", false),
