@@ -1851,7 +1851,15 @@ pub fn scanbuiltins(
                 .ok()
                 .map(|g| g.iter().cloned().collect())
                 .unwrap_or_default();
-        for b in BUILTINS.iter() {
+        // c:Src/Modules/parameter.c:822-823 —
+        //     for (i = 0; i < builtintab->hsize; i++)
+        //         for (hn = builtintab->nodes[i]; hn; hn = hn->next)
+        // i.e. the BUCKET-ARRAY walk of `builtintab`, not the declaration
+        // order of the `builtins[]` array. `builtintab_scan_order` is that
+        // walk (builtin.rs `BUILTINTAB_NODES`, a faithful `newhashtable(85)`
+        // + front-insert table); iterating `BUILTINS` directly printed the
+        // array order, which does not match `zsh -f`.
+        for (_, b) in crate::ported::builtin::BUILTINTAB_NODES.iter() {
             // c:823
             let is_disabled = disabled_set.contains(&b.node.nam); // c:825 hn->flags & DISABLED
             let pass = if dis != 0 {

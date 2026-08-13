@@ -14543,178 +14543,175 @@ pub fn paramsubst(
                     split_parts = Some(kept); // c:3540 (auto-splat)
                     isarr = 1; // c:3548 SUB_INTERSECT returns array shape
                 }
-            } else if let Some(rhs) = r.strip_prefix(":^^") {
-                // c:Src/subst.c:3456-3520 SUB_ZIP_LONG — `${a:^^b}`.
-                // In DQ context (`"${a:^^b}"`), zsh collapses the FIRST
-                // operand to a single sepjoin'd string BEFORE the zip
-                // pattern walks, producing pairs of (joined-a, b[i %
-                // blen]) for outlen = max(1, blen) iterations. Direct
-                // port of the prefork-collapse-then-zip path observed
-                // via:
-                //   a=(1 2); b=(x y z) → "${a:^^b}" =
-                //   ['1 2','x','1 2','y','1 2','z']
-                // Scalar operands wrap to 1-element array (same as :^).
-                let arr = arrays_get(&var_name)
-                    .or_else(|| vars_get(&var_name).map(|s| vec![s]))
-                    .unwrap_or_default();
-                let other_name = rhs.trim();
-                // c:Src/subst.c:3464 — the zip RHS must be a bare identifier
-                // (see the `:|` arm); `:^^` shares the same gate.
-                if crate::ported::utils::itype_end(
-                    other_name,
-                    crate::ported::ztype_h::INAMESPC,
-                    false,
-                ) < other_name.len()
-                {
-                    zerr(&format!("not an identifier: {}", untokenize(other_name))); // c:3466
-                    errflag_set_error();
-                    return (String::new(), new_pos, vec![]);
-                }
-                let other = arrays_get(other_name)
-                    .or_else(|| vars_get(other_name).map(|s| vec![s]))
-                    .unwrap_or_default();
-                // c:Src/subst.c — `[@]`/`[*]` subscript keeps array
-                // shape across DQ for the same SCANPM_ISVAR_AT reason
-                // documented in the `:^` arm below. Bug #597.
-                let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
-                // c:Src/subst.c:3032 — the DQ scalar-collapse of the LEFT
-                // operand fires in ANY scalar context, including a NESTED inner
-                // (`"${${a:^^b}}"`) whose own qt is false but which runs under
-                // the outer's ssub scalar context. Mirror the c:3901-3907
-                // "inner runs in ssub" rule via SUBEXP_SCALAR_CTX, exactly like
-                // the plain array collapse does. Without this the nested zip
-                // walked per-element instead of joining the LHS first.
-                let zip_dq_ctx = (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
-                let zipped: Vec<String> =
-                    if zip_dq_ctx && !is_at_subscript_zip && !other.is_empty() && !arr.is_empty() {
-                        // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1);`.
-                        // The DQ collapse joins with `sep` — the (j:STR:) /
-                        // (F) separator when one was given, NOT a hardcoded
-                        // space. Passing None here made
-                        // `"[${(j:,:)a:^^b}]"` flatten the LEFT operand with
-                        // " " (`x y z y`) while the final c:3903 sepjoin used
-                        // "," — zsh uses "," for both (`x,y,z,y,y,…`).
-                        let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
-                        let n = other.len();
-                        let mut z: Vec<String> = Vec::with_capacity(n * 2);
-                        for i in 0..n {
-                            z.push(joined.clone());
-                            z.push(other[i].clone());
-                        }
-                        z
-                    } else if arr.is_empty() {
-                        // One operand empty → return the other verbatim.
-                        // Mirror C: zsh skips the interleave when either
-                        // side has zero elements.
-                        other.clone()
-                    } else if other.is_empty() {
-                        arr.clone()
-                    } else {
-                        // c:Src/subst.c SUB_ZIP_LONG — the shorter array
-                        // CYCLES through its values to fill outlen =
-                        // max(alen, blen). Mirror via modular index:
-                        // `arr[i % alen]` / `other[i % blen]`. Without
-                        // this, the shorter array's overflow positions
-                        // received an empty string (visible as the
-                        // Nularg sentinel `¡` in output) instead of
-                        // wrapping back to element 0.
-                        let n = arr.len().max(other.len());
-                        let mut z: Vec<String> = Vec::with_capacity(n * 2);
-                        for i in 0..n {
-                            z.push(arr[i % arr.len()].clone());
-                            z.push(other[i % other.len()].clone());
-                        }
-                        z
-                    };
-                value = zipped.join(" ");
-                split_parts = Some(zipped); // c:3540 (auto-splat)
-                isarr = 1; // c:3540 SUB_ZIP_LONG returns array shape
-            } else if let Some(rhs) = r.strip_prefix(":^") {
-                // c:Src/subst.c:3456-3520 SUB_ZIP — `${a:^b}` short-
-                // zip. Outlen = min(alen, blen) when shortest=1. In
-                // DQ context, zsh collapses the FIRST operand to a
-                // single sepjoin'd string before zipping, then takes
-                // outlen = min(1, blen) = 1 (or 0 if blen=0),
-                // producing exactly 2 elements:
-                //   [sepjoin(a), b[0]]
-                // Unset-vs-empty: `${a:^b}` with b unset returns a
-                // verbatim (no zip); a unset returns b verbatim.
-                // Parity bug #24 (DQ joining) + #23 (unset operand).
+            } else if let Some(rhs) = r
+                .strip_prefix(":^^")
+                .map(|t| (t, false))
+                .or_else(|| r.strip_prefix(":^").map(|t| (t, true)))
+            {
+                // c:Src/subst.c:3467-3532 — `${a:^b}` (SUB_ZIP, `shortest`)
+                // and `${a:^^b}` (SUB_ZIP_LONG, `!shortest`). Faithful port
+                // of the whole C block; the two spellings differ ONLY in the
+                // `shortest` flag C sets at c:3469/3472, so they share one
+                // arm here.
                 //
-                // SCALAR operands are treated as 1-element arrays —
-                // C zsh's getarrvalue auto-wraps a scalar param into
-                // a `char *aval[2] = { scalar, NULL }` for zip. Parity
-                // bug: zshrs's arrays_get returns None for scalars,
-                // so `${a:^a}` with scalar `a=hello` was both-unset →
-                // empty result. Fall back to vars_get for the scalar
-                // single-element case.
-                let arr_opt =
-                    arrays_get(&var_name).or_else(|| vars_get(&var_name).map(|s| vec![s]));
+                //     } else if (inbrace && (*s == '^' || *s == Hat)) {
+                //         char **zip;
+                //         int shortest = 1;
+                //         ++s;
+                //         if (*s == '^' || *s == Hat) { shortest = 0; ++s; }
+                let (rhs, shortest) = rhs;
                 let other_name = rhs.trim();
-                // c:Src/subst.c:3464 — the zip RHS must be a bare identifier:
-                // itype_end(s, INAMESPC, 0) has to reach the end of `s`, else
-                // abort with "not an identifier: s" (see the `:|` arm).
+                // c:3475-3479 — `if (*itype_end(s, INAMESPC, 0)) { untokenize(s);
+                //                  zerr("not an identifier: %s", s); return NULL; }`
                 if crate::ported::utils::itype_end(
                     other_name,
                     crate::ported::ztype_h::INAMESPC,
                     false,
                 ) < other_name.len()
                 {
-                    zerr(&format!("not an identifier: {}", untokenize(other_name))); // c:3466
+                    zerr(&format!("not an identifier: {}", untokenize(other_name))); // c:3477
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                let other_opt =
-                    arrays_get(other_name).or_else(|| vars_get(other_name).map(|s| vec![s]));
-                let arr_unset = arr_opt.is_none();
-                let other_unset = other_opt.is_none();
-                let arr = arr_opt.unwrap_or_default();
-                let other = other_opt.unwrap_or_default();
-                // c:Src/subst.c — explicit `[@]`/`[*]` subscript on
-                // the LHS array bypasses the DQ scalar-collapse: zsh's
-                // SCANPM_ISVAR_AT (set for `[@]`/`[*]` per params.c:2027-2029)
-                // keeps isarr=-1 through the qt transition so the zip
-                // walks per-element instead of sepjoin'ing the LHS.
-                // Without this gate, `"${a[@]:^b}"` truncated to
-                // `[sepjoin(a), b[0]]` — 2 elements instead of the
-                // interleaved 2*min(|a|,|b|). Bug #597.
-                let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
-                // c:Src/subst.c:3032 — DQ collapse of the LHS also fires in a
-                // NESTED scalar context (`"${${a:^b}}"`), tracked via
-                // SUBEXP_SCALAR_CTX just like the `:^^` arm above.
-                let zip_dq_ctx = (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
-                let zipped: Vec<String> = if other_unset && !arr_unset {
-                    // b unset → return a verbatim.
-                    arr.clone()
-                } else if arr_unset && !other_unset {
-                    // a unset → return b verbatim.
-                    other.clone()
-                } else if zip_dq_ctx && !is_at_subscript_zip {
-                    // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1);`.
-                    // Join with the (j:STR:) / (F) separator when one was
-                    // given (`sep`), else IFS[0]. Hardcoding None made
-                    // `"[${(j:,:)a:^b}]"` emit `[x y z y,y]` where zsh emits
-                    // `[x,y,z,y,y]` — the same `sep` feeds both this collapse
-                    // and the final c:3903 join.
-                    let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
-                                                                                      // outlen = min(1, blen). When blen=0 → 0 elements.
-                    if other.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![joined, other[0].clone()]
+                // c:3480 `if (vunset)` — the LHS PARAMETER is unset (as opposed
+                // to set-but-empty). C then skips the zip entirely and yields
+                // the empty scalar at c:3486, so `${UNSET:^b}` is "" — NOT `b`.
+                // A nested LHS (`${${(s::)x}:^b}`) is materialized into a
+                // synthetic array param upstream, so the same lookup answers
+                // for it; `split_parts`/`isarr` cover the remaining shapes.
+                let lhs_param_set = arrays_get(&var_name).is_some()
+                    || vars_get(&var_name).is_some()
+                    || getvaluearr_assoc!(&var_name).is_some();
+                let vunset = !lhs_param_set && split_parts.is_none() && isarr == 0;
+                if vunset {
+                    // c:3481-3485 — `if (vunset > 0 && unset(UNSET))` errors
+                    // under NO_UNSET; otherwise c:3486 `val = dupstring("")`.
+                    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+                        zerr(&format!("{}: parameter not set", var_name)); // c:3483
+                        errflag_set_error();
+                        return (String::new(), new_pos, vec![]);
                     }
+                    value = String::new(); // c:3486
+                    split_parts = None;
+                    isarr = 0;
                 } else {
-                    let mut z: Vec<String> = Vec::with_capacity(arr.len() + other.len());
-                    let n = arr.len().min(other.len()); // c:3540 truncate to shorter
-                    for i in 0..n {
-                        z.push(arr[i].clone());
-                        z.push(other[i].clone());
+                    // c:3489-3497 — the RHS operand, in C's order:
+                    //     zip = getaparam(s);
+                    //     if (!zip) zip = gethparam(s);          (assoc VALUES,
+                    //                                             params.c:3065)
+                    //     if (!zip) { sval = getsparam(s);
+                    //                 if (sval) zip = hmkarray(sval); }
+                    let zip: Option<Vec<String>> = arrays_get(other_name) // c:3489
+                        .or_else(|| {
+                            getvaluearr_assoc!(other_name) // c:3491
+                                .map(|m| m.values().cloned().collect::<Vec<String>>())
+                        })
+                        .or_else(|| vars_get(other_name).map(|s| vec![s])); // c:3494-3496
+                    // c:3030-3037 — the `qt` collapse (`val = sepjoin(aval, sep, 1);
+                    // isarr = 0;`) runs BEFORE this operator, which is why
+                    // `"${a:^b}"` zips the JOINED left operand while `${a:^b}`
+                    // zips element-wise. The upstream collapse site records it in
+                    // `isarr`/`dq_collapsed`; a NESTED inner (`"${${a:^b}}"`)
+                    // runs in the outer's scalar context, which the bridge hands
+                    // over as a raw string with qt=false, so SUBEXP_SCALAR_CTX
+                    // carries it instead. `[@]`/`[*]` keeps isarr=-1 through the
+                    // qt transition (params.c:2027-2029 SCANPM_ISVAR_AT), so it
+                    // stays element-wise.
+                    let is_at_subscript_zip =
+                        matches!(subscript.as_deref(), Some("@") | Some("*"));
+                    let scalar_ctx = (qt
+                        || dq_collapsed
+                        || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0)
+                        && !is_at_subscript_zip
+                        && nojoin != 2;
+                    // C's `aval` at this point: the CURRENT expansion value with
+                    // any subscript / flags already applied — `split_parts` when
+                    // an operator or subscript produced it, else the raw array.
+                    let cur_arr: Vec<String> = split_parts
+                        .clone()
+                        .or_else(|| arrays_get(&var_name))
+                        .unwrap_or_default();
+                    // KSHARRAYS bare array → the operand is element 0 only
+                    // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps
+                    // all. Same clamp the `:|` / `:*` arms apply.
+                    let cur_arr: Vec<String> =
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                            && subscript.is_none()
+                            && !was_at_star_splat
+                            && arrays_contains(&var_name)
+                        {
+                            cur_arr.into_iter().take(1).collect()
+                        } else {
+                            cur_arr
+                        };
+                    let mut cur_isarr = isarr;
+                    let mut cur_val = value.clone();
+                    if scalar_ctx && cur_isarr != 0 {
+                        // c:3034 — `val = sepjoin(aval, sep, 1);` uses the
+                        // (j:STR:) / (F) separator when one was given, else
+                        // IFS[0]; the same `sep` feeds the final c:3917 join.
+                        cur_val = crate::ported::utils::sepjoin(&cur_arr, sep.as_deref());
+                        cur_isarr = 0; // c:3035
                     }
-                    z
-                };
-                value = zipped.join(" ");
-                split_parts = Some(zipped); // c:3540 (auto-splat)
-                isarr = 1; // c:3540 SUB_ZIP returns array shape
+                    // c:3498-3501 — `if (!isarr) { aval = hmkarray(val); isarr = 1; }`
+                    let mut aval: Vec<String> = if cur_isarr != 0 {
+                        cur_arr
+                    } else {
+                        vec![cur_val.clone()] // c:3499 hmkarray(val)
+                    };
+                    if let Some(zip) = zip {
+                        // c:3504-3507
+                        //     alen = arrlen(aval);
+                        //     ziplen = arrlen(zip);
+                        //     outlen = shortest ^ (alen > ziplen) ? alen : ziplen;
+                        // C's `^` binds tighter than `?:`, so this is
+                        // min(alen, ziplen) for `:^` and max(…) for `:^^`.
+                        let alen = aval.len(); // c:3505
+                        let ziplen = zip.len(); // c:3506
+                        let outlen = if shortest ^ (alen > ziplen) {
+                            alen
+                        } else {
+                            ziplen
+                        }; // c:3507
+                        if !shortest && (alen == 0 || ziplen == 0) {
+                            // c:3508-3510 — long-zip with an empty side yields
+                            // the OTHER side verbatim (and nothing when both
+                            // are empty).
+                            if ziplen != 0 {
+                                aval = zip.clone(); // c:3510 arrdup(zip)
+                            }
+                        } else {
+                            // c:3512-3522 — interleave with MODULAR indices, so
+                            // the shorter side cycles for `:^^`. `outlen` is 0
+                            // whenever either side is empty under `:^`, so the
+                            // `% alen` / `% ziplen` never divide by zero.
+                            let mut out: Vec<String> = Vec::with_capacity(outlen * 2);
+                            let mut i = 0usize; // c:3504
+                            while i < outlen {
+                                out.push(aval[i % alen].clone()); // c:3515/3517
+                                out.push(zip[i % ziplen].clone()); // c:3518
+                                i += 1; // c:3519
+                            }
+                            aval = out; // c:3522
+                        }
+                        value = crate::ported::utils::sepjoin(&aval, sep.as_deref());
+                        split_parts = Some(aval); // c:3522 (auto-splat)
+                        isarr = 1; // c:3500 — the zip result is array-shaped
+                    } else {
+                        // c:3525-3531 — the RHS name is unset. C does NOT undo
+                        // c:3498's `aval = hmkarray(val); isarr = 1;`, so the
+                        // LEFT operand survives as the array result while `val`
+                        // is blanked.
+                        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+                            zerr(&format!("{}: parameter not set", other_name)); // c:3527
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
+                        value = String::new(); // c:3530
+                        split_parts = Some(aval); // c:3499 aval
+                        isarr = 1; // c:3500
+                    }
+                }
             } else if let Some(slice) = r.strip_prefix(':') {
                 // c:715 (substring) OR :modifier
                 // Detect history-style modifier (`:h`, `:t`, `:r`,

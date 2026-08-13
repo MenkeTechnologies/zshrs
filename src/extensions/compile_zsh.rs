@@ -117,6 +117,26 @@ pub struct ZshCompiler {
     /// array entry). Distinct from assign_context_depth which is set
     /// for both forms.
     pub scalar_assign_depth: i32,
+    /// Depth tracker for "this word's outer `\u{9e}…\u{9e}` (Dnull) pair was
+    /// SYNTHESIZED by the scalar-assignment glob-suppression wrap below, not
+    /// typed by the user".
+    ///
+    /// c:Src/exec.c:2546 — C zsh prefork-s an assignment RHS with
+    /// `PREFORK_SINGLE|PREFORK_ASSIGN`, which sets `ssub` (c:Src/subst.c:1761)
+    /// and leaves `qt` (c:Src/subst.c:1625) at ZERO — an unquoted `x=${…}` is
+    /// NOT a double-quoted expansion. The two flags gate DIFFERENT collapses:
+    /// `qt` joins the array BEFORE the operator runs (c:Src/subst.c:3030-3037,
+    /// so it changes what `:^` / `:#` see), while `ssub` joins only at the very
+    /// END (c:Src/subst.c:4226-4231, after every operator).
+    ///
+    /// zshrs fakes PREFORK_SINGLE by wrapping the RHS in Dnulls so the emit
+    /// sites pick the no-glob / no-split variants. That wrap makes
+    /// `word_is_single_dq_span` report a double-quoted word, which used to
+    /// feed `qt=true` into paramsubst — firing the c:3030-3037 pre-operator
+    /// join that C never performs here. Sites that derive paramsubst's `qt`
+    /// (as opposed to sites that merely suppress glob/split) must therefore
+    /// ignore a synthetic wrap.
+    pub synthetic_dq_wrap_depth: i32,
     /// Set while compiling a whole-array `name[@]=(...)` / `name[*]=(...)`
     /// assignment (the array-RHS form recurses through compile_assign with
     /// the bracket stripped). When true, the array-store emit uses the
@@ -288,6 +308,7 @@ impl ZshCompiler {
             assign_context_depth: 0,
             in_cond_operand: false,
             scalar_assign_depth: 0,
+            synthetic_dq_wrap_depth: 0,
             array_whole_assign: false,
             lineno_offset: 0,
             lineno_addend: 0,
@@ -3645,7 +3666,18 @@ impl ZshCompiler {
                 // (no `$` / backtick — those expand at runtime to
                 // single keys, not ranges) and dispatch as a single-
                 // element array RHS.
-                let key_is_range = !key.contains('$') && !key.contains('`') && key.contains(',');
+                // The `$`/backtick veto used to be blanket, which lost every
+                // range whose BOUND is computed: `t[$#MATCH/2+1,-1]=""` (the
+                // fzf-tab common-prefix loop, fzf-tab.zsh:176) compiled to
+                // SET_ASSOC and auto-vivified a hash key instead of splicing,
+                // so the scalar kept all but its last character. c:Src/params.c
+                // getindex splits the subscript on a top-level `,` and runs
+                // each half through mathevalarg — the halves are ARITHMETIC, so
+                // a `$` inside one is ordinary. Look for a LITERAL top-level
+                // comma instead, skipping expansion/quote spans so a comma that
+                // only appears *inside* `${…}` / `$(…)` / `` `…` `` / quotes
+                // still reads as a single assoc key.
+                let key_is_range = subscript_has_toplevel_comma(key);
                 if key_is_range {
                     // c:Src/params.c:2895 setarrvalue — range append
                     // `a[lo,hi]+=tail` pre-concats the existing slice
@@ -3964,7 +3996,13 @@ impl ZshCompiler {
                 self.scalar_assign_depth += 1;
                 if needs_dq_wrap {
                     let wrapped = format!("\u{9e}{}\u{9e}", s);
+                    // The Dnull pair below is SYNTHETIC — it stands in for C's
+                    // PREFORK_SINGLE (c:Src/exec.c:2546), not for a user's
+                    // `"…"`. Flag it so the qt-deriving emit sites don't read
+                    // it as `qt=1` (c:Src/subst.c:1625).
+                    self.synthetic_dq_wrap_depth += 1;
                     self.compile_word_str(&wrapped);
+                    self.synthetic_dq_wrap_depth -= 1;
                 } else {
                     self.compile_word_str(s);
                 }
@@ -6628,7 +6666,13 @@ impl ZshCompiler {
                         // Without this, the filter ran per-element in DQ
                         // (zshrs printed "ha he hi" for
                         // `"${(M)a:#h?}"` where zsh prints "").
-                        let in_dq_ba = (word_is_single_dq_span(s)) || self.dq_context_depth > 0;
+                        // c:Src/subst.c:1625 vs :1761 — a SYNTHETIC assignment
+                        // wrap is `ssub`, not `qt`; only a real `"…"` sets qt.
+                        // `x=${(M)a:#[13]}` must filter PER ELEMENT (zsh: "3 1"),
+                        // while `x="${(M)a:#[13]}"` tests the joined word ("").
+                        let in_dq_ba = (word_is_single_dq_span(s)
+                            && self.synthetic_dq_wrap_depth == 0)
+                            || self.dq_context_depth > 0;
                         let body_text = if in_dq_ba {
                             format!("\u{8c}{}", inner_safe)
                         } else {
@@ -6668,7 +6712,13 @@ impl ZshCompiler {
         // ([sepjoin(a), b[0]]) and long-zip emits pairs of
         // (sepjoin(a), b[i]). The fast path still applies — pass
         // DQ flag through so paramsubst_to_value flips qt on.
-        let raw_dq_word_zip = word_is_single_dq_span(s);
+        // c:Src/subst.c:1625 vs :1761 — the scalar-assignment Dnull wrap is
+        // SYNTHETIC (it stands in for PREFORK_SINGLE / `ssub`), so it must not
+        // read as `qt`. C joins under `ssub` only at c:4226, long AFTER the
+        // c:3467 zip; under `qt` it joins at c:3033, BEFORE it. Hence
+        // `x=${a:^b}` zips per element (zsh: `1 x 2 y 3 z`) while
+        // `x="${a:^b}"` collapses first (zsh: `1 2 3 x`).
+        let raw_dq_word_zip = word_is_single_dq_span(s) && self.synthetic_dq_wrap_depth == 0;
         let in_dq = raw_dq_word_zip || self.dq_context_depth > 0;
         // Verify the `${...}` spans the WHOLE word (i.e. there's no
         // trailing text after the matching close brace). For multi-
@@ -7476,8 +7526,38 @@ impl ZshCompiler {
                 // path — this covers the typeset-family multi-segment
                 // path. Gate on a splice segment (the only shape that can
                 // leave an array); the coerce is a no-op on scalars.
-                if has_splice_seg
-                    && (self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0)
+                //
+                // c:Src/subst.c:4226-4231 — the same coerce is owed to EVERY
+                // array-producing segment, not just a splice:
+                //     if (isarr && ssub) {
+                //         val = sepjoin(aval, NULL, 1);
+                //         isarr = 0;
+                //     }
+                // runs on whatever `aval` holds. A plain `${arr}` /
+                // distribute / plan9 segment in a typeset-family `NAME=VALUE`
+                // arg (`local v=${a}`, `local y=${a:^b}`) left the word an
+                // ARRAY, so `local` received one arg per element and rejected
+                // element 2 with "not an identifier: 2". The bare
+                // `v=${a}` form is unaffected because compile_assign's
+                // SET_VAR joins the array on store; only the typeset-family
+                // arg path splats. Restrict the widened arm to an
+                // assignment-SHAPED typeset arg (assign_context_depth is
+                // bumped at the `arg_is_assign` site above) so a bare
+                // multi-name word like `local ${(k)assoc}` still declares one
+                // name per element.
+                // The typeset-family arm is deliberately NOT gated on a
+                // compile-time segment classification: a plain `${a}` segment
+                // is neither splice nor distribute at compile time, yet it
+                // still yields an ARRAY at runtime (CONCAT_DISTRIBUTE is the
+                // default concat builtin). C doesn't inspect the shape either
+                // — c:4226 joins whatever `aval` holds — and ARRAY_JOIN is a
+                // no-op on a scalar, so emitting it unconditionally for an
+                // assignment-SHAPED typeset arg is the faithful form.
+                let typeset_assign_arg =
+                    self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0;
+                if (has_splice_seg
+                    && (self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0))
+                    || typeset_assign_arg
                 {
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN, 0), 0);
@@ -13849,6 +13929,61 @@ fn word_is_bare_param_ref(word: &str) -> bool {
         && inner
             .iter()
             .all(|c| *c == b'_' || c.is_ascii_alphanumeric())
+}
+
+/// True when an assignment subscript carries a LITERAL top-level `,` — the
+/// marker that makes `name[lo,hi]=…` a RANGE splice rather than a single
+/// key/index store.
+///
+/// c:Src/params.c getindex — the subscript is split at the first unnested `,`
+/// and each half is fed to `mathevalarg`, so a `$` inside a bound is just part
+/// of an arithmetic expression (`t[$#MATCH/2+1,-1]`). Only a comma that the
+/// SOURCE wrote at top level counts here: one that arrives from inside an
+/// expansion (`m[${k}]` with k="a,b") or from a quoted span is left to the
+/// assoc-key path, matching how zshrs already treats a purely dynamic
+/// subscript.
+///
+/// Spans skipped: `${…}` / `$(…)` / `$((…))`, `` `…` ``, `'…'`, `"…"`, and
+/// bracket nesting. Token forms of the delimiters (Inbrace `\u{8f}` /
+/// Outbrace `\u{90}` / Inpar `\u{88}` / Outpar `\u{89}` / Inbrack `\u{91}` /
+/// Outbrack `\u{92}` / Qstring `\u{8c}` / Stringg `\u{85}` / Tick `\u{86}` /
+/// Qtick `\u{8b}`, zsh.h token table) count the same as their ASCII spellings
+/// because the lexer may hand over either.
+fn subscript_has_toplevel_comma(key: &str) -> bool {
+    let chars: Vec<char> = key.chars().collect();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    let mut in_squote = false;
+    let mut in_dquote = false;
+    let mut in_tick = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_squote {
+            if c == '\'' {
+                in_squote = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_tick {
+            if c == '`' || c == '\u{86}' || c == '\u{8b}' {
+                in_tick = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\'' if !in_dquote => in_squote = true,
+            '"' => in_dquote = !in_dquote,
+            '`' | '\u{86}' | '\u{8b}' => in_tick = true,
+            '{' | '\u{8f}' | '(' | '\u{88}' | '[' | '\u{91}' => depth += 1,
+            '}' | '\u{90}' | ')' | '\u{89}' | ']' | '\u{92}' => depth -= 1,
+            ',' if depth == 0 && !in_dquote => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 fn is_typeset_scalar_assign(word: &str) -> bool {
