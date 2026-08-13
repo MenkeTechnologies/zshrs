@@ -12,7 +12,7 @@
 //! `HashTable` substrate (vtable callbacks, intrusive `next` chain)
 //! is not yet wired. Names match C 1:1.
 
-use std::collections::HashMap;
+use crate::ported::hashtable::hashtable_nodes;
 use std::io::Write;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -191,9 +191,18 @@ pub fn printnameddirnode(hn: &nameddir, printflags: i32) {
 
 // hash table containing named directories                                 // c:45
 //
-// C: `mod_export HashTable nameddirtab;` (c:48). Rust port stores the
-// table as a `Mutex<HashMap<String, nameddir>>` keyed on `node.nam`.
-static NAMEDDIRTAB_INNER: OnceLock<Mutex<HashMap<String, nameddir>>> = OnceLock::new();
+// C: `mod_export HashTable nameddirtab;` (c:48). Node storage is the
+// open-hashed bucket array C builds at c:61
+// (`newhashtable(201, "nameddirtab", NULL)`); the Mutex is the Rust
+// singleton wrapper.
+//
+// The bucket walk is user-visible — `${(k)nameddirs}` (and `hash -d`
+// with no args) scans this table, so backing it with a `HashMap`
+// re-seeded `RandomState` order rather than C's. Repro that failed
+// before this change:
+//   hash -d aa=/tmp bb=/usr cc=/var dd=/etc ee=/opt
+//   print -rl -- ${(k)nameddirs}   # zsh: aa dd bb cc ee
+static NAMEDDIRTAB_INNER: OnceLock<Mutex<hashtable_nodes<nameddir>>> = OnceLock::new();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
@@ -221,9 +230,10 @@ static NAMEDDIRTAB_INNER: OnceLock<Mutex<HashMap<String, nameddir>>> = OnceLock:
 /// dereference (`nameddirtab->...`) by returning the underlying
 /// mutex; callers `.lock()` and operate on the map directly.
 #[allow(non_snake_case)]
-pub fn nameddirtab() -> &'static Mutex<HashMap<String, nameddir>> {
+pub fn nameddirtab() -> &'static Mutex<hashtable_nodes<nameddir>> {
     // c:48
-    NAMEDDIRTAB_INNER.get_or_init(|| Mutex::new(HashMap::new()))
+    // c:61 — `newhashtable(201, "nameddirtab", NULL)`.
+    NAMEDDIRTAB_INNER.get_or_init(|| Mutex::new(hashtable_nodes::newhashtable(201)))
 }
 
 #[cfg(test)]

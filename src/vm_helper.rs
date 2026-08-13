@@ -322,7 +322,10 @@ pub struct SubshellSnapshot {
     /// `arrays` / `assoc_arrays` leaks the subshell's writes to the
     /// parent via paramtab (e.g. `x=outer; (x=inner); echo $x` returned
     /// `inner` because paramsubst reads through paramtab).
-    pub paramtab: crate::fast_hash::FastMap<String, crate::ported::zsh_h::Param>,
+    /// Same node storage as the live table (`Src/params.c:854`
+    /// `newparamtable(151, "paramtab")`) so restoring a snapshot restores
+    /// C's bucket-walk order too, not just the name→value mapping.
+    pub paramtab: crate::ported::hashtable::hashtable_nodes<crate::ported::zsh_h::Param>,
     /// `paramtab_hashed_storage` field.
     pub paramtab_hashed_storage: crate::cow_map::CowHashMap<String, IndexMap<String, String>>,
     /// `positional_params` field.

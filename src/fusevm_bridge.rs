@@ -12677,7 +12677,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 .read()
                 .ok()
                 .map(|t| t.clone())
-                .unwrap_or_default();
+                // c:Src/params.c:854 — a fresh table is 151 buckets, not
+                // the 17-bucket `Default`.
+                .unwrap_or_else(|| crate::ported::hashtable::hashtable_nodes::newhashtable(151));
             let paramtab_hashed_snap = crate::ported::params::paramtab_hashed_storage()
                 .lock()
                 .ok()

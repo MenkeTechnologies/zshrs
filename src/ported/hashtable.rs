@@ -233,6 +233,125 @@ impl<T> hashtable_nodes<T> {
         // c:420-434
         self.nodes.iter().flatten().map(|(k, v)| (k, v))
     }
+
+    /// Mutable companion of [`hashtable_nodes::iter`] — same
+    /// `scanmatchtable` walk (`Src/hashtable.c:420-434`); C hands the
+    /// scan function a writable `HashNode`, Rust needs the separate
+    /// borrow.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut T)> {
+        // c:420-434
+        self.nodes.iter_mut().flatten().map(|(k, v)| (&*k, v))
+    }
+
+    /// The names in `scanmatchtable` order (`Src/hashtable.c:420-434`) —
+    /// C's scan reads `hn->nam` off each node in the same walk.
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        // c:420-434
+        self.nodes.iter().flatten().map(|(k, _)| k)
+    }
+
+    /// The nodes in `scanmatchtable` order (`Src/hashtable.c:420-434`).
+    pub fn values(&self) -> impl Iterator<Item = &T> {
+        // c:420-434
+        self.nodes.iter().flatten().map(|(_, v)| v)
+    }
+
+    /// Mutable companion of [`hashtable_nodes::values`]
+    /// (`Src/hashtable.c:420-434`).
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        // c:420-434
+        self.nodes.iter_mut().flatten().map(|(_, v)| v)
+    }
+
+    /// `ht->getnode2(ht, nam)` (`Src/hashtable.c:255` `gethashnode2`) —
+    /// map-shaped alias so tables converted from a `HashMap` keep their
+    /// call sites. Same O(1) bucket hash + short-chain walk as C.
+    pub fn get(&self, nam: &str) -> Option<&T> {
+        // c:255
+        self.gethashnode2(nam)
+    }
+
+    /// `ht->getnode2(ht, nam)` != NULL (`Src/hashtable.c:255`).
+    pub fn contains_key(&self, nam: &str) -> bool {
+        // c:255
+        self.gethashnode2(nam).is_some()
+    }
+
+    /// `ht->addnode(ht, ztrdup(nam), node)` (`Src/hashtable.c:157`
+    /// `addhashnode` → `addhashnode2` at `c:168`) — returns the
+    /// displaced node instead of running `freenode`.
+    pub fn insert(&mut self, nam: String, nodeptr: T) -> Option<T> {
+        // c:157 / c:168
+        self.addhashnode2(&nam, nodeptr)
+    }
+
+    /// `ht->removenode(ht, nam)` (`Src/hashtable.c:275`
+    /// `removehashnode`).
+    pub fn remove(&mut self, nam: &str) -> Option<T> {
+        // c:275
+        self.removehashnode(nam)
+    }
+
+    /// `ht->emptytable(ht)` (`Src/hashtable.c:517` `emptyhashtable`).
+    pub fn clear(&mut self) {
+        // c:517
+        self.emptyhashtable();
+    }
+
+    /// The `scanmatchtable` walk (`Src/hashtable.c:420-434`) with the
+    /// C `freenode` arm taken for every node the predicate rejects.
+    /// Chain order of the survivors is preserved exactly, which is what
+    /// makes this different from rebuilding the table.
+    pub fn retain<F: FnMut(&String, &mut T) -> bool>(&mut self, mut f: F) {
+        // c:420-434
+        let mut ct = 0usize;
+        for bucket in self.nodes.iter_mut() {
+            bucket.retain_mut(|(k, v)| f(k, v));
+            ct += bucket.len();
+        }
+        self.ct = ct; // c:294 — one decrement per unlinked node
+    }
+}
+
+impl<T> Default for hashtable_nodes<T> {
+    /// `newparamtable`/`newmoduletable` fall back to `size = 17` when
+    /// handed 0 (`Src/params.c:541-542`, and `Src/module.c:1602`
+    /// creates 17-bucket sub-tables); use that as the neutral default
+    /// for `#[derive(Default)]` containers.
+    fn default() -> Self {
+        // c:541-542
+        Self::newhashtable(17)
+    }
+}
+
+impl<T, Q: ?Sized + std::borrow::Borrow<str>> std::ops::Index<&Q> for hashtable_nodes<T> {
+    type Output = T;
+    /// `ht->getnode2(ht, nam)` with C's "caller already checked" contract
+    /// (`Src/hashtable.c:255`) — panics on a missing name, like the
+    /// `HashMap` indexing it replaces.
+    fn index(&self, nam: &Q) -> &T {
+        // c:255
+        let nam = nam.borrow();
+        self.gethashnode2(nam)
+            .unwrap_or_else(|| panic!("no hash node named {nam}"))
+    }
+}
+
+impl<'a, T> IntoIterator for &'a hashtable_nodes<T> {
+    type Item = (&'a String, &'a T);
+    type IntoIter = std::iter::Map<
+        std::iter::Flatten<std::slice::Iter<'a, Vec<(String, T)>>>,
+        fn(&'a (String, T)) -> (&'a String, &'a T),
+    >;
+    /// `for (k, v) in &table` — the `scanmatchtable` walk
+    /// (`Src/hashtable.c:420-434`).
+    fn into_iter(self) -> Self::IntoIter {
+        // c:420-434
+        self.nodes
+            .iter()
+            .flatten()
+            .map(|(k, v): &(String, T)| (k, v))
+    }
 }
 
 // ===========================================================
