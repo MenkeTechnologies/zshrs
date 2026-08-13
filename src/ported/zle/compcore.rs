@@ -2063,7 +2063,23 @@ pub fn multiquote(s: &str, ign: i32) -> String {
                 x if x == QT_DOLLARS => QT_DOLLARS,
                 _ => QT_BACKSLASH,
             };
+            let before = cur.clone();
             cur = crate::ported::utils::quotestring(&cur, qt);
+            // ZZZ-TEMP-INSTRUMENTATION
+            if std::env::var_os("ZSHRS_QIDEBUG").is_some() {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/qidbg.log")
+                {
+                    let _ = writeln!(
+                        f,
+                        "  multiquote q={:?}(={}) {:?} -> {:?}",
+                        q as char, qt, before, cur
+                    );
+                }
+            }
         }
         cur // c:1092
     } else {
@@ -4468,6 +4484,22 @@ pub fn addmatches(
             };
             let mut lc_out: Option<Box<Cline>> = None;
             let mut isexact_out = 0i32;
+            // ZZZ-TEMP-INSTRUMENTATION
+            if std::env::var_os("ZSHRS_QIDEBUG").is_some() {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/qidbg.log")
+                {
+                    let _ = writeln!(
+                        f,
+                        "comp_match IN lpre={:?} lsuf={:?} word={:?} qu={} cp={} bcp={} ppre={:?} psuf={:?} ipre={:?} isuf={:?} aflags={:#x} flags={:#x}",
+                        lpre, lsuf, word, qu, cp.is_some(), bcp,
+                        dat.ppre, dat.psuf, dat.ipre, dat.isuf, dat.aflags, dat.flags
+                    );
+                }
+            }
             // c:2535 — comp_match(lpre, lsuf, s, cp, &lc, qu, &bpl, bcp,
             //          &bsl, bcs, &isexact).
             match crate::ported::zle::compmatch::comp_match(
@@ -4489,6 +4521,17 @@ pub fn addmatches(
                     isexact = isexact_out;
                 }
                 None => {
+                    // ZZZ-TEMP-INSTRUMENTATION
+                    if std::env::var_os("ZSHRS_QIDEBUG").is_some() {
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/qidbg.log")
+                        {
+                            let _ = writeln!(f, "comp_match OUT = None (REJECT {:?})", word);
+                        }
+                    }
                     dpar_skip_word!(); // c:2540 — drop this word's dpar element
                     continue 'cand; // c:2541-2545 reject
                 }

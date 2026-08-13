@@ -1329,7 +1329,11 @@ pub fn del_autoparam(_modnam: &str, pnam: &str, flags: i32) -> i32 {
 impl modulestab {
     /// `new` — see implementation.
     pub fn new() -> Self {
-        let mut table = Self::default();
+        let mut table = Self {
+            // `Src/init.c:1193` — `modulestab = newmoduletable(17, "modules")`.
+            modules: crate::ported::hashtable::hashtable_nodes::newhashtable(17),
+            ..Self::default()
+        };
         table.register_builtin_modules();
         table
     }
@@ -7011,8 +7015,14 @@ pub const FEATURE_TYPE_HOOK: i32 = 4;
 /// (line 359) inserts entries, `printmodulenode()` (line 154)
 /// renders for `zmodload`.
 pub struct modulestab {
-    /// `modules` field.
-    pub modules: HashMap<String, module>,
+    /// C's `HashTable modulestab` node storage (`Src/module.c:274`
+    /// `newmoduletable`, created as `newmoduletable(17, "modules")` at
+    /// `Src/init.c:1193`). The bucket walk is user-visible: the
+    /// `modules` special parameter (`Src/Modules/parameter.c`) emits
+    /// `${(k)modules}` straight out of `scanhashtable(modulestab, …)`,
+    /// so a Rust `HashMap` here produced an order that matched zsh on
+    /// no line at all.
+    pub modules: crate::ported::hashtable::hashtable_nodes<module>,
     /// Builtin name → module name mapping for autoload
     pub autoload_builtins: HashMap<String, String>,
     /// Condition name → module name mapping for autoload

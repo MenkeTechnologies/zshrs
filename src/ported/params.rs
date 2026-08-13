@@ -13,6 +13,7 @@ use crate::ported::builtin::{LASTVAL, PPARAMS};
 use crate::ported::config_h::{MACHTYPE, OSTYPE, VENDOR};
 use crate::ported::exec::FORKLEVEL;
 use crate::ported::hashtable::emptycmdnamtable;
+use crate::ported::hashtable::hashtable_nodes;
 use crate::ported::hist::{
     bangchar, casemodify, hashchar, hatchar, histsiz, resizehistents, saveandpophiststack,
     savehistsiz,
@@ -1679,7 +1680,7 @@ pub fn createparamtable() {
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
     let add_special = |ip: &special_paramdef,
-                       tab: &mut crate::fast_hash::FastMap<String, Param>| {
+                       tab: &mut hashtable_nodes<Param>| {
         // c:840 — `paramdef->gsu` selects which gsu_scalar vtable the
         // new param gets. C uses the per-IPDEF macro's BR(...) field;
         // since the Rust special_paramdef doesn't carry a gsu slot
@@ -7396,8 +7397,11 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     if let Some(alt_name) = alt {
         let parts: Vec<String> = val.split(':').map(String::from).collect();
         if let Ok(mut tab) = paramtab().write() {
-            let entry = tab.entry(alt_name.to_string()).or_insert_with(|| {
-                Box::new(param {
+            // c:Src/hashtable.c:157 — `ht->addnode(ht, ztrdup(nam), pm)`
+            // only when the name isn't already a node; an existing node
+            // keeps its chain position and is mutated in place.
+            if tab.get(alt_name).is_none() {
+                let pm = Box::new(param {
                     node: hashnode {
                         next: None,
                         nam: alt_name.to_string(),
@@ -7421,8 +7425,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     ename: None,
                     old: None,
                     level: 0,
-                })
-            });
+                });
+                tab.insert(alt_name.to_string(), pm);
+            }
+            let entry = tab.get_mut(alt_name).expect("inserted above");
             entry.u_arr = Some(parts);
             entry.u_str = None;
         }
@@ -7455,8 +7461,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 .unwrap_or_else(|| val.to_string())
         };
         if let Ok(mut tab) = paramtab().write() {
-            let entry = tab.entry(sc.to_string()).or_insert_with(|| {
-                Box::new(param {
+            // c:Src/hashtable.c:157 — add only when absent; an existing
+            // node is mutated in place, keeping its chain position.
+            if tab.get(sc).is_none() {
+                let pm = Box::new(param {
                     node: hashnode {
                         next: None,
                         nam: sc.to_string(),
@@ -7480,8 +7488,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     ename: None,
                     old: None,
                     level: 0,
-                })
-            });
+                });
+                tab.insert(sc.to_string(), pm);
+            }
+            let entry = tab.get_mut(sc).expect("inserted above");
             entry.u_str = Some(joined.clone());
             entry.u_arr = None;
         }
@@ -7520,8 +7530,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         .unwrap_or(&[]);
     for other in alias_group.iter().copied().filter(|n| *n != name) {
         if let Ok(mut tab) = paramtab().write() {
-            let entry = tab.entry(other.to_string()).or_insert_with(|| {
-                Box::new(param {
+            // c:Src/hashtable.c:157 — add only when absent; an existing
+            // node is mutated in place, keeping its chain position.
+            if tab.get(other).is_none() {
+                let pm = Box::new(param {
                     node: hashnode {
                         next: None,
                         nam: other.to_string(),
@@ -7545,8 +7557,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     ename: None,
                     old: None,
                     level: 0,
-                })
-            });
+                });
+                tab.insert(other.to_string(), pm);
+            }
+            let entry = tab.get_mut(other).expect("inserted above");
             entry.u_str = Some(val.to_string());
             entry.u_arr = None;
         }
@@ -7612,9 +7626,27 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // callbacks, intrusive `next` chain, scope-stacked iterators) is
 // not yet wired; until it is, the typed map is the operative
 // storage.
-static PARAMTAB_INNER: OnceLock<RwLock<crate::fast_hash::FastMap<String, Param>>> = OnceLock::new();
-static REALPARAMTAB_INNER: OnceLock<RwLock<crate::fast_hash::FastMap<String, Param>>> =
-    OnceLock::new();
+//
+// Node storage is `hashtable_nodes<Param>` — the port of the
+// open-hashed bucket array `newparamtable(151, "paramtab")` builds
+// (`Src/params.c:538` → `newhashtable` at `Src/hashtable.c:100`,
+// called from `createparamtable` at `Src/params.c:854`). C's
+// `newparamtable` differs from a plain `newhashtable` only in the
+// callback slots it installs (`getnode = getparamnode` for the
+// PM_AUTOLOAD stub path, `freenode = freeparamnode`,
+// `printnode = printparamnode`, `addnode = addhashnode`,
+// `getnode2 = gethashnode2`, `removenode = removehashnode`,
+// c:545-556) — the node storage itself is the same bucket array,
+// so the walk order is `hasher(nam) % 151` + front-insertion +
+// the ×4 `expandhashtable` at `ct >= 2 * hsize`.
+//
+// That walk is user-visible: `${(k)parameters}` scans this table
+// (`Src/Modules/parameter.c` `scanparamtab`), and `_parameters`
+// feeds those matches to `compadd` in that order, which decides the
+// `join_clines` common-prefix fold. A `FastMap` here produced an
+// order matching zsh on zero of ~479 names.
+static PARAMTAB_INNER: OnceLock<RwLock<hashtable_nodes<Param>>> = OnceLock::new();
+static REALPARAMTAB_INNER: OnceLock<RwLock<hashtable_nodes<Param>>> = OnceLock::new();
 
 /// Array parameter assignment (no subscript).
 ///
@@ -14358,15 +14390,17 @@ fn foundparam_lock() -> &'static Mutex<Option<String>> {
 /// Mirrors C's `paramtab->...` dereference by handing back the
 /// inner RwLock; callers `.read()` for lookups and `.write()` for
 /// mutation, operating on the `HashMap<String, Param>` directly.
-pub fn paramtab() -> &'static RwLock<crate::fast_hash::FastMap<String, Param>> {
-    PARAMTAB_INNER.get_or_init(|| RwLock::new(crate::fast_hash::FastMap::default()))
+pub fn paramtab() -> &'static RwLock<hashtable_nodes<Param>> {
+    // c:854 — `paramtab = realparamtab = newparamtable(151, "paramtab");`
+    PARAMTAB_INNER.get_or_init(|| RwLock::new(hashtable_nodes::newhashtable(151)))
 }
 
 /// Accessor for the global `realparamtab` (Src/params.c:515).
 /// Same role as `paramtab` for the not-currently-redirected case;
 /// the alias-flip during assoc-array iteration isn't modelled yet.
-pub fn realparamtab() -> &'static RwLock<crate::fast_hash::FastMap<String, Param>> {
-    REALPARAMTAB_INNER.get_or_init(|| RwLock::new(crate::fast_hash::FastMap::default()))
+pub fn realparamtab() -> &'static RwLock<hashtable_nodes<Param>> {
+    // c:854 — same 151-bucket table C aliases `paramtab` onto.
+    REALPARAMTAB_INNER.get_or_init(|| RwLock::new(hashtable_nodes::newhashtable(151)))
 }
 
 fn scanprog_lock() -> &'static Mutex<Option<String>> {
