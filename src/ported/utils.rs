@@ -6564,6 +6564,19 @@ pub fn ztrdup_metafy(s: &str) -> String {
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, len)
 pub fn unmetafy(s: &mut Vec<u8>) -> usize {
     // c:4954
+    // c:4958 `for (p = s; *p && *p != Meta; p++);` — when the string holds no
+    // Meta byte at all, C's second loop copies each byte onto itself and the
+    // call is just that scan. Ask the question with `<[u8]>::contains`, which
+    // resolves to libcore's precompiled `memchr`, and skip both loops: the
+    // index-by-index walk below is monomorphised into this crate and compiled
+    // UNOPTIMISED in the debug build, where it measured ~24% of a `pr <TAB>`
+    // (one `unmetafy` per history entry while paging the history in).
+    // Returning `s.len()` is exactly what the two loops below produce on this
+    // input — `p` runs to the end, the copy loop never executes, and
+    // `truncate(t)` is a no-op.
+    if !s.contains(&Meta) {
+        return s.len();
+    }
     // First loop: find the first `Meta` byte. Everything before it
     // stays as-is, so we don't need to copy.
     let mut p: usize = 0;

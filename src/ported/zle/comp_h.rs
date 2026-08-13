@@ -442,7 +442,33 @@ pub struct Cmgroup {
     /// Number of closed braces.
     pub nbrend: i32, // c:68
     /// New matches since last permalloc().
-    pub new_: i32, // c:69 (Rust keyword `new`)
+    ///
+    /// c:69 — SHARED between every clone of this group, for the same reason
+    /// the `l*` accumulators above are: in C there is one `struct cmgroup`
+    /// and two names for it. `begcmgroup` makes the file-scope `mgroup`
+    /// point AT the entry it also threads onto `amatches`
+    /// (`Src/Zle/compcore.c:3087` `mgroup = p;` on reuse, `:3100`+`:3123`
+    /// `amatches = mgroup;` on create), so the writers that go through
+    /// `mgroup` — `addmatch` (`c:2068`), `addmatches`' inner add (`c:3010`)
+    /// and `addexpl` (`c:3153`, `c:3161`) — mark the very object
+    /// `permmatches` later tests while walking `amatches` (`c:3452`
+    /// `if (fi != ofi || !g->perm || g->new)`) and then clears (`c:3544`
+    /// `g->new = 0;`).
+    ///
+    /// The port stores a CLONE in `mgroup`, so a plain `i32` made
+    /// `mgroup->new = 1` invisible to that walk for as long as the group
+    /// stayed open. `permmatches` then took its reuse branch and added the
+    /// group's STALE `mcount` to `nmatches`, so `$compstate[nmatches]` —
+    /// live through `get_nmatches` (`Src/Zle/complete.c:1411-1413`) —
+    /// under-reported every match added since the group opened. That is the
+    /// value `_path_files` returns on
+    /// (`Completion/Unix/Type/_path_files` sh:895
+    /// `[[ nm -ne compstate[nmatches] ]]`), so `_path_files` reported "added
+    /// nothing", `_cd`/`_dispatch`/`_normal`/`_complete` propagated the 1,
+    /// and `_approximate` never took its sh:105 `ret=0` — leaving
+    /// `_main_complete`'s sh:216 `break 2` unreached and the completer chain
+    /// running past the completer that should have ended it.
+    pub new_: std::sync::Arc<std::sync::atomic::AtomicI32>, // c:69 (Rust keyword `new`)
     // c:71-77 — listing accumulators.
     /// Number of matches to list in columns.
     pub dcount: i32, // c:71
