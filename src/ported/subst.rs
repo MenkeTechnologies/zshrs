@@ -16211,7 +16211,13 @@ pub fn paramsubst(
         // needed" optional form. No C counterpart; --bash only.
         if bash_at_q {
             let q = |s: &str| -> String {
-                crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE)
+                // `quotestring(QT_SINGLE)` returns the BODY only
+                // (utils.c:6131-6134 — the quote pair is the caller's job,
+                // as in subst.c:4085-4087), so add the `'…'` wrapper here.
+                format!(
+                    "'{}'",
+                    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE)
+                )
             };
             value = q(&value);
             if let Some(parts) = split_parts.as_ref() {
@@ -17834,7 +17840,25 @@ pub fn paramsubst(
                 } else {
                     quotetype
                 };
-                wrap_snull(quotestring(s, qt_effective)) // c:4070/4124
+                // c:4124 — `tmp = quotestring(val, quotetype)` returns the
+                // quoted BODY only (utils.c:6131-6134); C then wraps it here.
+                let body = quotestring(s, qt_effective); // c:4124
+                                                        // c:4042-4063 — `pre`/`post` select the wrapper:
+                                                        //   QT_DOLLARS            → pre = 2, post = 1  (`$` + `'` … `'`)
+                                                        //   QT_SINGLE / QT_DOUBLE → pre = post = 1     (`'` … `'` / `"` … `"`)
+                                                        //   QT_BACKSLASH{,_PATTERN}, QT_SINGLE_OPTIONAL → none
+                                                        // c:4129-4130 — the pair character is `"` for QT_DOUBLE, else `'`.
+                                                        // c:4132-4133 — QT_DOLLARS additionally sets `val[0] = '$'`.
+                let wrapped = if quotetype == QT_DOLLARS {
+                    format!("$'{}'", body) // c:4129-4133
+                } else if quotetype == crate::ported::zsh_h::QT_DOUBLE {
+                    format!("\"{}\"", body) // c:4129-4130
+                } else if quotetype == QT_SINGLE {
+                    format!("'{}'", body) // c:4129-4130
+                } else {
+                    body // c:4055-4058 — pre = post = 0
+                };
+                wrap_snull(wrapped) // c:4070/4124
             } else {
                 // c:4034
                 s.to_string() // c:4034

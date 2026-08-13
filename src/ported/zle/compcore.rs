@@ -2063,23 +2063,7 @@ pub fn multiquote(s: &str, ign: i32) -> String {
                 x if x == QT_DOLLARS => QT_DOLLARS,
                 _ => QT_BACKSLASH,
             };
-            let before = cur.clone();
             cur = crate::ported::utils::quotestring(&cur, qt);
-            // ZZZ-TEMP-INSTRUMENTATION
-            if std::env::var_os("ZSHRS_QIDEBUG").is_some() {
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/tmp/qidbg.log")
-                {
-                    let _ = writeln!(
-                        f,
-                        "  multiquote q={:?}(={}) {:?} -> {:?}",
-                        q as char, qt, before, cur
-                    );
-                }
-            }
         }
         cur // c:1092
     } else {
@@ -4484,22 +4468,6 @@ pub fn addmatches(
             };
             let mut lc_out: Option<Box<Cline>> = None;
             let mut isexact_out = 0i32;
-            // ZZZ-TEMP-INSTRUMENTATION
-            if std::env::var_os("ZSHRS_QIDEBUG").is_some() {
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/tmp/qidbg.log")
-                {
-                    let _ = writeln!(
-                        f,
-                        "comp_match IN lpre={:?} lsuf={:?} word={:?} qu={} cp={} bcp={} ppre={:?} psuf={:?} ipre={:?} isuf={:?} aflags={:#x} flags={:#x}",
-                        lpre, lsuf, word, qu, cp.is_some(), bcp,
-                        dat.ppre, dat.psuf, dat.ipre, dat.isuf, dat.aflags, dat.flags
-                    );
-                }
-            }
             // c:2535 — comp_match(lpre, lsuf, s, cp, &lc, qu, &bpl, bcp,
             //          &bsl, bcs, &isexact).
             match crate::ported::zle::compmatch::comp_match(
@@ -4521,17 +4489,6 @@ pub fn addmatches(
                     isexact = isexact_out;
                 }
                 None => {
-                    // ZZZ-TEMP-INSTRUMENTATION
-                    if std::env::var_os("ZSHRS_QIDEBUG").is_some() {
-                        use std::io::Write;
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("/tmp/qidbg.log")
-                        {
-                            let _ = writeln!(f, "comp_match OUT = None (REJECT {:?})", word);
-                        }
-                    }
                     dpar_skip_word!(); // c:2540 — drop this word's dpar element
                     continue 'cand; // c:2541-2545 reject
                 }
@@ -8468,6 +8425,47 @@ mod tests {
         }
         assert_eq!(multiquote("hello", 0), "hello");
         assert_eq!(multiquote("", 0), "");
+    }
+
+    /// c:1073 — `multiquote` ESCAPES for the active quoting level; it must
+    /// never WRAP the candidate in quote characters. `comp_match`
+    /// (compmatch.c:1172) runs every compadd candidate through it and then
+    /// matches the result against `$PREFIX` (compmatch.c:1178), so a wrapped
+    /// candidate can never share a prefix with the typed word.
+    ///
+    /// Regression pinned: `quotestring(QT_DOUBLE)` used to return `"abcdef"`
+    /// (with the quote pair) instead of the body `abcdef`, against C's
+    /// contract at utils.c:6131-6134. Inside a quoted word — `cmd "ab<TAB>`,
+    /// where compqstack holds QT_DOUBLE — `comp_match` compared `ab` to
+    /// `"abcdef"`, rejected it, and `compadd` produced ZERO matches, so
+    /// completion silently did nothing for EVERY quoted word.
+    #[test]
+    fn multiquote_escapes_but_never_wraps_the_candidate() {
+        let _g = crate::test_util::global_state_lock();
+        for (qt, label) in [
+            (QT_DOUBLE, "QT_DOUBLE"),
+            (QT_SINGLE, "QT_SINGLE"),
+            (QT_DOLLARS, "QT_DOLLARS"),
+            (QT_BACKSLASH, "QT_BACKSLASH"),
+        ] {
+            if let Ok(mut g) = COMPQSTACK
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+            {
+                *g = (qt as u8 as char).to_string(); // c:305-306
+            }
+            assert_eq!(
+                multiquote("abcdef", 0),
+                "abcdef",
+                "{label}: a candidate with nothing to escape must pass through \
+                 unchanged so comp_match can prefix-match it"
+            );
+        }
+        if let Some(c) = COMPQSTACK.get() {
+            if let Ok(mut g) = c.lock() {
+                g.clear();
+            }
+        }
     }
 
     /// c:1092 — `tildequote("foo")` (no leading ~) MUST behave like

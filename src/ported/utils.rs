@@ -8055,12 +8055,19 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         } else if quote_type == QT_BACKSLASH_SHOWNULL {
             // c:6165 sets shownull=1, so empty → '' (c:6194 adds the pair).
             "''".to_string()
-        } else if quote_type == QT_SINGLE || quote_type == QT_SINGLE_OPTIONAL {
+        } else if quote_type == QT_SINGLE_OPTIONAL {
+            // c:6187 sets `quotesub = shownull = 1`, so empty → '' (c:6194).
             "''".to_string()
-        } else if quote_type == QT_DOUBLE {
-            "\"\"".to_string()
-        } else if quote_type == QT_DOLLARS {
-            "$''".to_string()
+        } else if quote_type == QT_SINGLE || quote_type == QT_DOUBLE || quote_type == QT_DOLLARS {
+            // c:6194 — `if (!*s && shownull)`. `shownull` is set ONLY by
+            // QT_BACKSLASH_SHOWNULL (c:6165) and QT_SINGLE_OPTIONAL (c:6187);
+            // it is 0 for QT_SINGLE / QT_DOUBLE / QT_DOLLARS, which take the
+            // `default:` arm at c:6190. Those styles return the quoted BODY
+            // only — c:6131-6134: "Most quote styles other than backslash
+            // assume the quotes are to be added outside quotestring()" — so an
+            // empty input yields an empty body, and the CALLER supplies the
+            // `''` / `""` / `$''` pair (subst.c:4083-4090, text.c:1086-1092).
+            String::new()
         } else {
             String::new()
         };
@@ -8156,8 +8163,17 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         //   previous port emitted `'$'\n''` (split-quote with
         //   `$'\n'` escape between segments) for newline, diverging
         //   from zsh's literal-newline-in-single-quotes output.
+        //   c:6131-6134 — "Most quote styles other than backslash assume the
+        //   quotes are to be added OUTSIDE quotestring()." The port used to
+        //   push a leading and trailing `'` here, i.e. it returned `'abc'`
+        //   where C returns `abc`. Every caller that follows C and adds its
+        //   own pair (text.c:1086-1088 → text.rs:1273-1275) therefore doubled
+        //   them, and `multiquote` (compcore.c:1073) — which passes the raw
+        //   completion candidate through quotestring and expects the BODY —
+        //   turned `abcdef` into `'abcdef'`, so `comp_match` (compmatch.c:1172,
+        //   1178) matched it against $PREFIX `ab` and rejected every match
+        //   inside a quoted word. See the QT_DOUBLE arm below for the same fix.
         let mut result = String::with_capacity(s.len() + 4);
-        result.push('\'');
         for c in s.chars() {
             if c == '\'' {
                 // c:6364-6379 — apostrophe close-reopen sequence.
@@ -8167,7 +8183,6 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 result.push(c);
             }
         }
-        result.push('\'');
         result
     } else if quote_type == QT_SINGLE_OPTIONAL {
         // c:Src/utils.c:6314-6385 QT_SINGLE_OPTIONAL — minimum
@@ -8243,16 +8258,19 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         }
         result.into_iter().collect()
     } else if quote_type == QT_DOUBLE {
-        // Double quote: "string" (lines 6272-6280, 6311-6312)
+        // c:6311-6312 — inside a double-quoted string only `$`, `` ` ``, `"`
+        // and `\` take a backslash. c:6131-6134 — the surrounding `"` pair is
+        // the CALLER's job (subst.c:4085-4087, text.c:1090-1092), so this
+        // returns the BODY only; pushing the pair here is what made
+        // `multiquote` hand `"abcdef"` to `comp_match` and lose every match in
+        // a double-quoted word.
         let mut result = String::with_capacity(s.len() + 4);
-        result.push('"');
         for c in s.chars() {
             if matches!(c, '$' | '`' | '"' | '\\') {
                 result.push('\\');
             }
             result.push(c);
         }
-        result.push('"');
         result
     } else if quote_type == QT_DOLLARS {
         // c:6203-6241 — `$'…'` quoting. Each element is either printable, in
@@ -8268,8 +8286,11 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         //     be re-parsed.
         //   * emit `\e` for ESC. C's addunprintable has no `\e` case — ESC comes
         //     out as the octal `\033`.
+        //
+        // c:6131-6134 — the `$'` … `'` wrapper is added by the CALLER
+        // (subst.c:4085-4090 writes the quote pair and then `val[0] = '$'`),
+        // so this arm returns the BODY only.
         let mut result = String::with_capacity(s.len() + 4);
-        result.push_str("$'");
         let mcs = meta_chars(s);
         let bang = crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
         for i in 0..mcs.len() {
@@ -8293,7 +8314,6 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 push_unprintable(&mut result, mc, mcs.get(i + 1).copied());
             }
         }
-        result.push('\'');
         result
     } else if quote_type == QT_BACKTICK {
         // Backtick quoting (minimal - just escape backticks)
@@ -11913,25 +11933,35 @@ mod tests {
     }
 
     #[test]
+    /// c:6131-6134 — "Most quote styles other than backslash assume the
+    /// quotes are to be added outside quotestring()." QT_SINGLE therefore
+    /// returns the BODY: the caller (subst.c:4085-4087, text.c:1086-1088)
+    /// supplies the `'…'` pair. The inner apostrophe still takes the
+    /// close-reopen form from c:6372-6377.
+    #[test]
     fn test_quotestring_single() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("hello", QT_SINGLE), "'hello'");
-        assert_eq!(quotestring("it's", QT_SINGLE), "'it'\\''s'");
+        assert_eq!(quotestring("hello", QT_SINGLE), "hello");
+        assert_eq!(quotestring("it's", QT_SINGLE), "it'\\''s");
     }
 
+    /// c:6131-6134 + c:6311-6312 — body only; `"` is backslash-escaped and
+    /// the surrounding pair is the caller's (subst.c:4085-4087).
     #[test]
     fn test_quotestring_double() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("hello", QT_DOUBLE), "\"hello\"");
-        assert_eq!(quotestring("say \"hi\"", QT_DOUBLE), "\"say \\\"hi\\\"\"");
+        assert_eq!(quotestring("hello", QT_DOUBLE), "hello");
+        assert_eq!(quotestring("say \"hi\"", QT_DOUBLE), "say \\\"hi\\\"");
     }
 
+    /// c:6131-6134 — body only. C's caller writes the quote pair and then
+    /// `val[0] = '$'` (subst.c:4085-4090), so `$'` never appears here.
     #[test]
     fn test_quotestring_dollars() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("hello", QT_DOLLARS), "$'hello'");
-        assert_eq!(quotestring("line\nbreak", QT_DOLLARS), "$'line\\nbreak'");
-        assert_eq!(quotestring("tab\there", QT_DOLLARS), "$'tab\\there'");
+        assert_eq!(quotestring("hello", QT_DOLLARS), "hello");
+        assert_eq!(quotestring("line\nbreak", QT_DOLLARS), "line\\nbreak");
+        assert_eq!(quotestring("tab\there", QT_DOLLARS), "tab\\there");
     }
 
     #[test]
@@ -15000,11 +15030,14 @@ mod tests {
         assert_eq!(quotestring("", QT_BACKSLASH_SHOWNULL), "''");
     }
 
-    /// QT_SINGLE on empty → "''" (single-quote pair).
+    /// c:6194 — `if (!*s && shownull)`. `shownull` is 0 for QT_SINGLE (it is
+    /// set only by QT_BACKSLASH_SHOWNULL at c:6165 and QT_SINGLE_OPTIONAL at
+    /// c:6187), so an empty string yields an EMPTY body; the `''` comes from
+    /// the caller's wrapper (subst.c:4085-4087).
     #[test]
-    fn quotestring_qt_single_empty_yields_empty_single_quotes() {
+    fn quotestring_qt_single_empty_yields_empty_body() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("", QT_SINGLE), "''");
+        assert_eq!(quotestring("", QT_SINGLE), "");
     }
 
     /// QT_SINGLE_OPTIONAL on empty → "''" too.
@@ -15014,18 +15047,20 @@ mod tests {
         assert_eq!(quotestring("", QT_SINGLE_OPTIONAL), "''");
     }
 
-    /// QT_DOUBLE on empty → "" (empty double-quote pair).
+    /// c:6194 — `shownull` is 0 for QT_DOUBLE, so the body is empty and the
+    /// `""` pair is added by the caller (subst.c:4085-4087).
     #[test]
-    fn quotestring_qt_double_empty_yields_empty_double_quotes() {
+    fn quotestring_qt_double_empty_yields_empty_body() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("", QT_DOUBLE), "\"\"");
+        assert_eq!(quotestring("", QT_DOUBLE), "");
     }
 
-    /// QT_DOLLARS on empty → "$''".
+    /// c:6194 — same for QT_DOLLARS; C's caller adds `''` and then
+    /// `val[0] = '$'` (subst.c:4085-4090).
     #[test]
-    fn quotestring_qt_dollars_empty_yields_dollar_quote_pair() {
+    fn quotestring_qt_dollars_empty_yields_empty_body() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("", QT_DOLLARS), "$''");
+        assert_eq!(quotestring("", QT_DOLLARS), "");
     }
 
     /// QT_BACKSLASH_PATTERN escapes only pattern meta-chars.
@@ -15062,11 +15097,12 @@ mod tests {
         }
     }
 
-    /// QT_SINGLE on simple input → "'simple'" (wrapped in single quotes).
+    /// c:6131-6134 — QT_SINGLE returns the BODY; a word with nothing to
+    /// escape passes straight through and the caller adds the `'…'` pair.
     #[test]
-    fn quotestring_qt_single_wraps_simple_input() {
+    fn quotestring_qt_single_returns_body_unwrapped() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("simple", QT_SINGLE), "'simple'");
+        assert_eq!(quotestring("simple", QT_SINGLE), "simple");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -15134,25 +15170,21 @@ mod tests {
         assert_eq!(quotestring(s, QT_NONE), s);
     }
 
-    /// `quotestring(QT_SINGLE)` on plain word wraps in single quotes.
+    /// c:6131-6134 — `quotestring(QT_SINGLE)` on a plain word is a
+    /// pass-through: no `'` pair is added here (that is the caller's job at
+    /// subst.c:4085-4087). Emitting the pair here is what broke completion
+    /// inside a quoted word — see `multiquote_leaves_plain_word_unquoted`.
     #[test]
-    fn quotestring_corpus_qt_single_wraps_plain_word() {
+    fn quotestring_corpus_qt_single_returns_plain_word_verbatim() {
         let out = quotestring("hello", QT_SINGLE);
-        assert!(
-            out.starts_with('\'') && out.ends_with('\''),
-            "single-quoted = wraps with ', got {out:?}"
-        );
-        assert!(out.contains("hello"), "content preserved");
+        assert_eq!(out, "hello", "QT_SINGLE returns the body, unwrapped");
     }
 
-    /// `quotestring(QT_DOUBLE)` on plain word wraps in double quotes.
+    /// c:6131-6134 — same contract for QT_DOUBLE.
     #[test]
-    fn quotestring_corpus_qt_double_wraps_plain_word() {
+    fn quotestring_corpus_qt_double_returns_plain_word_verbatim() {
         let out = quotestring("hello", QT_DOUBLE);
-        assert!(
-            out.starts_with('"') && out.ends_with('"'),
-            "double-quoted = wraps with \", got {out:?}"
-        );
+        assert_eq!(out, "hello", "QT_DOUBLE returns the body, unwrapped");
     }
 
     /// `quotestring(QT_SINGLE)` on string with apostrophe escapes the
@@ -15175,18 +15207,19 @@ mod tests {
         assert!(out.contains("\\?"), "? gets backslashed, got {out:?}");
     }
 
-    /// `quotestring("", QT_DOUBLE)` returns `""` literal.
+    /// c:6194 — `shownull` is 0 for QT_DOUBLE, so an empty input gives an
+    /// empty body; the `""` pair comes from the caller.
     #[test]
-    fn quotestring_corpus_qt_double_empty_yields_double_quotes() {
+    fn quotestring_corpus_qt_double_empty_yields_empty_body() {
         let out = quotestring("", QT_DOUBLE);
-        assert_eq!(out, "\"\"", "empty double-quoted = \"\"");
+        assert_eq!(out, "", "empty double-quoted body is empty");
     }
 
-    /// `quotestring("", QT_SINGLE)` returns `''` literal.
+    /// c:6194 — same for QT_SINGLE.
     #[test]
-    fn quotestring_corpus_qt_single_empty_yields_single_quotes() {
+    fn quotestring_corpus_qt_single_empty_yields_empty_body() {
         let out = quotestring("", QT_SINGLE);
-        assert_eq!(out, "''", "empty single-quoted = ''");
+        assert_eq!(out, "", "empty single-quoted body is empty");
     }
 
     /// `quotestring(QT_BACKSLASH)` on plain alphanumeric is identity.
