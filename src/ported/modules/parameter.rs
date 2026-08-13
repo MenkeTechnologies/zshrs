@@ -2668,46 +2668,77 @@ pub fn scanpmhistory(
     // the HISTFILE in now. This is the on-demand full load; startup
     // never slurps the file (extensions/history_lazy).
     crate::history_lazy::page_older_until(0);
-    // Snapshot (histnum, command) pairs so func() can re-enter without
-    // deadlocking on the hist_ring mutex.
-    let entries: Vec<(i64, String)> = {
+    // c:1203 — `if ((flags & (SCANPM_WANTVALS|SCANPM_MATCHVAL)) ||
+    //             !(flags & SCANPM_WANTKEYS))`. The VALUE side is only
+    // materialized when the caller asked for values; a keys-only scan
+    // (`paramvalarr(ht, SCANPM_WANTKEYS)`, c:Src/params.c:3138 — what
+    // `${(k)history}` / `${#history}` issue) never dups the command text.
+    // This port used to clone every command string unconditionally, which
+    // on a 574k-entry ring is 574k `String` allocations plus a copy of the
+    // whole history text per scan, thrown away by every keys-only caller.
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    // Snapshot the walk so func() can re-enter without deadlocking on the
+    // hist_ring mutex.
+    let entries: Vec<(i64, Option<String>)> = {
         let ring = hist_ring.lock().unwrap(); // c:1196 walk via up_histent
         ring.iter()
             .rev() // c:1199 up_histent walks newest→oldest
-            .map(|h| (h.histnum, h.node.nam.clone()))
+            .map(|h| {
+                (
+                    h.histnum,
+                    if want_val {
+                        Some(h.node.nam.clone()) // c:1204
+                    } else {
+                        None
+                    },
+                )
+            })
             .collect()
     };
-    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
-        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    // c:1192-1197 — `struct param pm;` is declared ONCE, `memset` ONCE, and
+    // the loop only rewrites `pm.node.nam` / `pm.u.str` before each
+    // `func(&pm.node, flags)`. The previous port built a fresh `param` and
+    // then `Box::new`d its node on every iteration: one heap allocation per
+    // history event (574k per scan) that C does not make.
+    let mut pm = param {
+        node: hashnode {
+            // c:1194 memset((void *)&pm, 0, sizeof(struct param))
+            next: None,
+            nam: String::new(),
+            flags: (PM_SCALAR | PM_READONLY) as i32, // c:1195
+        },
+        u_data: 0,
+        u_tied: None,
+        u_arr: None,
+        u_str: None,
+        u_val: 0,
+        u_dval: 0.0,
+        u_hash: None,
+        gsu_s: None,
+        gsu_i: None,
+        gsu_f: None,
+        gsu_a: None,
+        gsu_h: None,
+        base: 0,
+        width: 0,
+        env: None,
+        ename: None,
+        old: None,
+        level: 0,
+    };
+    // The `ScanFunc` ABI (zsh_h.rs:748) hands the callback the NODE only —
+    // C passes `&pm.node` too (c:1206) but its callbacks recover the whole
+    // `struct param` with the `(Param)hn` downcast `scanparamvals` does
+    // (c:Src/params.c:649), which Rust has no equivalent for. So the node
+    // is boxed once here and reused, and value-side consumers still reach
+    // the string through the partab row's `getfn` (`getpmhistory`, c:1156).
+    let mut node: HashNode = Box::new(pm.node);
     for (histnum, cmd) in entries {
         // c:1199-1207
-        let pm = param {
-            node: hashnode {
-                // c:1194 memset(&pm, 0)
-                next: None,
-                nam: crate::ported::params::convbase(histnum, 10), // c:1202 convbase(buf, he->histnum, 10)
-                flags: (PM_SCALAR | PM_READONLY) as i32,           // c:1195
-            },
-            u_data: 0,
-            u_tied: None,
-            u_arr: None,
-            u_str: if want_val { Some(cmd) } else { None }, // c:1204 pm.u.str = he->node.nam
-            u_val: 0,
-            u_dval: 0.0,
-            u_hash: None,
-            gsu_s: None,
-            gsu_i: None,
-            gsu_f: None,
-            gsu_a: None,
-            gsu_h: None,
-            base: 0,
-            width: 0,
-            env: None,
-            ename: None,
-            old: None,
-            level: 0,
-        };
-        func(&Box::new(pm.node), flags); // c:1206
+        node.nam = crate::ported::params::convbase(histnum, 10); // c:1202 convbase(buf, he->histnum, 10)
+        pm.u_str = cmd; // c:1204 pm.u.str = he->node.nam
+        func(&node, flags); // c:1206
     }
 }
 

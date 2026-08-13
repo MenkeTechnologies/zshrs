@@ -10296,8 +10296,8 @@ pub fn paramsubst(
                             // `unset a[i]` don't count. No-op in --zsh
                             // (dense; no holes tracked). c:3854
                             crate::bash_arrays::live_len(&var_name, arr.len())
-                        } else if let Some(map) = assoc_get(&var_name) {
-                            map.len()
+                        } else if let Some(keys) = assoc_keys(&var_name) {
+                            keys.len()
                         } else if let Some(ref keys) = magic_keys {
                             keys.len()
                         } else {
@@ -10305,8 +10305,19 @@ pub fn paramsubst(
                         }
                     } else if let Some(arr) = arrays_get(&var_name) {
                         crate::bash_arrays::live_len(&var_name, arr.len()) // c:3854
-                    } else if let Some(map) = assoc_get(&var_name) {
-                        map.len() // c:3854 (assoc len)
+                    } else if let Some(keys) = assoc_keys(&var_name) {
+                        // c:3854 (assoc len). C sizes the result with
+                        // `scancountparams` (c:Src/params.c:630) — the FIRST of
+                        // paramvalarr's two passes (c:693-695) — which for the
+                        // `history` special short-circuits before any string is
+                        // built at all (`if (func != scancountparams)`,
+                        // c:Src/Modules/parameter.c:1201). Counting through
+                        // `assoc_get` instead built the entire association:
+                        // every key materialized, then a `getfn` call and an
+                        // `IndexMap` insert per key, for a number that needs
+                        // neither. `assoc_keys` is the keys-only scan, so the
+                        // per-key getfn and every value string drop out.
+                        keys.len()
                     } else if let Some(ref keys) = magic_keys {
                         // PARTAB magic-assoc count.
                         keys.len()
@@ -19123,6 +19134,26 @@ pub fn paramsubst(
                 // over 3000 keys took 8.7s against zsh's 0.003s, and the same
                 // idiom over the 51k-entry `$_comps` never finished.
                 hit.unwrap_or_default() // c:1625
+            } else if !sub.trim_start().starts_with('(')
+                && sub != "@"
+                && sub != "*"
+                && crate::ported::modules::parameter::PARTAB
+                    .iter()
+                    .any(|e_| e_.name == var_name.as_str())
+                && !crate::vm_helper::magic_special_shadowed(var_name.as_str())
+            {
+                // c:1585 — `v->pm = (Param) ht->getnode(ht, s)`. The same O(1)
+                // exact-key rule as the arm above, for a PM_HASHED SPECIAL:
+                // `ht->getnode` on a `partab[]` row (Src/Modules/parameter.c:2235+)
+                // IS that row's getfn, e.g. `getpmhistory` (c:1156) — one
+                // `quietgethist`, no enumeration. `assoc_key_hit` only knows
+                // about `paramtab_hashed_storage`, which these specials have no
+                // entry in, so `$history[$num]` fell into the whole-map
+                // `assoc_get` below: `scanpmhistory` then paged the ENTIRE
+                // HISTFILE into the ring and built a 574k-entry map to read one
+                // event. A flagged subscript `[(R)pat]` still needs the map
+                // machinery and is excluded above.
+                crate::vm_helper::partab_get(&var_name, sub).unwrap_or_default() // c:1585
             } else if let Some(map) = assoc_get(&var_name) {
                 // c:Src/params.c::getarg — (I)/(i)/(R)/(r)/(k)/(K)/(e)/(n)/(b)
                 // hash subscript routing. Delegate to the canonical getarg so
@@ -22069,7 +22100,17 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
         PARTAB_SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
     }
     PARTAB_SCAN_KEYS.with(|k| k.borrow_mut().clear());
-    (entry.scanfn)(std::ptr::null_mut(), Some(partab_scan_cb), 0);
+    // c:Src/params.c:3138 `paramvalarr(…, SCANPM_WANTKEYS)` — this scan is
+    // used for KEY ENUMERATION only (the callback ABI carries the node, not
+    // the `struct param`, so the value side is read back through the row's
+    // getfn below). Saying so lets a scanfn skip materializing values it
+    // cannot hand over: `scanpmhistory` (c:1203) otherwise dups the whole
+    // history text — 574k `String`s per read on this host's ring.
+    (entry.scanfn)(
+        std::ptr::null_mut(),
+        Some(partab_scan_cb),
+        crate::ported::zsh_h::SCANPM_WANTKEYS as i32,
+    );
     // c:Src/params.c:712-719 paramvalarr — C reads the scan's output buffer in
     // place (`paramvals` is the collected array itself). Move the collected
     // names out of the thread-local instead of copying them: a `.clone()` here
@@ -22139,8 +22180,31 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
     if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
         return None;
     }
+    // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
+    // integer, never stored data, so the store has no key for it. `assoc_get`
+    // splices it in; do the same here or the two siblings disagree on
+    // `compstate`'s key set (and `${#compstate}`, which counts through this
+    // one, would come out one short of `${(kv)compstate}`).
+    let live_nmatches = if resolved == "compstate" {
+        Some(
+            crate::ported::zle::compcore::get_compstate_str("nmatches")
+                .unwrap_or_else(|| "0".to_string()),
+        )
+    } else {
+        None
+    };
     if let Some(store) = paramtab_hashed_storage().lock().ok() {
-        if let Some(m) = store.get(resolved.as_str()) {
+        if let Some(stored) = store.get(resolved.as_str()) {
+            let spliced;
+            let m: &indexmap::IndexMap<String, String> = match live_nmatches {
+                Some(v) => {
+                    let mut t = stored.clone();
+                    t.insert("nmatches".to_string(), v);
+                    spliced = t;
+                    &spliced
+                }
+                None => stored,
+            };
             // Same hash-bucket reorder as assoc_get (see there for the C
             // provenance: c:217 front insert, c:457 ×4 growth, c:426 walk),
             // but collect only keys.
@@ -22245,7 +22309,12 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
         ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().push(node.nam.clone()));
     }
     ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().clear());
-    (entry.scanfn)(std::ptr::null_mut(), Some(assoc_keys_scan_cb), 0);
+    // c:Src/params.c:3138 — `paramvalarr(pm->gsu.h->getfn(pm), SCANPM_WANTKEYS)`.
+    (entry.scanfn)(
+        std::ptr::null_mut(),
+        Some(assoc_keys_scan_cb),
+        crate::ported::zsh_h::SCANPM_WANTKEYS as i32,
+    );
     // mem::take, not clone: the thread_local buffer is exclusively ours
     // (cleared above, populated by the scan just now) so hand its
     // storage straight out instead of cloning the whole Vec a final

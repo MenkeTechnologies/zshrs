@@ -724,6 +724,40 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
 
     let _useglob = USEGLOB.load(Ordering::Relaxed); // c:579
 
+    // c:667-693 — `compquote` / `compquoting` from the quote state
+    // `get_comp_string` recorded. These ARE `$compstate[quote]` and
+    // `$compstate[quoting]` (complete.c:1276-1277). Neither was ported, so
+    // both read empty for every completion — `_main_complete`'s
+    // `[[ -n $compstate[quote] ]]` branches, `_path_files`'s quoting
+    // decisions and `addmatches`'s own c:2139 quote block all behaved as
+    // if nothing were ever quoted.
+    {
+        use crate::ported::zle::complete::{COMPQUOTE, COMPQUOTING};
+        let instring = INSTRING.load(Ordering::Relaxed);
+        let (cq, cqg): (&str, &str) = if instring > QT_BACKSLASH {
+            // c:669
+            match instring {
+                QT_SINGLE => ("'", "single"),   // c:671-674
+                QT_DOUBLE => ("\"", "double"),  // c:676-679
+                QT_DOLLARS => ("$'", "dollars"), // c:681-684
+                _ => ("", ""),
+            }
+        } else if INBACKT.load(Ordering::Relaxed) != 0 {
+            ("`", "backtick") // c:687-689
+        } else {
+            ("", "") // c:691-693
+        };
+        for (global, v) in [(&COMPQUOTE, cq), (&COMPQUOTING, cqg)] {
+            if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
+                *g = v.to_string();
+            }
+        }
+        // The `$compstate` entries are gsu VIEWS onto those globals in C;
+        // this port has to publish them explicitly.
+        set_compstate_str("quote", cq); // complete.c:1276
+        set_compstate_str("quoting", cqg); // complete.c:1277
+    }
+
     // Publish the completion word split at the cursor into the
     // `$PREFIX` / `$SUFFIX` params (+ empty ignored-prefix/suffix). In C
     // these are gsu-bound to `compprefix`/`compsuffix`; the Rust ports
@@ -800,8 +834,24 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         let _ = crate::ported::params::setsparam("SUFFIX", &suf);
         let _ = crate::ported::params::setsparam("IPREFIX", "");
         let _ = crate::ported::params::setsparam("ISUFFIX", "");
-        let _ = crate::ported::params::setsparam("QIPREFIX", "");
-        let _ = crate::ported::params::setsparam("QISUFFIX", "");
+        // c:742-745 — `compqiprefix = ztrdup(qipre ? qipre : "");
+        //              compqisuffix = ztrdup(qisuf ? qisuf : "");`
+        // `compqiprefix`/`compqisuffix` ARE `$QIPREFIX`/`$QISUFFIX`
+        // (complete.c:1266-1267), and `qipre`/`qisuf` are what
+        // `get_comp_string` (zle_tricky.c:1753-1766) filled in with the
+        // opening/closing quote of the word being completed. The port
+        // hardcoded both to "" here, so `$QIPREFIX` was permanently empty:
+        // completing inside `"…"` / `'…'` / `$'…'` dropped the opening
+        // quote off the command line and every `$QIPREFIX`-testing
+        // completer took its unquoted branch.
+        let _ = crate::ported::params::setsparam(
+            "QIPREFIX",
+            &crate::ported::zle::zle_tricky::qipre_get(),
+        ); // c:743
+        let _ = crate::ported::params::setsparam(
+            "QISUFFIX",
+            &crate::ported::zle::zle_tricky::qisuf_get(),
+        ); // c:745
         // c:complete.c:1235-1295 — in C these params ARE `compprefix`/
         // `compsuffix`/`compiprefix`/`compisuffix` (gsu-bound, one
         // storage), so the publish above resets the globals too. The Rust
@@ -3545,6 +3595,9 @@ pub fn addmatches(
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default(); // c:2084
+    // c:2085 — `char *oqp = qipre, *oqs = qisuf`, restored at c:2629-2630.
+    let oqp = crate::ported::zle::zle_tricky::qipre_get(); // c:2085
+    let oqs = crate::ported::zle::zle_tricky::qisuf_get(); // c:2085
 
     // c:2093 — `Cmlist oms = mstack;`, restored at c:2622 `mstack = oms;`.
     // The `-M` matcher a compadd carries is pushed onto `mstack` (c:2212) for
@@ -3684,24 +3737,56 @@ pub fn addmatches(
         dat.flags |= parflags.load(Ordering::Relaxed); // c:2149
     }
 
-    let qc = compquote_first(); // c:2150
+    let qc = compquote_first(); // c:2139
     if let Some(q) = qc {
-        // c:2151
+        // c:2139 — `if (compquote && (qc = *compquote))`
         match q {
             '`' => {
-                instring_set(0);
+                instring_set(QT_NONE);
                 inbackt_set(0);
-                autoq_set("");
-            } // c:2153-2161
-            '\'' => instring_set(QT_SINGLE), // c:2165
-            '"' => instring_set(QT_DOUBLE),  // c:2168
-            '$' => instring_set(QT_DOLLARS), // c:2171
-            _ => {}
+                autoq_set(""); // c:2140-2146
+            }
+            _ => {
+                match q {
+                    '\'' => instring_set(QT_SINGLE), // c:2149-2151
+                    '"' => instring_set(QT_DOUBLE),  // c:2153-2155
+                    '$' => instring_set(QT_DOLLARS), // c:2157-2159
+                    _ => {}
+                }
+                // c:2162-2163 — `inbackt = 0;
+                //   autoq = multiquote(*compquote == '$' ? compquote+1 : compquote, 1);`
+                // Both lines were missing: `autoq` kept the PREVIOUS
+                // completion's quote, which is what `do_single`
+                // (compresult.c) re-closes the inserted word with.
+                inbackt_set(0); // c:2162
+                let cq = crate::ported::zle::complete::COMPQUOTE
+                    .get_or_init(|| Mutex::new(String::new()))
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
+                let cq = if cq.starts_with('$') { &cq[1..] } else { &cq[..] };
+                autoq_set(&multiquote(cq, 1)); // c:2163
+            }
         }
     } else {
-        instring_set(0);
+        instring_set(QT_NONE);
         inbackt_set(0);
-        autoq_set(""); // c:2179
+        autoq_set(""); // c:2166-2168
+    }
+    // c:2170-2171 — `qipre = ztrdup(compqiprefix ? compqiprefix : "");
+    //                qisuf = ztrdup(compqisuffix ? compqisuffix : "");`
+    // `compqiprefix`/`compqisuffix` ARE `$QIPREFIX`/`$QISUFFIX` (complete.c:
+    // 1266-1267), so a completer that ran `compset -q` (or `compset -P`)
+    // hands its edited value back to the match builder here. Without this,
+    // `add_match_data` saw whatever `get_comp_string` had left.
+    for (global, param) in [
+        (&crate::ported::zle::zle_tricky::QIPRE, "QIPREFIX"), // c:2170
+        (&crate::ported::zle::zle_tricky::QISUF, "QISUFFIX"), // c:2171
+    ] {
+        let v = crate::ported::params::getsparam(param).unwrap_or_default();
+        if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = v;
+        }
     }
 
     // c:2173 — `useexact = (compexact && !strcmp(compexact, "accept"))`.
@@ -4495,6 +4580,15 @@ pub fn addmatches(
     instring_set(ois); // c:2624
     inbackt_set(oib); // c:2625
     autoq_set(&oaq); // c:2626
+    // c:2627-2630 — `zsfree(qipre); zsfree(qisuf); qipre = oqp; qisuf = oqs;`
+    for (global, v) in [
+        (&crate::ported::zle::zle_tricky::QIPRE, oqp), // c:2629
+        (&crate::ported::zle::zle_tricky::QISUF, oqs), // c:2630
+    ] {
+        if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = v;
+        }
+    }
 
     // c:2632-2633 — `if (mnum == nm) haspattern = ohp;`. A compadd that
     // added NOTHING must not leave `haspattern` raised by its own pattern
@@ -6776,9 +6870,20 @@ fn lexrestore(_token: usize) {
 
 // ---- Extern stubs for addmatches's bucket-3 dependencies ----
 
+/// Reads the first char of `char *compquote` — `Src/Zle/complete.c:54`,
+/// gsu-bound to `$compstate[quote]` (complete.c:1276), i.e. C's
+/// `(qc = *compquote)` at c:2139.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C dereferences the bare global; the port keeps it in an
+/// `OnceLock<Mutex<String>>`, so the deref needs a function. It used to
+/// read `zle_tricky::COMPQUOTE` — a Rust-only DUPLICATE of the global
+/// that has no counterpart in `Src/Zle/zle_tricky.c` and that nothing
+/// ever writes, so `addmatches`'s quote block (c:2139-2168) always took
+/// the `else` arm and cleared `instring`/`autoq` on every compadd.
 fn compquote_first() -> Option<char> {
-    // zle_tricky.c compquote
-    COMPQUOTE
+    // complete.c:54
+    crate::ported::zle::complete::COMPQUOTE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .ok()
@@ -6832,15 +6937,23 @@ fn cline_matched_compcore(line: Option<&str>) {
     }));
     cline_matched(&mut head);
 }
-/// Real read of `char *qisuf` via the paramtab. Mirrors C's direct
-/// global read at `Src/Zle/zle_tricky.c qisuf`.
+/// Reads `char *qisuf` — `Src/Zle/zle_tricky.c:137`.
+///
+/// This used to be `getsparam("qisuf")`, i.e. a lookup for a SHELL
+/// PARAMETER spelled with the C variable's name. No such parameter
+/// exists in zsh or in this port (the shell-visible names are
+/// `$QIPREFIX` / `$QISUFFIX`, complete.c:1266-1267, and they are gsu
+/// views onto `compqiprefix`/`compqisuffix`, not onto `qipre`/`qisuf`),
+/// so the read missed on every match and `add_match_data` built every
+/// `cm->ipre`/`cm->isuf` without the word's quotes.
 fn qisuf_get() -> String {
-    // zle_tricky.c qisuf
-    getsparam("qisuf").unwrap_or_default()
+    // zle_tricky.c:137
+    crate::ported::zle::zle_tricky::qisuf_get()
 }
+/// Reads `char *qipre` — `Src/Zle/zle_tricky.c:137`. See [`qisuf_get`].
 fn qipre_get() -> String {
-    // zle_tricky.c qipre
-    getsparam("qipre").unwrap_or_default()
+    // zle_tricky.c:137
+    crate::ported::zle::zle_tricky::qipre_get()
 }
 
 /// Adapter for `int movefd(int fd)` from `Src/utils.c:2974` —

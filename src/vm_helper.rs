@@ -389,12 +389,14 @@ pub struct SubshellSnapshot {
     /// subshell body so `(f() { ... })` defining a function dies
     /// with the child and never leaks to the parent. zshrs runs
     /// subshells in-process, so we must clone `shfunctab` on entry
-    /// and restore on exit. Bug #208 in docs/BUGS.md. Stored as
-    /// the full `HashMap<String, Box<shfunc>>` clone — shfunc is
-    /// `Clone` and the table snapshot is bounded by the user's
-    /// declared function set.
-    pub shfuncs:
-        std::sync::Arc<std::collections::HashMap<String, Box<crate::ported::zsh_h::shfunc>>>,
+    /// and restore on exit. Bug #208 in docs/BUGS.md. Stored as a
+    /// clone of the whole `shfunc_table` — the bucket layout is part
+    /// of the state, because `${(k)functions}` / `compadd -k functions`
+    /// emit C's bucket-walk order verbatim
+    /// (`Src/Modules/parameter.c:480-481`); rebuilding the table from
+    /// an unordered map on restore would reshuffle that order after
+    /// every `( … )` / `$( … )`.
+    pub shfuncs: std::sync::Arc<crate::ported::hashtable::shfunc_table>,
     /// Parent's compiled-function chunks at subshell entry. Companion
     /// to `shfuncs` above — `ShellExecutor.functions_compiled` is the
     /// runtime dispatch table that `Op::CallFunction` reads through;
@@ -5522,7 +5524,13 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
             fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
                 SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
             }
-            (entry.scanfn)(std::ptr::null_mut(), Some(cb), 0);
+            // c:Src/params.c:3138 — `paramvalarr(…, SCANPM_WANTKEYS)`: keys
+            // only, so a scanfn need not materialize the value side.
+            (entry.scanfn)(
+                std::ptr::null_mut(),
+                Some(cb),
+                crate::ported::zsh_h::SCANPM_WANTKEYS as i32,
+            );
             return Some(SCAN_KEYS.with(|k| k.borrow().clone()));
         }
     }
