@@ -1315,6 +1315,217 @@ impl ShellExecutor {
             }
         }
 
+        // c:Src/params.c:838-847 — `for (ip = special_params; ip->node.nam;
+        //     ip++) paramtab->addnode(paramtab, ztrdup(ip->node.nam), ip);`
+        // The specials go into paramtab FIRST, ahead of every non-special
+        // seed below, because creation ORDER is observable: a new key is
+        // front-inserted into its bucket chain (c:Src/hashtable.c:214-215)
+        // and `${(k)parameters}` prints that chain walk verbatim
+        // (c:Src/hashtable.c:420-434). Seeding NULLCMD / FUNCNEST / PS1 /
+        // … before this loop put them AHEAD of the specials they follow in
+        // the C table (`#` at c:304 vs NULLCMD at c:378; UID at c:312 vs
+        // FUNCNEST at c:366), which is exactly where zshrs's parameter
+        // order diverged from zsh's. With the table seeded first, those
+        // later `setsparam`/`setiparam` calls hit an existing node and
+        // replace it IN PLACE (c:187-203 `replacing:`), keeping C's slot.
+        // c:Src/params.c:384-394 — IPDEF8/IPDEF9 macros stamp
+        // `PM_SCALAR|PM_SPECIAL` (IPDEF8 for `PATH`/`FPATH`/etc.) and
+        // `PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT` (IPDEF9 for `path`/
+        // `fpath`/etc.) on every entry in the createparamtable table.
+        // setsparam/setaparam above create plain PM_SCALAR/PM_ARRAY
+        // entries; this loop applies the PM_SPECIAL + PM_TIED bits
+        // (plus the IPDEF9 PM_DONTIMPORT bit on the array side) so
+        // `${(t)PATH}` reads `scalar-tied-export-special` and
+        // `${(t)path}` reads `array-tied-special`.
+        //
+        // Walks the `special_params` table (params.rs:464+) which is
+        // the Rust port of the C IPDEF list. For each entry: OR the
+        // declared pm_flags onto the existing paramtab entry. The
+        // tied-pair entries (PM_TIED) also need PM_SPECIAL OR'd in
+        // since the IPDEF8/IPDEF9 macros add PM_SPECIAL implicitly;
+        // the table declares only the per-entry-distinct flags.
+        let stamp_special_params = || {
+            use crate::ported::params::{paramtab, special_params};
+            use crate::ported::zsh_h::{PM_ARRAY, PM_DONTIMPORT, PM_SCALAR, PM_SPECIAL, PM_TIED};
+            if let Ok(mut tab) = paramtab().write() {
+                // Stamp PM_SPECIAL onto every entry the special_params
+                // table declares. For tied scalars (PATH/FPATH/etc),
+                // also walks `tied_name` to apply IPDEF9-flag bits
+                // (PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED) onto the
+                // partner array entry (path/fpath/etc) — those array
+                // names aren't in the special_params table directly
+                // but C zsh's createparamtable emits IPDEF9 rows for
+                // them at Src/params.c:425-432.
+                use crate::ported::zsh_h::{hashnode, param, PM_DONTIMPORT as PM_DI, PM_UNSET};
+                for entry in special_params.iter() {
+                    // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
+                    // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
+                    //
+                    // Mask `entry.pm_flags` to ONLY the attribute bits
+                    // safe to OR onto an existing Param without changing
+                    // assignment semantics. PM_READONLY is excluded
+                    // here because many internal-runtime writes go
+                    // through setsparam (subshell ZSH_SUBSHELL bump,
+                    // ZSH_EVAL_CONTEXT push, etc.) and would be
+                    // rejected by assignstrvalue's PM_READONLY guard.
+                    // C zsh's PM_SPECIAL GSU setfn bypasses the guard;
+                    // the Rust port lacks that vtable wiring, so keep
+                    // the entries writable.
+                    //
+                    // PM_UNSET is included: lookup_special_var arms for
+                    // TRY_BLOCK_ERROR / TRY_BLOCK_INTERRUPT (and other
+                    // PM_UNSET entries with sentinel defaults) check
+                    // this bit to decide between "stored value" vs
+                    // "uninitialized → return -1 sentinel". The flag
+                    // gets cleared by assignstrvalue at c:3660 on any
+                    // write, so it correctly tracks "ever assigned".
+                    // Bug #143 in docs/BUGS.md.
+                    let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI | PM_UNSET);
+                    // c:Src/params.c — IPDEF macros set PM_TYPE bits
+                    // (PM_INTEGER for IPDEF5/6, PM_ARRAY for IPDEF9,
+                    // PM_HASHED for IPDEF-hash) along with PM_SPECIAL.
+                    // zshrs's previous init only ORed PM_SPECIAL +
+                    // tied/di/unset/readonly — never the type bit. If
+                    // setsparam ran BEFORE init_partab_params (it does
+                    // for OPTIND/SHLVL at vm_helper.rs:874/878), the
+                    // param entry stayed PM_SCALAR and `typeset -p
+                    // OPTIND` emitted `typeset OPTIND=1` instead of
+                    // zsh's `typeset -i10 OPTIND=1`. OR the pm_type
+                    // into the bits so the type attribute lands.
+                    let mut bits = safe_pm_flags | PM_SPECIAL | entry.pm_type;
+                    // c:Src/params.c — IPDEF4/IPDEF1 set
+                    // PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
+                    // PM_RO_BY_DESIGN. zshrs masks PM_READONLY out
+                    // (see above) but the introspection bit can still
+                    // ride along. Replace dropped PM_READONLY with
+                    // PM_RO_BY_DESIGN so `typeset -r` recognises these
+                    // entries as logically-readonly without blocking
+                    // internal writes. The listing filter in
+                    // `bin_typeset` expands its PM_READONLY match to
+                    // also pick up PM_RO_BY_DESIGN. Bug #97 in
+                    // docs/BUGS.md.
+                    if (entry.pm_flags & crate::ported::zsh_h::PM_READONLY) != 0 {
+                        bits |= crate::ported::zsh_h::PM_RO_BY_DESIGN;
+                    }
+                    if entry.pm_type == PM_ARRAY {
+                        bits |= PM_DI;
+                    }
+                    let _ = PM_SCALAR;
+                    let _ = PM_DONTIMPORT;
+                    if let Some(pm) = tab.get_mut(entry.name) {
+                        let was_integer =
+                            (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0;
+                        pm.node.flags |= bits as i32;
+                        // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 — the
+                        // C struct literal initialises the `base` field
+                        // to 10 for every PM_INTEGER special. zshrs's
+                        // initial paramtab seeding doesn't carry that
+                        // through (the special_paramdef table has no
+                        // `base` field). Set the default here so
+                        // `printparamnode`'s PMTF_USE_BASE arm at
+                        // params.rs:9341 emits "10" between
+                        // `integer` and the name (`integer 10 readonly
+                        // !=0`). Bug #297 in docs/BUGS.md.
+                        if entry.pm_type == crate::ported::zsh_h::PM_INTEGER && pm.base == 0 {
+                            pm.base = 10;
+                        }
+                        // When OR-ing PM_INTEGER onto a param that
+                        // was previously PM_SCALAR (i.e. setsparam ran
+                        // BEFORE init_partab_params, storing the value
+                        // in u_str), parse the u_str into u_val so the
+                        // integer getter reads the correct value. C
+                        // zsh's setsparam-equivalent path detects the
+                        // pm's PM_TYPE first and routes through
+                        // intsetfn, but zshrs's setsparam at the bin
+                        // entry point predates init_partab_params, so
+                        // it lands as PM_SCALAR storage that the
+                        // type-flip needs to migrate.
+                        if !was_integer
+                            && entry.pm_type == crate::ported::zsh_h::PM_INTEGER
+                            && pm.u_val == 0
+                        {
+                            if let Some(ref s) = pm.u_str {
+                                pm.u_val = s.parse::<i64>().unwrap_or(0);
+                                pm.u_str = None;
+                            }
+                        }
+                        // c:Src/zsh.h IPDEF8/IPDEF9 — the third macro
+                        // arg is the tied partner name; mapped into
+                        // `pm->ename` so `typeset -p` can find the
+                        // peer for the PM_TIED swap. Bug #410.
+                        if let Some(peer) = entry.tied_name {
+                            pm.ename = Some(peer.to_string());
+                        }
+                    } else {
+                        // Param hasn't been created yet (e.g. PATH gets
+                        // imported lazily via the env fallback in
+                        // getsparam at params.rs:4104; array specials
+                        // like `pipestatus` / `funcstack` / `dirstack`
+                        // / `zsh_scheduled_events` aren't pre-populated).
+                        // Seed an empty placeholder carrying the
+                        // canonical flag set so subsequent setsparam /
+                        // `(t)X` / `${+X}` observers see the IPDEF
+                        // attribute bits AND `${+X}` returns 1.
+                        let u_arr = if entry.pm_type == PM_ARRAY {
+                            Some(Vec::new())
+                        } else {
+                            None
+                        };
+                        let pm: crate::ported::zsh_h::Param = Box::new(param {
+                            node: hashnode {
+                                next: None,
+                                nam: entry.name.to_string(),
+                                flags: (entry.pm_type as i32) | bits as i32,
+                            },
+                            u_data: 0,
+                            u_tied: None,
+                            u_arr,
+                            u_str: None,
+                            u_val: 0,
+                            u_dval: 0.0,
+                            u_hash: None,
+                            gsu_s: None,
+                            gsu_i: None,
+                            gsu_f: None,
+                            gsu_a: None,
+                            gsu_h: None,
+                            // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 —
+                            // PM_INTEGER specials default base=10.
+                            base: if entry.pm_type == crate::ported::zsh_h::PM_INTEGER {
+                                10
+                            } else {
+                                0
+                            },
+                            width: 0,
+                            env: None,
+                            // c:Src/zsh.h IPDEF8/IPDEF9 — tied partner
+                            // name. Bug #410.
+                            ename: entry.tied_name.map(|s| s.to_string()),
+                            old: None,
+                            level: 0,
+                        });
+                        tab.insert(entry.name.to_string(), pm);
+                    }
+                    // Tied partner side. The previous loop body ORed
+                    // PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED onto the
+                    // partner indiscriminately, but for a SCALAR ↔
+                    // ARRAY tied pair (PATH ↔ path, FIGNORE ↔ fignore),
+                    // that incorrectly stamped PM_ARRAY onto the scalar
+                    // partner (FIGNORE, PATH, FPATH, MAILPATH, MANPATH,
+                    // PSVAR, CDPATH, MODULE_PATH). Result: `(t)PATH`
+                    // returned `array-tied-export-special` instead of
+                    // `scalar-tied-export-special`.
+                    //
+                    // Both partners are already listed in `special_params`
+                    // (the scalar at the IPDEF8 block, the array at the
+                    // IPDEF9 block past the sentinel), so each gets its
+                    // own pass through this loop and ends up with the
+                    // correct flags. No cross-stamping needed.
+                    let _ = entry.tied_name;
+                }
+            }
+        };
+        stamp_special_params(); // c:838-847 — create in C's order
         // Standard zsh scalar param defaults — direct port of
         // `createparamtable` (Src/params.c:817-988) + the `setupvals`
         // tail. Writes through canonical `setsparam` (Src/params.c:3350).
@@ -1330,39 +1541,15 @@ impl ShellExecutor {
         // Use the cleaned `patchlevel::ZSH_VERSION` here ("5.9") and
         // surface the full snapshot tag as `$ZSHRS_VERSION` for
         // zshrs-specific identity checks.
-        setsparam("ZSH_VERSION", crate::ported::patchlevel::ZSH_VERSION);
-        // c:Src/params.c:43 + Src/patchlevel.h — `ZSH_PATCHLEVEL` is
-        // a git-describe-style identifier (`zsh-MAJOR.MINOR-N-gHASH`)
-        // of the upstream commit zshrs targets. `build.rs` emits
-        // "unknown" because the vendored zsh tarball doesn't ship a
-        // CUSTOM_PATCHLEVEL define; use the canonical const in
-        // `patchlevel.rs` instead (snapshot of `src/zsh/Src/patchlevel.h`).
-        // Bug #90 in docs/BUGS.md — scripts that fingerprint by
-        // $ZSH_PATCHLEVEL fell to the wildcard arm under "unknown".
-        setsparam("ZSH_PATCHLEVEL", crate::ported::patchlevel::ZSH_PATCHLEVEL);
-        // Skip ZSHRS_VERSION whenever the zsh-compatible namespace must
-        // stay free of zshrs-original names, so `${(k)parameters}`
-        // doesn't carry a name zsh doesn't ship — same predicate and
-        // same reasoning as the guard in
-        // `ported::params::createparamtable`. `hide_ext_builtins()` is
-        // `--zsh` OR `ZSHRS_HIDE_EXT_BUILTINS` (the parity harnesses'
-        // knob); the previous `--zsh`-only gate missed the native
-        // binary the harnesses actually run. Scripts can still detect
-        // zshrs via `$ZSH_VERSION`, which carries a `-test` suffix.
-        if !crate::ext_builtins::hide_ext_builtins() {
-            setsparam("ZSHRS_VERSION", crate::ported::patchlevel::ZSHRS_VERSION);
-        }
-        setsparam("ZSH_NAME", "zsh");
-        // c:params.c:971 — ZSH_ARGZERO from `posixzero` (Src/init.c:271):
-        // the kernel-supplied argv[0] of THIS binary, in --zsh parity
-        // mode too. The bin entrypoint overrides this with the script
-        // path for -c / runscript invocations. (A previous revision
-        // probed the system zsh install path and reported THAT as
-        // ZSH_ARGZERO for byte-parity — faking the shell's identity.
-        // Parity tests that compare the value must normalize the
-        // machine-specific binary path in the test row instead.)
-        let argzero_default = env::args().next().unwrap_or_else(|| "zsh".to_string());
-        setsparam("ZSH_ARGZERO", &argzero_default);
+        // ZSH_VERSION / ZSH_PATCHLEVEL / ZSHRS_VERSION / ZSH_NAME /
+        // ZSH_ARGZERO are NOT seeded here: C creates them at the END of
+        // `createparamtable` (c:970-973, after the environ import) and
+        // ZSH_NAME at `Src/init.c:1364` (setupvals, later still). They
+        // are seeded at those C positions further down, because a name
+        // created before the import lands in a different chain slot —
+        // `ZSH_NAME` seeded here came out BEHIND every same-bucket
+        // environment variable in `${(k)parameters}` instead of ahead
+        // of them (c:Src/hashtable.c:214-215 front-insert).
         setsparam("WORDCHARS", "*?_-.[]~=/&;!#$%^(){}<>");
         // SHLVL is NOT seeded here. c:Src/params.c:948-951 increments it
         // AFTER the environ-import loop, so the +1 lives at the end of that
@@ -1412,17 +1599,35 @@ impl ShellExecutor {
         // `env -i`) left it unset and every temp-file path derived
         // from it fell back per-call-site.
         //
-        // Guarded on the environment for the same reason NULLCMD /
-        // READNULLCMD below are guarded: C seeds BEFORE the import loop
-        // (c:892 vs c:893+) so an exported $TMPPREFIX overwrites the
-        // default, but zshrs's import (further down in this fn) only
-        // writes an existing entry while it is still PM_UNSET — an
-        // unconditional seed here clears that bit and would make the
-        // default beat the environment. `var_os` is the same
-        // "was it in the environment" test the import loop keys off.
-        if std::env::var_os("TMPPREFIX").is_none() {
-            setsparam("TMPPREFIX", crate::ported::config_h::DEFAULT_TMPPREFIX);
-        }
+        // C seeds unconditionally BEFORE the import loop (c:870 vs
+        // c:893+) and the import then overwrites via assignsparam, so
+        // an exported $TMPPREFIX still wins. zshrs's import only
+        // rewrites an entry that is still PM_UNSET, so the env value is
+        // resolved HERE instead — same end state, and the node is
+        // created at C's position in the bucket chain. Skipping the
+        // seed when the environment had TMPPREFIX (the previous shape)
+        // deferred creation into the import loop, which put TMPPREFIX
+        // behind every environment variable that hashes to its bucket.
+        //
+        // The lookup reads the process-entry environ snapshot, the same
+        // source the import loop below walks (see the `environ` static
+        // in ported::params for why the live environment is not it).
+        let env_at_entry = |name: &str| -> Option<String> {
+            crate::ported::params::environ
+                .get()
+                .and_then(|v| {
+                    v.iter()
+                        .find(|(k, _)| k == name)
+                        .map(|(_, val)| val.clone())
+                })
+                .or_else(|| std::env::var(name).ok())
+        };
+        setsparam(
+            "TMPPREFIX",
+            env_at_entry("TMPPREFIX")
+                .as_deref()
+                .unwrap_or(crate::ported::config_h::DEFAULT_TMPPREFIX),
+        ); // c:870
         // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
         // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Real paramtab
         // seeds (NOT read-time fallbacks) so `unset NULLCMD` truly
@@ -1441,42 +1646,54 @@ impl ShellExecutor {
         if getsparam("READNULLCMD").map_or(true, |v| v.is_empty()) {
             setsparam("READNULLCMD", crate::ported::config_h::DEFAULT_READNULLCMD);
         }
-        // c:Src/init.c:963 — `setsparam("TTY", ttyname(0) ?: "")`.
-        // Even in non-interactive -fc mode zsh creates the param;
-        // mirror so ${(k)parameters} count matches.
-        let tty_str = unsafe {
-            let p = libc::ttyname(0);
-            if p.is_null() {
-                String::new()
+        // c:Src/params.c:873-876 — `gethostname(hostnam, 256);
+        //                            setsparam("HOST", ztrdup_metafy(hostnam));`
+        // Seeded HERE, before the import loop, exactly like C; it used
+        // to run at the very end of this constructor, which put HOST
+        // ahead of same-bucket specials (PROMPT) that C creates first.
+        // The env value is resolved up front for the same reason as
+        // TMPPREFIX above (C's import would overwrite it).
+        let mut host_buf = [0u8; 256];
+        let host_rc = unsafe { libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256) }; // c:874
+        let hostname = if host_rc == 0 {
+            std::ffi::CStr::from_bytes_until_nul(&host_buf)
+                .ok()
+                .and_then(|c| c.to_str().ok())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            String::new()
+        };
+        setsparam(
+            "HOST",
+            env_at_entry("HOST").as_deref().unwrap_or(&hostname),
+        ); // c:875
+        // c:Src/params.c:878-882 — `setsparam("LOGNAME", (str = getlogin())
+        //     && *str ? ztrdup_metafy(str) : ztrdup(cached_username));`
+        // Also pre-import in C (c:878 vs c:893+); creating it during the
+        // import instead put LOGNAME behind the environment variables
+        // sharing its bucket.
+        let logname_default = {
+            let from_getlogin = unsafe {
+                let p = libc::getlogin(); // c:880
+                if p.is_null() {
+                    String::new()
+                } else {
+                    std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+                }
+            };
+            if from_getlogin.is_empty() {
+                crate::ported::utils::get_username() // c:882 cached_username
             } else {
-                std::ffi::CStr::from_ptr(p)
-                    .to_str()
-                    .unwrap_or("")
-                    .to_string()
+                from_getlogin
             }
         };
-        setsparam("TTY", &tty_str);
-        // c:Src/params.c:968-979 — `setaparam("signals", ...)`.
-        // Build the signal-name array. Mirror by inserting directly
-        // into paramtab so ${(k)parameters} sees it.
-        {
-            use crate::ported::signals_h::SIGS;
-            // c:signames.c sigs[] (generated) — index 0 is "EXIT",
-            // entries 1..=SIGCOUNT are in PLATFORM SIGNAL-NUMBER
-            // order, tail is "ZERR", "DEBUG" (zsh.h SIGZERR/SIGDEBUG).
-            // SIGS is declared in Linux textual order, so sort by the
-            // libc number to reproduce the generated table's order on
-            // every platform. Same construction as params.rs — keep
-            // in sync.
-            let mut by_num: Vec<(&str, i32)> = SIGS.to_vec();
-            by_num.sort_by_key(|&(_, n)| n);
-            let mut signals_arr: Vec<String> = Vec::with_capacity(by_num.len() + 3);
-            signals_arr.push("EXIT".to_string()); // c:sigs[0]
-            signals_arr.extend(by_num.iter().map(|(n, _)| n.to_string()));
-            signals_arr.push("ZERR".to_string()); // c:sigs tail
-            signals_arr.push("DEBUG".to_string()); // c:sigs tail
-            crate::ported::params::setaparam("signals", signals_arr);
-        }
+        setsparam(
+            "LOGNAME",
+            env_at_entry("LOGNAME")
+                .as_deref()
+                .unwrap_or(&logname_default),
+        ); // c:878
         // c:Src/init.c:1186-1193 — default prompt strings. zsh sets
         // PS4 to "+%N:%i> " for ZSH emulation ("+ " for KSH/SH).
         // Without seeding, PS4 reads empty and `set -x` output has
@@ -1769,201 +1986,24 @@ impl ShellExecutor {
         for (k, v) in &arrays {
             setaparam(k, v.clone()); // c:params.c:3595
         }
-        // c:Src/params.c:384-394 — IPDEF8/IPDEF9 macros stamp
-        // `PM_SCALAR|PM_SPECIAL` (IPDEF8 for `PATH`/`FPATH`/etc.) and
-        // `PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT` (IPDEF9 for `path`/
-        // `fpath`/etc.) on every entry in the createparamtable table.
-        // setsparam/setaparam above create plain PM_SCALAR/PM_ARRAY
-        // entries; this loop applies the PM_SPECIAL + PM_TIED bits
-        // (plus the IPDEF9 PM_DONTIMPORT bit on the array side) so
-        // `${(t)PATH}` reads `scalar-tied-export-special` and
-        // `${(t)path}` reads `array-tied-special`.
-        //
-        // Walks the `special_params` table (params.rs:464+) which is
-        // the Rust port of the C IPDEF list. For each entry: OR the
-        // declared pm_flags onto the existing paramtab entry. The
-        // tied-pair entries (PM_TIED) also need PM_SPECIAL OR'd in
-        // since the IPDEF8/IPDEF9 macros add PM_SPECIAL implicitly;
-        // the table declares only the per-entry-distinct flags.
+        // Re-stamp the IPDEF flag set. zshrs's `setsparam`/`setiparam`
+        // rewrite an existing node's flags to a plain PM_SCALAR /
+        // PM_INTEGER set, so the c:838-847 pass above loses PM_SPECIAL /
+        // PM_DONTIMPORT / PM_TIED on every special the seeds just wrote
+        // (`_`, IFS, OPTIND, NULLCMD, PS1, …). Re-running the stamp here —
+        // where the single pass used to sit — restores them BEFORE the
+        // import loop reads `dontimport(pm->node.flags)` (c:902-906). It
+        // only takes its "entry exists" arm now, so nothing is created and
+        // no chain position moves (c:187-203 `replacing:`).
+        stamp_special_params();
+
+        // c:Src/params.c:893-924 — the environment import runs AFTER the
+        // specials table (moved above, c:838-847) and after the c:854-885
+        // non-special seeds, exactly as `createparamtable` sequences them.
         {
-            use crate::ported::params::{paramtab, special_params};
-            use crate::ported::zsh_h::{PM_ARRAY, PM_DONTIMPORT, PM_SCALAR, PM_SPECIAL, PM_TIED};
+            use crate::ported::params::paramtab;
             if let Ok(mut tab) = paramtab().write() {
-                // Stamp PM_SPECIAL onto every entry the special_params
-                // table declares. For tied scalars (PATH/FPATH/etc),
-                // also walks `tied_name` to apply IPDEF9-flag bits
-                // (PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED) onto the
-                // partner array entry (path/fpath/etc) — those array
-                // names aren't in the special_params table directly
-                // but C zsh's createparamtable emits IPDEF9 rows for
-                // them at Src/params.c:425-432.
-                use crate::ported::zsh_h::{hashnode, param, PM_DONTIMPORT as PM_DI, PM_UNSET};
-                for entry in special_params.iter() {
-                    // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
-                    // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
-                    //
-                    // Mask `entry.pm_flags` to ONLY the attribute bits
-                    // safe to OR onto an existing Param without changing
-                    // assignment semantics. PM_READONLY is excluded
-                    // here because many internal-runtime writes go
-                    // through setsparam (subshell ZSH_SUBSHELL bump,
-                    // ZSH_EVAL_CONTEXT push, etc.) and would be
-                    // rejected by assignstrvalue's PM_READONLY guard.
-                    // C zsh's PM_SPECIAL GSU setfn bypasses the guard;
-                    // the Rust port lacks that vtable wiring, so keep
-                    // the entries writable.
-                    //
-                    // PM_UNSET is included: lookup_special_var arms for
-                    // TRY_BLOCK_ERROR / TRY_BLOCK_INTERRUPT (and other
-                    // PM_UNSET entries with sentinel defaults) check
-                    // this bit to decide between "stored value" vs
-                    // "uninitialized → return -1 sentinel". The flag
-                    // gets cleared by assignstrvalue at c:3660 on any
-                    // write, so it correctly tracks "ever assigned".
-                    // Bug #143 in docs/BUGS.md.
-                    let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI | PM_UNSET);
-                    // c:Src/params.c — IPDEF macros set PM_TYPE bits
-                    // (PM_INTEGER for IPDEF5/6, PM_ARRAY for IPDEF9,
-                    // PM_HASHED for IPDEF-hash) along with PM_SPECIAL.
-                    // zshrs's previous init only ORed PM_SPECIAL +
-                    // tied/di/unset/readonly — never the type bit. If
-                    // setsparam ran BEFORE init_partab_params (it does
-                    // for OPTIND/SHLVL at vm_helper.rs:874/878), the
-                    // param entry stayed PM_SCALAR and `typeset -p
-                    // OPTIND` emitted `typeset OPTIND=1` instead of
-                    // zsh's `typeset -i10 OPTIND=1`. OR the pm_type
-                    // into the bits so the type attribute lands.
-                    let mut bits = safe_pm_flags | PM_SPECIAL | entry.pm_type;
-                    // c:Src/params.c — IPDEF4/IPDEF1 set
-                    // PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
-                    // PM_RO_BY_DESIGN. zshrs masks PM_READONLY out
-                    // (see above) but the introspection bit can still
-                    // ride along. Replace dropped PM_READONLY with
-                    // PM_RO_BY_DESIGN so `typeset -r` recognises these
-                    // entries as logically-readonly without blocking
-                    // internal writes. The listing filter in
-                    // `bin_typeset` expands its PM_READONLY match to
-                    // also pick up PM_RO_BY_DESIGN. Bug #97 in
-                    // docs/BUGS.md.
-                    if (entry.pm_flags & crate::ported::zsh_h::PM_READONLY) != 0 {
-                        bits |= crate::ported::zsh_h::PM_RO_BY_DESIGN;
-                    }
-                    if entry.pm_type == PM_ARRAY {
-                        bits |= PM_DI;
-                    }
-                    let _ = PM_SCALAR;
-                    let _ = PM_DONTIMPORT;
-                    if let Some(pm) = tab.get_mut(entry.name) {
-                        let was_integer =
-                            (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0;
-                        pm.node.flags |= bits as i32;
-                        // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 — the
-                        // C struct literal initialises the `base` field
-                        // to 10 for every PM_INTEGER special. zshrs's
-                        // initial paramtab seeding doesn't carry that
-                        // through (the special_paramdef table has no
-                        // `base` field). Set the default here so
-                        // `printparamnode`'s PMTF_USE_BASE arm at
-                        // params.rs:9341 emits "10" between
-                        // `integer` and the name (`integer 10 readonly
-                        // !=0`). Bug #297 in docs/BUGS.md.
-                        if entry.pm_type == crate::ported::zsh_h::PM_INTEGER && pm.base == 0 {
-                            pm.base = 10;
-                        }
-                        // When OR-ing PM_INTEGER onto a param that
-                        // was previously PM_SCALAR (i.e. setsparam ran
-                        // BEFORE init_partab_params, storing the value
-                        // in u_str), parse the u_str into u_val so the
-                        // integer getter reads the correct value. C
-                        // zsh's setsparam-equivalent path detects the
-                        // pm's PM_TYPE first and routes through
-                        // intsetfn, but zshrs's setsparam at the bin
-                        // entry point predates init_partab_params, so
-                        // it lands as PM_SCALAR storage that the
-                        // type-flip needs to migrate.
-                        if !was_integer
-                            && entry.pm_type == crate::ported::zsh_h::PM_INTEGER
-                            && pm.u_val == 0
-                        {
-                            if let Some(ref s) = pm.u_str {
-                                pm.u_val = s.parse::<i64>().unwrap_or(0);
-                                pm.u_str = None;
-                            }
-                        }
-                        // c:Src/zsh.h IPDEF8/IPDEF9 — the third macro
-                        // arg is the tied partner name; mapped into
-                        // `pm->ename` so `typeset -p` can find the
-                        // peer for the PM_TIED swap. Bug #410.
-                        if let Some(peer) = entry.tied_name {
-                            pm.ename = Some(peer.to_string());
-                        }
-                    } else {
-                        // Param hasn't been created yet (e.g. PATH gets
-                        // imported lazily via the env fallback in
-                        // getsparam at params.rs:4104; array specials
-                        // like `pipestatus` / `funcstack` / `dirstack`
-                        // / `zsh_scheduled_events` aren't pre-populated).
-                        // Seed an empty placeholder carrying the
-                        // canonical flag set so subsequent setsparam /
-                        // `(t)X` / `${+X}` observers see the IPDEF
-                        // attribute bits AND `${+X}` returns 1.
-                        let u_arr = if entry.pm_type == PM_ARRAY {
-                            Some(Vec::new())
-                        } else {
-                            None
-                        };
-                        let pm: crate::ported::zsh_h::Param = Box::new(param {
-                            node: hashnode {
-                                next: None,
-                                nam: entry.name.to_string(),
-                                flags: (entry.pm_type as i32) | bits as i32,
-                            },
-                            u_data: 0,
-                            u_tied: None,
-                            u_arr,
-                            u_str: None,
-                            u_val: 0,
-                            u_dval: 0.0,
-                            u_hash: None,
-                            gsu_s: None,
-                            gsu_i: None,
-                            gsu_f: None,
-                            gsu_a: None,
-                            gsu_h: None,
-                            // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 —
-                            // PM_INTEGER specials default base=10.
-                            base: if entry.pm_type == crate::ported::zsh_h::PM_INTEGER {
-                                10
-                            } else {
-                                0
-                            },
-                            width: 0,
-                            env: None,
-                            // c:Src/zsh.h IPDEF8/IPDEF9 — tied partner
-                            // name. Bug #410.
-                            ename: entry.tied_name.map(|s| s.to_string()),
-                            old: None,
-                            level: 0,
-                        });
-                        tab.insert(entry.name.to_string(), pm);
-                    }
-                    // Tied partner side. The previous loop body ORed
-                    // PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED onto the
-                    // partner indiscriminately, but for a SCALAR ↔
-                    // ARRAY tied pair (PATH ↔ path, FIGNORE ↔ fignore),
-                    // that incorrectly stamped PM_ARRAY onto the scalar
-                    // partner (FIGNORE, PATH, FPATH, MAILPATH, MANPATH,
-                    // PSVAR, CDPATH, MODULE_PATH). Result: `(t)PATH`
-                    // returned `array-tied-export-special` instead of
-                    // `scalar-tied-export-special`.
-                    //
-                    // Both partners are already listed in `special_params`
-                    // (the scalar at the IPDEF8 block, the array at the
-                    // IPDEF9 block past the sentinel), so each gets its
-                    // own pass through this loop and ends up with the
-                    // correct flags. No cross-stamping needed.
-                    let _ = entry.tied_name;
-                }
+                use crate::ported::zsh_h::{param, PM_UNSET};
                 // c:Src/params.c:893-924 environment-import loop —
                 // every env var gets either a fresh exported paramtab
                 // entry OR (when the entry pre-exists from
@@ -2364,71 +2404,6 @@ impl ShellExecutor {
         // in paramtab even though the live env was corrected.
         crate::ported::builtin::set_pwd_env();
 
-        // Populate paramtab with PM_SPECIAL placeholder Params for
-        // every PARTAB / PARTAB_ARRAY magic-assoc name. Mirrors
-        // what C's zsh/parameter module boot_ → handlefeatures
-        // chain does at startup. Makes `${+aliases}` / `${(t)commands}`
-        // / `typeset -p modules` etc. see the special entries.
-        init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
-
-        // c:Src/init.c:1703 init_bltinmods — must run before user
-        // code so default-loaded modules (zsh/watch, …) get their
-        // boot_ entry points called and their params (e.g. `watch`,
-        // `WATCH`) seeded in paramtab. Without this, `${(t)watch}`
-        // returned empty even though zsh treats zsh/watch as loaded
-        // by default. The bin entry skips zsh_main → init_bltinmods,
-        // so we run it here from ShellExecutor::new for the same
-        // effect. Bug #270.
-        crate::ported::init::init_bltinmods();
-
-        // c:Src/params.c:873-876 — `gethostname(hostnam,256);
-        //                            setsparam("HOST", ztrdup_metafy(hostnam));`
-        // Plain port of the createparamtable HOST init. Direct
-        // libc::gethostname call; result written via canonical
-        // setsparam. createparamtable() itself isn't called from the
-        // bin entry yet (full init port pending); this is the minimum
-        // for `$HOST` to read non-empty.
-        let mut host_buf = [0u8; 256];
-        let host_rc = unsafe { libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256) }; // c:874
-        if host_rc == 0 {
-            if let Ok(c) = std::ffi::CStr::from_bytes_until_nul(&host_buf) {
-                if let Ok(name) = c.to_str() {
-                    crate::ported::params::setsparam("HOST", name); // c:875
-                }
-            }
-        }
-        // bash startup delta: bash defines TERM itself when the
-        // environment does not carry one, and exports it. zsh leaves
-        // TERM unset in that case, so `zshrs --bash` inherited zsh's
-        // behavior and diverged from the reference shell:
-        //
-        //   $ env -u TERM /bin/bash -c 'printf "%s\n" "${TERM+set}"'
-        //   set
-        //   $ env -u TERM /bin/bash -c 'echo "$TERM"'
-        //   dumb
-        //   $ env -u TERM /bin/zsh -f -c 'printf "%s\n" "${TERM+set}"'
-        //                                  (empty — zsh leaves it unset)
-        //
-        // Same on bash 3.2.57 (macOS /bin/bash) and 5.3.15, so it is
-        // not a version artifact. Only the bare `--bash` drop-in takes
-        // it: `--bash --zsh` asks for zsh-STYLE emulation, where zsh's
-        // leave-it-unset behavior is the correct answer. Guarded on the
-        // environment so an inherited TERM always wins.
-        if crate::extensions::dash_mode::bash_mode() && std::env::var_os("TERM").is_none() {
-            crate::ported::params::setsparam("TERM", "dumb");
-            // bash exports it (`declare -x TERM` shows up in `export -p`);
-            // addenv stamps PM_EXPORTED and pushes it into the child env.
-            crate::ported::params::addenv("TERM", "dumb");
-        }
-
-        // c:Src/init.c:479 — `-c` mode: scriptname = scriptfilename
-        // = ztrdup("zsh"). Both globals start as the literal "zsh"
-        // (not the binary path) so PS4's %x / %N print "zsh" not
-        // "/path/to/zshrs" at the top level. Function dispatch
-        // overrides scriptname per c:5903; scriptfilename stays.
-        crate::ported::utils::set_scriptname(Some("zsh".to_string()));
-        crate::ported::utils::set_scriptfilename(Some("zsh".to_string()));
-
         // c:Src/params.c:975-992 — host/arch identification params:
         // CPUTYPE / MACHTYPE / OSTYPE / VENDOR. C zsh reads from
         // compile-time `#define`s (set by ./configure) for MACHTYPE /
@@ -2472,39 +2447,103 @@ impl ShellExecutor {
         // source of truth, exactly as OSTYPE/MACHTYPE above.
         crate::ported::params::setsparam("VENDOR", crate::ported::config_h::VENDOR); // c:992
 
-        // c:Src/params.c:878-882 — `setsparam("LOGNAME", getlogin() ?:
-        // cached_username);`. C's createparamtable also assigns
-        // USERNAME from the same source (cached_username) via the
-        // special_paramdefs table. Here mirror the LOGNAME +
-        // USERNAME seeding so the canonical paramtab entries exist
-        // (usernamegetfn at c:4655 reads through Param.u_str).
-        // Same one-shot init pattern as the HOST gethostname call
-        // above — full createparamtable() port is pending.
-        let logname = unsafe {
-            let p = libc::getlogin();
+        // c:Src/init.c:963 — `setsparam("TTY", ttyname(0) ?: "")`, which
+        // C reaches at c:969 in the createparamtable tail. Even a
+        // non-interactive -fc shell creates the param.
+        let tty_str = unsafe {
+            let p = libc::ttyname(0);
             if p.is_null() {
-                None
+                String::new()
             } else {
-                Some(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+                std::ffi::CStr::from_ptr(p)
+                    .to_str()
+                    .unwrap_or("")
+                    .to_string()
             }
-        }; // c:880
-        if let Some(name) = logname {
-            crate::ported::params::setsparam("LOGNAME", &name); // c:881
-                                                                // DO NOT setsparam("USERNAME", ...) here. `$USERNAME` is
-                                                                // a special parameter whose SETTER (`usernamesetfn` in
-                                                                // params.rs) performs setgid(2) + setuid(2) to actually
-                                                                // change the effective user — that's a deliberate upstream
-                                                                // zsh feature for `USERNAME=other-user cmd`. Calling it at
-                                                                // init seeds the value AND tries to change uid/gid; when
-                                                                // the resolved pwd's pw_uid differs from `getuid()` (sudo
-                                                                // launches, macOS Keychain-helper inherited env, container
-                                                                // entry points, etc.) the setgid call fails with EPERM and
-                                                                // emits `zsh:1: failed to change group ID: Operation not
-                                                                // permitted`. Upstream seeds `$USERNAME` via the GETTER
-                                                                // path (`usernamegetfn` reads through `cached_username`
-                                                                // populated by `inittyptab` → `get_username`), no setter
-                                                                // call needed.
+        };
+        crate::ported::params::setsparam("TTY", &tty_str); // c:969
+        // c:Src/params.c:971 — `setsparam("ZSH_ARGZERO", ztrdup(posixzero))`:
+        // the kernel-supplied argv[0] of THIS binary, in --zsh parity mode
+        // too. The bin entrypoint overrides this with the script path for
+        // -c / runscript invocations. (A previous revision probed the
+        // system zsh install path and reported THAT as ZSH_ARGZERO for
+        // byte-parity — faking the shell's identity. Parity tests that
+        // compare the value must normalize the machine-specific binary
+        // path in the test row instead.)
+        let argzero_default = env::args().next().unwrap_or_else(|| "zsh".to_string());
+        crate::ported::params::setsparam("ZSH_ARGZERO", &argzero_default); // c:971
+        // c:Src/params.c:972 — ZSH_VERSION. `zsh_version::ZSH_VERSION`
+        // (emitted by build.rs from the vendored `Config/version.mk`) is
+        // the development snapshot tag `5.9.0.3-test`; shipped zsh
+        // binaries report the clean release form (`5.9`). Bug #73 in
+        // docs/BUGS.md — cross-shell scripts that gate on
+        // `[[ $ZSH_VERSION = 5.9 ]]` or split on `.` expecting
+        // MAJOR.MINOR break on the `-test` suffix. Use the cleaned
+        // `patchlevel::ZSH_VERSION` here ("5.9") and surface the full
+        // snapshot tag as `$ZSHRS_VERSION` for zshrs identity checks.
+        crate::ported::params::setsparam("ZSH_VERSION", crate::ported::patchlevel::ZSH_VERSION); // c:972
+        // c:Src/params.c:973 + Src/patchlevel.h — `ZSH_PATCHLEVEL` is a
+        // git-describe-style identifier (`zsh-MAJOR.MINOR-N-gHASH`) of
+        // the upstream commit zshrs targets. `build.rs` emits "unknown"
+        // because the vendored zsh tarball ships no CUSTOM_PATCHLEVEL
+        // define; use the canonical const in `patchlevel.rs` instead.
+        // Bug #90 in docs/BUGS.md — scripts that fingerprint by
+        // $ZSH_PATCHLEVEL fell to the wildcard arm under "unknown".
+        crate::ported::params::setsparam(
+            "ZSH_PATCHLEVEL",
+            crate::ported::patchlevel::ZSH_PATCHLEVEL,
+        ); // c:973
+        // Skip ZSHRS_VERSION whenever the zsh-compatible namespace must
+        // stay free of zshrs-original names, so `${(k)parameters}`
+        // doesn't carry a name zsh doesn't ship — same predicate and
+        // reasoning as the guard in `ported::params::createparamtable`.
+        // `hide_ext_builtins()` is `--zsh` OR `ZSHRS_HIDE_EXT_BUILTINS`
+        // (the parity harnesses' knob). Scripts can still detect zshrs
+        // via `$ZSH_VERSION`, which carries a `-test` suffix.
+        if !crate::ext_builtins::hide_ext_builtins() {
+            crate::ported::params::setsparam(
+                "ZSHRS_VERSION",
+                crate::ported::patchlevel::ZSHRS_VERSION,
+            );
         }
+        // c:Src/params.c:974-979 — `setaparam("signals", …)`.
+        {
+            use crate::ported::signals_h::SIGS;
+            // c:signames.c sigs[] (generated) — index 0 is "EXIT",
+            // entries 1..=SIGCOUNT are in PLATFORM SIGNAL-NUMBER
+            // order, tail is "ZERR", "DEBUG" (zsh.h SIGZERR/SIGDEBUG).
+            // SIGS is declared in Linux textual order, so sort by the
+            // libc number to reproduce the generated table's order on
+            // every platform. Same construction as params.rs — keep
+            // in sync.
+            let mut by_num: Vec<(&str, i32)> = SIGS.to_vec();
+            by_num.sort_by_key(|&(_, n)| n);
+            let mut signals_arr: Vec<String> = Vec::with_capacity(by_num.len() + 3);
+            signals_arr.push("EXIT".to_string()); // c:sigs[0]
+            signals_arr.extend(by_num.iter().map(|(n, _)| n.to_string()));
+            signals_arr.push("ZERR".to_string()); // c:sigs tail
+            signals_arr.push("DEBUG".to_string()); // c:sigs tail
+            crate::ported::params::setaparam("signals", signals_arr); // c:974
+        }
+        // c:Src/init.c:1364 — `setsparam("ZSH_NAME", ztrdup(zsh_name))`,
+        // which setupvals runs AFTER createparamtable, so the node lands
+        // ahead of the imported environment in its bucket chain.
+        crate::ported::params::setsparam("ZSH_NAME", "zsh"); // c:Src/init.c:1364
+        // LOGNAME is seeded pre-import now (c:878) — see the block by the
+        // TMPPREFIX/HOST seeds above.
+        //
+        // DO NOT setsparam("USERNAME", ...) anywhere in init. `$USERNAME`
+        // is a special parameter whose SETTER (`usernamesetfn` in
+        // params.rs) performs setgid(2) + setuid(2) to actually change
+        // the effective user — a deliberate upstream zsh feature for
+        // `USERNAME=other-user cmd`. Calling it at init seeds the value
+        // AND tries to change uid/gid; when the resolved pwd's pw_uid
+        // differs from `getuid()` (sudo launches, macOS Keychain-helper
+        // inherited env, container entry points, etc.) the setgid call
+        // fails with EPERM and emits `zsh:1: failed to change group ID:
+        // Operation not permitted`. Upstream seeds `$USERNAME` via the
+        // GETTER path (`usernamegetfn` reads through `cached_username`
+        // populated by `inittyptab` → `get_username`), no setter call.
 
         // c:Src/init.c:1176 — `module_path = mkarray(MODULE_DIR)`.
         // The canonical init lives in `init::setupvals` (port of
@@ -2513,6 +2552,59 @@ impl ShellExecutor {
         // module_path bootstrap exposed by init.rs from here. This
         // mirrors the HOST gethostname seeding pattern above:
         // duplicated init that should collapse into a full setupvals
+
+        // c:Src/init.c:1945 init_bltinmods — runs right after setupvals
+        // (c:1942), i.e. after createparamtable's import, so the module
+        // autoload stubs (`WATCH`, `watch`, …) are created HERE. The bin
+        // entry skips zsh_main → init_bltinmods, so run it from
+        // ShellExecutor::new for the same effect. Bug #270.
+        crate::ported::init::init_bltinmods(); // c:Src/init.c:1945
+
+        // Populate paramtab with PM_SPECIAL Params for every PARTAB /
+        // PARTAB_ARRAY magic-assoc name. Mirrors what C's zsh/parameter
+        // module boot_ → handlefeatures chain does — which happens when
+        // the module LOADS, after init_bltinmods planted its autoload
+        // stubs, and `addparamdef` unsets the stub before creating the
+        // real param (c:Src/module.c addparamdef → unsetparam_pm +
+        // createparam), so these names take a FRESH chain slot ahead of
+        // the stubs. Running this before init_bltinmods put `usergroups`
+        // and friends behind `WATCH` in `${(k)parameters}`.
+        init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
+
+        // HOST is seeded pre-import now (c:875) — see the block next to
+        // the TMPPREFIX/LOGNAME seeds above.
+        // bash startup delta: bash defines TERM itself when the
+        // environment does not carry one, and exports it. zsh leaves
+        // TERM unset in that case, so `zshrs --bash` inherited zsh's
+        // behavior and diverged from the reference shell:
+        //
+        //   $ env -u TERM /bin/bash -c 'printf "%s\n" "${TERM+set}"'
+        //   set
+        //   $ env -u TERM /bin/bash -c 'echo "$TERM"'
+        //   dumb
+        //   $ env -u TERM /bin/zsh -f -c 'printf "%s\n" "${TERM+set}"'
+        //                                  (empty — zsh leaves it unset)
+        //
+        // Same on bash 3.2.57 (macOS /bin/bash) and 5.3.15, so it is
+        // not a version artifact. Only the bare `--bash` drop-in takes
+        // it: `--bash --zsh` asks for zsh-STYLE emulation, where zsh's
+        // leave-it-unset behavior is the correct answer. Guarded on the
+        // environment so an inherited TERM always wins.
+        if crate::extensions::dash_mode::bash_mode() && std::env::var_os("TERM").is_none() {
+            crate::ported::params::setsparam("TERM", "dumb");
+            // bash exports it (`declare -x TERM` shows up in `export -p`);
+            // addenv stamps PM_EXPORTED and pushes it into the child env.
+            crate::ported::params::addenv("TERM", "dumb");
+        }
+
+        // c:Src/init.c:479 — `-c` mode: scriptname = scriptfilename
+        // = ztrdup("zsh"). Both globals start as the literal "zsh"
+        // (not the binary path) so PS4's %x / %N print "zsh" not
+        // "/path/to/zshrs" at the top level. Function dispatch
+        // overrides scriptname per c:5903; scriptfilename stays.
+        crate::ported::utils::set_scriptname(Some("zsh".to_string()));
+        crate::ported::utils::set_scriptfilename(Some("zsh".to_string()));
+
         // call once that port is complete.
         crate::ported::init::module_path_init();
 

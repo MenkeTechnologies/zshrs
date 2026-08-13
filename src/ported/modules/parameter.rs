@@ -2466,13 +2466,51 @@ pub fn scanpmmodules(
     // walking it emitted ~75 OPTION STRINGS as module names in
     // ${(k)modules}. The autoload-stub registry is
     // MODULESTAB.autoload_builtins (builtin -> owning module).
-    let auto_bin_modules: Vec<String> = {
+    //
+    // c:1102-1103 is a BUCKET WALK of builtintab:
+    //     for (i = 0; i < builtintab->hsize; i++)
+    //         for (hn = builtintab->nodes[i]; hn; hn = hn->next)
+    // and c:1104 emits `((Builtin) hn)->optstr` — which, for a
+    // BINF_ADDED-clear stub, IS the owning module name. Reading the
+    // ledger's `values()` instead walked a `HashMap` whose iteration
+    // order is `RandomState`-seeded, so `${(k)modules}` came out in a
+    // different order on every process (and matched `zsh -f` on no
+    // line past the two loaded modules). Walk `builtintab` in C's
+    // order (builtin.rs `BUILTINTAB_NODES`, the faithful
+    // `newhashtable(85)` front-insert table) and resolve each name
+    // through the ledger, which is zshrs's `optstr`-for-a-stub.
+    let auto_bin_ledger: std::collections::HashMap<String, String> = {
         let tab = MODULESTAB.lock().unwrap();
-        tab.autoload_builtins.values().cloned().collect()
+        tab.autoload_builtins.clone()
     };
-    for opt in auto_bin_modules {
+    for (name, _b) in crate::ported::builtin::BUILTINTAB_NODES.iter() {
+        // c:1103
+        // c:1104 — `!(hn->flags & BINF_ADDED)`: zshrs's builtintab holds
+        // the statically-linked builtins, so the stub set is exactly the
+        // ledger's key set.
+        let Some(opt) = auto_bin_ledger.get(name) else {
+            continue;
+        };
         if done.insert(opt.clone()) {
-            let node = emit(&opt, "autoloaded"); // c:1108
+            // c:1105 linknodebystring(done, optstr)
+            let node = emit(opt, "autoloaded"); // c:1106-1108
+            func(&Box::new(node), flags); // c:1109
+        }
+    }
+    // RUST-ONLY TAIL: `zmodload -ab NAME MODULE` at runtime records the
+    // stub in the ledger, but zshrs's `BUILTINTAB_NODES` is a static
+    // built from `BUILTINS`, so such a name has no node to walk above
+    // (in C `add_autobin` calls `addbuiltin`, c:436, and the node IS in
+    // builtintab). Emit the leftovers so they still appear; sorted by
+    // stub name because there is no bucket order to inherit.
+    let mut leftover: Vec<(&String, &String)> = auto_bin_ledger
+        .iter()
+        .filter(|(name, _)| !crate::ported::builtin::BUILTINTAB_NODES.contains_key(name.as_str()))
+        .collect();
+    leftover.sort();
+    for (_name, opt) in leftover {
+        if done.insert(opt.clone()) {
+            let node = emit(opt, "autoloaded"); // c:1108
             func(&Box::new(node), flags); // c:1109
         }
     }

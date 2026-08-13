@@ -3127,6 +3127,19 @@ pub fn comp_wrapper(
         restore(&COMPQUOTE, oq); // c:1608
         restore(&COMPQUOTING, oqi); // c:1610
         restore(&COMPQSTACK, oqs); // c:1612
+        // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
+        // In C, `$compstate[all_quotes]` has NO storage of its own: its
+        // `compkparams` row is `{ "all_quotes", PM_SCALAR | PM_READONLY,
+        // NULL, GSU(compqstack_gsu) }` (c:1299) and `compqstack_gsu`
+        // (c:1242-1243) routes every read through `get_compqstack` (c:1479)
+        // against the live `compqstack` global — so c:1612's assignment IS
+        // the parameter update. zshrs splits the two: a single-key
+        // `${compstate[KEY]}` read comes straight out of
+        // `paramtab_hashed_storage` (`src/ported/subst.rs:7034-7044`), which
+        // special-cases only `nmatches`, so nothing ever published
+        // `all_quotes` and it read EMPTY where zsh gives `\`, `"`, `'`.
+        // Run the getter and store its result at each `compqstack` write.
+        compcore::set_compstate_str("all_quotes", &get_compqstack(std::ptr::null_mut()));
         restore(&AUTOQ, oaq); // c:1614
         if let Ok(mut g) = lock_vec(&COMPWORDS).lock() {
             *g = owords; // c:1617
@@ -3466,6 +3479,55 @@ fn lock_vec(g: &'static std::sync::OnceLock<Mutex<Vec<String>>>) -> &'static Mut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:1479-1494 — `get_compqstack` emits ONE char per open quoting level:
+    /// `*ptr++ = *comp_quoting_string(*cqp)` (c:1489-1490), i.e. the FIRST
+    /// char of the printable form, innermost level first. This is what
+    /// `$compstate[all_quotes]` (c:1299 `compqstack_gsu`) serves.
+    #[test]
+    fn get_compqstack_translates_each_quoting_level() {
+        use crate::ported::zsh_h::{
+            QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_SINGLE,
+        };
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let put = |s: &str| {
+            *COMPQSTACK
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap() = s.to_string();
+        };
+        let q = |c: i32| char::from_u32(c as u32).unwrap();
+
+        // c:1483-1484 — `if (!compqstack) return ""`.
+        put("");
+        assert_eq!(get_compqstack(std::ptr::null_mut()), "");
+
+        // The three contexts `compstate[all_quotes]` is read in: unquoted
+        // (compcore.c:305 seeds QT_BACKSLASH), inside `"`, inside `'`.
+        put(&q(QT_BACKSLASH).to_string());
+        assert_eq!(get_compqstack(std::ptr::null_mut()), "\\");
+        put(&q(QT_DOUBLE).to_string());
+        assert_eq!(get_compqstack(std::ptr::null_mut()), "\"");
+        put(&q(QT_SINGLE).to_string());
+        assert_eq!(get_compqstack(std::ptr::null_mut()), "'");
+
+        // c:1490 takes only the FIRST char, so QT_DOLLARS ("$'") is `$`.
+        put(&q(QT_DOLLARS).to_string());
+        assert_eq!(get_compqstack(std::ptr::null_mut()), "$");
+        // `comp_quoting_string` (compcore.c:1437-1447) has cases for only
+        // QT_SINGLE / QT_DOUBLE / QT_DOLLARS; QT_BACKTICK hits
+        // `default: return "\\"` (compcore.c:1445-1446), so a backtick level
+        // reports as a backslash — not as a backtick.
+        put(&q(QT_BACKTICK).to_string());
+        assert_eq!(get_compqstack(std::ptr::null_mut()), "\\");
+
+        // c:1488 walks the whole stack — nested levels, innermost first
+        // (compcore.c:1861-1868 PREPENDS the newly opened quote).
+        put(&format!("{}{}", q(QT_SINGLE), q(QT_DOUBLE)));
+        assert_eq!(get_compqstack(std::ptr::null_mut()), "'\"");
+        put("");
+    }
 
     #[test]
     fn classes_basic_cclass() {
