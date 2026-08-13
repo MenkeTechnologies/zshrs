@@ -45,7 +45,7 @@
 //! ```
 
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
-use crate::ported::params::{getaparam, getiparam, getsparam};
+use crate::ported::params::{getaparam, gethkparam, gethparam, getiparam, getsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{isset, options, AUTOMENU, MAX_OPS};
@@ -59,8 +59,21 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:3-7 assoc helper for the flat `_lastcomp` layout
+/// `$_lastcomp[key]` — the snapshot `_main_complete` sh:407-416 writes.
+///
+/// `compinit` sh:126 declares `typeset -gHA _lastcomp`, so the canonical
+/// storage is an ASSOCIATION (`gethkparam`/`gethparam`). The flat-array
+/// walk below is the pre-`sethparam` layout, kept as a fallback so a
+/// snapshot written by older code still reads.
 fn lastcomp_get(key: &str) -> Option<String> {
+    let keys = gethkparam("_lastcomp").unwrap_or_default();
+    if !keys.is_empty() {
+        let vals = gethparam("_lastcomp").unwrap_or_default();
+        if let Some(i) = keys.iter().position(|k| k == key) {
+            return vals.get(i).cloned();
+        }
+        return None;
+    }
     let arr = getaparam("_lastcomp")?;
     arr.chunks(2)
         .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))

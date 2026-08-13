@@ -38,7 +38,10 @@
 use crate::compsys::ported::_setup::_setup;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, lookupstyle, testforstyle};
-use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
+use crate::ported::params::{
+    getaparam, gethkparam, gethparam, getiparam, getsparam, setaparam, sethparam, setsparam,
+    unsetparam,
+};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{isset, options, EQUALSOPT, MAX_OPS};
@@ -1198,33 +1201,50 @@ pub fn _main_complete(args: &[String]) -> i32 {
         let _ = dispatch_function_call(pf, &[]);
     }
 
-    // sh:407-417  _lastcomp snapshot — flat key/value array
+    // sh:407  `_lastcomp=( "${(@kv)compstate}" )` — the snapshot STARTS as a
+    // full key/value copy of `$compstate`, which is where `_lastcomp[insert]`
+    // (`_oldlist` sh:22), `_lastcomp[unambiguous]` (sh:84, `_next_tags` sh:105)
+    // and `_lastcomp[unambiguous_cursor]` (sh:85-86) come from. sh:408-416 then
+    // OVERRIDE nine keys. The port hand-built a 12-pair list instead, so every
+    // compstate key it did not happen to name (`list`, `to_end`, `old_list`,
+    // `last_prompt`, `exact`, `context`, …) was simply absent.
+    //
+    // `compinit` sh:126 declares `typeset -gHA _lastcomp`: it is an
+    // ASSOCIATION, and sh:407's flat pair list is assigned INTO that assoc.
+    // The port stored it with `setaparam`, which retypes the parameter to a
+    // plain indexed array — `${(t)_lastcomp}` read `array-hideval` against
+    // zsh's `association-hideval`, so every shell-level `$_lastcomp[key]`
+    // subscript (a string subscript on an array) evaluated to the empty
+    // string. `_oldlist` sh:3/21/22/38, `_next_tags` sh:90/91/95/105 and any
+    // user or plugin code reading the snapshot all saw nothing. `sethparam`
+    // (`Src/params.c:3602`) is the assoc-preserving store.
     let mut lastcomp: Vec<String> = Vec::new();
-    lastcomp.push("nmatches".to_string());
-    lastcomp.push(nm.to_string());
-    lastcomp.push("completer".to_string());
-    lastcomp.push(getsparam("_completer").unwrap_or_default());
-    lastcomp.push("prefix".to_string());
-    lastcomp.push(getsparam("PREFIX").unwrap_or_default());
-    lastcomp.push("suffix".to_string());
-    lastcomp.push(getsparam("SUFFIX").unwrap_or_default());
-    lastcomp.push("iprefix".to_string());
-    lastcomp.push(getsparam("IPREFIX").unwrap_or_default());
-    lastcomp.push("isuffix".to_string());
-    lastcomp.push(getsparam("ISUFFIX").unwrap_or_default());
-    lastcomp.push("qiprefix".to_string());
-    lastcomp.push(getsparam("QIPREFIX").unwrap_or_default());
-    lastcomp.push("qisuffix".to_string());
-    lastcomp.push(getsparam("QISUFFIX").unwrap_or_default());
-    lastcomp.push("tags".to_string());
-    lastcomp.push(getsparam("_comp_tags").unwrap_or_default());
-    lastcomp.push("insert".to_string());
-    lastcomp.push(get_compstate_str("insert").unwrap_or_default());
-    lastcomp.push("unambiguous".to_string());
-    lastcomp.push(get_compstate_str("unambiguous").unwrap_or_default());
-    lastcomp.push("unambiguous_cursor".to_string());
-    lastcomp.push(get_compstate_str("unambiguous_cursor").unwrap_or_default());
-    setaparam("_lastcomp", lastcomp);
+    {
+        // sh:407 — `${(@kv)compstate}`: keys and values interleaved.
+        let keys = gethkparam("compstate").unwrap_or_default();
+        let vals = gethparam("compstate").unwrap_or_default();
+        for (k, v) in keys.iter().zip(vals.iter()) {
+            lastcomp.push(k.clone());
+            lastcomp.push(v.clone());
+        }
+    }
+    // sh:408-416 — the nine overrides, appended after the copy. `sethparam`
+    // consumes the flat list left-to-right, so a later pair wins.
+    for (k, v) in [
+        ("nmatches", nm.to_string()),                               // sh:408
+        ("completer", getsparam("_completer").unwrap_or_default()), // sh:409
+        ("prefix", getsparam("PREFIX").unwrap_or_default()),        // sh:410
+        ("suffix", getsparam("SUFFIX").unwrap_or_default()),        // sh:411
+        ("iprefix", getsparam("IPREFIX").unwrap_or_default()),      // sh:412
+        ("isuffix", getsparam("ISUFFIX").unwrap_or_default()),      // sh:413
+        ("qiprefix", getsparam("QIPREFIX").unwrap_or_default()),    // sh:414
+        ("qisuffix", getsparam("QISUFFIX").unwrap_or_default()),    // sh:415
+        ("tags", getsparam("_comp_tags").unwrap_or_default()),      // sh:416
+    ] {
+        lastcomp.push(k.to_string());
+        lastcomp.push(v);
+    }
+    sethparam("_lastcomp", lastcomp); // sh:407-416, c:params.c:3602
 
     // sh:384-396  always-block: ZLS_COLORS save/restore.
     if get_compstate_str("old_list").as_deref() == Some("keep") {
@@ -1278,6 +1298,17 @@ fn glob_escape(s: &str) -> String {
 
 /// `_lastcomp[key]` lookup (`_lastcomp` is the prior-call snapshot).
 fn lastcomp_get(key: &str) -> Option<String> {
+    // `compinit` sh:126 declares `typeset -gHA _lastcomp`, so the canonical
+    // storage is an ASSOCIATION. The flat-array walk below is the layout the
+    // pre-`sethparam` writer left behind, kept as a fallback.
+    let keys = gethkparam("_lastcomp").unwrap_or_default();
+    if !keys.is_empty() {
+        let vals = gethparam("_lastcomp").unwrap_or_default();
+        if let Some(i) = keys.iter().position(|k| k == key) {
+            return vals.get(i).cloned();
+        }
+        return None;
+    }
     let arr = getaparam("_lastcomp")?;
     arr.chunks(2)
         .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
@@ -1763,5 +1794,44 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         setaparam("_lastcomp", vec!["k1".to_string(), "v1".to_string()]);
         assert!(lastcomp_get("never-set").is_none());
+    }
+
+    /// `compinit` sh:126 declares `typeset -gHA _lastcomp`, and sh:407-416
+    /// assigns the snapshot INTO that association. Writing it with
+    /// `setaparam` retypes the parameter to an indexed array, and a shell
+    /// `$_lastcomp[key]` subscript on an array is a string-subscript miss
+    /// that evaluates empty — which is what `_oldlist` sh:3/21/22 and
+    /// `_next_tags` sh:90/91/95/105 read. Pin the storage TYPE, not just the
+    /// values: `gethkparam` returns `None` for anything that is not
+    /// `PM_HASHED`, so this fails outright if the writer regresses to
+    /// `setaparam`. The duplicate `nmatches` pair mirrors sh:408 overriding
+    /// the sh:407 copy — last pair must win, as C's hash insert does.
+    #[test]
+    fn lastcomp_snapshot_is_stored_as_an_association() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("_lastcomp");
+        sethparam(
+            "_lastcomp",
+            vec![
+                "nmatches".to_string(),
+                "0".to_string(),
+                "insert".to_string(),
+                "automenu-unambiguous".to_string(),
+                "nmatches".to_string(),
+                "40".to_string(),
+            ],
+        );
+        assert_eq!(
+            gethkparam("_lastcomp").map(|k| k.len()),
+            Some(2),
+            "sh:407-416 snapshot must live in PM_HASHED storage"
+        );
+        assert_eq!(lastcomp_get("nmatches").as_deref(), Some("40"));
+        assert_eq!(
+            lastcomp_get("insert").as_deref(),
+            Some("automenu-unambiguous")
+        );
+        assert!(lastcomp_get("never-set").is_none());
+        unsetparam("_lastcomp");
     }
 }

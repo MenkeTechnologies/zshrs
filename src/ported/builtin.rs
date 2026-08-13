@@ -12106,6 +12106,25 @@ pub fn bin_dot(
                                                               // with source_from_memory in bins/zshrs.rs.
     crate::ported::utils::set_scriptfilename(Some(arg0.clone())); // c:1592
 
+    // c:Src/init.c:1609 — `oloops = loops;` — and c:1622 `loops = 0;`.
+    // `source` is a full loop-scope FIREWALL: the sourced file starts
+    // with a zero nesting count no matter how deep the caller's loops
+    // are, and the caller's count is put back at c:1694 below.
+    //
+    // Both halves are observable:
+    //   * `loops = 0` on entry — `for i in 1 2; do source f; done` where
+    //     `f` does a top-level `return` must still run BOTH iterations.
+    //     `bin_break`'s BIN_RETURN arm sets `breaks = loops` (c:5835),
+    //     so without the zeroing the return would set `breaks = 1` and
+    //     the caller's `for` would drain it and stop after iteration 1.
+    //     It is also why a bare `break` at a sourced file's top level
+    //     errors with "not in while, until, select, or repeat loop"
+    //     even when the `source` itself sits inside a loop.
+    //   * `loops = oloops` on exit — the caller's own `break` keeps
+    //     working after the source returns.
+    let oloops = LOOPS.load(Relaxed); // c:1609
+    LOOPS.store(0, Relaxed); // c:1622
+
     crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
 
     // c:Src/init.c:1608-1616 — push a funcstack frame with
@@ -12252,13 +12271,29 @@ pub fn bin_dot(
                                                             // scriptfilename restore from the c:1667 line.
     crate::ported::utils::set_scriptname(old_scriptname);
     crate::ported::utils::set_scriptfilename(old_scriptfilename);
-    // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
+    // c:Src/init.c:1694 — `loops = oloops;` — put the caller's loop
+    // nesting count back (see the c:1609/1622 note at the entry half).
+    LOOPS.store(oloops, Relaxed); // c:1694
+
+    // c:Src/init.c:1697-1698 — `if (!exit_pending) retflag = 0;`
+    // RETFLAG is set by bin_break's BIN_RETURN arm (c:5834). Once the
     // sourced file's execute_script unwinds, the return has been
     // serviced; clear the flag so the outer compile unit's main loop
     // (init.rs:1252's `if retflag break` guard) doesn't see a stale
     // request and abort `echo done` after `source foo`.
-    RETFLAG.store(0, Relaxed); // c:5842 unwind
-                               // c:6149 again — restore argzero on the success path as well.
+    //
+    // The `exit_pending` guard is C's, not an approximation: `exit`
+    // inside a function sets retflag ALONG WITH exit_pending
+    // (c:5874-5878) precisely so the unwind keeps propagating past
+    // every enclosing scope until the deferred exit is honoured.
+    // Clearing retflag unconditionally would strand that exit at the
+    // `source` boundary.
+    if EXIT_PENDING.load(Relaxed) == 0 {
+        // c:1697
+        RETFLAG.store(0, Relaxed); // c:1698
+    }
+
+    // c:6149 again — restore argzero on the success path as well.
     if let Some(prev) = saved_argzero {
         set_argzero(prev);
     }

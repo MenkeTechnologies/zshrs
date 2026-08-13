@@ -13916,25 +13916,38 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
-                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
+                // c:Src/glob.c:2707-2714 `getmatch` — C compiles the
+                // pattern ONCE (`compgetmatch`, c:2671 `patcompile`) and
+                // hands the single `Patprog` to `igetmatch`, which then
+                // runs `pattrylen` against every trial slice. This port
+                // did the tokenize AND the compile INSIDE the per-slice
+                // closure, so scanning an n-character value re-derived
+                // the same program n times, once per array element:
+                // `glob::tokenize` alone was 45.4% of a `man <TAB>`
+                // completion, all of it from this call site. Derive it
+                // here, exactly where C does. Every `gms` call in this
+                // arm passes the same `p`, so the closure no longer
+                // takes the pattern.
+                let prog_ = crate::ported::pattern::patcompile(
+                    &{
+                        let mut t_ = p.clone();
+                        crate::ported::glob::tokenize(&mut t_);
+                        t_
+                    },
+                    crate::ported::zsh_h::PAT_HEAPDUP,
+                    None,
+                );
+                let gms = |s_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — see the
                     // sibling closure above (captures/(#b)/(#m) now
                     // publish inside pattryrefs).
-                    match crate::ported::pattern::patcompile(
-                        &{
-                            let mut t_ = p_.to_string();
-                            crate::ported::glob::tokenize(&mut t_);
-                            t_
-                        },
-                        crate::ported::zsh_h::PAT_HEAPDUP,
-                        None,
-                    ) {
+                    match &prog_ {
                         // c:Src/glob.c:2964 igetmatch — the suffix scan passes `ioff`,
                         // the CHARACTER offset of the trial slice, so pattryrefs
                         // reports $mbegin/$mend relative to the WHOLE string
                         // (c:2596-2610). `pattry` hardcodes offset 0.
                         Some(pr_) => crate::ported::pattern::pattrylen(
-                            &pr_,
+                            pr_,
                             s_,
                             s_.len() as i32,
                             -1,
@@ -13976,7 +13989,7 @@ pub fn paramsubst(
                             // span at the end. Plain `%%` (no SUB_SUBSTR) has no
                             // such probe — its arm at c:3186 walks `ioff` all the
                             // way to `send` instead — hence the substr_mode gate.
-                            if gms("", &p, val.len() as i32) {
+                            if gms("", val.len() as i32) {
                                 return Some((total, total));
                             }
                             // Rightmost longest substring match.
@@ -13984,7 +13997,7 @@ pub fn paramsubst(
                             for start in 0..=total {
                                 for k in (0..=(total - start)).rev() {
                                     let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, &p, ioff(start)) {
+                                    if gms(&candidate, ioff(start)) {
                                         best = Some((start, start + k));
                                         break;
                                     }
@@ -14005,7 +14018,7 @@ pub fn paramsubst(
                             // shift of the published arrays added a BYTE offset
                             // instead, so any non-ASCII prefix reported the
                             // wrong positions.
-                            if gms(&suffix, &p, ioff(suffix_start_char)) {
+                            if gms(&suffix, ioff(suffix_start_char)) {
                                 return Some((suffix_start_char, total));
                             }
                             if k == 0 {
@@ -14143,25 +14156,38 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
-                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
+                // c:Src/glob.c:2707-2714 `getmatch` — C compiles the
+                // pattern ONCE (`compgetmatch`, c:2671 `patcompile`) and
+                // hands the single `Patprog` to `igetmatch`, which then
+                // runs `pattrylen` against every trial slice. This port
+                // did the tokenize AND the compile INSIDE the per-slice
+                // closure, so scanning an n-character value re-derived
+                // the same program n times, once per array element:
+                // `glob::tokenize` alone was 45.4% of a `man <TAB>`
+                // completion, all of it from this call site. Derive it
+                // here, exactly where C does. Every `gms` call in this
+                // arm passes the same `p`, so the closure no longer
+                // takes the pattern.
+                let prog_ = crate::ported::pattern::patcompile(
+                    &{
+                        let mut t_ = p.clone();
+                        crate::ported::glob::tokenize(&mut t_);
+                        t_
+                    },
+                    crate::ported::zsh_h::PAT_HEAPDUP,
+                    None,
+                );
+                let gms = |s_: &str, off_: i32| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — see the
                     // sibling closure above (captures/(#b)/(#m) now
                     // publish inside pattryrefs).
-                    match crate::ported::pattern::patcompile(
-                        &{
-                            let mut t_ = p_.to_string();
-                            crate::ported::glob::tokenize(&mut t_);
-                            t_
-                        },
-                        crate::ported::zsh_h::PAT_HEAPDUP,
-                        None,
-                    ) {
+                    match &prog_ {
                         // c:Src/glob.c:2964 igetmatch — the suffix scan passes `ioff`,
                         // the CHARACTER offset of the trial slice, so pattryrefs
                         // reports $mbegin/$mend relative to the WHOLE string
                         // (c:2596-2610). `pattry` hardcodes offset 0.
                         Some(pr_) => crate::ported::pattern::pattrylen(
-                            &pr_,
+                            pr_,
                             s_,
                             s_.len() as i32,
                             -1,
@@ -14201,7 +14227,7 @@ pub fn paramsubst(
                         // character count. When it matches, C returns
                         // immediately with `get_match_ret(&imd, umltot,
                         // umltot)` — the empty span at the end.
-                        if gms("", &p, val.len() as i32) {
+                        if gms("", val.len() as i32) {
                             return Some((total, total));
                         }
                         if substr_mode {
@@ -14210,7 +14236,7 @@ pub fn paramsubst(
                             for start in 0..=total {
                                 for k in 0..=(total - start) {
                                     let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, &p, ioff(start)) {
+                                    if gms(&candidate, ioff(start)) {
                                         best = Some((start, start + k));
                                         break;
                                     }
@@ -14240,7 +14266,7 @@ pub fn paramsubst(
                                 let mut longest = e;
                                 for k in (0..=(total - b)).rev() {
                                     let candidate: String = cv[b..b + k].iter().collect();
-                                    if gms(&candidate, &p, ioff(b)) {
+                                    if gms(&candidate, ioff(b)) {
                                         longest = b + k;
                                         break;
                                     }
@@ -14254,14 +14280,14 @@ pub fn paramsubst(
                                 } else {
                                     ioff(b)
                                 };
-                                let _ = gms(&span, &p, off);
+                                let _ = gms(&span, off);
                             }
                             return best;
                         }
                         for k in 0..=total {
                             let suffix: String = cv[total - k..].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if gms(&suffix, &p, ioff(total - k)) {
+                            if gms(&suffix, ioff(total - k)) {
                                 return Some((total - k, total));
                             }
                         }
