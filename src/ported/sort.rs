@@ -167,31 +167,53 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     if no_backslash {
         let mut done = false;
         if !numeric {
-            let (ab, bb) = (a.as_bytes(), bs.as_bytes());
-            let (mut i, mut j) = (0usize, 0usize);
-            while i < ab.len() && j < bb.len() {
-                if ab[i] == b'\\' {
-                    i += 1; // c:122-123
+            // c:120-131 — the skip loop can only change the OUTCOME when one
+            // of the operands actually carries a backslash. When neither does
+            // it degenerates to "advance both to the first differing byte",
+            // and handing `strcoll` the two remainders from that point is the
+            // same call C makes without the flag at all (c:134 on the
+            // untouched pointers). So test for the backslash first: the loop
+            // below — and the `\EurydiceCM\` ordering it was written to fix —
+            // still runs for the strings that need it, while everything else
+            // reaches c:134 after a single `memchr` per operand. That matters
+            // because `<[u8]>::contains` resolves to libcore's precompiled
+            // `memchr` while this loop is monomorphised into this crate and
+            // compiled UNOPTIMISED in the debug build the completion runs in,
+            // and this is a sort comparator: one 52396-match command-name
+            // completion runs it ~800k times per sort. (`str::find('\\')`
+            // reaches the same `memchr` but builds a `CharSearcher` first,
+            // and that setup — `encode_utf8_raw` per call — measured 4.6% of
+            // the completion on its own.)
+            if !a.as_bytes().contains(&b'\\') && !bs.as_bytes().contains(&b'\\') {
+                done = true; // a_str/b_str stay as the whole strings
+            } else {
+                let (ab, bb) = (a.as_bytes(), bs.as_bytes());
+                let (alen, blen) = (ab.len(), bb.len()); // c:121 `*as`/`*bs` NUL test
+                let (mut i, mut j) = (0usize, 0usize);
+                while i < alen && j < blen {
+                    if ab[i] == b'\\' {
+                        i += 1; // c:122-123
+                    }
+                    if bb[j] == b'\\' {
+                        j += 1; // c:124-125
+                    }
+                    // c:126-127 — `if (*as != *bs || !*as) break;`. A run off the
+                    // end of either side is C reading its NUL terminator, which
+                    // fails the equality test just the same.
+                    if i >= alen || j >= blen || ab[i] != bb[j] {
+                        break;
+                    }
+                    i += 1; // c:128-129
+                    j += 1;
                 }
-                if bb[j] == b'\\' {
-                    j += 1; // c:124-125
+                // Byte indices only land off a char boundary if a multibyte
+                // sequence straddled the divergence; slicing there would panic,
+                // so fall through to the old whole-string form in that case.
+                if let (Some(ar), Some(br)) = (a.get(i..), bs.get(j..)) {
+                    a_str = ar;
+                    b_str = br;
+                    done = true;
                 }
-                // c:126-127 — `if (*as != *bs || !*as) break;`. A run off the
-                // end of either side is C reading its NUL terminator, which
-                // fails the equality test just the same.
-                if i >= ab.len() || j >= bb.len() || ab[i] != bb[j] {
-                    break;
-                }
-                i += 1; // c:128-129
-                j += 1;
-            }
-            // Byte indices only land off a char boundary if a multibyte
-            // sequence straddled the divergence; slicing there would panic, so
-            // fall through to the old whole-string form in that case.
-            if let (Some(ar), Some(br)) = (a.get(i..), bs.get(j..)) {
-                a_str = ar;
-                b_str = br;
-                done = true;
             }
         }
         if !done {
@@ -233,17 +255,20 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
             const SCRATCH: usize = 256;
             let mut abuf = [0u8; SCRATCH];
             let mut bbuf = [0u8; SCRATCH];
-            // C stops at the NUL terminator; mirror that by truncating at
-            // the first embedded 0 byte (same rule the old `cstr_head`
-            // applied) and reject anything too long for the buffer.
+            // Copy the bytes and terminate; reject anything too long for the
+            // buffer. There is deliberately no scan for an embedded NUL:
+            // `strcoll` stops at the first NUL it sees, so copying the whole
+            // slice and appending a terminator gives it exactly the view
+            // truncating at that byte would have. The scan this replaces cost
+            // one `memchr` per operand on every comparison and could not
+            // change an answer.
             let fill = |s: &str, buf: &mut [u8; SCRATCH]| -> bool {
                 let sb = s.as_bytes();
-                let n = sb.iter().position(|&x| x == 0).unwrap_or(sb.len());
-                if n >= SCRATCH {
+                if sb.len() >= SCRATCH {
                     return false;
                 }
-                buf[..n].copy_from_slice(&sb[..n]);
-                buf[n] = 0;
+                buf[..sb.len()].copy_from_slice(sb);
+                buf[sb.len()] = 0;
                 true
             };
             if fill(a, &mut abuf) && fill(b, &mut bbuf) {

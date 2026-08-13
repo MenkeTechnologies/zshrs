@@ -3175,31 +3175,31 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
         md.line = 0;
         md.len = next.wlen; // c:2168
         md.olen = next.wlen; // c:2168
-                             // c:2170-2172 — `md->str += md->len`, which upstream marks
-                             // `/* HERE: multibyte */`: a raw byte bump that can land inside a
-                             // character and can run past the string. Offset the bytes.
-        if let Some(ref w) = next.word {
-            md.str = if sfx != 0 {
+        // c:2169-2170 — `if ((md->str = md->cl->word) && sfx) md->str += md->len;`
+        // upstream marks the bump `/* HERE: multibyte */`: a raw byte bump that
+        // can land inside a character and can run past the string, so the port
+        // offsets bytes with a bounds check. The ASSIGNMENT is unconditional in
+        // C (a NULL word stores NULL); the port used to keep the previous
+        // node's string when `word` was None, which left `sub_match`'s "still
+        // have the line string to try" test (c:2425) reading a stale `astr`.
+        md.str = match next.word {
+            Some(ref w) if sfx != 0 => {
                 String::from_utf8_lossy(w.as_bytes().get(md.len.max(0) as usize..).unwrap_or(&[]))
                     .into_owned()
-            }
-            // c:2171
-            else {
-                w.clone()
-            };
-        }
+            } // c:2171
+            Some(ref w) => w.clone(),
+            None => String::new(),
+        };
         md.alen = next.llen; // c:2173
                              // c:2174-2176 — same `/* HERE: multibyte */` bump for `astr`.
-        if let Some(ref l) = next.line {
-            md.astr = if sfx != 0 {
+        md.astr = match next.line {
+            Some(ref l) if sfx != 0 => {
                 String::from_utf8_lossy(l.as_bytes().get(md.alen.max(0) as usize..).unwrap_or(&[]))
                     .into_owned()
-            }
-            // c:2176
-            else {
-                l.clone()
-            };
-        }
+            } // c:2176
+            Some(ref l) => l.clone(),
+            None => String::new(),
+        };
     }
     md.pcl = Some(Box::new(next.clone())); // c:2179
     md.cl = next.next.clone(); // c:2180
@@ -3466,8 +3466,17 @@ pub fn sub_match(md: &mut cmdata, str: &str, len: i32, sfx: i32) -> i32 {
         }
 
         if l == 0 {
-            return ret;
-        } // c:2380 no progress
+            // c:2425 — `else if (md->line || md->len != md->olen || !md->astr)
+            //     return ret;`
+            if md.line != 0 || md.len != md.olen || md.astr.is_empty() {
+                return ret;
+            }
+            // c:2428-2431 — "We still have the line string to try."
+            md.line = 1;
+            md.len = md.alen;
+            md.str = md.astr.clone();
+            continue;
+        }
 
         // c:2335-2349 — meta-character boundary correction. Avoid
         // ending in the middle of a `Meta x` 2-byte sequence.
@@ -3485,27 +3494,29 @@ pub fn sub_match(md: &mut cmdata, str: &str, len: i32, sfx: i32) -> i32 {
             l -= 1;
         }
 
-        // c:2400 — md.len -= l; md.str = md.str + l (or md.str - l for sfx).
+        // c:2418-2423 — md.len -= l; md.str += l (or md.str -= l for sfx).
+        // C counts BYTES here (the strings are metafied), so the port must
+        // slice bytes too, not chars.
         md.len -= l as i32;
-        if sfx != 0 {
-            // suffix-mode: strip from the END of md.str.
-            md.str = md
-                .str
-                .chars()
-                .take(md.str.chars().count().saturating_sub(l))
-                .collect();
-        } else {
-            // prefix-mode: skip first l bytes.
-            md.str = md.str.chars().skip(l).collect();
+        {
+            let cur = std::mem::take(&mut md.str).into_bytes();
+            md.str = if sfx != 0 {
+                // suffix-mode: the cursor walks backwards, so what is left
+                // is everything before the matched tail.
+                String::from_utf8_lossy(&cur[..cur.len().saturating_sub(l)]).into_owned()
+            } else {
+                String::from_utf8_lossy(cur.get(l..).unwrap_or(&[])).into_owned()
+            };
         }
 
-        ret += l as i32; // c:2418
+        ret += l as i32; // c:2424
         remaining = remaining.saturating_sub(l);
-
-        if remaining == 0 || md.len == 0 {
-            // c:2421
-            break;
-        }
+        // c:2316 — the loop is `while (len)`: when this cline node runs out
+        // (md.len == 0) the next round's check_cmdata refills md from the
+        // NEXT node and matching continues. The port used to `break` on
+        // md.len == 0, so a common prefix spanning two sub-cline nodes was
+        // truncated at the first one (`rsync-2.7` vs `y3`+`r`+`sa-`+`s`
+        // matched just `r`, not `rs`).
     }
     ret // c:2441
 }
@@ -3995,8 +4006,25 @@ pub fn sub_join(
         let mut head: Option<Box<Cline>> = None;
         let mut tail: *mut Option<Box<Cline>> = &mut head;
         for src in &chain[i..] {
-            let mut clone = Box::new((**src).clone());
-            clone.next = None;
+            // c:199 `memcpy(t, l, sizeof(*t))` copies ONE node. Cline's derived
+            // Clone walks `next` as well, so cloning-then-clearing copied the
+            // whole tail once per node — quadratic on every sub_join, and
+            // `man <TAB>` (thousands of matches) went from ~1s to ~25s.
+            let mut clone = Box::new(Cline {
+                next: None,
+                flags: src.flags,
+                line: src.line.clone(),
+                llen: src.llen,
+                word: src.word.clone(),
+                wlen: src.wlen,
+                orig: src.orig.clone(),
+                olen: src.olen,
+                slen: src.slen,
+                prefix: None,
+                suffix: None,
+                min: src.min,
+                max: src.max,
+            });
             // c:201-204 — deep clone of prefix/suffix.
             clone.prefix = cp_cline(src.prefix.as_deref(), 0);
             clone.suffix = cp_cline(src.suffix.as_deref(), 0);
@@ -4161,21 +4189,63 @@ pub fn join_clines(
                     }
                 });
                 if let Some(steps) = found {
-                    // c:2729-2748 — splice. Save the cut-out head x,
-                    // bump o to the matched node, drop NEW run.
+                    // c:2727-2748 — cut the o chain at tn, hand the cut-out
+                    // run to sub_join (it becomes tn's prefix sub-list), then
+                    // make tn the current o.
                     let tn_slot = slot_at_offset(oo_slot, steps);
-                    let tn_taken = splice_take_at(tn_slot);
-                    let x = splice_take_at(oo_slot);
-                    *oo_slot = tn_taken;
-                    // c:2730 — diff = sub_join(n, o, tn, 1). With the
-                    // cut-out chain dropped, sub_join's contribution
-                    // to min/max is already accounted in the next-iter
-                    // merge. We mark CLF_MISS to signal the diff.
-                    if let Some(tn_ref) = (*oo_slot).as_deref_mut() {
-                        tn_ref.flags |= CLF_MISS;
+                    let tn_taken = splice_take_at(tn_slot); // tn …
+                    let x = splice_take_at(oo_slot); // c:2737 `x = o`
+                    // c:2740 reads `x`'s anchor after c:2736 `free_cline(o)`
+                    // (C's freed clines keep their fields on the free list).
+                    // The port hands `x` to sub_join, so keep a copy for it.
+                    // Anchor fields only: cmp_anchors reads flags/word/wlen/
+                    // line/llen, and Cline's derived Clone would deep-copy the
+                    // whole cut-out run (and its sub-lists) for nothing.
+                    let mut x_head: Option<Cline> = x.as_deref().map(|h| Cline {
+                        next: None,
+                        flags: h.flags,
+                        line: h.line.clone(),
+                        llen: h.llen,
+                        word: h.word.clone(),
+                        wlen: h.wlen,
+                        orig: h.orig.clone(),
+                        olen: h.olen,
+                        slen: h.slen,
+                        prefix: None,
+                        suffix: None,
+                        min: h.min,
+                        max: h.max,
+                    });
+                    *oo_slot = tn_taken; // c:2730-2733 + c:2738 `o = tn`
+                    // c:2728 — `diff = sub_join(n, o, tn, 1)`.
+                    let diff = {
+                        let a_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                        let e_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                        sub_join(&mut *a_ptr, x, &mut *e_ptr, 1)
+                    };
+                    // c:2740 — `if (po && po->prefix && cmp_anchors(x, po, 0))`.
+                    let mut hit = false;
+                    if !po_slot.is_null() {
+                        let po_ptr: *mut Cline = match (*po_slot).as_mut() {
+                            Some(b) => &mut **b,
+                            None => std::ptr::null_mut(),
+                        };
+                        if !po_ptr.is_null() && (*po_ptr).prefix.is_some() {
+                            if let Some(xh) = x_head.as_mut() {
+                                hit = cmp_anchors(xh, &*po_ptr, 0) != 0;
+                            }
+                        }
                     }
-                    drop(x);
-                    continue; // c:2749
+                    if hit {
+                        let po_ref = (*po_slot).as_deref_mut().unwrap();
+                        po_ref.flags |= CLF_MISS; // c:2741
+                        po_ref.max += diff; // c:2742
+                    } else {
+                        let o_ref = (*oo_slot).as_deref_mut().unwrap();
+                        o_ref.flags |= CLF_MISS; // c:2744
+                        o_ref.max += diff; // c:2745
+                    }
+                    continue; // c:2747
                 }
                 // c:2728 `if (tn) { … }` — when the scan finds nothing C does
                 // NOT advance: it falls out of this `if` into the SUF/MID and
@@ -4195,19 +4265,74 @@ pub fn join_clines(
                     }
                 });
                 if let Some(steps) = found {
-                    // c:2761 — diff = sub_join(o, n, tn, 0).
-                    // Advance n by `steps` to the matched node; o stays.
-                    // Mark o with CLF_MISS to record the asymmetry.
-                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
-                        let of = o_ref.flags & CLF_MISS;
-                        o_ref.flags = (o_ref.flags & !CLF_MISS) | of | CLF_MISS;
+                    // c:2757 — `int of = o->flags & CLF_MISS;`
+                    let of = (*oo_slot).as_deref().unwrap().flags & CLF_MISS;
+                    // c:2762 — `cmp_anchors(n, pn, 0)` is asked about the
+                    // CURRENT n and pn. C runs it after sub_join, on a node it
+                    // is about to walk past; the port must decide before the
+                    // call (sub_join takes ownership of that run) and runs the
+                    // test on a copy, so cmp_anchors' CLF_LINE side effect
+                    // lands where C leaves it — on a node nothing reads again —
+                    // instead of on the run sub_join is about to fold in.
+                    // The verdict is unaffected: sub_join only clears
+                    // prefix/suffix and CLF_SUF, none of which cmp_anchors
+                    // reads.
+                    let mut po_hit = false;
+                    if !po_slot.is_null() && !pn_slot.is_null() {
+                        let po_ptr: *mut Cline = match (*po_slot).as_mut() {
+                            Some(b) => &mut **b,
+                            None => std::ptr::null_mut(),
+                        };
+                        if !po_ptr.is_null() && (*po_ptr).prefix.is_some() {
+                            let n_ref = (*nn_slot).as_deref().unwrap();
+                            let mut n_copy = Cline {
+                                next: None,
+                                flags: n_ref.flags,
+                                line: n_ref.line.clone(),
+                                llen: n_ref.llen,
+                                word: n_ref.word.clone(),
+                                wlen: n_ref.wlen,
+                                orig: n_ref.orig.clone(),
+                                olen: n_ref.olen,
+                                slen: n_ref.slen,
+                                prefix: None,
+                                suffix: None,
+                                min: n_ref.min,
+                                max: n_ref.max,
+                            };
+                            if let Some(pn_ref) = (*pn_slot).as_deref() {
+                                let pn_ptr: *const Cline = pn_ref;
+                                po_hit = cmp_anchors(&mut n_copy, &*pn_ptr, 0) != 0;
+                            }
+                        }
                     }
+                    // Cut the n chain at tn so the run before it can be handed
+                    // to sub_join; `n = tn` (c:2769) falls out of the splice.
                     let tn_slot = slot_at_offset(nn_slot, steps);
                     let tn_taken = splice_take_at(tn_slot);
-                    // Drop the run of NEW nodes from n between current
-                    // and the matched anchor.
+                    let b_chain = splice_take_at(nn_slot);
                     *nn_slot = tn_taken;
-                    continue;
+                    // c:2759 — `diff = sub_join(o, n, tn, 0)`.
+                    let diff = {
+                        let a_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                        let e_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                        sub_join(&mut *a_ptr, b_chain, &mut *e_ptr, 0)
+                    };
+                    {
+                        // c:2760 — restore the pre-existing CLF_MISS state.
+                        let o_ref = (*oo_slot).as_deref_mut().unwrap();
+                        o_ref.flags = (o_ref.flags & !CLF_MISS) | of;
+                    }
+                    if po_hit {
+                        let po_ref = (*po_slot).as_deref_mut().unwrap();
+                        po_ref.flags |= CLF_MISS; // c:2763
+                        po_ref.max += diff; // c:2764
+                    } else {
+                        let o_ref = (*oo_slot).as_deref_mut().unwrap();
+                        o_ref.flags |= CLF_MISS; // c:2766
+                        o_ref.max += diff; // c:2767
+                    }
+                    continue; // c:2770
                 }
                 // c:2757 `if (tn) { … }` — same fall-through as the mirror
                 // branch above; no cursor advance when the scan comes up empty.
@@ -4216,38 +4341,52 @@ pub fn join_clines(
             // c:2777-2819 — SUF/MID mask differs.
             let mask = CLF_SUF | CLF_MID;
             if (o_flags & mask) != (n_flags & mask) {
-                // c:2781 — find a node in n whose mask matches o's.
-                let o_immut: *const Cline = (*oo_slot).as_deref().unwrap();
-                let n_head_im: &Cline = (*nn_slot).as_deref().unwrap();
-                let o_mask = (*o_immut).flags & mask;
-                let found_n = find_node_in_chain(n_head_im, |t| {
-                    (t.flags & mask) == o_mask && {
-                        let mut o_copy = (*o_immut).clone();
-                        cmp_anchors(&mut o_copy, t, 1) != 0
-                    }
-                });
+                // c:2781-2784 — the scan stops at the FIRST n-successor whose
+                // SUF/MID mask matches o's; cmp_anchors is then asked once
+                // about that node (c:2785). The port used to fold the
+                // cmp_anchors test into the scan predicate and keep walking
+                // past a mask-match that failed the anchor test.
+                let o_mask = (*oo_slot).as_deref().unwrap().flags & mask;
+                let found_n = {
+                    let n_head_im: &Cline = (*nn_slot).as_deref().unwrap();
+                    find_node_in_chain(n_head_im, |t| (t.flags & mask) == o_mask)
+                };
                 if let Some(steps) = found_n {
                     let tn_slot = slot_at_offset(nn_slot, steps);
-                    let tn_taken = splice_take_at(tn_slot);
-                    *nn_slot = tn_taken;
-                    continue;
-                }
-                // c:2792 — find a node in o whose mask matches n's.
-                let n_immut_2: *const Cline = (*nn_slot).as_deref().unwrap();
-                let o_head_im: &Cline = (*oo_slot).as_deref().unwrap();
-                let n_mask = (*n_immut_2).flags & mask;
-                let found_o = find_node_in_chain(o_head_im, |t| {
-                    (t.flags & mask) == n_mask && {
-                        let mut t_copy = t.clone();
-                        cmp_anchors(&mut t_copy, &*n_immut_2, 1) != 0
+                    let o_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                    let tn_ptr: *const Cline = &**(*tn_slot).as_ref().unwrap();
+                    if cmp_anchors(&mut *o_ptr, &*tn_ptr, 1) != 0 {
+                        // c:2785 — `sub_join(o, n, tn, 0)` then `n = tn` (c:2787).
+                        let tn_taken = splice_take_at(tn_slot);
+                        let b_chain = splice_take_at(nn_slot);
+                        *nn_slot = tn_taken;
+                        let a_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                        let e_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                        let _ = sub_join(&mut *a_ptr, b_chain, &mut *e_ptr, 0);
+                        continue; // c:2788
                     }
-                });
+                }
+                // c:2792-2795 — same shape with the roles swapped.
+                let n_mask = (*nn_slot).as_deref().unwrap().flags & mask;
+                let found_o = {
+                    let o_head_im: &Cline = (*oo_slot).as_deref().unwrap();
+                    find_node_in_chain(o_head_im, |t| (t.flags & mask) == n_mask)
+                };
                 if let Some(steps) = found_o {
                     let tn_slot = slot_at_offset(oo_slot, steps);
-                    let tn_taken = splice_take_at(tn_slot);
-                    *oo_slot = None;
-                    *oo_slot = tn_taken;
-                    continue;
+                    let tn_ptr: *mut Cline = &mut **(*tn_slot).as_mut().unwrap();
+                    let n_ptr: *const Cline = &**(*nn_slot).as_ref().unwrap();
+                    if cmp_anchors(&mut *tn_ptr, &*n_ptr, 1) != 0 {
+                        // c:2796 — `sub_join(n, o, tn, 1)`, then the o chain is
+                        // cut at tn (c:2798-2804) and tn becomes o.
+                        let tn_taken = splice_take_at(tn_slot);
+                        let x = splice_take_at(oo_slot);
+                        *oo_slot = tn_taken;
+                        let a_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                        let e_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                        let _ = sub_join(&mut *a_ptr, x, &mut *e_ptr, 1);
+                        continue; // c:2805
+                    }
                 }
                 // c:2809-2818 — o has CLF_MID: rewrite to CLF_SUF or
                 // strip the prefix/suffix branch.
@@ -4303,20 +4442,29 @@ pub fn join_clines(
                     tn_idx += 1;
                 }
                 if let (Some(tn_s), Some(to_s)) = (tn_steps, to_steps) {
-                    // c:2834-2851 — splice o to the matched node.
+                    // c:2833-2837 — splice o to the matched node (`o = to`).
                     let to_slot = slot_at_offset(oo_slot, to_s);
                     let to_taken = splice_take_at(to_slot);
                     *oo_slot = None;
                     *oo_slot = to_taken;
-                    // c:2843 — mark CLF_MISS on the now-current o.
-                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
-                        o_ref.flags |= CLF_MISS;
-                    }
-                    // c:2846 — advance n to tn.
+                    // c:2844 — `n = tn`, cutting the run before it loose so
+                    // sub_join can fold it into tn's prefix.
                     let tn_slot = slot_at_offset(nn_slot, tn_s);
                     let tn_taken = splice_take_at(tn_slot);
+                    let b_chain = splice_take_at(nn_slot);
                     *nn_slot = tn_taken;
-                    // c:2847-2850 — advance both po/pn to current, then
+                    // c:2839 — `diff = sub_join(o, n, tn, 0)`.
+                    let diff = {
+                        let a_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                        let e_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                        sub_join(&mut *a_ptr, b_chain, &mut *e_ptr, 0)
+                    };
+                    // c:2841-2842 — mark CLF_MISS on the now-current o.
+                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
+                        o_ref.flags |= CLF_MISS;
+                        o_ref.max += diff;
+                    }
+                    // c:2845-2848 — advance both po/pn to current, then
                     // skip current pair.
                     po_slot = oo_slot;
                     oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
@@ -4324,23 +4472,104 @@ pub fn join_clines(
                     nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
                     continue;
                 }
-                // c:2853-2873 — scan o for CLF_SKIP matching n's anchor.
-                let n_head_im: &Cline = (*nn_slot).as_deref().unwrap();
-                let n_ptr: *const Cline = n_head_im;
-                let o_head_im: &Cline = (*oo_slot).as_deref().unwrap();
-                let to_idx_o = find_node_in_chain(o_head_im, |t| {
-                    (t.flags & CLF_SKIP) != 0 && {
-                        let mut t_copy = t.clone();
-                        cmp_anchors(&mut t_copy, &*n_ptr, 1) != 0
+                // c:2851-2853 — scan o for a CLF_SKIP node whose anchor the
+                // CURRENT n can be joined with. C's `cmp_anchors(n, to, 1)`
+                // has n as the mutated side, so the port must run it against
+                // the live n node, not a clone.
+                let to_idx_o = {
+                    let n_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                    let mut found: Option<usize> = None;
+                    let mut cur = (*oo_slot).as_deref().unwrap().next.as_deref();
+                    let mut idx = 1usize;
+                    while let Some(to) = cur {
+                        if (to.flags & CLF_SKIP) != 0 {
+                            let to_ptr: *const Cline = to;
+                            if cmp_anchors(&mut *n_ptr, &*to_ptr, 1) != 0 {
+                                found = Some(idx);
+                                break;
+                            }
+                        }
+                        cur = to.next.as_deref();
+                        idx += 1;
                     }
+                    found
+                };
+                // c:2872-2881 — otherwise walk n looking for a CLF_SKIP node
+                // that has a CLF_SKIP partner in o. Only `to` (in o) is used;
+                // n is left where it is.
+                let to_idx_o = to_idx_o.or_else(|| {
+                    let o_head: &Cline = (*oo_slot).as_deref().unwrap();
+                    let mut tn_cur = (*nn_slot).as_deref().unwrap().next.as_deref();
+                    while let Some(tn) = tn_cur {
+                        if (tn.flags & CLF_SKIP) != 0 {
+                            let mut to_cur = o_head.next.as_deref();
+                            let mut to_idx = 1usize;
+                            while let Some(to) = to_cur {
+                                if (to.flags & CLF_SKIP) != 0 && {
+                                    let mut tn_copy = tn.clone();
+                                    cmp_anchors(&mut tn_copy, to, 1) != 0
+                                } {
+                                    return Some(to_idx);
+                                }
+                                to_cur = to.next.as_deref();
+                                to_idx += 1;
+                            }
+                        }
+                        tn_cur = tn.next.as_deref();
+                    }
+                    None
                 });
                 if let Some(steps) = to_idx_o {
+                    // c:2855-2870 / c:2882-2897 — identical tails: fold the o
+                    // run before `to` into `to`'s prefix, then make it o.
                     let to_slot = slot_at_offset(oo_slot, steps);
                     let to_taken = splice_take_at(to_slot);
-                    *oo_slot = None;
-                    *oo_slot = to_taken;
-                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
-                        o_ref.flags |= CLF_MISS;
+                    let x = splice_take_at(oo_slot); // c:2862 / c:2889 `x = o`
+                    // Anchor fields only: cmp_anchors reads flags/word/wlen/
+                    // line/llen, and Cline's derived Clone would deep-copy the
+                    // whole cut-out run (and its sub-lists) for nothing.
+                    let mut x_head: Option<Cline> = x.as_deref().map(|h| Cline {
+                        next: None,
+                        flags: h.flags,
+                        line: h.line.clone(),
+                        llen: h.llen,
+                        word: h.word.clone(),
+                        wlen: h.wlen,
+                        orig: h.orig.clone(),
+                        olen: h.olen,
+                        slen: h.slen,
+                        prefix: None,
+                        suffix: None,
+                        min: h.min,
+                        max: h.max,
+                    });
+                    *oo_slot = to_taken; // c:2863 / c:2890 `o = to`
+                    // c:2856 / c:2883 — `diff = sub_join(n, o, to, 1)`.
+                    let diff = {
+                        let a_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                        let e_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                        sub_join(&mut *a_ptr, x, &mut *e_ptr, 1)
+                    };
+                    let mut hit = false;
+                    if !po_slot.is_null() {
+                        let po_ptr: *mut Cline = match (*po_slot).as_mut() {
+                            Some(b) => &mut **b,
+                            None => std::ptr::null_mut(),
+                        };
+                        if !po_ptr.is_null() && (*po_ptr).prefix.is_some() {
+                            if let Some(xh) = x_head.as_mut() {
+                                hit = cmp_anchors(xh, &*po_ptr, 0) != 0;
+                            }
+                        }
+                    }
+                    if hit {
+                        let po_ref = (*po_slot).as_deref_mut().unwrap();
+                        po_ref.flags |= CLF_MISS; // c:2865 / c:2892
+                        po_ref.max += diff; // c:2866 / c:2893
+                    } else {
+                        let o_ref = (*oo_slot).as_deref_mut().unwrap();
+                        o_ref.flags |= CLF_MISS; // c:2868 / c:2895
+                        o_ref.max += diff; // c:2869 / c:2896
                     }
                     continue;
                 }
@@ -4367,17 +4596,42 @@ pub fn join_clines(
                     found
                 };
                 if let Some(steps) = tn_idx_n {
-                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
-                        o_ref.flags |= CLF_MISS;
-                    }
-                    let tn_slot = if steps == 0 {
-                        nn_slot
-                    } else {
-                        slot_at_offset(nn_slot, steps)
+                    // c:2906 — `int of = o->flags & CLF_MISS;`
+                    let of = (*oo_slot).as_deref().unwrap().flags & CLF_MISS;
+                    // c:2919 — `n = tn`; the run before tn is cut loose so
+                    // sub_join can fold it into tn's prefix. Without this the
+                    // node kept its whole prefix and cline_str rendered the
+                    // first match verbatim (`prs` → `_prsync-2.7`).
+                    let tn_slot = slot_at_offset(nn_slot, steps);
+                    let tn_taken = splice_take_at(tn_slot);
+                    let b_chain = splice_take_at(nn_slot);
+                    *nn_slot = tn_taken;
+                    // c:2908 — `if ((diff = sub_join(o, n, tn, 0)))`.
+                    let diff = {
+                        let a_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
+                        let e_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
+                        sub_join(&mut *a_ptr, b_chain, &mut *e_ptr, 0)
                     };
-                    if steps > 0 {
-                        let tn_taken = splice_take_at(tn_slot);
-                        *nn_slot = tn_taken;
+                    if diff != 0 {
+                        // c:2909 — restore the pre-existing CLF_MISS state.
+                        {
+                            let o_ref = (*oo_slot).as_deref_mut().unwrap();
+                            o_ref.flags = (o_ref.flags & !CLF_MISS) | of;
+                        }
+                        let po_pref = !po_slot.is_null()
+                            && (*po_slot)
+                                .as_deref()
+                                .map(|p| p.prefix.is_some())
+                                .unwrap_or(false);
+                        if po_pref {
+                            let po_ref = (*po_slot).as_deref_mut().unwrap();
+                            po_ref.flags |= CLF_MISS; // c:2911
+                            po_ref.max += diff; // c:2912
+                        } else {
+                            let o_ref = (*oo_slot).as_deref_mut().unwrap();
+                            o_ref.flags |= CLF_MISS; // c:2915
+                            o_ref.max += diff; // c:2916
+                        }
                     }
                     po_slot = oo_slot;
                     oo_slot = &mut (*oo_slot).as_mut().unwrap().next;

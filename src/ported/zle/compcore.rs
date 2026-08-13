@@ -3499,9 +3499,11 @@ pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {
     newmatches.store(1, Ordering::Relaxed); // c:2068
     {
         let cell = mgroup.get_or_init(|| Mutex::new(None)); // c:2069
-        if let Ok(mut g) = cell.lock() {
-            if let Some(grp) = g.as_mut() {
-                grp.new_ = 1;
+        if let Ok(g) = cell.lock() {
+            if let Some(grp) = g.as_ref() {
+                // c:2068 `mgroup->new = 1` — `new_` is the shared flag the
+                // `amatches` entry sees too (comp_h.rs Cmgroup::new_).
+                grp.new_.store(1, Ordering::Relaxed);
             }
         }
     }
@@ -5007,9 +5009,9 @@ pub fn add_match_data(
     // marked dirty, so `permmatches` could serve its cached permanent copy
     // and the match never appeared (the sibling `addmatch` at c:2068 sets it).
     newmatches.store(1, Ordering::Relaxed); // c:3009
-    if let Ok(mut mg) = mgroup.get_or_init(|| Mutex::new(None)).lock() {
-        if let Some(grp) = mg.as_mut() {
-            grp.new_ = 1; // c:3010
+    if let Ok(mg) = mgroup.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(grp) = mg.as_ref() {
+            grp.new_.store(1, Ordering::Relaxed); // c:3010
         }
     }
 
@@ -5216,18 +5218,18 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
     // etc. already ARE `mgroup->lmatches` (aliased in begcmgroup), so nothing
     // to flush. The port now mirrors that — the group's `l*` are shared
     // `Arc`s the file-scope handles point at, so `compadd`'s appends are
-    // already in the group. Only the per-clone SCALAR fields (`ylist`,
-    // `new_`) still diverge between the `mgroup` holder and the `amatches`
-    // entry, so copy those; the `l*` need no copy.
+    // already in the group. `new_` is shared the same way now
+    // (comp_h.rs `Cmgroup::new_`), so the only per-clone SCALAR field left
+    // to copy is `ylist`.
 
     // Identify the current group and record ylist on the mgroup holder.
-    let (name, flags, new_) = {
+    let (name, flags) = {
         let mc = mgroup.get_or_init(|| Mutex::new(None));
         match mc.lock() {
             Ok(mut g) => match g.as_mut() {
                 Some(grp) => {
                     grp.ylist = yl.clone(); // c:3140
-                    (grp.name.clone(), grp.flags, grp.new_)
+                    (grp.name.clone(), grp.flags)
                 }
                 None => return,
             },
@@ -5255,15 +5257,15 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
             .is_empty();
 
     let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
-    // Copy ONLY the scalar fields to the amatches entry; its `l*` Arcs are the
-    // same allocations as this group's, already carrying the appended matches.
+    // Copy ONLY the scalar field to the amatches entry; its `l*` and `new_`
+    // are the same allocations as this group's, already carrying the
+    // appended matches and the dirty flag.
     if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
         if let Some(grp) = g
             .iter_mut()
             .find(|grp| grp.name == name && (grp.flags & mask) == (flags & mask))
         {
             grp.ylist = yl;
-            grp.new_ = new_;
         }
     }
     if flushed_any {
@@ -5303,9 +5305,9 @@ pub fn addexpl(always: bool) {
                     nmessages.fetch_add(1, Ordering::Relaxed); // c:3152
                     newmatches.store(1, Ordering::Relaxed); // c:3153
                     let mc = mgroup.get_or_init(|| Mutex::new(None));
-                    if let Ok(mut mg) = mc.lock() {
-                        if let Some(grp) = mg.as_mut() {
-                            grp.new_ = 1;
+                    if let Ok(mg) = mc.lock() {
+                        if let Some(grp) = mg.as_ref() {
+                            grp.new_.store(1, Ordering::Relaxed); // c:3154
                         }
                     }
                 }
@@ -5321,9 +5323,9 @@ pub fn addexpl(always: bool) {
     if always {
         // c:3161
         let mc = mgroup.get_or_init(|| Mutex::new(None));
-        if let Ok(mut mg) = mc.lock() {
-            if let Some(grp) = mg.as_mut() {
-                grp.new_ = 1;
+        if let Ok(mg) = mc.lock() {
+            if let Some(grp) = mg.as_ref() {
+                grp.new_.store(1, Ordering::Relaxed); // c:3162
             }
         }
         nmessages.fetch_add(1, Ordering::Relaxed); // c:3173
@@ -5773,7 +5775,7 @@ pub fn permmatches(last: i32) -> i32 {
     for g_orig in groups_snapshot.into_iter() {
         // c:3449 while (g)
         let mut g = g_orig; // borrow-mut snapshot
-        let must_rebuild = fi != ofi || g.perm.is_none() || g.new_ != 0; // c:3456
+        let must_rebuild = fi != ofi || g.perm.is_none() || g.new_.load(Ordering::Relaxed) != 0; // c:3456
         if must_rebuild {
             // c:3456
             let src_list = if fi != 0 {
@@ -5884,7 +5886,7 @@ pub fn permmatches(last: i32) -> i32 {
                 new_pmatches.push(p.clone()); // c:3533 pmatches = g->perm
             }
         }
-        g.new_ = 0; // c:3544
+        g.new_.store(0, Ordering::Relaxed); // c:3544
         updated_groups.push(g);
     }
     // c:3488/3542/3544 write-back — see the note above the loop.
@@ -8029,6 +8031,77 @@ mod tests {
         let fi = permmatches(0);
         assert_eq!(fi, 0);
         assert_eq!(hasperm.load(Ordering::Relaxed), 1);
+    }
+
+    /// c:2068 / c:3010 / c:3154 / c:3162 — `mgroup->new = 1` MUST be visible
+    /// through the `amatches` chain, because in C `mgroup` and the `amatches`
+    /// entry are the same `struct cmgroup` (`begcmgroup` c:3087 on reuse,
+    /// c:3100+c:3123 on create). `permmatches` reads the flag while walking
+    /// `amatches` (c:3452 `if (fi != ofi || !g->perm || g->new)`) and clears it
+    /// there (c:3544).
+    ///
+    /// With `new_` a per-clone `i32`, the write landed only on the `mgroup`
+    /// copy, so an OPEN group's freshly added matches were invisible: the c:3452
+    /// test took its reuse branch and c:3536 added the group's STALE `mcount` to
+    /// `nmatches`. `$compstate[nmatches]` is live through `get_nmatches`
+    /// (`Src/Zle/complete.c:1411-1413`), so every completer that returns
+    /// `[[ nm -ne compstate[nmatches] ]]` — `Completion/Unix/Type/_path_files`
+    /// sh:895 — reported "added nothing" and the whole completer chain ran past
+    /// the completer that should have ended it.
+    #[test]
+    fn mgroup_new_flag_is_shared_with_the_amatches_entry() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        amatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .clear();
+
+        begcmgroup(Some("corrections"), 0); // c:3072
+                                            // c:2068 — exactly the write `addmatch` performs, through `mgroup`.
+        mgroup
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("begcmgroup must leave a current group")
+            .new_
+            .store(1, Ordering::Relaxed);
+
+        let seen = amatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|g| g.name.as_deref() == Some("corrections"))
+            .map(|g| g.new_.load(Ordering::Relaxed));
+        assert_eq!(
+            seen,
+            Some(1),
+            "c:3452 permmatches reads `g->new` off the amatches walk, so the \
+             mgroup write must alias it"
+        );
+
+        // c:3544 — and the clear on the amatches walk must reach `mgroup` too.
+        amatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .iter()
+            .for_each(|g| g.new_.store(0, Ordering::Relaxed));
+        assert_eq!(
+            mgroup
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .new_
+                .load(Ordering::Relaxed),
+            0
+        );
     }
 
     /// c:1323 — `rembslash` removes backslash escapes by walking the
