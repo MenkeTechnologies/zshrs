@@ -3016,13 +3016,37 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
                         // c:2057-2087 — bld_line writes the synthesized
                         // line into a local buffer + returns the
                         // count consumed from the other string.
+                        // c:2028-2045 — `t` says WHICH string matched the word
+                        // pattern: `ap` is that string, `bp` the other one.
+                        // c:2057 — `bld_line(mp, line, *ap, *bp, *blp, 0)`, so
+                        // `mword` is `*ap`.
+                        //
+                        // The port passed `""` for `mword`, which silently
+                        // disabled bld_line's whole equivalence pass
+                        // (c:1780 `lpat->tp == CPAT_EQUIV && wpat && *mword`):
+                        // with no mword the CPAT_EQUIV line class is copied
+                        // through verbatim instead of being resolved to the ONE
+                        // concrete equivalent character (c:1817
+                        // pattern_match_equivalence), so pass 2 accepted any
+                        // member of the class and emitted the WORD character as
+                        // the line character (c:1898-1901 `lchr = *wp` for a
+                        // non-CPAT_CHAR pattern). join_strs then reported a
+                        // successful join for two anchors that share nothing:
+                        // under `m:{a-z\-}={A-Z\_}`, joining the anchors `_`
+                        // (from `_services`) and `f` (from `functions_source`)
+                        // returned `"f"`, and cmp_anchors (c:2126-2132) stamped
+                        // that onto the merged anchor with CLF_JOIN. Completing
+                        // `typeset -src` under the live matcher-list therefore
+                        // produced the common prefix `fser` — characters lifted
+                        // out of unrelated candidates — instead of leaving
+                        // `-src` alone and listing the three matches.
                         let mut line: Vec<char> = Vec::new();
                         let bl = bld_line(
                             mp,
                             &mut line,
-                            "", // mword empty here; bld_line runs its equivalence pass as a no-op (c:2103 passes "")
-                            if t == 1 { b_slice } else { a_slice },
-                            if t == 1 { lb } else { la },
+                            if t == 1 { a_slice } else { b_slice }, // c:2057 *ap
+                            if t == 1 { b_slice } else { a_slice }, // c:2057 *bp
+                            if t == 1 { lb } else { la },           // c:2057 *blp
                             0,
                         );
                         if bl > 0 {
@@ -3365,10 +3389,15 @@ pub fn join_sub(
                     } else {
                         (nw_slice, ow_slice, ol)
                     };
-                    let _ = mw_slice;
-
+                    // c:2265-2272 — `mw` is the string that matched the word
+                    // pattern (`ow` when `t`, else `nw`), and it is what C
+                    // hands bld_line as `mword`. Dropping it disabled
+                    // bld_line's equivalence resolution (c:1780) exactly as in
+                    // join_strs above, so a CPAT_EQUIV line class matched any
+                    // class member and the word character was emitted as the
+                    // line character (c:1898-1901).
                     let mut line: Vec<char> = Vec::new();
-                    let bl = bld_line(mp, &mut line, "", other_slice, other_len, sfx);
+                    let bl = bld_line(mp, &mut line, mw_slice, other_slice, other_len, sfx);
                     if bl > 0 {
                         // c:2274
                         let new_nl = if t == 1 { bl } else { mp.wlen };
@@ -4899,6 +4928,62 @@ fn patmatchrange(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:1994 join_strs / c:1734 bld_line — an equivalence matcher may only
+    /// join two anchors when the SAME line character maps to both word
+    /// characters. `bld_line`'s `mword` argument (c:2057 passes `*ap`, the
+    /// string that already matched the word pattern) is what pins the
+    /// CPAT_EQUIV line class down to that one character (c:1780-1822). With
+    /// `mword` dropped the class stayed generic, pass 2 accepted any member of
+    /// it and copied the WORD character onto the line (c:1898-1901), so
+    /// join_strs claimed a successful join for anchors that share nothing.
+    ///
+    /// Live consequence: completing `typeset -src` with the matcher-list
+    /// `'r:|?=** m:{a-z\-}={A-Z\_}'` joined the `_` anchor of `_services` with
+    /// the `f` anchor of `functions_source` into `"f"`, and cmp_anchors
+    /// (c:2126-2132) stamped that onto the merged cline. `do_ambiguous` then
+    /// wrote the common prefix `fser` over the typed `-src`.
+    #[test]
+    fn join_strs_equivalence_needs_a_shared_line_char() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let bm = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        *bm.lock().unwrap() = None;
+        let m = crate::ported::zle::complete::parse_cmatcher("t", r"m:{a-z\-}={A-Z\_}")
+            .expect("equivalence matcher parses");
+        add_bmatchers(Some(&m));
+
+        // `-` on the line is the only character equivalent to `_`, and `-`
+        // does not match `f`, so no single line character covers both.
+        assert_eq!(
+            join_strs(1, "_", 1, "f"),
+            None,
+            "no line char maps to both `_` and `f` under m:{{a-z\\-}}={{A-Z\\_}}"
+        );
+        // The equivalence itself must still resolve: `-` on the line matches
+        // the word `_` directly and the word `-` literally.
+        assert_eq!(
+            join_strs(1, "_", 1, "-"),
+            Some("-".to_string()),
+            "`-` is the line char for both `_` (via the equivalence) and `-`"
+        );
+
+        // …and the anchor comparison that consumes it must agree.
+        let mut o = *get_cline(Some("-".into()), 1, Some("_".into()), 1, None, 0, 0);
+        let n = *get_cline(None, 1, Some("f".into()), 1, None, 0, 0);
+        assert_eq!(
+            cmp_anchors(&mut o, &n, 1),
+            0,
+            "cmp_anchors must not report `_` and `f` as joinable anchors"
+        );
+        assert_eq!(
+            o.word.as_deref(),
+            Some("_"),
+            "a failed join must leave the anchor untouched"
+        );
+
+        *bm.lock().unwrap() = None;
+    }
 
     /// c:Src/Zle/compmatch.c:2752-2774 — the `!(o->flags & CLF_NEW) &&
     /// (n->flags & CLF_NEW)` arm scans `n` for a non-NEW node whose anchor

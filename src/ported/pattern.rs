@@ -4250,6 +4250,16 @@ pub fn clearpatterndisables() {
 /// position 1" scan adjustment here since `&str` is immutable.
 pub fn haswilds(str: &str) -> bool {
     // c:4306
+    // c:4325-4372 — every `return 1` needs one of Inpar / Bar / Star /
+    // Inbrack / Inang / Quest / Pound / Hat, and all eight are TOKEN
+    // chars in U+0080..U+00A0, i.e. non-ASCII. An all-ASCII string
+    // therefore always falls through to c:4374 `return 0`. Answer it
+    // with libcore's precompiled word-at-a-time `<[u8]>::is_ascii`
+    // instead of building a `Vec<char>` to walk: `haswilds` runs once
+    // per candidate word, and a `man <TAB>` offers 60605 of them.
+    if str.is_ascii() {
+        return false; // c:4374
+    }
     let chars: Vec<char> = str.chars().collect();
     let len = chars.len();
     if len == 0 {

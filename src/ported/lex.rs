@@ -4653,6 +4653,12 @@ fn is_valid_assignment_target(s: &str) -> bool {
 /// which was BOTH too inclusive (0x83 = Meta, IMETA-only, NOT ITOK)
 /// and too narrow (missing 0xa0 Bnullkeep and 0xa1 Nularg).
 pub fn untokenize_preserve_quotes(s: &str) -> String {
+    // c:Src/exec.c:2136 — same reasoning as `untokenize`: the only chars
+    // this rewrites are the ITOK range 0x84..=0xA1, all non-ASCII, so an
+    // all-ASCII string passes through unchanged.
+    if s.is_ascii() {
+        return s.to_string();
+    }
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {
         let cu = c as u32;
@@ -4987,6 +4993,17 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
 }
 /// `untokenize` — see implementation.
 pub fn untokenize(s: &str) -> String {
+    // c:Src/exec.c:2136-2156 — C's loop scans for the first `itok(c)` and
+    // returns the string byte-for-byte unchanged when there is none. Every
+    // ITOK char (Pound 0x84 … Nularg 0xA1) and the `Meta` lead byte the
+    // walk below also tracks are non-ASCII, so an all-ASCII string IS its
+    // own answer. Say so with libcore's precompiled word-at-a-time
+    // `<[u8]>::is_ascii` instead of building a `Vec<char>` and re-encoding
+    // every char: this runs once per element of a whole-array read, and
+    // `${(v)history}` over a 135000-entry ring spent 48.7% of its CPU here.
+    if s.is_ascii() {
+        return s.to_string();
+    }
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;

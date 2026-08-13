@@ -13149,6 +13149,21 @@ impl fusevm::ShellHost for ZshrsHost {
             !(crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD),
             std::sync::atomic::Ordering::Relaxed,
         );
+        // c:Src/builtin.c:5834 / Src/exec.c:1443 — `retflag` dies at the
+        // fork boundary for the same reason `errflag` above does. In C a
+        // `return` inside `( … )` sets retflag in the CHILD; the child's
+        // execlist unwinds, the child _exit()s, and the PARENT's retflag
+        // was never touched. zshrs runs subshells in-process, so the flag
+        // survived and returned from the enclosing FUNCTION:
+        //   f() { ( return 1 ); print IN }; f
+        // printed nothing where zsh prints `IN`. Storing 0 is exactly a
+        // restore-to-entry: a non-zero retflag unwinds its list
+        // immediately (c:1443's `!retflag` gate), so the parent can never
+        // be sitting at a subshell with the flag already set. Twin of the
+        // save/restore `$( … )` already does in vm_helper.rs (the
+        // `saved_retflag` pair around the cmd-subst sub-VM), and of the
+        // loops/breaks/contflag restore in SubshellSnapshot::loop_flags.
+        crate::ported::builtin::RETFLAG.store(0, std::sync::atomic::Ordering::Relaxed);
         let exit_pending =
             crate::ported::builtin::EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed);
         if exit_pending != 0 {

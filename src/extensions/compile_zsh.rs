@@ -64,6 +64,24 @@ pub struct ZshCompiler {
     /// leaves the loop's own CS_FOR/CS_WHILE/CS_REPEAT push for the
     /// loop's own `emit_cmd_pop`.
     loop_cmd_depth: Vec<u32>,
+    /// !!! RUST-ONLY BOOKKEEPING !!!
+    ///
+    /// Count of loop constructs whose `loops++` (c:Src/loop.c:114 /
+    /// :427 / :523) has been emitted but whose matching `loops--`
+    /// (c:188 / :491 / :546) has not. C never needs this: `execfor` /
+    /// `execwhile` / `execrepeat` are recursive C functions, so a
+    /// `return` that aborts the body simply falls out of the enclosing
+    /// `for(;;)` and the `loops--` on the way out of the C frame runs
+    /// unconditionally. A compiled chunk instead jumps straight to the
+    /// chunk's return landing, skipping every enclosing loop's exit
+    /// code, so the escape site has to replay those unwinds itself —
+    /// see `emit_loop_unwind`.
+    ///
+    /// Incremented by `emit_loop_enter`, decremented by
+    /// `close_loop_scope`; the extra `emit_loop_exit` calls that a
+    /// multi-level `break N` emits do NOT touch it (those levels are
+    /// still statically open for the code that follows).
+    open_loop_depth: usize,
     /// Suppresses `emit_break_escape_check` inside the try-block
     /// epilogue, where BUILTIN_RESTORE_TRY_BLOCK_STATUS has just
     /// re-armed BREAKS/CONTFLAG for the dedicated re-jump probes that
@@ -262,6 +280,7 @@ impl ZshCompiler {
             continue_patches: Vec::new(),
             body_end_patches: Vec::new(),
             loop_cmd_depth: Vec::new(),
+            open_loop_depth: 0,
             break_escape_suppress: 0,
             return_patches: Vec::new(),
             errexit_suppress_depth: 0,
@@ -407,6 +426,39 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_ENTER, 0), 0);
         self.builder.emit(Op::Pop, 0);
+        self.open_loop_depth += 1;
+    }
+
+    /// Replay, for each still-open loop construct, the exit sequence C
+    /// runs as its interpreter recursion unwinds — used by the
+    /// `return` / `exit` escape jump, which otherwise leaves the chunk
+    /// without ever reaching any enclosing loop's exit code.
+    ///
+    /// Per level, in C's order:
+    ///   c:Src/loop.c:529-534 — `if (breaks) { breaks--; if (breaks ||
+    ///     !contflag) break; contflag = 0; }`  (the post-body drain)
+    ///   c:Src/loop.c:188 / :491 / :546 — `loops--;`
+    ///
+    /// Draining `breaks` is as load-bearing as `loops--`: `bin_break`'s
+    /// BIN_RETURN arm sets `breaks = loops` (c:Src/builtin.c:5835), so
+    /// a `return` from inside N loops leaves `breaks == N` and relies
+    /// on those N drains to bring it back to zero before control
+    /// reaches the caller. Skipping them let the count survive the
+    /// `source`/function boundary and abort the CALLER's list.
+    ///
+    /// The drain's verdict is popped: it only ever says "terminate
+    /// this loop", which the unconditional escape jump already does.
+    fn emit_loop_unwind(&mut self, n: usize) {
+        for _ in 0..n {
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_BREAK_DRAIN, 0),
+                0,
+            ); // c:530
+            self.builder.emit(Op::Pop, 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_EXIT, 0), 0); // c:188
+            self.builder.emit(Op::Pop, 0);
+        }
     }
 
     /// Emit `n` × `loops--` (c:Src/loop.c:188/491/546).
@@ -459,6 +511,7 @@ impl ZshCompiler {
         }
         self.loop_cmd_depth.pop();
         self.emit_loop_exit(1);
+        self.open_loop_depth = self.open_loop_depth.saturating_sub(1);
     }
 
     /// c:Src/exec.c:1370 execlist — `while (… && !breaks && …)`. Emitted
@@ -2877,6 +2930,18 @@ impl ZshCompiler {
                     ); // c:1601
                     self.builder.emit(Op::Pop, 0);
                 }
+                // c:Src/loop.c:188/:491/:546 + :529-534 — unwind every
+                // enclosing loop the escape jump is about to skip. C
+                // gets this for free (execfor/execwhile/execrepeat are
+                // recursive C frames whose `loops--` runs as the stack
+                // pops, and whose post-body drain consumes the
+                // `breaks = loops` that c:Src/builtin.c:5835 just set).
+                // Without it, `return` from inside a loop left `loops`
+                // permanently incremented AND `breaks` non-zero, and the
+                // stray break count aborted the caller's list the moment
+                // control crossed a `source` / function boundary —
+                // silently truncating the rest of the calling script.
+                self.emit_loop_unwind(self.open_loop_depth);
                 self.emit_cmd_stack_drain();
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);

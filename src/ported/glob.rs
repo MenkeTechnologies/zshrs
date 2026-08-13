@@ -50,6 +50,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct gmatch {
     /// `name` field.
     pub name: String,
+    /// c:47 `char *uname` — "Unmetafied file name; embedded nulls can't
+    /// occur in file names". The string `gmatchcmp`'s `GS_NAME` arm
+    /// collates (c:945). C fills it once per match, immediately before
+    /// the qsort (c:1963-1973); the port does the same in `sort_matches`
+    /// so the comparator never re-derives it. Empty until then.
+    pub uname: String,
     /// `path` field.
     pub path: PathBuf,
     /// `size` field.
@@ -1181,22 +1187,17 @@ pub fn gmatchcmp(
             // lexicographic order zsh produces. Verified vs
             // /opt/homebrew/bin/zsh: `echo /tmp/rg/**/*` → `f sub sub/g`
             // (sorted by full path, not basename).
-            let a_cow = a.path.to_string_lossy();
-            let b_cow = b.path.to_string_lossy();
-            // c:Src/glob.c:424 — C stores bare-relative match names
-            // (`dyncat(pathbuf, news)`, no "./"), so its single qsort at
-            // c:1977 sorts the exact strings it emits. The Rust scanner joins
-            // depth-0 matches against base "." (glob.rs:527 + :584), giving a
-            // leading "./" that deeper matches lack and that `glob_emit_path`
-            // strips at emit. Since '.' (0x2E) sorts before any letter, that
-            // stray prefix clustered every top-level entry ahead of any nested
-            // path (`**/*` → `d e m d/z` instead of `d d/z e m`). Strip it here
-            // so the sort key matches the emit key.
-            let a_full = a_cow.strip_prefix("./").unwrap_or(&a_cow);
-            let b_full = b_cow.strip_prefix("./").unwrap_or(&b_cow);
+            // c:945 `zstrcmp(b->uname, a->uname, …)` — C hands the
+            // comparator two ready-made `char *`; the key was built once
+            // per match at c:1963-1973. `sort_matches` fills `uname` the
+            // same way (including the "./" strip described there), so
+            // this arm only collates. Deriving it here instead cost a
+            // `Path::to_string_lossy` + `strip_prefix` pair on EVERY
+            // comparison — 11.7% of a 60605-match `man` glob, since a
+            // sort comparator runs O(n log n) times.
             zstrcmp(
-                a_full,
-                b_full,
+                &a.uname,
+                &b.uname,
                 if numeric_sort {
                     crate::zsh_h::SORTIT_NUMERICALLY as u32
                 } else {
@@ -1758,6 +1759,18 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
     let mut has_comma = false;
     let mut has_dotdot = false;
     let mut brace_open: Option<usize> = None;
+
+    // c:2042 — every `return 1` in the C walk sits inside the Outbrace
+    // arm, which is only reachable after an Inbrace has raised `depth`.
+    // No Inbrace in the string means the answer is 0, so skip the
+    // `Vec<char>` build. Inbrace is U+008F, whose UTF-8 encoding always
+    // contains the byte 0x8F; testing for that byte can only
+    // FALSE-POSITIVE (0x8F is also a continuation byte of other
+    // characters), which just falls through to the real walk.
+    // `<[u8]>::contains` is libcore's precompiled `memchr`.
+    if !s.as_bytes().contains(&0x8f) {
+        return false;
+    }
 
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len();
@@ -2808,6 +2821,50 @@ pub fn igetmatch(
 // position N in the string maps to high-bit byte `Pound + N`.
 pub const ZTOKENS: &str = "#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";
 
+/// The `switch (*s)` labels of `zshtokenize` (c:3592-3639), as a byte
+/// table: `true` for every byte that can reach an arm which MUTATES the
+/// string. `\\` `<` `>` `^` `#` `~` `[` `]` `*` `?` `=` `-` `!` `(` `|`
+/// `)` are the literal case labels; the `Meta` / `Bnull` / `Bnullkeep`
+/// sentinels (c:3593/3597/3598) are non-ASCII chars, so every byte of
+/// their UTF-8 encoding is >= 0x80 and the whole high half is marked —
+/// conservatively, since a `>= 0x80` byte only sends the string down the
+/// full walk, never past it.
+///
+/// C needs no such table: its loop is a byte-pointer walk that costs
+/// about a cycle per uninteresting byte. The port has to materialize a
+/// `Vec<char>` and rebuild the `String`, so the same "do nothing" answer
+/// costs three allocations and a decode/encode pair — 33.4% of a `man
+/// <TAB>` completion, which tokenizes every one of 60605 candidate
+/// names and finds a metachar in 3105 of them (5%).
+static ZSHTOK_TRIGGER: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut i = 0;
+    while i < 256 {
+        let b = i as u8;
+        t[i] = b >= 0x80
+            || matches!(
+                b,
+                b'\\' | b'<'
+                    | b'>'
+                    | b'^'
+                    | b'#'
+                    | b'~'
+                    | b'['
+                    | b']'
+                    | b'*'
+                    | b'?'
+                    | b'='
+                    | b'-'
+                    | b'!'
+                    | b'('
+                    | b'|'
+                    | b')'
+            );
+        i += 1;
+    }
+    t
+};
+
 /// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
 /// `Src/glob.c:3548`. One-line C delegation: `zshtokenize(s, 0)`.
 pub fn tokenize(s: &mut String) {
@@ -2835,7 +2892,17 @@ pub fn shtokenize(s: &mut String) {
 /// `<` / `(` / `|` / `)`).
 pub fn zshtokenize(s: &mut String, flags: i32) {
     // c:3575
-    let ztokens: Vec<char> = ZTOKENS.chars().collect();
+    // c:3580-3651 — every arm that writes to the string is guarded by
+    // one of the `switch` labels; a string holding none of them leaves
+    // C's loop with `*s` byte-for-byte unchanged. Answer that case
+    // without materializing anything (see ZSHTOK_TRIGGER).
+    if !s.as_bytes().iter().any(|&b| ZSHTOK_TRIGGER[b as usize]) {
+        return;
+    }
+    // c:3640 `for (t = ztokens; *t; t++)` — C scans the static table by
+    // pointer. Every ZTOKENS entry is ASCII, so scanning its bytes is
+    // the same comparison without the per-call `Vec<char>` build.
+    let ztokens: &[u8] = ZTOKENS.as_bytes();
     let mut chars: Vec<char> = s.chars().collect();
     let mut bslash = false; // c:3578
     let mut i = 0;
@@ -2900,7 +2967,7 @@ pub fn zshtokenize(s: &mut String, flags: i32) {
             '>' | '^' | '#' | '~' | '[' | ']' | '*' | '?'                    // c:3621-3631
             | '=' | '-' | '!' | '(' | '|' | ')' => {
                 for (n, &t) in ztokens.iter().enumerate() {                  // c:3633
-                    if t == c {                                              // c:3634
+                    if t as char == c {                                      // c:3634
                         if bslash {                                          // c:3635
                             chars[i - 1] = if (flags & ZSHTOK_SUBST) != 0 {
                                 Bnullkeep
@@ -2949,6 +3016,16 @@ pub fn remnulargs(s: &mut String) {
     // c:3649
     if s.is_empty() {
         // c:3654
+        return;
+    }
+    // c:3664-3688 — C's walk rewrites nothing until it meets a
+    // `Bnullkeep` or an `inull(c)`. Both those sentinels, and the `Meta`
+    // the port's walk also tracks, are non-ASCII chars, so an all-ASCII
+    // string can't reach either branch and C leaves it untouched. Say so
+    // before paying for the `Vec<char>` materialization: `<[u8]>::is_ascii`
+    // is libcore's precompiled word-at-a-time scan, while the walk below
+    // is monomorphised into this crate and built unoptimised.
+    if s.is_ascii() {
         return;
     }
     // c:3656 `inull(c)` predicate: Snull / Dnull / Bnull / Bnullkeep / Nularg.
@@ -5454,57 +5531,109 @@ fn parse_subscript(
 /// Called by the scanner per matched name, mirroring glob.c:576/668.
 pub fn insert(state: &mut globdata, s: &Path, checked: i32) {
     use std::os::unix::fs::MetadataExt;
-    let _ = checked; // c:347 already-stat'd hint; check_qualifiers re-stats.
-                     // c:381-419 — qualifier walk; reject the file if it fails.
-    if !check_qualifiers(state, s) {
+    // c:348-350 — `struct stat buf, buf2, *bp; int statted = 0;`. `buf`
+    // is the lstat result, `buf2` the link-followed one; `statted` keeps
+    // C's bit meaning (1 = buf valid, 2 = buf2 valid). C stats the file
+    // AT MOST ONCE per variant and only when something actually reads
+    // the result — the scanner already proved the file exists by
+    // readdir'ing it (`checked`), so a plain `dir/*(N)` costs no stat at
+    // all. The port used to `symlink_metadata` every match
+    // unconditionally: 60605 wasted lstat + 60605 wasted stat on the
+    // `man` completion glob, 37.6% of its CPU.
+    let mut statted: i32 = 0;
+    let mut buf: Option<fs::Metadata> = None;
+    let mut buf2: Option<fs::Metadata> = None;
+    // c:353 — `inserts = NULL;`: drop any $reply/$REPLY replacement left
+    // by a previous file's (e:…:) eval before this file's walk.
+    *INSERTS.lock().unwrap() = None;
+    // c:187 `gd_gf_sorts` (macro at c:218) — the OR of every sort key the
+    // glob's `o`/`O` qualifiers asked for. c:434/c:438 consult it to
+    // decide whether this match needs its stat fields filled in. With no
+    // explicit sort qualifier C leaves it at the c:1856 default GS_NAME,
+    // which is in neither GS_NORMAL nor GS_LINKED.
+    let gf_sorts: i32 = state.qualifiers.as_ref().map_or(0, |q| {
+        q.sorts.iter().fold(0, |acc, &tp| acc | (tp & !GS_DESC))
+    });
+
+    // c:355-364 — `if (gf_listtypes || gf_markdirs)` stat for the type
+    // marker, and drop the match if the stat fails. The port appends the
+    // marker at emit time (glob_emit_path), so only C's `checked =
+    // statted = 1` side effect on the arms below is reproduced here.
+    if state.gf_listtypes != 0 || state.gf_markdirs != 0 {
+        match fs::symlink_metadata(s) {
+            Ok(m) => {
+                buf = Some(m);
+                statted = 1; // c:363 `checked = statted = 1;`
+            }
+            Err(_) => return, // c:358-360
+        }
+    }
+
+    // c:381-418 — qualifier walk; reject the file if any test fails. The
+    // walk needs the stat itself, so it hands its buffer back for the
+    // arms below (C's `statted = 1` at c:391).
+    if !check_qualifiers(state, s, &mut buf) {
         return;
     }
-    // c:421-490 — build + append the match entry. Symlink targets get
-    // their own stat for the GS_LINKED (follow-link) sort variants.
-    let Ok(meta) = fs::symlink_metadata(s) else {
+    if buf.is_some() {
+        statted |= 1;
+    }
+    // c:419-423 — `else if (!checked) { if (statfullpath(s, NULL, 1))
+    // return; }`: a match the scanner did NOT readdir (a pure literal
+    // path section, c:576 `insert(str, 0)`) still has to be proven to
+    // exist. Nothing reads the buffer, so C passes NULL.
+    if statted & 1 == 0 && checked == 0 && fs::symlink_metadata(s).is_err() {
         return;
-    };
+    }
+    // c:434-437 — `if (!statted && (gf_sorts & GS_NORMAL))`: a
+    // size/time/link sort key needs the stat fields, so fill them now.
+    if statted & 1 == 0 && (gf_sorts & GS_NORMAL) != 0 {
+        buf = fs::symlink_metadata(s).ok(); // c:435
+        statted |= 1;
+    }
+    // c:438-445 — `if (!(statted & 2) && (gf_sorts & GS_LINKED))`: the
+    // follow-link sort variants need the TARGET's stat. C reuses `buf`
+    // verbatim when the match is not a symlink (c:440-441 memcpy), and
+    // falls back to it when the target stat fails (a dangling link).
+    if statted & 2 == 0 && (gf_sorts & GS_LINKED) != 0 {
+        buf2 = match &buf {
+            // c:439-441
+            Some(m) if !m.file_type().is_symlink() => Some(m.clone()),
+            Some(m) => fs::metadata(s).ok().or_else(|| Some(m.clone())),
+            // c:442-443 `if (statfullpath(s,&buf2,0)) statfullpath(s,&buf2,1);`
+            None => fs::metadata(s)
+                .ok()
+                .or_else(|| fs::symlink_metadata(s).ok()),
+        };
+        statted |= 2;
+    }
+
+    // c:446-478 — copy the stat fields into the match entry, but only
+    // the ones actually stat'd (`if (statted & 1)` / `if (statted & 2)`);
+    // the rest stay zero as C's calloc'd match buffer leaves them.
     let name = s
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let (tsize, tatime, tmtime, tctime, tlinks, tansec, tmnsec, tcnsec) =
-        if meta.file_type().is_symlink() {
-            if let Ok(tm) = fs::metadata(s) {
-                (
-                    tm.size(),
-                    tm.atime(),
-                    tm.mtime(),
-                    tm.ctime(),
-                    tm.nlink(),
-                    tm.atime_nsec(),
-                    tm.mtime_nsec(),
-                    tm.ctime_nsec(),
-                )
-            } else {
-                (
-                    meta.size(),
-                    meta.atime(),
-                    meta.mtime(),
-                    meta.ctime(),
-                    meta.nlink(),
-                    meta.atime_nsec(),
-                    meta.mtime_nsec(),
-                    meta.ctime_nsec(),
-                )
-            }
-        } else {
-            (
-                meta.size(),
-                meta.atime(),
-                meta.mtime(),
-                meta.ctime(),
-                meta.nlink(),
-                meta.atime_nsec(),
-                meta.mtime_nsec(),
-                meta.ctime_nsec(),
-            )
-        };
+    let meta = buf;
+    // c:463-478 — `if (statted & 2)` fills the `_size`/`_atime`/… twins.
+    // When only the lstat ran, C's GS_LINKED keys are never consulted, so
+    // mirroring the lstat values here is equivalent and keeps a match
+    // that IS a symlink self-consistent.
+    let target = buf2.as_ref().or(meta.as_ref());
+    let (tsize, tatime, tmtime, tctime, tlinks, tansec, tmnsec, tcnsec) = match target {
+        Some(tm) => (
+            tm.size(),
+            tm.atime(),
+            tm.mtime(),
+            tm.ctime(),
+            tm.nlink(),
+            tm.atime_nsec(),
+            tm.mtime_nsec(),
+            tm.ctime_nsec(),
+        ),
+        None => (0, 0, 0, 0, 0, 0, 0, 0),
+    };
     // c:428 — `while (!inserts || (news = *inserts++))`: an (e:…:) eval
     // may have set $reply/$REPLY (INSERTS), replacing this match with
     // zero-or-more names; otherwise emit the original name once. The
@@ -5521,25 +5650,26 @@ pub fn insert(state: &mut globdata, s: &Path, checked: i32) {
     for (nm, pth) in emit {
         state.matches.push(gmatch {
             name: nm,
+            uname: String::new(), // c:1963-1973 — filled before the sort
             path: pth,
-            size: meta.size(),
-            atime: meta.atime(),
-            mtime: meta.mtime(),
-            ctime: meta.ctime(),
-            links: meta.nlink(),
-            mode: meta.mode(),
-            uid: meta.uid(),
-            gid: meta.gid(),
-            dev: meta.dev(),
-            ino: meta.ino(),
+            size: meta.as_ref().map_or(0, |m| m.size()),
+            atime: meta.as_ref().map_or(0, |m| m.atime()),
+            mtime: meta.as_ref().map_or(0, |m| m.mtime()),
+            ctime: meta.as_ref().map_or(0, |m| m.ctime()),
+            links: meta.as_ref().map_or(0, |m| m.nlink()),
+            mode: meta.as_ref().map_or(0, |m| m.mode()),
+            uid: meta.as_ref().map_or(0, |m| m.uid()),
+            gid: meta.as_ref().map_or(0, |m| m.gid()),
+            dev: meta.as_ref().map_or(0, |m| m.dev()),
+            ino: meta.as_ref().map_or(0, |m| m.ino()),
             target_size: tsize,
             target_atime: tatime,
             target_mtime: tmtime,
             target_ctime: tctime,
             target_links: tlinks,
-            ansec: meta.atime_nsec(),
-            mnsec: meta.mtime_nsec(),
-            cnsec: meta.ctime_nsec(),
+            ansec: meta.as_ref().map_or(0, |m| m.atime_nsec()),
+            mnsec: meta.as_ref().map_or(0, |m| m.mtime_nsec()),
+            cnsec: meta.as_ref().map_or(0, |m| m.ctime_nsec()),
             target_ansec: tansec,
             target_mnsec: tmnsec,
             target_cnsec: tcnsec,
@@ -5551,12 +5681,15 @@ pub fn insert(state: &mut globdata, s: &Path, checked: i32) {
 
 /// Drive the OR-of-AND qualifier filter against `path`. **RUST-ONLY**
 /// — C glob.c does qualifier eval inline inside `insert()` (c:381+).
-fn check_qualifiers(state: &globdata, path: &Path) -> bool {
+///
+/// `stat_out` is C's `struct stat buf` (c:348), which `insert()` shares
+/// with this walk: c:385 fills it here and c:391's `statted = 1` stops
+/// c:434 from stat'ing the same file a second time. Only the plain lstat
+/// is handed back — under `follow_links` the walk reads C's `buf2`
+/// (c:399-402), which the arms after c:419 track separately.
+fn check_qualifiers(state: &globdata, path: &Path, stat_out: &mut Option<fs::Metadata>) -> bool {
     use std::os::unix::fs::MetadataExt;
     use std::sync::atomic::Ordering;
-    // c:353 — `inserts = NULL;` at insert() entry: clear any reply/REPLY
-    // replacement left by a previous file's (e:…:) eval before this walk.
-    *INSERTS.lock().unwrap() = None;
     let qs = match &state.qualifiers {
         Some(q) => q,
         None => return true,
@@ -5578,8 +5711,12 @@ fn check_qualifiers(state: &globdata, path: &Path) -> bool {
         fs::symlink_metadata(path)
     } {
         Ok(m) => m,
-        Err(_) => return false,
+        Err(_) => return false, // c:385-387
     };
+    if !qs.follow_links {
+        // c:385 `statfullpath(s, &buf, 1)` — this IS insert()'s `buf`.
+        *stat_out = Some(meta.clone());
+    }
     // Bridge meta → libc::stat for the leaf test fns (no extra syscall).
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     st.st_mode = meta.mode() as _;
@@ -5711,6 +5848,26 @@ fn sort_matches(state: &mut globdata) {
         .map_or(true, |&last| (last & !GS_DESC) != GS_NAME)
     {
         specs.push(GS_NAME); // deterministic name-ascending tie-break
+    }
+
+    // c:1958-1973 — "Where necessary, create unmetafied version of names
+    // for comparison." C runs this loop once over the match list, right
+    // before the qsort at c:1977, so `gmatchcmp` (c:945) collates two
+    // ready-made strings. The port's key is the full match path with the
+    // scanner's depth-0 "./" prefix stripped:
+    //
+    //   c:424 — C stores bare-relative match names (`dyncat(pathbuf,
+    //   news)`, no "./"), so its single qsort sorts the exact strings it
+    //   emits. The Rust scanner joins depth-0 matches against base "."
+    //   (glob.rs:527 + :584), giving a leading "./" that deeper matches
+    //   lack and that `glob_emit_path` strips at emit. Since '.' (0x2E)
+    //   sorts before any letter, that stray prefix clustered every
+    //   top-level entry ahead of any nested path (`**/*` → `d e m d/z`
+    //   instead of `d d/z e m`). Strip it so the sort key matches the
+    //   emit key.
+    for m in state.matches.iter_mut() {
+        let full = m.path.to_string_lossy();
+        m.uname = full.strip_prefix("./").unwrap_or(&full).to_string();
     }
 
     // c:1258/1575 — gf_numsort starts at the global NUMERIC_GLOB_SORT
