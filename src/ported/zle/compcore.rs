@@ -724,6 +724,37 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
 
     let _useglob = USEGLOB.load(Ordering::Relaxed); // c:579
 
+    // c:561-563 — `kset = CP_ALLKEYS & ~(CP_PARAMETER | CP_REDIRECT |
+    // CP_QUOTE | CP_QUOTING | CP_EXACTSTR | CP_OLDLIST | CP_OLDINS | …)`,
+    // handed to `comp_setunset(…, kset, ~kset & CP_ALLKEYS)` at c:818.
+    // Every cleared bit raises PM_UNSET on that key's `compkpms` slot
+    // (complete.c:1557-1558), and a PM_UNSET param is skipped by every
+    // hash scan — so `${(@kv)compstate}`, and therefore `_lastcomp`
+    // (`_main_complete` sh:407), carries no entry for it at all.
+    //
+    // zshrs's assoc backing is a flat name→map with no per-key flag bits,
+    // so the equivalent of raising PM_UNSET is removing the entry. The
+    // publishes below used to write "" for these keys instead, which is a
+    // different observable state: present, with an empty value.
+    let kunset = |key: &str| {
+        // c:complete.c:1558 — `(*p)->node.flags |= PM_UNSET`.
+        if let Ok(mut tab) = paramtab_hashed_storage().lock() {
+            if let Some(hash) = tab.get_mut(crate::ported::zle::complete::COMPSTATENAME) {
+                hash.remove(key);
+            }
+        }
+        crate::ported::params::unsetparam(&format!("compstate[{}]", key));
+    };
+    // c:562 — `CP_EXACTSTR` is one of the bits cleared out of `kset`, so
+    // `$compstate[exact_string]` starts the round UNSET; only a later
+    // exact match publishes it (c:3046-3055, mirrored at the
+    // `set_compstate_str("exact_string", …)` site below). do_completion's
+    // c:312 `compexactstr = ""` resets the GLOBAL, not the param's set
+    // bit — the port's matching publish left the key present-and-empty,
+    // so `_lastcomp` carried an `exact_string` entry zsh does not have
+    // whenever the round found no exact match.
+    kunset("exact_string"); // c:562
+
     // c:667-693 — `compquote` / `compquoting` from the quote state
     // `get_comp_string` recorded. These ARE `$compstate[quote]` and
     // `$compstate[quoting]` (complete.c:1276-1277). Neither was ported, so
@@ -754,8 +785,19 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         }
         // The `$compstate` entries are gsu VIEWS onto those globals in C;
         // this port has to publish them explicitly.
-        set_compstate_str("quote", cq); // complete.c:1276
-        set_compstate_str("quoting", cqg); // complete.c:1277
+        //
+        // c:561-563 — `CP_QUOTE | CP_QUOTING` start cleared in `kset`;
+        // only the two quoted arms (c:686, c:690) raise them. The
+        // unquoted arm at c:691-693 leaves the globals empty AND the
+        // params unset, so the keys must disappear rather than appear
+        // with an empty value.
+        if cq.is_empty() && cqg.is_empty() {
+            kunset("quote"); // c:562
+            kunset("quoting"); // c:562
+        } else {
+            set_compstate_str("quote", cq); // complete.c:1276, c:686/690
+            set_compstate_str("quoting", cqg); // complete.c:1277, c:686/690
+        }
     }
 
     // Publish the completion word split at the cursor into the
@@ -978,7 +1020,17 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             .unwrap_or_default(),
         _ => String::new(), // c:577
     };
-    set_compstate_str("parameter", &compparameter);
+    // c:561-563 — `kset = CP_ALLKEYS & ~(CP_PARAMETER | …)`: the key
+    // starts UNSET and only c:586 / c:594 / c:607 / c:626 raise
+    // `kset |= CP_PARAMETER`, which is exactly the set of arms that give
+    // `compparameter` a name. Publishing "" instead left the key present
+    // in `${(@kv)compstate}` (and so in `_lastcomp`) where zsh has no
+    // entry at all.
+    if compparameter.is_empty() {
+        kunset("parameter"); // c:562
+    } else {
+        set_compstate_str("parameter", &compparameter);
+    }
 
     // c:598-602 — `compcontext = "redirect"; if (rdstr) compredirect =
     // rdstr;`. `compredirect` is `$compstate[redirect]` (complete.c:1265)
@@ -994,7 +1046,13 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     } else {
         String::new() // c:577
     };
-    set_compstate_str("redirect", &compredirect);
+    // c:561-563 / c:601 — `CP_REDIRECT` likewise starts cleared and is
+    // raised only by the `redirect` context arm.
+    if compredirect.is_empty() {
+        kunset("redirect"); // c:562
+    } else {
+        set_compstate_str("redirect", &compredirect); // c:601
+    }
     // C binds `compredirect` to `$compstate[redirect]` through one gsu
     // storage; this port keeps the global and the param separate, so
     // mirror the write (same pattern as PREFIX/COMPPREFIX above).
@@ -1222,13 +1280,16 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             .and_then(|m| m.lock().ok())
             .and_then(|m| m.cur.as_ref().map(|c| c.gnum));
         match cur_gnum {
+            // c:806 — `kset |= CP_OLDINS` only in the minfo.cur arm.
             Some(g) => set_compstate_str("old_insert", &g.to_string()), // c:804-805
-            None => set_compstate_str("old_insert", ""),                // c:808
+            None => kunset("old_insert"),                  // c:808
         }
     } else {
-        // c:810
-        set_compstate_str("old_list", "");
-        set_compstate_str("old_insert", "");
+        // c:810 — `compoldlist = compoldins = ""` with CP_OLDLIST /
+        // CP_OLDINS still cleared from c:562, i.e. both params stay
+        // PM_UNSET and neither key appears in `${(@kv)compstate}`.
+        kunset("old_list");
+        kunset("old_insert");
     }
 
     // c:838 — `incompfunc = 1` before invoking the user fn.
@@ -6719,27 +6780,101 @@ pub fn set_compstate_str(key: &str, val: &str) {
     }
 }
 
+/// The `$compstate` keys whose values C does not store: their
+/// `compkparams` rows (`Src/Zle/complete.c:1261-1300`) carry a `gsu`
+/// vtable instead of a `var` pointer, so every read runs the getter
+/// against live completion state. Listed in `compkparams` order.
+pub const LIVE_COMPSTATE_KEYS: &[&str] = &[
+    "nmatches",              // c:1262 nmatches_gsu
+    "unambiguous",           // c:1285 unambig_gsu
+    "unambiguous_cursor",    // c:1286 unambig_curs_gsu
+    "unambiguous_positions", // c:1288 unambig_pos_gsu
+    "insert_positions",      // c:1290 insert_pos_gsu
+    "list_max",              // c:1292 VAL(complistmax)
+    "vared",                 // c:1297 VAL(compvared)
+    "list_lines",            // c:1298 listlines_gsu
+    "all_quotes",            // c:1299 compqstack_gsu
+    "ignored",               // c:1300 VAL(compignored)
+];
+
 /// Read `$compstate[KEY]`. Returns `None` when the key was never set.
 ///
-/// Prefers the hash-storage view (the canonical home for a PM_HASHED
-/// param); falls back to the legacy flat `compstate[KEY]` bracketed
-/// param for entries that some code wrote via raw `setsparam` without
-/// going through [`set_compstate_str`].
+/// The [`LIVE_COMPSTATE_KEYS`] arm below is the Rust stand-in for C's
+/// per-key gsu getter firing on each read; everything else comes from
+/// the hash-storage view (the canonical home for a PM_HASHED param),
+/// falling back to the legacy flat `compstate[KEY]` bracketed param for
+/// entries that some code wrote via raw `setsparam` without going
+/// through [`set_compstate_str`].
 pub fn get_compstate_str(key: &str) -> Option<String> {
-    // c:complete.c:1411-1414 — `compstate[nmatches]` is a LIVE GSU integer:
-    // `get_nmatches` flushes pending match groups via `permmatches(0)` and
-    // returns the running `nmatches` counter. The stored-hash read below
-    // served a stale 0 for it, so every completer's `nm != $compstate[nmatches]`
-    // idiom (_describe, _arguments, _alternative, …) concluded "nothing was
-    // added" and option completion died even though addmatches had added
-    // hundreds of matches.
-    if key == "nmatches" {
-        let v = if permmatches(0) != 0 {
-            0
-        } else {
-            nmatches.load(Ordering::Relaxed)
-        };
-        return Some(v.to_string());
+    // c:complete.c:1236-1252 — the gsu-backed keys are recomputed on
+    // every read; a stored value would be stale. Before this arm covered
+    // more than `nmatches`, none of them existed anywhere in zshrs's
+    // compstate storage, so `_lastcomp` (`_main_complete` sh:407) came
+    // back missing nine entries — `_lastcomp[unambiguous]` and
+    // `[unambiguous_cursor]` (read at sh:84-86 and by `_next_tags`
+    // sh:105) among them.
+    let nil = std::ptr::null_mut();
+    match key {
+        // c:complete.c:1401-1405 — `get_nmatches`: flush pending match
+        // groups via `permmatches(0)`, then read the counter. A stored
+        // read served a stale 0, so every completer's
+        // `nm != $compstate[nmatches]` idiom (_describe, _arguments,
+        // _alternative, …) concluded "nothing was added" and option
+        // completion died even though addmatches had added hundreds.
+        "nmatches" => {
+            let v = if permmatches(0) != 0 {
+                0
+            } else {
+                nmatches.load(Ordering::Relaxed)
+            };
+            return Some(v.to_string());
+        }
+        // c:1439-1442 — `unambig_data(NULL, NULL, NULL)`.
+        "unambiguous" => return Some(crate::ported::zle::complete::get_unambig(nil)),
+        // c:1446-1450 — `unambig_data(&c, NULL, NULL); return c`.
+        "unambiguous_cursor" => {
+            return Some(crate::ported::zle::complete::get_unambig_curs(nil).to_string())
+        }
+        // c:1447-1456 — `unambig_data(NULL, &p, NULL); return p`.
+        "unambiguous_positions" => return Some(crate::ported::zle::complete::get_unambig_pos(nil)),
+        // c:1458-1466 — `unambig_data(NULL, NULL, &p); return p`.
+        "insert_positions" => return Some(crate::ported::zle::complete::get_insert_pos(nil)),
+        // c:1292 `VAL(complistmax)`; seeded from $LISTMAX at c:323.
+        "list_max" => {
+            return Some(
+                crate::ported::zle::complete::COMPLISTMAX
+                    .load(Ordering::Relaxed)
+                    .to_string(),
+            )
+        }
+        // c:1297 `VAL(compvared)` — the parameter name `vared` is
+        // editing, `""` outside `vared` (c:compcore.c:565-570). zshrs
+        // does not track `varedarg` yet, so the global stays at the
+        // `""` C publishes for every non-`vared` completion.
+        "vared" => {
+            return Some(
+                crate::ported::zle::complete::COMPVARED
+                    .get_or_init(|| Mutex::new(String::new()))
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default(),
+            )
+        }
+        // c:1408-1420 — `get_listlines` → `list_lines()`.
+        "list_lines" => {
+            return Some(crate::ported::zle::complete::get_listlines(nil).to_string())
+        }
+        // c:1469 — `get_compqstack`: one char per quoting level.
+        "all_quotes" => return Some(crate::ported::zle::complete::get_compqstack(nil)),
+        // c:1300 `VAL(compignored)` — matches dropped by `compadd -F`.
+        "ignored" => {
+            return Some(
+                crate::ported::zle::complete::COMPIGNORED
+                    .load(Ordering::Relaxed)
+                    .to_string(),
+            )
+        }
+        _ => {}
     }
     if let Ok(tab) = paramtab_hashed_storage().lock() {
         if let Some(hash) = tab.get("compstate") {

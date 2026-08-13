@@ -279,6 +279,7 @@ comp_string_global!(pub COMPCONTEXT,   "compcontext",   59);
 comp_string_global!(pub COMPPARAMETER, "compparameter", 60);
 comp_string_global!(pub COMPREDIRECT,  "compredirect",  61);
 comp_string_global!(pub COMPPATINSERT, "comppatinsert", 69);
+comp_string_global!(pub COMPVARED,     "compvared",     73);
 
 /// Port of `char **compwords` (complete.c:45) — argv-style array of
 /// the command-line words being completed.
@@ -2418,13 +2419,24 @@ pub fn get_unambig(pm: *mut param) -> String {
 #[allow(unused_variables)]
 pub fn get_unambig_curs(pm: *mut param) -> i64 {
     // c:1436
-    // c:1438 — `unambig_data(&c, NULL, NULL); return c` (C returns
-    // ccache+1). When ainfo->line is populated, the cursor offset is
-    // the length of the cline_str output (in chars) since our cline_str
-    // doesn't currently track the divergence-position cursor — full
-    // mid/pm/sm/d tracking lives in the C ins=0 csp pass.
+    // c:1438 — `unambig_data(&c, NULL, NULL); return c`. When ainfo->line
+    // is populated, the cursor offset is the length of the cline_str
+    // output (in chars) since our cline_str doesn't currently track the
+    // divergence-position cursor — full mid/pm/sm/d tracking lives in the
+    // C ins=0 csp pass.
     let prefix = get_unambig(std::ptr::null_mut());
-    prefix.chars().count() as i64
+    // c:compresult.c:564 — `if (cp) *cp = ccache + 1;`. The value is
+    // ONE-BASED: `$compstate[unambiguous_cursor]` is "the index of the
+    // character the cursor would sit before", and both consumers slice
+    // with it as such — `_main_complete` sh:86-88
+    // (`PREFIX[1,upos-1]`) and sh:375
+    // (`${compstate[unambiguous]}[1,${compstate[unambiguous_cursor]}-1]`).
+    // The `+ 1` was dropped here, so every reader was one character short:
+    // for `_pr<TAB>` zsh reports 4 against this port's 3, and the sh:375
+    // ambiguous-colour prefix came out `_p` instead of `_pr`. The empty
+    // case still agrees with C, whose else-branch (c:560) leaves
+    // `ccache = 0` and so also returns 1.
+    prefix.chars().count() as i64 + 1
 }
 
 /// Direct port of `struct compparam` from `Src/Zle/complete.c:1215`.
@@ -2715,15 +2727,31 @@ pub fn get_unambig_pos(pm: *mut param) -> String {
 /// insert positions (where the cursor sits after the prefix is
 /// inserted, accounting for braces and original-string positions).
 ///
-/// Returns the same single-position string `get_unambig_pos` produces
-/// — for the common no-brace case the insert position equals the
-/// divergence position (the cline_str / LCP length). C's separate
-/// ins=2 cline_str pass differs only in brace-reinsertion offsets,
-/// which aren't applicable for the read-only position-string output.
+/// c:compresult.c:159-161 spells out how the `ins=2` pass differs from
+/// the `ins=0` pass `get_unambig_pos` uses: "If ins is two, csp and posl
+/// contain **real command line positions** (including braces)" — i.e.
+/// the same divergence points, but measured from the start of the LINE
+/// rather than from the start of the unambiguous string. So each
+/// position is shifted by `wb`, the line offset where the word being
+/// completed begins (`Src/Zle/compcore.c` / lex.c:120).
+///
+/// This port previously returned `get_unambig_pos` verbatim, i.e. left
+/// the shift out: for `ls -<TAB>` zsh reports `4` (word starts at
+/// column 3, divergence at offset 1) against this port's `1`. Only the
+/// `wb == 0` case — a word at the very start of the line, e.g.
+/// `_pr<TAB>` — agreed. The brace-reinsertion offsets the C pass also
+/// folds in still need the Cline-tree walk and are not modelled here.
 #[allow(unused_variables)]
 pub fn get_insert_pos(pm: *mut param) -> String {
     // c:1458
+    let wb = compcore::WB.load(Ordering::Relaxed).max(0) as i64;
     get_unambig_pos(std::ptr::null_mut())
+        .split(':') // c:build_pos_string joins with ':'
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<i64>().ok())
+        .map(|p| (p + wb).to_string())
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 /// Direct port of `char *get_compqstack(UNUSED(Param pm))` from

@@ -1264,6 +1264,13 @@ pub fn zshrs_main() {
         // Long options keep the `--` prefix; numeric/symbolic clumps
         // are left alone. Argument-consuming flags like `-c` get their
         // value from the next argv slot after expansion, same as zsh.
+        //
+        // Exception: a clump containing `o` is left intact. c:528-529
+        // (`if (!*++*argv) argv++;`) makes the REST of the word after
+        // `o` the option NAME, so `-onullglob` is `-o nullglob` — not
+        // nine separate letters. Splitting it produced `-o -n -u -l …`
+        // and lost the option entirely; the option-word walk below
+        // handles clumps natively via its own character loop.
         let raw: Vec<String> = env::args().collect();
         let mut out: Vec<String> = Vec::with_capacity(raw.len());
         for a in &raw {
@@ -1271,7 +1278,8 @@ pub fn zshrs_main() {
             let is_clumped = bytes.len() >= 3
                 && bytes[0] == b'-'
                 && bytes[1] != b'-'
-                && bytes.iter().skip(1).all(|c| c.is_ascii_alphabetic());
+                && bytes.iter().skip(1).all(|c| c.is_ascii_alphabetic())
+                && !bytes.iter().skip(1).any(|c| *c == b'o');
             if is_clumped {
                 for c in bytes.iter().skip(1) {
                     out.push(format!("-{}", *c as char));
@@ -1844,113 +1852,258 @@ pub fn zshrs_main() {
         return;
     }
 
-    // Extract flags before filtering: -x (xtrace), -f (no rcs), -v (verbose)
-    let enable_xtrace = args.iter().any(|a| a == "-x");
-    let enable_verbose = args.iter().any(|a| a == "-v");
-    // -f / --no-rcs: skip startup files AND turn off rcs + hashdirs.
-    // zsh's `-f`-mode `setopt` lists `nohashdirs` and `norcs` for this
-    // reason; without these inserts, zshrs's `setopt` reported an
-    // empty list under `-f`.
-    let no_rcs_flag = args.iter().any(|a| a == "-f" || a == "--no-rcs");
-
-    // Collect `-o NAME` (set option) and `+o NAME` (unset option)
-    // pairs from the CLI before filtering. Direct port of zsh's
-    // option-on-command-line behavior — `zsh -f +o nomatch -c '...'`
-    // disables nomatch for the run. Without parsing, `+o` was taken
-    // as a script file argument and zshrs errored.
-    let mut option_settings: Vec<(String, bool)> = Vec::new();
-    {
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            if (a == "-o" || a == "+o") && i + 1 < args.len() {
-                let setval = a == "-o";
-                option_settings.push((args[i + 1].clone(), setval));
-                i += 2;
-            } else {
-                i += 1;
-            }
-        }
+    // ── c:Src/init.c:401-556 — `parseopts()` ───────────────────────────
+    //
+    // Walk the LEADING option words (`-…` / `+…`) the way C does and
+    // resolve every option through the same two lookups C uses:
+    //   * single letters      → `optlookupc` (Src/options.c:723) over the
+    //                           `zshletters` table (Src/options.c:292)
+    //   * `-o NAME`, `+o NAME`,
+    //     `--NAME`, `+-NAME`  → `optlookup`  (Src/options.c:686)
+    // Each resolution is recorded in argv order and replayed with
+    // `dosetopt(optno, action, toplevel)` inside `apply_cli_flags`.
+    // C applies inline at c:501 / c:526; the Rust bin has to defer
+    // because the emulation mode (`--zsh`, `--bash`, …) is installed
+    // into the option table by `enter_*_mode()` at that point and would
+    // otherwise overwrite whatever the command line asked for. This is
+    // the same ordering C gets from `parseopts_setemulate` (c:359)
+    // running before the first option character is consumed.
+    //
+    // Before this port the block recognised only `-f`, `-x`, `-v` and a
+    // separated `-o NAME`; every other option letter was dropped on the
+    // floor. `zshrs -e script.sh` ran the script WITHOUT errexit, `-u`
+    // never errored on an unset parameter, and `-n` executed the script
+    // instead of only parsing it. A per-letter differential against
+    // `zsh -f` showed 47 of the 57 letters in `zshletters` diverging.
+    //
+    // c:289-290 — the letter table C consults is `kshletters` when
+    // SHOPTIONLETTERS is set, which is an OPT_BOURNE default (sh/ksh
+    // emulation). C has the emulation installed before parseopts runs;
+    // raise the flag up-front for the Bourne modes so `optlookupc`
+    // picks the right table, and let `enter_*_mode()` re-establish the
+    // complete option set afterwards.
+    if matches!(
+        shell_mode(),
+        ShellMode::Ksh | ShellMode::Posix | ShellMode::Dash
+    ) {
+        zsh::ported::options::opt_state_set("shoptionletters", true);
     }
 
-    // Filter out flags that don't affect -c / script dispatch and reject
-    // unknown long options so typos (e.g. `--poop`, `--dump-wordgcode`)
-    // fail loudly instead of falling through to interactive shell startup.
-    //
-    // The filter must enumerate every long flag the binary recognizes —
-    // either to consume it here, or to pass it through for downstream
-    // detection. Long flags handled by earlier `return`-on-match blocks
-    // (--help/--version/--doctor/--daemon/--dump-*) never reach this loop.
-    // After `--`, all remaining tokens are positional.
+    // Resolved `(optno, action)` pairs in argv order. `action` is true
+    // for a `-` word (set) and false for a `+` word (unset); a negative
+    // `optno` carries the inverted-sense marker (`-n` ↔ EXECOPT), which
+    // `dosetopt` flips at c:739-741.
+    let mut option_actions: Vec<(i32, bool)> = Vec::new();
+    // c:400 — `*cmdp`: set when a `-c` option letter was consumed, so
+    // the dispatch below knows the first operand is the command string
+    // and not a script path. Tracked here rather than re-scanned out of
+    // the filtered argv because after `-b` (c:511-517, option break) a
+    // literal `-c` among the operands is NOT the flag.
+    let mut cmd_word_seen = false;
     let args: Vec<String> = {
+        use zsh::ported::options::{optlookup, optlookupc};
+        use zsh::ported::zsh_h::{isset, OPT_INVALID, SHOPTIONLETTERS};
+
+        // c:411-417 — `WARN_OPTION` + `return 1`, which parseargs turns
+        // into `exit(1)` at c:291. Message text matches C's wording
+        // ("bad option: -%c" c:522, "no such option: %s" c:494) with
+        // zshrs's program prefix.
+        fn bad_option(msg: String) -> ! {
+            eprintln!("zshrs: {}", msg);
+            std::process::exit(1);
+        }
+
+        // zshrs-only long flags. These are NOT zsh options, so the
+        // faithful c:511 `optlookup` would reject them; they are
+        // consumed here after having been read off the raw argv by the
+        // shell-mode scan (line 1415) and `--disasm` (line 1286).
+        const ZSHRS_LONG_FLAGS: &[&str] = &[
+            "zsh-compat",
+            "zsh",
+            "bash",
+            "ksh",
+            "mksh",
+            "pdksh",
+            "sh",
+            "dash",
+            "ash",
+            "csh",
+            "posix",
+            "disasm",
+        ];
+
         let mut out: Vec<String> = Vec::new();
-        let mut i = 0;
-        let mut saw_dashdash = false;
+        // c:277 — `argv0 = argzero = posixzero = *argv++;`
+        if let Some(a0) = args.first() {
+            out.push(a0.clone());
+        }
+        let mut i = 1usize;
+        let mut optionbreak = false; // c:403
+        'words: while i < args.len() {
+            // c:418 — `while (!optionbreak && *argv &&
+            //            (**argv == '-' || **argv == '+'))`
+            if optionbreak {
+                break;
+            }
+            let word = args[i].clone();
+            if !(word.starts_with('-') || word.starts_with('+')) {
+                break;
+            }
+            let action = word.starts_with('-'); // c:420
+                                                // c:421-422 — `if (!argv[0][1]) *argv = "--";`: a bare `-`
+                                                // or `+` is rewritten to `--`, which the character loop
+                                                // below immediately reads as the end-of-options marker.
+            let chars: Vec<char> = if word.chars().count() == 1 {
+                vec!['-', '-']
+            } else {
+                word.chars().collect()
+            };
+            let mut p = 1usize; // c:423 `while (*++*argv)`
+            while p < chars.len() {
+                let ch = chars[p];
+                if ch == '-' {
+                    // c:425-429 — the pseudo-option `--` ends options.
+                    if p + 1 == chars.len() {
+                        i += 1;
+                        break 'words;
+                    }
+                    // c:430-431 — `-` is only allowed immediately after
+                    // the leading `-`/`+`; anywhere else is a bad
+                    // option string.
+                    if p != 1 {
+                        bad_option(format!("bad option string: '{}'", word));
+                    }
+                    // c:432 — `++*argv` steps past the second dash.
+                    let long: String = chars[p + 1..].iter().collect();
+                    if ZSHRS_LONG_FLAGS.contains(&long.as_str()) {
+                        break;
+                    }
+                    // c:447-455 `--version` / c:456-459 `--help` are
+                    // served by the earlier return-on-match blocks in
+                    // this bin, so they never reach here.
+                    // c:460-471 `--emulate MODE` — the mode name is read
+                    // by the shell-mode scan at line 1415; consume the
+                    // flag and its argument.
+                    if long == "emulate" {
+                        i += 1; // c:462 `++argv`
+                        if i >= args.len() {
+                            bad_option("--emulate: argument required".to_string());
+                        }
+                        break; // c:470
+                    }
+                    // c:473-475 — `-` characters are allowed in long
+                    // options; they map onto `_`.
+                    let name = long.replace('-', "_");
+                    // c:493-497 — `longoptions:` → optlookup + dosetopt.
+                    let optno = optlookup(&name);
+                    if optno == OPT_INVALID {
+                        bad_option(format!("no such option: {}", long));
+                    }
+                    option_actions.push((optno, action));
+                    break; // c:507
+                }
+                // c:511-517 — `-b` ends option processing at the end of
+                // this word, but only while SHOPTIONLETTERS is unset (in
+                // ksh/sh emulation `b` is an ordinary option letter).
+                if ch == 'b' && !isset(SHOPTIONLETTERS) {
+                    optionbreak = true; // c:516
+                    p += 1;
+                    continue;
+                }
+                // c:518-527 — `-c command`: the command string is the
+                // NEXT argv word, consumed at c:549 (`doneoptions`).
+                // Emit a normalised `-c` marker below so the dispatch
+                // finds it regardless of clumping (`-fc`, `-ic`).
+                if ch == 'c' {
+                    cmd_word_seen = true; // c:524 `*cmdp = *argv`
+                    p += 1;
+                    continue;
+                }
+                // c:528-533 — `-o NAME` / `-oNAME`: the option name is
+                // the rest of this word, or the next word when the rest
+                // is empty.
+                if ch == 'o' {
+                    let attached: String = chars[p + 1..].iter().collect();
+                    let name = if attached.is_empty() {
+                        i += 1; // c:529 `argv++`
+                        match args.get(i) {
+                            Some(n) => n.clone(),
+                            // c:531-532
+                            None => bad_option("string expected after -o".to_string()),
+                        }
+                    } else {
+                        attached
+                    };
+                    let optno = optlookup(&name); // c:493
+                    if optno == OPT_INVALID {
+                        bad_option(format!("no such option: {}", name)); // c:494
+                    }
+                    option_actions.push((optno, action)); // c:501
+                    break; // c:507
+                }
+                // c:509-516 — whitespace inside an option word is only
+                // legal if the whole remainder is whitespace.
+                if ch.is_whitespace() {
+                    if chars[p..].iter().any(|c| !c.is_whitespace()) {
+                        bad_option(format!("bad option string: '{}'", word));
+                    }
+                    break; // c:515
+                }
+                // c:517-534 — a single option letter.
+                let optno = optlookupc(ch); // c:520
+                if optno == OPT_INVALID {
+                    bad_option(format!("bad option: -{}", ch)); // c:521
+                }
+                option_actions.push((optno, action)); // c:526
+                p += 1;
+            }
+            i += 1;
+        }
+        // c:548-553 — `doneoptions:` — when `-c` was seen the command
+        // string is the first remaining word. Re-emit the `-c` marker
+        // so the dispatch below reads `args[1] = "-c"`, `args[2] = cmd`.
+        if cmd_word_seen {
+            if i >= args.len() {
+                // c:550-551 — `WARN_OPTION("string expected after -%s")`
+                bad_option("string expected after -c".to_string());
+            }
+            out.push("-c".to_string());
+        }
+        // Remaining words are the script / command string and operands.
         while i < args.len() {
-            let a = &args[i];
-            if saw_dashdash {
-                out.push(a.clone());
-                i += 1;
-                continue;
-            }
-            if a == "--" {
-                saw_dashdash = true;
-                out.push(a.clone());
-                i += 1;
-                continue;
-            }
-            // Long flags consumed here: don't propagate to downstream
-            // -c / script dispatch (their effect is captured earlier).
-            if a == "--zsh-compat"
-                || a == "--zsh"
-                || a == "--bash"
-                || a == "--ksh"
-                || a == "--mksh"
-                || a == "--pdksh"
-                || a == "--sh"
-                || a == "--dash"
-                || a == "--ash"
-                || a == "--csh"
-                || a == "--posix"
-                || a == "-f"
-                || a == "--no-rcs"
-                || a == "-x"
-                || a == "-v"
-                || a == "--disasm"
-            {
-                i += 1;
-                continue;
-            }
-            // `--emulate MODE` — consume the flag AND the next arg.
-            if a == "--emulate" && i + 1 < args.len() {
-                i += 2;
-                continue;
-            }
-            if (a == "-o" || a == "+o") && i + 1 < args.len() {
-                // Consume the next arg as the option name and skip
-                // both — already captured above.
-                i += 2;
-                continue;
-            }
-            // Long flags passed through for later detection: --login is
-            // checked downstream at the is_login site; --xtrace / --verbose
-            // are checked at the argv-scan sites.
-            if a == "--login" || a == "--xtrace" || a == "--verbose" {
-                out.push(a.clone());
-                i += 1;
-                continue;
-            }
-            // Any remaining `--*` is unknown. C zsh emits
-            // `zsh: no such option: <name>` (no leading dashes); match that.
-            if let Some(name) = a.strip_prefix("--") {
-                eprintln!("zshrs: no such option: {}", name);
-                std::process::exit(1);
-            }
-            out.push(a.clone());
+            out.push(args[i].clone());
             i += 1;
         }
         out
     };
+
+    // Final requested state of a named option, derived from the ordered
+    // action list (last write wins, exactly as C's sequential `dosetopt`
+    // calls do). Used for the three flags that drive control flow in
+    // this bin rather than only the option table.
+    let final_opt_state = |name: &str| -> Option<bool> {
+        let target = zsh::ported::options::optlookup(name);
+        let mut state = None;
+        for &(optno, action) in &option_actions {
+            // c:739-741 — a negative optno inverts the requested value.
+            let (idx, value) = if optno < 0 {
+                (-optno, !action)
+            } else {
+                (optno, action)
+            };
+            if idx == target {
+                state = Some(value);
+            }
+        }
+        state
+    };
+    let enable_xtrace = final_opt_state("xtrace").unwrap_or(false);
+    let enable_verbose = final_opt_state("verbose").unwrap_or(false);
+    // `-f` / `+o rcs` / `--no-rcs` all resolve to RCS-off; that is the
+    // flag that suppresses the startup files, so read it back off the
+    // resolved actions rather than re-scanning argv text (which missed
+    // the clumped `-fc` and `-o norcs` spellings).
+    let no_rcs_flag = final_opt_state("rcs").map(|on| !on).unwrap_or(false);
 
     /// Apply CLI flags and shell mode to executor
     fn apply_cli_flags(
@@ -1958,7 +2111,7 @@ pub fn zshrs_main() {
         xtrace: bool,
         verbose: bool,
         no_rcs: bool,
-        opts: &[(String, bool)],
+        opt_actions: &[(i32, bool)],
     ) {
         // Apply shell mode
         executor.zsh_compat = is_zsh_mode();
@@ -1980,11 +2133,33 @@ pub fn zshrs_main() {
             zsh::ported::options::opt_state_set("verbose", true);
         }
         if no_rcs {
-            // Match zsh -f: rcs and hashdirs default-on options are
-            // turned off so `setopt` lists `nohashdirs norcs`. zsh
-            // keeps globalrcs on (only the user-rcs files are skipped).
+            // Match zsh -f: RCS is turned off so `setopt` lists `norcs`.
+            // zsh keeps globalrcs on (only the user-rcs files are
+            // skipped). HASHDIRS is not touched here — it derives from
+            // INTERACTIVE below, the way c:314-315 does it.
             zsh::ported::options::opt_state_set("rcs", false);
-            zsh::ported::options::opt_state_set("hashdirs", false);
+        }
+        // c:Src/init.c:298 and c:526 — both the script-file dispatch
+        // (`opts[INTERACTIVE] &= 1`) and `-c` (`new_opts[INTERACTIVE]
+        // &= 1`) clear the default-on sentinel 2 → 0. Only an explicit
+        // `-i` (which writes 1) survives that mask, so establish OFF
+        // here and let the replayed option words below override it.
+        // `apply_cli_flags` only runs on those two dispatch paths; the
+        // no-script/no-command path goes through
+        // `ported::init::parseargs`, which keeps the full 0/1/2 model.
+        zsh::ported::options::opt_state_set("interactive", false);
+        // c:Src/init.c:368 — `opts[USEZLE] = 1;` in
+        // `parseopts_setemulate`, i.e. before the option words are read,
+        // so an explicit `-Z` / `+Z` overrides it and `init_io` gets the
+        // final say below.
+        zsh::ported::options::opt_state_set("zle", true);
+        // c:Src/init.c:501 / c:526 — `dosetopt(optno, action, toplevel,
+        // new_opts)` for every option word, in argv order. `force` is
+        // the C `toplevel` flag (1 here), so the startup-only options
+        // INTERACTIVE / SHINSTDIN / SINGLECOMMAND / USEZLE are settable
+        // from the command line exactly as they are in C's parseargs.
+        for &(optno, action) in opt_actions {
+            zsh::ported::options::dosetopt(optno, action as i32, 1);
         }
         // c:Src/init.c:312-315 — `if (opts[MONITOR] == 2)
         //   opts[MONITOR] = opts[INTERACTIVE]; if (opts[HASHDIRS]
@@ -1996,48 +2171,57 @@ pub fn zshrs_main() {
         // emitted nothing because hashdirs stayed at its emulate-
         // ZSH default ON, matching the no-divergence filter at
         // Src/options.c:462. Bug #87 in docs/BUGS.md.
-        let stdin_isatty = unsafe { libc::isatty(0) != 0 };
-        if !stdin_isatty {
-            zsh::ported::options::opt_state_set("monitor", false);
-            zsh::ported::options::opt_state_set("hashdirs", false);
+        let interactive = zsh::ported::options::opt_state_get("interactive").unwrap_or(false);
+        zsh::ported::options::opt_state_set("monitor", interactive);
+        zsh::ported::options::opt_state_set("hashdirs", interactive);
+        // c:Src/init.c:703-710 — `init_io`:
+        //   if (interact) { init_shout();
+        //                   if (!SHTTY || !shout) opts[USEZLE] = 0; }
+        //   else opts[USEZLE] = 0;
+        // The comment above it says "only use zle if SHTTY != -1", but
+        // the code tests `!SHTTY`, i.e. SHTTY == 0 — and `movefd` never
+        // hands back fd 0. `!shout` cannot fire either: `init_shout`
+        // falls back to `shout = stderr` when SHTTY == -1 (c:735-740,
+        // "Since we're interactive, it's nice to have somewhere to
+        // write"). So the branch collapses to `USEZLE = interact`, which
+        // is why `zsh -f -i -c …` reports `zle` on even with no
+        // controlling terminal at all. Reproduce the observable rule,
+        // not the comment.
+        if !interactive {
+            zsh::ported::options::opt_state_set("zle", false); // c:707/710
         }
-        // Apply CLI `-o NAME` / `+o NAME` option settings.
-        for (raw, set_val) in opts {
-            let canonical = raw.to_lowercase().replace(['_', '-'], "");
-            zsh::ported::options::opt_state_set(&canonical, *set_val);
+        // c:Src/init.c:715-718 — `if (opts[MONITOR]) { if (SHTTY == -1)
+        //   opts[MONITOR] = 0; … }`. MONITOR, unlike USEZLE, really does
+        // need a terminal. SHTTY is whatever `init_io` would have
+        // acquired: fd 0 or fd 1 when either is a tty (c:640, c:678),
+        // else `/dev/tty` (c:682). The `-c` / script dispatch never
+        // reaches `init_io` — only the no-command path does, through
+        // `ported::init::zsh_main` — so make the same call here and
+        // close the probe fd again, since this path never edits a line.
+        let has_shtty = unsafe {
+            libc::isatty(0) != 0 || libc::isatty(1) != 0 || {
+                let fd = libc::open(c"/dev/tty".as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+                if fd >= 0 {
+                    libc::close(fd);
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if !has_shtty {
+            zsh::ported::options::opt_state_set("monitor", false); // c:718
         }
     }
 
-    // c:Src/init.c parseargs — options are scanned in order, and `-c` takes
-    // the NEXT word as the command string. It is not required to be the
-    // first option: `zsh -i -c 'print hi'`, `zsh -l -c …`, and the clumped
-    // `zsh -fi -c …` all run the command. The filter above only consumes a
-    // fixed set of flags (`-f`, `-x`, `-v`, `--no-rcs`, the emulation modes,
-    // `-o NAME`), so any other option — `-i`, `-l`, `-m`, … — survives into
-    // `args` and pushed `-c` off index 1. The old positional `args[1] ==
-    // "-c"` test then failed and the binary exited 0 with the command never
-    // run and nothing printed on stderr.
-    //
-    // Scan only the leading option words: stop at `--` or at the first
-    // non-option, so a literal `-c` appearing among the operands after the
-    // command string (`zsh -c 'print $1' zero -c`) is not mistaken for the
-    // flag.
-    let cmd_idx = {
-        let mut found = None;
-        let mut i = 1;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" || !a.starts_with('-') {
-                break;
-            }
-            if a == "-c" {
-                found = Some(i);
-                break;
-            }
-            i += 1;
-        }
-        found
-    };
+    // c:Src/init.c:548-553 (`doneoptions:`) — `-c` takes the NEXT word
+    // as the command string. It is not required to be the first option:
+    // `zsh -i -c 'print hi'`, `zsh -l -c …` and the clumped `zsh -fic …`
+    // all run the command. The option walk above already decided this
+    // and re-emitted a normalised `-c` marker at index 1, so the index
+    // is fixed — no second scan of the filtered argv, which used to
+    // mistake a post-`-b` (option-break) `-c` operand for the flag.
+    let cmd_idx = if cmd_word_seen { Some(1) } else { None };
     // Handle -c 'command' syntax
     if let Some(ci) = cmd_idx.filter(|ci| ci + 1 < args.len()) {
         let code = &args[ci + 1];
@@ -2048,7 +2232,7 @@ pub fn zshrs_main() {
             enable_xtrace,
             enable_verbose,
             no_rcs_flag,
-            &option_settings,
+            &option_actions,
         );
         // c:Src/init.c:1340 — `if (cmd)
         //                       setsparam("ZSH_EXECUTION_STRING",
@@ -2271,15 +2455,23 @@ pub fn zshrs_main() {
         return;
     }
 
-    // Handle script file argument
-    if args.len() >= 2 && !args[1].starts_with('-') {
+    // Handle script file argument.
+    // c:Src/init.c:296-303 — after `doneoptions:` the first remaining
+    // word is the script, with NO leading-dash test: `--` and `-b` end
+    // option processing, so `zsh -- -c` runs a FILE named `-c` (and
+    // reports "can't open input file: -c"). The old `!starts_with('-')`
+    // guard silently fell through to the interactive shell instead.
+    // Every genuine option word has already been consumed — and an
+    // unrecognised one exits at c:521 — so anything left here is an
+    // operand whatever it looks like.
+    if args.len() >= 2 {
         let mut executor = ShellExecutor::new();
         apply_cli_flags(
             &mut executor,
             enable_xtrace,
             enable_verbose,
             no_rcs_flag,
-            &option_settings,
+            &option_actions,
         );
         // Port from Src/init.c:295-306 + Src/init.c:1368-1370.
         // In script mode the parsed argv is split as:
