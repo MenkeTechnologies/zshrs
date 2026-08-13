@@ -4154,6 +4154,16 @@ pub static MSEARCHSTR: std::sync::LazyLock<std::sync::Mutex<String>> =
 /// state bitmask: `MS_OK` / `MS_FAILED` / `MS_WRAPPED`.
 pub static MSEARCHSTATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(MS_OK); // c:msearchstate
 
+/// Port of `static Chdata fdat = NULL;` from `Src/Zle/complist.c:2385`.
+/// C uses it for one thing only: to tell `domenuselect` that it is already
+/// running further up the stack (c:2407), in which case the nested call
+/// refreshes the outer frame's match set and returns 0. This port has no
+/// Chdata threading through `runhookdef`, so the flag carries just that
+/// on-the-stack bit; the c:2409-2412 field copy-back is unnecessary here
+/// because the fields it refreshes live in the `amatches` / `nmatches` /
+/// `nmessages` globals that every reader already consults directly.
+pub static FDAT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:2385
+
 /// Port of `static Menusearch msearchstack` from
 /// `Src/Zle/complist.c:2263`. LIFO stack of `menusearch` frames so
 /// `msearchpop` can rewind the incremental search by one char.
@@ -4345,8 +4355,64 @@ pub fn domenuselect(
 
     crate::ported::signals::queue_signals(); // c:2406
 
-    // c:2407-2416 — recursive-entry guard via `fdat` static.
-    // Without the Chdata param + fdat static wired here, skip.
+    // c:2407-2415 —
+    //   if (fdat || (dummy && (!(s = getsparam("MENUSELECT")) ||
+    //                          (dat && dat->num < atoi(s))))) {
+    //       if (fdat) { fdat->matches = dat->matches;
+    //                   fdat->num = dat->num;
+    //                   fdat->nmesg = dat->nmesg; }
+    //       unqueue_signals();
+    //       return 0;
+    //   }
+    //
+    // Two independent bails, both previously MISSING from this port:
+    //
+    //   * `fdat` non-NULL — domenuselect is already on the stack (a nested
+    //     completion re-entered it through the menu_start hook). C just
+    //     refreshes the outer frame's match set and returns.
+    //   * `dummy` non-NULL (i.e. we were called AS the `menu_start` hook,
+    //     not directly by the `menu-select` widget at c:3512, which passes
+    //     NULL for both args) AND either `$MENUSELECT` is unset — the user
+    //     never asked for interactive selection — or there are fewer
+    //     matches than the threshold it names.
+    //
+    // Without the second bail every ordinary TAB that starts menu
+    // completion (GLOB_COMPLETE / `menu` styles / AUTO_MENU) fell into the
+    // whole interactive selection loop, which exits with `2` and thereby
+    // told `after_complete` (compcore.c:522-531) the menu had been ABORTED:
+    // it then ran `foredel` + `inststr(origline)`, throwing away the match
+    // that had just been inserted. Measured on
+    // `--zstyle drop-menu.zsh --case 'cd /src' --sequences tab1`: the line
+    // reverted from `cd /cores/` to `cd /src` while the list below it was
+    // byte-identical to zsh's.
+    //
+    // Bridge notes for the two C pointers this port does not carry:
+    //   * `dat` (Chdata) — `runhookdef` has no chdata plumbing, so the hook
+    //     passes NULL. The C-visible value is non-NULL with
+    //     `dat->num == nmatches` (compcore.c:513), so read that global for
+    //     the `dat->num < atoi(s)` half. The c:2409-2412 copy-back into
+    //     `fdat` is likewise a no-op here: the fields it refreshes
+    //     (matches/num/nmesg) are read from the `amatches`/`nmatches`/
+    //     `nmessages` globals by everything downstream, not from a captured
+    //     struct.
+    //   * `fdat` — modelled as the FDAT recursion flag below (c:2385).
+    {
+        let s = getsparam("MENUSELECT"); // c:2407
+        let dummy_nonnull = !_dummy.is_null(); // c:2407 `dummy`
+        let below_threshold = match &s {
+            // c:2408 `dat && dat->num < atoi(s)` — C's atoi yields 0 for a
+            // non-numeric value, so a junk MENUSELECT never bails here.
+            Some(v) => {
+                let n: i32 = v.trim().parse().unwrap_or(0);
+                crate::ported::zle::compcore::nmatches.load(Ordering::SeqCst) < n
+            }
+            None => false,
+        };
+        if FDAT.load(Ordering::SeqCst) != 0 || (dummy_nonnull && (s.is_none() || below_threshold)) {
+            unqueue_signals(); // c:2413
+            return 0; // c:2414
+        }
+    }
 
     // c:2427-2432 — `if (zlemetaline != NULL) wasmeta = 1; else metafy_line();`
     _wasmeta = if ZLEMETALINE.get().is_some() {
@@ -4427,6 +4493,10 @@ pub fn domenuselect(
     }
     // c:2464 — leave the signal-queued region the entry (c:2406) opened.
     unqueue_signals();
+    // c:2468 — `fdat = dat;`. From here on a nested entry through the
+    // menu_start hook takes the c:2407 bail instead of starting a second
+    // selection loop. Cleared again at c:3489 (the single exit below).
+    FDAT.store(1, Ordering::SeqCst);
 
     // ===== c:2385-2396 loop-local state =====
     let mut acc = 0i32; // c:2392
@@ -6279,6 +6349,7 @@ pub fn domenuselect(
         zrefresh();
     }
     MLBEG.store(-1, Ordering::SeqCst); // c:3513
+    FDAT.store(0, Ordering::SeqCst); // c:3489 `fdat = NULL;`
 
     let _ = step;
     // c:3517 — `return (broken == 2 ? 3 :

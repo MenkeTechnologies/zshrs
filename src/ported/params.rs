@@ -3735,8 +3735,34 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                 // the same element node here — this port keeps assoc values as
                 // plain strings, so build the `PM_SCALAR` node C's hash
                 // carries (c:4156-4166).
-                let entry =
-                    crate::ported::subst::assoc_get(&name).and_then(|m| m.get(pat).cloned());
+                // c:1585 — `if (!(v->pm = (Param) ht->getnode(ht, s)))`. C
+                // resolves an exact key with ONE hash-node lookup; it never
+                // enumerates the table. For a PM_HASHED SPECIAL (`history`,
+                // `functions`, `commands`, `parameters`, … — the partab[] rows
+                // at Src/Modules/parameter.c:2235+) `ht->getnode` is that
+                // row's `getfn`, e.g. `getpmhistory` (c:Src/Modules/
+                // parameter.c:1156), which is a single `quietgethist`.
+                // Routing this through `assoc_get` instead materialized the
+                // WHOLE association to read one key: on `$history[$num]` that
+                // meant paging the entire HISTFILE into the ring and building
+                // a 574k-entry map for one event, seconds per completion.
+                // Only the magic rows change path here — a plain assoc still
+                // reads through `assoc_get`, since its values live in
+                // `paramtab_hashed_storage` and carry no getfn.
+                // c:570-575 — nameref deref before the read (what `assoc_get`
+                // does on its own way in).
+                let hname = match resolve_nameref_name(&name, None) {
+                    nameref_resolution::Target { name: t_, .. } => t_,
+                    _ => name.clone(),
+                };
+                let entry = if paramtab_hashed_storage()
+                    .lock()
+                    .map_or(true, |st| st.contains_key(hname.as_str()))
+                {
+                    crate::ported::subst::assoc_get(&hname).and_then(|m| m.get(pat).cloned())
+                } else {
+                    crate::vm_helper::partab_get(&hname, pat) // c:1585 ht->getnode
+                };
                 let mut elem = param::default();
                 elem.node.nam = pat.to_string();
                 elem.node.flags = PM_SCALAR as i32;
@@ -5861,7 +5887,12 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
                     // sh:34-35) left both names typed "undefined".
                     crate::vm_helper::mark_module_param_used(name);
                     KEYS_.with(|k| k.borrow_mut().clear());
-                    (e_.scanfn)(std::ptr::null_mut(), Some(cb_), 0);
+                    // c:3138 — `paramvalarr(…, SCANPM_WANTKEYS)`.
+                    (e_.scanfn)(
+                        std::ptr::null_mut(),
+                        Some(cb_),
+                        crate::ported::zsh_h::SCANPM_WANTKEYS as i32,
+                    );
                     Some(KEYS_.with(|k| k.borrow().clone()))
                 })() {
                     return Some(keys); // c:3138

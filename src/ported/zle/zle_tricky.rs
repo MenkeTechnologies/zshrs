@@ -877,6 +877,23 @@ pub fn docomplete(lst: i32) -> i32 {
     // `interactive: /sbin[]`.
     crate::ported::zle::compcore::metafy_line();
 
+    // c:654-660 — `inwhat = IN_NOTHING; zsfree(qipre); qipre = ztrdup("");
+    //               zsfree(qisuf); qisuf = ztrdup(""); zsfree(autoq);
+    //               autoq = NULL;`
+    // The quote state is per-completion: `get_comp_string` below only ever
+    // PREPENDS to `qipre` / APPENDS to `qisuf` (c:1753-1765), so without
+    // this reset the quotes of every previous Tab would accumulate.
+    crate::ported::zle::compcore::INWHAT.store(crate::ported::zsh_h::IN_NOTHING, Ordering::SeqCst); // c:654
+    if let Ok(mut g) = QIPRE.get_or_init(|| Mutex::new(String::new())).lock() {
+        g.clear(); // c:655-656
+    }
+    if let Ok(mut g) = QISUF.get_or_init(|| Mutex::new(String::new())).lock() {
+        g.clear(); // c:657-658
+    }
+    if let Ok(mut g) = AUTOQ.get_or_init(|| Mutex::new(String::new())).lock() {
+        g.clear(); // c:659-660 — `zsfree(autoq); autoq = NULL;`
+    }
+
     // c:664-810 — `get_comp_string()` extracts the cursor word and
     // sets origword/lincmd/wb/we. The Rust port runs the (best-effort)
     // extractor for its side effects (LINCMD/WB/WE) and uses the
@@ -2655,6 +2672,99 @@ pub fn get_comp_string() -> Option<String> {
             ADDEDX.store(0, Ordering::SeqCst);
         }
 
+        // c:1728-1776 — quote-form detection. When the word being completed
+        // is the INSIDE of a quoted string, the lexer left the opening
+        // quote as an `inull` marker (`Snull` for `'`, `Dnull` for `"`,
+        // `String`/`Qstring` + `Snull` for `$'`). C records the quote in
+        // three globals the whole completion system then reads:
+        //   * `instring`  — `callcompfunc` (compcore.c:669-693) turns it into
+        //                   `$compstate[quote]` / `$compstate[quoting]`;
+        //   * `qipre`/`qisuf` — become `$QIPREFIX` / `$QISUFFIX`
+        //                   (compcore.c:742-745) and are prepended/appended to
+        //                   every match's ipre/isuf (compcore.c:2934-2941);
+        //   * `autoq`     — the quote `do_single` re-closes the word with
+        //                   (compresult.c).
+        // None of this was ported, so `instring` stayed `QT_NONE` from
+        // c:1157 and `qipre`/`qisuf` stayed empty for every completion:
+        // `ls "fo<TAB>` lost its opening `"` off the line and completers
+        // that branch on `$QIPREFIX` (Completion/Unix/Type/_remote_files,
+        // Completion/Zsh/Type/_vars) took the unquoted path.
+        //
+        // NOT ported from this hunk: c:1709-1726 (the `parambeg`/`${…}`
+        // level walk that rewrites Snull/Dnull to literal quotes) and
+        // c:1774-1776 (the BANGHIST `\!` sanitize, which rewrites `s` in
+        // place with `Bnull`). Neither can fire for the words this block
+        // accepts: c:1709-1726 only rewrites when the word is a parameter
+        // expansion (whose first char is `String` + `Inbrace`, failing the
+        // test below), and the BANGHIST walk only changes bytes the
+        // untokenize at the return already drops.
+        {
+            use crate::ported::zsh_h::{Qstring, Stringg, QT_DOLLARS, QT_DOUBLE, QT_SINGLE};
+            let sc: Vec<char> = s.chars().collect();
+            let c0 = sc.first().copied();
+            let c1 = sc.get(1).copied();
+            // c:1728-1730 — `(*s == Snull || *s == Dnull ||
+            //   ((*s == String || *s == Qstring) && s[1] == Snull))
+            //   && !has_real_token(s + 1)`
+            let quoted = (c0 == Some(snull)
+                || c0 == Some(dnull)
+                || ((c0 == Some(Stringg) || c0 == Some(Qstring)) && c1 == Some(snull)))
+                && !has_real_token(&sc[1.min(sc.len())..].iter().collect::<String>());
+            if quoted {
+                let mut sl = sc.len(); // c:1731 — `int sl = strlen(s);`
+                let mut qtptr = 0usize; // c:1732 — `char *qtptr = s;`
+                let mut q: &str;
+                match c0 {
+                    // c:1735-1738
+                    x if x == Some(snull) => {
+                        q = "'";
+                        INSTRING.store(QT_SINGLE, Ordering::SeqCst);
+                    }
+                    // c:1740-1743
+                    x if x == Some(dnull) => {
+                        q = "\"";
+                        INSTRING.store(QT_DOUBLE, Ordering::SeqCst);
+                    }
+                    // c:1745-1751 — `$'…'`: q is "$'", and qtptr/sl skip the
+                    // leading String/Qstring so the closing-quote test below
+                    // still compares against the `Snull` at qtptr[0].
+                    _ => {
+                        q = "$'";
+                        INSTRING.store(QT_DOLLARS, Ordering::SeqCst);
+                        qtptr += 1;
+                        sl -= 1;
+                    }
+                }
+                // c:1753-1755 — `n = tricat(qipre, q, ""); qipre = n;`
+                if let Ok(mut g) = QIPRE.get_or_init(|| Mutex::new(String::new())).lock() {
+                    g.push_str(q); // c:1753-1755
+                }
+                // c:1760-1761 — `if (*q == '$') q++;`
+                if q.starts_with('$') {
+                    q = &q[1..];
+                }
+                // c:1762-1766 — `if (sl > 1 && qtptr[sl - 1] == *qtptr)
+                //                    qisuf = tricat(q, qisuf, "");`
+                // i.e. the word already carries its CLOSING quote, so the
+                // suffix has to carry it too.
+                if sl > 1 && sc.get(qtptr + sl - 1).copied() == sc.get(qtptr).copied() {
+                    if let Ok(mut g) = QISUF.get_or_init(|| Mutex::new(String::new())).lock() {
+                        g.insert_str(0, q); // c:1763-1765
+                    }
+                }
+                // c:1767 — `autoq = ztrdup(q);`
+                if let Ok(mut g) = AUTOQ.get_or_init(|| Mutex::new(String::new())).lock() {
+                    *g = q.to_string();
+                }
+                tracing::debug!(
+                    target: "compsys_args",
+                    qipre = %qipre_get(), qisuf = %qisuf_get(),
+                    instring = INSTRING.load(Ordering::SeqCst),
+                    "get_comp_string quote-form"
+                );
+            }
+        }
+
         // c:2219 — zcontext_restore(); return s.
         // NOTE: quote-form cleanup (c:1709-1926) + brace-expansion
         // (c:1931-2218) not ported; return the lexer word untokenized.
@@ -3789,6 +3899,46 @@ pub static LASTPOSTBR: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock:
 pub static COMPQUOTE: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
 /// Port of `mod_export char *autoq` from `Src/Zle/zle_tricky.c`.
 pub static AUTOQ: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+
+/// Port of `mod_export char *qipre` from `Src/Zle/zle_tricky.c:137`
+/// (`mod_export char *qipre, *qisuf, *autoq;`) — the "ignored quoted
+/// prefix": the opening quote character(s) of the word being completed
+/// (compctl.c:1729 documents the pair as "ignored quoted string").
+///
+/// `docomplete` (c:655-656) clears it, `get_comp_string` (c:1753-1755)
+/// prepends the quote it detected, `callcompfunc` (compcore.c:742-743)
+/// publishes it as `compqiprefix` = `$QIPREFIX`, and `addmatches`
+/// (compcore.c:2170) reads it back from `compqiprefix` so a completer's
+/// `compset -q` edit takes effect. `add_match_data` (compcore.c:2934-2941)
+/// then prepends it to every match's `ipre`.
+///
+/// This was previously looked up as a PARAMETER named `qipre`
+/// (compcore.rs `qipre_get`), and no such parameter has ever existed —
+/// the read always missed and `$QIPREFIX` was hardcoded empty at
+/// compcore.rs c:743, so quoted completion lost its opening quote.
+pub static QIPRE: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // c:137
+/// Port of `mod_export char *qisuf` from `Src/Zle/zle_tricky.c:137` —
+/// the closing-quote counterpart of [`QIPRE`]. Published as
+/// `compqisuffix` = `$QISUFFIX`.
+pub static QISUF: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // c:137
+
+/// Reads `qipre` (c:137). Helper only — C dereferences the global
+/// directly; the port needs the `OnceLock`/`Mutex` dance.
+pub fn qipre_get() -> String {
+    // c:137
+    QIPRE.get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+/// Reads `qisuf` (c:137).
+pub fn qisuf_get() -> String {
+    // c:137
+    QISUF.get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
 
 /// Port of `mod_export int menucmp` from `Src/Zle/zle_tricky.c:106`.
 /// Non-zero while inside a menu-completion sequence.

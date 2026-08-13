@@ -61,6 +61,175 @@ pub fn hasher(str: &str) -> u32 {
     hashval
 }
 
+/// Port of the node-storage half of `struct hashtable`
+/// (`Src/zsh.h:1175-1235`: `HashNode *nodes; int hsize; int ct;`) as
+/// `Src/hashtable.c` actually drives it — an OPEN-HASHED BUCKET ARRAY:
+///
+///   * bucket index is `ht->hash(nam) % ht->hsize` (c:176/236/260/280);
+///   * a new key goes to the FRONT of its chain (c:194-196 for an empty
+///     bucket, c:214-215 otherwise);
+///   * replacing an existing key keeps that key's POSITION in the chain
+///     (c:187-203 `replacing:` — `hn->next = hp->next`);
+///   * once `ct >= hsize * 2` the table quadruples and every node is
+///     re-added in old-traversal order (c:183/219 → `expandhashtable`
+///     c:458-482);
+///   * an unsorted scan walks bucket 0..hsize-1, each chain head→tail
+///     (`scanmatchtable` c:420-434).
+///
+/// That walk order is OBSERVABLE: `${(k)functions}` /
+/// `${(k)commands}` / `compadd -k <assoc>` all emit it verbatim
+/// (`Src/Modules/parameter.c:480-481` loops `shfunctab->nodes[i]`
+/// directly), and `join_clines` is a non-commutative fold, so the
+/// order matches are added in decides the common prefix `compadd -k`
+/// produces.
+///
+/// The port previously stood a `std::collections::HashMap` in for the
+/// bucket array. That is not merely a different order — `RandomState`
+/// re-seeds per process, so `print -rl -- ${(k)functions}` returned a
+/// DIFFERENT order on every run of the same binary against the same
+/// 46761-function table, and any completion enumerating the table was
+/// nondeterministic.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C reaches these fields through one polymorphic `struct hashtable`
+/// with `hash`/`cmpnodes`/`addnode`/`getnode` function pointers. Rust
+/// has no equivalent of the `HashNode`-as-first-member downcast, so the
+/// storage is a generic struct and the typed wrappers below embed it.
+/// Every method is named for the `Src/hashtable.c` function it ports.
+#[derive(Debug, Clone)]
+pub struct hashtable_nodes<T> {
+    /// `HashNode *nodes` (`Src/zsh.h:1177`) — `hsize` chains. Index 0 of
+    /// a chain is the head, i.e. the most recently inserted key.
+    nodes: Vec<Vec<(String, T)>>,
+    /// `int hsize` (`Src/zsh.h:1179`) — number of buckets.
+    hsize: usize,
+    /// `int ct` (`Src/zsh.h:1181`) — number of live nodes.
+    ct: usize,
+}
+
+impl<T> hashtable_nodes<T> {
+    /// Port of `newhashtable(int size, …)` from `Src/hashtable.c:100` —
+    /// `zshcalloc(size * sizeof(HashNode))` + `hsize = size` + `ct = 0`.
+    pub fn newhashtable(size: usize) -> Self {
+        // c:100
+        let size = size.max(1); // c:115 — a 0-bucket table can't be indexed
+        let mut nodes = Vec::with_capacity(size);
+        nodes.resize_with(size, Vec::new); // c:116
+        Self {
+            nodes,
+            hsize: size, // c:117
+            ct: 0,       // c:118
+        }
+    }
+
+    /// Port of `expandhashtable(HashTable ht)` from `Src/hashtable.c:458`.
+    /// Quadruples `hsize`, zeroes `ct`, and re-adds every node walking the
+    /// OLD table in traversal order (bucket 0..osize-1, chain head→tail)
+    /// so the new chains come out in C's exact order.
+    fn expandhashtable(&mut self) {
+        // c:458
+        let osize = self.hsize; // c:463
+        let onodes = std::mem::take(&mut self.nodes); // c:464
+        self.hsize = osize * 4; // c:466
+        self.nodes = Vec::with_capacity(self.hsize);
+        self.nodes.resize_with(self.hsize, Vec::new); // c:467
+        self.ct = 0; // c:468
+                     // c:471-476 — `for (i = 0, ha = onodes; i < osize; i++, ha++)
+                     //                for (hn = *ha; hn;) { hp = hn->next;
+                     //                    ht->addnode(ht, hn->nam, hn); hn = hp; }`
+        for bucket in onodes {
+            for (nam, node) in bucket {
+                let hashval = hasher(&nam) as usize % self.hsize; // c:176
+                self.nodes[hashval].insert(0, (nam, node)); // c:214-215
+                self.ct += 1; // c:219 (the expand test can't re-fire here)
+            }
+        }
+    }
+
+    /// Port of `addhashnode2(HashTable ht, char *nam, void *nodeptr)` from
+    /// `Src/hashtable.c:168` — inserts, returning the displaced node.
+    pub fn addhashnode2(&mut self, nam: &str, nodeptr: T) -> Option<T> {
+        // c:168
+        let hashval = hasher(nam) as usize % self.hsize; // c:176
+                                                         // c:186-206 — an existing key is replaced IN PLACE, keeping its
+                                                         // position in the chain; ct does not move and no expand fires.
+        if let Some(pos) = self.nodes[hashval].iter().position(|(k, _)| k == nam) {
+            let old = std::mem::replace(&mut self.nodes[hashval][pos], (nam.to_string(), nodeptr));
+            return Some(old.1); // c:203
+        }
+        // c:193-196 / c:214-215 — otherwise the new node goes to the FRONT.
+        self.nodes[hashval].insert(0, (nam.to_string(), nodeptr));
+        self.ct += 1;
+        if self.ct >= self.hsize * 2 {
+            // c:183 / c:219
+            self.expandhashtable(); // c:184 / c:220
+        }
+        None
+    }
+
+    /// Port of `gethashnode2(HashTable ht, const char *nam)` from
+    /// `Src/hashtable.c:255` — lookup WITHOUT the DISABLED filter.
+    pub fn gethashnode2(&self, nam: &str) -> Option<&T> {
+        // c:255
+        let hashval = hasher(nam) as usize % self.hsize; // c:260
+        self.nodes[hashval]
+            .iter()
+            .find(|(k, _)| k == nam) // c:262-265
+            .map(|(_, v)| v)
+    }
+
+    /// Mutable companion of [`hashtable_nodes::gethashnode2`]. C mutates
+    /// straight through the returned `HashNode` pointer; Rust needs the
+    /// separate borrow.
+    pub fn get_mut(&mut self, nam: &str) -> Option<&mut T> {
+        // c:255
+        let hashval = hasher(nam) as usize % self.hsize;
+        self.nodes[hashval]
+            .iter_mut()
+            .find(|(k, _)| k == nam)
+            .map(|(_, v)| v)
+    }
+
+    /// Port of `removehashnode(HashTable ht, const char *nam)` from
+    /// `Src/hashtable.c:275` — unlinks the node from its chain and
+    /// decrements `ct`.
+    pub fn removehashnode(&mut self, nam: &str) -> Option<T> {
+        // c:275
+        let hashval = hasher(nam) as usize % self.hsize; // c:280
+        let pos = self.nodes[hashval].iter().position(|(k, _)| k == nam)?;
+        self.ct -= 1; // c:294
+        Some(self.nodes[hashval].remove(pos).1)
+    }
+
+    /// Port of `emptyhashtable(HashTable ht)` from `Src/hashtable.c:517`
+    /// (`resizehashtable(ht, ht->hsize)`) — frees every node, keeps `hsize`.
+    pub fn emptyhashtable(&mut self) {
+        // c:517
+        for bucket in self.nodes.iter_mut() {
+            bucket.clear(); // c:490-497
+        }
+        self.ct = 0; // c:509
+    }
+
+    /// C's `ht->ct` (`Src/zsh.h:1181`).
+    pub fn len(&self) -> usize {
+        self.ct
+    }
+
+    /// `ht->ct == 0`.
+    pub fn is_empty(&self) -> bool {
+        self.ct == 0
+    }
+
+    /// The unsorted scan order of `scanmatchtable` (`Src/hashtable.c:420-434`):
+    /// bucket 0..hsize-1, each chain head→tail. This IS the order zsh's
+    /// `${(k)assoc}` / `compadd -k` emit.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &T)> {
+        // c:420-434
+        self.nodes.iter().flatten().map(|(k, v)| (k, v))
+    }
+}
+
 // ===========================================================
 // Direct ports of the generic `HashTable` lifecycle / mutation /
 // printer routines from Src/hashtable.c. The Rust port stores
@@ -173,7 +342,10 @@ impl cmdnam_table {
     /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
-            table: HashMap::new(),
+            // hashtable.c:603 — `cmdnamtab = newhashtable(201, "cmdnamtab", NULL)`.
+            // The bucket count is observable: `${(k)commands}` and
+            // `compadd -k commands` emit the raw bucket walk.
+            table: hashtable_nodes::newhashtable(201), // c:603
             path_checked_index: 0,
             path: Vec::new(),
             hash_executables_only: false,
@@ -188,27 +360,28 @@ impl cmdnam_table {
     pub fn set_hash_executables_only(&mut self, value: bool) {
         self.hash_executables_only = value;
     }
-    /// `add` — see implementation.
+    /// `add` — `addhashnode` (`Src/hashtable.c:157`).
     pub fn add(&mut self, cmd: cmdnam) {
-        self.table.insert(cmd.node.nam.clone(), cmd);
+        let nam = cmd.node.nam.clone();
+        let _ = self.table.addhashnode2(&nam, cmd); // c:168
     }
-    /// `get` — see implementation.
+    /// `get` — `gethashnode` (`Src/hashtable.c:231`).
     pub fn get(&self, name: &str) -> Option<&cmdnam> {
         self.table
-            .get(name)
-            .filter(|c| (c.node.flags & DISABLED as i32) == 0)
+            .gethashnode2(name)
+            .filter(|c| (c.node.flags & DISABLED as i32) == 0) // c:239
     }
-    /// `get_including_disabled` — see implementation.
+    /// `get_including_disabled` — `gethashnode2` (`Src/hashtable.c:255`).
     pub fn get_including_disabled(&self, name: &str) -> Option<&cmdnam> {
-        self.table.get(name)
+        self.table.gethashnode2(name) // c:255
     }
-    /// `remove` — see implementation.
+    /// `remove` — `removehashnode` (`Src/hashtable.c:275`).
     pub fn remove(&mut self, name: &str) -> Option<cmdnam> {
-        self.table.remove(name)
+        self.table.removehashnode(name) // c:275
     }
-    /// `clear` — see implementation.
+    /// `clear` — `emptyhashtable` (`Src/hashtable.c:517`).
     pub fn clear(&mut self) {
-        self.table.clear();
+        self.table.emptyhashtable(); // c:517
         self.path_checked_index = 0;
     }
     /// `len` — see implementation.
@@ -235,7 +408,7 @@ impl cmdnam_table {
                 continue;
             };
 
-            if self.table.contains_key(&name) {
+            if self.table.gethashnode2(&name).is_some() {
                 continue;
             }
 
@@ -268,8 +441,9 @@ impl cmdnam_table {
                     .get(dir_index)
                     .cloned()
                     .unwrap_or_else(|| dir.to_string());
-                self.table
-                    .insert(name.clone(), cmdnam_unhashed(&name, vec![segment]));
+                let _ = self
+                    .table
+                    .addhashnode2(&name, cmdnam_unhashed(&name, vec![segment])); // c:168
             }
         }
     }
@@ -291,7 +465,7 @@ impl cmdnam_table {
     /// Get full path for a command. Mirrors C's
     /// `findcmd(name, 1, 0)` lookup via cmdnamtab (Src/exec.c:5260).
     pub fn get_full_path(&self, name: &str) -> Option<PathBuf> {
-        let cmd = self.table.get(name)?;
+        let cmd = self.table.gethashnode2(name)?;
         if (cmd.node.flags & DISABLED as i32) != 0 {
             return None;
         }
@@ -371,53 +545,66 @@ pub fn disablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &st
 }
 
 impl shfunc_table {
-    /// `new` — see implementation.
+    /// `new` — `shfunctab = newhashtable(7, "shfunctab", NULL)`
+    /// (`Src/hashtable.c:814`). The initial bucket count is part of the
+    /// observable scan order, so it must be C's 7 and grow only through
+    /// `expandhashtable`'s x4 rule.
     pub fn new() -> Self {
         Self {
-            table: HashMap::new(),
+            table: hashtable_nodes::newhashtable(7), // hashtable.c:814
         }
     }
-    /// `snapshot` — clone the internal `HashMap<String, Box<shfunc>>`
-    /// for subshell save/restore. Used by `subshell_begin` to capture
-    /// the parent's function set before the subshell body runs, so
-    /// `subshell_end` can restore it (matches C fork-copy semantics
-    /// at `Src/exec.c::entersubsh`).
-    pub fn snapshot(&self) -> std::sync::Arc<HashMap<String, Box<shfunc>>> {
-        std::sync::Arc::new(self.table.clone())
+    /// `snapshot` — clone the whole bucket array for subshell
+    /// save/restore. Used by `subshell_begin` to capture the parent's
+    /// function set before the subshell body runs, so `subshell_end`
+    /// can restore it (matches C fork-copy semantics at
+    /// `Src/exec.c::entersubsh`).
+    ///
+    /// This clones the TABLE, not a `HashMap` of its entries: the scan
+    /// order is part of the state (`Src/Modules/parameter.c:480-481`
+    /// walks `shfunctab->nodes[i]` directly), and rebuilding a bucket
+    /// array from an unordered map would reshuffle `${(k)functions}`
+    /// after every `( … )` / `$( … )`.
+    pub fn snapshot(&self) -> std::sync::Arc<shfunc_table> {
+        std::sync::Arc::new(self.clone())
     }
     /// `restore` — replace the internal table with a saved snapshot.
     /// Called by `subshell_end` after the subshell body completes.
     /// Takes the `Arc`-shared snapshot stored in `SubshellSnapshot`;
     /// unwraps in place when uniquely owned (the common case), else
     /// clones out of the shared handle.
-    pub fn restore(&mut self, snap: std::sync::Arc<HashMap<String, Box<shfunc>>>) {
-        self.table = std::sync::Arc::try_unwrap(snap).unwrap_or_else(|arc| (*arc).clone());
+    pub fn restore(&mut self, snap: std::sync::Arc<shfunc_table>) {
+        *self = std::sync::Arc::try_unwrap(snap).unwrap_or_else(|arc| (*arc).clone());
     }
-    /// Pre-size the table for `additional` more entries. C's
-    /// `newhashtable` takes the expected size up front (`Src/hashtable.c`
-    /// `hcalloc(hashtab->hsize * sizeof(HashNode))`); the Rust port grows
-    /// on demand instead. `compinit` inserts ~46k autoload stubs in one
-    /// batch, so reserving once avoids a dozen rehashes of the whole map.
-    pub fn reserve(&mut self, additional: usize) {
-        self.table.reserve(additional);
-    }
+    /// Formerly pre-sized the backing `HashMap`. C has no such call and
+    /// CANNOT have one: `hsize` only ever moves through
+    /// `expandhashtable`'s x4 steps (`Src/hashtable.c:466`), and the
+    /// bucket count is what `hasher(nam) % hsize` — hence the whole scan
+    /// order — is computed against. Pre-sizing to the batch size would
+    /// put every name in a different bucket than zsh does. Kept as a
+    /// no-op so the `compinit` call site (which is a Rust-only
+    /// optimisation) still compiles.
+    pub fn reserve(&mut self, _additional: usize) {}
 
-    /// `add` — see implementation.
+    /// `add` — `addhashnode2` (`Src/hashtable.c:168`) with the displaced
+    /// node handed back to the caller instead of `freenode`d.
     pub fn add(&mut self, func: shfunc) -> Option<shfunc> {
+        let name = func.node.nam.clone();
         self.table
-            .insert(func.node.nam.clone(), Box::new(func))
+            .addhashnode2(&name, Box::new(func)) // c:168
             .map(|b| *b)
     }
-    /// `get` — see implementation.
+    /// `get` — `gethashnode` (`Src/hashtable.c:231`): DISABLED nodes read
+    /// as absent.
     pub fn get(&self, name: &str) -> Option<&shfunc> {
         self.table
-            .get(name)
+            .gethashnode2(name) // c:236-241
             .map(|b| b.as_ref())
-            .filter(|f| (f.node.flags & DISABLED as i32) == 0)
+            .filter(|f| (f.node.flags & DISABLED as i32) == 0) // c:239
     }
-    /// `get_including_disabled` — see implementation.
+    /// `get_including_disabled` — `gethashnode2` (`Src/hashtable.c:255`).
     pub fn get_including_disabled(&self, name: &str) -> Option<&shfunc> {
-        self.table.get(name).map(|b| b.as_ref())
+        self.table.gethashnode2(name).map(|b| b.as_ref()) // c:255
     }
     /// `get_mut` — see implementation.
     pub fn get_mut(&mut self, name: &str) -> Option<&mut shfunc> {
@@ -426,13 +613,13 @@ impl shfunc_table {
             .map(|b| b.as_mut())
             .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
-    /// `remove` — see implementation.
+    /// `remove` — `removehashnode` (`Src/hashtable.c:275`).
     pub fn remove(&mut self, name: &str) -> Option<shfunc> {
-        self.table.remove(name).map(|b| *b)
+        self.table.removehashnode(name).map(|b| *b) // c:275
     }
     /// `contains_key` — see implementation.
     pub fn contains_key(&self, name: &str) -> bool {
-        self.table.contains_key(name)
+        self.table.gethashnode2(name).is_some()
     }
 
     /// Port of C's `HashTable.addnode` GSU function pointer
@@ -451,7 +638,7 @@ impl shfunc_table {
         }
         let boxed = unsafe { Box::from_raw(shf) };
         let name = boxed.node.nam.clone();
-        let _ = self.table.insert(name, boxed);
+        let _ = self.table.addhashnode2(&name, boxed); // c:168
     }
 
     /// Port of C's `HashTable.getnode` GSU. Returns the raw `Shfunc`
@@ -460,7 +647,7 @@ impl shfunc_table {
     /// lives in the table (i.e. until `remove`/`addnode`-overwrite).
     pub fn getnode(&self, name: &str) -> *mut shfunc {
         self.table
-            .get(name)
+            .gethashnode2(name)
             .filter(|b| (b.node.flags & DISABLED as i32) == 0)
             .map(|b| b.as_ref() as *const shfunc as *mut shfunc)
             .unwrap_or(std::ptr::null_mut())
@@ -470,7 +657,7 @@ impl shfunc_table {
     /// returns disabled nodes too. Used by `unhash`/`enable -f` paths.
     pub fn getnode2(&self, name: &str) -> *mut shfunc {
         self.table
-            .get(name)
+            .gethashnode2(name)
             .map(|b| b.as_ref() as *const shfunc as *mut shfunc)
             .unwrap_or(std::ptr::null_mut())
     }
@@ -511,9 +698,10 @@ impl shfunc_table {
         entries.sort_by(|a, b| a.0.cmp(b.0));
         entries
     }
-    /// `clear` — see implementation.
+    /// `clear` — `emptyhashtable` (`Src/hashtable.c:517`): frees every
+    /// node but keeps the bucket count.
     pub fn clear(&mut self) {
-        self.table.clear();
+        self.table.emptyhashtable(); // c:517
     }
 }
 
@@ -3042,8 +3230,11 @@ pub struct dircache_entry {
 /// cmdnam_table/shfunc_table/reswd_table/alias_table get deleted
 /// in favor of typed views over the shared `HashTable` storage.
 pub struct cmdnam_table {
-    /// `table` field.
-    table: HashMap<String, cmdnam>,
+    /// `table` field — C's `cmdnamtab` bucket array, `hsize = 201`
+    /// (`Src/hashtable.c:603`). Was a `std::collections::HashMap`,
+    /// whose per-process-seeded order made `${(k)commands)` /
+    /// `compadd -k commands` differ on every run.
+    table: hashtable_nodes<cmdnam>,
     /// `path_checked_index` field.
     path_checked_index: usize,
     /// `path` field.
@@ -3059,7 +3250,7 @@ pub struct cmdnam_table {
 
 /// Shell function hash table
 // hash table containing the shell functions                                // c:805
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// `$shfunctab` shell function table.
 /// Port of the `shfunctab` HashTable Src/hashtable.c builds —
 /// `printshfuncnode` / `freeshfuncnode` (Src/builtin.c) hang off
@@ -3075,8 +3266,16 @@ pub struct cmdnam_table {
 /// (`fusevm_bridge.rs:8378`) and the C-style `bin_functions`
 /// port (`builtin.rs:3689+`) write to the same canonical table.
 pub struct shfunc_table {
-    /// `table` field.
-    table: HashMap<String, Box<shfunc>>,
+    /// `table` field — the `nodes`/`hsize`/`ct` bucket array C's
+    /// `shfunctab` is, created at `hsize = 7` (`Src/hashtable.c:814`
+    /// `shfunctab = newhashtable(7, "shfunctab", NULL)`).
+    ///
+    /// It used to be a `std::collections::HashMap`, whose iteration
+    /// order is neither C's bucket walk nor even stable across runs
+    /// (`RandomState` re-seeds per process). `${(k)functions}` and
+    /// `compadd -k functions` read this order straight out
+    /// (`Src/Modules/parameter.c:480-481`), so both were random.
+    table: hashtable_nodes<Box<shfunc>>,
 }
 
 /// Reserved word hash table
