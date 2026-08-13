@@ -6201,8 +6201,33 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     let flags_const = self.builder.add_constant(Value::str(flags_lit));
                     self.builder.emit(Op::LoadConst(flags_const), 0);
+                    // c:Src/exec.c:2603 + :4239-4241 — the VALUE of a scalar
+                    // assignment is preforked with `PREFORK_SINGLE|
+                    // PREFORK_ASSIGN`, for the bare `NAME=VALUE` statement
+                    // (addvars, c:2603 `isstr ? …`) and for the typeset-family
+                    // `NAME=VALUE` ARGUMENT alike (c:4239, inside the
+                    // `WC_ASSIGN_SCALAR` arm). PREFORK_SINGLE is `ssub`
+                    // (c:Src/subst.c:1761), and `ssub` is what turns off
+                    // c:3913's `force_split = !ssub && (spbreak || spsep)` —
+                    // so `local s=${(s::)arr}` must NOT split, it joins at
+                    // c:3917 and yields `1 2 3`.
+                    //
+                    // The bare `x=${(s::)arr}` form already reaches paramsubst
+                    // with the flag: compile_assign wraps that RHS in Dnulls
+                    // and the word leaves through BUILTIN_EXPAND_TEXT mode 5,
+                    // whose singsub is `prefork(&foo, PREFORK_SINGLE)`
+                    // (c:Src/subst.c:520). This fast path calls paramsubst
+                    // directly and had no channel for it, so the split fired
+                    // and the pieces came back re-joined with IFS[0] —
+                    // `1   2   3`. Only an assignment-SHAPED typeset arg
+                    // qualifies: a name-only arg is preforked with
+                    // PREFORK_TYPESET (c:4197) and an array-valued one with
+                    // plain PREFORK_ASSIGN (c:4265), neither of which is ssub.
+                    let ssub = self.scalar_assign_depth > 0
+                        || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0);
+                    self.builder.emit(Op::LoadInt(ssub as i64), 0);
                     self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 3), 0);
                     return;
                 }
             }
@@ -7653,9 +7678,28 @@ impl ZshCompiler {
         // "Globbing is only done for multios."). Without this,
         // `unsetopt multios; echo hi > *.txt` globbed the target
         // instead of creating the literal file `*.txt`.
+        // Mode 8: "unquoted assignment VALUE" — mode 6 plus PREFORK_SINGLE.
+        // c:Src/exec.c:2603 `prefork(vl, isstr ? (PREFORK_SINGLE|
+        // PREFORK_ASSIGN) : PREFORK_ASSIGN, …)` for a bare `NAME=VALUE`
+        // statement, and c:Src/exec.c:4239-4241 `prefork(&svl,
+        // PREFORK_SINGLE|PREFORK_ASSIGN, NULL)` for the typeset-family
+        // `NAME=VALUE` ARGUMENT. PREFORK_SINGLE is `ssub`
+        // (c:Src/subst.c:1761), which turns off the forced split at
+        // c:Src/subst.c:3913 `force_split = !ssub && (spbreak || spsep)` —
+        // so `local s=${(s.:.)str:u}` keeps the separators (`A:B:C`) instead
+        // of splitting and re-joining on IFS[0] (`A B C`).
+        //
+        // Only an assignment-SHAPED word qualifies, hence the
+        // `assign_context_depth` term: a NAME-only typeset argument is
+        // preforked with PREFORK_TYPESET (c:4197) and an array-valued one
+        // with plain PREFORK_ASSIGN (c:4265), and both must keep splatting
+        // one word per element (`local ${(k)assoc}`, `local -a a=(${(s::)x})`).
         let scalar_assign_ctx = self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
+        let ssub_assign_value = scalar_assign_ctx && self.assign_context_depth > 0;
         let mode = if base_mode == 1 && scalar_assign_ctx {
             5
+        } else if base_mode == 0 && ssub_assign_value {
+            8
         } else if base_mode == 0 && scalar_assign_ctx {
             6
         } else if base_mode == 0 && self.redir_word_depth > 0 {

@@ -3951,11 +3951,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // selection — all of that lives inside paramsubst. Compile-time
     // context (DQ / scalar-assign-RHS) flows through executor cells
     // (in_dq_context, in_scalar_assign) bumped by BUILTIN_EXPAND_TEXT.
-    vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, argc| {
+        // argc 3 = the compiler flagged this expansion as the VALUE of a
+        // scalar assignment (`x=…` / `local x=…`), which C preforks with
+        // PREFORK_SINGLE|PREFORK_ASSIGN (c:Src/exec.c:2603 / :4239-4241).
+        // PREFORK_SINGLE is paramsubst's `ssub` (c:Src/subst.c:1761) and
+        // gates off c:3913's `force_split`, so `(s::)` / `(f)` / `(0)` do
+        // not split there. argc 2 = ordinary word, no ssub.
+        let ssub = if argc >= 3 { vm.pop().to_int() != 0 } else { false };
         let flags = vm.pop().to_str();
         let name = vm.pop().to_str();
         let body = format!("${{({}){}}}", flags, name);
-        paramsubst_to_value(&body)
+        let pf_flags = if ssub {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        };
+        paramsubst_to_value_pf(&body, pf_flags)
     });
 
     // `foo[key]=val` — single-key set on an assoc array. Stack: [name, key, value].
@@ -9645,6 +9657,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   3 = AltBackquote — strip backticks, run as cmd-sub
     //   7 = RedirTarget — same as Default but glob gated on MULTIOS
     //         (c:Src/glob.c:2161-2167 xpandredir)
+    //   8 = unquoted assignment VALUE — same as 6 plus PREFORK_SINGLE
+    //         (c:Src/exec.c:2603 / :4239-4241)
     // Single result → Value::str; multi → Value::Array.
     vm.register_builtin(BUILTIN_EXPAND_TEXT, |vm, _argc| {
         let mode = vm.pop().to_int() as u8;
@@ -9812,7 +9826,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         text, prepped, mode
                     );
                 }
-                let pf_flags = if mode == 6 {
+                // Mode 8 = the unquoted VALUE of a `NAME=VALUE` assignment
+                // (bare statement or typeset-family argument). C preforks
+                // exactly that with `PREFORK_SINGLE|PREFORK_ASSIGN`
+                // (c:Src/exec.c:2603 and c:Src/exec.c:4239-4241); the
+                // PREFORK_SINGLE half is paramsubst's `ssub`
+                // (c:Src/subst.c:1761), which gates off the forced split at
+                // c:Src/subst.c:3913.
+                let pf_flags = if mode == 8 {
+                    crate::ported::zsh_h::PREFORK_SINGLE | crate::ported::zsh_h::PREFORK_ASSIGN
+                } else if mode == 6 {
                     crate::ported::zsh_h::PREFORK_ASSIGN
                 } else {
                     0
@@ -9874,7 +9897,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:Src/options.c — `no_brace_expand` (negated
                 // `braceexpand`) gates brace expansion entirely.
                 // When off, `{a,b}` stays literal.
-                let brace_expand = opt_state_get("braceexpand").unwrap_or(true);
+                // c:Src/subst.c:170 — `if (unset(IGNOREBRACES) && !(flags &
+                // PREFORK_SINGLE))` guards the `xpandbraces` loop, so a word
+                // preforked as a scalar (assignment VALUE, mode 8) is NEVER
+                // brace-expanded: `local x={a,b}` stores the five literal
+                // characters. This pass stands in for prefork's loop, so it
+                // owes the same guard.
+                let brace_expand = opt_state_get("braceexpand").unwrap_or(true)
+                    && (pf_flags & crate::ported::zsh_h::PREFORK_SINGLE) == 0; // c:170
                 let pre_brace: Vec<String> = if nodes.is_empty() {
                     vec![String::new()]
                 } else {
@@ -10502,6 +10532,18 @@ fn ksharrays_bare_words(name: &str) -> Vec<String> {
 /// zsh uses LinkList everywhere; the conversion happens at the
 /// boundary back into the VM's stack.
 fn paramsubst_to_value(body: &str) -> Value {
+    paramsubst_to_value_pf(body, 0)
+}
+
+/// `paramsubst_to_value` with an explicit `pf_flags` (`PREFORK_*`) set.
+///
+/// c:Src/subst.c:1627 — `paramsubst(l, n, str, qt, pf_flags, ret_flags)`.
+/// The only caller that needs a non-zero set today is the `${(flags)NAME}`
+/// fast path when the word is a scalar-assignment VALUE: C preforks that with
+/// `PREFORK_SINGLE|PREFORK_ASSIGN` (c:Src/exec.c:2603 for `x=…`,
+/// c:Src/exec.c:4239-4241 for the typeset-family `NAME=…` argument), and
+/// `PREFORK_SINGLE` is the `ssub` that turns off c:3913's forced split.
+fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // c:Src/subst.c:1625 paramsubst's `qt` flag is the C signal that
     // the current expansion is inside `"…"`. The fast-path bridges
     // (BUILTIN_PARAM_*, BUILTIN_BRIDGE_BRACE_ARRAY) used to hardcode
@@ -10512,7 +10554,8 @@ fn paramsubst_to_value(body: &str) -> Value {
     // propagates the DQ flag without changing every bridge call site.
     let qt = with_executor(|exec| exec.in_dq_context > 0);
     let mut ret_flags: i32 = 0;
-    let (_full, _pos, nodes) = crate::ported::subst::paramsubst(body, 0, qt, 0i32, &mut ret_flags);
+    let (_full, _pos, nodes) =
+        crate::ported::subst::paramsubst(body, 0, qt, pf_flags, &mut ret_flags);
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         with_executor(|exec| exec.set_last_status(1));
     }
