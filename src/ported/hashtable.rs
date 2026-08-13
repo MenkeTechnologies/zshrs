@@ -1,7 +1,12 @@
 //! Hash table implementations - port of hashtable.c
 //!
 //! Provides hash tables for commands, shell functions, reserved words, aliases,
-//! and history. Uses Rust's HashMap internally but maintains zsh-compatible APIs.
+//! and history. The four tables whose iteration order is user-visible
+//! (`cmdnamtab`, `shfunctab`, `reswdtab`, `aliastab`/`sufaliastab`)
+//! store their nodes in `hashtable_nodes`, a port of the node-storage
+//! half of C's `struct hashtable` (`Src/zsh.h:1175-1235`), so
+//! `${(k)commands}` / `${(k)functions}` / `$reswords` /
+//! `${(k)aliases}` come out in C's bucket-walk order.
 //!
 //! `cmdnam_table` / `shfunc_table` / `reswd_table` / `alias_table` are
 //! Rust-side typed wrappers. C uses one polymorphic `struct hashtable`
@@ -785,9 +790,14 @@ pub fn enablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str
 }
 
 impl reswd_table {
-    /// `new` — see implementation.
+    /// `new` — port of `createreswdtable()` (`Src/hashtable.c:1120`):
+    /// `newhashtable(23, "reswdtab", NULL)` (`c:1124`) followed by
+    /// `for (rw = reswds; rw->node.nam; rw++) reswdtab->addnode(...)`
+    /// (`c:1138-1139`), which walks the static `reswds[]` array in
+    /// declaration order.
     pub fn new() -> Self {
-        let mut table = HashMap::new();
+        // c:1124 — `reswdtab = newhashtable(23, "reswdtab", NULL);`
+        let mut table = hashtable_nodes::newhashtable(23);
 
         // Direct port of `static struct reswd reswds[]` at
         // Src/hashtable.c:1076-1108. Token IDs are the lextok
@@ -841,8 +851,9 @@ impl reswd_table {
             // `node: hashnode` (zsh.h:1246) so we build the
             // embedded hashnode inline. Mirrors C `{{NULL,
             // "if", 0}, IF}` at hashtable.c:1077+.
-            table.insert(
-                name.to_string(),
+            // c:1138-1139 — `reswdtab->addnode(reswdtab, rw->node.nam, rw)`
+            table.addhashnode2(
+                name,
                 reswd {
                     node: hashnode {
                         next: None,
@@ -856,15 +867,20 @@ impl reswd_table {
 
         Self { table }
     }
-    /// `get` — see implementation.
+    /// `get` — `gethashnode` (`Src/hashtable.c:245`), the lookup that
+    /// skips `DISABLED` nodes (`c:253`); `createreswdtable` wires
+    /// `reswdtab->getnode = gethashnode` (`c:1131`).
     pub fn get(&self, name: &str) -> Option<&reswd> {
+        // c:245
         self.table
-            .get(name)
+            .gethashnode2(name)
             .filter(|r| (r.node.flags & DISABLED as i32) == 0)
     }
-    /// `get_including_disabled` — see implementation.
+    /// `get_including_disabled` — `gethashnode2`
+    /// (`Src/hashtable.c:255`), wired as `reswdtab->getnode2`
+    /// (`c:1132`).
     pub fn get_including_disabled(&self, name: &str) -> Option<&reswd> {
-        self.table.get(name)
+        self.table.gethashnode2(name) // c:255
     }
     /// `disable` — see implementation.
     pub fn disable(&mut self, name: &str) -> bool {
@@ -888,9 +904,12 @@ impl reswd_table {
     pub fn is_reserved(&self, name: &str) -> bool {
         self.get(name).is_some()
     }
-    /// `iter` — see implementation.
+    /// `iter` — the raw bucket walk `getreswords`
+    /// (`Src/Modules/parameter.c:877-880`) does over
+    /// `reswdtab->nodes[]`, which is what `$reswords` /
+    /// `$dis_reswords` expose.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &reswd)> {
-        self.table.iter()
+        self.table.iter() // c:420-434
     }
     /// Port of `addhashnode(HashTable ht, char *nam, void *nodeptr)`
     /// from `Src/hashtable.c:157`. C stores `nodeptr` under `nam` and
@@ -902,7 +921,7 @@ impl reswd_table {
     /// (param_private.c:687 `reswdtab->addnode(reswdtab, ...)`).
     pub fn insert(&mut self, name: &str, rw: reswd) {
         // c:157 addhashnode → c:159 addhashnode2 sets hn->nam = nam
-        self.table.insert(name.to_string(), rw);
+        self.table.addhashnode2(name, rw);
     }
     /// Port of `removehashnode(HashTable ht, const char *nam)` from
     /// `Src/hashtable.c:275`. Unlinks the node keyed by `nam` and
@@ -912,7 +931,7 @@ impl reswd_table {
     /// `removehashnode(reswdtab, "private")`).
     pub fn remove(&mut self, name: &str) -> Option<reswd> {
         // c:275
-        self.table.remove(name)
+        self.table.removehashnode(name)
     }
 }
 
@@ -999,13 +1018,20 @@ pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
 }
 
 impl alias_table {
-    /// `new` — see implementation.
+    /// `new` — `newhashtable(23, "aliastab", NULL)` +
+    /// `createaliastable(aliastab)` (`Src/hashtable.c:1210-1212`),
+    /// without the two default aliases. `sufaliastab` is created at
+    /// `hsize = 11` (`Src/hashtable.c:1221`) so `sufaliastab_lock()`
+    /// builds its table inline rather than going through here.
     pub fn new() -> Self {
         Self {
-            table: indexmap::IndexMap::new(),
+            table: hashtable_nodes::newhashtable(23), // c:1210
         }
     }
-    /// `with_defaults` — see implementation.
+    /// `with_defaults` — `new()` plus the two aliases
+    /// `createaliastables()` installs (`Src/hashtable.c:1215-1216`).
+    /// They are added FIRST, before any user alias, so the chain heads
+    /// come out in C's order.
     pub fn with_defaults() -> Self {
         let mut table = Self::new();
         // C addaliasnode(aliastab, "run-help", createaliasnode("man", 0));
@@ -1014,29 +1040,40 @@ impl alias_table {
         table.add(createaliasnode("which-command", "whence", 0)); // c:1216
         table
     }
-    /// `add` — see implementation.
+    /// `add` — `addhashnode2` (`Src/hashtable.c:168`). C's `addnode`
+    /// for this table is `addhashnode` (`c:1194`), which is
+    /// `addhashnode2` + `freenode(oldnode)` (`c:157-162`); returning
+    /// the displaced node lets the caller do the freeing, and dropping
+    /// it is `freealiasnode` (`c:1243`).
     pub fn add(&mut self, alias: alias) -> Option<alias> {
-        self.table.insert(alias.node.nam.clone(), alias)
+        // c:157 / c:168
+        let nam = alias.node.nam.clone(); // c:177 — `hn->nam = nam`
+        self.table.addhashnode2(&nam, alias)
     }
-    /// `get` — see implementation.
+    /// `get` — `gethashnode` (`Src/hashtable.c:245`), i.e. the lookup
+    /// that skips `DISABLED` nodes (`c:253`).
     pub fn get(&self, name: &str) -> Option<&alias> {
+        // c:245
         self.table
-            .get(name)
+            .gethashnode2(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
-    /// `get_including_disabled` — see implementation.
+    /// `get_including_disabled` — `gethashnode2`
+    /// (`Src/hashtable.c:255`), the lookup WITHOUT the DISABLED filter.
     pub fn get_including_disabled(&self, name: &str) -> Option<&alias> {
-        self.table.get(name)
+        self.table.gethashnode2(name) // c:255
     }
-    /// `get_mut` — see implementation.
+    /// `get_mut` — mutable `gethashnode` (`Src/hashtable.c:245`); C
+    /// mutates straight through the returned `HashNode` pointer.
     pub fn get_mut(&mut self, name: &str) -> Option<&mut alias> {
+        // c:245
         self.table
             .get_mut(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
-    /// `remove` — see implementation.
+    /// `remove` — `removehashnode` (`Src/hashtable.c:275`).
     pub fn remove(&mut self, name: &str) -> Option<alias> {
-        self.table.remove(name)
+        self.table.removehashnode(name) // c:275
     }
     /// `disable` — see implementation.
     pub fn disable(&mut self, name: &str) -> bool {
@@ -1064,18 +1101,25 @@ impl alias_table {
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
-    /// `clear` — see implementation.
+    /// `clear` — `emptyhashtable` (`Src/hashtable.c:517`), which is
+    /// `resizehashtable(ht, ht->hsize)`: every node freed, `hsize` kept.
     pub fn clear(&mut self) {
-        self.table.clear();
+        self.table.emptyhashtable(); // c:517
     }
-    /// `iter` — see implementation.
+    /// `iter` — the unsorted `scanmatchtable` walk
+    /// (`Src/hashtable.c:420-434`): bucket 0..hsize-1, each chain
+    /// head→tail. This IS the order `${(k)aliases}` / `${(k)galiases}`
+    /// / `${(k)saliases}` emit via `scanpmraliases` and friends
+    /// (`Src/Modules/parameter.c:2005-2047`).
     pub fn iter(&self) -> impl Iterator<Item = (&String, &alias)> {
-        self.table.iter()
+        self.table.iter() // c:420-434
     }
-    /// `iter_sorted` — see implementation.
+    /// `iter_sorted` — the `sorted` arm of `scanmatchtable`
+    /// (`Src/hashtable.c:395-401`), which `qsort`s the collected nodes
+    /// with `hnamcmp`.
     pub fn iter_sorted(&self) -> Vec<(&String, &alias)> {
         let mut entries: Vec<_> = self.table.iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
+        entries.sort_by(|a, b| a.0.cmp(b.0)); // c:400
         entries
     }
 }
@@ -3287,8 +3331,17 @@ pub struct shfunc_table {
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `cmdnam_table` for the canonical-port direction.
 pub struct reswd_table {
-    /// `table` field.
-    table: HashMap<String, reswd>,
+    /// `table` field — C's `reswdtab` bucket array, `hsize = 23`
+    /// (`Src/hashtable.c:1124` `reswdtab = newhashtable(23, "reswdtab",
+    /// NULL)`).
+    ///
+    /// Was a `std::collections::HashMap`, whose per-process-seeded
+    /// order made `$reswords` / `$dis_reswords` random. `getreswords`
+    /// (`Src/Modules/parameter.c:871-886`) walks the raw bucket array
+    /// (`for (i = 0; i < reswdtab->hsize; i++) for (hn =
+    /// reswdtab->nodes[i]; hn; hn = hn->next)`), so those parameters
+    /// expose C's chain order directly.
+    table: hashtable_nodes<reswd>,
 }
 
 /// crate::ported::zsh_h::alias hash table
@@ -3301,16 +3354,22 @@ pub struct reswd_table {
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `cmdnam_table` for the canonical-port direction.
 pub struct alias_table {
-    // c:Src/hashtable.c:1186 — aliastab is a HashTable. C's iteration
-    // order is bucket-walk through hash(name); zsh's order is therefore
-    // deterministic per-name but not insertion-order. Tests anchored
-    // to real zsh (zinit/p10k parity) expect insertion-order iteration
-    // (declarations appear in script order) because that's what users
-    // see in practice with small alias counts. IndexMap preserves
-    // insertion order — closer to zsh's observed behavior than the
-    // previous HashMap (randomized).
-    /// `table` field.
-    table: indexmap::IndexMap<String, alias>,
+    /// `table` field — C's `aliastab` bucket array, `hsize = 23`
+    /// (`Src/hashtable.c:1210` `aliastab = newhashtable(23, "aliastab",
+    /// NULL)`); the `sufaliastab` instance is built with `hsize = 11`
+    /// (`Src/hashtable.c:1221`).
+    ///
+    /// Was an `indexmap::IndexMap`, chosen on the theory that
+    /// insertion order was "closer to zsh's observed behavior". That
+    /// reasoning was wrong: zsh emits alias keys in the `scanhashtable`
+    /// bucket walk (`Src/hashtable.c:420-434`) that `scanpmraliases` /
+    /// `scanpmgaliases` / `scanpmsaliases` drive
+    /// (`Src/Modules/parameter.c:2005-2047`), i.e. bucket
+    /// `hasher(nam) % hsize` ascending, each chain walked head→tail
+    /// with the most recently added key at the head (`c:214-215`).
+    /// That is neither insertion order nor sorted order, so
+    /// `${(k)aliases}` diverged from zsh for every alias set.
+    table: hashtable_nodes<alias>,
 }
 
 // Mirrors C's file-statics at hashtable.c:1517:
@@ -3456,7 +3515,18 @@ pub fn aliastab_lock() -> &'static std::sync::RwLock<alias_table> {
 pub fn sufaliastab_lock() -> &'static std::sync::RwLock<alias_table> {
     static SUFALIASTAB: std::sync::OnceLock<std::sync::RwLock<alias_table>> =
         std::sync::OnceLock::new();
-    SUFALIASTAB.get_or_init(|| std::sync::RwLock::new(alias_table::new()))
+    // c:1221 — `sufaliastab = newhashtable(11, "sufaliastab", NULL);`
+    // "Table for suffix aliases --- make this smaller" (c:1219). The
+    // smaller `hsize` gives a DIFFERENT bucket walk than `aliastab`'s
+    // 23, so `${(k)saliases}` order depends on getting this exact
+    // number. Built inline rather than via `alias_table::new()` (which
+    // is `aliastab`'s 23) because a second named constructor would be
+    // a Rust-only fn with no C counterpart.
+    SUFALIASTAB.get_or_init(|| {
+        std::sync::RwLock::new(alias_table {
+            table: hashtable_nodes::newhashtable(11), // c:1221
+        })
+    })
 }
 
 // hash table containing the reserved words                                 // c:1111

@@ -18323,6 +18323,14 @@ pub fn paramsubst(
         // correctly come back scalar.
         PARAMSUBST_LF_ARRAY
             .with(|c| c.set(empty_arr_scalarized && lf_array_c3882 && !split_join_block_ran));
+        // c:Src/subst.c:2653 + c:283 — this paramsubst is the INNER of a
+        // nested `${(flags)${…}}` that sits inside `"…"`. C spells the inner
+        // `$` as the Qstring token there (Src/lex.c:1546), so its stringsubst
+        // sets `qt = c == Qstring` (c:283) one level down as well; the Rust
+        // bridge hands the nested body over as a raw string, so the DQ context
+        // rides on SUBEXP_SCALAR_CTX (set at subst.rs:5522, the same carrier
+        // the c:3032 collapse reads at subst.rs:10930).
+        let subexp_dq = SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0; // c:2653
         if (nojoin == 2) || auto_splat {
             // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
@@ -18344,7 +18352,15 @@ pub fn paramsubst(
                 // A plan9 element that stays truly empty (no affix) is
                 // then dropped by the `!qt` retain at subst.rs:15894,
                 // so unquoted no-affix still elides — matching zsh.
-                if !qt && !plan9 && spsep.is_some() {
+                // c:Src/subst.c:3938 — `isarr = nojoin ? 1 : 2;`. An
+                // `(@)`-flagged split is isarr == 1, so the c:4354 nulstring
+                // marking (`qt && !*y && isarr != 2`) DOES apply to it and its
+                // empty fields survive inside quotes. A NESTED inner runs with
+                // qt == false here, so ask `subexp_dq` for the quoting the
+                // Qstring token carries in C: `v="a::b";
+                // "${(j:|:)${(@s.:.)v}}"` is `a||b` in zsh, while the non-`(@)`
+                // spelling (isarr == 2) is `a|b`.
+                if !qt && !(subexp_dq && nojoin == 2) && !plan9 && spsep.is_some() {
                     sp.into_iter().filter(|s| !s.is_empty()).collect()
                 } else if crate::bash_arrays::has_holes(&var_name)
                     && arrays_get(&var_name).as_deref() == Some(sp.as_slice())
@@ -18605,9 +18621,34 @@ pub fn paramsubst(
             // emitted Nularg unconditionally, so unquoted splats with
             // empty elements leaked `\u{a1}` into argv. Mirror C by
             // gating on qt.
+            // c:Src/subst.c:2653 + c:283 — the nested `${(flags)${…}}` inner.
+            // C hands multsub the inner expansion text STARTING AT the `$`
+            // token, and inside `"…"` the lexer spelled that `$` as Qstring
+            // (Src/lex.c:1546), so stringsubst's `qt = c == Qstring` (c:283)
+            // is 1 for the inner too. The Rust bridge hands the nested body
+            // over as a raw string (leading ASCII `$`), so `qt` arrives false
+            // and the DQ context rides on SUBEXP_SCALAR_CTX instead — the same
+            // carrier the c:3032 collapse already reads at subst.rs:10930.
+            //
+            // c:Src/subst.c:4354 / :4366 / :4398 / :4415 / :4437 —
+            // `if (qt && !*y && isarr != 2) y = dupstring(nulstring);`.
+            // The `isarr != 2` half is what separates a real array (or an
+            // `(@)`-flagged split, isarr = -1 / 1 at c:3938) from an array
+            // that came from splitting a scalar (isarr = 2): the former keeps
+            // its empty elements inside quotes, the latter does not.
+            //
+            // Only the NESTED reading needs that guard here. A DIRECTLY
+            // quoted expansion reaches this port without C's surrounding Dnull
+            // markers (BUILTIN_EXPAND_TEXT mode 1 strips them), and those
+            // markers are what keep a leading/trailing empty of an isarr == 2
+            // split alive in C (c:4386 / c:4436 strcatsub over ostr/fstr —
+            // `x="|a|b|"; set -- "${(s:|:)x}"` is 4 words in zsh). Its
+            // interior empties are dropped by the split-time collapse at
+            // subst.rs:16697, so `qt` alone stays the right test there.
             let emit_part = |s: &str| -> String {
                 if s.is_empty() {
-                    if qt {
+                    if qt || (subexp_dq && isarr != 2) {
+                        // c:4354
                         nul_str.to_string()
                     } else {
                         String::new()
