@@ -4414,12 +4414,34 @@ pub fn domenuselect(
         }
     }
 
-    // c:2427-2432 — `if (zlemetaline != NULL) wasmeta = 1; else metafy_line();`
-    _wasmeta = if ZLEMETALINE.get().is_some() {
-        1
+    // c:2427-2432 — `if (zlemetaline != NULL) wasmeta = 1;
+    //                else { wasmeta = 0; metafy_line(); }`.
+    //
+    // C's `zlemetaline != NULL` test has no direct Rust analog: this port
+    // marks "meta-mode inactive" by zeroing `ZLEMETALL` in `unmetafy_line`
+    // (compcore.rs:6601, c:1001-1002 `free(zlemetaline);
+    // zlemetaline = NULL`), and `ZLEMETALL == 0` is exactly the stand-in the
+    // port already uses for C's `if (zlemetaline == NULL) metafy_line()` in
+    // `do_menucmp` (compcore.rs:477-485). The old `.get().is_some()` test
+    // asked whether the OnceLock had ever been initialised — true for the
+    // process lifetime — so c:2431's `metafy_line()` never ran.
+    //
+    // Only ONE caller reaches here unmetafied, and it is the one that was
+    // unreachable until boot_ started registering the widget: the explicit
+    // `menu-select` widget (c:3512 `domenuselect(NULL, NULL)`), which runs
+    // AFTER `menucomplete` has finished its completion and unmetafied the
+    // line. Skipping the metafy left `do_single` (c:2481 → compresult.c:1281)
+    // rewriting an EMPTY completion buffer, so the first arrow-key move
+    // replaced the whole command line with the bare match: measured
+    // `cd /` + `menu-select` + Down giving `/Library/` where zsh gives
+    // `cd /Library/`. The `menu_start` hook path arrives metafied
+    // (`do_completion` metafies first), takes the wasmeta=1 arm, and is
+    // untouched by this.
+    _wasmeta = if crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) != 0 {
+        1 // c:2428
     } else {
-        // c:2431 — metafy_line(); zshrs's line is already UTF-8 native.
-        0
+        crate::ported::zle::compcore::metafy_line(); // c:2431
+        0 // c:2430
     };
 
     // c:2434-2440 — MENUSCROLL: step size for half-page jumps.
@@ -6351,6 +6373,14 @@ pub fn domenuselect(
     MLBEG.store(-1, Ordering::SeqCst); // c:3513
     FDAT.store(0, Ordering::SeqCst); // c:3489 `fdat = NULL;`
 
+    // c:3474-3475 — `if (!wasmeta) unmetafy_line();`. Undo the c:2431
+    // metafy so the caller gets the buffer back in the state it handed over
+    // (the `menu-select` widget at c:3512 goes on to call `menucomplete`,
+    // which metafies for itself).
+    if _wasmeta == 0 {
+        crate::ported::zle::compcore::unmetafy_line(); // c:3475
+    }
+
     let _ = step;
     // c:3517 — `return (broken == 2 ? 3 :
     //                   ((dat && !broken) ? (acc ? 1 : 2) : (!noselect ^ acc)))`.
@@ -6526,11 +6556,42 @@ pub fn boot_() -> i32 {
     INSELECT.store(0, Ordering::Relaxed); // c:3569
 
     // c:3571-3577 — `w_menuselect = addzlefunction("menu-select",
-    //                                  menuselect, ZLE_MENUCMP|...);`.
-    //  zshrs widgets are static-linked; the `menu-select` widget is
-    //  already registered at boot via the iwidget table at
-    //  zle_bindings.rs. Skipping the dynamic addzlefunction
-    //  registration.
+    //                                  menuselect,
+    //                                  ZLE_MENUCMP|ZLE_KEEPSUFFIX|ZLE_ISCOMP);
+    //                if (!w_menuselect) { zwarnnam(...); return -1; }`.
+    //  `menu-select` is NOT in `Src/Zle/iwidgets.list` — it is a
+    //  module-provided widget that only exists once complist is loaded, so
+    //  the static `IWIDGET_NAMES`/`IWIDGET_FLAGS` tables in zle_bindings.rs
+    //  never carried it. The previous body claimed the registration was
+    //  redundant and skipped it, which left `menu-select` absent from
+    //  thingytab entirely: `zle -la | grep -cx menu-select` returned 0 where
+    //  zsh returns 1, `bindkey <seq> menu-select` bound a name with no
+    //  widget behind it, and `compinit`'s
+    //  `zle -C menu-select .menu-select _main_complete` (compinit sh:560)
+    //  could never resolve its `.menu-select` base.
+    let w = crate::ported::zle::zle_thingy::addzlefunction(
+        // c:3571
+        "menu-select",
+        menuselect,
+        crate::ported::zle::zle_h::ZLE_MENUCMP
+            | crate::ported::zle::zle_h::ZLE_KEEPSUFFIX
+            | crate::ported::zle::zle_h::ZLE_ISCOMP, // c:3572
+    );
+    if w.is_none() {
+        // c:3573
+        // c:3574-3575 — `zwarnnam(m->node.nam, "name clash when adding ZLE
+        //                function `menu-select'")`.
+        crate::ported::utils::zwarnnam(
+            "complist",
+            "name clash when adding ZLE function `menu-select'",
+        );
+        return -1; // c:3576
+    }
+    // c:159 `static Widget w_menuselect;` — kept for cleanup_ (c:3591
+    // `deletezlefunction(w_menuselect)`).
+    if let Ok(mut g) = W_MENUSELECT.lock() {
+        *g = w; // c:3571
+    }
     // c:3578-3579 — `addhookfunc("comp_list_matches", complistmatches);
     //                addhookfunc("menu_start", domenuselect);`.
     //  These add complist's funcs to the hookdefs registered at ZLE boot
@@ -6577,6 +6638,14 @@ pub fn cleanup_() -> i32 {
     //                      menu_start hooks, unlinks both keymaps,
     //                      and resets feature enables. We have no
     //                      live mtab arrays; the keymap unlink stays.
+    // c:3591 — `deletezlefunction(w_menuselect)`. Unbinds both the
+    // `.menu-select` immortal anchor and the rebindable `menu-select`
+    // thingy that boot_ created at c:3571, so `zmodload -u zsh/complist`
+    // takes the widget back out of `zle -la` exactly as C does.
+    let w = W_MENUSELECT.lock().ok().and_then(|mut g| g.take());
+    if let Some(w) = w {
+        crate::ported::zle::zle_thingy::deletezlefunction(&w); // c:3591
+    }
     0
 }
 
@@ -6688,6 +6757,14 @@ pub static NOSELECT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 /// Port of `static int mselect` from `complist.c:52`. Currently
 /// selected match index (-1 = none).
 pub static MSELECT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:52
+
+/// Port of file-static `static Widget w_menuselect;` from
+/// `Src/Zle/complist.c:159` — the widget `boot_` creates for the
+/// `menu-select` ZLE function (c:3571) and `cleanup_` destroys
+/// (c:3591 `deletezlefunction(w_menuselect)`).
+pub static W_MENUSELECT: std::sync::LazyLock<
+    std::sync::Mutex<Option<std::sync::Arc<crate::ported::zle::zle_h::widget>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None)); // c:159
 /// Port of `static int inselect` from `complist.c:52`. Inside menu-
 /// select dispatch loop.
 pub static INSELECT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52
@@ -7567,6 +7644,82 @@ mod tests {
         assert_eq!(boot_(), 0);
         assert_eq!(cleanup_(), 0);
         assert_eq!(finish_(), 0);
+    }
+
+    /// c:3571-3577 — `boot_` MUST create the `menu-select` ZLE function.
+    ///
+    /// `menu-select` is not in `Src/Zle/iwidgets.list`; it exists only once
+    /// `zsh/complist` is loaded, via
+    /// `addzlefunction("menu-select", menuselect,
+    ///                 ZLE_MENUCMP|ZLE_KEEPSUFFIX|ZLE_ISCOMP)` (c:3571-3572).
+    /// The port used to skip that call, so `zle -la | grep -cx menu-select`
+    /// gave 0 against zsh's 1 and `zle -C menu-select .menu-select
+    /// _main_complete` (compinit sh:560) had no base widget to bind.
+    #[test]
+    fn boot_registers_menu_select_widget() {
+        use crate::ported::zle::zle_h::{
+            WIDGET_INT, ZLE_ISCOMP, ZLE_KEEPSUFFIX, ZLE_MENUCMP,
+        };
+        use crate::ported::zle::zle_h::TH_IMMORTAL;
+        use crate::ported::zle::zle_thingy::thingytab;
+        let _g = crate::test_util::global_state_lock();
+        // Start from a clean slate: a previous test's boot_ may have left the
+        // widget registered, and `addzlefunction` refuses to re-register over
+        // an existing TH_IMMORTAL `.menu-select` (c:291-293).
+        cleanup_();
+        assert_eq!(boot_(), 0, "c:3581 — boot_ returns 0 on success");
+
+        let tab = thingytab().lock().unwrap();
+        for nam in ["menu-select", ".menu-select"] {
+            let t = tab
+                .get(nam)
+                .unwrap_or_else(|| panic!("c:3571 — `{}` missing from thingytab", nam));
+            let w = t
+                .widget
+                .as_ref()
+                .unwrap_or_else(|| panic!("c:299/301 — `{}` bound to no widget", nam));
+            // c:295 `w->flags = WIDGET_INT | flags;` + c:3572 flag word.
+            assert_eq!(
+                w.flags,
+                WIDGET_INT | ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
+                "c:3572 — wrong flag word on `{}`",
+                nam
+            );
+        }
+        // c:300 — only the dotted anchor is immortal; the bare name stays
+        // rebindable so `zle -C menu-select …` (compinit sh:560) can take it.
+        assert_ne!(
+            tab[".menu-select"].flags & TH_IMMORTAL,
+            0,
+            "c:300 — `.menu-select` must be TH_IMMORTAL"
+        );
+        assert_eq!(
+            tab["menu-select"].flags & TH_IMMORTAL,
+            0,
+            "c:301 — bare `menu-select` must stay rebindable"
+        );
+        drop(tab);
+        // Leave the widget unregistered: C guarantees one boot_ per load
+        // (module.c:2255-2257 short-circuits an already-linked module), and
+        // c:3573-3576 makes a second registration an error, so every test
+        // touching boot_ has to hand the global table back as it found it.
+        cleanup_();
+    }
+
+    /// c:3591 — `cleanup_` runs `deletezlefunction(w_menuselect)`, so an
+    /// unloaded complist takes `menu-select` back out of `zle -la`.
+    #[test]
+    fn cleanup_removes_menu_select_widget() {
+        use crate::ported::zle::zle_thingy::thingytab;
+        let _g = crate::test_util::global_state_lock();
+        cleanup_();
+        assert_eq!(boot_(), 0);
+        assert_eq!(cleanup_(), 0);
+        let tab = thingytab().lock().unwrap();
+        assert!(
+            !tab.contains_key("menu-select") && !tab.contains_key(".menu-select"),
+            "c:3591 — deletezlefunction must unbind both thingies"
+        );
     }
 
     /// c:3083 — `menuselect_bindings` returns i32.

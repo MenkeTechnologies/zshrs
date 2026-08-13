@@ -110,6 +110,23 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     if let Ok(mut g) = COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = head_q.to_string(); // c:305-306
     }
+    // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
+    // In C, `$compstate[all_quotes]` has NO storage of its own: its
+    // `compkparams` row is `{ "all_quotes", PM_SCALAR | PM_READONLY, NULL,
+    // GSU(compqstack_gsu) }` (complete.c:1299) and `compqstack_gsu`
+    // (complete.c:1242-1243) routes every read through `get_compqstack`
+    // (complete.c:1479) against the live `compqstack` global — so the
+    // c:305-306 assignment IS the parameter update. zshrs splits the two: a
+    // single-key `${compstate[KEY]}` read comes straight out of
+    // `paramtab_hashed_storage` (`src/ported/subst.rs:7034-7044`), which
+    // special-cases only `nmatches`, so nothing ever published `all_quotes`
+    // and it read EMPTY where zsh gives `\`, `"`, `'` (`_cmdambivalent`
+    // sh:47 and the documented `compquote` idiom both read it). Run the
+    // getter and store its result at each `compqstack` write.
+    set_compstate_str(
+        "all_quotes",
+        &crate::ported::zle::complete::get_compqstack(std::ptr::null_mut()),
+    );
 
     hasunqu.store(0, Ordering::Relaxed); // c:309
     let wouldinstab_v = WOULDINSTAB.load(Ordering::Relaxed); // c:310
@@ -3186,6 +3203,14 @@ pub fn set_comp_sep() -> i32 {
         }
         new_qstack.push_str(&compqstack_s);
         put(&COMPQSTACK, new_qstack);
+        // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
+        // Same reason as the c:305-306 site above: in C the c:1854-1860
+        // `compqstack = p` IS the `$compstate[all_quotes]` update, because
+        // `compqstack_gsu` (complete.c:1299) has no storage of its own.
+        set_compstate_str(
+            "all_quotes",
+            &crate::ported::zle::complete::get_compqstack(std::ptr::null_mut()),
+        );
     }
 
     // c:1870-1892 — compquote / compquoting + comp_setunset.
