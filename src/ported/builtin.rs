@@ -16284,6 +16284,37 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("aAcef:ghi:M:m:p:r:t:"),
             None,
         ),
+        // Registration ORDER note (zshrs-only): C adds these two through
+        // compctl.mdd's `autofeatures="b:compctl b:compcall"`, which the
+        // generated `Src/bltinmods.list` walks in MODULE order — and
+        // `Src/Zle/compctl.mdd` sorts before `complete.mdd` / `computil.mdd`,
+        // so zsh/compctl reaches `builtintab` BEFORE zsh/complete and
+        // zsh/computil do. `BUILTINTAB_NODES` front-inserts
+        // (c:Src/hashtable.c:217-218), so this order decides the chain order
+        // `${(k)builtins}` prints: with the block left below the computil
+        // batch, bucket 29 came out `compctl comptags compdescribe` where
+        // `zsh -f` prints `comptags compdescribe compctl`.
+        // c:Src/Zle/compctl.c:4000-4001 — zsh/compctl module.
+        BUILTIN(
+            "compcall",
+            0,
+            Some(crate::ported::zle::compctl::bin_compcall as HandlerFunc),
+            0,
+            0,
+            0,
+            Some("TD"),
+            None,
+        ), // c:4000
+        BUILTIN(
+            "compctl",
+            0,
+            Some(crate::ported::zle::compctl::bin_compctl as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:4001
         // C: `BUILTIN("compadd", BINF_HANDLES_OPTS, bin_compadd, 0, -1, 0,
         // NULL, NULL)` (complete.c:1693). compadd parses ALL its own
         // options (the char-by-char loop in bin_compadd_body). The earlier
@@ -16625,27 +16656,6 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ), // c:139
-        // c:Src/Zle/compctl.c:4000-4001 — zsh/compctl module.
-        BUILTIN(
-            "compcall",
-            0,
-            Some(crate::ported::zle::compctl::bin_compcall as HandlerFunc),
-            0,
-            0,
-            0,
-            Some("TD"),
-            None,
-        ), // c:4000
-        BUILTIN(
-            "compctl",
-            0,
-            Some(crate::ported::zle::compctl::bin_compctl as HandlerFunc),
-            0,
-            -1,
-            0,
-            None,
-            None,
-        ), // c:4001
         // c:Src/Modules/attr.c:220-223 — zsh/attr module (4 builtins).
         BUILTIN(
             "zgetattr",
@@ -16897,6 +16907,50 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
 /// `builtintab()` is called; mirrors the C `mod_export HashTable
 /// builtintab` exposed at `Src/builtin.c:146`.
 static builtintab: OnceLock<HashMap<String, &'static builtin>> = OnceLock::new();
+
+/// The BUCKET-ARRAY form of `builtintab` — the storage C actually uses, kept
+/// alongside the `HashMap` above (which stays the lookup fast path).
+///
+/// c:Src/builtin.c:152 `builtintab = newhashtable(85, "builtintab", NULL);`
+/// then c:167 `addbuiltins("zsh", builtins, sizeof(builtins)/sizeof(*builtins))`,
+/// whose loop (c:Src/module.c:547-557) walks the `builtins[]` array in
+/// DECLARATION order calling `addbuiltin` → `builtintab->addnode` (= the
+/// `addhashnode` / `addhashnode2` front-insert at c:Src/hashtable.c:168-222).
+///
+/// Enumeration order matters beyond cosmetics: `scanhashtable` walks buckets
+/// 0..hsize-1, each chain head→tail (c:Src/hashtable.c:420-434), and that is
+/// the order `${(k)builtins}` prints AND the order `compadd -k builtins` feeds
+/// `join_clines`, whose ambiguous-prefix fold is not commutative. A `HashMap`
+/// (or a sorted list) produces a different, wrong sequence.
+///
+/// 85 buckets vs 103 nodes never trips the c:183/219 `ct >= hsize * 2`
+/// expansion, so the table keeps its original `hsize`.
+/// Iterate it with `.iter()` to get C's `scanhashtable` traversal — bucket
+/// 0..hsize-1, each chain head→tail (c:Src/hashtable.c:420-434).
+///
+/// Only entries that are actually IN `builtintab` are added: zshrs's
+/// `BUILTINS` slice is the static union of every statically-linked module's
+/// bintab, while C's table holds the core `builtins[]` plus whatever the
+/// currently-loaded modules added. `builtin_in_builtintab` is the existing
+/// predicate for that membership; feeding the same set through C's hash makes
+/// the bucket walk match `zsh -f` name for name.
+pub static BUILTINTAB_NODES: std::sync::LazyLock<
+    crate::ported::hashtable::hashtable_nodes<&'static builtin>, // c:152
+> = std::sync::LazyLock::new(|| {
+    // c:152 — `newhashtable(85, "builtintab", NULL)`.
+    let mut ht = crate::ported::hashtable::hashtable_nodes::newhashtable(85);
+    // c:167 → c:Src/module.c:547 `for (n = 0; n < size; n++)`, i.e. the
+    // `builtins[]` DECLARATION order. A duplicate name re-adds in place
+    // (c:Src/hashtable.c:189-204 `replacing:`), leaving it at the same chain
+    // position C's `BINF_ADDED` skip would.
+    for b in BUILTINS.iter() {
+        if !crate::ext_builtins::builtin_in_builtintab(&b.node.nam) {
+            continue;
+        }
+        ht.addhashnode2(&b.node.nam, b); // c:Src/module.c:551 addbuiltin
+    }
+    ht
+});
 
 /// Names whose `node.flags & DISABLED` is set in C. The Rust port's
 /// `builtintab` is an immutable static, so the disabled bit lives

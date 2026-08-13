@@ -29,8 +29,8 @@ use crate::ported::pattern::pattry;
 use crate::ported::utils::set_noerrs;
 use crate::ported::zle::comp_h::{
     Cline, Cmatcher, Cmlist, Cpattern, CLF_DIFF, CLF_JOIN, CLF_LINE, CLF_MATCHED, CLF_MISS,
-    CLF_NEW, CLF_SUF, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS, CPAT_CHAR,
-    CPAT_EQUIV, CPAT_NCLASS,
+    CLF_NEW, CLF_SKIP, CLF_SUF, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS,
+    CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
 use crate::ported::zle::compcore::{mstack, multiquote, tildequote, useqbr};
 use crate::ported::zle::zle_h::{brinfo, ZC_tolower, ZC_toupper};
@@ -987,45 +987,136 @@ pub fn add_match_sub(
     w: Option<&str>,
     wl: i32,
 ) {
-    // c:450-453 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
-    let (eff_w, eff_wl) = match m {
-        Some(mat) if (mat.flags & CMF_LINE) != 0 => (l, mat.llen),
-        _ => (w, wl),
+    let flags: i32; // c:448
+                    // c:451-456 — "Check if we are interested only in the string from the line."
+                    // `w = NULL; wl = 0; flags = CLF_LINE;`. The port used to keep the WORD side
+                    // alive as a copy of the LINE string (`w = l; wl = m->llen`) and never set
+                    // CLF_LINE, so every consumer that branches on CLF_LINE — check_cmdata
+                    // (c:2161), undo_cmdata (c:2190), cmp_anchors (c:2118), cline_str
+                    // (compcore.c) — took the word path on nodes C marks line-only.
+    let (w, wl) = if m.is_some_and(|mat| (mat.flags & CMF_LINE) != 0) {
+        flags = CLF_LINE; // c:454
+        (None, 0) // c:453
+    } else {
+        flags = 0; // c:456
+        (w, wl)
     };
 
-    // c:455-456 — short-circuit if no length.
-    if eff_wl <= 0 && ll <= 0 {
+    // c:459 — `if (wl || ll)`; nothing to add when both are empty.
+    if wl == 0 && ll == 0 {
         return;
     }
 
-    // c:464-484 — build a fresh Cline node and append to matchsubs.
-    let node = Box::new(Cline {
-        flags: CLF_NEW,
-        line: l.map(|s| s.to_string()),
-        llen: ll,
-        word: eff_w.map(|s| s.to_string()),
-        wlen: eff_wl,
-        ..Default::default()
-    });
+    // c:462 — `if ((p = n = bld_parts(w, wl, ll, &lp, NULL)) && n != lp)`.
+    // `n != lp` is "the chain bld_parts returned has more than one node", since
+    // `lp` is always its LAST node (bld_parts c:1707-1711). That happens as soon
+    // as a right-anchor bmatcher (`r:|?=**`, `r:|[._-]=*`) splits the word, which
+    // is the case for every one of this shell's stock matcher-lists.
+    let mut lp: Option<Box<Cline>> = None;
+    let p_chain = bld_parts(w.unwrap_or(""), wl, ll, Some(&mut lp), None);
 
-    let last_cell = MATCHLASTSUB.get_or_init(|| Mutex::new(None));
-    let head_cell = MATCHSUBS.get_or_init(|| Mutex::new(None));
-    let last_present = last_cell.lock().ok().map(|g| g.is_some()).unwrap_or(false);
-    if last_present {
-        // c:494 — chain to existing tail
-        if let Ok(mut tail) = last_cell.lock() {
-            if let Some(t) = tail.as_mut() {
-                t.next = Some(node.clone()); // c:495 matchlastsub->next = n
+    if p_chain.as_ref().is_some_and(|n| n.next.is_some()) {
+        // c:462 — the split branch. This whole arm was missing from the port:
+        // the anchor nodes were dropped on the floor and a single flat node was
+        // pushed onto matchsubs instead, so `matchparts` never received the
+        // split sub-parts and `matchsubs` kept a node C had already moved.
+        let mut n = p_chain.expect("checked Some above");
+
+        // c:463 — `for (; p->next != lp; p = p->next);` then c:475 `p->next = 0`:
+        // walk to the node BEFORE the tail and cut the tail (`lp`) off.
+        let lp_node = {
+            let mut cur = n.as_mut();
+            while cur.next.as_ref().is_some_and(|nx| nx.next.is_some()) {
+                cur = cur.next.as_mut().expect("checked Some above");
             }
+            cur.next.take().expect("chain has at least two nodes") // c:475
+        };
+
+        // c:465-468 — `if (matchsubs) { matchlastsub->next = n->prefix;
+        //                               n->prefix = matchsubs; }`
+        // i.e. the pending sub-clines are pushed in FRONT of the head node's
+        // prefix chain.
+        let subs = MATCHSUBS
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take());
+        if let Some(mut subs_chain) = subs {
+            let old_prefix = n.prefix.take();
+            // c:466 — `matchlastsub->next = n->prefix`. C has the tail pointer
+            // in hand; this port owns the chain, so the store is a walk to the
+            // real tail (a stored MATCHLASTSUB would be a detached clone).
+            let mut cur = &mut subs_chain.next;
+            while cur.is_some() {
+                cur = &mut cur.as_mut().expect("checked Some above").next;
+            }
+            *cur = old_prefix;
+            n.prefix = Some(subs_chain); // c:467
+        }
+
+        // c:469 — `matchsubs = matchlastsub = lp`.
+        if let Ok(mut g) = MATCHSUBS.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(lp_node.clone());
+        }
+        if let Ok(mut g) = MATCHLASTSUB.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(lp_node);
+        }
+
+        // c:471-474 — `if (matchlastpart) matchlastpart->next = n;
+        //              else matchparts = n;` — `matchlastpart` is by construction
+        // the tail of `matchparts`, so this is an append (same reasoning as
+        // add_match_part c:434-438 above).
+        // c:476 — `matchlastpart = p`, the new tail; kept as a marker only.
+        let new_tail: Option<Box<Cline>> = {
+            let mut cur = n.as_ref();
+            while let Some(next) = cur.next.as_deref() {
+                cur = next;
+            }
+            Some(Box::new(cur.clone()))
+        };
+        if let Ok(mut head) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
+            let mut cur = &mut *head;
+            while cur.is_some() {
+                cur = &mut cur.as_mut().expect("checked Some above").next;
+            }
+            *cur = Some(n);
+        }
+        if let Ok(mut tail) = MATCHLASTPART.get_or_init(|| Mutex::new(None)).lock() {
+            *tail = new_tail;
         }
     } else {
-        // c:496 — first node
-        if let Ok(mut h) = head_cell.lock() {
-            *h = Some(node.clone()); // c:497 matchsubs = n
+        // c:478-479 — `n = get_cline(l, ll, w, wl, NULL, 0,
+        //                  flags | ((m && m->wlen == -2) ? CLF_SKIP : 0));`
+        // The port hardcoded CLF_NEW here, which is neither of C's two flag
+        // sources: CLF_NEW is what bld_parts stamps (c:1659), never add_match_sub.
+        let node = get_cline(
+            l.map(|s| s.to_string()),
+            ll,
+            w.map(|s| s.to_string()),
+            wl,
+            None,
+            0,
+            flags | if m.is_some_and(|mat| mat.wlen == -2) { CLF_SKIP } else { 0 }, // c:479
+        );
+
+        // c:480-484 — `if (matchlastsub) matchlastsub->next = n;
+        //              else matchsubs = n; matchlastsub = n;`
+        // `matchlastsub` is always the tail of `matchsubs` (it is only ever set
+        // to a node just linked in there, c:469/:484), so C's pointer write is
+        // an append to `matchsubs`. The port wrote through the DETACHED CLONE
+        // held in MATCHLASTSUB, so the second and every later sub-cline of a
+        // match vanished — `matchsubs` never grew past its first node.
+        let marker = Some(node.clone());
+        if let Ok(mut head) = MATCHSUBS.get_or_init(|| Mutex::new(None)).lock() {
+            let mut cur = &mut *head;
+            while cur.is_some() {
+                cur = &mut cur.as_mut().expect("checked Some above").next;
+            }
+            *cur = Some(node); // c:481 / c:483
         }
-    }
-    if let Ok(mut tail) = last_cell.lock() {
-        *tail = Some(node); // c:499 matchlastsub = n
+        if let Ok(mut tail) = MATCHLASTSUB.get_or_init(|| Mutex::new(None)).lock() {
+            *tail = marker; // c:484
+        }
     }
 }
 
@@ -3180,6 +3271,10 @@ pub struct cmdata {
 /// exhausted, 0 otherwise.
 pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
     // c:2152
+    // `sfx` only ever selected C's cursor bump (c:2169/:2173); this port stores
+    // the span itself, so the argument is inert here — see the representation
+    // note below. Kept in the signature for parity with the C prototype.
+    let _ = sfx;
 
     if md.len != 0 {
         return 0;
@@ -3200,30 +3295,28 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
         md.len = next.wlen; // c:2168
         md.olen = next.wlen; // c:2168
         // c:2169-2170 — `if ((md->str = md->cl->word) && sfx) md->str += md->len;`
-        // upstream marks the bump `/* HERE: multibyte */`: a raw byte bump that
-        // can land inside a character and can run past the string, so the port
-        // offsets bytes with a bounds check. The ASSIGNMENT is unconditional in
-        // C (a NULL word stores NULL); the port used to keep the previous
-        // node's string when `word` was None, which left `sub_match`'s "still
-        // have the line string to try" test (c:2425) reading a stale `astr`.
-        md.str = match next.word {
-            Some(ref w) if sfx != 0 => {
-                String::from_utf8_lossy(w.as_bytes().get(md.len.max(0) as usize..).unwrap_or(&[]))
-                    .into_owned()
-            } // c:2171
-            Some(ref w) => w.clone(),
-            None => String::new(),
-        };
+        //
+        // !!! RUST-ONLY REPRESENTATION NOTE !!!
+        // C's `md->str` is a `char *` CURSOR into the word, and `md->len` is how
+        // much of it is still unconsumed; the `+= md->len` under `sfx` parks that
+        // cursor on the RIGHT edge of the unconsumed span, because the suffix
+        // walk reads backwards from it (`q[ind]` with `ind == -1`, c:2326) and
+        // consumes with `md->str -= l` (c:2420). The span itself is identical in
+        // both directions: `[word, word + md->len)`.
+        //
+        // This port has no cursor — `md.str` OWNS the unconsumed span, and the
+        // direction lives in the consumers instead (sub_match trims the tail for
+        // sfx at c:2419-2423, the head otherwise; join_sub offsets by
+        // `nl - mp.wlen` for sfx). So the C bump must NOT be reproduced as a
+        // slice: `word[md.len..]` is the text AFTER the span — empty whenever
+        // `wlen` covers the whole word, which is every node bld_parts builds.
+        // That left every suffix-side sub_match/join_sub with an empty string to
+        // match against, so suffix sub-matching always came up empty.
+        // The ASSIGNMENT is unconditional in C (a NULL word stores NULL).
+        md.str = next.word.clone().unwrap_or_default(); // c:2170
         md.alen = next.llen; // c:2173
-                             // c:2174-2176 — same `/* HERE: multibyte */` bump for `astr`.
-        md.astr = match next.line {
-            Some(ref l) if sfx != 0 => {
-                String::from_utf8_lossy(l.as_bytes().get(md.alen.max(0) as usize..).unwrap_or(&[]))
-                    .into_owned()
-            } // c:2176
-            Some(ref l) => l.clone(),
-            None => String::new(),
-        };
+                             // c:2174-2175 — same cursor/span reasoning for `astr`.
+        md.astr = next.line.clone().unwrap_or_default(); // c:2174
     }
     md.pcl = Some(Box::new(next.clone())); // c:2179
     md.cl = next.next.clone(); // c:2180
@@ -6282,5 +6375,197 @@ mod tests {
             add_bmatchers(None);
             update_bmatchers();
         }
+    }
+
+    /// !!! RUST-ONLY TEST HELPER !!! — counts nodes on an owned Cline chain.
+    /// C would walk the pointer chain inline; there is no C function for it.
+    fn chain_len(mut cur: Option<&Cline>) -> usize {
+        let mut n = 0;
+        while let Some(c) = cur {
+            n += 1;
+            cur = c.next.as_deref();
+        }
+        n
+    }
+
+    /// c:462-476 — `add_match_sub` runs the word through `bld_parts` and, when
+    /// that splits it (`n != lp`, i.e. more than one node), moves everything
+    /// but the LAST node onto `matchparts` and keeps only that last node as the
+    /// new `matchsubs`. The port had no such branch at all: it always built one
+    /// flat node and pushed it onto `matchsubs`, so the split parts never
+    /// reached `matchparts`.
+    ///
+    /// `r:|?=**` is in every stock matcher-list here
+    /// (scripts/parity_combos/*.zsh), and it makes `bld_parts` emit one anchor
+    /// node per character (c:1647-1677), so this branch is live for every
+    /// `add_match_sub` call carrying two or more characters.
+    #[test]
+    fn add_match_sub_moves_split_parts_to_matchparts() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let bm = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        *bm.lock().unwrap() = None;
+        add_bmatchers(crate::ported::zle::complete::parse_cmatcher("t", "r:|?=**").as_deref());
+        start_match();
+
+        // c:959/:964 call shape: no matcher, no line, the carried word only.
+        add_match_sub(None, None, 0, Some("abc"), 3);
+
+        let subs = MATCHSUBS.get().unwrap().lock().unwrap();
+        let parts = MATCHPARTS.get().unwrap().lock().unwrap();
+        // c:469 — `matchsubs = matchlastsub = lp`: exactly the tail node.
+        assert_eq!(
+            chain_len(subs.as_deref()),
+            1,
+            "matchsubs must hold only bld_parts' last node"
+        );
+        assert_eq!(
+            subs.as_ref().unwrap().wlen,
+            1,
+            "that node is a one-character anchor, not the whole `abc`"
+        );
+        // c:471-476 — the other two nodes are appended to matchparts.
+        assert_eq!(
+            chain_len(parts.as_deref()),
+            2,
+            "the leading anchors must land on matchparts"
+        );
+        drop(subs);
+        drop(parts);
+        *bm.lock().unwrap() = None;
+        start_match();
+    }
+
+    /// c:451-456 — a `CMF_LINE` matcher (`M:`/`L:`/`R:` specs) means "we are
+    /// interested only in the string from the line": C drops the word
+    /// (`w = NULL; wl = 0`) and stamps `CLF_LINE`. The port copied the LINE
+    /// string into the word side and stamped `CLF_NEW`, so `check_cmdata`
+    /// (c:2161), `undo_cmdata` (c:2190) and `cline_str` all took the word path
+    /// on a node C marks line-only.
+    #[test]
+    fn add_match_sub_line_matcher_drops_the_word() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let bm = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        *bm.lock().unwrap() = None;
+        start_match();
+
+        let m = crate::ported::zle::complete::parse_cmatcher("t", "M:_=-")
+            .expect("line-only matcher parses");
+        assert_ne!(m.flags & CMF_LINE, 0, "M: sets CMF_LINE (complete.c:269)");
+        // c:966 call shape: `add_match_sub(mp, tl, mp->llen, tw, mp->wlen)`.
+        add_match_sub(Some(&m), Some("_"), 1, Some("-"), 1);
+
+        let subs = MATCHSUBS.get().unwrap().lock().unwrap();
+        let n = subs.as_ref().expect("one sub-cline");
+        assert_eq!(n.line.as_deref(), Some("_"), "the line string is kept");
+        assert_eq!(n.llen, 1);
+        assert!(n.word.is_none() && n.wlen == 0, "c:453 — the word is dropped");
+        assert_ne!(n.flags & CLF_LINE, 0, "c:454 — CLF_LINE is stamped");
+        assert_eq!(n.flags & CLF_NEW, 0, "CLF_NEW is bld_parts' flag, not this");
+        drop(subs);
+        start_match();
+    }
+
+    /// c:477-479 — the non-split branch stamps
+    /// `flags | ((m && m->wlen == -2) ? CLF_SKIP : 0)`. `wlen == -2` is a `**`
+    /// word pattern (complete.c:367-369). The port stamped a hardcoded
+    /// `CLF_NEW` instead, so `CLF_SKIP` never existed anywhere in the port and
+    /// `join_clines`' three CLF_SKIP scans (c:2824, :2852, :2874) were dead.
+    #[test]
+    fn add_match_sub_double_star_matcher_stamps_clf_skip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let bm = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        *bm.lock().unwrap() = None; // no bmatchers: bld_parts returns one node
+        start_match();
+
+        let m = crate::ported::zle::complete::parse_cmatcher("t", "r:|?=**")
+            .expect("`**` matcher parses");
+        assert_eq!(m.wlen, -2, "`**` is wlen -2 (complete.c:369)");
+        add_match_sub(Some(&m), Some("y"), 1, Some("y"), 1);
+
+        let subs = MATCHSUBS.get().unwrap().lock().unwrap();
+        let n = subs.as_ref().expect("one sub-cline");
+        assert_ne!(n.flags & CLF_SKIP, 0, "c:479 — CLF_SKIP for a `**` matcher");
+        assert_eq!(n.flags & CLF_NEW, 0, "c:479 — CLF_NEW is not one of C's bits");
+        drop(subs);
+        start_match();
+    }
+
+    /// c:480-484 — `if (matchlastsub) matchlastsub->next = n; else matchsubs =
+    /// n;` appends to the `matchsubs` LIST. The port wrote through the detached
+    /// clone parked in `MATCHLASTSUB`, so `matchsubs` never grew past its first
+    /// node and every later sub-cline of a match was silently dropped.
+    #[test]
+    fn add_match_sub_appends_every_node_to_matchsubs() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let bm = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        *bm.lock().unwrap() = None; // one node per call, so all three append
+        start_match();
+
+        add_match_sub(None, None, 0, Some("a"), 1);
+        add_match_sub(None, None, 0, Some("b"), 1);
+        add_match_sub(None, None, 0, Some("c"), 1);
+
+        let subs = MATCHSUBS.get().unwrap().lock().unwrap();
+        assert_eq!(
+            chain_len(subs.as_deref()),
+            3,
+            "all three sub-clines must be on the list"
+        );
+        let words: Vec<Option<String>> = {
+            let mut out = Vec::new();
+            let mut cur = subs.as_deref();
+            while let Some(c) = cur {
+                out.push(c.word.clone());
+                cur = c.next.as_deref();
+            }
+            out
+        };
+        assert_eq!(
+            words,
+            vec![
+                Some("a".to_string()),
+                Some("b".to_string()),
+                Some("c".to_string())
+            ],
+            "and in call order"
+        );
+        drop(subs);
+        start_match();
+    }
+
+    /// c:2169-2174 — C parks `md->str` on the RIGHT edge of the unconsumed span
+    /// for a suffix (`md->str += md->len`) because the suffix walk reads
+    /// backwards from it (c:2326 `q[ind]`, `ind == -1`). This port owns the span
+    /// instead of pointing into it, so the bump had been transcribed as
+    /// `word[md.len..]` — the text AFTER the span, empty for every node
+    /// `bld_parts` builds. Suffix-side `sub_match` therefore had nothing to
+    /// compare and always returned 0.
+    #[test]
+    fn check_cmdata_suffix_keeps_the_word_span() {
+        let mut md = cmdata {
+            cl: Some(get_cline(None, 0, Some("abc".to_string()), 3, None, 0, 0)),
+            ..Default::default()
+        };
+        assert_eq!(check_cmdata(&mut md, 1), 0, "c:2179 — chain not exhausted");
+        assert_eq!(md.len, 3, "c:2167 — len is the whole word");
+        assert_eq!(md.str, "abc", "c:2169 — the span itself, not what follows it");
+
+        // The consumer that the empty span broke: a two-character common
+        // SUFFIX between the old string `xbc` and the new word `abc`.
+        let mut md = cmdata {
+            cl: Some(get_cline(None, 0, Some("abc".to_string()), 3, None, 0, 0)),
+            ..Default::default()
+        };
+        assert_eq!(
+            sub_match(&mut md, "xbc", 3, 1),
+            2,
+            "c:2416-2424 — `bc` is common to both"
+        );
+        assert_eq!(md.len, 1, "c:2418 — one character left unconsumed");
+        assert_eq!(md.str, "a", "c:2420 — consumed from the right");
     }
 }
