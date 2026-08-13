@@ -6373,16 +6373,72 @@ pub fn domenuselect(
     }
 }
 
-/// Port of `menuselect(char **args)` from Src/Zle/complist.c:3484.
-/// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn menuselect() -> i32 {
-    // c:3484
-    // C body c:3486-3510 — entry widget for `menu-select`. Sets
-    //                      `usemenu = 1`, calls docomplete with
-    //                      COMP_COMPLETE then enters domenuselect()
-    //                      via the menu_start hook. Without mtab[][]
-    //                      we delegate to the basic menucomplete entry.
-    menucomplete(&[])
+/// Port of `static int menuselect(char **args)` from
+/// `Src/Zle/complist.c:3501` — the `menu-select` widget function.
+///
+/// The previous body was `menucomplete(&[])`, which is NOT this function:
+/// it dropped `args`, dropped the `selected` handshake, and — the part that
+/// matters — never called `domenuselect(NULL, NULL)`. That NULL `dummy` is
+/// load-bearing: `domenuselect`'s early bail (c:2407-2408) reads
+///
+///     if (fdat || (dummy && (!(s = getsparam("MENUSELECT")) || …)))
+///
+/// so a NULL `dummy` SKIPS the `$MENUSELECT` threshold test entirely. Going
+/// through `menucomplete` instead means the loop is only ever entered via the
+/// `menu_start` hook, where `dummy` is the Hookdef — i.e. the explicit
+/// `menu-select` widget was subject to a threshold C exempts it from, and
+/// with `$MENUSELECT` unset it could not start interactive selection at all.
+pub fn menuselect(args: &[String]) -> i32 {
+    // c:3501
+    // C reads the `minfo` struct fields directly (`minfo.cur`,
+    // `minfo.asked`); this port holds `minfo` behind a mutex, so each read
+    // is the same lock-and-copy expression inlined at the C line it stands
+    // for. `minfo.cur` is a `Cmatch **` tested for NULL in C and an
+    // `Option` here.
+    let mut d = 0; // c:3503
+
+    // c:3505-3511 — no menu in progress yet: run a menu completion first,
+    // and take the result if it already settled the matter.
+    let cur_none = MINFO
+        .get()
+        .and_then(|lk| lk.lock().ok())
+        .map(|mi| mi.cur.is_none())
+        .unwrap_or(true); // c:3505 `!minfo.cur`
+    if cur_none {
+        // c:3505
+        SELECTED.store(0, Ordering::SeqCst); // c:3506
+        menucomplete(args); // c:3507
+                            // c:3508-3509 — `if ((minfo.cur && minfo.asked == 2) || selected) return 0;`
+        let (cur_some, asked) = MINFO
+            .get()
+            .and_then(|lk| lk.lock().ok())
+            .map(|mi| (mi.cur.is_some(), mi.asked))
+            .unwrap_or((false, 0));
+        if (cur_some && asked == 2) || SELECTED.load(Ordering::SeqCst) != 0 {
+            return 0; // c:3509
+        }
+        d = 1; // c:3510
+    }
+    // c:3512-3513 — `if (minfo.cur && (minfo.asked == 2 ||
+    //                                  domenuselect(NULL, NULL)) && !d)
+    //                    menucomplete(args);`
+    // Both `domenuselect` arguments are NULL here, which is the ONLY call
+    // site in C that passes NULL (c:3512); the hook path passes the Hookdef.
+    // C's `&&` short-circuits, so `domenuselect` runs only when
+    // `minfo.asked != 2`.
+    let (cur_some, asked) = MINFO
+        .get()
+        .and_then(|lk| lk.lock().ok())
+        .map(|mi| (mi.cur.is_some(), mi.asked))
+        .unwrap_or((false, 0)); // c:3512
+    if cur_some
+        && (asked == 2 || domenuselect(std::ptr::null_mut(), std::ptr::null_mut()) != 0)
+        && d == 0
+    {
+        menucomplete(args); // c:3513
+    }
+
+    0 // c:3515
 }
 
 /// Port of `setup_(UNUSED(Module m))` from Src/Zle/complist.c:3511.
@@ -7461,11 +7517,44 @@ mod tests {
         let _: i32 = msearchpop();
     }
 
-    /// c:3039 — `menuselect` returns i32.
+    /// c:3515 — `menuselect` returns i32. C's signature is
+    /// `static int menuselect(char **args)` (c:3501), so it takes the
+    /// widget's argument vector.
     #[test]
     fn menuselect_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: i32 = menuselect();
+        let _: i32 = menuselect(&[]);
+    }
+
+    /// c:3505-3506 — with no menu in progress (`!minfo.cur`) `menuselect`
+    /// clears the `selected` handshake flag before running the menu
+    /// completion, so the c:3508 test observes only what THIS invocation
+    /// set (c:2589 sets it from `domenucomplete`).
+    ///
+    /// Regression pin: the previous body was a bare `menucomplete(&[])`,
+    /// which is a different function entirely — it never touched
+    /// `selected`, never consulted `minfo.asked`, and never reached
+    /// `domenuselect(NULL, NULL)` (c:3512). That NULL `dummy` is the whole
+    /// point of the widget: `domenuselect` bails early on
+    /// `dummy && !getsparam("MENUSELECT")` (c:2407-2408), so only a NULL
+    /// `dummy` lets the explicit `menu-select` widget start interactive
+    /// selection when `$MENUSELECT` is unset.
+    #[test]
+    fn menuselect_clears_selected_before_completing() {
+        let _g = crate::test_util::global_state_lock();
+        // No menu in progress → c:3505 is taken.
+        if let Some(lk) = MINFO.get() {
+            if let Ok(mut mi) = lk.lock() {
+                mi.cur = None;
+            }
+        }
+        SELECTED.store(1, Ordering::SeqCst);
+        let _ = menuselect(&[]);
+        assert_eq!(
+            SELECTED.load(Ordering::SeqCst),
+            0,
+            "c:3506 — `selected = 0` must run on the !minfo.cur path"
+        );
     }
 
     /// c:3051-3165 — every lifecycle hook returns 0 (success sentinel).
