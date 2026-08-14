@@ -15,6 +15,7 @@ use crate::ported::parse::init_parse_status;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::subst::equalsubstr;
 use crate::ported::utils::{errflag, zerr, zmonotime, zsleep_random, ERRFLAG_ERROR};
+use crate::ported::zsh_system_h::IS_DIRSEP;
 use crate::ported::zle::compcore::ZLEMETACS;
 use crate::ported::zsh_h::{
     hashnode, hist_stack, histent, isset, Pound, BANGHIST, CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE,
@@ -2993,43 +2994,82 @@ pub fn rembutext(s: &str) -> String {
 }
 
 /// Port of `char *remlpaths(char **str, int count)` from Src/hist.c:2152.
-/// Rust idiom replacement: `split('/')` + `iter().rev().take(n)`
-/// covers the C reverse-scan-and-skip-leading-paths loop without
-/// strchr/strncpy bookkeeping.
+/// Keeps the last `count` path components (the `:t` modifier family).
 ///
-/// C behavior (c:2172-2179): when `--count > 0` and the cursor has
+/// The C body walks a single cursor backwards from `strend(*junkptr)`
+/// and, on the separator that ends the wanted range, cuts in place
+/// (`*str = '\0'; *junkptr = dupstring(str + 1)`). This port keeps that
+/// shape — one backward byte scan, one allocation for the result — so
+/// the modifier costs a scan of the string instead of a split + Vec +
+/// join per element.
+///
+/// C behavior (c:2165-2172): when `--count > 0` and the cursor has
 /// already reached the start of the string (`str > *junkptr` fails),
-/// the function returns 1 ("whole string needed") WITHOUT modifying
-/// `*junkptr` — preserving the original input verbatim (including
-/// the leading slash for absolute paths).
+/// the function returns 1 ("whole string needed") WITHOUT cutting, so
+/// the caller observes the input (leading slash included) apart from
+/// the trailing-separator trim c:2156-2161 already applied in place.
+/// c:2182-2185 (`str <= *junkptr` → `return 0`) reaches the same
+/// result by a different route.
+///
+/// `count == 0` needs no special case: C tests `--count > 0`, which is
+/// false for both 0 and 1, so both cut at the first separator from the
+/// right — c:574's `digitcount()` default of 0 means "one component".
 pub fn remlpaths(s: &str, count: i32) -> String {
     // c:2152
-    // c:2156-2161 — `if (IS_DIRSEP(*str))` block trims trailing slashes
-    // off the input. Apply lexically before splitting.
-    let trimmed = s.trim_end_matches('/');
-    if trimmed.is_empty() {
+    let b = s.as_bytes();
+    // c:2154 — `char *str = strend(*junkptr);` — the LAST character
+    // (string.c:196), or the string itself when empty. The cursor is an
+    // isize because C lets it walk one step before `*junkptr`.
+    if b.is_empty() {
         return String::new();
     }
-    let parts: Vec<&str> = trimmed.split('/').filter(|p| !p.is_empty()).collect();
-    let n = if count == 0 { 1 } else { count as usize };
-    if n > parts.len() {
-        // c:2172-2175 — `str > *junkptr` fails → `return 1` early-exit
-        // without writing to junkptr. The caller `apply_history_modifiers`
-        // observes the input string UNCHANGED (including leading slashes).
-        return s.to_string();
+    let mut count = count;
+    let mut str_ = b.len() as isize - 1;
+    // `end` is where C's in-place NUL lands: everything from `end` on is
+    // already cut off the buffer the caller sees.
+    let mut end = b.len();
+
+    // c:2156-2161 — trailing separators are trimmed off the input first.
+    if IS_DIRSEP(b[str_ as usize] as char) {
+        while str_ >= 0 && IS_DIRSEP(b[str_ as usize] as char) {
+            str_ -= 1; // c:2159
+        }
+        end = (str_ + 1) as usize; // c:2160 `str[1] = '\0'`
     }
-    // c:2178-2179 — `*str = '\0'; *junkptr = dupstring(str + 1);` — the
-    // leading slash (and prefix path) gets overwritten by NUL and the
-    // returned slice starts AFTER it, dropping it. So when n <= count of
-    // components, the leading slash is stripped (matches C).
-    parts
-        .iter()
-        .rev()
-        .take(n)
-        .rev()
-        .copied()
-        .collect::<Vec<&str>>()
-        .join("/")
+
+    loop {
+        // c:2162-2163
+        while str_ >= 0 {
+            // c:2164
+            if IS_DIRSEP(b[str_ as usize] as char) {
+                count -= 1;
+                if count > 0 {
+                    // c:2165 `if (--count > 0)`
+                    if str_ > 0 {
+                        // c:2166-2168 — more components wanted; keep scanning
+                        // left from before this separator.
+                        str_ -= 1;
+                        break;
+                    }
+                    // c:2169-2172 — whole string needed.
+                    return s[..end].to_string();
+                }
+                // c:2174-2176 — cut here; the result starts after the
+                // separator, which is why the leading slash is dropped.
+                return s[str_ as usize + 1..end].to_string();
+            }
+            str_ -= 1;
+        }
+        // c:2179-2181 — count consecutive separators as 1.
+        while str_ >= 0 && IS_DIRSEP(b[str_ as usize] as char) {
+            str_ -= 1;
+        }
+        if str_ <= 0 {
+            break; // c:2182-2183
+        }
+    }
+    // c:2185 — `return 0`: no cut, the caller keeps the (trimmed) input.
+    s[..end].to_string()
 }
 
 /// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.

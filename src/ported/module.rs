@@ -1563,23 +1563,121 @@ impl modulestab {
         // in current zsh git but do not exist in the 5.9.x line this
         // parity target ships, and zshrs implements none of them, so
         // they contribute no boot node.
-        let bltinmods_list: &[(&str, bool, &[&str])] = &[
-            // (module, has `autofeatures=`, `moddeps=`)
-            ("zsh/rlimits", true, &[][..]),       // Src/Builtins/rlimits.mdd
-            ("zsh/sched", true, &[][..]),         // Src/Builtins/sched.mdd
-            ("zsh/param/private", true, &[][..]), // Src/Modules/param_private.mdd
-            ("zsh/parameter", true, &[][..]),     // Src/Modules/parameter.mdd
-            ("zsh/termcap", true, &[][..]),       // Src/Modules/termcap.mdd
-            ("zsh/terminfo", true, &[][..]),      // Src/Modules/terminfo.mdd
-            ("zsh/watch", true, &[][..]),         // Src/Modules/watch.mdd
-            ("zsh/zutil", true, &["zsh/complete"][..]), // Src/Modules/zutil.mdd
-            ("zsh/compctl", true, &["zsh/complete", "zsh/zle"][..]), // Src/Zle/compctl.mdd
-            ("zsh/complete", true, &["zsh/zle"][..]), // Src/Zle/complete.mdd
+        //
+        // The `autofeatures` column below is each `.mdd`'s
+        // `autofeatures=` line VERBATIM — that string is what
+        // `mkbltnmlst.sh:63-69` bakes into the generated
+        // `char *features[] = { … }` array, and `autofeatures("zsh",
+        // MODULE, features, 0, 1)` (defflags 1 = FEAT_IGNORE, c:62) is
+        // what registers the `b:`/`c:`/`p:`/`f:` autoloads. Replaying
+        // only the `find_module` half left `zmodload -ac` and
+        // `zmodload -ap` printing nothing where zsh lists four
+        // conditions and forty parameters.
+        let bltinmods_list: &[(&str, &[&str], &[&str])] = &[
+            // (module, `autofeatures=`, `moddeps=`)
+            // Src/Builtins/rlimits.mdd:5
+            ("zsh/rlimits", &["b:limit", "b:ulimit", "b:unlimit"][..], &[][..]),
+            // Src/Builtins/sched.mdd:5
+            ("zsh/sched", &["b:sched", "p:zsh_scheduled_events"][..], &[][..]),
+            // Src/Modules/param_private.mdd:5
+            ("zsh/param/private", &["b:private"][..], &[][..]),
+            // Src/Modules/parameter.mdd:5
+            (
+                "zsh/parameter",
+                &[
+                    "p:parameters",
+                    "p:commands",
+                    "p:functions",
+                    "p:dis_functions",
+                    "p:functions_source",
+                    "p:dis_functions_source",
+                    "p:funcfiletrace",
+                    "p:funcsourcetrace",
+                    "p:funcstack",
+                    "p:functrace",
+                    "p:builtins",
+                    "p:dis_builtins",
+                    "p:reswords",
+                    "p:dis_reswords",
+                    "p:patchars",
+                    "p:dis_patchars",
+                    "p:options",
+                    "p:modules",
+                    "p:dirstack",
+                    "p:history",
+                    "p:historywords",
+                    "p:jobtexts",
+                    "p:jobdirs",
+                    "p:jobstates",
+                    "p:nameddirs",
+                    "p:userdirs",
+                    "p:usergroups",
+                    "p:aliases",
+                    "p:dis_aliases",
+                    "p:galiases",
+                    "p:dis_galiases",
+                    "p:saliases",
+                    "p:dis_saliases",
+                ][..],
+                &[][..],
+            ),
+            // Src/Modules/termcap.mdd:15
+            ("zsh/termcap", &["b:echotc", "p:termcap"][..], &[][..]),
+            // Src/Modules/terminfo.mdd:15
+            ("zsh/terminfo", &["b:echoti", "p:terminfo"][..], &[][..]),
+            // Src/Modules/watch.mdd:5
+            ("zsh/watch", &["b:log", "p:WATCH", "p:watch"][..], &[][..]),
+            // Src/Modules/zutil.mdd:9
+            (
+                "zsh/zutil",
+                &["b:zformat", "b:zstyle", "b:zregexparse", "b:zparseopts"][..],
+                &["zsh/complete"][..],
+            ),
+            // Src/Zle/compctl.mdd:7
+            (
+                "zsh/compctl",
+                &["b:compctl", "b:compcall"][..],
+                &["zsh/complete", "zsh/zle"][..],
+            ),
+            // Src/Zle/complete.mdd:8 — the only `c:` autofeatures in the
+            // boot set, and the source of `zmodload -ac`'s four rows.
+            (
+                "zsh/complete",
+                &[
+                    "b:compadd",
+                    "b:compset",
+                    "c:prefix",
+                    "c:suffix",
+                    "c:between",
+                    "c:after",
+                ][..],
+                &["zsh/zle"][..],
+            ),
             // No `autofeatures=`; the node comes from `add_dep` alone.
-            ("zsh/complist", false, &["zsh/complete", "zsh/zle"][..]), // Src/Zle/complist.mdd
-            ("zsh/computil", true, &["zsh/complete", "zsh/zle"][..]),  // Src/Zle/computil.mdd
-            ("zsh/zle", true, &[][..]),                                // Src/Zle/zle.mdd
-            ("zsh/zleparameter", true, &["zsh/zle"][..]),              // Src/Zle/zleparameter.mdd
+            ("zsh/complist", &[][..], &["zsh/complete", "zsh/zle"][..]), // Src/Zle/complist.mdd
+            // Src/Zle/computil.mdd:9
+            (
+                "zsh/computil",
+                &[
+                    "b:compdescribe",
+                    "b:comparguments",
+                    "b:compvalues",
+                    "b:compquote",
+                    "b:comptags",
+                    "b:comptry",
+                    "b:compfiles",
+                    "b:compgroups",
+                ][..],
+                &["zsh/complete", "zsh/zle"][..],
+            ),
+            // Src/Zle/zle.mdd:6
+            ("zsh/zle", &["b:bindkey", "b:vared", "b:zle"][..], &[][..]),
+            // Src/Zle/zleparameter.mdd:7
+            (
+                "zsh/zleparameter",
+                &["p:widgets", "p:keymaps"][..],
+                &["zsh/zle"][..],
+            ),
             // mkbltnmlst.sh:83-105 second pass — `link=dynamic
             // load=no` with `moddeps`. `zsh/deltochar` is the only
             // other module in that shape and does NOT appear: the
@@ -1588,16 +1686,22 @@ impl modulestab {
             // `load=no` (it declares no `functions=`), so it never
             // matches. Verified on the oracle: `zmodload -d` lists
             // seven modules and deltochar is not one of them.
-            ("zsh/zftp", false, &["zsh/net/tcp"][..]), // Src/Modules/zftp.mdd
+            // zftp.mdd DOES carry `autofeatures="b:zftp"`, but it is
+            // `load=no`, so mkbltnmlst.sh's second pass emits ONLY the
+            // `add_dep` — no `autofeatures()` call, which is why
+            // `zmodload -a` on the oracle has no `zftp` row.
+            ("zsh/zftp", &[][..], &["zsh/net/tcp"][..]), // Src/Modules/zftp.mdd
         ];
-        for (name, has_autofeatures, deps) in bltinmods_list {
-            if *has_autofeatures {
+        for (name, autofeature_list, deps) in bltinmods_list {
+            if !autofeature_list.is_empty() {
                 // c:3449 — autofeatures() opens with
                 //   find_module(module, FINDMOD_ALIASP|FINDMOD_CREATE, NULL)
-                // Only the node-creating half is replayed here: the
-                // autoload feature registration itself lives in the
-                // `autoload_builtins` / `autoload_param_stubs` ledgers
-                // seeded further down and in `vm_helper`.
+                // which is what creates the module's modulestab node.
+                // The feature registration itself is replayed after the
+                // whole list has its nodes + MOD_LINKED flags (see the
+                // second pass below) — `autofeatures` reads
+                // `MOD_INIT_B`/the feature tables off the node it is
+                // registering against, so the node has to exist first.
                 find_module(self, name, FINDMOD_CREATE);
             }
             for dep in *deps {
@@ -1689,47 +1793,62 @@ impl modulestab {
             }
         }
 
-        // c:Src/init.c:1708 init_bltinmods + Config/installmodules —
-        // canonical auto-load builtin→module bindings reported by
-        // `zmodload -a` (no args). The 27 entries match
-        // `/opt/homebrew/bin/zsh -fc 'zmodload -a'` exactly. NOT the
-        // same as the full module→builtin index above: `zsh/files`
-        // builtins (mkdir, rm, etc.) are statically linked but NOT
-        // in the auto-load registry (zsh requires explicit
-        // `zmodload zsh/files` to get them). Bug #222.
-        let autoload_pairs: &[(&str, &str)] = &[
-            ("bindkey", "zsh/zle"),
-            ("compadd", "zsh/complete"),
-            ("comparguments", "zsh/computil"),
-            ("compcall", "zsh/compctl"),
-            ("compctl", "zsh/compctl"),
-            ("compdescribe", "zsh/computil"),
-            ("compfiles", "zsh/computil"),
-            ("compgroups", "zsh/computil"),
-            ("compquote", "zsh/computil"),
-            ("compset", "zsh/complete"),
-            ("comptags", "zsh/computil"),
-            ("comptry", "zsh/computil"),
-            ("compvalues", "zsh/computil"),
-            ("echotc", "zsh/termcap"),
-            ("echoti", "zsh/terminfo"),
-            ("limit", "zsh/rlimits"),
-            ("log", "zsh/watch"),
-            ("private", "zsh/param/private"),
-            ("sched", "zsh/sched"),
-            ("ulimit", "zsh/rlimits"),
-            ("unlimit", "zsh/rlimits"),
-            ("vared", "zsh/zle"),
-            ("zformat", "zsh/zutil"),
-            ("zle", "zsh/zle"),
-            ("zparseopts", "zsh/zutil"),
-            ("zregexparse", "zsh/zutil"),
-            ("zstyle", "zsh/zutil"),
-        ];
-        for (b, m) in autoload_pairs {
-            self.autoload_builtins
-                .insert((*b).to_string(), (*m).to_string());
+        // c:Src/init.c:1739 `#include "bltinmods.list"` — the
+        // `autofeatures("zsh", MODULE, features, 0, 1)` half, replayed in
+        // `config.modules` order. `mkbltnmlst.sh:62-70` wraps each call in
+        // `if (EMULATION(EMULATE_ZSH))`, and every boot module except
+        // `zsh/rlimits` / `zsh/ksh93` (the two with `autofeatures_emu=`)
+        // registers NOTHING outside zsh emulation. zshrs's emulation is
+        // not settled at `modulestab::new()` time — this runs from
+        // `init_bltinmods`, before `apply_cli_flags`' `emulate("sh")` —
+        // so the zsh arm is the one replayed; a `--sh`/`--bash` process
+        // will carry the zsh feature set, matching what zshrs already
+        // does for the builtin ledger this replaces.
+        //
+        // `prefchar = 0` (the features carry their own `b:`/`c:`/`p:`
+        // type prefix) and `defflags = 1` = FEAT_IGNORE (c:62), which is
+        // what lets a name the static link already provides — every one
+        // of the 27 `b:` builtins, and the eagerly-seeded `p:` specials
+        // (`vm_helper::init_partab_params`) — register its ledger entry
+        // without an "already defined" diagnostic.
+        //
+        // ORDERING (Rust-only): this runs AFTER the `zsh_default_loaded`
+        // `boot_` shim loop above, not interleaved with node creation as
+        // `bltinmods.list` has it. That loop is itself a zshrs-only shim
+        // (see its comment) which installs `zsh/watch`'s `watch`/`WATCH`
+        // specials eagerly, the way `init_partab_params` installs the
+        // `partab[]` ones. Running the replay first made `add_autoparam`
+        // (c:1197) win the race and leave a live PM_AUTOLOAD SCALAR stub
+        // whose value is the module name, so `${#watch}` read 9
+        // ("zsh/watch") instead of 0. With the specials already in
+        // paramtab, `checkaddparam` (c:1026) returns 2 under FEAT_IGNORE
+        // and `add_autoparam` is the no-op C reaches once a module is
+        // loaded — while the ledger entry `autofeatures` records is what
+        // `zmodload -ap` lists.
+        for (name, autofeature_list, _deps) in bltinmods_list {
+            if autofeature_list.is_empty() {
+                continue;
+            }
+            let features: Vec<String> = autofeature_list.iter().map(|f| f.to_string()).collect();
+            // c:3440 `autofeatures(cmdnam, module, features, prefchar,
+            //          defflags)` — cmdnam "zsh" per mkbltnmlst.sh:69.
+            autofeatures(self, "zsh", Some(name), &features, 0, FEAT_IGNORE);
         }
+
+
+        // The auto-load builtin→module bindings `zmodload -a` reports
+        // used to be a hand-maintained 27-row `autoload_pairs` table
+        // here. They are now produced by the `b:` half of the
+        // `autofeatures` replay above, from each `.mdd`'s own
+        // `autofeatures=` line — one source of truth instead of two.
+        // The set is unchanged: rlimits 3 + sched 1 + param/private 1 +
+        // termcap 1 + terminfo 1 + watch 1 + zutil 4 + compctl 2 +
+        // complete 2 + computil 8 + zle 3 = 27, matching
+        // `/opt/homebrew/bin/zsh -fc 'zmodload -a'` exactly. `zsh/files`
+        // builtins (mkdir, rm, …) are statically linked but carry no
+        // boot autofeatures entry (files.mdd is `load=no`), so they stay
+        // out of the registry — zsh requires an explicit
+        // `zmodload zsh/files`. Bug #222.
 
         // c:Src/init.c:1708 — `init_bltinmods` ends with
         // `load_module("zsh/main", NULL, 0)`. `zsh/main` is the
@@ -1771,8 +1890,25 @@ impl modulestab {
     /// deps via `MOD_BUSY`, load dependency list recursively. zshrs:
     /// all modules are statically linked, so dlopen path is skipped
     /// and we operate on the static registry.
-    /// WARNING: param names don't match C — Rust=(name) vs C=(name, enablesarr, silent)
-    pub fn load_module(&mut self, name: &str) -> bool {
+    /// `enablesarr` is C's `Feature_enables` argument, threaded through
+    /// to `do_boot_module` (c:2306) so a `require_module` that asks for ONE
+    /// feature enables only that feature — the port used to drop the
+    /// argument and enable every feature the module has.
+    /// `enablesarr` is C's `Feature_enables` argument, threaded through to
+    /// `do_boot_module` (c:2306) so a `require_module` that asks for ONE
+    /// feature enables only that feature. The port used to drop the
+    /// argument and pass `None` (= enable everything), so the first
+    /// `[[ -prefix … ]]` installed all four of `zsh/complete`'s conddefs
+    /// where zsh installs only `prefix`.
+    /// WARNING: param names don't match C — Rust=(name, enablesarr) vs C=(name, enablesarr, silent)
+    pub fn load_module(
+        &mut self,
+        name: &str,
+        enablesarr: Option<&[String]>,
+        // !!! RUST-ONLY PARAM !!! — carries C's per-entry
+        // `Feature_enables.pat` (see FEAT_PATTERN_ARGS).
+        feat_pat: bool,
+    ) -> bool {
         // c:2200
         // Faithful port of the find_module-found branch (c:2249-2320).
         // The !find_module branch (c:2219-2247) requires DSO loading and
@@ -1867,7 +2003,7 @@ impl modulestab {
             //       (bootret = do_boot_module(m, enablesarr, silent)) == 1)
             let set = setup_module(self, name);
             let bootret = if set == 0 {
-                do_boot_module(self, name, None, 0)
+                do_boot_module(self, name, enablesarr, 0, feat_pat)
             } else {
                 1
             };
@@ -1936,7 +2072,7 @@ impl modulestab {
             .map(|d| d.iter().cloned().collect())
             .unwrap_or_default();
         for dep in &deps_snapshot {
-            if !self.load_module(dep) {
+            if !self.load_module(dep, None, false) {
                 // c:2272 — return 1 on dep failure
                 self.modules.get_mut(name).unwrap().node.flags &= !MOD_BUSY; // c:2273
                 unqueue_signals(); // c:2274
@@ -2008,7 +2144,7 @@ impl modulestab {
         // The Rust do_boot_module routes through boot_module dispatcher
         // (b474b62898) to the per-module boot_(m) — the real partab
         // and bintab installations land here.
-        let bootret = do_boot_module(self, name, None, 0);
+        let bootret = do_boot_module(self, name, enablesarr, 0, feat_pat);
         if bootret == 1 {
             // c:2306-2315 — boot failure: cleanup + finish + clear, return 1.
             //   else m->u.linked = NULL;  (c:2312)
@@ -2991,7 +3127,7 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(module, feature) vs C=(modname, prefix, feature)
     pub fn ensurefeature(&mut self, module: &str, feature: &str) -> bool {
         if !self.is_loaded(module) {
-            self.load_module(module);
+            self.load_module(module, None, false);
         }
         self.is_loaded(module)
     }
@@ -3774,8 +3910,33 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
         // zsh/sched `b:sched` error). The feature surface is `b:<builtin>`
         // per the C BUILTIN() homes (complete.c:1693-1694 / computil.c:5131-
         // 5138 / compctl.c:4006-4007).
+        // c:Src/Zle/complete.c:1720-1726 — `module_features = { bintab,
+        // …, cotab, …, NULL, 0, NULL, 0, 0 }`, so `featuresarray`
+        // (c:3283-3308) emits the two `b:` rows in bintab order
+        // (c:1693-1694) then the four `c:` rows in cotab order
+        // (c:1698-1701: after, between, prefix, suffix). The `c:` rows
+        // were missing, so `zmodload zsh/complete` after the boot
+        // autofeatures replay hit do_module_features' FEAT_CHECKAUTO arm
+        // (c:2024-2044) and cancelled all four autoloads with
+        // "module `zsh/complete' has no such feature".
         "zsh/complete" => {
-            for f in ["b:compadd", "b:compset"] {
+            for f in [
+                "b:compadd",
+                "b:compset",
+                "c:after",   // c:1698
+                "c:between", // c:1699
+                "c:prefix",  // c:1700
+                "c:suffix",  // c:1701
+            ] {
+                features.push(f.to_string());
+            }
+            0
+        }
+        // c:Src/Zle/zleparameter.c:137-143 — `module_features` carries
+        // ONLY `partab` (c:131-135), so the feature surface is the two
+        // `p:` rows in partab order.
+        "zsh/zleparameter" => {
+            for f in ["p:keymaps", "p:widgets"] {
                 features.push(f.to_string());
             }
             0
@@ -3807,8 +3968,14 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
         // "module `zsh/sched' has no such feature: `b:sched'". Feature
         // surface = `b:<builtin>` (sched.c:376 / rlimits.c limit/ulimit/
         // unlimit).
+        // c:Src/Builtins/sched.c:387-393 — `module_features = { bintab,
+        // …, NULL, 0, NULL, 0, partab, … }`: one `b:` row then the
+        // `p:zsh_scheduled_events` paramdef (sched.c partab), which
+        // `featuresarray` emits last (c:3304-3305).
         "zsh/sched" => {
-            features.push("b:sched".to_string());
+            for f in ["b:sched", "p:zsh_scheduled_events"] {
+                features.push(f.to_string());
+            }
             0
         }
         "zsh/rlimits" => {
@@ -3875,6 +4042,14 @@ pub fn enables_module(_table: &mut modulestab, name: &str, enables: &mut Option<
         "zsh/zpty" => crate::ported::modules::zpty::enables_(std::ptr::null(), enables),
         "zsh/zselect" => crate::ported::modules::zselect::enables_(std::ptr::null(), enables),
         "zsh/zutil" => crate::ported::modules::zutil::enables_(std::ptr::null(), enables),
+        // c:Src/Zle/complete.c:1751 — `handlefeatures(m, &module_features,
+        // enables)`. This is the arm that installs the four cotab
+        // conddefs (`-prefix`/`-suffix`/`-after`/`-between`), replacing the
+        // `c:` autoload stubs the boot `autofeatures` replay planted.
+        // Falling to `_ => 0` left them installed forever, so
+        // `zmodload zsh/complete; zmodload -ac` listed all four where
+        // `zsh -f` lists none.
+        "zsh/complete" => crate::ported::zle::complete::enables_(std::ptr::null(), enables),
         _ => 0,
     }
 }
@@ -3917,6 +4092,13 @@ pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
         // `zmodload zsh/complist` was a no-op and every `bindkey -M
         // menuselect …` (zpwr's completion-menu keybindings) errored
         // "no such keymap `menuselect'".
+        // c:Src/Zle/complete.c:1758 boot_ — registers the six completion
+        // hookfns and (via the cotab half of `handlefeatures`,
+        // c:3364-3369) installs the four `-prefix`/`-suffix`/`-after`/
+        // `-between` conddefs that replace the `c:` autoload stubs.
+        // Missing from this table, `zmodload zsh/complete` left all four
+        // stubs in condtab where `zsh -f` clears them.
+        "zsh/complete" => crate::ported::zle::complete::boot_(std::ptr::null()),
         "zsh/complist" => crate::ported::zle::complist::boot_(),
         "zsh/curses" => crate::ported::modules::curses::boot_(std::ptr::null()),
         "zsh/datetime" => crate::ported::modules::datetime::boot_(std::ptr::null()),
@@ -3959,8 +4141,8 @@ pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/zpty" => crate::ported::modules::zpty::boot_(std::ptr::null()),
         "zsh/zselect" => crate::ported::modules::zselect::boot_(std::ptr::null()),
         "zsh/zutil" => crate::ported::modules::zutil::boot_(std::ptr::null()),
-        // Modules without a ported per-module boot_ (e.g. zsh/main,
-        // zsh/complete — purely-static modules with no setup hook):
+        // Modules without a ported per-module boot_ (e.g. zsh/main —
+        // purely-static modules with no setup hook):
         // 0 == success no-op, matching the pre-port behaviour.
         _ => 0,
     }
@@ -4191,26 +4373,61 @@ pub fn do_module_features(
                     } else {
                         (1i32, fep_str.as_str())
                     };
-                    // c:2088-2094 — exact name match (pattern path
-                    // skipped: zshrs doesn't carry the patprog from
-                    // Feature_enables).
+                    // c:2088-2094 —
+                    //   for (fp = features; *fp; fp++)
+                    //       if (fep->pat ? pattry(fep->pat, *fp)
+                    //                    : !strcmp(*fp, esp)) {
+                    //           enables[fp - features] = on;
+                    //           found++;
+                    //           if (!fep->pat) break;
+                    //       }
+                    // `fep->pat` is non-NULL exactly when `zmodload -m`
+                    // was given (c:3258); zshrs carries that as
+                    // FEAT_PATTERN_ARGS (see its doc comment for why).
+                    // A pattern keeps scanning — it may enable several
+                    // features — while an exact name stops at the first
+                    // hit.
+                    let pat = if (flags & FEAT_PATTERN_ARGS) != 0 {
+                        let mut pat_src = crate::ported::string::dupstring(esp);
+                        crate::ported::glob::tokenize(&mut pat_src);
+                        crate::ported::pattern::patcompile(
+                            &pat_src,
+                            crate::ported::zsh_h::PAT_STATIC,
+                            None,
+                        )
+                    } else {
+                        None
+                    };
                     let mut found = false;
                     for (i, f) in module_features.iter().enumerate() {
-                        if f == esp {
+                        let hit = match pat.as_ref() {
+                            Some(p) => crate::ported::pattern::pattry(p, f), // c:2093
+                            None => f == esp,                                    // c:2093
+                        };
+                        if hit {
                             enables_vec[i] = on; // c:2090
                             found = true;
-                            break; // c:2093 break-on-non-pat
+                            if pat.is_none() {
+                                break; // c:2096-2097 `if (!fep->pat) break;`
+                            }
                         }
                     }
                     if !found {
-                        // c:2095-2102 — `module has no such feature`.
+                        // c:2099-2106 — the diagnostic differs for the
+                        // pattern form.
                         if (flags & FEAT_IGNORE) == 0 {
                             zwarn(&format!(
-                                "module `{}' has no such feature: `{}'",
-                                modname, esp
+                                "module `{}' has no {}: `{}'",
+                                modname,
+                                if pat.is_some() {
+                                    "feature matching" // c:2102
+                                } else {
+                                    "such feature" // c:2103
+                                },
+                                esp
                             ));
                         }
-                        return 1; // c:2101
+                        return 1; // c:2105
                     }
                 }
             }
@@ -4283,14 +4500,20 @@ pub fn do_boot_module(
     modname: &str,
     features: Option<&[String]>,
     silent: i32,
+    // !!! RUST-ONLY PARAM !!! — carries C's per-entry
+    // `Feature_enables.pat` (see FEAT_PATTERN_ARGS).
+    feat_pat: bool,
 ) -> i32 {
     // c:2139
-    let flags = if silent != 0 {
+    let mut flags = if silent != 0 {
         // c:2142 — silent → IGNORE | CHECKAUTO
         FEAT_IGNORE | FEAT_CHECKAUTO
     } else {
         FEAT_CHECKAUTO // c:2143
     };
+    if feat_pat {
+        flags |= FEAT_PATTERN_ARGS;
+    }
     let ret = do_module_features(table, modname, features, flags); // c:2141
     if ret == 1 {
         // c:2145
@@ -4427,6 +4650,9 @@ pub fn require_module(
     modname: &str,
     features: Option<&[String]>,
     silent: i32,
+    // !!! RUST-ONLY PARAM !!! — carries C's per-entry
+    // `Feature_enables.pat` (see FEAT_PATTERN_ARGS).
+    feat_pat: bool,
 ) -> i32 {
     // c:2344
     // c:2350 — queue_signals(): signal-deferral wrapper.
@@ -4462,7 +4688,7 @@ pub fn require_module(
             crate::ported::signals::unqueue_signals();
             return 1;
         }
-        if !table.load_module(&mname) {
+        if !table.load_module(&mname, features, feat_pat) {
             crate::ported::signals::unqueue_signals();
             return 1;
         }
@@ -4473,7 +4699,12 @@ pub fn require_module(
         // features=NULL in C means "enable all features"; the Rust
         // do_module_features takes a single enablesstr arg, so flatten
         // C: features=NULL means "enable all"; pass through.
-        do_module_features(table, &mname, features, 0)
+        do_module_features(
+            table,
+            &mname,
+            features,
+            if feat_pat { FEAT_PATTERN_ARGS } else { 0 },
+        )
     };
 
     // c:2357 — unqueue_signals();
@@ -5264,12 +5495,39 @@ pub fn bin_zmodload_auto(
                     .expect("paramtab poisoned");
                 let mut v: Vec<(String, u32, String)> = tab
                     .iter()
-                    .filter(|(_, p)| (p.node.flags as u32 & crate::ported::zsh_h::PM_AUTOLOAD) != 0)
+                    .filter(|(name, p)| {
+                        (p.node.flags as u32 & crate::ported::zsh_h::PM_AUTOLOAD) != 0
+                            // !!! RUST-ONLY CONDITION !!!
+                            // C has ONE storage for a module parameter: the
+                            // PM_AUTOLOAD stub `add_autoparam` (c:1218) plants
+                            // is the paramtab node, and `addparamdef`
+                            // (c:1065) only replaces it with the real special
+                            // when the module actually loads. zshrs seeds every
+                            // `partab[]` special EAGERLY at startup
+                            // (`vm_helper::init_partab_params`), which wipes
+                            // the stub's PM_AUTOLOAD bit, so it models
+                            // "still an unresolved stub" as a side-set instead
+                            // (`vm_helper::MATERIALIZED_MODULE_PARAMS`, whose
+                            // doc comment carries the same warning). That set
+                            // is per-NAME, exactly like C's flag: after
+                            // `: ${keymaps}`, zsh drops `keymaps` from
+                            // `zmodload -ap` but keeps its sibling `widgets`,
+                            // which a per-MODULE "is it loaded" test cannot
+                            // express. Read it here so `-ap`/`-apL` see the
+                            // same stubs C's PM_AUTOLOAD scan does.
+                            || crate::vm_helper::module_param_is_autoload_stub(name)
+                    })
                     .map(|(name, p)| {
                         (
                             name.clone(),
-                            p.node.flags as u32,
-                            p.u_str.clone().unwrap_or_default(),
+                            p.node.flags as u32 | crate::ported::zsh_h::PM_AUTOLOAD,
+                            // c:2716/2718 read the module off `pm->u.str`.
+                            // An eagerly-seeded special has no `u_str`; its
+                            // owning module is the one the boot
+                            // `autofeatures` replay recorded.
+                            p.u_str.clone().unwrap_or_else(|| {
+                                table.autoload_params.get(name).cloned().unwrap_or_default()
+                            }),
                         )
                     })
                     .collect();
@@ -5622,7 +5880,7 @@ pub fn bin_zmodload_load(table: &mut modulestab, nam: &str, args: &[String], ops
     } else {
         // c:2989-2992 — load loop
         for arg in args {
-            let tmpret = require_module(table, arg, None, OPT_ISSET(ops, b's') as i32); // c:2990
+            let tmpret = require_module(table, arg, None, OPT_ISSET(ops, b's') as i32, false); // c:2990
             if tmpret != 0 && ret != 1 {
                 // c:2991
                 ret = tmpret;
@@ -6045,7 +6303,13 @@ pub fn bin_zmodload_features(
     } else {
         Some(feats.as_slice())
     };
-    require_module(table, modname, features_arg, OPT_ISSET(ops, b's') as i32) // c:3260
+    require_module(
+        table,
+        modname,
+        features_arg,
+        OPT_ISSET(ops, b's') as i32,
+        OPT_ISSET(ops, b'm'), // c:3258 `fep->pat = patprogs ? *patprogs++ : NULL`
+    ) // c:3260
 }
 
 /// Port of `ensurefeature(const char *modname, const char *prefix, const char *feature)` from `Src/module.c:3415`.
@@ -6076,12 +6340,12 @@ pub fn ensurefeature(
     // c:3415
     match feature {
         // c:3420-3421 — `if (!feature) return require_module(modname, NULL, 0);`
-        None => require_module(table, modname, None, 0),
+        None => require_module(table, modname, None, 0, false),
         Some(f) => {
             // c:3422-3428 — build single-element features[2] array.
             let combined = crate::ported::string::dyncat(prefix, f); // c:3422
             let arr = vec![combined];
-            require_module(table, modname, Some(&arr), 0) // c:3428
+            require_module(table, modname, Some(&arr), 0, false) // c:3428
         }
     }
 }
@@ -7301,6 +7565,20 @@ pub const FEAT_REMOVE: i32 = 0x0008; // c:76
 /// `enum { FEAT_CHECKAUTO = 0x0010 }` from `Src/module.c:81`.
 pub const FEAT_CHECKAUTO: i32 = 0x0010; // c:81
 
+/// !!! WARNING: RUST-ONLY FLAG BIT !!!
+/// C has no such bit. It carries the `zmodload -m` decision on the
+/// `Patprog pat` field of each `struct feature_enables` entry
+/// (`Src/module.c:3253-3262` fills `fep->pat = patprogs ? *patprogs++ :
+/// NULL`, and `do_module_features` at c:2093 branches
+/// `fep->pat ? pattry(fep->pat, *fp) : !strcmp(*fp, esp)`). zshrs's
+/// feature list is a plain `&[String]` with no per-entry payload, so
+/// there is nowhere to hang the compiled pattern. `-m` sets the pat for
+/// EVERY entry of one invocation uniformly, so the decision is carried
+/// as this one flag bit alongside `FEAT_IGNORE`/`FEAT_CHECKAUTO` and the
+/// pattern is compiled at the match site. Deliberately outside C's
+/// 0x0001-0x0010 range so it cannot collide with a future upstream bit.
+pub const FEAT_PATTERN_ARGS: i32 = 0x1000;
+
 /// `FINDMOD_ALIASP` — bit in `find_module()`'s `flags` arg.
 /// Port of `enum { FINDMOD_ALIASP = 0x0001 }` from `Src/module.c:110`.
 /// /* Resolve any aliases to the underlying module. */
@@ -7344,7 +7622,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut table = modulestab::new();
         assert!(table.is_loaded("zsh/complete"));
-        table.load_module("zsh/complete");
+        table.load_module("zsh/complete", None, false);
         assert!(table.is_bound("zsh/complete"));
 
         table.unload_module("zsh/complete");
@@ -7354,7 +7632,7 @@ mod tests {
             "record must survive: zsh/complete has deps (c:2910)"
         );
 
-        table.load_module("zsh/complete");
+        table.load_module("zsh/complete", None, false);
         assert!(table.is_loaded("zsh/complete"));
         assert!(table.is_bound("zsh/complete"));
     }

@@ -15724,17 +15724,37 @@ pub fn paramsubst(
             // Consult the flags when the entry exists; "declared but unset"
             // (`setopt typesettounset; typeset x`) still emits its tag because
             // that path stamps PM_DECLARED (builtin.rs:8286).
-            let declared = paramtab()
-                .read()
-                .ok()
-                .and_then(|tab| {
-                    tab.get(&var_name).map(|p| {
-                        let f = p.node.flags as u32;
-                        (f & crate::ported::zsh_h::PM_DECLARED) != 0
-                            || (f & crate::ported::zsh_h::PM_UNSET) == 0
-                    })
+            // c:2812 — the env probe at the end of this chain stands in for
+            // zsh's eager createparamtable import (zshrs imports lazily), so
+            // it may only speak for names with NO paramtab entry. When the
+            // entry exists and says PM_UNSET, that IS the answer — `_` is the
+            // case that forced this: it keeps its (PM_UNSET-flagged) node
+            // after `unset _` (c:3877 — PM_SPECIAL without PM_REMOVABLE stays
+            // in the table) and C never removed its environ entry (pm->env is
+            // NULL for the PM_DONTIMPORT special, c:326), so the inherited
+            // `_=…` from the parent shell resurrected the type tag.
+            // The other fallbacks (array / assoc side-stores, PARTAB_ARRAY,
+            // positionals) stay live: they are real zshrs value stores that
+            // legitimately hold a parameter whose paramtab stub is stale
+            // (e.g. the default-empty `watch` array).
+            let node_is_unset = paramtab().read().ok().and_then(|tab| {
+                tab.get(&var_name).map(|p| {
+                    let f = p.node.flags as u32;
+                    (f & crate::ported::zsh_h::PM_DECLARED) == 0
+                        && (f & crate::ported::zsh_h::PM_UNSET) != 0
                 })
-                .unwrap_or(false)
+            }) == Some(true);
+            let declared = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|tab| {
+                        tab.get(&var_name).map(|p| {
+                            let f = p.node.flags as u32;
+                            (f & crate::ported::zsh_h::PM_DECLARED) != 0
+                                || (f & crate::ported::zsh_h::PM_UNSET) == 0
+                        })
+                    })
+                    .unwrap_or(false)
                 || arrays_contains(&var_name)
                 || assoc_contains(&var_name)
                 || crate::ported::modules::parameter::PARTAB_ARRAY
@@ -15748,7 +15768,7 @@ pub fn paramsubst(
                     })
                     .is_some()
                 || (var_name.chars().all(|c| c.is_ascii_digit()) && !var_name.is_empty())
-                || std::env::var(&var_name).is_ok();
+                || (!node_is_unset && std::env::var(&var_name).is_ok());
             is_set || declared
         } {
             // c:2807
@@ -15890,12 +15910,24 @@ pub fn paramsubst(
                                     // instead of "integer-readonly-special".
                                     bits |= sp.pm_flags as u32;
                                 }
-                                // c:Src/params.c PM_EXPORTED — present iff
-                                // the name has a non-null `pm->env` entry,
-                                // which mirrors std::env::var Ok in Rust.
-                                if std::env::var(&var_name).is_ok() {
-                                    bits |= PM_EXPORTED;
-                                }
+                                // c:Src/Modules/parameter.c:48-50 +
+                                // c:80-81 — `paramtypestr` builds the tag
+                                // from `pm->node.flags` ALONE; the
+                                // `-export` suffix comes from
+                                // `f & PM_EXPORTED`, never from a probe of
+                                // the process environment. The probe that
+                                // used to be here OR-ed PM_EXPORTED into
+                                // every PM_SPECIAL name that happened to
+                                // exist in environ, which is wrong for the
+                                // PM_DONTIMPORT specials: the parent shell
+                                // exports `_` (c:Src/exec.c:5487 puts the
+                                // command name there for the child), so
+                                // `${(t)_}` reported `scalar-export-special`
+                                // where zsh reports `scalar-special`. The
+                                // live flags are already right — `typeset
+                                // -p _`, `export -p`, `typeset +x -r` and
+                                // `$parameters[_]` all agreed with zsh; only
+                                // the (t) tag was lying.
                                 bits
                             } else {
                                 f
@@ -21922,7 +21954,18 @@ fn vars_contains(name: &str) -> bool {
         tab.get(name)
             .is_some_and(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0)
     });
-    in_paramtab_and_set || std::env::var(name).is_ok() || lookup_special_var(name).is_some()
+    // c:3193 — the env fallback stands in for zsh's eager
+    // createparamtable import, so it may only speak for names that have
+    // NO paramtab entry at all. An entry flagged PM_UNSET has already
+    // answered the question: `unset _` keeps its node (PM_SPECIAL
+    // without PM_REMOVABLE, c:3877) and clears nothing in environ —
+    // `pm->env` was never set for a PM_DONTIMPORT special (c:326), so C
+    // never calls `delenv` — and the inherited `_=…` made `${+_}`
+    // report 1 where zsh reports 0.
+    let has_node = paramtab().read().map_or(false, |tab| tab.get(name).is_some());
+    in_paramtab_and_set
+        || (!has_node && std::env::var(name).is_ok())
+        || lookup_special_var(name).is_some()
 }
 
 /// Read an array parameter from `paramtab`. Equivalent to C's

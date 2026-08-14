@@ -730,7 +730,7 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // (needs_load checks MOD_INIT_B).
     if name == "private" {
         if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
-            let _ = crate::ported::module::require_module(&mut tab, "zsh/param/private", None, 0);
+            let _ = crate::ported::module::require_module(&mut tab, "zsh/param/private", None, 0, false);
             // c:2710 ensurefeature
         }
     }
@@ -1134,6 +1134,19 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     //
     // Without this bracket every trap raised inside a function was
     // deferred to the enclosing unqueue_signals() (i.e. script end).
+    // c:Src/exec.c:3546 — `setunderscore((args && nonempty(args)) ?
+    // ((char *) getdata(lastnode(args))) : "");`. execcmd_exec sets `$_`
+    // to the last word of the command it is ABOUT to run — after the
+    // words were expanded, before the builtin/external executes — so a
+    // builtin that READS `_` at run time (`typeset -p _`, `${(P)…}`,
+    // `$parameters[_]`) sees its own last argument, not the previous
+    // command's. zshrs only did this for a handful of builtins (echo,
+    // print, true, false, `:`) and for the external/function paths;
+    // every reg_passthru! builtin was left reading the stale value.
+    // C's `args` list carries argv[0], so a bare `cat` sets `_=cat` —
+    // hence the fallback to `name` when there are no arguments.
+    let underscore = args.last().cloned().unwrap_or_else(|| name.to_string()); // c:3546
+    crate::ported::params::set_zunderscore(std::slice::from_ref(&underscore)); // c:3546
     let q = crate::ported::signals_h::queue_signal_level(); // c:3997
     crate::ported::signals_h::dont_queue_signals(); // c:4231
     let status = dispatch_builtin_raw(name, args);
@@ -1257,6 +1270,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // the zshrs shadow and system coreutils. Cached
                 // after first call, so the hot path is one atomic
                 // load per shadowed-builtin invocation.
+                // c:Src/exec.c:3545-3547 — these shadows stand in for
+                // EXTERNAL commands (`cat`, `head`, …), which in zsh reach
+                // execcmd_exec and set `$_` to the command's last word
+                // before running. Both arms below bypass dispatch_builtin
+                // AND execute_external_bg (the shadow runs in-process; the
+                // opt-out arm spawns through exec_system_command), so
+                // without this `cat f; print $_` reported the PREVIOUS
+                // command's last argument.
+                {
+                    let last = args.last().cloned().unwrap_or_else(|| $name.to_string());
+                    crate::ported::params::set_zunderscore(std::slice::from_ref(&last));
+                    // c:3546
+                }
                 if !crate::daemon_presence::coreutils_shadows_enabled() {
                     return Value::Status(exec_system_command($name, &args));
                 }
@@ -5976,18 +6002,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .last()
                     .is_some_and(|frame| frame.recording)
             {
+                // c:1369 — assignment-only command clears `$_`. The
+                // former DUAL-STATE note here is obsolete: `set_zunderscore`
+                // and the ported `setunderscore` now write the SAME
+                // `init::zunderscore` global (params.rs `zunderscore_lock`
+                // points at it), matching C's single store, so this one call
+                // is the whole effect.
                 crate::ported::exec::setunderscore(""); // c:1369
-                // !!! DUAL-STATE NOTE (no C counterpart) !!! C has ONE
-                // `zunderscore` (Src/init.c:49). zshrs has two: the canonical
-                // port's `init::zunderscore` (written by `setunderscore`
-                // above) and `params::zunderscore_lock()`, which is what
-                // `underscoregetfn` (params.rs:10893, port of
-                // c:Src/params.c:5152) actually reads and what every live `$_`
-                // writer uses (`set_zunderscore`, e.g. the BUILTIN_TRUE arm at
-                // fusevm_bridge.rs:1415). Clear BOTH or the read still sees the
-                // stale value.
-                crate::ported::params::set_zunderscore(&[]); // c:1369
-                exec.pending_underscore = Some(String::new()); // c:1369
             }
         });
         Value::Status(vm.last_status)
@@ -6671,17 +6692,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name: String = op
             .trim_start_matches(|c: char| c == '-' || c == '\u{9b}')
             .to_string();
-        let (min, max): (usize, usize) = match name.as_str() {
-            "prefix" | "suffix" => (1, 2),
-            "after" => (1, 1),
-            "between" => (2, 2),
-            _ => {
-                crate::ported::utils::zerr(&format!(
-                    "unknown condition: {}",
-                    op.replace('\u{9b}', "-")
-                ));
-                return Value::Bool(false);
-            }
+        // c:Src/cond.c:149-150 — `cd = getconddef((ctype == COND_MODI),
+        // name + 1, 1)`. The `autol = 1` argument is what makes an
+        // autoloadable condition LOAD its module: `getconddef`
+        // (Src/module.c:647) sees the `c:`-stub's `p->module` and calls
+        // `ensurefeature(p->module, "c:", name)`, then re-looks-up the
+        // now-real definition that `zsh/complete`'s cotab installed.
+        // Without this call zshrs answered `[[ -prefix … ]]` straight
+        // from the compiled-in handler table and left `zsh/complete`
+        // unloaded, where `zsh -f` reports it loaded after the first use.
+        // `try_lock`: every other MODULESTAB caller holds the same mutex
+        // for a moment and the load chain re-enters it; falling through
+        // to the compiled-in table is the safe outcome, not a deadlock.
+        let cd = match crate::ported::module::MODULESTAB.try_lock() {
+            Ok(mut tab) => crate::ported::module::getconddef(0, &name, 1, &mut tab), // c:150
+            Err(_) => None,
+        };
+        // c:151-155 — arity check against the conddef's own min/max
+        // (`if (l < cd->min || (cd->max >= 0 && l > cd->max))`). The
+        // fallback pins the same numbers the cotab rows carry
+        // (complete.c:1698-1701) for the window before zsh/complete is
+        // loaded, when `getconddef` has only the module-less stub.
+        let (min, max): (usize, usize) = match cd.as_ref() {
+            Some(c) if c.max >= 0 => (c.min.max(0) as usize, c.max as usize), // c:152
+            _ => match name.as_str() {
+                "prefix" | "suffix" => (1, 2), // c:1700-1701
+                "after" => (1, 1),             // c:1698
+                "between" => (2, 2),           // c:1699
+                _ => {
+                    crate::ported::utils::zerr(&format!(
+                        "unknown condition: {}",
+                        op.replace('\u{9b}', "-")
+                    ));
+                    return Value::Bool(false);
+                }
+            },
         };
         if args.len() < min || args.len() > max {
             crate::ported::utils::zerr(&format!(
@@ -6690,12 +6735,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             ));
             return Value::Bool(false);
         }
-        let r = match name.as_str() {
-            "prefix" => cond_psfix(&args, CVT_PREPAT),
-            "suffix" => cond_psfix(&args, CVT_SUFPAT),
-            "after" => cond_range(&args, 0),
-            "between" => cond_range(&args, 1),
-            _ => 0,
+        // c:158 — `return !cd->handler(strs, cd->condid);`
+        let r = match cd.as_ref().and_then(|c| c.handler.map(|h| (h, c.condid))) {
+            Some((handler, condid)) => handler(&args, condid),
+            // Pre-load window: zsh/complete's cotab is not installed yet,
+            // so dispatch through the compiled-in handlers directly.
+            None => match name.as_str() {
+                "prefix" => cond_psfix(&args, CVT_PREPAT),
+                "suffix" => cond_psfix(&args, CVT_SUFPAT),
+                "after" => cond_range(&args, 0),
+                "between" => cond_range(&args, 1),
+                _ => 0,
+            },
         };
         Value::Bool(r == 1)
     });
@@ -10993,20 +11044,24 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     if with_executor(|exec| exec.current_command_glob_failed.get()) {
         with_executor(|exec| exec.set_last_status(1));
     }
-    // `$_` tracks the last argument of the PREVIOUSLY executed
-    // command (zsh / bash convention). Promote the deferred value
-    // into `$_` BEFORE this command runs (so `echo $_` reads the
-    // prior command's last arg) then stash THIS command's last arg
-    // for the next dispatch.
-    let new_last = args.last().cloned();
-    with_executor(|exec| {
-        if let Some(prev) = exec.pending_underscore.take() {
-            exec.set_scalar("_".to_string(), prev);
-        }
-        if let Some(last) = new_last {
-            exec.pending_underscore = Some(last);
-        }
-    });
+    // c:Src/exec.c:2709 setunderscore / c:Src/params.c:252 underscore_gsu
+    // — `$_` has exactly ONE store in zsh, the `zunderscore` global
+    // (`Src/init.c:49`), read back through `underscoregetfn`. It is
+    // never written into the parameter table: the `_` Param created by
+    // `IPDEF2("_", underscore_gsu, PM_DONTIMPORT)` (c:Src/params.c:326)
+    // carries `nullstrsetfn` as its setfn, so even `_=x` stores nothing.
+    //
+    // The deferred `pending_underscore` → `set_scalar("_")` promotion
+    // that used to live here was a second, contradictory store: it wrote
+    // the paramtab node, which (a) CLEARED the PM_UNSET that `unset _`
+    // had just set — resurrecting the parameter, so `${+_}` flipped back
+    // to 1 and `$_` kept reading a value where zsh reports empty — and
+    // (b) shadowed the canonical zunderscore value. Every dispatch path
+    // now calls `set_zunderscore` (the `setunderscore` equivalent) just
+    // before running its command, which is where C sets it
+    // (execcmd_exec, c:3545-3547), so the deferral is unnecessary as
+    // well: argument expansion has already happened by then, exactly as
+    // in C.
     args
 }
 
@@ -13437,12 +13492,13 @@ impl fusevm::ShellHost for ZshrsHost {
         if redir_failed {
             return 1;
         }
-        // Track `$_` as the last argument of the last command (zsh /
-        // bash convention). Empty arglists leave it untouched.
+        // c:Src/exec.c:3545-3547 — `setunderscore(lastnode(args))` for the
+        // command about to run. Write the canonical `zunderscore` global,
+        // NOT the paramtab node: `_`'s setfn is `nullstrsetfn`
+        // (c:Src/params.c:252-253), so a table write has no counterpart in
+        // C and clobbers the PM_UNSET bit that `unset _` relies on.
         if let Some(last) = args.last() {
-            with_executor(|exec| {
-                exec.set_scalar("_".to_string(), last.clone());
-            });
+            crate::ported::params::set_zunderscore(std::slice::from_ref(last)); // c:3546
         }
         // Route external command spawning through `executor.execute_external`
         // so intercepts (AOP before/after/around), command_hash lookups,
@@ -13753,12 +13809,12 @@ impl fusevm::ShellHost for ZshrsHost {
         // `${_}` returned empty. Bug #279 in docs/BUGS.md. Mirror the
         // C `setunderscore` by writing via `set_zunderscore` directly.
         let fn_name = name.to_string();
-        with_executor(|exec| {
+        {
             let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-            exec.set_scalar("_".to_string(), dollar_underscore.clone());
+            // c:3546 — zunderscore is the only store; the paramtab write
+            // that used to accompany this cleared PM_UNSET (see pop_args).
             crate::ported::params::set_zunderscore(std::slice::from_ref(&dollar_underscore));
-            exec.pending_underscore = Some(dollar_underscore);
-        });
+        }
 
         // Delegate the actual function dispatch to the canonical
         // `dispatch_function_call` (which itself wraps the canonical
@@ -13790,13 +13846,16 @@ impl fusevm::ShellHost for ZshrsHost {
             });
         }
 
-        // $_ post-body — last call-arg or function name. Mirrors the
-        // C `setunderscore` invocation after the body returns.
-        with_executor(|exec| {
+        // c:Src/exec.c:6207-6265 — doshfunc saves `ou = zunderscore`
+        // around the body and runs `setunderscore(ou)` (c:6257) on the way
+        // out, so a function call leaves `$_` at the CALL's last argument
+        // rather than at whatever the body's last command set. The value
+        // saved there is the one execcmd_exec installed just before the
+        // call (c:3546), i.e. exactly `args.last()`.
+        {
             let last_call_arg = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-            exec.set_scalar("_".to_string(), last_call_arg.clone());
-            exec.pending_underscore = Some(last_call_arg);
-        });
+            crate::ported::params::set_zunderscore(std::slice::from_ref(&last_call_arg)); // c:6257
+        }
 
         status
     }
