@@ -8352,6 +8352,33 @@ pub fn bin_unset(
                 for nm in &names {
                     if pattry(&prog, nm) {
                         // c:3842
+                        // c:3846 — `unsetparam_pm(pm, 0, 1)` runs on the
+                        // node the walk found. For a magic assoc/array
+                        // nothing has read yet that node is still the
+                        // PM_AUTOLOAD stub (Src/module.c:1218-1223): a
+                        // plain PM_SCALAR with no PM_READONLY, so it is
+                        // removed silently (c:3874). zshrs seeds the real
+                        // special instead, whose PM_READONLY would reject
+                        // the glob — `unset -m 'func*'` died on
+                        // `functrace` where zsh unsets the lot. Same
+                        // stub-state branch as the literal-name arm below.
+                        if crate::vm_helper::module_param_is_autoload_stub(nm)
+                            && (crate::ported::modules::parameter::PARTAB
+                                .iter()
+                                .any(|e| e.name == nm.as_str())
+                                || crate::ported::modules::parameter::PARTAB_ARRAY
+                                    .iter()
+                                    .any(|e| e.name == nm.as_str()))
+                        {
+                            let _ = paramtab().write().ok().map(|mut t| t.remove(nm)); // c:3874
+                            let _ = crate::ported::params::paramtab_hashed_storage()
+                                .lock()
+                                .ok()
+                                .as_deref_mut()
+                                .map(|m| m.remove(nm.as_str()));
+                            match_count += 1; // c:3848
+                            continue;
+                        }
                         unsetparam(nm); // c:3847 (with guards)
                         match_count += 1; // c:3848
                     }
@@ -8822,6 +8849,54 @@ pub fn bin_unset(
                 if let Some(t) = resolved_target {
                     target_buf = t;
                     nm = &target_buf;
+                }
+                // c:3884-3886 — `pm = (paramtab == realparamtab ?
+                // paramtab->getnode2(paramtab, s) : paramtab->getnode(
+                // paramtab, s))` — the comment on that line is
+                // `getnode2() to avoid autoloading`. A magic assoc /
+                // array that nothing has READ yet is still the
+                // `PM_AUTOLOAD` stub `add_autoparam` planted
+                // (c:Src/module.c:1218-1223 `setsparam(pnam, module);
+                // pm->node.flags |= PM_AUTOLOAD`), i.e. a PLAIN
+                // `PM_SCALAR` node at level 0 whose value is the owning
+                // module's name — NOT the `SPECIALPMDEF` row. So
+                // `unsetparam_pm` on it:
+                //   * skips the readonly guard (c:3786) — the stub has
+                //     no PM_READONLY, which is why `unset parameters`
+                //     succeeds in zsh where the materialized special
+                //     would be rejected;
+                //   * fails c:3851-3852's keep-the-node test
+                //     `(flags & (PM_SPECIAL|PM_REMOVABLE)) == PM_SPECIAL`
+                //     and falls through to c:3874
+                //     `paramtab->removenode(paramtab, pm->node.nam)`.
+                // The name is then unbound: `${#functions}` is 0,
+                // `functions[k]=v` hits c:2700's "assignment to invalid
+                // subscript range", and `functions=(a b)` makes an
+                // ORDINARY array.
+                //
+                // zshrs seeds the real special eagerly
+                // (`vm_helper::init_partab_params`) instead of planting
+                // a stub, so reproduce C by consulting the same
+                // stub-state predicate the subscript arm above uses and
+                // dropping the node directly. Materialized names fall
+                // through to `unsetparam` below, which is C's other
+                // branch: node kept, `PM_UNSET` stamped, readonly rows
+                // rejected.
+                if crate::vm_helper::module_param_is_autoload_stub(nm)
+                    && (crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .any(|e| e.name == nm)
+                        || crate::ported::modules::parameter::PARTAB_ARRAY
+                            .iter()
+                            .any(|e| e.name == nm))
+                {
+                    crate::ported::params::paramtab().write().ok().map(|mut t| t.remove(nm)); // c:3874
+                    let _ = crate::ported::params::paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .as_deref_mut()
+                        .map(|m| m.remove(nm));
+                    continue; // c:3893 next argument
                 }
                 // c:3900-3905 — whole-param unset.
                 // Route through `unsetparam` (params.rs) so the

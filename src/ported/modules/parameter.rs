@@ -4914,10 +4914,15 @@ pub static PARTAB: &[PartabHashEntry] = &[
         module: Some("zsh/system"),
         scanfn: crate::ported::modules::system::scanpmsysparams,
     },
-    // Src/Modules/langinfo.c:455 SPECIALPMDEF("langinfo", PM_READONLY, ...).
+    // Src/Modules/langinfo.c:447 SPECIALPMDEF("langinfo", 0, ...).
     PartabHashEntry {
         name: "langinfo",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // langinfo.c:455
+        // c:Src/Modules/langinfo.c:447 — `SPECIALPMDEF("langinfo", 0,
+        // NULL, getlanginfo, scanlanginfo)`: the flags argument is 0, so
+        // the row is NOT PM_READONLY (unlike its zsh/system neighbours
+        // `sysparams`/`errnos`, which pass PM_READONLY explicitly).
+        // `${(t)langinfo}` is `association-hide-hideval-special` in zsh.
+        flags: PM_HASHED as i32, // langinfo.c:447
         getfn: crate::ported::modules::langinfo::getlanginfo,
         module: Some("zsh/langinfo"),
         scanfn: crate::ported::modules::langinfo::scanlanginfo,

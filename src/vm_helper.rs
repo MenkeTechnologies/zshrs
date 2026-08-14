@@ -5504,9 +5504,34 @@ pub fn module_param_is_autoload_stub(name: &str) -> bool {
 /// node's `PM_SPECIAL` bit is exactly C's "is the special still the
 /// visible binding" test.
 ///
-/// Returns false when the name has no `paramtab` node at all — that is
-/// a module-gated row (`sysparams`, `errnos`, `mapfile`, `langinfo`)
-/// seeded on demand, which the PARTAB walk must still answer for.
+/// Returns false when a MODULE-GATED row (`sysparams`, `errnos`,
+/// `mapfile`, `langinfo`) has no `paramtab` node: those are seeded on
+/// demand by `seed_partab_param`, and the PARTAB walk must still answer
+/// for them (their own `module` gate decides).
+///
+/// For every other magic row an ABSENT node means the binding is gone —
+/// `unset` removed it. C reaches the same answer through one gate:
+/// `Src/params.c:2264-2266` `if (!pm || ((pm->node.flags & PM_UNSET) &&
+/// !(pm->node.flags & PM_DECLARED))) return NULL;` in `fetchvalue`, the
+/// single choke point every `${X}` / `${#X}` / `${(k)X}` / `${(t)X}` /
+/// `${X[k]}` read passes through. Both of its arms show up here:
+///  * `!pm` — `unset functions` at a point where the name is still the
+///    `PM_AUTOLOAD` stub (`Src/module.c:1218-1223`) finds a PLAIN
+///    `PM_SCALAR` node with neither `PM_SPECIAL` nor `PM_READONLY`, so
+///    `unsetparam_pm`'s c:3851-3852 keep-the-node test
+///    (`(flags & (PM_SPECIAL|PM_REMOVABLE)) == PM_SPECIAL`) is false and
+///    c:3874 `paramtab->removenode` drops it outright.
+///  * `PM_UNSET && !PM_DECLARED` — once the special HAS been
+///    materialized, c:3851-3852 keeps the node and `stdunsetfn`
+///    (c:3939) marking `PM_UNSET` is the entire record of the unset;
+///    `setpmfunctions(pm, NULL)` returns immediately on `if (!ht)
+///    return` (`Src/Modules/parameter.c:361-362`), so `shfunctab` — the
+///    real table behind the row — survives untouched and `ff` still runs.
+///
+/// Both arms mean the same thing for a split-table port: the magic row
+/// is no longer the visible binding for this name, exactly as when a
+/// `local` shadows it. Answering that one question here is what lets
+/// every PARTAB dispatch site keep a single guard.
 ///
 /// Symptom this fixes: git's `git-completion.bash`
 /// `__git_resolve_builtins` does `local options; eval
@@ -5524,7 +5549,26 @@ pub fn magic_special_shadowed(name: &str) -> bool {
     crate::ported::params::paramtab()
         .read()
         .map_or(false, |tab| {
-            tab.get(name).is_some_and(|pm| {
+            let Some(pm) = tab.get(name) else {
+                // c:Src/params.c:2264 `if (!pm ...) return NULL` —
+                // `unset` removed the node (see the doc comment). Only
+                // a valid reading once the rows have been seeded, and
+                // never for the seeded-on-demand module rows.
+                return PARTAB_SEEDED.load(std::sync::atomic::Ordering::Acquire)
+                    && module_gated_partab_module(name).is_none();
+            };
+            {
+                // c:Src/params.c:2264-2266 — `(pm->node.flags & PM_UNSET)
+                // && !(pm->node.flags & PM_DECLARED)`: the materialized
+                // special was unset and the node kept (c:3851-3852).
+                let f = pm.node.flags as u32;
+                if (f & crate::ported::zsh_h::PM_UNSET) != 0
+                    && (f & crate::ported::zsh_h::PM_DECLARED) == 0
+                {
+                    return true;
+                }
+            }
+            {
                 // c:Src/module.c:1029-1052 checkaddparam — `if (pm->level ||
                 // !(pm->node.flags & PM_AUTOLOAD))` is C's OWN test for "is
                 // this node a blocker or the module's own placeholder": a
@@ -5546,7 +5590,7 @@ pub fn magic_special_shadowed(name: &str) -> bool {
                     return false;
                 }
                 (f & crate::ported::zsh_h::PM_SPECIAL) == 0
-            })
+            }
         })
 }
 
@@ -5828,7 +5872,30 @@ pub fn init_partab_params() {
         tab.remove(entry.name); // c:1052 unsetparam_pm
         tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
     }
+    // See `PARTAB_SEEDED` — every magic row now has its paramtab node,
+    // so from here on a MISSING node is a real "no binding" answer.
+    PARTAB_SEEDED.store(true, std::sync::atomic::Ordering::Release);
 }
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// True once [`init_partab_params`] has finished planting a paramtab
+/// node for every `PARTAB` / `PARTAB_ARRAY` row.
+///
+/// No C counterpart BY CONSTRUCTION. In C the magic rows only ENTER
+/// `paramtab` when `zsh/parameter` boots (`handlefeatures` →
+/// `addparamdef` → `createspecialhash`, `Src/module.c:1065`), and before
+/// that the name still resolves — to the `PM_AUTOLOAD` stub
+/// `init_bltinmods` planted (`Src/module.c:1218-1223`). Either way C's
+/// `paramtab->getnode(name)` answers, so C never has to distinguish
+/// "not seeded yet" from "unset". zshrs seeds the rows from
+/// `ShellExecutor::new` (vm_helper.rs:2566) and matches `PARTAB` BY NAME
+/// out of a separate static table, so a magic read that runs BEFORE that
+/// seeding would see an absent node. `magic_special_shadowed` reads
+/// absence as "unset" (C: `getnode` → NULL → `fetchvalue` NULL,
+/// `Src/params.c:2264-2266`), which is only a valid inference once the
+/// seeding has run; this flag is that precondition.
+static PARTAB_SEEDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Insert a single PARTAB / PARTAB_ARRAY entry into paramtab. Called
 /// from `zmodload <module>` once the module's boot completes, so that
@@ -5863,10 +5930,22 @@ pub fn seed_partab_param(name: &str) {
         node: hashnode {
             next: None,
             nam: name.to_string(),
-            flags: (flags & !(PM_READONLY as i32))
-                | PM_SPECIAL as i32
-                | PM_HIDE as i32
-                | PM_HIDEVAL as i32,
+            // Keep C's PM_READONLY. `init_partab_params` strips it from
+            // rows the RUNTIME writes internally (funcstack pushes and
+            // friends) and keeps it on the getfn/scanfn-computed rows —
+            // see its `user_protected` list. Every name reaching THIS
+            // seeder is a zmodload-gated row
+            // (`module_gated_params_for`), and all of them are the
+            // computed kind: `SPECIALPMDEF("sysparams", PM_READONLY,
+            // NULL, getpmsysparams, scanpmsysparams)`
+            // (Src/Modules/system.c:906), `errnos` (c:904), `langinfo`
+            // (Src/Modules/langinfo.c:455); `mapfile` carries flags 0 in
+            // C so it is unaffected either way. Stripping the bit made
+            // `${(t)sysparams}` read `association-hide-hideval-special`
+            // against zsh's `association-readonly-hide-hideval-special`,
+            // and let `unset sysparams` succeed where zsh rejects with
+            // `read-only variable: sysparams`.
+            flags: flags | PM_SPECIAL as i32 | PM_HIDE as i32 | PM_HIDEVAL as i32,
         },
         u_data: 0,
         u_tied: None,
