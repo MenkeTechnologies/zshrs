@@ -63,6 +63,8 @@ pub mod exec_jobs;
 pub mod extensions;
 /// `ported` submodule.
 pub mod ported;
+/// `subscript_escape` submodule (Rust-only; see the module docs).
+pub mod subscript_escape;
 /// `test_util` submodule.
 #[cfg(test)]
 pub mod test_util;

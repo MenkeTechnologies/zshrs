@@ -324,9 +324,28 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 // checks; the Rust port collapses it here so plain
                 // string consumers (print, echo, assignment) see
                 // proper empty.
+                //
+                // c:Src/glob.c:3683-3686 — remnulargs RE-INSERTS the sentinel
+                // when stripping the markers leaves nothing (`if (!*o) { o[0] =
+                // Nularg; o[1] = '\0'; }`), so in C it is still there after this
+                // loop. C drops it later, in the `untokenize` that zglob runs on
+                // every word on the way to execution (c:Src/glob.c zglob →
+                // Src/exec.c:2143 `if (c != Nularg)`); the collapse here stands
+                // in for that step.
+                //
+                // A PREFORK_SUBEXP prefork is the INNER of a nested `${…${…}…}`
+                // (c:Src/subst.c:2682 `multsub(&val, PREFORK_SUBEXP, …)`), and C
+                // has no untokenize between it and the outer paramsubst — the
+                // sentinel is meant to reach the outer AS a one-char element.
+                // That is what makes `q=("" 1); "${(s::)${(@)q}}"` three words
+                // in zsh: the outer sepjoin (c:3917) builds `<Nularg> 1` and the
+                // char-split (c:3932) hands the sentinel back as its own field,
+                // which this loop then turns into the surviving empty word.
+                // (Observable directly: `${#${(@)q}[1]}` is 1 in zsh, 0 without
+                // the sentinel.) Collapsing it here dropped the field entirely.
                 let mut s = data.to_string();
                 crate::ported::glob::remnulargs(&mut s);
-                if s == "\u{a1}" {
+                if s == "\u{a1}" && flags & PREFORK_SUBEXP == 0 {
                     s.clear();
                 }
                 let data = s;
@@ -5586,6 +5605,15 @@ pub fn paramsubst(
                     c.set(false);
                     v
                 });
+                // c:Src/subst.c:4354 `if (qt && !*y && isarr != 2)` — an
+                // isarr == 2 inner is the ONE shape C does NOT mark with
+                // `nulstring`, so its empty fields reach prefork as genuinely
+                // empty nodes and are deleted there (c:100 `uremnode`). The
+                // emission above now honours that guard, so an element that
+                // still carries the sentinel here is DATA (the marked empty of
+                // an inner expansion, which C keeps as a one-char element) and
+                // must not be filtered — that is what keeps
+                // `"${(s::)${(@)q}}"` three words even one nesting level up.
                 let (joined, arr_parts, isarr) =
                     if inner_nonat_split && isarr && arr_parts.iter().any(|p| p.is_empty()) {
                         let filtered: Vec<String> =
@@ -5615,6 +5643,23 @@ pub fn paramsubst(
                     } else {
                         (joined, arr_parts, isarr)
                     };
+                // c:Src/subst.c:2690-2691 — `if (*val == Nularg) ++val;`. The
+                // inner's SCALAR result carries the c:4476 `nulstring` mark when
+                // it is empty inside `"…"` (`if (qt && !*y) y =
+                // dupstring(nulstring);` — the scalar arm has no `isarr != 2`
+                // guard), and prefork hands it back intact
+                // (c:Src/glob.c:3683-3686 remnulargs re-inserts it). C strips
+                // that leading sentinel here, before the outer reads the value:
+                // without it `unset x; "${${x:+set}:-unset}"` saw a one-char
+                // value instead of an empty one and skipped the `:-` default,
+                // and `s=; "${#${(@)s}}"` counted 1. Only the leading char of
+                // the joined SCALAR is stripped — the array elements keep their
+                // sentinels (C never touches `aval` here), which is what makes
+                // `${#${(@)q}[1]}` 1 for `q=("" 1)`.
+                let joined = match joined.strip_prefix('\u{a1}') {
+                    Some(rest) => rest.to_string(), // c:2691
+                    None => joined,
+                };
                 // c:2709-2716 — the name-splice array resolved above replaces
                 // whatever the inner produced.
                 let isarr = isarr || aspar_arr.is_some();
@@ -6034,6 +6079,21 @@ pub fn paramsubst(
                     idx += 2;
                     continue;
                 }
+                // c:Src/lex.c:1497-1507 — the SOURCE-literal spelling of
+                // the same escape. C never sees it here because
+                // `parse_subscript` (c:Src/params.c:2029) re-lexes the
+                // subscript and turns `\]` into `Bnull ]` BEFORE any
+                // bracket walk; zshrs walks the outer lexer's output,
+                // where a DQ-context (or `${…}`-body) backslash is still
+                // a plain char. Treat it like the marker: the escaped
+                // bracket is subscript CONTENT, not a depth delimiter.
+                // Without this, `x=${A[\]]}` ended the subscript at the
+                // escaped `]`, leaving the lone `\` that the downstream
+                // parsestr rejected ("parse error").
+                if bc == '\\' && idx + 1 < body_chars.len() {
+                    idx += 2;
+                    continue;
+                }
                 if bc == '[' || bc == Inbrack {
                     depth += 1;
                 }
@@ -6132,27 +6192,69 @@ pub fn paramsubst(
                 // (next char becomes the literal escaped char) and turns
                 // Bnullkeep into a literal backslash (c:Src/glob.c
                 // remnulargs).
-                let raw_sub = {
+                //
+                // c:Src/params.c:1549-1550 — a marker that is NOT before a
+                // bracket/`"` is untokenized to its ztokens char, and
+                // `ztokens[Bnull - Pound]` is `\` (c:Src/lex.c:38). Fold BOTH
+                // spellings of the escape (lexer marker and source-literal
+                // backslash, which is what the DQ/`${…}`-body paths deliver
+                // because zshrs has no `parse_subscript` re-lex) into the one
+                // literal form, then let `subscript_unescape` apply C's
+                // composite disposition to it. Doing the fold first is what
+                // keeps `Bnull $` (an ESCAPED `$`) from reading as a live
+                // expansion — the old loop dropped the marker outright and
+                // `${A[a\$b]}` then expanded `$b` instead of keying on `a$b`.
+                let (raw_sub, sub_literal_resolved) = {
                     let trimmed = raw_sub.trim_start();
                     let is_flag = trimmed.starts_with('(')
                         || trimmed.starts_with(crate::ported::zsh_h::Inpar);
-                    if is_flag {
-                        raw_sub
+                    let had_escape = raw_sub.contains('\\')
+                        || raw_sub.contains(crate::ported::zsh_h::Bnull)
+                        || raw_sub.contains(crate::ported::zsh_h::Bnullkeep);
+                    if is_flag || !had_escape {
+                        (raw_sub, false)
                     } else {
-                        let mut out = String::with_capacity(raw_sub.len());
+                        let mut folded = String::with_capacity(raw_sub.len());
                         for c in raw_sub.chars() {
-                            if c == crate::ported::zsh_h::Bnull {
-                                continue; // drop marker; next char is literal
-                            } else if c == crate::ported::zsh_h::Bnullkeep {
-                                out.push('\\');
+                            if c == crate::ported::zsh_h::Bnull
+                                || c == crate::ported::zsh_h::Bnullkeep
+                            {
+                                folded.push('\\'); // c:1550
                             } else {
-                                out.push(c);
+                                folded.push(c);
                             }
                         }
-                        out
+                        // First pass answers "does an UNESCAPED `$`/backtick
+                        // survive?" — i.e. does C's c:1592 singsub still have
+                        // work to do. When it doesn't, this call also stands in
+                        // for the c:1585-1592 parsestr/singsub round (which for
+                        // an expansion-free subscript only removes the quoting
+                        // this function already resolved), so the round below is
+                        // skipped rather than re-reading the bare `$` as live.
+                        let (resolved, live) =
+                            crate::subscript_escape::subscript_unescape(&folded, qt, true);
+                        if live {
+                            // c:1585-1592 still has an expansion to run, so hand
+                            // it only getarg's share of the work (the marker
+                            // disposition, `resolve_dollar = false`) and let
+                            // parsestr/singsub finish the job as C does.
+                            let (phase1, _) = crate::subscript_escape::subscript_unescape(
+                                &folded, qt, false,
+                            );
+                            (phase1, false)
+                        } else {
+                            // Stand in for that round ONLY when this pass
+                            // actually resolved an escape. A subscript whose
+                            // backslashes C leaves alone (`${a[1,\2]}` — the
+                            // bounds are arithmetic and `\2` is a math syntax
+                            // error there) must still reach parsestr/singsub so
+                            // it fails the same way.
+                            let changed = resolved != folded;
+                            (resolved, changed)
+                        }
                     }
                 };
-                let expanded = if needtok {
+                let expanded = if needtok && !sub_literal_resolved {
                     // c:Src/params.c::getarg:1564-1572 — when needtok
                     // fires, the full sequence is:
                     //   char exe = opts[EXECOPT];
@@ -17055,7 +17157,16 @@ pub fn paramsubst(
             let mut in_sq = false; // c:2439
             let mut in_dq = false; // c:2439
             let mut in_comment = false; // c:2451
-            let chars_v: Vec<char> = value.chars().collect(); // c:2439
+            // c:Src/subst.c:4191,4196 — `untokenize(*ap);` / `untokenize(val);`
+            // runs on the value BEFORE `bufferwords`, and C's untokenize DROPS
+            // the Nularg sentinel outright (`Src/exec.c:2143 if (c != Nularg)`).
+            // That is what keeps a nulstring element out of the `(z)` word list:
+            // for `q=("" 1)`, `"${(z)${(@)q}}"` lexes ` 1` and yields the single
+            // word `1`, not an empty word plus `1`. Only the Nularg half of
+            // untokenize is applied here — the rest of zshrs's untokenize also
+            // decodes `$'…'` regions, which the `(z)` lexer below must see in
+            // source form.
+            let chars_v: Vec<char> = value.chars().filter(|&c| c != Nularg).collect(); // c:2439 + c:4196
             let push_word = |w: &mut String, words: &mut Vec<String>| {
                 // c:2439
                 if !w.is_empty() {
@@ -18669,9 +18780,32 @@ pub fn paramsubst(
             // `x="|a|b|"; set -- "${(s:|:)x}"` is 4 words in zsh). Its
             // interior empties are dropped by the split-time collapse at
             // subst.rs:16697, so `qt` alone stays the right test there.
+            //
+            // c:Src/subst.c:3938 `isarr = nojoin ? 1 : 2;` — the isarr == 2
+            // half of the c:4354 guard means precisely "this array came from a
+            // forced split with no `(@)`", which is knowable from the flags
+            // themselves. Read it that way rather than from `isarr`: the local
+            // is re-assigned by later operator arms (`[N]` subscripts, `(o)`
+            // sort, the c:3032 DQ collapse …), so by the time the emission runs
+            // it no longer always carries the split's verdict — split-derived
+            // empties were still being marked, and the nested reader then could
+            // not tell them from a sentinel the INNER expansion produced.
+            let split_isarr_2 = spsep.is_some() && nojoin != 2; // c:3938
+            // c:Src/subst.c:4354 `if (qt && !*y && isarr != 2)`. The isarr != 2
+            // half only takes effect for a NESTED inner here: a directly quoted
+            // expansion reaches this port without C's surrounding Dnull markers
+            // (see the note above), and those markers are what keep an isarr ==
+            // 2 split's outer empties alive in C — so the top-level case still
+            // marks on `qt` alone. Inside a nested `${…${…}…}` there are no
+            // such markers in C either (the inner's list goes straight back to
+            // the outer paramsubst), so C's guard applies as written: a
+            // split-derived empty stays a genuinely empty node and prefork
+            // deletes it, which is how zshrs's nested reader tells it apart
+            // from a sentinel the inner deliberately produced.
+            let mark_empty = if subexp_dq { !split_isarr_2 } else { qt }; // c:4354
             let emit_part = |s: &str| -> String {
                 if s.is_empty() {
-                    if qt || (subexp_dq && isarr != 2) {
+                    if mark_empty {
                         // c:4354
                         nul_str.to_string()
                     } else {
