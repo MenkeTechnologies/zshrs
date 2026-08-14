@@ -21,7 +21,7 @@ use crate::ported::params::TERMFLAGS;
 use crate::ported::zsh_h::module;
 use crate::zsh_h::{isset, INTERACTIVE, TERM_UNKNOWN};
 use std::sync::atomic::Ordering;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 // FFI bindings to the system ncurses terminfo interface. Direct
 // port of the call sites in `zsh/Src/Modules/terminfo.c`. macOS
@@ -334,6 +334,133 @@ pub fn getterminfo(
     Some(mk_str(String::new(), PM_SCALAR as i32 | PM_UNSET as i32))
 }
 
+// ---------------------------------------------------------------
+// Capability-name tables (c:197-203, c:205-212, c:214-264)
+//
+// terminfo.c wraps each literal array in `#ifndef HAVE_<X>NAMES`:
+// when the curses library exports `boolnames[]` / `numnames[]` /
+// `strnames[]` itself (ncurses and libtinfo both do — term.h:712-718
+// declares them `extern char *const boolnames[]` etc.), C walks the
+// LIBRARY arrays at c:257 / c:268 / c:280 and these literals are
+// never compiled in. They are kept here as the `#ifndef` fallback,
+// transcribed verbatim from the C, and used only when the library
+// symbols resolve to an empty table.
+//
+// The library arrays are the larger set: ncurses carries 44 bool /
+// 39 num / 414 string names against the C fallback's 37 / 33 / 394,
+// the extra entries being the `OT*` termcap-compatibility names.
+// ---------------------------------------------------------------
+
+/// c:198-202 — `#ifndef HAVE_BOOLNAMES static char *boolnames[] = {...}`
+static BOOLNAMES_FALLBACK: &[&str] = &[
+    "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl", "eo", "gn", "hc",
+    "chts", "km", "daisy", "hs", "hls", "in", "lpix", "da", "db", "mir", "msgr", "nxon", "xsb",
+    "npc", "ndscr", "nrrmc", "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon"
+];
+
+/// c:206-211 — `#ifndef HAVE_NUMNAMES static char *numnames[] = {...}`
+static NUMNAMES_FALLBACK: &[&str] = &[
+    "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors", "pairs", "wnum", "ncv",
+    "nlab", "pb", "vt", "wsl", "bitwin", "bitype", "bufsz", "btns", "spinh", "spinv", "maddr",
+    "mjump", "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs"
+];
+
+/// c:215-264 — `#ifndef HAVE_STRNAMES static char *strnames[] = {...}`
+static STRNAMES_FALLBACK: &[&str] = &[
+    "acsc", "cbt", "bel", "cr", "cpi", "lpi", "chr", "cvr", "csr", "rmp", "tbc", "mgc", "clear",
+    "el1", "el", "ed", "hpa", "cmdch", "cwin", "cup", "cud1", "home", "civis", "cub1", "mrcup",
+    "cnorm", "cuf1", "ll", "cuu1", "cvvis", "defc", "dch1", "dl1", "dial", "dsl", "dclk", "hd",
+    "enacs", "smacs", "smam", "blink", "bold", "smcup", "smdc", "dim", "swidm", "sdrfq", "smir",
+    "sitm", "slm", "smicm", "snlq", "snrmq", "prot", "rev", "invis", "sshm", "smso", "ssubm",
+    "ssupm", "smul", "sum", "smxon", "ech", "rmacs", "rmam", "sgr0", "rmcup", "rmdc", "rwidm",
+    "rmir", "ritm", "rlm", "rmicm", "rshm", "rmso", "rsubm", "rsupm", "rmul", "rum", "rmxon",
+    "pause", "hook", "flash", "ff", "fsl", "wingo", "hup", "is1", "is2", "is3", "if", "iprog",
+    "initc", "initp", "ich1", "il1", "ip", "ka1", "ka3", "kb2", "kbs", "kbeg", "kcbt", "kc1",
+    "kc3", "kcan", "ktbc", "kclr", "kclo", "kcmd", "kcpy", "kcrt", "kctab", "kdch1", "kdl1",
+    "kcud1", "krmir", "kend", "kent", "kel", "ked", "kext", "kf0", "kf1", "kf10", "kf11",
+    "kf12", "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf2", "kf20", "kf21",
+    "kf22", "kf23", "kf24", "kf25", "kf26", "kf27", "kf28", "kf29", "kf3", "kf30", "kf31",
+    "kf32", "kf33", "kf34", "kf35", "kf36", "kf37", "kf38", "kf39", "kf4", "kf40", "kf41",
+    "kf42", "kf43", "kf44", "kf45", "kf46", "kf47", "kf48", "kf49", "kf5", "kf50", "kf51",
+    "kf52", "kf53", "kf54", "kf55", "kf56", "kf57", "kf58", "kf59", "kf6", "kf60", "kf61",
+    "kf62", "kf63", "kf7", "kf8", "kf9", "kfnd", "khlp", "khome", "kich1", "kil1", "kcub1",
+    "kll", "kmrk", "kmsg", "kmov", "knxt", "knp", "kopn", "kopt", "kpp", "kprv", "kprt", "krdo",
+    "kref", "krfr", "krpl", "krst", "kres", "kcuf1", "ksav", "kBEG", "kCAN", "kCMD", "kCPY",
+    "kCRT", "kDC", "kDL", "kslt", "kEND", "kEOL", "kEXT", "kind", "kFND", "kHLP", "kHOM", "kIC",
+    "kLFT", "kMSG", "kMOV", "kNXT", "kOPT", "kPRV", "kPRT", "kri", "kRDO", "kRPL", "kRIT",
+    "kRES", "kSAV", "kSPD", "khts", "kUND", "kspd", "kund", "kcuu1", "rmkx", "smkx", "lf0",
+    "lf1", "lf10", "lf2", "lf3", "lf4", "lf5", "lf6", "lf7", "lf8", "lf9", "fln", "rmln",
+    "smln", "rmm", "smm", "mhpa", "mcud1", "mcub1", "mcuf1", "mvpa", "mcuu1", "nel", "porder",
+    "oc", "op", "pad", "dch", "dl", "cud", "mcud", "ich", "indn", "il", "cub", "mcub", "cuf",
+    "mcuf", "rin", "cuu", "mcuu", "pfkey", "pfloc", "pfx", "pln", "mc0", "mc5p", "mc4", "mc5",
+    "pulse", "qdial", "rmclk", "rep", "rfi", "rs1", "rs2", "rs3", "rf", "rc", "vpa", "sc",
+    "ind", "ri", "scs", "sgr", "setb", "smgb", "smgbp", "sclk", "scp", "setf", "smgl", "smglp",
+    "smgr", "smgrp", "hts", "smgt", "smgtp", "wind", "sbim", "scsd", "rbim", "rcsd", "subcs",
+    "supcs", "ht", "docr", "tsl", "tone", "uc", "hu", "u0", "u1", "u2", "u3", "u4", "u5", "u6",
+    "u7", "u8", "u9", "wait", "xoffc", "xonc", "zerom", "scesa", "bicr", "binel", "birep",
+    "csnm", "csin", "colornm", "defbi", "devt", "dispc", "endbi", "smpch", "smsc", "rmpch",
+    "rmsc", "getm", "kmous", "minfo", "pctrm", "pfxl", "reqmp", "scesc", "s0ds", "s1ds", "s2ds",
+    "s3ds", "setab", "setaf", "setcolor", "smglr", "slines", "smgtb", "ehhlm", "elhlm",
+    "elohlm", "erhlm", "ethlm", "evhlm", "sgr1", "slength"
+];
+
+// ncurses/libtinfo public capability-name arrays, declared exactly as
+// `term.h:712/715/718` declares them:
+//   extern NCURSES_CONST char * const boolnames[];
+//   extern NCURSES_CONST char * const numnames[];
+//   extern NCURSES_CONST char * const strnames[];
+// Each is a NUL-pointer-terminated array of C strings. Declared as a
+// zero-length array so `as_ptr()` yields the symbol address.
+#[allow(non_upper_case_globals)]
+unsafe extern "C" {
+    static boolnames: [*const libc::c_char; 0];
+    static numnames: [*const libc::c_char; 0];
+    static strnames: [*const libc::c_char; 0];
+}
+
+/// `boolnames[]` — the library's array when it exports one (the
+/// HAVE_BOOLNAMES path C takes), else the c:198-202 literal.
+static BOOLNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
+    let mut v: Vec<&'static str> = Vec::new();
+    let base = boolnames.as_ptr();
+    let mut i = 0isize;
+    while !(*base.offset(i)).is_null() {
+        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
+            v.push(s);
+        }
+        i += 1;
+    }
+    if v.is_empty() { BOOLNAMES_FALLBACK.to_vec() } else { v }
+});
+
+/// `numnames[]` — library array (HAVE_NUMNAMES path) else c:206-211.
+static NUMNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
+    let mut v: Vec<&'static str> = Vec::new();
+    let base = numnames.as_ptr();
+    let mut i = 0isize;
+    while !(*base.offset(i)).is_null() {
+        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
+            v.push(s);
+        }
+        i += 1;
+    }
+    if v.is_empty() { NUMNAMES_FALLBACK.to_vec() } else { v }
+});
+
+/// `strnames[]` — library array (HAVE_STRNAMES path) else c:215-264.
+static STRNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
+    let mut v: Vec<&'static str> = Vec::new();
+    let base = strnames.as_ptr();
+    let mut i = 0isize;
+    while !(*base.offset(i)).is_null() {
+        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
+            v.push(s);
+        }
+        i += 1;
+    }
+    if v.is_empty() { STRNAMES_FALLBACK.to_vec() } else { v }
+});
+
 /// Port of `static void scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)`
 /// from `Src/Modules/terminfo.c:177-289`. Walks the bool/num/string
 /// capability tables and invokes the callback per resolved cap.
@@ -402,60 +529,8 @@ pub fn scanterminfo(
         return;
     }
 
-    // c:184-194 — boolnames fallback when libtermcap doesn't export them.
-    let boolnames = [
-        "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl", "eo", "gn", "hc",
-        "chts", "km", "daisy", "hs", "hls", "in", "lpix", "da", "db", "mir", "msgr", "nxon", "xsb",
-        "npc", "ndscr", "nrrmc", "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon",
-    ];
-    // c:198-204 — numnames.
-    let numnames = [
-        "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors", "pairs", "wnum", "ncv",
-        "nlab", "pb", "vt", "wsl", "bitwin", "bitype", "bufsz", "btns", "spinh", "spinv", "maddr",
-        "mjump", "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs",
-    ];
-    // c:208-247 — strnames: full ~290-entry list matching the C source.
-    let strnames: &[&str] = &[
-        "acsc", "cbt", "bel", "cr", "cpi", "lpi", "chr", "cvr", "csr", "rmp", "tbc", "mgc",
-        "clear", "el1", "el", "ed", "hpa", "cmdch", "cwin", "cup", "cud1", "home", "civis", "cub1",
-        "mrcup", "cnorm", "cuf1", "ll", "cuu1", "cvvis", "defc", "dch1", "dl1", "dial", "dsl",
-        "dclk", "hd", "enacs", "smacs", "smam", "blink", "bold", "smcup", "smdc", "dim", "swidm",
-        "sdrfq", "smir", "sitm", "slm", "smicm", "snlq", "snrmq", "prot", "rev", "invis", "sshm",
-        "smso", "ssubm", "ssupm", "smul", "sum", "smxon", "ech", "rmacs", "rmam", "sgr0", "rmcup",
-        "rmdc", "rwidm", "rmir", "ritm", "rlm", "rmicm", "rshm", "rmso", "rsubm", "rsupm", "rmul",
-        "rum", "rmxon", "pause", "hook", "flash", "ff", "fsl", "wingo", "hup", "is1", "is2", "is3",
-        "if", "iprog", "initc", "initp", "ich1", "il1", "ip", "ka1", "ka3", "kb2", "kbs", "kbeg",
-        "kcbt", "kc1", "kc3", "kcan", "ktbc", "kclr", "kclo", "kcmd", "kcpy", "kcrt", "kctab",
-        "kdch1", "kdl1", "kcud1", "krmir", "kend", "kent", "kel", "ked", "kext", "kf0", "kf1",
-        "kf10", "kf11", "kf12", "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf2",
-        "kf20", "kf21", "kf22", "kf23", "kf24", "kf25", "kf26", "kf27", "kf28", "kf29", "kf3",
-        "kf30", "kf31", "kf32", "kf33", "kf34", "kf35", "kf36", "kf37", "kf38", "kf39", "kf4",
-        "kf40", "kf41", "kf42", "kf43", "kf44", "kf45", "kf46", "kf47", "kf48", "kf49", "kf5",
-        "kf50", "kf51", "kf52", "kf53", "kf54", "kf55", "kf56", "kf57", "kf58", "kf59", "kf6",
-        "kf60", "kf61", "kf62", "kf63", "kf7", "kf8", "kf9", "kfnd", "khlp", "khome", "kich1",
-        "kil1", "kcub1", "kll", "kmrk", "kmsg", "kmov", "knxt", "knp", "kopn", "kopt", "kpp",
-        "kprv", "kprt", "krdo", "kref", "krfr", "krpl", "krst", "kres", "kcuf1", "ksav", "kBEG",
-        "kCAN", "kCMD", "kCPY", "kCRT", "kDC", "kDL", "kslt", "kEND", "kEOL", "kEXT", "kind",
-        "kFND", "kHLP", "kHOM", "kIC", "kLFT", "kMSG", "kMOV", "kNXT", "kOPT", "kPRV", "kPRT",
-        "kri", "kRDO", "kRPL", "kRIT", "kRES", "kSAV", "kSPD", "khts", "kUND", "kspd", "kund",
-        "kcuu1", "rmkx", "smkx", "lf0", "lf1", "lf10", "lf2", "lf3", "lf4", "lf5", "lf6", "lf7",
-        "lf8", "lf9", "fln", "rmln", "smln", "rmm", "smm", "mhpa", "mcud1", "mcub1", "mcuf1",
-        "mvpa", "mcuu1", "nel", "porder", "oc", "op", "pad", "dch", "dl", "cud", "mcud", "ich",
-        "indn", "il", "cub", "mcub", "cuf", "mcuf", "rin", "cuu", "mcuu", "pfkey", "pfloc", "pfx",
-        "pln", "mc0", "mc5p", "mc4", "mc5", "pulse", "qdial", "rmclk", "rep", "rfi", "rs1", "rs2",
-        "rs3", "rf", "rc", "vpa", "sc", "ind", "ri", "scs", "sgr", "setb", "smgb", "smgbp", "sclk",
-        "scp", "setf", "smgl", "smglp", "smgr", "smgrp", "hts", "smgt", "smgtp", "wind", "sbim",
-        "scsd", "rbim", "rcsd", "subcs", "supcs", "ht", "docr", "tsl", "tone", "uc", "hu", "u0",
-        "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "wait", "xoffc", "xonc", "zerom",
-        "scesa", "bicr", "binel", "birep", "csnm", "csin", "colornm", "defbi", "devt", "dispc",
-        "endbi", "smpch", "smsc", "rmpch", "rmsc", "getm", "kmous", "minfo", "pctrm", "pfxl",
-        "reqmp", "scesc", "s0ds", "s1ds", "s2ds", "s3ds", "setab", "setaf", "setcolor", "smglr",
-        "slines", "smgtb", "ehhlm", "elhlm", "elohlm", "erhlm", "ethlm", "evhlm", "sgr1",
-        "slength",
-    ];
-
     // c:257-263 — boolean caps: tigetflag → "yes" / "no", emit when num != -1.
-    for cap in &boolnames {
+    for cap in BOOLNAMES.iter() {
         // c:257
         let cn = match std::ffi::CString::new(*cap) {
             Ok(c) => c,
@@ -470,7 +545,7 @@ pub fn scanterminfo(
     }
 
     // c:268-275 — numeric caps.
-    for cap in &numnames {
+    for cap in NUMNAMES.iter() {
         // c:268
         let cn = match std::ffi::CString::new(*cap) {
             Ok(c) => c,
@@ -484,7 +559,7 @@ pub fn scanterminfo(
     }
 
     // c:280-287 — string caps: tigetstr → metafy, emit when non-NULL/-1.
-    for cap in strnames {
+    for cap in STRNAMES.iter() {
         // c:280
         let cn = match std::ffi::CString::new(*cap) {
             Ok(c) => c,

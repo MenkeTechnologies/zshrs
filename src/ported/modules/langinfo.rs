@@ -41,7 +41,14 @@ static NL_TABLE: &[(&str, libc::nl_item)] = &[
     ("THOUSEP", libc::THOUSEP),
     ("YESEXPR", libc::YESEXPR),
     ("NOEXPR", libc::NOEXPR),
-    #[cfg(target_os = "linux")]
+    // c:64-67 — `#ifdef CRNCYSTR "CRNCYSTR", #endif` (and the matching
+    // nl_vals entry at c:233-236). macOS defines CRNCYSTR too
+    // (`/usr/include/_langinfo.h:109`, value 56) and `libc` exposes it
+    // for apple targets, so the previous `target_os = "linux"` gate
+    // dropped the item from `${(k)langinfo}` on macOS while zsh listed
+    // it. Gated to the targets whose `libc` defines the constant,
+    // which is the Rust equivalent of C's `#ifdef CRNCYSTR`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     ("CRNCYSTR", libc::CRNCYSTR),
     ("ABDAY_1", libc::ABDAY_1),
     ("ABDAY_2", libc::ABDAY_2),
