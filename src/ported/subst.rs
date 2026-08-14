@@ -10835,7 +10835,20 @@ pub fn paramsubst(
             // paths assoc_keys doesn't cover, but assoc_keys already routes
             // magic assocs through their scanfn in the canonical order.
             magic_assoc_array = assoc_keys(&var_name)
-                .or_else(|| match var_name.as_str() {
+                // c:Src/params.c:2264-2266 — these by-name fallbacks read
+                // the REAL tables (shfunctab/aliastab/cmdnamtab) without
+                // going through the param at all, so they also have to
+                // answer "is the magic row still the visible binding for
+                // this name": after `unset functions` C's fetchvalue
+                // returns NULL and `${(k)functions}` is empty even though
+                // shfunctab is untouched (`setpmfunctions(pm, NULL)` is a
+                // no-op, Src/Modules/parameter.c:361-362) — which is
+                // exactly why `ff` still runs afterwards.
+                .or_else(|| {
+                    if crate::vm_helper::magic_special_shadowed(&var_name) {
+                        return None;
+                    }
+                    match var_name.as_str() {
                     "aliases" => aliastab_lock().read().ok().map(|t| {
                         let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
                         names.sort();
@@ -10852,6 +10865,7 @@ pub fn paramsubst(
                         names
                     }),
                     _ => None,
+                    }
                 })
                 // c:Src/subst.c — on an indexed array, `(k)` is a no-
                 // op and returns the array's values (zsh quirk; verified
@@ -15862,6 +15876,13 @@ pub fn paramsubst(
             let partab_array_tag = crate::ported::modules::parameter::PARTAB_ARRAY
                 .iter()
                 .find(|e_| e_.name == var_name.as_str())
+                // c:Src/params.c:2264-2266 — `(t)` types the node
+                // `fetchvalue` returned; after `unset dirstack` there is
+                // none (c:3874) and C's tag is empty (c:2855-2856). This
+                // by-name reconstruction outranks the paramtab lookup
+                // below, so it needs the same visibility test a `local`
+                // shadow gets.
+                .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))
                 .map(|e_| {
                     e_.flags as u32
                         | crate::ported::zsh_h::PM_SPECIAL
@@ -16147,9 +16168,20 @@ pub fn paramsubst(
                         // here so `(t)historywords` reads
                         // `array-readonly-hide-hideval-special` matching
                         // zsh.
+                        // c:Src/params.c:2264-2266 — `(t)` runs off the
+                        // node `fetchvalue` returned, so once `unset`
+                        // has dropped / PM_UNSET'd the magic row's node
+                        // there is nothing to type and the tag is empty
+                        // (c:2855-2856, same as a dangling nameref).
+                        // Both by-name reconstructions below have to
+                        // honour that or `${(t)funcstack}` keeps
+                        // reporting `array-readonly-hide-hideval-special`
+                        // for a name that no longer has a binding.
+                        let magic_bound = !crate::vm_helper::magic_special_shadowed(&var_name);
                         if let Some(f) = crate::ported::modules::parameter::PARTAB_ARRAY
                             .iter()
                             .find(|e_| e_.name == var_name.as_str())
+                            .filter(|_| magic_bound)
                             .map(|e_| {
                                 e_.flags as u32
                                     | crate::ported::zsh_h::PM_SPECIAL
@@ -16207,7 +16239,8 @@ pub fn paramsubst(
                             // docs/BUGS.md. Empty $0 falls through to
                             // the standard scalar handling below.
                             "array-special".to_string()
-                        } else if matches!(
+                        } else if magic_bound
+                            && matches!(
                             var_name.as_str(),
                             "aliases"
                                 | "galiases"

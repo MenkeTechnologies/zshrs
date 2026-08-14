@@ -6462,7 +6462,43 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // route, the assignment lands in paramtab_hashed_storage as
     // a normal assoc element and the corresponding function/alias
     // is never actually defined in shfunctab/aliastab.
-    if let Some(key) = subscript {
+    // c:Src/params.c:2264 — `if (!pm ...) return NULL`. `unset
+    // functions` on a name that is still the `PM_AUTOLOAD` stub removes
+    // the paramtab node outright (c:3874, see bin_unset), so a later
+    // `functions[k]=v` no longer finds ANY node: `getvalue` builds a
+    // fresh `PM_SCALAR|PM_UNSET` param (c:1609) whose `getindex` rejects
+    // the string subscript with c:2700 "assignment to invalid subscript
+    // range". Skipping the magic dispatch here routes the assignment
+    // into that generic path, which already emits exactly that message.
+    let magic_unbound = |name: &str| -> bool {
+        crate::ported::modules::parameter::PARTAB
+            .iter()
+            .any(|e| e.name == name)
+            && paramtab().read().map_or(false, |t| t.get(name).is_none())
+    };
+    // c:Src/params.c:1135-1144 — createparam's reuse arm: an assignment
+    // to a name whose node is PM_UNSET but PM_SPECIAL takes the
+    // `oldpm->node.flags &= ~PM_UNSET` branch and returns NULL, i.e. the
+    // EXISTING special node is revived and the assignment proceeds
+    // through it (c:1048 "If the parameter is not created because it
+    // already exists, the PM_UNSET flag is cleared"). That is how
+    // `unset functions; functions[gg]=body` re-activates the row after a
+    // MATERIALIZED unset kept the node (c:3851-3852). zshrs's magic
+    // dispatch below writes the real table directly and never runs
+    // createparam, so clear the bit here or every later read stays gated.
+    if crate::ported::modules::parameter::PARTAB
+        .iter()
+        .any(|e| e.name == name)
+    {
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(pm) = tab.get_mut(name) {
+                if (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+                    pm.node.flags &= !(PM_UNSET as i32); // c:1144
+                }
+            }
+        }
+    }
+    if let Some(key) = subscript.filter(|_| !magic_unbound(name)) {
         match name {
             "functions" => {
                 use crate::ported::zsh_h::hashnode;
@@ -6853,7 +6889,14 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // emits the canonical diagnostic and exits non-zero. Internal
     // table mutations that bypass `assignsparam` stay free. Bug
     // #242 in docs/BUGS.md.
-    if subscript.is_some() {
+    // c:Src/params.c:2688-2689 — `if (v->pm->node.flags & PM_READONLY)
+    // zerr("read-only variable: %s", ...)` reads the flag off the NODE
+    // `fetchvalue` returned. After `unset parameters` there is no node
+    // (c:3874, see bin_unset), so C never reaches that test: `getindex`
+    // rejects the string subscript on the fresh `PM_SCALAR|PM_UNSET`
+    // param first (c:2700 "assignment to invalid subscript range").
+    // Keep this name-keyed stand-in in step with the node's existence.
+    if subscript.is_some() && !magic_unbound(name) {
         // `options` is intentionally NOT in this list — C zsh's
         // `setpmoption`/`setpmoptions` (Src/Modules/parameter.c:926-979)
         // accept "on"/"off" writes and translate them to dosetopt calls.
@@ -7720,12 +7763,27 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // stayed empty). Dispatch writable PARTAB_ARRAY specials here. Only
     // whole-name (non-subscripted) assignment; `dirstack[1]=x` keeps the
     // existing subscript path.
+    // c:Src/params.c:2264 — `if (!pm ...) return NULL`. Once `unset
+    // dirstack` has removed the node (c:3874, see bin_unset), the name
+    // has no special binding left, so `dirstack=(a b)` must create an
+    // ORDINARY array via createparam below instead of calling
+    // `dirssetfn`. Same gate as the subscript arm in assignsparam.
     if !name.contains('[') {
         if let Some(entry) = crate::ported::modules::parameter::PARTAB_ARRAY
             .iter()
             .find(|e| e.name == name)
+            .filter(|_| paramtab().read().map_or(true, |t| t.get(name).is_some()))
         {
             if let Some(setfn) = entry.setfn {
+                // c:Src/params.c:1135-1144 — see the PM_HASHED twin
+                // below: createparam's reuse arm clears PM_UNSET on a
+                // PM_SPECIAL node so a write after a materialized
+                // `unset` revives the row.
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(name) {
+                        pm.node.flags &= !(PM_UNSET as i32); // c:1144
+                    }
+                }
                 setfn(std::ptr::null_mut(), val.clone()); // c:2922 gsu.a->setfn
                 let mut pm = param::default();
                 pm.node.nam = name.to_string();
@@ -7952,6 +8010,19 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                     };
                     let v = it.next().cloned().unwrap_or_default();
                     pairs.push((key, v));
+                }
+                // c:Src/params.c:1135-1144 — createparam's reuse arm
+                // revives a PM_UNSET|PM_SPECIAL node
+                // (`oldpm->node.flags &= ~PM_UNSET`) instead of making a
+                // new param, which is how `unset functions;
+                // functions=(k v)` re-activates the row after a
+                // MATERIALIZED unset kept the node (c:3851-3852). The
+                // gsu dispatch below writes the real table directly and
+                // never runs createparam, so clear the bit here.
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(name) {
+                        pm.node.flags &= !(PM_UNSET as i32); // c:1144
+                    }
                 }
                 // pm->gsu.h->setfn(pm, ht) — per-name dispatch to the
                 // canonical Src/Modules/parameter.c setfn ports. The
@@ -9068,6 +9139,26 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         return 1; // c:3854
     }
     pm.node.flags &= !(PM_DECLARED as i32); // c:3868
+    // c:3870 — WHICH unsetfn `pm->gsu.s->unsetfn` is comes from
+    // createspecialhash (c:1227-1228): a SPECIALPMDEF hash whose
+    // `partab[]` row supplies NO gsu keeps the default
+    // `nullsethash_gsu` unless it is PM_READONLY (which takes
+    // `stdhash_gsu`), and `nullsethash_gsu`'s unsetfn is `nullunsetfn`
+    // (c:196-197 → c:4143-4145), whose body is EMPTY. So `unset` on
+    // such a row does nothing at all: no PM_UNSET, node untouched,
+    // value still readable — `zmodload zsh/langinfo; unset langinfo`
+    // leaves `${#langinfo}` at 55 in zsh. Rows that DO carry a gsu get
+    // it stamped over the default by addparamdef
+    // (c:Src/module.c:1080-1110) and so unset through `stdunsetfn`.
+    // `langinfo` (c:Src/Modules/langinfo.c:447 `SPECIALPMDEF("langinfo",
+    // 0, NULL, getlanginfo, scanlanginfo)`) is the only `partab[]` row
+    // that is both gsu-less and non-readonly; every other gsu-less row
+    // is PM_READONLY_SPECIAL and is rejected at c:3786 above before
+    // reaching here.
+    let nullsethash_gsu = pm.node.nam == "langinfo"; // c:1227-1228
+    if nullsethash_gsu {
+        return 0; // c:3870 nullunsetfn — empty body
+    }
     if (pm.node.flags as u32 & PM_UNSET) == 0 || (pm.node.flags as u32 & PM_REMOVABLE) != 0 {
         // c:3870 — `pm->gsu.s->unsetfn(pm, exp)` — open-coded to stdunsetfn.
         stdunsetfn(pm, exp);
