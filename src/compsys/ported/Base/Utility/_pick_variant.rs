@@ -12,11 +12,14 @@
 //! sh:15  done
 //! sh:17  if (( ${#precommands:|builtin_precommands} )); then
 //! sh:18    pre=command
-//! sh:17  elif (( $+opts[-b] && (...) )); then
+//! sh:19  elif (( $+opts[-b] && ( $precommands[(I)builtin] || $+builtins[$opts[-c]] ) )); then
+//! sh:20    (( $+opts[-r] )) && : ${(P)opts[-r]::=$opts[-b]}
 //! sh:21    return 0
 //! sh:22  elif (( $precommands[(I)builtin] )); then
 //! sh:23    pre=builtin
 //! sh:24  else
+//! sh:25    # Neither builtin nor command-forcing precommand specified,
+//! sh:26    # so no prefix is needed.
 //! sh:27    pre=
 //! sh:28  fi
 //! sh:30  if [[ $pre != builtin ]] && (( $+_cmd_variant[$opts[-c]] )); then
@@ -32,6 +35,8 @@
 //! sh:42      return 0
 //! sh:43    fi
 //! sh:44  done
+//! sh:46  (( $+opts[-r] )) && : ${(P)opts[-r]::=$1}
+//! sh:47  [[ $pre != builtin ]] && _cmd_variant[$opts[-c]]="$1"
 //! sh:49  return 1
 //! ```
 
@@ -39,7 +44,7 @@ use crate::compsys::ported::_call_program::_call_program;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::zsh_h::{options, MAX_OPS, PM_UNSET};
 
 fn make_ops() -> options {
     options {
@@ -77,6 +82,27 @@ fn run_zparseopts_pick_variant(args: &[String]) -> (Vec<String>, Vec<String>) {
     // real zsh identifier; zsh operates on positional $argv). Bug #657.
     crate::ported::params::unsetparam(src);
     (remaining, opts_flat)
+}
+
+/// sh:19 — `$+builtins[$opts[-c]]`.
+///
+/// `builtins` is the `zsh/parameter` special associative array; `$+`
+/// on one of its elements resolves through the module's `getnode`
+/// hook, which for `builtins` is `getpmbuiltin`
+/// (`src/ported/builtin.rs:8567` dispatches exactly this way). A name
+/// that is not in `builtintab` still yields a Param, but flagged
+/// `PM_UNSET` (`Src/Modules/parameter.c:790-792`), which is what makes
+/// `$+builtins[nosuchthing]` evaluate to 0. Go through the same
+/// accessor rather than probing `BUILTINS` directly so the DISABLED /
+/// auto-load-stub semantics `getbuiltin` already models are honoured.
+fn plus_builtins(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    match crate::ported::modules::parameter::getpmbuiltin(std::ptr::null_mut(), name) {
+        Some(pm) => (pm.node.flags as u32 & PM_UNSET) == 0,
+        None => false,
+    }
 }
 
 /// Look up `key` in a flat [k, v, k, v, ...] options array.
@@ -122,12 +148,64 @@ pub fn _pick_variant(args: &[String]) -> i32 {
         }
     }
 
-    // sh:30  cached?
+    // sh:17-28 — decide the command PREFIX (`$pre`) for the probe, and
+    // short-circuit entirely when `-b` says "this is a shell builtin".
+    //
+    // This whole block used to be MISSING from the port: `_pick_variant`
+    // went straight from arg parsing to the `_cmd_variant` cache and the
+    // `_call_program` probe, so the `-b` fast path (sh:19-21) never fired.
+    // `Completion/Unix/Command/_echo:6` calls
+    // `_pick_variant -r variant -b zsh gnu='Free Soft' $OSTYPE --version`
+    // — `echo` IS a builtin, so upstream returns `zsh` at sh:21 without
+    // running anything. Skipping that meant the probe ran, matched no
+    // `name=pattern`, and fell through to the DEFAULT `$1` = `$OSTYPE`.
+    // On macOS that is `darwin25.4.0`, selecting `_echo`'s `darwin*` arm
+    // (sh:24-26) which strips `-e`/`-E` as well as `--*`, leaving `-n` as
+    // the ONLY match — so `echo -<TAB>` inserted `-n` instead of listing
+    // `-E`/`-e`/`-n`. Every `_pick_variant -b` caller was affected the
+    // same way.
+    let precommands = getaparam("precommands").unwrap_or_default();
+    let builtin_precommands = getaparam("builtin_precommands").unwrap_or_default();
+    // sh:17 — `(( ${#precommands:|builtin_precommands} ))`. `${a:|b}`
+    // is array-difference, so this is "some precommand is NOT one of
+    // the builtin-preserving ones" (same computation as
+    // `_command_names.rs:126`, sh:28 there).
+    let precmd_diff_nonempty = precommands.iter().any(|p| !builtin_precommands.contains(p));
+    // sh:19/sh:22 — `$precommands[(I)builtin]`, the index of the LAST
+    // `builtin` element (0 when absent), used purely as a boolean.
+    let has_builtin_precommand = precommands.iter().any(|p| p == "builtin");
+    let pre: &str;
+    if precmd_diff_nonempty {
+        pre = "command"; // sh:18
+    } else if opt(&opts_flat, "-b").is_some()
+        && (has_builtin_precommand || plus_builtins(&cmd_name))
+    {
+        // sh:20 — `(( $+opts[-r] )) && : ${(P)opts[-r]::=$opts[-b]}`
+        if let Some(r) = opt(&opts_flat, "-r") {
+            let _ = setsparam(&r, &opt(&opts_flat, "-b").unwrap_or_default());
+        }
+        return 0; // sh:21
+    } else if has_builtin_precommand {
+        pre = "builtin"; // sh:23
+    } else {
+        // sh:25-27 — Neither builtin nor command-forcing precommand
+        // specified, so no prefix is needed.
+        pre = "";
+    }
+
+    // sh:30  cached?  — guarded by `[[ $pre != builtin ]]`: a `builtin
+    // foo` command line must not consume (or later populate, sh:47) the
+    // cache entry keyed on the bare command name, since that entry
+    // describes the EXTERNAL `foo`.
     let cmd_variant_arr = getaparam("_cmd_variant").unwrap_or_default();
-    let cached: Option<String> = cmd_variant_arr
-        .chunks(2)
-        .find(|kv| kv.first().map(|k| k == &cmd_name).unwrap_or(false))
-        .and_then(|kv| kv.get(1).cloned());
+    let cached: Option<String> = if pre == "builtin" {
+        None
+    } else {
+        cmd_variant_arr
+            .chunks(2)
+            .find(|kv| kv.first().map(|k| k == &cmd_name).unwrap_or(false))
+            .and_then(|kv| kv.get(1).cloned())
+    };
     if let Some(cached_v) = cached {
         if let Some(r) = opt(&opts_flat, "-r") {
             let _ = setsparam(&r, &cached_v);
@@ -150,7 +228,14 @@ pub fn _pick_variant(args: &[String]) -> i32 {
     // (`-iconic`/`-line`/…) instead of netcat's `-b`/`-i`/`-l`. `_call_program`
     // runs `sh -c <joined args>`, so append the redirects as command words to
     // reproduce the `</dev/null 2>&1` the shell puts on the `$()`.
-    let mut call_args: Vec<String> = vec!["variant".to_string(), cmd_name.clone()];
+    // sh:36 — `$pre` is UNQUOTED in the shell, so an empty `$pre`
+    // contributes no word at all; `command`/`builtin` become a real
+    // prefix word ahead of `$opts[-c]`.
+    let mut call_args: Vec<String> = vec!["variant".to_string()];
+    if !pre.is_empty() {
+        call_args.push(pre.to_string());
+    }
+    call_args.push(cmd_name.clone());
     if argv.len() > 1 {
         call_args.extend(argv[1..].iter().cloned());
     }
@@ -197,10 +282,13 @@ pub fn _pick_variant(args: &[String]) -> i32 {
     if let Some(r) = opt(&opts_flat, "-r") {
         let _ = setsparam(&r, &dflt);
     }
-    let mut arr = getaparam("_cmd_variant").unwrap_or_default();
-    arr.push(cmd_name);
-    arr.push(dflt);
-    setaparam("_cmd_variant", arr);
+    // sh:47 — `[[ $pre != builtin ]] && _cmd_variant[$opts[-c]]="$1"`.
+    if pre != "builtin" {
+        let mut arr = getaparam("_cmd_variant").unwrap_or_default();
+        arr.push(cmd_name);
+        arr.push(dflt);
+        setaparam("_cmd_variant", arr);
+    }
     1
 }
 

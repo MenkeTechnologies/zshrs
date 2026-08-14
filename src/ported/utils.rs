@@ -11952,7 +11952,6 @@ mod tests {
         );
     }
 
-    #[test]
     /// c:6131-6134 — "Most quote styles other than backslash assume the
     /// quotes are to be added outside quotestring()." QT_SINGLE therefore
     /// returns the BODY: the caller (subst.c:4085-4087, text.c:1086-1088)

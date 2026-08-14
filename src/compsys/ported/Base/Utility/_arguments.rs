@@ -59,7 +59,25 @@ fn make_ops() -> options {
 
 /// Call the ported C builtin `comparguments` the way the shell does.
 /// Mirrors `comparguments -X …` — `argv[0]` is the `-X` subcommand.
-fn comparguments(argv: &[&str]) -> i32 {
+///
+/// `sh_line` is the line of `Completion/Base/Utility/_arguments` the call sits
+/// on. C runs a wordcode line marker before every pipeline
+/// (`Src/exec.c:2057` — `lineno = WC_PIPE_LINENO(pcode) - 1;`), and
+/// `zerrmsg` prints that value between the builtin name and the message
+/// (`Src/utils.c:301-308`), which is what produces zsh's
+/// `_arguments:comparguments:327: invalid option definition: …`.
+/// `comparguments` reports through `zwarnnam`, so every call site here has to
+/// publish its line first or the field is silently dropped. Taking the line as
+/// a parameter (rather than a bare `set_sh_lineno` before each call) makes it
+/// impossible to add a call site that forgets it.
+///
+/// The value is the line the COMMAND starts on, not the line the enclosing
+/// `if`/`&&` list starts on: `if (( 1 )) &&\n  unset -Z` inside an autoloaded
+/// function reports the `unset` line. Verified against zsh 5.9:
+/// `zsh -f -c 'fpath=(dir); autoload -Uz g; g'` over a `g` whose body is that
+/// two-line list prints `g:unset:4: bad option: -Z` for `unset` on line 4.
+fn comparguments(sh_line: u64, argv: &[&str]) -> i32 {
+    crate::compsys::ported::shared::set_sh_lineno(sh_line);
     let v: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     bin_comparguments("comparguments", &v, &make_ops(), 0)
 }
@@ -973,7 +991,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
         for s in &specs {
             init_argv.push(s);
         }
-        let rc_init = comparguments(&init_argv);
+        let rc_init = comparguments(327, &init_argv);
         tracing::debug!(target: "compsys_args", rc_init, nspecs = specs.len(), "comparguments -i");
         if rc_init != 0 {
             // sh:588 — else return 1
@@ -1007,13 +1025,13 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
     // sh:333-356 — get descrs/actions/subcs and the option lists, then
     // pick the right `_tags` set.
     let mut have_descrs = false;
-    let rc_d = comparguments(&["-D", "descrs", "actions", "subcs"]);
+    let rc_d = comparguments(333, &["-D", "descrs", "actions", "subcs"]);
     tracing::debug!(target: "compsys_args", rc_d, prefix = %origpre, "comparguments -D");
     if rc_d == 0 {
         // sh:333 comparguments -D descrs actions subcs
         have_descrs = true;
         let subcs = getaparam("subcs").unwrap_or_default();
-        let rc_o = comparguments(&["-O", "next", "direct", "odirect", "equal"]);
+        let rc_o = comparguments(334, &["-O", "next", "direct", "odirect", "equal"]);
         tracing::debug!(
             target: "compsys_args",
             rc_o,
@@ -1033,13 +1051,13 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
         }
     } else {
         // sh:341 comparguments -a
-        if comparguments(&["-a"]) == 0 {
+        if comparguments(341, &["-a"]) == 0 {
             noargs = "no more arguments".to_string();
         } else {
             noargs = "no arguments".to_string();
         }
         // sh:346 comparguments -O next direct odirect equal
-        let orc = comparguments(&["-O", "next", "direct", "odirect", "equal"]);
+        let orc = comparguments(346, &["-O", "next", "direct", "odirect", "equal"]);
         if orc == 0 {
             opts = true;
             let _ = _tags(&["options".to_string()]); // sh:348
@@ -1063,7 +1081,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
     let nul_sep = opt_args_use_nul_separators.to_string();
 
     // sh:358 — comparguments -M matcher
-    let _ = comparguments(&["-M", "matcher"]);
+    let _ = comparguments(358, &["-M", "matcher"]);
     let matcher = getsparam("matcher").unwrap_or_default();
 
     // sh:360-362 — context=(); state=(); state_descr=()
@@ -1093,7 +1111,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
 
                     // sh:374 — if [[ $subc = argument* && -n $setnormarg ]]
                     if subc.starts_with("argument") && setnormarg {
-                        let _ = comparguments(&["-n", "NORMARG"]); // sh:375
+                        let _ = comparguments(375, &["-n", "NORMARG"]); // sh:375
                     }
 
                     // sh:378 — if [[ -n "$matched" ]] || _requested "$subc"
@@ -1131,7 +1149,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                         // sh:392 — if (( ! $state[(I)$action] ))
                         if !state.iter().any(|s| s == &st) {
                             // sh:393 comparguments -W line opt_args <nul>
-                            let _ = comparguments(&["-W", "line", "opt_args", nul_sep.as_str()]);
+                            let _ = comparguments(393, &["-W", "line", "opt_args", nul_sep.as_str()]);
                             state.push(st.clone());
                             state_descr.push(descr.clone());
                             setaparam("state", state.clone());
@@ -1173,7 +1191,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                     }
 
                     // sh:411 — comparguments -W line opt_args <nul>
-                    let _ = comparguments(&["-W", "line", "opt_args", nul_sep.as_str()]);
+                    let _ = comparguments(411, &["-W", "line", "opt_args", nul_sep.as_str()]);
 
                     if action.chars().all(|c| c == ' ') {
                         // sh:413 — [[ "$action" = \ # ]] empty action.
@@ -1348,7 +1366,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                 // sh:489 — single-option mode?
                 let want_single = alwopt.is_empty() || !tried || alwopt == "arg";
                 let single_rc = if want_single {
-                    comparguments(&["-s", "single"])
+                    comparguments(490, &["-s", "single"])
                 } else {
                     1
                 };
@@ -1613,7 +1631,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                 matched = true; // sh:557
 
                 // sh:559 comparguments -L "${equal[1]%%:*}" descrs actions subcs
-                let _ = comparguments(&["-L", opt_name.as_str(), "descrs", "actions", "subcs"]);
+                let _ = comparguments(559, &["-L", opt_name.as_str(), "descrs", "actions", "subcs"]);
                 have_descrs = true;
                 let subcs = getaparam("subcs").unwrap_or_default();
                 let _ = _tags(&subcs); // sh:561

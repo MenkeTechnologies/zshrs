@@ -1705,9 +1705,52 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
     // even after `disable ls`, and `$dis_builtins[ls]` reported "" /
     // PM_UNSET when ls was actually disabled — both diverging from
     // zsh -fc parity.
-    let entry = BUILTINS
-        .iter() // c:784
-        .find(|b| b.node.nam == name);
+    // c:784 — `builtintab->getnode2(builtintab, name)`.
+    //
+    // In C a module's builtins are ADDED to `builtintab` by
+    // `addbuiltins()` when the module loads (Src/module.c:551) and
+    // removed when it unloads, so a name owned by an UNLOADED module is
+    // simply not in the table. zshrs links every module statically and
+    // keeps ONE flat `BUILTINS` slice, so the raw `.find()` below saw
+    // `chmod`/`stat`/`zpty`/`clone`/`pcre_compile`/… whether or not the
+    // owning `zmodload` ever ran: `$+builtins[chmod]` answered 1 where
+    // `zsh -f` answers 0, across 27 names.
+    //
+    // zshrs's own dispatch and `whence -w` already apply this gate
+    // unconditionally (port of Src/builtin.c:4123 at
+    // `src/ported/builtin.rs:9420-9472`) — `zshrs -fc 'builtin chmod'`
+    // runs /bin/chmod, and `whence -w chmod` says `command`, both
+    // flipping to `builtin` after `zmodload zsh/files`. The `builtins`
+    // parameter view was the only reader that disagreed.
+    //
+    // Surfaced by `_pick_variant`, whose sh:19
+    // (`Completion/Base/Utility/_pick_variant:19`) reads exactly
+    // `$+builtins[$opts[-c]]`: a false positive on `chmod` selected the
+    // `zsh` variant of `_chmod` (and would for `_rm`/`_ln`/`_mv`/
+    // `_stat`/`_chown`/`_mkdir`/`_rmdir`) instead of the OS one.
+    //
+    // c:Src/module.c:1265 `add_autobin` — a module registered for
+    // AUTO-loading contributes STUBS to `builtintab` up front, so those
+    // names (`zstyle`, `compadd`, `zle`, `bindkey`, `ulimit`, …) ARE
+    // present before their module loads. `resolve_autoload_builtin` is
+    // that registry (Src/init.c:1708 `init_bltinmods`), and it is the
+    // same call the `defined`/`undefined` decision below already makes.
+    let in_builtintab = match crate::ext_builtins::builtin_owning_module(name) {
+        // A `zsh/main` core builtin (always in the table), or a
+        // zshrs-original entry that belongs to no module at all.
+        None | Some("__zshrs_only") => true,
+        Some(modname) => crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_loaded(modname) || t.resolve_autoload_builtin(name).is_some())
+            .unwrap_or(false),
+    };
+    let entry = if in_builtintab {
+        BUILTINS
+            .iter() // c:784
+            .find(|b| b.node.nam == name)
+    } else {
+        None
+    };
     let (value, found) = if let Some(bn) = entry {
         // c:785 — `bn != NULL`. Check the DISABLED state.
         let is_disabled = {
