@@ -917,6 +917,31 @@ pub fn boot_(m: *const module) -> i32 {
     // mode. Gating on emulation mode instead left the native binary printing
     // `W=%n has %a %l from %m. L=60` where zsh prints nothing, and left two
     // extra rows in `unset <TAB>`'s parameter listing.
+    //
+    // Re-measured 2026-08-14 (scripts/comptab_parity.py --zstyle
+    // scripts/parity_combos/full.zsh) after the parameter-table fixes
+    // landed; the trade-off is NOT gone and the gate stays:
+    //
+    //   gate on  (this code): `unset ` cell = 150/150 rows, ONE differing
+    //                         row (the `$` PID); `-` cell = 47093 vs 47095.
+    //   gate off (seed here): `-` cell PASSES 47095/47095, but `unset `
+    //                         becomes 152 vs zsh's 150 (LOGCHECK +
+    //                         WATCHFMT shift every row below `L`), and
+    //                         `zsh -f -c 'print -l ${(ko)parameters}'`
+    //                         gains those same two names — 526 against
+    //                         zsh's 524.
+    //
+    // The asymmetry is structural, not a stale number: zsh seeds these two
+    // DURING a completion, not at startup. `_parameters` (the user's
+    // Completion fn, sh:35) reads every name's value with `${(P)i}`, and
+    // C's `${(P)…}` fetchvalue → getparamnode → loadparamnode
+    // (c:Src/params.c:544-567) runs `ensurefeature(mn, "p:", nam)` on the
+    // `zsh/watch` stub, whose `boot_` seeds WATCHFMT/LOGCHECK at c:756-759.
+    // The names therefore appear only from the SECOND completion onward,
+    // which is exactly why `-` (keys tab,tab) shows them and `unset `
+    // (keys tab) does not. Seeding at startup cannot reproduce that
+    // ordering; making `${(P)…}` resolve the stub does (see the aspar arm
+    // in src/ported/subst.rs).
     if mid_load {
         if crate::ported::params::getsparam("WATCHFMT").is_none() {
             crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT); // c:757
