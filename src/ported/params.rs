@@ -5415,6 +5415,10 @@ pub fn getsparam(name: &str) -> Option<String> {
     //    Walk the global paramtab for the named param, returning
     //    `pm->u.str` for PM_SCALAR/PM_NAMEREF or `sepjoin(pm->u.arr)`
     //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
+    // c:2352 — set when the node is PM_ARRAY but its elements live behind a
+    // MODULE getfn instead of `u.arr`; the dispatch runs after the read guard
+    // below is dropped (see the arm that sets it).
+    let mut needs_partab_dispatch = false;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             // c:Src/Modules/param_private.c:568-617 + c:678 — C swaps
@@ -5467,9 +5471,49 @@ pub fn getsparam(name: &str) -> Option<String> {
             } else if t == PM_SCALAR && pm.gsu_s.is_some() {
                 pm.gsu_s.as_ref().map(|gsu| (gsu.getfn)(pm))
             } else if let Some(s) = pm.u_str.as_ref() {
-                Some(s.clone())
+                // c:2350-2357 — getstrvalue switches on PM_TYPE FIRST: a
+                // PM_ARRAY node's scalar value is
+                // `sepjoin(getvaluearr(v), NULL, 1)`, never a scalar field.
+                // `getvaluearr` (c:724-732) reads the elements through
+                // `v->pm->gsu.a->getfn(v->pm)` — `arrgetfn` (c:4054 `return
+                // pm->u.arr`) for an ordinary array, but a MODULE getfn
+                // (`reswordsgetfn`, Src/Modules/parameter.c:878) for the
+                // zsh/parameter magic arrays, which carry no `u.arr` at all.
+                // That is the same split `getaparam` spells out below.
+                // Reading `u_str` for those returned the seeded PM_SPECIAL
+                // stub's EMPTY string, so every colon modifier — whose test
+                // is `vunset = isarr ? !*aval : !*val` (c:Src/subst.c:3188) —
+                // saw a null value: `${reswords:-D}` / `${keymaps:+S}` /
+                // `${(P)r:-D}` took the unset branch where zsh takes the set
+                // one. Gated on "the stub is empty and this name really is a
+                // PARTAB_ARRAY row" so no node that already answers keeps its
+                // answer.
+                if s.is_empty() && t == PM_ARRAY && pm.u_arr.is_none() {
+                    needs_partab_dispatch = crate::ported::modules::parameter::PARTAB_ARRAY
+                        .iter()
+                        .any(|e| e.name == name); // c:2352
+                }
+                if needs_partab_dispatch {
+                    None
+                } else {
+                    Some(s.clone())
+                }
             } else {
-                pm.u_arr.as_ref().map(|arr| arr.join(" "))
+                match pm.u_arr.as_ref() {
+                    // c:2354 — stdarray gsu → arrgetfn (c:4054).
+                    Some(arr) => Some(arr.join(" ")),
+                    None => {
+                        // Same module-getfn dispatch as above for a stub that
+                        // carries neither string nor array storage.
+                        if t == PM_ARRAY {
+                            needs_partab_dispatch =
+                                crate::ported::modules::parameter::PARTAB_ARRAY
+                                    .iter()
+                                    .any(|e| e.name == name); // c:2352
+                        }
+                        None
+                    }
+                }
             };
             if let Some(mut s) = raw {
                 if pad_flags != 0 && pm.width > 0 {
@@ -5582,6 +5626,13 @@ pub fn getsparam(name: &str) -> Option<String> {
                 return Some(s);
             }
         }
+    }
+    if needs_partab_dispatch {
+        // c:2352-2354 — `ss = getvaluearr(v); s = sepjoin(ss, NULL, 1);` over
+        // the module getfn's array. Dispatched here, outside the paramtab read
+        // guard, because `partab_array_get` re-locks `paramtab` for its shadow
+        // check — the same deferral `getaparam` documents below.
+        return crate::vm_helper::partab_array_get(name).map(|a| a.join(" ")); // c:2354
     }
     // 3. Env fallback — C imports env into paramtab at init so the
     //    read above would hit. If the import hasn't happened yet
@@ -6499,6 +6550,47 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
     }
     if let Some(key) = subscript.filter(|_| !magic_unbound(name)) {
+        // c:Src/params.c:3153-3155 — the subscripted branch of
+        // `assignsparam` NUL-terminates at the `[` and calls
+        // `getvalue(&vbuf, &s, 1)` on the bare NAME. That resolves the
+        // node through `getparamnode` → `loadparamnode` (c:563-585),
+        // clearing PM_AUTOLOAD on the `zsh/parameter` stub. zshrs
+        // models PM_AUTOLOAD as a side-set (vm_helper's
+        // MATERIALIZED_MODULE_PARAMS), and the magic dispatch below
+        // never runs `getvalue`, so the name stayed a "stub" after the
+        // write: a later `unset "nameddirs[qq]"` /
+        // `unset "functions[ff]"` then took bin_unset's
+        // `module_param_is_autoload_stub` arm (builtin.rs:8483,
+        // C's c:3896-3919 scalar arm → "assignment to invalid
+        // subscript range") instead of the c:3891-3895 PM_HASHED arm,
+        // leaving the entry in nameddirtab / shfunctab.
+        if crate::ported::modules::parameter::PARTAB
+            .iter()
+            .any(|e| e.name == name)
+        {
+            crate::vm_helper::mark_module_param_used(name); // c:3155 getvalue → c:571 loadparamnode
+            // c:Src/params.c:3159-3165 — `if (v->pm->node.flags &
+            // PM_READONLY) { zerr("read-only variable: %s",
+            // v->pm->node.nam); … return NULL; }`. The check runs on the
+            // node getvalue just returned, BEFORE any element write, so
+            // `readonly commands; commands[x]=/y` is rejected in C. The
+            // magic dispatch below writes the real shell table directly
+            // and never consulted the node's flags, so a user
+            // `readonly`-ed magic assoc silently accepted element
+            // writes. Name-keyed `is_readonly_magic` further down only
+            // covers the PM_READONLY_SPECIAL rows, not user readonly.
+            let ro = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(name).map(|pm| (pm.node.flags as u32 & PM_READONLY) != 0))
+                .unwrap_or(false);
+            if ro {
+                zerr(&format!("read-only variable: {}", name)); // c:3160
+                errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                unqueue_signals(); // c:3163
+                return None; // c:3164
+            }
+        }
         match name {
             "functions" => {
                 use crate::ported::zsh_h::hashnode;
@@ -6771,6 +6863,53 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 unqueue_signals();
                 return Some(pm);
             }
+            "nameddirs" => {
+                // c:Src/Modules/parameter.c:1534-1545 setpmnameddir —
+                // `nameddirs[name]=dir` installs a Nameddir node in
+                // nameddirtab (`nd->node.flags = 0; nd->dir = value;
+                // nameddirtab->addnode(...)`), exactly like
+                // `hash -d name=dir`, so `~name` expands afterwards.
+                // The SPECIALPMDEF for `nameddirs`
+                // (Src/Modules/parameter.c:2301-2302) carries NO
+                // PM_READONLY_SPECIAL and its element gsu is
+                // `pmnamedir_gsu = { strgetfn, setpmnameddir,
+                // unsetpmnameddir }` (c:1607-1608), i.e. the write is
+                // legal in C. Verified vs zsh 5.9: `nameddirs[qq]=/tmp`
+                // → rc=0, `print ~qq` → /tmp, `hash -d` lists qq.
+                // Dispatch to the canonical setpmnameddir port so the
+                // write reaches nameddirtab (a generic assoc store
+                // would leave `~qq` silently broken).
+                use crate::ported::zsh_h::hashnode;
+                use crate::ported::zsh_h::param as ParamStruct;
+                let pm: Box<ParamStruct> = Box::new(ParamStruct {
+                    node: hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0,
+                    u_tied: None,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                });
+                crate::ported::modules::parameter::setpmnameddir(pm.clone(), val.to_string());
+                unqueue_signals();
+                return Some(pm);
+            }
             "mapfile" => {
                 // c:Src/Modules/mapfile.c:68 setpmmapfile —
                 // `mapfile[fname]=value` WRITES `value` to the file
@@ -6911,6 +7050,16 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         // zsh 5.9: `commands[x]=/y` → rc=0, ${commands[x]} → /y,
         // `whence x` → /y. The `commands` arm above routes through
         // the canonical setpmcommand port. Bug #375.
+        // `nameddirs` is intentionally NOT in this list — its
+        // SPECIALPMDEF (Src/Modules/parameter.c:2301-2302) has no
+        // PM_READONLY_SPECIAL and its element gsu (c:1607-1608
+        // `pmnamedir_gsu = { strgetfn, setpmnameddir,
+        // unsetpmnameddir }`) accepts the write, installing a
+        // nameddirtab node. Verified vs zsh 5.9: `nameddirs[qq]=/tmp`
+        // → rc=0, `print ~qq` → /tmp. The `nameddirs` arm above routes
+        // through the canonical setpmnameddir port. `userdirs` STAYS
+        // read-only: c:1670/1694 give it `PM_READONLY` +
+        // `nullsetscalar_gsu`.
         let is_readonly_magic = matches!(
             name,
             "builtins"
@@ -6922,7 +7071,6 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 | "jobtexts"
                 | "jobstates"
                 | "jobdirs"
-                | "nameddirs"
                 | "userdirs"
                 | "usergroups"
                 | "widgets"

@@ -4040,6 +4040,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // c:Src/params.c:3203-3207 — `if (!isident(s)) { zerr("not an
+        // identifier: %s", s); errflag |= ERRFLAG_ERROR; return NULL; }`.
+        // Every subscripted assignment passes through that gate, and isident
+        // rejects an empty subscript at c:1334 `if (!(ss =
+        // parse_subscript(++ss, 1, ']'))) return 0;` — the LHS text is
+        // untokenized by then, so the `]` IS parse_subscript's literal endchar
+        // and c:Src/lex.c:1748 returns NULL. `m[]=z` / `A[]=z` / `s[]=z` are
+        // therefore all `not an identifier: NAME[]`, never a store.
+        // Only the SOURCE-LITERAL empty subscript is affected: with a dynamic
+        // key (`H[$k]=v`) C's isident sees the unexpanded `$k` text, passes,
+        // and getindex stores the expanded — possibly empty — key.
+        // The gate lives here because the PM_HASHED fast path and the numeric
+        // pre-resolve below both reach the store without calling assignsparam
+        // (the empty key resolved to "" for a hash and to math-0 for an
+        // indexed array, so `A[]=z` reported "assignment to invalid subscript
+        // range" instead). Route through assignsparam so the diagnostic and
+        // the errflag are the canonical ones.
+        if !key_is_dynamic && key.is_empty() {
+            crate::ported::params::assignsparam(
+                &format!("{}[]", name), // c:3203 — the LHS spelling zsh reports
+                &value,
+                crate::ported::zsh_h::ASSPM_WARN,
+            );
+            return Value::Status(1);
+        }
         // Bash sparse-array tracking for `a[i]=v` (scalar single-index). A set
         // that pads the dense Vec past its old end leaves old_len..i as holes;
         // on an undefined array, `a[5]=q` leaves only index 5 (count 1). Only
@@ -10934,7 +10959,29 @@ fn word_assemble_plan9(segments: &[Value], plan9_flags: &[bool]) -> Value {
         }
         if !started {
             started = true;
-            words = elems;
+            // c:Src/subst.c:4261 — `if ((!aval[0] || !aval[1]) && !plan9)`.
+            // A NON-plan9 EMPTY expansion (empty array, or an empty scalar
+            // that zshrs collapsed to the same empty `Value::Array`) is
+            // folded into the word text as the empty string and the node
+            // SURVIVES (c:4268-4274 `strcatsub` of prefix + "" + suffix).
+            // Only the plan9 arm deletes the word, and that is the
+            // `uremnode` case already returned above (c:4362-4365).
+            //
+            // Seeding `words` with that single empty element is what keeps a
+            // growing edge alive for the segments that follow. Leaving
+            // `words` empty instead made `words[active_lo..]` an empty slice
+            // forever, so every later segment cross-multiplied against
+            // nothing and the whole word vanished: `n=""; a=(x y z);
+            // print -rl -- $n${^a}` printed nothing where zsh prints
+            // `x`/`y`/`z`, and `$n$a${^a}` dropped the leading `x`. Only a
+            // word whose FIRST segment was the empty one was affected —
+            // `pre$n${^a}` already started from the literal and hit the
+            // "contributes nothing" `continue` below.
+            words = if elems.is_empty() {
+                vec![String::new()]
+            } else {
+                elems
+            };
             // plan9 → the whole first array is the growing edge; splice/scalar
             // → only its last element grows, earlier ones are finalized words.
             active_lo = if plan9 {
@@ -14868,5 +14915,55 @@ mod word_assemble_tests {
             &[false, true, false],
         );
         assert_eq!(out(r), vec!["X1A", "X2A", "B"]);
+    }
+
+    // c:Src/subst.c:4261 — a NON-plan9 empty expansion collapses to the empty
+    // string and the word SURVIVES; only plan9 (c:4362 `uremnode`) deletes it.
+    // A leading empty segment used to leave `words` empty, so every following
+    // segment cross-multiplied against nothing and the word vanished.
+    // Verified against zsh 5.9:
+    //     n=""; a=(x y z); print -rl -- $n${^a}      -> x / y / z
+    #[test]
+    fn leading_empty_splice_keeps_word_and_crosses() {
+        let r = word_assemble_plan9(
+            &[Value::array(vec![]), arr(&["x", "y", "z"])],
+            &[false, true],
+        );
+        assert_eq!(out(r), vec!["x", "y", "z"]);
+    }
+
+    //     n=""; a=(x y z); print -rl -- $n"pre"${^a} -> prex / prey / prez
+    #[test]
+    fn leading_empty_then_literal_then_plan9() {
+        let r = word_assemble_plan9(
+            &[Value::array(vec![]), Value::str("pre"), arr(&["x", "y", "z"])],
+            &[false, false, true],
+        );
+        assert_eq!(out(r), vec!["prex", "prey", "prez"]);
+    }
+
+    //     n=""; a=(x y z); print -rl -- $n$a${^a} -> x / y / zx / zy / zz
+    // The leading empty must not consume the splice's first element.
+    #[test]
+    fn leading_empty_does_not_eat_first_splice_element() {
+        let r = word_assemble_plan9(
+            &[
+                Value::array(vec![]),
+                arr(&["x", "y", "z"]),
+                arr(&["x", "y", "z"]),
+            ],
+            &[false, false, true],
+        );
+        assert_eq!(out(r), vec!["x", "y", "zx", "zy", "zz"]);
+    }
+
+    //     n=""; e=(); print -rl -- $n${^e} -> nothing (plan9 empty still wins)
+    #[test]
+    fn leading_empty_then_empty_plan9_still_deletes_word() {
+        let r = word_assemble_plan9(
+            &[Value::array(vec![]), Value::array(vec![])],
+            &[false, true],
+        );
+        assert!(out(r).is_empty(), "plan9 empty array still deletes the word");
     }
 }

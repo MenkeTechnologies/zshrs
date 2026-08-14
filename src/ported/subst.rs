@@ -6131,6 +6131,26 @@ pub fn paramsubst(
             idx += 1; // c:2867
             let sub_start = idx;
             let mut depth = 1_i32;
+            // c:Src/lex.c:1748 — `if (!*s || *s == endchar) return 0;` inside
+            // `parse_subscript`, whose `endchar` is the LITERAL `']'`
+            // (c:Src/params.c:2029 passes `']'`). That guard therefore fires
+            // only when the closing bracket reached the subscript parser
+            // UNTOKENIZED — i.e. inside double quotes, where the lexer leaves
+            // `[`/`]` alone. In an ordinary word the closer is the Outbrack
+            // TOKEN, the guard does NOT fire, and C runs `getarg` on the empty
+            // argument instead (c:Src/params.c:1388). Record whether a closer
+            // was found at all: with none, C's dquote_parse runs off the end
+            // and parse_subscript returns NULL through the same error exit.
+            //
+            // The DQ half of the test is taken from `qt` rather than from the
+            // byte, because zshrs re-synthesises `${name[key]}` in raw ASCII on
+            // several routes (the compile-time unbraced fast path, the
+            // `${+name[key]}` / `${#name[key]}` rewrites), which loses the
+            // Inbrack/Outbrack spelling the outer lexer produced. `qt` is the
+            // same condition in C — the lexer leaves the bracket literal
+            // exactly when the reference is double-quoted, which is also what
+            // c:Src/subst.c:2900 forwards as SCANPM_DQUOTED.
+            let mut closed_literal: Option<bool> = None;
             while idx < body_chars.len() && depth > 0 {
                 // c:2867
                 let bc = body_chars[idx];
@@ -6170,6 +6190,7 @@ pub fn paramsubst(
                     // c:2867
                     depth -= 1;
                     if depth == 0 {
+                        closed_literal = Some(bc == ']'); // c:Src/lex.c:1748
                         break;
                     }
                 }
@@ -6419,19 +6440,58 @@ pub fn paramsubst(
                     was_at_star_splat = true;
                 }
                 subscript = Some(expanded);
-            } else {
-                // c:Src/params.c:2022 — `zerr("invalid subscript")`. An EMPTY
-                // bracket pair is not a subscript; zsh rejects `${a[]}`
-                // outright, and `${a[]:-D}` too — the expansion is an error, so
-                // the default never applies. The guard above only enters the
-                // subscript machinery when the brackets have CONTENT
-                // (`idx > sub_start`), so an empty pair left `subscript` as
-                // None and the expansion fell through to the whole-value path:
-                // `${a[]}` on (1 2 3) printed `1 2 3` at status 0, `${s[]}`
-                // printed the whole scalar, and `${m[]}` on an assoc printed a
-                // value. That is wrong DATA, not merely a missing diagnostic.
-                // docs/BUGS.md #1035.
+            } else if qt || closed_literal.is_none() {
+                // c:Src/lex.c:1748 `if (!*s || *s == endchar) return 0;` →
+                // c:Src/params.c:2020-2022 `zerr("invalid subscript")`.
+                // Reached when the closing bracket is the LITERAL `]` — a
+                // double-quoted reference (`"${m[]}"`, `"$m[]"`), where the
+                // lexer never tokenizes the bracket — or when no closer was
+                // found at all (`${m[`), which is C's dquote_parse error
+                // return from the same function. Both make parse_subscript
+                // return NULL, and getindex turns that into this diagnostic.
+                // The expansion is dead, so `${m[]:-D}` never reaches its
+                // default. docs/BUGS.md #1035.
                 zerr("invalid subscript"); // c:2022
+                errflag_set_error();
+                return (String::new(), idx + 1, vec![]);
+            } else {
+                // c:Src/params.c:1533-1596 — the closer was the Outbrack
+                // TOKEN, so C's c:1748 guard did not fire and `getarg` runs on
+                // the EMPTY argument. The scan loop at c:1533-1536 stops
+                // immediately on Outbrack and `s = dupstrpfx(s, 0)` is "".
+                // Whether that is legal is decided by the shared ishash test
+                // below, exactly as in C.
+                subscript = Some(String::new());
+            }
+            // c:Src/params.c:1583-1620 — getarg's terminal branch, reached with
+            // the subscript text `s` fully resolved (post-remnulargs /
+            // parsestr / singsub, c:1577-1592):
+            //     if (ishash) { ... ht->getnode(ht, s) ... }
+            //     else        { r = mathevalarg(s, &s); ... }
+            // For a PM_HASHED parameter an empty `s` is an ordinary (missing)
+            // key: c:1585 `getnode(ht, "")` misses, c:1588 `createparam(s,
+            // PM_SCALAR|PM_UNSET)` hands back an UNSET element, so the value is
+            // empty, a `:-` default applies and `${+m[]}` is 0. For anything
+            // else the empty text reaches `mathevalarg`, the one math entry
+            // point that REFUSES an empty expression (c:Src/math.c:1536-1539
+            // `zerr("bad math expression: empty string")`) where plain
+            // `matheval` would yield 0 (c:Src/math.c:1491-1495). C's own
+            // comment there names this case: "`$array[$ind]` where ind hasn't
+            // been set produces an error, which is probably safe."
+            //
+            // The test sits after BOTH arms because the text can become empty
+            // two ways: written empty (`${A[]}`) or expanded empty
+            // (`${A[$unset]}`) — C makes no distinction, both arrive at c:1618
+            // as a zero-length `s`.
+            //
+            // `wantt` excludes the hash arm: after the `(t)` arm has replaced
+            // the value with the type name, C re-runs the subscript against a
+            // FRESH anonymous carrier — `pm = createparam(nulstring, isarr ?
+            // PM_ARRAY : PM_SCALAR)` at c:2890-2900 — so `v->pm` is never
+            // PM_HASHED there and `${(t)m[]}` is the math error too, not an
+            // empty-key read of `m`.
+            if subscript.as_deref() == Some("") && (wantt || !assoc_contains(&var_name)) {
+                crate::ported::math::mathevalarg(""); // c:1618
                 errflag_set_error();
                 return (String::new(), idx + 1, vec![]);
             }
@@ -6453,6 +6513,7 @@ pub fn paramsubst(
             idx += 1;
             let sub2_start = idx;
             let mut depth = 1_i32;
+            let mut closed2 = false; // c:Src/lex.c:1748 — see the first walk
             while idx < body_chars.len() && depth > 0 {
                 let bc = body_chars[idx];
                 if bc == '[' || bc == Inbrack {
@@ -6460,6 +6521,7 @@ pub fn paramsubst(
                 } else if bc == ']' || bc == Outbrack {
                     depth -= 1;
                     if depth == 0 {
+                        closed2 = true;
                         break;
                     }
                 }
@@ -6489,6 +6551,22 @@ pub fn paramsubst(
                     }
                 }
                 second_subscript = Some(expanded2);
+            }
+            // c:Src/params.c:2925 getarg recursion — the second subscript
+            // indexes the SCALAR the first one produced, so `ishash` is false
+            // and c:1618 `mathevalarg` owns the empty text: `${A[1][]}` and
+            // `${A[1][$unset]}` are both "bad math expression: empty string".
+            // Double-quoted, the closer stays a literal `]`, C's c:Src/lex.c:1748
+            // guard fires first and the error is "invalid subscript" instead —
+            // the same split as the first subscript above.
+            if second_subscript.as_deref().unwrap_or("").is_empty() {
+                if qt || !closed2 {
+                    zerr("invalid subscript"); // c:2022
+                } else {
+                    crate::ported::math::mathevalarg(""); // c:1618
+                }
+                errflag_set_error();
+                return (String::new(), idx + 1, vec![]);
             }
             if idx < body_chars.len() {
                 idx += 1;
@@ -6767,6 +6845,26 @@ pub fn paramsubst(
                         subscript = Some(key);
                     }
                 }
+            }
+            // c:Src/subst.c:2800 — the SECOND `fetchvalue` of the aspar
+            // arm resolves the dereferenced name, and fetchvalue reaches
+            // the node through `getparamnode` (c:Src/params.c:589-594) →
+            // `loadparamnode` (c:544-567), which fires
+            // `ensurefeature(mn, "p:", nam)` on a PM_AUTOLOAD stub. So in
+            // C `${(P)v}` with v=WATCH LOADS `zsh/watch`, and that
+            // module's `boot_` seeds WATCHFMT/LOGCHECK
+            // (c:Src/Modules/watch.c:756-759). zshrs pre-registers
+            // `$WATCH`/`$watch` in paramtab, so the deref below found a
+            // node and never went near the module: `v=WATCH;
+            // print ${(P)v}` left `${WATCHFMT-unset}` reading `unset`
+            // where zsh prints the default format. `_parameters` (the
+            // Completion fn, sh:35) reads EVERY parameter that way, which
+            // is how zsh's completion listings gain the two names after
+            // the first TAB. `mark_module_param_used` is zshrs's
+            // stand-in for clearing PM_AUTOLOAD and runs the same
+            // ensurefeature (vm_helper.rs:5430 materialize_module_param).
+            if !var_name.is_empty() {
+                crate::vm_helper::mark_module_param_used(&var_name); // c:2800
             }
         }
 
@@ -19448,6 +19546,7 @@ pub fn paramsubst(
             // so `$arr[$other[1]]` works).
             let mut depth = 1; // c:1625
             let mut q = pos + 1; // c:1625
+            let mut closed_literal: Option<bool> = None; // c:Src/lex.c:1748
             while q < chars.len() && depth > 0 {
                 // c:1625
                 let ch = chars[q];
@@ -19466,12 +19565,35 @@ pub fn paramsubst(
                 } else if ch == ']' || ch == Outbrack {
                     depth -= 1;
                     if depth == 0 {
+                        // c:Src/lex.c:1748 — see the braced walk above:
+                        // `parse_subscript`'s endchar test is against the
+                        // LITERAL `']'`, so an empty `[]` is an error only
+                        // when the closer arrived untokenized (inside double
+                        // quotes). Record the spelling for the empty arm.
+                        closed_literal = Some(ch == ']');
                         break;
                     }
                 }
                 q += 1; // c:1625
             } // c:1625
-            if depth == 0 {
+            if depth == 0 && q == pos + 1 {
+                // EMPTY subscript on the UNBRACED reference (`$m[]`,
+                // `"$m[]"`, `$A[]`). c:Src/lex.c:1748 — `parse_subscript`
+                // bails only when the closer is the LITERAL `]`, i.e. inside
+                // double quotes, and c:Src/params.c:2022 turns that NULL into
+                // "invalid subscript". With the Outbrack TOKEN the empty text
+                // goes on to getarg, where the shared c:1583 ishash test below
+                // decides between an empty-key hash read and mathevalarg.
+                // The DQ half comes from `qt` — see the braced walk for why
+                // the byte spelling alone can't carry it in zshrs.
+                if qt || closed_literal.is_none() {
+                    zerr("invalid subscript"); // c:2022
+                    errflag_set_error();
+                    return (String::new(), q + 1, vec![]);
+                }
+                subscript_str = Some(String::new()); // c:1533-1536
+                pos = q + 1; // c:1625
+            } else if depth == 0 {
                 // c:1625
                 let raw_sub: String = chars[pos + 1..q].iter().collect(); // c:1625
                                                                           // c:Src/params.c:1577-1582 — `if (ishash && (keymatch ||
@@ -19522,6 +19644,19 @@ pub fn paramsubst(
                 subscript_str = Some(crate::lex::untokenize(&expanded)); // c:1584
                 pos = q + 1; // c:1625
             } // c:1625
+            // c:Src/params.c:1583-1620 — getarg's terminal branch on the
+            // RESOLVED subscript text: `if (ishash) { ht->getnode(ht, s) }
+            // else { r = mathevalarg(s, &s); }`. An empty `s` is a legal
+            // (missing) hash key but an ILLEGAL math expression
+            // (c:Src/math.c:1536-1539 "bad math expression: empty string",
+            // where plain matheval would return 0). The text reaches zero
+            // length either written empty (`$A[]`) or expanded empty
+            // (`$A[$unset]`); C treats both the same. Mirrors the braced walk.
+            if subscript_str.as_deref() == Some("") && !assoc_contains(&var_name) {
+                crate::ported::math::mathevalarg(""); // c:1618
+                errflag_set_error();
+                return (String::new(), pos, vec![]);
+            }
         } // c:1625
 
         // Element list of a hash MATCHMANY search subscript (`(K)`/`(I)`/`(R)`),
