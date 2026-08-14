@@ -3679,12 +3679,21 @@ impl ZshCompiler {
             // literal key `a$b` in zsh, not `a` + the expansion of `$b`).
             let (resolved_key, key_live_expansion) =
                 crate::subscript_escape::subscript_unescape(key, false, true);
-            // A key that still holds a live expansion keeps its SOURCE text:
-            // the runtime word compiler owns its quoting (and would glob a
-            // now-bare `[…]`), so only the fully-resolvable literal key — the
-            // one stored verbatim as a constant below — is rewritten here.
+            // A key that still holds a live expansion cannot take the resolved
+            // text (its `$` would be re-expanded and its now-bare `[` globbed),
+            // but it must not keep the SOURCE text either: `untokenize_preserve_quotes`
+            // above folded the lexer's `Bnull` markers down to plain
+            // backslashes, and the word compiler reads a plain backslash as an
+            // ordinary character — so `A[\[$x\]]=v` stored the 5-char key
+            // `\[k\]` where zsh stores `[k]` (same for `A[a\$b$x]`, `A[\(x$x\)]`,
+            // `A[\{x$x\}]`). Hand it C's INTERMEDIATE spelling instead: the
+            // marker disposition of `getarg` + `remnulargs` re-encoded as
+            // `Bnull`+char, which is precisely the lexer encoding the word
+            // compiler already resolves (`print -r -- \[$x\]` → `[k]`), with
+            // the live `$` left for it to expand — c:Src/params.c:1585-1592
+            // `parsestr(&s); singsub(&s);`.
             let key_unescaped = if key_live_expansion {
-                key.to_string()
+                crate::subscript_escape::subscript_escape_markers(key, false)
             } else {
                 resolved_key
             };

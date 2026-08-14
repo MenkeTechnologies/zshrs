@@ -385,6 +385,19 @@ pub fn register_module(table: &mut modulestab, name: &str) -> bool {
     if table.modules.contains_key(name) {
         return false;
     }
+    // c:378 — `zaddlinknode(linkedmodules, m)`: the static entry-point
+    // record goes on `linkedmodules`, which is what `module_linked`
+    // (c:385) searches from `load_module` (c:2224, c:2285).
+    if !table.linkedmodules.iter().any(|n| n == name) {
+        table.linkedmodules.push(name.to_string());
+    }
+    // WARNING: RUST-ONLY — C's `register_module` does NOT add a
+    // `modulestab` node (only `load_module`/`autofeatures`/`add_dep`
+    // do). The node insert is kept here because zshrs callers treat
+    // this free fn as "make the module exist and be loadable"; the
+    // boot path (`register_builtin_modules`) deliberately does NOT use
+    // it, and populates `linkedmodules` directly so that the
+    // `modulestab` node set matches C's boot set exactly.
     table.modules.insert(name.to_string(), module::new(name));
     true
 }
@@ -1488,41 +1501,124 @@ impl modulestab {
             "zsh/zleparameter",
             "zsh/zutil",
         ];
+        // c:Src/module.c:359-379 `register_module` — every compiled-in
+        // module is appended to `linkedmodules` and NOTHING ELSE. C's
+        // `modulestab` starts EMPTY and is filled lazily; the node set
+        // it ends up with at the end of `main()` is decided entirely by
+        // the generated `bltinmods.list` replayed below.
+        //
+        // Inserting all ~40 known modules as `modulestab` nodes here
+        // (the previous shape) put `ct` past `hsize * 2` and quadrupled
+        // the table from C's 17 buckets to 68, so `${(k)modules}` —
+        // which is a raw bucket walk (`Src/Modules/parameter.c:1102`)
+        // — listed loaded modules in an order that could not match zsh
+        // for any collision: `zmodload zsh/system; zmodload zsh/zle`
+        // printed `zle, system` where zsh prints `system, zle`
+        // (bucket 6 vs buckets 23/57).
         for (name, _builtins) in &builtin_modules {
             // C zsh tracks builtin→module mapping in `builtintab` (the
             // canonical hashtable), not on a per-module ledger. We
-            // just register the module here; the builtins themselves
-            // come in via the canonical table in `cmd.rs`.
-            let mut module = module::new(name);
-            if !zsh_default_loaded.contains(name) {
-                // Mark as registered-but-not-loaded so
-                // ${modules[NAME]} reads as unset until zmodload.
-                module.node.flags |= crate::ported::zsh_h::MOD_UNLOAD;
-            }
-            self.modules.insert(name.to_string(), module);
+            // just record the module as linked here; the builtins
+            // themselves come in via the canonical table in `cmd.rs`.
+            self.linkedmodules.push((*name).to_string()); // c:378
         }
+        // `zsh/main` is the `link=static` module `Src/mkbltnmlst.sh:107`
+        // emits a `register_module("zsh/main", …)` call for; it is not
+        // in the autoloadable table above.
+        self.linkedmodules.push("zsh/main".to_string()); // c:378
 
-        // c:Src/init.c:1705 `#include "bltinmods.list"` — the generated
-        // list ends with one `add_dep(MODULE, DEP)` call per `moddeps=`
-        // entry in the module's `.mdd` (emitted by
-        // `Src/mkbltnmlst.sh:75-77` for `load=yes` modules and
-        // `:96-98` for dynamic `load=no` ones). Without these edges
-        // `load_module("zsh/compctl")` never pulls in `zsh/complete`
-        // and `zsh/zle`, and `zmodload -d` prints nothing where zsh
-        // prints seven lines. The set below is exactly what
-        // `/opt/homebrew/bin/zsh -fc 'zmodload -d'` reports.
-        let static_moddeps: &[(&str, &[&str])] = &[
-            ("zsh/compctl", &["zsh/complete", "zsh/zle"][..]), // Src/Zle/compctl.mdd
-            ("zsh/complete", &["zsh/zle"][..]),                // Src/Zle/complete.mdd
-            ("zsh/complist", &["zsh/complete", "zsh/zle"][..]), // Src/Zle/complist.mdd
-            ("zsh/computil", &["zsh/complete", "zsh/zle"][..]), // Src/Zle/computil.mdd
-            ("zsh/zftp", &["zsh/net/tcp"][..]),                // Src/Modules/zftp.mdd
-            ("zsh/zleparameter", &["zsh/zle"][..]),            // Src/Zle/zleparameter.mdd
-            ("zsh/zutil", &["zsh/complete"][..]),              // Src/Modules/zutil.mdd
+        // c:Src/init.c:1739 `#include "bltinmods.list"` — the generated
+        // boot code, replayed in order. `Src/mkbltnmlst.sh` walks
+        // `config.modules` and emits, for every `load=yes` module:
+        //   * `autofeatures("zsh", MODULE, features, 0, 1)` when the
+        //     `.mdd` has an `autofeatures=` line (mkbltnmlst.sh:44-70);
+        //     `autofeatures` opens with
+        //     `find_module(module, FINDMOD_ALIASP|FINDMOD_CREATE, NULL)`
+        //     (c:3449) — THAT is what creates the module's `modulestab`
+        //     node.
+        //   * one `add_dep(MODULE, DEP)` per `moddeps=` entry
+        //     (mkbltnmlst.sh:71-73); `add_dep` also opens with
+        //     `find_module(name, …|FINDMOD_CREATE, &name)` (c:2390), so
+        //     a module with deps but no autofeatures (`zsh/complist`)
+        //     still gets a node.
+        // then a second pass (mkbltnmlst.sh:83-105) emits `add_dep` for
+        // `link=dynamic load=no` modules that declare `moddeps`.
+        //
+        // ORDER IS LOAD-BEARING: `addhashnode` front-inserts, so the
+        // chain order inside a bucket is reverse creation order, and
+        // `${(k)modules}` shows it. The sequence below is
+        // `config.modules` order (Src/Builtins, then Src/Modules, then
+        // Src/Zle, then Src/zsh.mdd), verified against the oracle:
+        // `zsh -f -c 'zmodload <all 15>; print -rl -- ${(k)modules}'`
+        // pins terminfo-before-watch, parameter-before-computil,
+        // zle-before-zleparameter and rlimits-before-param/private.
+        //
+        // The resulting node count is 16 (15 here + `zsh/main` below),
+        // which is also what the running zsh measures: adding module
+        // aliases one at a time, the 18th alias is the one that
+        // re-hashes the table (17 buckets, expand at `ct >= 34`), so
+        // the boot count is exactly 34 - 18 = 16.
+        //
+        // `zsh/hlgroup`, `zsh/ksh93` and `zsh/random` carry `load=yes`
+        // in current zsh git but do not exist in the 5.9.x line this
+        // parity target ships, and zshrs implements none of them, so
+        // they contribute no boot node.
+        let bltinmods_list: &[(&str, bool, &[&str])] = &[
+            // (module, has `autofeatures=`, `moddeps=`)
+            ("zsh/rlimits", true, &[][..]),       // Src/Builtins/rlimits.mdd
+            ("zsh/sched", true, &[][..]),         // Src/Builtins/sched.mdd
+            ("zsh/param/private", true, &[][..]), // Src/Modules/param_private.mdd
+            ("zsh/parameter", true, &[][..]),     // Src/Modules/parameter.mdd
+            ("zsh/termcap", true, &[][..]),       // Src/Modules/termcap.mdd
+            ("zsh/terminfo", true, &[][..]),      // Src/Modules/terminfo.mdd
+            ("zsh/watch", true, &[][..]),         // Src/Modules/watch.mdd
+            ("zsh/zutil", true, &["zsh/complete"][..]), // Src/Modules/zutil.mdd
+            ("zsh/compctl", true, &["zsh/complete", "zsh/zle"][..]), // Src/Zle/compctl.mdd
+            ("zsh/complete", true, &["zsh/zle"][..]), // Src/Zle/complete.mdd
+            // No `autofeatures=`; the node comes from `add_dep` alone.
+            ("zsh/complist", false, &["zsh/complete", "zsh/zle"][..]), // Src/Zle/complist.mdd
+            ("zsh/computil", true, &["zsh/complete", "zsh/zle"][..]),  // Src/Zle/computil.mdd
+            ("zsh/zle", true, &[][..]),                                // Src/Zle/zle.mdd
+            ("zsh/zleparameter", true, &["zsh/zle"][..]),              // Src/Zle/zleparameter.mdd
+            // mkbltnmlst.sh:83-105 second pass — `link=dynamic
+            // load=no` with `moddeps`. `zsh/deltochar` is the only
+            // other module in that shape and does NOT appear: the
+            // grep is `' link=dynamic .* load=no '` with a TRAILING
+            // space, and deltochar's `config.modules` line ends at
+            // `load=no` (it declares no `functions=`), so it never
+            // matches. Verified on the oracle: `zmodload -d` lists
+            // seven modules and deltochar is not one of them.
+            ("zsh/zftp", false, &["zsh/net/tcp"][..]), // Src/Modules/zftp.mdd
         ];
-        for (name, deps) in static_moddeps {
+        for (name, has_autofeatures, deps) in bltinmods_list {
+            if *has_autofeatures {
+                // c:3449 — autofeatures() opens with
+                //   find_module(module, FINDMOD_ALIASP|FINDMOD_CREATE, NULL)
+                // Only the node-creating half is replayed here: the
+                // autoload feature registration itself lives in the
+                // `autoload_builtins` / `autoload_param_stubs` ledgers
+                // seeded further down and in `vm_helper`.
+                find_module(self, name, FINDMOD_CREATE);
+            }
             for dep in *deps {
-                add_dep(self, name, dep); // c:2369
+                add_dep(self, name, dep); // c:2390 (via c:3449's sibling)
+            }
+            // WARNING: RUST-ONLY — C's `find_module` node is
+            // `zshcalloc`ed with flags 0 and a NULL union, so
+            // `module_loaded` reads 0 for every one of these until a
+            // real `zmodload`. zshrs's static-link mirror instead uses
+            // `MOD_LINKED` as the "this name has backing code" bit
+            // (`zsh_h::module::is_loaded`) and `MOD_UNLOAD` as the
+            // "not live yet" sentinel, and a long tail of gates in
+            // `subst.rs` / `params.rs` / `fusevm_bridge.rs` read those
+            // two bits. Keep the flags each of these nodes carried
+            // before the boot set was trimmed, so this change moves
+            // ONLY the bucket layout.
+            if let Some(m) = self.modules.get_mut(name) {
+                m.node.flags |= MOD_LINKED;
+                if !zsh_default_loaded.contains(name) {
+                    m.node.flags |= crate::ported::zsh_h::MOD_UNLOAD;
+                }
             }
         }
 
@@ -1717,12 +1813,81 @@ impl modulestab {
             // c:2210 — zerr if !silent (silent flag not threaded yet)
             return false;
         }
-        crate::ported::signals::queue_signals(); // c:2218
-                                                 // c:2219 — find_module(name, FINDMOD_ALIASP)
+        crate::ported::signals::queue_signals(); // c:2222
+                                                 // c:2223 — find_module(name, FINDMOD_ALIASP)
         if !self.modules.contains_key(name) {
-            // c:2219 — !m branch: static-link path can't dlopen.
-            unqueue_signals(); // c:2222
-            return false; // c:2223 return 1
+            // c:2223-2251 — the allocate-on-miss branch. C reaches it
+            // for every module whose `modulestab` node has not been
+            // created yet, which is the NORMAL state: `bltinmods.list`
+            // creates nodes for only 16 modules at boot, so the first
+            // `zmodload zsh/system` (or any other module) lands here.
+            //
+            // c:2224-2225 —
+            //   if (!(linked = module_linked(name)) &&
+            //       !(handle = do_load_module(name, silent))) { return 1; }
+            // zshrs compiles every module in, so `module_linked` is the
+            // only arm that can succeed; `do_load_module` (dlopen) is
+            // called for its failure path only. `silent = 1` because
+            // `require_module` (c:2354's caller) has already emitted the
+            // canonical `failed to load module` warning through its own
+            // `try_load_module` gate — matching the pre-existing
+            // behaviour where this branch returned quietly.
+            if !self.module_linked(name) {
+                let _ = do_load_module(self, name, 1); // c:2225
+                unqueue_signals(); // c:2226
+                return false; // c:2227 return 1
+            }
+            // c:2229 — m = zshcalloc(sizeof(*m));
+            let mut m = module::new(name);
+            // c:2234-2235 — m->u.linked = linked;
+            //               m->node.flags |= MOD_SETUP | MOD_LINKED;
+            m.linked = Some(Box::new(linkedmod {
+                name: name.to_string(),
+                setup: None,
+                features: None,
+                enables: None,
+                boot: None,
+                cleanup: None,
+                finish: None,
+            }));
+            m.node.flags = MOD_SETUP | MOD_LINKED;
+            // c:2237 — modulestab->addnode(modulestab, ztrdup(name), m);
+            self.modules.insert(name.to_string(), m);
+
+            // Same Rust-only paramtab re-seed the already-noded path
+            // does below: C gets these SPECIALPMDEF entries from
+            // `do_boot_module` → `enables_module` → `addparam`, which
+            // zshrs services out of `PARTAB` instead.
+            for nm in crate::vm_helper::module_gated_params_for(name) {
+                crate::vm_helper::seed_partab_param(nm);
+            }
+
+            // c:2239-2240 —
+            //   if ((set = setup_module(m)) ||
+            //       (bootret = do_boot_module(m, enablesarr, silent)) == 1)
+            let set = setup_module(self, name);
+            let bootret = if set == 0 {
+                do_boot_module(self, name, None, 0)
+            } else {
+                1
+            };
+            if set != 0 || bootret == 1 {
+                if set == 0 {
+                    let _ = do_cleanup_module(self, name); // c:2242
+                }
+                let _ = finish_module(self, name); // c:2243
+                delete_module(self, name); // c:2244
+                unqueue_signals(); // c:2245
+                return false; // c:2246 return 1
+            }
+            // c:2248-2249 — m->node.flags |= MOD_INIT_S | MOD_INIT_B;
+            //               m->node.flags &= ~MOD_SETUP;
+            if let Some(m) = self.modules.get_mut(name) {
+                m.node.flags |= MOD_INIT_S | MOD_INIT_B;
+                m.node.flags &= !MOD_SETUP;
+            }
+            unqueue_signals(); // c:2250
+            return true; // c:2251 return bootret
         }
 
         // c:2249 — if (MOD_SETUP) return 0;
@@ -2800,8 +2965,15 @@ impl modulestab {
 
     /// Check if a module is linked (statically compiled) (from module.c module_linked)
     /// Port of `module_linked(char const *name)` from `Src/module.c:385`.
+    ///
+    /// C body walks `linkedmodules` comparing `->name`; it never looks
+    /// at `modulestab`. A module can be linked with no `modulestab`
+    /// node (the normal state before its first `zmodload`) and can have
+    /// a node while not linked (an alias, or an `add_dep`/`zmodload -ab`
+    /// bookkeeping node).
     pub fn module_linked(&self, name: &str) -> bool {
-        self.modules.contains_key(name)
+        // c:389-391 — for (node = firstnode(linkedmodules); …)
+        self.linkedmodules.iter().any(|n| n == name)
     }
 
     /// Resolve autoload — find which module provides a builtin
@@ -3150,16 +3322,19 @@ pub fn hpux_dlsym(handle: usize, name: &str) -> usize {
 pub fn try_load_module(table: &modulestab, name: &str) -> i32 {
     // c:1583
     // C dlopens the module path (or falls back to module_linked for
-    // compiled-in modules). Static-link analog: the node must carry
-    // MOD_LINKED (seeded by register_module / register_builtin_modules
-    // for every compiled-in module). A bare FINDMOD_CREATE bookkeeping
-    // node (flags=0 per C's zshcalloc at c:1676) has no backing code —
-    // dlopen would fail, so the loadable probe must too. Without the
-    // flag gate, `zmodload -ab zsh/bogus x; x` "booted" the phantom
-    // module instead of emitting `failed to load module`.
-    match table.modules.get(name) {
-        Some(m) if (m.node.flags & MOD_LINKED) != 0 => 1,
-        _ => 0,
+    // compiled-in modules). Static-link analog: the name must be on
+    // `linkedmodules` (c:385 `module_linked`) — zshrs has no DSOs, so
+    // "the file exists and dlopens" is exactly "the module is compiled
+    // in". Deliberately NOT a `modulestab` membership test: a bare
+    // FINDMOD_CREATE bookkeeping node (flags=0 per C's zshcalloc at
+    // c:1676) has no backing code, so `zmodload -ab zsh/bogus x; x`
+    // must still emit `failed to load module` rather than "boot" the
+    // phantom; and a real module has no node at all until its first
+    // load, which must still succeed.
+    if table.module_linked(name) {
+        1
+    } else {
+        0
     }
 }
 
@@ -5290,12 +5465,21 @@ pub fn unload_named_module(table: &mut modulestab, name: &str, nam: &str, silent
         .iter()
         .filter_map(|(other_name, other)| {
             // c:2939 — `if (!dm->deps || !dm->u.handle) continue;`
-            // Static-link analog of `u.handle`: MOD_LINKED && !MOD_UNLOAD.
-            // Actually C's gate is `u.handle` (loaded) — the MOD_UNLOAD
-            // check happens INSIDE the inner loop. So here we only skip
-            // modules with no deps or no handle (= not loaded).
+            // Static-link analog of `u.handle` is MOD_INIT_B ("boot_
+            // ran"), the same analog `require_module` (c:2352) and
+            // `getpmmodule` (c:1069) use. It is NOT MOD_LINKED, which
+            // only means "this name has compiled-in code" and is set on
+            // every boot node: with that gate, the never-loaded
+            // `zsh/compctl` / `zsh/complete` / `zsh/computil` /
+            // `zsh/zleparameter` boot nodes counted as live dependents,
+            // so a bare `zmodload -u zsh/zle` (nothing loaded) failed
+            // with "in use by another module" where zsh silently
+            // returns 0.
+            // The MOD_UNLOAD check stays INSIDE the inner loop: a
+            // dependent already flagged for deferred unload must still
+            // be seen there so it can set `del = 1`.
             let deps = other.deps.as_ref()?;
-            if (other.node.flags & MOD_LINKED) == 0 {
+            if (other.node.flags & MOD_INIT_B) == 0 {
                 return None;
             }
             // Note: C checks `u.handle` (loaded handle) not
@@ -7023,6 +7207,28 @@ pub struct modulestab {
     /// so a Rust `HashMap` here produced an order that matched zsh on
     /// no line at all.
     pub modules: crate::ported::hashtable::hashtable_nodes<module>,
+    /// C's `LinkList linkedmodules` (`Src/module.c:39`, created at
+    /// `Src/init.c:1194` `linkedmodules = znewlinklist()`), the list
+    /// `register_module` appends to (`c:378 zaddlinknode(linkedmodules,
+    /// m)`) and `module_linked` (`c:385`) searches. It is a SEPARATE
+    /// store from `modulestab`: a statically-linked module is on this
+    /// list from boot but gets a `modulestab` node only when something
+    /// creates one — `autofeatures`/`add_dep` at boot (`c:3449`,
+    /// `c:2390`) or `load_module`'s allocate-on-miss branch
+    /// (`c:2229-2237`).
+    ///
+    /// zshrs compiles every module in, so this list holds every name
+    /// `zmodload` can resolve; C only reaches it for `link=static`
+    /// modules and dlopens the rest. Keeping it separate is what makes
+    /// `modulestab->hsize` stay at C's boot value of 17 — inserting all
+    /// ~40 known modules as nodes tripped `ct >= hsize * 2`
+    /// (`Src/hashtable.c` addhashnode) and quadrupled the table to 68
+    /// buckets, so every `${(k)modules}` bucket index differed from C.
+    ///
+    /// C stores `Linkedmod` records (name + six entry points); zshrs
+    /// dispatches the entry points by name (`setup_module` etc.), so
+    /// only the name is kept.
+    pub linkedmodules: Vec<String>,
     /// Builtin name → module name mapping for autoload
     pub autoload_builtins: HashMap<String, String>,
     /// Condition name → module name mapping for autoload

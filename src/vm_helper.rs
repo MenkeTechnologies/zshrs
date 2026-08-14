@@ -1980,22 +1980,14 @@ impl ShellExecutor {
                 .insert(arr.to_string(), (scalar.to_string(), ":".to_string()));
         }
 
-        // Pour `path` (from env PATH split) into paramtab before the
-        // special_paramdef stamping loop below so the canonical tied
-        // entry exists when PM_SPECIAL bits are applied.
+        // Pour `path` (from env PATH split) into paramtab. The IPDEF9
+        // flag set was stamped by the c:838-847 pass above and survives
+        // the assignment (`assignaparam` keeps PM_DONTIMPORT on a
+        // PM_SPECIAL node — c:3374 + params.rs), so no re-stamp is
+        // needed here.
         for (k, v) in &arrays {
             setaparam(k, v.clone()); // c:params.c:3595
         }
-        // Re-stamp the IPDEF flag set. zshrs's `setsparam`/`setiparam`
-        // rewrite an existing node's flags to a plain PM_SCALAR /
-        // PM_INTEGER set, so the c:838-847 pass above loses PM_SPECIAL /
-        // PM_DONTIMPORT / PM_TIED on every special the seeds just wrote
-        // (`_`, IFS, OPTIND, NULLCMD, PS1, …). Re-running the stamp here —
-        // where the single pass used to sit — restores them BEFORE the
-        // import loop reads `dontimport(pm->node.flags)` (c:902-906). It
-        // only takes its "entry exists" arm now, so nothing is created and
-        // no chain position moves (c:187-203 `replacing:`).
-        stamp_special_params();
 
         // c:Src/params.c:893-924 — the environment import runs AFTER the
         // specials table (moved above, c:838-847) and after the c:854-885
