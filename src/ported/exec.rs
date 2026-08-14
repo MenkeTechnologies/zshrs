@@ -762,7 +762,30 @@ pub fn loadautofn(
     // decision sees the same precedence.
     let dump_ksh = dump_hit.as_ref().map(|(_, k)| *k);
     let body = match dump_hit {
-        Some((prog, _ksh)) => crate::ported::text::getpermtext(Box::new(prog), None, 0),
+        // The wordcode C executes carries a line number on every pipe
+        // (`WCB_PIPE(type, toklineno + 1)`, c:Src/parse.c:911/935/944, read
+        // back by `lineno = WC_PIPE_LINENO(pcode) - 1` at c:Src/exec.c:2057
+        // and `lineno = code - 1` at c:Src/exec.c:1356), so a dump-loaded
+        // function reports exactly the `$LINENO` of its ORIGINAL source.
+        //
+        // `getpermtext` cannot reproduce that: `gettext2` is a pretty-printer
+        // (`Src/text.c`), so it drops comments and blank lines and re-breaks
+        // compounds onto its own lines — `if X; then` becomes `if X` NEWLINE
+        // `then`. Re-parsing that text yields a DIFFERENT line for every
+        // statement, and `$LINENO` / error prefixes / `funcfiletrace` inside
+        // any `.zwc`-loaded function drift from zsh (measured: 29 vs 32 for
+        // `_parameters` loaded out of a `comp_utils.zwc` digest).
+        //
+        // `try_dump_file` (parse.rs, c:Src/parse.c:3746) only accepts a dump
+        // whose mtime is >= the source's, so when `<dir>/<name>` still exists
+        // it IS the text the wordcode was compiled from — the one text that
+        // re-parses to the same wordcode INCLUDING its line numbers. Prefer
+        // it, and keep the lossy `getpermtext` render for digest-only
+        // installs where no source file remains.
+        Some((prog, _ksh)) => match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(_) => crate::ported::text::getpermtext(Box::new(prog), None, 0),
+        },
         None => match std::fs::read_to_string(&path) {
             Ok(t) => t,
             Err(_) => return 1,

@@ -4433,6 +4433,11 @@ pub(crate) fn hgetc() -> Option<char> {
     };
 
     let from_inbuf = if try_inbuf { read_stack() } else { None };
+    // Did this character come off the ported `inbuf` stack (input.rs) or
+    // out of the Rust-only LEX_INPUT window? The C line-counting gate at
+    // c:Src/input.c:330 only has meaning for the former — see the
+    // `LEX_LINENO` bump below.
+    let mut via_inbuf = from_inbuf.is_some();
     let c = if let Some(c) = from_inbuf {
         c
     } else if let Some(c) = LEX_INPUT.with_borrow(|s| s.get(pos..).and_then(|t| t.chars().next())) {
@@ -4450,10 +4455,39 @@ pub(crate) fn hgetc() -> Option<char> {
         if crate::ported::input::lexstop.with(|s| s.get()) {
             return None;
         }
+        via_inbuf = true;
         read_stack()?
     };
 
-    if c == '\n' {
+    // c:Src/input.c:330 — `if (((inbufflags & INP_LINENO) || !strin) &&
+    // lastc == '\n') lineno++;`  C has ONE `lineno`, maintained inside
+    // `ingetc` under that gate, so a nested `inpush` that carries neither
+    // `INP_LINENO` nor a clear `strin` contributes NO lines to the count.
+    //
+    // zshrs splits the lexer input in two: the ported `inbuf` stack
+    // (input.rs, fed by `inpush` — aliases, here-strings, `parsestrnoerr`)
+    // and the Rust-only `LEX_INPUT` window (`-c`, script text, and the
+    // `parse_isolated` nested parses for `eval` / `$(...)`). The window has
+    // no `inbufflags` frame of its own; its C analogue is always an
+    // `inpush(..., INP_LINENO, ...)` (c:Src/exec.c:294 `parse_string`), so
+    // those characters always count. Only stack-sourced characters get the
+    // real C gate.
+    //
+    // The gate is load-bearing for here-documents: `gethere`
+    // (c:Src/exec.c:4625, ported at exec.rs:356) reads the body with
+    // `hgetc` — counting its newlines once, correctly — and then re-lexes
+    // the SAME body through `parsestr` (c:4697) for an unquoted
+    // terminator. `parsestrnoerr` pushes that body with flags `0` under
+    // `strinbeg(0)` (c:Src/lex.c:1719-1720), so C counts nothing the
+    // second time. Without this gate zshrs counted every unquoted
+    // here-document body line twice and `$LINENO` ran ahead by the body's
+    // length for the rest of the file.
+    let counts_lineno = !via_inbuf || {
+        let f = crate::ported::input::inbufflags.with(|f| f.get());
+        (f & crate::ported::zsh_h::INP_LINENO) != 0
+            || crate::ported::input::strin.with(|s| s.get()) == 0
+    };
+    if c == '\n' && counts_lineno {
         LEX_LINENO.set(LEX_LINENO.get() + 1);
     }
 
