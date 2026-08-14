@@ -40,6 +40,7 @@ use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setapar
 use crate::ported::subst::{filesubstr, singsub};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compadd_body, bin_compset};
+use crate::compsys::ported::shared::{PM_ARRAY, PM_UNIQUE};
 use crate::ported::zle::computil::{bin_compfiles, bin_compquote};
 use crate::ported::zsh_h::{isset, options, CASEGLOB, MAX_OPS};
 
@@ -475,6 +476,12 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             }
         } else {
             if eg_on {
+                // sh:30 — `local -a flags`. The port hands `flags` to
+                // `_describe` BY NAME, so it has to exist in paramtab; without
+                // the declaration it would be born at level 0 and outlive the
+                // call.
+                let _flags_scope =
+                    crate::compsys::ported::shared::LocalScope::declare(&["flags"], PM_ARRAY);
                 // sh:31-34 — flags=( '#:introduce glob flag' ); _describe...
                 setaparam("flags", vec!["#:introduce glob flag".into()]);
                 if dispatch0(
@@ -499,6 +506,35 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
         }
         return ret;
     }
+
+    // sh:44-53 — the function's `local` block.
+    //
+    // Only the names this port round-trips through `paramtab` need a real
+    // declaration; everything else upstream lists (`linepath`, `realpath`,
+    // `pre`, `suf`, …) is a Rust local here and never reaches the parameter
+    // table. The ones below DO reach it, because the C builtins this port
+    // drives — `compfiles` (computil.c:4998), `compquote`, `compadd` — and
+    // the `_describe` port take their operands BY NAME.
+    //
+    // Without the declaration `setaparam` created them at level 0, so they
+    // survived the completion: after `- <TAB><TAB>` the shell was left holding
+    // global arrays `accex`, `fake`, `tmp1` and `tmp2`, and the user's
+    // `_parameters` (~/.zpwr/autoload/comp_utils/_parameters:34) — which keeps
+    // every name whose `$parameters` type string does NOT contain `local` —
+    // then offered all four in the `parameters` group. `ls <TAB>` leaked
+    // `accex` the same way. See shared::declare_locals for the general case.
+    let mut _locals = crate::compsys::ported::shared::LocalScope::declare(
+        // sh:45 `local tmp1 tmp2 tmp3 tmp4 i …`, sh:48 `local … tmpdisp …`.
+        // Declared PM_ARRAY rather than as bare scalars because the paramtab
+        // copy only ever carries the ARRAY use of each name (the scalar uses
+        // are the Rust locals `tmp1s`/`tmp2s`/`tmp4s`), so the type never has
+        // to change under `setaparam`.
+        &["tmp1", "tmp2", "tmp4", "i", "tmpdisp"],
+        PM_ARRAY,
+    );
+    _locals.also(&["ignore"], PM_ARRAY); // sh:46
+    _locals.also(&["accex", "fake"], PM_ARRAY); // sh:47
+    _locals.also(&["exppaths"], PM_ARRAY | PM_UNIQUE); // sh:53 `typeset -U … exppaths`
 
     // sh:59-62 — option parse.
     let parsed = zparse_pathfiles(argv);
