@@ -339,7 +339,7 @@ pub fn getterminfo(
 /// capability tables and invokes the callback per resolved cap.
 pub fn scanterminfo(
     _ht: *mut crate::ported::zsh_h::HashTable,
-    func: Option<crate::ported::zsh_h::ScanFunc>,
+    func: Option<crate::ported::zsh_h::ParamScanFunc>,
     flags: i32,
 ) {
     // c:177
@@ -374,8 +374,7 @@ pub fn scanterminfo(
             old: None,
             level: 0,
         };
-        let node_box = Box::new(pm.node.clone());
-        f(&node_box, flags);
+        f(&pm, flags);
     };
 
     // c:152-153 — `if (termflags & TERM_BAD) return;`. The full
@@ -750,7 +749,7 @@ mod tests {
         unsafe {
             std::env::set_var("TERM", "dumb");
         }
-        fn cb(_n: &crate::ported::zsh_h::HashNode, _f: i32) {}
+        fn cb(_pm: &crate::ported::zsh_h::param, _f: i32) {}
         scanterminfo(std::ptr::null_mut(), Some(cb), 0);
         match old {
             Some(v) => unsafe {

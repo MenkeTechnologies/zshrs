@@ -25,6 +25,7 @@ use crate::ported::signals::{
     killjb, queue_signals, signal_block, signal_setmask, unqueue_signals, wait_for_processes,
 };
 use crate::ported::signals_h::{signal_default, signal_ignore, sigs_name, sigs_number};
+use crate::ported::utils::zwarn;
 use crate::ported::utils::zwarnnam;
 use crate::ported::utils::{fdtable_get, zclose};
 use crate::ported::zsh_h::{
@@ -2494,7 +2495,11 @@ pub fn selectjobtab() -> (Vec<job>, usize) {
 /// C signature: `mod_export int getjob(const char *s, const char *prog)`
 ///
 /// Returns job index or -1 on error. `prog` is the program name for
-/// `zwarnnam` error messages (pass empty string to suppress warnings).
+/// `zwarnnam` error messages; the empty string encodes C's `NULL`,
+/// which suppresses the `prog &&`-guarded warnings (c:2077, c:2088,
+/// c:2111, c:2129) but NOT the unguarded final `job not found` at
+/// c:2143 — that one prints with the bare `zsh:` prefix, matching
+/// `zwarnnam(NULL, ...)` → `zwarning(NULL, ...)` (Src/utils.c:156-165).
 pub fn getjob(s: &str, prog: &str) -> i32 {
     // c:2063
     let mut jobnum: i32; // c:2063
@@ -2522,6 +2527,24 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
         POSIXBUILTINS,
     );
 
+    // !!! WARNING: RUST-ONLY HELPER !!!
+    // C passes `prog == NULL` for callers that have no command name
+    // (Src/Modules/parameter.c:1308/1416/1488 all call `getjob(name, NULL)`).
+    // `zwarnnam(NULL, fmt)` is NOT silent in C: it reaches
+    // `zwarning(NULL, ...)` (Src/utils.c:244) which takes the `else`
+    // branch at Src/utils.c:156-165 and prints the bare `zsh:` /
+    // scriptname prefix — exactly what `zwarn` does (Src/utils.c:214).
+    // The Rust signature encodes NULL as the empty string, and zshrs's
+    // `zwarnnam("")` would take `zwarning(Some(""))`'s cmd branch and emit
+    // an extra `:`, so route the empty case to `zwarn` for that prefix.
+    let zwarnnam_or_zwarn = |prog: &str, msg: &str| {
+        if prog.is_empty() {
+            zwarn(msg);
+        } else {
+            zwarnnam(prog, msg);
+        }
+    };
+
     let s_bytes = s.as_bytes();
     let mut idx = 0usize;
 
@@ -2535,9 +2558,13 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
             return jn;
         }
         // if we get here, it is because none of the above succeeded         // c:2141
-        if !posixbuiltins && !prog.is_empty() {
-            // c:2143
-            zwarnnam(prog, &format!("job not found: {}", s)); // c:2144
+        // c:2143 — `if (!isset(POSIXBUILTINS))`. Unlike every earlier
+        // warn in this function, C does NOT gate this one on `prog`, so
+        // a NULL/empty `prog` still reports. Gating it here made
+        // `${jobstates[zzz]}` silent where zsh prints
+        // `zsh:1: job not found: zzz`.
+        if !posixbuiltins {
+            zwarnnam_or_zwarn(prog, &format!("job not found: {}", s)); // c:2144
         }
         return -1; // c:2145
     }
@@ -2635,11 +2662,12 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
         return jn; // c:2138-2139
     }
     // if we get here, it is because none of the above succeeded             // c:2141
-    if !posixbuiltins && !prog.is_empty() {
-        // c:2143
+    // c:2143 — `if (!isset(POSIXBUILTINS))` only; no `prog` guard (see
+    // the twin site above).
+    if !posixbuiltins {
         // c:Src/jobs.c:2144 — same `s++` strip — emit the post-`%` name.
         // Bug #393.
-        zwarnnam(prog, &format!("job not found: {}", rest)); // c:2144
+        zwarnnam_or_zwarn(prog, &format!("job not found: {}", rest)); // c:2144
     }
     -1 // c:2145-2147
 }

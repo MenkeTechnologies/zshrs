@@ -460,7 +460,7 @@ pub fn getpmmapfile(
 /// Hence just leave it empty." → values are always `""` (c:263).
 pub fn scanpmmapfile(
     _ht: *mut crate::ported::zsh_h::HashTable,
-    func: Option<crate::ported::zsh_h::ScanFunc>,
+    func: Option<crate::ported::zsh_h::ParamScanFunc>,
     flags: i32,
 ) {
     // c:241
@@ -505,8 +505,7 @@ pub fn scanpmmapfile(
                 old: None,
                 level: 0,
             };
-            let node_box = Box::new(pm.node.clone());
-            f(&node_box, flags); // c:264 `func(&pm.node, flags);`
+            f(&pm, flags); // c:264 `func(&pm.node, flags);`
         }
     }
     // c:266 — `closedir(dir);` (auto on Drop)
@@ -714,11 +713,11 @@ mod tests {
         use std::sync::Mutex;
         static COLLECTED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
         COLLECTED.lock().unwrap().clear();
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+        fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
             COLLECTED
                 .lock()
                 .unwrap()
-                .push((node.nam.clone(), String::new()));
+                .push((node.node.nam.clone(), String::new()));
         }
         scanpmmapfile(std::ptr::null_mut(), Some(cb), 0);
         let entries = COLLECTED.lock().unwrap().clone();
@@ -873,8 +872,8 @@ mod tests {
         // calling func (c:263), so the contract is enforced at the
         // call site. This test verifies scan runs to completion
         // without panicking and yields some entries.
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            VALS.lock().unwrap().push(node.nam.clone());
+        fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
+            VALS.lock().unwrap().push(node.node.nam.clone());
         }
         scanpmmapfile(std::ptr::null_mut(), Some(cb), 0);
         // No assertion on contents — the c:263 empty-value contract

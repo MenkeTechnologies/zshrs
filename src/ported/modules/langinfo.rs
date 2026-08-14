@@ -9,7 +9,7 @@
 //! `nl_langinfo(3)`.
 
 use crate::ported::zsh_h::features;
-use crate::ported::zsh_h::{hashnode, param, HashTable, Param, ScanFunc, PM_READONLY, PM_SCALAR};
+use crate::ported::zsh_h::{hashnode, param, HashTable, Param, ParamScanFunc, PM_READONLY, PM_SCALAR};
 use crate::utils::unmetafy;
 use crate::zsh_h::module;
 /// `nl_names[]` — port of the static name-array at `langinfo.c:65`.
@@ -186,7 +186,7 @@ pub fn getlanginfo(_ht: *mut HashTable, _name: &str) -> Option<Param> {
 /// `nl_langinfo` for each entry, and dispatches every present
 /// (name, value) pair through `func` — PARTAB-dispatch shape
 /// matching `scanpmsysparams`.
-pub fn scanlanginfo(_ht: *mut HashTable, func: Option<ScanFunc>, flags: i32) {
+pub fn scanlanginfo(_ht: *mut HashTable, func: Option<ParamScanFunc>, flags: i32) {
     // c:430
     let f = match func {
         Some(f) => f,
@@ -196,8 +196,7 @@ pub fn scanlanginfo(_ht: *mut HashTable, func: Option<ScanFunc>, flags: i32) {
         // c:444 walk nl_names
         if let Some(pm) = getlanginfo(std::ptr::null_mut(), name) {
             // c:446 nl_langinfo
-            let node_box = Box::new(pm.node.clone());
-            f(&node_box, flags); // c:451 func(&pm->node, flags)
+            f(&pm, flags); // c:451 func(&pm->node, flags)
         }
     }
 }
@@ -409,8 +408,8 @@ mod tests {
             static KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         }
         KEYS.with(|k| k.borrow_mut().clear());
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
+        fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
+            KEYS.with(|k| k.borrow_mut().push(node.node.nam.clone()));
         }
         scanlanginfo(std::ptr::null_mut(), Some(cb), 0);
         KEYS.with(|k| {

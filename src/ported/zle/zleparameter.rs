@@ -141,7 +141,7 @@ pub fn getpmwidgets(
 /// the type label.
 pub fn scanpmwidgets(
     _ht: *mut crate::ported::zsh_h::HashTable,
-    func: Option<crate::ported::zsh_h::ScanFunc>,
+    func: Option<crate::ported::zsh_h::ParamScanFunc>,
     flags: i32,
 ) {
     // c:81
@@ -188,8 +188,7 @@ pub fn scanpmwidgets(
             old: None,
             level: 0,
         };
-        let node_box = Box::new(pm.node.clone());
-        f(&node_box, flags); // c:97 `func(&pm.node, flags);`
+        f(&pm, flags); // c:97 `func(&pm.node, flags);`
     }
 }
 

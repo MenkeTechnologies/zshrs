@@ -5624,8 +5624,11 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
     for entry in PARTAB.iter() {
         if entry.name == name {
             SCAN_KEYS.with(|k| k.borrow_mut().clear());
-            fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-                SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
+            // c:Src/Modules/parameter.c — a param-table ScanFunc receives
+            // `&pm.node` of a fully populated `struct param`; the Rust side
+            // models that as `ParamScanFunc = fn(&param, i32)`.
+            fn cb(pm: &crate::ported::zsh_h::param, _flags: i32) {
+                SCAN_KEYS.with(|k| k.borrow_mut().push(pm.node.nam.clone()));
             }
             // c:Src/params.c:3138 — `paramvalarr(…, SCANPM_WANTKEYS)`: keys
             // only, so a scanfn need not materialize the value side.

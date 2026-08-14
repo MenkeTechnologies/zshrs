@@ -3936,15 +3936,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // magic hashes and whose getarg port (c:Src/params.c:1591 +
         // Src/subst.c:2922) returns the KEY for `(k)` on a plain
         // subscript. zsh 5.9: `${(k)parameters[PATH]}` → "PATH".
+        // c:Src/params.c:1602-1612 — on a hash subscript C dispatches
+        // `ht->getnode(ht, s)`; it never enumerates. For the magic hashes that
+        // distinction is observable: `getfunction_source` (c:Src/Modules/
+        // parameter.c:549-566) answers for names its scan never lists, `mapfile`
+        // answers for any readable file, and the job trio calls `getjob(name,
+        // NULL)` whose `job not found` diagnostic (Src/jobs.c:2150-2151) must be
+        // emitted by the read. `gethkparam` answers Some(<enumerated keys>) for
+        // these names, which shortcut the dispatch entirely — `${(k)jobstates[x]}`
+        // stayed silent and `${(k)functions_source[x]}` returned "" where zsh
+        // returns the key. Send PARTAB names to paramsubst, which owns the
+        // getnode path (c:Src/subst.c:2923-2925 — key when set, "" when unset).
+        // Keys carrying `]`/`}` can't survive the flat rebuild (see
+        // array_index_lookup), so those keep the enumeration answer.
+        let magic_getnode = !key.contains(']')
+            && !key.contains('}')
+            && crate::ported::modules::parameter::PARTAB
+                .iter()
+                .any(|e_| e_.name == name);
         match crate::ported::params::gethkparam(&name) {
-            Some(keys) => {
+            Some(keys) if !magic_getnode => {
                 if keys.iter().any(|k| k == &key) {
                     Value::str(key)
                 } else {
                     Value::str("")
                 }
             }
-            None => paramsubst_to_value(&format!("${{(k){}[{}]}}", name, key)),
+            _ => paramsubst_to_value(&format!("${{(k){}[{}]}}", name, key)),
         }
     });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
