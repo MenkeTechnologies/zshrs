@@ -5524,8 +5524,29 @@ pub fn magic_special_shadowed(name: &str) -> bool {
     crate::ported::params::paramtab()
         .read()
         .map_or(false, |tab| {
-            tab.get(name)
-                .is_some_and(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL) == 0)
+            tab.get(name).is_some_and(|pm| {
+                // c:Src/module.c:1029-1052 checkaddparam — `if (pm->level ||
+                // !(pm->node.flags & PM_AUTOLOAD))` is C's OWN test for "is
+                // this node a blocker or the module's own placeholder": a
+                // GLOBAL PM_AUTOLOAD node is the autoload STUB
+                // `add_autoparam` planted (c:1222-1223 `setsparam(pnam,
+                // module); pm->node.flags |= PM_AUTOLOAD` — its VALUE is the
+                // owning module's name), and C replaces it with the real
+                // special via `unsetparam_pm` (c:1051) + `createspecialhash`
+                // (c:1068) the moment the module loads. Reading the name is
+                // what triggers that: c:Src/params.c:563-585 loadparamnode
+                // runs `ensurefeature(mn, "p:", nam)` and re-fetches the node.
+                // So a stub NEVER makes the special unreachable — treating it
+                // as a shadow left `${options}` reading the stub's own scalar
+                // value ("zsh/parameter") and killed every magic-assoc read
+                // for that name for the rest of the session. A LOCAL stub
+                // (pm->level != 0) still blocks, exactly as c:1032 says.
+                let f = pm.node.flags as u32;
+                if pm.level == 0 && (f & crate::ported::zsh_h::PM_AUTOLOAD) != 0 {
+                    return false;
+                }
+                (f & crate::ported::zsh_h::PM_SPECIAL) == 0
+            })
         })
 }
 
