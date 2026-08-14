@@ -2894,48 +2894,110 @@ pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> {
     }
 }
 
-/// Port of `char *remtpath(char **str, int count)` from Src/hist.c:2056.
+/// Port of `int remtpath(char **junkptr, int count)` from Src/hist.c:2056.
+/// Implements the `:h` modifier (and `:hN` via `digitcount()`).
+///
+/// The C body walks one cursor (`str`) backwards from `strend(*junkptr)`
+/// and only ever NUL-terminates the buffer in the two branches that
+/// actually cut (c:2090 and c:2115). Every other exit returns the buffer
+/// UNCHANGED — which is why `${x:h4}` on `/a/b/c/` keeps its trailing
+/// slash: the trailing-slash trim at c:2060-2062 moves the cursor but
+/// writes nothing. This port keeps that shape (cursor + late cut) rather
+/// than pre-trimming the string, because pre-trimming leaks into the
+/// "full string needed" exits.
+///
+/// The Rust signature returns the resulting string instead of mutating
+/// `*junkptr`, so C's in-place `*str = '\0'` becomes a `s[..idx]` slice.
+///
+/// !!! RUST-ONLY DETAIL !!! C reads `str[1]` / `**junkptr` freely because
+/// the buffer is NUL-terminated; `byte()` below reproduces that by
+/// yielding `'\0'` for any index at/after the end. `strend()`
+/// (Src/string.c:196) returns the string itself when empty, so the
+/// cursor starts at index 0 — i.e. on that implicit NUL — for `""`.
 pub fn remtpath(s: &str, count: i32) -> String {
     // c:2056
-    // c:2068-2074 — when `str` lands before `*junkptr` (path entirely
-    // consumed by trim+skip-filename), C picks `/` vs `.` based on the
-    // FIRST byte of the ORIGINAL `*junkptr`: `IS_DIRSEP(**junkptr)` →
-    // `/`, else `.`. For empty input the first byte is `\0`, not a
-    // dirsep, so C returns `.`. The previous Rust port returned `/`
-    // for empty input, diverging from zsh — bug #134.
-    let original_first_is_sep = s.as_bytes().first().copied() == Some(b'/');
-    let s = s.trim_end_matches('/');
-    if s.is_empty() {
-        return if original_first_is_sep { "/" } else { "." }.to_string();
+    let b = s.as_bytes();
+    // Nul-aware byte accessor: mirrors C reading through the terminator.
+    let byte = |i: isize| -> char {
+        if i >= 0 && (i as usize) < b.len() {
+            b[i as usize] as char
+        } else {
+            '\0'
+        }
+    };
+    // c:2058 — `char *str = strend(*junkptr);` (last char, or the string
+    // itself when empty — Src/string.c:196).
+    let mut str_: isize = if b.is_empty() { 0 } else { b.len() as isize - 1 };
+
+    // c:2060 — /* ignore trailing slashes */
+    while str_ >= 0 && IS_DIRSEP(byte(str_)) {
+        str_ -= 1; // c:2062
     }
     if count == 0 {
-        if let Some(pos) = s.rfind('/') {
-            if pos == 0 {
-                return "/".to_string();
-            }
-            return s[..pos].trim_end_matches('/').to_string();
+        // c:2063
+        // c:2064 — /* skip filename */
+        while str_ >= 0 && !IS_DIRSEP(byte(str_)) {
+            str_ -= 1; // c:2066
         }
-        return ".".to_string();
     }
-    let bytes = s.as_bytes();
-    let mut remaining = count;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'/' {
-            remaining -= 1;
-            if remaining <= 0 {
-                if i == 0 {
-                    return "/".to_string();
+    if str_ < 0 {
+        // c:2068
+        // c:2069-2072 — `/` vs `.` decided by the FIRST byte of the
+        // ORIGINAL buffer. Empty input's first byte is the NUL, not a
+        // dirsep, so C yields `.`.
+        return if IS_DIRSEP(byte(0)) { "/" } else { "." }.to_string();
+    }
+
+    if count != 0 {
+        // c:2076
+        // c:2078-2082 — /* Return this many components, so start from the
+        //  front. Leading slash counts as one component, consistent with
+        //  behaviour of repeated applications of :h. */
+        let mut count = count;
+        let mut strp: isize = 0; // c:2083 `char *strp = *junkptr;`
+        while strp < str_ {
+            // c:2084
+            if IS_DIRSEP(byte(strp)) {
+                // c:2085
+                count -= 1;
+                if count <= 0 {
+                    // c:2086
+                    if strp == 0 {
+                        // c:2087 `if (strp == *junkptr)`
+                        strp += 1; // c:2088
+                    }
+                    return s[..strp as usize].to_string(); // c:2089 `*strp = '\0'`
                 }
-                return s[..i].to_string();
+                // c:2093 — /* Count consecutive separators as one */
+                while IS_DIRSEP(byte(strp + 1)) {
+                    strp += 1; // c:2095
+                }
             }
-            while i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                i += 1;
-            }
+            strp += 1; // c:2097
         }
-        i += 1;
+
+        // c:2100 — /* Full string needed */ — nothing was NUL'd, so the
+        // caller sees the ORIGINAL buffer, trailing slashes included.
+        return s.to_string(); // c:2101
     }
-    s.to_string()
+
+    // c:2104 — /* repeated slashes are considered like a single slash */
+    while str_ > 0 && IS_DIRSEP(byte(str_ - 1)) {
+        str_ -= 1; // c:2106
+    }
+    // c:2107 — /* never erase the root slash */
+    if str_ == 0 {
+        // c:2108
+        str_ += 1; // c:2109
+        // c:2110-2112 — /* Leading doubled slashes (`//') have a special
+        //  meaning on cygwin and some old flavor of UNIX, so we do not
+        //  assimilate them to a single slash.  However a greater number
+        //  is ok to squeeze. */
+        if IS_DIRSEP(byte(str_)) && !IS_DIRSEP(byte(str_ + 1)) {
+            str_ += 1; // c:2114
+        }
+    }
+    s[..str_ as usize].to_string() // c:2115 `*str = '\0'`
 }
 
 /// Port of `int remtext(char **junkptr)` from Src/hist.c:2122.
