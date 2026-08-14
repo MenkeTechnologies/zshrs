@@ -13565,9 +13565,19 @@ fn pparams_lock() -> &'static Mutex<Vec<String>> {
     &PPARAMS
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C has a single `char *zunderscore` global (`Src/init.c:49`) that
+/// `setunderscore` (`Src/exec.c:2709`) writes and `underscoregetfn`
+/// (`Src/params.c:5147`) reads. zshrs had TWO stores: the canonical
+/// port `init::zunderscore` (written by the ported `setunderscore`,
+/// src/ported/exec.rs:1612) and a private mutex here that
+/// `set_zunderscore` wrote and `underscoregetfn` read — so a
+/// `setunderscore("")` from the assignment-only-command path
+/// (c:Src/exec.c:1370) never reached the reader, and
+/// `fusevm_bridge.rs:5979-5989` had to dual-write to both. Point this
+/// accessor at the canonical global so there is one store, as in C.
 fn zunderscore_lock() -> &'static Mutex<String> {
-    static ZUNDERSCORE_VAR: OnceLock<Mutex<String>> = OnceLock::new();
-    ZUNDERSCORE_VAR.get_or_init(|| Mutex::new(String::new()))
+    &crate::ported::init::zunderscore // c:Src/init.c:49
 }
 
 /// Update `$_` with the last argument of the just-completed
@@ -13723,9 +13733,19 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     // empty because nothing has set errno since startup. Mirror by
     // also consulting the paramtab pm flags. Without this, `$ERRNO`
     // returned the live errno value instead of empty.
+    //
+    // `_` (c:Src/params.c:326 `IPDEF2("_", underscore_gsu,
+    // PM_DONTIMPORT)`) belongs to the same family: its getfn
+    // (`underscoregetfn`, c:5147) reads the `zunderscore` global, which
+    // `unset _` does NOT clear — C's `stdunsetfn` (c:3908-3937) only
+    // flips PM_UNSET on the node, and `unsetparam_pm` keeps the node in
+    // the table because it is PM_SPECIAL without PM_REMOVABLE (c:3877).
+    // So the flag is the ONLY record that `_` was unset; without
+    // consulting it `${+_}` stayed 1 and `$_` kept regenerating from
+    // zunderscore after `unset _`.
     if matches!(
         name,
-        "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO"
+        "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO" | "_"
     ) && (is_unset_special(name) || {
         // c:Src/params.c — paramtab PM_UNSET check. ERRNO carries
         // this flag from IPDEF1 initialization (params.c:298); reads

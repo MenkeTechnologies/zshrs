@@ -8416,6 +8416,191 @@ pub fn bin_unset(
                     crate::ported::modules::mapfile::unsetpmmapfile(key, false);
                     continue;
                 }
+                // c:3891-3895 — `if (PM_TYPE(pm->node.flags) == PM_HASHED) {
+                //     HashTable tht = paramtab;
+                //     if ((paramtab = pm->gsu.h->getfn(pm))) unsetparam(subscript);
+                //     paramtab = tht; }`
+                //
+                // For the zsh/parameter magic associations the hash that
+                // `gsu.h->getfn` hands back is NOT a value store: its
+                // `getnode` is `getpmfunction` / `getpmralias` / … (each
+                // synthesising a child Param whose scalar gsu carries the
+                // element `unsetfn`), and that `unsetfn` mutates the REAL
+                // shell table — `shfunctab`, `aliastab`, `cmdnamtab`,
+                // `nameddirtab`, the option flags. Deleting a key from a
+                // value snapshot and writing the snapshot back (the generic
+                // assoc path below) cannot express that: the whole-hash
+                // setfns (`setpmfunctions`, c:344-365) only ADD entries, so
+                // `unset "functions[m]"` left the shell function defined.
+                //
+                // Mirror of the element-SET dispatch in `assignsparam`
+                // (`src/ported/params.rs:6455`), which routes
+                // `functions[m]=body` to `setpmfunction` for the same reason.
+                {
+                    use crate::ported::modules::parameter as pmod;
+                    use crate::ported::zsh_h::Param;
+                    // c:3884-3886 — `pm = (paramtab == realparamtab ?
+                    // paramtab->getnode2(paramtab, s) : paramtab->getnode(...))`
+                    // — the comment on that line is `getnode2() to avoid
+                    // autoloading`. A magic assoc that has never been touched
+                    // is still the PM_AUTOLOAD stub `zsh/parameter` planted
+                    // (c:Src/module.c:1218-1219), and getnode2 does NOT run
+                    // loadparamnode, so `PM_TYPE(pm->node.flags)` is PM_SCALAR,
+                    // not PM_HASHED: control falls into the scalar arm at
+                    // c:3896-3919, where `getindex` rejects the string
+                    // subscript with `assignment to invalid subscript range`
+                    // and the function/alias is left alone. Verified against
+                    // zsh 5.9.2: `f(){ :; }; unset "functions[f]"; whence f`
+                    // still prints `f`, while the same unset AFTER any read of
+                    // `$functions` removes it.
+                    if crate::vm_helper::module_param_is_autoload_stub(nm) {
+                        // c:Src/params.c getindex — `zerr("%s: assignment to
+                        // invalid subscript range", ...)`; bin_unset then does
+                        // `returnval = errflag; errflag &= ~ERRFLAG_ERROR;`
+                        // (c:3917-3918), so the status is 1 but the script is
+                        // NOT aborted.
+                        zwarn(&format!("{}: assignment to invalid subscript range", nm));
+                        returnval = 1; // c:3917
+                        continue;
+                    }
+                    // c:3893 `paramtab->getnode(paramtab, subscript)` (via
+                    // unsetparam, c:3763-3768) paired with the element gsu's
+                    // `unsetfn`. `None` for the unsetfn is C's NULL slot in
+                    // `nullsetscalar_gsu` (`Src/params.c:168-169`), used by
+                    // every PM_READONLY_SPECIAL hash — unreachable because
+                    // `unsetparam_pm` rejects on PM_READONLY first (c:3785).
+                    type ElemUnset = fn(Param, i32);
+                    let nul: *mut crate::ported::zsh_h::HashTable = std::ptr::null_mut();
+                    let hashed: Option<(Option<Param>, Option<ElemUnset>)> = match nm {
+                        // c:2281 SPECIALPMDEF("functions", …, getpmfunction),
+                        // c:394-395 pmfunction_gsu { …, unsetpmfunction }.
+                        "functions" => Some((
+                            pmod::getpmfunction(nul, key),
+                            Some(pmod::unsetpmfunction as ElemUnset),
+                        )),
+                        // c:2261-2262 + c:396-397 pmdisfunction_gsu shares
+                        // `unsetpmfunction`.
+                        "dis_functions" => Some((
+                            pmod::getpmdisfunction(nul, key),
+                            Some(pmod::unsetpmfunction as ElemUnset),
+                        )),
+                        // c:2251 + c:1867-1868 pmralias_gsu { …, unsetpmalias }.
+                        "aliases" => Some((
+                            pmod::getpmralias(nul, key),
+                            Some(pmod::unsetpmalias as ElemUnset),
+                        )),
+                        // c:2287-2288 + c:1869-1870 pmgalias_gsu.
+                        "galiases" => Some((
+                            pmod::getpmgalias(nul, key),
+                            Some(pmod::unsetpmalias as ElemUnset),
+                        )),
+                        // c:2258-2259 + c:1873-1874 pmdisralias_gsu.
+                        "dis_aliases" => Some((
+                            pmod::getpmdisralias(nul, key),
+                            Some(pmod::unsetpmalias as ElemUnset),
+                        )),
+                        // c:2266-2267 + c:1875-1876 pmdisgalias_gsu.
+                        "dis_galiases" => Some((
+                            pmod::getpmdisgalias(nul, key),
+                            Some(pmod::unsetpmalias as ElemUnset),
+                        )),
+                        // c:2312-2313 + c:1871-1872 pmsalias_gsu { …,
+                        // unsetpmsalias } (sufaliastab, not aliastab).
+                        "saliases" => Some((
+                            pmod::getpmsalias(nul, key),
+                            Some(pmod::unsetpmsalias as ElemUnset),
+                        )),
+                        // c:2272-2273 + c:1877-1878 pmdissalias_gsu.
+                        "dis_saliases" => Some((
+                            pmod::getpmdissalias(nul, key),
+                            Some(pmod::unsetpmsalias as ElemUnset),
+                        )),
+                        // c:2256 + c:209-210 pmcommand_gsu { …, unsetpmcommand }.
+                        "commands" => Some((
+                            pmod::getpmcommand(nul, key),
+                            Some(pmod::unsetpmcommand as ElemUnset),
+                        )),
+                        // c:2301-2302 + c:1607-1608 pmnamedir_gsu.
+                        "nameddirs" => Some((
+                            pmod::getpmnameddir(nul, key),
+                            Some(pmod::unsetpmnameddir as ElemUnset),
+                        )),
+                        // c:2303-2304 + c:997-998 pmoption_gsu { …,
+                        // unsetpmoption } — turns the option OFF.
+                        "options" => Some((
+                            pmod::getpmoption(nul, key),
+                            Some(pmod::unsetpmoption as ElemUnset),
+                        )),
+                        // PM_READONLY_SPECIAL hashes (c:2255, 2259-2260,
+                        // 2264-2265, 2269-2270, 2290-2291, 2296-2300,
+                        // 2305-2306, 2314-2317): their `getpm*` stamps
+                        // PM_SCALAR|PM_READONLY, so the element unset is
+                        // rejected by unsetparam_pm's readonly guard.
+                        "parameters" => Some((pmod::getpmparameter(nul, key), None)),
+                        "builtins" => Some((pmod::getpmbuiltin(nul, key), None)),
+                        "dis_builtins" => Some((pmod::getpmdisbuiltin(nul, key), None)),
+                        "functions_source" => Some((pmod::getpmfunction_source(nul, key), None)),
+                        "dis_functions_source" => {
+                            Some((pmod::getpmdisfunction_source(nul, key), None))
+                        }
+                        // c:1051-1056 — getpmmodule starts with
+                        // `m = modulestab->getnode2(modulestab, name);
+                        //  if (!m) return NULL;`, so a name that is not a
+                        // known module yields NO node and `unset
+                        // "modules[bogus]"` is a silent no-op (rc 0), while a
+                        // KNOWN module hits the PM_READONLY rejection. zshrs's
+                        // getpmmodule port never returns None — it folds the
+                        // unknown-name case into the "no type string" arm
+                        // (c:1068-1069, PM_UNSET|PM_SPECIAL), which is pinned
+                        // by its unit test — so re-apply C's `!m` gate here:
+                        // an empty type string only means NULL-in-C when the
+                        // module is absent from modulestab.
+                        "modules" => Some((
+                            pmod::getpmmodule(nul, key).filter(|p| {
+                                (p.node.flags as u32 & PM_UNSET) == 0
+                                    || crate::ported::module::MODULESTAB
+                                        .lock()
+                                        .map(|t| t.modules.contains_key(key))
+                                        .unwrap_or(false)
+                            }),
+                            None,
+                        )),
+                        "history" => Some((pmod::getpmhistory(nul, key), None)),
+                        "jobdirs" => Some((pmod::getpmjobdir(nul, key), None)),
+                        "jobstates" => Some((pmod::getpmjobstate(nul, key), None)),
+                        "jobtexts" => Some((pmod::getpmjobtext(nul, key), None)),
+                        "userdirs" => Some((pmod::getpmuserdir(nul, key), None)),
+                        "usergroups" => Some((pmod::getpmusergroups(nul, key), None)),
+                        _ => None,
+                    };
+                    if let Some((node, unsetfn)) = hashed {
+                        // c:3765-3768 — `if ((pm = paramtab->getnode(...)))
+                        // unsetparam_pm(pm, 0, 1);` — a NULL node (unknown
+                        // module) is silently ignored.
+                        if let Some(pm) = node {
+                            let f = pm.node.flags as u32;
+                            if (f & PM_READONLY) != 0 {
+                                // c:3785-3790 — `zerr("read-only %s: %s", …)`.
+                                zerr(&format!("read-only variable: {}", pm.node.nam));
+                            } else if (f & PM_UNSET) == 0 {
+                                // c:3805-3806 — `if (!(pm->node.flags &
+                                // PM_UNSET) || (pm->node.flags &
+                                // PM_REMOVABLE)) pm->gsu.s->unsetfn(pm, exp);`
+                                // A missing key comes back PM_UNSET (e.g.
+                                // getfunction c:437-440), so the unsetfn is
+                                // skipped and `unset "functions[nope]"` is a
+                                // silent no-op, as in zsh.
+                                if let Some(uf) = unsetfn {
+                                    uf(pm, 1); // c:3806 exp=1 from unsetparam
+                                }
+                            }
+                        }
+                        // c:3895 `paramtab = tht;` — nothing else to do for
+                        // this argument; the generic assoc/array delete below
+                        // must not also run.
+                        continue;
+                    }
+                }
                 // c:3893 assoc subscript: `m[key]` delete.
                 if let Some(mut map) = crate::ported::exec::assoc(nm) {
                     map.shift_remove(key); // c:3893

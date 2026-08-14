@@ -30,6 +30,7 @@
 //! freeze).
 
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
+use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
 use crate::ported::glob::{remnulargs, tokenize};
@@ -3328,13 +3329,82 @@ pub fn features_(m: *const module) -> i32 {
     0 // c:1746
 }
 
+/// Port of `static struct conddef cotab[]` from
+/// `Src/Zle/complete.c:1697-1702`:
+/// ```c
+/// static struct conddef cotab[] = {
+///     CONDDEF("after",   0, cond_range, 1, 1, 0),
+///     CONDDEF("between", 0, cond_range, 2, 2, 1),
+///     CONDDEF("prefix",  0, cond_psfix, 1, 2, CVT_PREPAT),
+///     CONDDEF("suffix",  0, cond_psfix, 1, 2, CVT_SUFPAT),
+/// };
+/// ```
+/// A FILE-STATIC ARRAY in C, and its per-entry `CONDF_ADDED` bit has to
+/// survive across calls: `setconddefs` (`Src/module.c:754`) skips an
+/// entry that is already `CONDF_ADDED` (c:763), which is what makes a
+/// second `require_module` for a different feature a no-op for the ones
+/// already installed rather than a "name clash" warning.
+static COTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> = Lazy::new(|| {
+    // c:1697
+    Mutex::new(vec![
+        crate::ported::zsh_h::CONDDEF("after", 0, cond_range, 1, 1, 0), // c:1698
+        crate::ported::zsh_h::CONDDEF("between", 0, cond_range, 2, 2, 1), // c:1699
+        crate::ported::zsh_h::CONDDEF("prefix", 0, cond_psfix, 1, 2, CVT_PREPAT), // c:1700
+        crate::ported::zsh_h::CONDDEF("suffix", 0, cond_psfix, 1, 2, CVT_SUFPAT), // c:1701
+    ])
+});
+
 /// Direct port of `int enables_(Module m, int **enables)` from
 /// `Src/Zle/complete.c:1751`. C body: `return handlefeatures(m,
-/// &module_features, enables)`. Static-link path: 0.
+/// &module_features, enables)`.
+///
+/// `module_features` (c:1720-1726) is `{ bintab, 2, cotab, 4, NULL, 0,
+/// NULL, 0, 0 }`, so the enable-bit vector is
+/// `[b:compadd, b:compset, c:after, c:between, c:prefix, c:suffix]` —
+/// `featuresarray` (`Src/module.c:3295-3305`) emits `b:` rows before
+/// `c:` rows, and `module.rs::features_module` reports the same order.
+///
+/// `handlefeatures` (`Src/module.c:3392-3398`): a NULL `*enables` means
+/// "report the current bits" (`getfeatureenables`, c:3318); a non-NULL
+/// one means "apply them" (`setfeatureenables`, c:3354), whose `cd_size`
+/// arm is `setconddefs(m->node.nam, cotab, 4, e + bn_size)` (c:3365).
+/// That call is what swaps the four `c:` AUTOLOAD stubs planted by
+/// `bltinmods.list` (`Src/Zle/complete.mdd:8`) for the real,
+/// `module`-less definitions — and it honours the per-feature bits, so
+/// `[[ -prefix … ]]` installs `prefix` ALONE and leaves the other three
+/// listed by `zmodload -ac`, exactly as `zsh -f` does.
+///
+/// The `bn_size` arm (`setbuiltins`, c:3359) is not replayed: zshrs
+/// links `compadd`/`compset` into `builtintab` statically, so there is
+/// nothing to add or remove. Its bits are still consumed off the front
+/// of `e` so the `c:` rows line up.
 #[allow(unused_variables)]
-pub fn enables_(m: *const module) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:1751
-    0 // c:1753
+    // c:Src/module.c:3394-3397 handlefeatures.
+    const BN_SIZE: usize = 2; // c:1721 sizeof(bintab)/sizeof(*bintab)
+    let mut cotab = match COTAB.lock() {
+        Ok(t) => t,
+        Err(_) => return 1,
+    };
+    match enables.as_ref() {
+        // c:3396 — `*enables = getfeatureenables(m, f); return 0;`
+        // (c:3330-3336: 1 for a feature already added, else 0.)
+        None => {
+            let mut bits = vec![0i32; BN_SIZE];
+            for c in cotab.iter() {
+                bits.push(i32::from((c.flags & crate::ported::module::CONDF_ADDED) != 0));
+            }
+            *enables = Some(bits);
+            0
+        }
+        // c:3395 — `setfeatureenables(m, f, *enables)`.
+        Some(e) => {
+            let cd_bits: Vec<i32> = e.iter().skip(BN_SIZE).copied().collect(); // c:3362 `e += bn_size`
+            crate::ported::module::setconddefs("zsh/complete", &mut cotab, Some(&cd_bits))
+            // c:3365
+        }
+    }
 }
 
 /// Direct port of `int boot_(Module m)` from `Src/Zle/complete.c:1758`.

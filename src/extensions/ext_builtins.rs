@@ -10173,7 +10173,7 @@ pub(crate) fn zcalc(args: &[String]) -> i32 {
     // function zcalc exists to provide. require_module is idempotent
     // (needs_load checks MOD_INIT_B) and silent=1 mirrors zcalc's `2>/dev/null`.
     if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
-        let _ = crate::ported::module::require_module(&mut tab, "zsh/mathfunc", None, 1);
+        let _ = crate::ported::module::require_module(&mut tab, "zsh/mathfunc", None, 1, false);
     }
     // c:Functions/Misc/zcalc:187 `setopt forcefloat` for `-f`. Save and
     // restore so the option doesn't leak into the caller's shell state.

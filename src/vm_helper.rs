@@ -437,7 +437,9 @@ pub struct SubshellSnapshot {
     /// entry. Same fork-copy semantics as THINGYTAB — a subshell's
     /// `bindkey -N km` / `bindkey -D km` mutates only the child's
     /// keymap registry in C zsh. Bug #454 in docs/BUGS.md.
-    pub keymapnamtab: HashMap<String, crate::ported::zle::zle_keymap::KeymapName>,
+    pub keymapnamtab: crate::ported::hashtable::hashtable_nodes<
+        crate::ported::zle::zle_keymap::KeymapName,
+    >,
     /// Parent's `$!` (clone::lastpid) at subshell entry. C zsh forks
     /// for `(...)`, so a background job started INSIDE the subshell
     /// sets the child's `lastpid` only — `( : & ); echo $!` prints 0
@@ -3699,6 +3701,20 @@ impl ShellExecutor {
         background: bool,
     ) -> Result<i32, String> {
         tracing::trace!(cmd, bg = background, "exec external");
+        // c:Src/exec.c:3545-3547 — `setunderscore((args && nonempty(args)) ?
+        // ((char *) getdata(lastnode(args))) : "")`. execcmd_exec sets `$_`
+        // to the last word of the command it is about to run, in the PARENT,
+        // before any builtin/plugin resolution or fork — so `cat /dev/null;
+        // print $_` reports `/dev/null` and a pipeline's stages each leave
+        // their own last word behind. This is the single funnel every
+        // external spawn reaches (the static-head command path calls it
+        // directly and bypasses ZshrsHost::exec / host_exec_external), so
+        // the write belongs here. C's `args` list carries argv[0], hence the
+        // fallback to `cmd` for a bare command.
+        {
+            let last = args.last().cloned().unwrap_or_else(|| cmd.to_string());
+            crate::ported::params::set_zunderscore(std::slice::from_ref(&last)); // c:3546
+        }
         // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
         // Native (Rust) plugin builtins registered via `zmodload -R`
         // (src/extensions/plugin_host.rs). fusevm compiles unknown
@@ -5764,16 +5780,28 @@ pub fn init_partab_params() {
         "mapfile",   // zsh/mapfile
         "langinfo",  // zsh/langinfo
     ];
+    // c:Src/module.c:1065 `addparamdef` — `checkaddparam` (c:1026) finds
+    // the PM_AUTOLOAD stub `init_bltinmods` planted, calls
+    // `unsetparam_pm(pm, 0, 1)` which UNLINKS the node (c:1052), and only
+    // then does `createparam` re-add it — so the real param takes a FRESH
+    // chain slot, it does not inherit the stub's. `hashtable_nodes::
+    // insert` is `addhashnode2` (Src/hashtable.c:168), which replaces an
+    // existing key IN PLACE (c:187-203) and would pin the special to the
+    // stub's slot; remove first to reproduce C. Visible in
+    // `${(k)parameters}`: without the remove, `dis_reswords` and
+    // `usergroups` came out one position off from `zsh -f`.
     for entry in PARTAB.iter() {
         if module_gated.contains(&entry.name) {
             continue;
         }
+        tab.remove(entry.name); // c:1052 unsetparam_pm
         tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
     }
     for entry in PARTAB_ARRAY.iter() {
         if module_gated.contains(&entry.name) {
             continue;
         }
+        tab.remove(entry.name); // c:1052 unsetparam_pm
         tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
     }
 }

@@ -3072,9 +3072,18 @@ pub static keybuflen: std::sync::atomic::AtomicI32 = // c:139
 //
 // C: `mod_export HashTable keymapnamtab` — global hash mapping
 // keymap names to KeymapName entries (each KeymapName holds an
-// Arc'd Keymap + flags). zshrs uses Mutex<HashMap<String, KeymapName>>.
-
-static KEYMAPNAMTAB: OnceLock<Mutex<HashMap<String, KeymapName>>> = OnceLock::new();
+// Arc'd Keymap + flags).
+//
+// Node storage is `hashtable_nodes<KeymapName>`, the port of the
+// bucket-array half of `struct hashtable` (`Src/zsh.h:1175-1235`), NOT
+// a `std::collections::HashMap`. The walk order is OBSERVABLE:
+// `keymapsgetfn` (`Src/Zle/zleparameter.c:113-115`) reads
+// `keymapnamtab->nodes[i]` directly, so `${(k)keymaps}` emits C's
+// bucket-0..hsize-1 / chain-head→tail order verbatim. With a `HashMap`
+// the `RandomState` seed re-ordered that list on every process and it
+// matched `zsh -f` on no line.
+static KEYMAPNAMTAB: OnceLock<Mutex<crate::ported::hashtable::hashtable_nodes<KeymapName>>> =
+    OnceLock::new();
 
 /// Direct port of `struct keymap` from `Src/Zle/zle_keymap.c:64`.
 /// A keymap — binding of keys to thingies.
@@ -3163,8 +3172,15 @@ pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
 // the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub(crate) fn keymapnamtab() -> &'static Mutex<HashMap<String, KeymapName>> {
-    KEYMAPNAMTAB.get_or_init(|| Mutex::new(HashMap::new()))
+pub(crate) fn keymapnamtab() -> &'static Mutex<crate::ported::hashtable::hashtable_nodes<KeymapName>>
+{
+    // c:155 — `keymapnamtab = newhashtable(7, "keymapnamtab", NULL)`.
+    // The bucket count is load-bearing: `${(k)keymaps}` is a raw
+    // `nodes[i]` walk, so 7 buckets (not `HashMap`'s capacity) is what
+    // produces zsh's `visual viopp command .safe vicmd main isearch
+    // viins emacs` for the nine boot keymaps.
+    KEYMAPNAMTAB
+        .get_or_init(|| Mutex::new(crate::ported::hashtable::hashtable_nodes::newhashtable(7)))
 }
 
 #[cfg(test)]

@@ -9146,19 +9146,23 @@ pub fn upchdir(n: usize) -> io::Result<()> {
 /// WARNING: param names don't match C — Rust=() vs C=(path)
 /// C body (3 lines):
 ///   `d->ino = d->dev = 0; d->dirname = NULL; d->dirfd = d->level = -1;`
-/// The C `dirname = NULL` becomes `dirname: None`; Rust port prefills
-/// dirname with current_dir for legacy callers that immediately read
-/// it (mirrors what `setpwd()` does in C right after `init_dirsav`).
+///
+/// `dirname` stays `None` exactly as C leaves it: the field is filled
+/// later, by `lchdir`/`zgetdir`, only on the paths that need a name to
+/// get back. An earlier Rust port prefilled it with `current_dir()`,
+/// which put a `getcwd` (plus an `open` on macOS) in front of every
+/// `scanner()` call in `glob.rs:444` — a syscall pair C never issues.
+/// The two consumers both cope with `None`: `restoredir` (c:7565) falls
+/// through to `fchdir(dirfd)` or `upchdir(level)`, and `lchdir` (c:7442-7448)
+/// fills `d->level` for the soft path before any restore can happen.
 pub fn init_dirsav() -> dirsav {
     // c:7381
     dirsav {
+        ino: 0,
+        dev: 0,        // c:7383 `d->ino = d->dev = 0;`
+        dirname: None, // c:7384 `d->dirname = NULL;`
         dirfd: -1,
-        level: 0,
-        dev: 0,
-        ino: 0, // c:7383-7385
-        dirname: std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string()),
+        level: -1, // c:7385 `d->dirfd = d->level = -1;`
     }
 }
 
@@ -9460,18 +9464,25 @@ pub fn restoredir(d: &mut dirsav) -> i32 {
         }
     } else if d.level > 0 {
         // C: err = upchdir(d->level);
-        let _ = upchdir(d.level as usize);
+        // The result is the caller's break-reason (glob.c:696 reports
+        // "current directory lost during glob" on it), so it must not be
+        // dropped — this is the branch every `init_dirsav`-then-`lchdir`
+        // soft restore lands in now that `dirname` starts out NULL.
+        if upchdir(d.level as usize).is_err() {
+            err = -1;
+        }
     } else if d.level < 0 {
         err = -1;
     }
-    // C: dev/ino integrity check after the chdir/fchdir.
-    if (d.dev != 0 || d.ino != 0) && err == 0 {
+    // C: dev/ino integrity check after the chdir/fchdir — unconditional
+    // in C (c:7591-7595), it can only escalate an existing failure to -2.
+    if d.dev != 0 || d.ino != 0 {
         if let Ok(meta) = fs::metadata(".") {
             if meta.ino() != d.ino || meta.dev() != d.dev {
-                err = -1;
+                err = -2; // c:7594
             }
         } else {
-            err = -1;
+            err = -2; // c:7592 `stat(".", &sbuf) < 0`
         }
     }
     err

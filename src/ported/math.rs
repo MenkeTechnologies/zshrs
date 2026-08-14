@@ -5523,7 +5523,7 @@ mod tests {
         crate::ported::module::MODULESTAB
             .lock()
             .unwrap()
-            .load_module("zsh/mathfunc");
+            .load_module("zsh/mathfunc", None, false);
         assert!(
             (matheval("sqrt(4)")
                 .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))

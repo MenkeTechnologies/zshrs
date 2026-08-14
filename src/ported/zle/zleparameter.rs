@@ -223,12 +223,23 @@ pub fn keymapsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     {
         crate::ported::zle::zle_keymap::default_bindings();
     }
-    let mut names: Vec<String> = crate::ported::zle::zle_keymap::keymapnamtab()
+    // c:111-116 —
+    //   p = ret = zhalloc((keymapnamtab->ct + 1) * sizeof(char *));
+    //   for (i = 0; i < keymapnamtab->hsize; i++)
+    //       for (hn = keymapnamtab->nodes[i]; hn; hn = hn->next)
+    //           *p++ = dupstring(hn->nam);
+    // A RAW BUCKET WALK — bucket 0..hsize-1, each chain head→tail. NOT
+    // sorted: `zsh -f -c 'zmodload zsh/zleparameter; print -rl --
+    // ${(k)keymaps}'` prints `visual viopp command .safe vicmd main
+    // isearch viins emacs`, which is exactly this walk over the
+    // 7-bucket table (c:155) with `default_bindings`' link order
+    // (c:1449-1472). `keys()` is `hashtable_nodes`' port of that walk
+    // (`Src/hashtable.c:420-434`), so the order comes out verbatim; the
+    // port used to `sort()` here, which matched zsh on no line.
+    crate::ported::zle::zle_keymap::keymapnamtab()
         .lock()
         .map(|t| t.keys().cloned().collect())
-        .unwrap_or_default();
-    names.sort();
-    names
+        .unwrap_or_default()
 }
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:147`. C body
@@ -697,17 +708,59 @@ mod tests {
         assert_eq!(pm.node.nam, "my-test-widget");
     }
 
-    /// c:105 — `keymapsgetfn` output must be sorted (Rust port sorts
-    /// at the end of the fn). Pin sorted-order contract so callers
-    /// can rely on deterministic output for ${(o)zle_keymaps}.
+    /// c:113-115 — `keymapsgetfn` emits the RAW `keymapnamtab` bucket
+    /// walk (`for i in 0..hsize { for hn in nodes[i] }`), NOT a sorted
+    /// list. With the 7-bucket table (`Src/Zle/zle_keymap.c:155`) and
+    /// `default_bindings`' link order (c:1449-1472) that walk is what
+    /// `zsh -f -c 'zmodload zsh/zleparameter; print -rl -- ${(k)keymaps}'`
+    /// prints. This test previously asserted SORTED output, which is a
+    /// property C does not have and which made `${(k)keymaps}` differ
+    /// from zsh on every line; it now pins the C contract instead.
     #[test]
-    fn keymapsgetfn_output_is_sorted() {
+    fn keymapsgetfn_output_is_the_keymapnamtab_bucket_walk() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let names = keymapsgetfn(std::ptr::null_mut());
-        let mut sorted = names.clone();
-        sorted.sort();
-        assert_eq!(names, sorted, "keymapsgetfn output must be sorted");
+        let walk: Vec<String> = crate::ported::zle::zle_keymap::keymapnamtab()
+            .lock()
+            .map(|t| t.keys().cloned().collect())
+            .unwrap_or_default();
+        assert_eq!(
+            names, walk,
+            "keymapsgetfn must emit the keymapnamtab bucket walk verbatim"
+        );
+        // The nine keymaps `default_bindings` links come out in C's
+        // bucket order for a 7-bucket front-inserting table — the exact
+        // sequence `zsh -f -c 'zmodload zsh/zleparameter;
+        // print -rl -- ${(k)keymaps}'` prints. Other keymaps the shared
+        // test fixture registers are filtered out; their presence must
+        // not perturb the relative order of these nine.
+        let boot: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .filter(|n| {
+                matches!(
+                    *n,
+                    "visual"
+                        | "viopp"
+                        | "command"
+                        | ".safe"
+                        | "vicmd"
+                        | "main"
+                        | "isearch"
+                        | "viins"
+                        | "emacs"
+                )
+            })
+            .collect();
+        assert_eq!(
+            boot,
+            vec![
+                "visual", "viopp", "command", ".safe", "vicmd", "main", "isearch", "viins",
+                "emacs",
+            ],
+            "c:155 newhashtable(7) + c:1449-1472 link order"
+        );
     }
 
     /// c:105 — `keymapsgetfn` output must not have duplicate names
@@ -1048,14 +1101,23 @@ mod tests {
         let _: Vec<String> = keymapsgetfn(std::ptr::null_mut());
     }
 
-    /// c:105-119 — `keymapsgetfn` output is sorted (additional pin via clone-compare).
+    /// c:105-119 — `keymapsgetfn` output is the `keymapnamtab` bucket
+    /// order, which is NOT sorted: C's loop is
+    /// `for (i = 0; i < hsize; i++) for (hn = nodes[i]; hn; hn = hn->next)`
+    /// (c:113-115), and `zsh -f` prints `visual viopp command .safe vicmd
+    /// main isearch viins emacs` for the nine boot keymaps. This test
+    /// used to assert SORTED output, a property C does not have; it now
+    /// pins the property C does have — the emitted order is exactly the
+    /// bucket walk, with no reordering applied on top.
     #[test]
-    fn keymapsgetfn_sorted_clone_compare() {
+    fn keymapsgetfn_matches_bucket_walk_clone_compare() {
         let _g = crate::test_util::global_state_lock();
         let v = keymapsgetfn(std::ptr::null_mut());
-        let mut sorted = v.clone();
-        sorted.sort();
-        assert_eq!(v, sorted, "keymapsgetfn must return sorted names");
+        let walk: Vec<String> = crate::ported::zle::zle_keymap::keymapnamtab()
+            .lock()
+            .map(|t| t.keys().cloned().collect())
+            .unwrap_or_default();
+        assert_eq!(v, walk, "keymapsgetfn must not reorder the bucket walk");
     }
 
     /// c:105 — `keymapsgetfn` is deterministic (purely a snapshot read).

@@ -639,8 +639,8 @@ pub fn inputline() -> i32 {
         if !crate::ported::init::zle_modules_loaded.swap(true, std::sync::atomic::Ordering::SeqCst)
         {
             let mut tab = crate::ported::module::MODULESTAB.lock().unwrap();
-            if tab.load_module("zsh/zle") {
-                tab.load_module("zsh/compctl"); // c:init.c:1765
+            if tab.load_module("zsh/zle", None, false) {
+                tab.load_module("zsh/compctl", None, false); // c:init.c:1765
             }
         }
         let mut flags = crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY;

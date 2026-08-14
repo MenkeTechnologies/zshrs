@@ -5910,8 +5910,15 @@ fn apply_selection(state: &mut globdata) {
         None => len as usize,
     };
 
+    // c:1990-2004 — C never copies the match array for the subscript: it
+    // walks the existing `matchbuf` from `matchbuf + matchct - first - end`
+    // and inserts straight out of it. The Rust equivalent that keeps the
+    // elements where they are is truncate-then-drain: both move `gmatch`
+    // values (each owning a PathBuf + String) instead of deep-cloning the
+    // whole 60k-entry list the way `to_vec()` did.
     if start < end && start < state.matches.len() {
-        state.matches = state.matches[start..end.min(state.matches.len())].to_vec();
+        state.matches.truncate(end.min(state.matches.len())); // c:1986-1989 `end` clamp
+        state.matches.drain(..start); // c:1981-1985 `first` offset
     } else {
         state.matches.clear();
     }
