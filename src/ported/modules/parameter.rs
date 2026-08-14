@@ -26,7 +26,7 @@ use crate::ported::params::{deleteparamtable, getsparam, getstrvalue, realparamt
 use crate::ported::utils::zwarn;
 use crate::ported::zsh_h::{
     hashnode, hashtable, isset, module, nameddir, opt_name, param, value, HashNode, HashTable,
-    Param, ScanFunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, FS_EVAL, FS_SOURCE, INTERACTIVE,
+    Param, ParamScanFunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, FS_EVAL, FS_SOURCE, INTERACTIVE,
     ND_USERNAME, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
     PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z,
     PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNIQUE, PM_UNSET,
@@ -510,7 +510,7 @@ mod paramtypestr_tests {
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmparameters(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:124
+    func: Option<ParamScanFunc>, // c:124
     flags: i32,
 ) {
     let func = match func {
@@ -569,35 +569,23 @@ pub fn scanpmparameters(
             })
             .collect()
     };
+    // c:126-129 — `struct param pm;` declared ONCE outside the walk,
+    // `memset` ONCE, `pm.node.flags` set ONCE; the loop only rebinds
+    // `pm.node.nam` / `pm.u.str` per entry. (c:130 `pm.gsu.s =
+    // &nullsetscalar_gsu` — vtable not modelled.)
+    let mut pm = param {
+        node: hashnode {
+            next: None,
+            nam: String::new(),
+            flags: (PM_SCALAR | PM_READONLY) as i32, // c:129
+        },
+        ..Default::default()
+    };
     for (name, _orig_flags, val) in entries {
         // c:135-145
-        let pm = param {
-            node: hashnode {
-                // c:128 memset(&pm, 0)
-                next: None,
-                nam: name,
-                flags: (PM_SCALAR | PM_READONLY) as i32, // c:129
-            },
-            u_data: 0,
-            u_tied: None,
-            u_arr: None,
-            u_str: Some(val), // c:144 pm.u.str
-            u_val: 0,
-            u_dval: 0.0,
-            u_hash: None,
-            gsu_s: None,
-            gsu_i: None,
-            gsu_f: None,
-            gsu_a: None,
-            gsu_h: None, // c:130 gsu.s = nullsetscalar_gsu (vtable not modelled)
-            base: 0,
-            width: 0,
-            env: None,
-            ename: None,
-            old: None,
-            level: 0,
-        };
-        func(&Box::new(pm.node), flags); // c:145 func(&pm.node, flags)
+        pm.node.nam = name; // c:137 pm.node.nam = hn->nam
+        pm.u_str = Some(val); // c:144 pm.u.str
+        func(&pm, flags); // c:145 func(&pm.node, flags)
     }
 }
 
@@ -774,7 +762,7 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, func) vs C=(ht, func, flags)
 pub fn scanpmcommands(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:245
+    func: Option<ParamScanFunc>, // c:245
     flags: i32,
 ) {
     // c:253 — `if (isset(HASHLISTALL)) cmdnamtab->filltable(...)`. The
@@ -793,7 +781,15 @@ pub fn scanpmcommands(
             crate::ported::hashtable::fillcmdnamtable(&path_arr); // c:253
         }
     }
-    let cmds: Vec<(String, bool, String)> = {
+    // c:275-277 — `if (func != scancountparams && ((flags &
+    // (SCANPM_WANTVALS|SCANPM_MATCHVAL)) || !(flags & SCANPM_WANTKEYS)))`:
+    // the value side is built ONLY when the caller asked for values. This
+    // port used to build it unconditionally, so every keys-only scan
+    // (`${(k)commands}`, `compadd -k commands` via `gethkparam`) still
+    // formatted a `dir/name` path for all of cmdnamtab and threw it away.
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    let cmds: Vec<(String, String)> = {
         let g = cmdnamtab_lock().read().unwrap();
         g.iter()
             .map(|(name, cmd)| {
@@ -801,7 +797,9 @@ pub fn scanpmcommands(
                 let hashed = (cmd.node.flags & HASHED as i32) != 0;
                 // c:266-274 — pm.u.str: HASHED → cmd->u.cmd (real path);
                 // unhashed → first $PATH dir + "/" + name.
-                let value = if hashed {
+                let value = if !want_val {
+                    String::new()
+                } else if hashed {
                     cmd.cmd.clone().unwrap_or_default() // c:267 cn->u.cmd
                 } else {
                     let dir = cmd
@@ -817,26 +815,28 @@ pub fn scanpmcommands(
                         });
                     format!("{}/{}", dir, name) // c:271-273 strcat
                 };
-                (name.clone(), hashed, value)
+                (name.clone(), value)
             })
             .collect()
     };
-    let _ = (PM_SCALAR, SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS);
     if let Some(f) = func {
-        // c:259 — for each cmdnamtab entry, build a stack-local param
-        // and pass to the callback. Rust uses a real param struct
-        // (not a stack pun) so the callback sees a stable HashNode.
-        for (name, _hashed, _value) in &cmds {
-            let node = Box::new(hashnode {
-                // c:264 pm.node.nam
+        // c:259-269 — `struct param pm;` declared ONCE outside the walk;
+        // the loop only rebinds `pm.node.nam` (c:273) and `pm.u.str`
+        // (c:279/281) before each `func(&pm.node, flags)`.
+        let mut pm = param {
+            node: hashnode {
                 next: None,
-                nam: name.clone(),
-                flags: 0,
-            });
-            f(&node, flags); // c:280 func(&pm.node, flags)
+                nam: String::new(),
+                flags: PM_SCALAR as i32, // c:268
+            },
+            ..Default::default()
+        };
+        for (name, value) in cmds {
+            pm.node.nam = name; // c:273
+            pm.u_str = Some(value); // c:279 / c:281-286
+            f(&pm, flags); // c:290 func(&pm.node, flags)
         }
     }
-    let _ = cmds;
 }
 
 /// Port of `setfunction(char *name, char *val, int dis)` from Src/Modules/parameter.c:284.
@@ -1200,7 +1200,7 @@ pub fn getpmdisfunction(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, func, _dis) vs C=(ht, func, flags, dis)
 pub fn scanfunctions(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:458
+    func: Option<ParamScanFunc>, // c:458
     flags: i32,
     dis: i32,
 ) {
@@ -1240,19 +1240,37 @@ pub fn scanfunctions(
     } else {
         Vec::new()
     };
+    // c:484-486 — `if (func != scancountparams && ((flags &
+    // (SCANPM_WANTVALS|SCANPM_MATCHVAL)) || !(flags & SCANPM_WANTKEYS)))`:
+    // the deparsed body is built ONLY when values were asked for, so
+    // `${(k)functions}` never pays getpermtext for every function.
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
     if let Some(f) = func {
-        // c:461 `struct param pm;` — ONE node for the whole walk, rebound per
-        // entry by c:472 `pm.node.nam = hn->nam`. The port allocated a fresh
-        // `Box<hashnode>` per entry instead, i.e. one heap allocation for every
-        // shell function on every `${functions}`-style read.
-        let mut node = Box::new(hashnode {
-            next: None,
-            nam: String::new(),
-            flags: 0, // c:463 pm.node.flags = PM_SCALAR (value unused here)
-        });
+        // c:461 `struct param pm;` — ONE param for the whole walk, rebound per
+        // entry by c:472 `pm.node.nam = hn->nam` and c:489/514 `pm.u.str`. The
+        // port allocated a fresh `Box<hashnode>` per entry instead, i.e. one
+        // heap allocation for every shell function on every `${functions}` read.
+        let mut pm = param {
+            node: hashnode {
+                next: None,
+                nam: String::new(),
+                flags: PM_SCALAR as i32, // c:463
+            },
+            ..Default::default()
+        };
         for name in names {
-            node.nam = name; // c:472 pm.node.nam = hn->nam
-            f(&node, flags); // c:514
+            // c:487-522 builds the body text inline from the Shfunc; the
+            // identical construction already lives in `getfunction` (c:387),
+            // which is what the per-key `getpmfunction` reads, so route
+            // through it rather than keeping two copies of the deparse.
+            pm.u_str = if want_val {
+                getfunction(std::ptr::null_mut(), &name, dis).and_then(|p| p.u_str)
+            } else {
+                None
+            };
+            pm.node.nam = name; // c:472 pm.node.nam = hn->nam
+            f(&pm, flags); // c:524
         }
     }
 }
@@ -1262,7 +1280,7 @@ pub fn scanfunctions(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmfunctions(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:519
+    func: Option<ParamScanFunc>, // c:519
     flags: i32,
 ) {
     scanfunctions(ht, func, flags, 0) // c:522
@@ -1275,7 +1293,7 @@ pub fn scanpmfunctions(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmdisfunctions(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:526
+    func: Option<ParamScanFunc>, // c:526
     flags: i32,
 ) {
     scanfunctions(ht, func, flags, DISABLED) // c:529
@@ -1351,13 +1369,15 @@ pub fn getfunction_source(_ht: *mut HashTable, name: &str, dis: i32) -> Option<P
         node: hashnode {
             next: None,
             nam: name.to_string(), // c:542
-            flags: if found {
-                (PM_SCALAR | PM_READONLY) as i32
-            }
-            // c:543
-            else {
-                (PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL) as i32
-            }, // c:587
+            // c:555-556 — `pm->node.flags = PM_SCALAR|PM_READONLY;`, set
+            // BEFORE the shfunctab lookup and never amended. Unlike
+            // `getfunction` / `getpmjobstate` (Src/Modules/parameter.c:1422-1423) this getter has no
+            // `else` arm: an unknown (or wrong-DISABLED-parity) function still
+            // yields an ordinary node whose `u.str` was simply never assigned,
+            // so `${+functions_source[nosuch]}` is 1 in zsh — the previous
+            // `PM_UNSET|PM_SPECIAL` else-branch has no counterpart in C and
+            // made it 0.
+            flags: (PM_SCALAR | PM_READONLY) as i32, // c:555-556
         },
         u_data: 0,
         u_tied: None,
@@ -1388,7 +1408,7 @@ pub fn getfunction_source(_ht: *mut HashTable, name: &str, dis: i32) -> Option<P
 /// WARNING: param names don't match C — Rust=(_ht, func, _dis) vs C=(ht, func, flags, dis)
 pub fn scanfunctions_source(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:560
+    func: Option<ParamScanFunc>, // c:560
     flags: i32,
     dis: i32,
 ) {
@@ -1425,17 +1445,34 @@ pub fn scanfunctions_source(
     } else {
         Vec::new()
     };
+    // c:586-588 — value side only when values were asked for.
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
     if let Some(f) = func {
-        // c:565 `struct param pm;` — one node for the whole walk (see the
-        // matching note in `scanfunctions`), rebound per entry at c:573.
-        let mut node = Box::new(hashnode {
-            next: None,
-            nam: String::new(),
-            flags: 0, // c:573
-        });
+        // c:574-580 `struct param pm;` — one param for the whole walk (see the
+        // matching note in `scanfunctions`), rebound per entry at c:585/589.
+        let mut pm = param {
+            node: hashnode {
+                next: None,
+                nam: String::new(),
+                flags: (PM_SCALAR | PM_READONLY) as i32, // c:579
+            },
+            ..Default::default()
+        };
         for name in names {
-            node.nam = name; // c:573 pm.node.nam = hn->nam
-            f(&node, flags); // c:604
+            // c:589-591 `pm.u.str = getshfuncfile((Shfunc)hn)` — the same
+            // lookup `getfunction_source` (c:547) performs for a single key.
+            pm.u_str = if want_val {
+                Some(
+                    getfunction_source(std::ptr::null_mut(), &name, dis)
+                        .and_then(|p| p.u_str)
+                        .unwrap_or_default(), // c:590-591
+                )
+            } else {
+                None
+            };
+            pm.node.nam = name; // c:585 pm.node.nam = hn->nam
+            f(&pm, flags); // c:593
         }
     }
 }
@@ -1463,7 +1500,7 @@ pub fn getpmdisfunction_source(ht: *mut HashTable, name: &str) -> Option<Param> 
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmfunction_source(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:609
+    func: Option<ParamScanFunc>, // c:609
     flags: i32,
 ) {
     scanfunctions_source(ht, func, flags, 0) // c:612
@@ -1476,7 +1513,7 @@ pub fn scanpmfunction_source(
 /// WARNING: param names don't match C — Rust=(ht, flags) vs C=(ht, func, flags)
 pub fn scanpmdisfunction_source(
     ht: *mut HashTable, // c:618
-    func: Option<ScanFunc>,
+    func: Option<ParamScanFunc>,
     flags: i32,
 ) {
     scanfunctions_source(ht, func, flags, 1) // c:621
@@ -1799,7 +1836,7 @@ pub fn getpmdisbuiltin(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, func, _dis) vs C=(ht, func, flags, dis)
 pub fn scanbuiltins(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:813
+    func: Option<ParamScanFunc>, // c:813
     flags: i32,
     dis: i32,
 ) {
@@ -1851,6 +1888,19 @@ pub fn scanbuiltins(
                 .ok()
                 .map(|g| g.iter().cloned().collect())
                 .unwrap_or_default();
+        // c:839-841 — value side only when values were asked for.
+        let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+            || (flags as u32 & SCANPM_WANTKEYS) == 0;
+        // c:827-833 — `struct param pm;` declared ONCE, `memset` ONCE,
+        // `pm.node.flags` set ONCE; the loop rebinds nam/u.str per entry.
+        let mut pm = param {
+            node: hashnode {
+                next: None,
+                nam: String::new(),
+                flags: (PM_SCALAR | PM_READONLY) as i32, // c:832
+            },
+            ..Default::default()
+        };
         // c:Src/Modules/parameter.c:822-823 —
         //     for (i = 0; i < builtintab->hsize; i++)
         //         for (hn = builtintab->nodes[i]; hn; hn = hn->next)
@@ -1881,12 +1931,18 @@ pub fn scanbuiltins(
             if !emitted.insert(b.node.nam.clone()) {
                 continue;
             }
-            let node = Box::new(hashnode {
-                next: None,
-                nam: b.node.nam.clone(),
-                flags: 0, // c:828
-            });
-            f(&node, flags); // c:838
+            // c:842-846 — `pm.u.str = (handlerfunc || BINF_PREFIX) ?
+            // "defined" : "undefined"`. The identical decision already lives
+            // in `getbuiltin` (c:775), which is what the per-key
+            // `getpmbuiltin` reads, so route through it rather than keeping
+            // two copies of the stub/loaded-module test.
+            pm.u_str = if want_val {
+                getbuiltin(std::ptr::null_mut(), &b.node.nam, dis).and_then(|p| p.u_str)
+            } else {
+                None
+            };
+            pm.node.nam = b.node.nam.clone(); // c:838
+            f(&pm, flags); // c:848
         }
         // zshrs extension builtins (`ext_builtins::EXT_BUILTIN_NAMES`)
         // dispatch in-process exactly like core builtins but have no
@@ -1911,12 +1967,15 @@ pub fn scanbuiltins(
                 if !emitted.insert(n.clone()) {
                     continue; // already emitted from BUILTINS (e.g. coreutils drop-ins)
                 }
-                let node = Box::new(hashnode {
-                    next: None,
-                    nam: n,
-                    flags: 0,
-                });
-                f(&node, flags);
+                // Extension builtins always dispatch in-process, so they are
+                // the c:842-844 "handlerfunc present" arm.
+                pm.u_str = if want_val {
+                    Some("defined".to_string()) // c:846
+                } else {
+                    None
+                };
+                pm.node.nam = n;
+                f(&pm, flags);
             }
         }
     }
@@ -1929,7 +1988,7 @@ pub fn scanbuiltins(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmbuiltins(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:843
+    func: Option<ParamScanFunc>, // c:843
     flags: i32,
 ) {
     scanbuiltins(ht, func, flags, 0) // c:846
@@ -1942,7 +2001,7 @@ pub fn scanpmbuiltins(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmdisbuiltins(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:850
+    func: Option<ParamScanFunc>, // c:850
     flags: i32,
 ) {
     scanbuiltins(ht, func, flags, DISABLED) // c:853
@@ -2249,7 +2308,7 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, func) vs C=(ht, func, flags)
 pub fn scanpmoptions(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1016
+    func: Option<ParamScanFunc>, // c:1016
     flags: i32,
 ) {
     // c:1025-1026 — `for (i = 0; i < optiontab->hsize; i++)
@@ -2261,14 +2320,24 @@ pub fn scanpmoptions(
         .map(|s| s.to_string())
         .collect();
     if let Some(f) = func {
+        // c:1032-1038 — `struct param pm;` declared ONCE outside the walk.
+        let mut pm = param {
+            node: hashnode {
+                next: None,
+                nam: String::new(),
+                flags: PM_SCALAR as i32, // c:1037
+            },
+            ..Default::default()
+        };
         for nm in names {
             // c:1024
-            let node = Box::new(hashnode {
-                next: None,
-                nam: nm,
-                flags: 0,
-            });
-            f(&node, flags); // c:1037
+            // c:1044-1045 — `ison = optno < 0 ? !opts[-optno] : opts[optno];
+            // pm.u.str = dupstring(ison ? "on" : "off")`. The identical
+            // decision lives in `getpmoption` (c:996), which the per-key
+            // read uses; route through it so there is one copy.
+            pm.u_str = getpmoption(std::ptr::null_mut(), &nm).and_then(|p| p.u_str);
+            pm.node.nam = nm; // c:1043
+            f(&pm, flags); // c:1046
         }
     }
 }
@@ -2401,7 +2470,7 @@ pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmmodules(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1074
+    func: Option<ParamScanFunc>, // c:1074
     flags: i32,
 ) {
     let func = match func {
@@ -2410,13 +2479,17 @@ pub fn scanpmmodules(
     };
     let mut done: std::collections::HashSet<String> = std::collections::HashSet::new(); // c:1080 done linklist
     let pm_flags = (PM_SCALAR | PM_READONLY) as i32; // c:1084
-    let emit = |name: &str, val: &str| -> hashnode {
-        // c:1083-1086 memset(&pm, 0); pm.node.flags = ...; pm.u.str = ...
-        let _ = val; // u.str carried via the parent func; node carries name+flags only.
-        hashnode {
-            next: None,
-            nam: name.to_string(),
-            flags: pm_flags,
+    let emit = |name: &str, val: &str| -> param {
+        // c:1098-1100 `memset(&pm, 0); pm.node.flags = PM_SCALAR|PM_READONLY;`
+        // then c:1106-1107 / c:1114 rebind `pm.node.nam` and `pm.u.str`.
+        param {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(), // c:1106
+                flags: pm_flags,
+            },
+            u_str: Some(val.to_string()), // c:1107 / c:1114
+            ..Default::default()
         }
     };
     // c:1088-1099 — modulestab walk, emit each LOADED module.
@@ -2467,8 +2540,8 @@ pub fn scanpmmodules(
     for (name, val) in modules {
         // c:1090
         done.insert(name.clone()); // c:1095 addlinknode(done, ...)
-        let node = emit(&name, &val); // c:1093 emit value-side
-        func(&Box::new(node), flags); // c:1096
+        let pm = emit(&name, &val); // c:1093 emit value-side
+        func(&pm, flags); // c:1096
     }
     // c:1088-1099 — this scan IS zsh/parameter's getfn: in C it can
     // only run with zsh/parameter loaded, so the module reports
@@ -2476,8 +2549,8 @@ pub fn scanpmmodules(
     // zsh/parameter). zshrs builds the param in statically; emit the
     // self-report when the modulestab walk didn't.
     if done.insert("zsh/parameter".to_string()) {
-        let node = emit("zsh/parameter", "loaded");
-        func(&Box::new(node), flags);
+        let pm = emit("zsh/parameter", "loaded");
+        func(&pm, flags);
     }
     // c:1102-1110 — builtintab autoloaded (BINF_ADDED clear with optstr → module).
     // C stores the OWNING MODULE NAME in `bn->optstr` only for
@@ -2514,8 +2587,8 @@ pub fn scanpmmodules(
         };
         if done.insert(opt.clone()) {
             // c:1105 linknodebystring(done, optstr)
-            let node = emit(opt, "autoloaded"); // c:1106-1108
-            func(&Box::new(node), flags); // c:1109
+            let pm = emit(opt, "autoloaded"); // c:1106-1108
+            func(&pm, flags); // c:1109
         }
     }
     // RUST-ONLY TAIL: `zmodload -ab NAME MODULE` at runtime records the
@@ -2531,8 +2604,8 @@ pub fn scanpmmodules(
     leftover.sort();
     for (_name, opt) in leftover {
         if done.insert(opt.clone()) {
-            let node = emit(opt, "autoloaded"); // c:1108
-            func(&Box::new(node), flags); // c:1109
+            let pm = emit(opt, "autoloaded"); // c:1108
+            func(&pm, flags); // c:1109
         }
     }
     // c:1112-1117 — condtab autoloaded (p->module set).
@@ -2545,8 +2618,8 @@ pub fn scanpmmodules(
     for m in cond_modules {
         // c:1112
         if done.insert(m.clone()) {
-            let node = emit(&m, "autoloaded");
-            func(&Box::new(node), flags); // c:1116
+            let pm = emit(&m, "autoloaded");
+            func(&pm, flags); // c:1116
         }
     }
     // c:1119-1124 — realparamtab PM_AUTOLOAD entries. The canonical
@@ -2556,8 +2629,8 @@ pub fn scanpmmodules(
     // and missed zsh/zleparameter.
     for (_pname, m) in crate::vm_helper::autoload_param_stubs() {
         if done.insert(m.to_string()) {
-            let node = emit(m, "autoloaded");
-            func(&Box::new(node), flags); // c:1124
+            let pm = emit(m, "autoloaded");
+            func(&pm, flags); // c:1124
         }
     }
     let auto_param_modules: Vec<String> = {
@@ -2566,8 +2639,8 @@ pub fn scanpmmodules(
     };
     for m in auto_param_modules {
         if done.insert(m.clone()) {
-            let node = emit(&m, "autoloaded");
-            func(&Box::new(node), flags); // c:1124
+            let pm = emit(&m, "autoloaded");
+            func(&pm, flags); // c:1124
         }
     }
 }
@@ -2723,7 +2796,7 @@ pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmhistory(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1188
+    func: Option<ParamScanFunc>, // c:1188
     flags: i32,
 ) {
     let func = match func {
@@ -2794,18 +2867,11 @@ pub fn scanpmhistory(
         old: None,
         level: 0,
     };
-    // The `ScanFunc` ABI (zsh_h.rs:748) hands the callback the NODE only —
-    // C passes `&pm.node` too (c:1206) but its callbacks recover the whole
-    // `struct param` with the `(Param)hn` downcast `scanparamvals` does
-    // (c:Src/params.c:649), which Rust has no equivalent for. So the node
-    // is boxed once here and reused, and value-side consumers still reach
-    // the string through the partab row's `getfn` (`getpmhistory`, c:1156).
-    let mut node: HashNode = Box::new(pm.node);
     for (histnum, cmd) in entries {
         // c:1199-1207
-        node.nam = crate::ported::params::convbase(histnum, 10); // c:1202 convbase(buf, he->histnum, 10)
+        pm.node.nam = crate::ported::params::convbase(histnum, 10); // c:1202 convbase(buf, he->histnum, 10)
         pm.u_str = cmd; // c:1204 pm.u.str = he->node.nam
-        func(&node, flags); // c:1206
+        func(&pm, flags); // c:1206
     }
 }
 
@@ -2895,10 +2961,40 @@ pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1284-1287 — alloc PM_SCALAR|PM_READONLY param with name.
     // c:1289 — selectjobtab(&jtab, &jmax);
     let (jtab, jmax) = selectjobtab();
-    // c:1291 — job = strtod(name, &pend);
-    let (job, pend_nonempty) = match name.parse::<i32>() {
-        Ok(n) => (n, false),
-        Err(_) => (0, true),
+    // c:1291 — `job = strtol(name, &pend, 10);`
+    //
+    // libc `strtol` skips leading whitespace and an optional sign before the
+    // digit run and points `pend` at the first unconverted byte; with NO digits
+    // converted it returns 0 and leaves `pend == name`. `str::parse` rejects
+    // both leading blanks and any trailing text, so `${jobtexts[ 1]}` (which
+    // zsh answers with job 1) took the `getjob` path and reported
+    // `job not found`. Inlined rather than factored into a helper: each of the
+    // three C getters carries its own copy (c:1291 / c:1399 / c:1471), and
+    // src/ported/ admits no functions without a C counterpart.
+    let n_bytes = name.as_bytes();
+    let mut n_i = 0usize;
+    while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_whitespace() {
+        n_i += 1;
+    }
+    let n_num_start = n_i;
+    if n_i < n_bytes.len() && (n_bytes[n_i] == b'+' || n_bytes[n_i] == b'-') {
+        n_i += 1;
+    }
+    let n_digits_start = n_i;
+    while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_digit() {
+        n_i += 1;
+    }
+    let (job, pend_nonempty) = if n_i == n_digits_start {
+        // No conversion performed: strtol returns 0 and pend stays at `name`.
+        (0i32, !name.is_empty())
+    } else {
+        // C truncates strtol's `long` into an `int` job number; an overflowing
+        // key saturates to LONG_MAX, whose low 32 bits are -1 — out of range
+        // either way.
+        (
+            name[n_num_start..n_i].parse::<i64>().unwrap_or(i64::MAX) as i32,
+            n_i != n_bytes.len(),
+        )
     };
     // c:1293-1294 — if (*pend) job = getjob(name, NULL);
     let job = if pend_nonempty { getjob(name, "") } else { job };
@@ -2933,7 +3029,7 @@ pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmjobtexts(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1308
+    func: Option<ParamScanFunc>, // c:1308
     flags: i32,
 ) {
     let func = match func {
@@ -2978,7 +3074,7 @@ pub fn scanpmjobtexts(
                     old: None,
                     level: 0,
                 };
-                func(&Box::new(pm.node), flags); // c:1333
+                func(&pm, flags); // c:1333
             }
         }
     }
@@ -3062,10 +3158,29 @@ pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {
 pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1385
     let (jtab, jmax) = selectjobtab(); // c:1397
-    let (job, pend_nonempty) = match name.parse::<i32>() {
-        // c:1399
-        Ok(n) => (n, false),
-        Err(_) => (0, true),
+    // c:1399 — `job = strtol(name, &pend, 10);`. See getpmjobtext (c:1291) for
+    // why libc strtol's leading-blank / partial-digit semantics are spelled out
+    // here instead of using `str::parse`.
+    let n_bytes = name.as_bytes();
+    let mut n_i = 0usize;
+    while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_whitespace() {
+        n_i += 1;
+    }
+    let n_num_start = n_i;
+    if n_i < n_bytes.len() && (n_bytes[n_i] == b'+' || n_bytes[n_i] == b'-') {
+        n_i += 1;
+    }
+    let n_digits_start = n_i;
+    while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_digit() {
+        n_i += 1;
+    }
+    let (job, pend_nonempty) = if n_i == n_digits_start {
+        (0i32, !name.is_empty())
+    } else {
+        (
+            name[n_num_start..n_i].parse::<i64>().unwrap_or(i64::MAX) as i32,
+            n_i != n_bytes.len(),
+        )
     };
     let job = if pend_nonempty {
         // c:1400-1401
@@ -3103,7 +3218,7 @@ pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmjobstates(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1415
+    func: Option<ParamScanFunc>, // c:1415
     flags: i32,
 ) {
     let func = match func {
@@ -3148,7 +3263,7 @@ pub fn scanpmjobstates(
                     old: None,
                     level: 0,
                 };
-                func(&Box::new(pm.node), flags); // c:1440
+                func(&pm, flags); // c:1440
             }
         }
     }
@@ -3189,10 +3304,29 @@ pub fn pmjobdir(_jtab: *mut std::ffi::c_void, job: i32) -> String {
 pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1457
     let (jtab, jmax) = selectjobtab(); // c:1469
-    let (job, pend_nonempty) = match name.parse::<i32>() {
-        // c:1471
-        Ok(n) => (n, false),
-        Err(_) => (0, true),
+    // c:1471 — `job = strtol(name, &pend, 10);`. See getpmjobtext (c:1291) for
+    // why libc strtol's leading-blank / partial-digit semantics are spelled out
+    // here instead of using `str::parse`.
+    let n_bytes = name.as_bytes();
+    let mut n_i = 0usize;
+    while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_whitespace() {
+        n_i += 1;
+    }
+    let n_num_start = n_i;
+    if n_i < n_bytes.len() && (n_bytes[n_i] == b'+' || n_bytes[n_i] == b'-') {
+        n_i += 1;
+    }
+    let n_digits_start = n_i;
+    while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_digit() {
+        n_i += 1;
+    }
+    let (job, pend_nonempty) = if n_i == n_digits_start {
+        (0i32, !name.is_empty())
+    } else {
+        (
+            name[n_num_start..n_i].parse::<i64>().unwrap_or(i64::MAX) as i32,
+            n_i != n_bytes.len(),
+        )
     };
     let job = if pend_nonempty {
         // c:1472-1473
@@ -3230,7 +3364,7 @@ pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmjobdirs(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1487
+    func: Option<ParamScanFunc>, // c:1487
     flags: i32,
 ) {
     let func = match func {
@@ -3275,7 +3409,7 @@ pub fn scanpmjobdirs(
                     old: None,
                     level: 0,
                 };
-                func(&Box::new(pm.node), flags); // c:1514
+                func(&pm, flags); // c:1514
             }
         }
     }
@@ -3469,23 +3603,36 @@ pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, func) vs C=(ht, func, flags)
 pub fn scanpmnameddirs(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1618
+    func: Option<ParamScanFunc>, // c:1618
     flags: i32,
 ) {
+    // c:1648-1650 — value side only when values were asked for.
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
     if let Some(f) = func {
+        // c:1640-1642 — one `struct param pm` for the whole walk.
+        let mut pm = param {
+            node: hashnode {
+                next: None,
+                nam: String::new(),
+                flags: PM_SCALAR as i32, // c:1641
+            },
+            ..Default::default()
+        };
         if let Ok(tab) = crate::ported::hashnameddir::nameddirtab().lock() {
             for (nam, nd) in tab.iter() {
-                // c:1627-1628
-                // c:1629 — `!(nd->node.flags & ND_USERNAME)`
+                // c:1644-1645
+                // c:1646 — `!(nd->node.flags & ND_USERNAME)`
                 if (nd.node.flags & crate::ported::zsh_h::ND_USERNAME) != 0 {
                     continue;
                 }
-                let node = Box::new(hashnode {
-                    next: None,
-                    nam: nam.clone(),        // c:1630
-                    flags: PM_SCALAR as i32, // c:1623 pm.node.flags
-                });
-                f(&node, flags); // c:1640
+                pm.node.nam = nam.clone(); // c:1647
+                pm.u_str = if want_val {
+                    Some(nd.dir.clone()) // c:1651 pm.u.str = dupstring(nd->dir)
+                } else {
+                    None
+                };
+                f(&pm, flags); // c:1652
             }
         }
     }
@@ -3574,7 +3721,7 @@ pub fn getpmuserdir(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, func) vs C=(ht, func, flags)
 pub fn scanpmuserdirs(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1669
+    func: Option<ParamScanFunc>, // c:1669
     flags: i32,
 ) {
     // c:1676 `nameddirtab->filltable(nameddirtab)` →
@@ -3603,16 +3750,29 @@ pub fn scanpmuserdirs(
     let Ok(tab) = crate::ported::hashnameddir::nameddirtab().lock() else {
         return;
     };
+    // c:1701-1703 — value side only when values were asked for.
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    // c:1693-1694 — one `struct param pm` for the whole walk.
+    let mut pm = param {
+        node: hashnode {
+            next: None,
+            nam: String::new(),
+            flags: (PM_SCALAR | PM_READONLY) as i32, // c:1694
+        },
+        ..Default::default()
+    };
     for (nam, nd) in tab.iter() {
         if (nd.node.flags & crate::ported::zsh_h::ND_USERNAME) == 0 {
-            continue; // c:1684
+            continue; // c:1699
         }
-        let node = Box::new(hashnode {
-            next: None,
-            nam: nam.clone(), // c:1685
-            flags: 0,
-        });
-        f(&node, flags); // c:1690
+        pm.node.nam = nam.clone(); // c:1700
+        pm.u_str = if want_val {
+            Some(nd.dir.clone()) // c:1704 pm.u.str = dupstring(nd->dir)
+        } else {
+            None
+        };
+        f(&pm, flags); // c:1705
     }
 }
 
@@ -4110,7 +4270,7 @@ pub fn getpmdissalias(ht: *mut HashTable, name: &str) -> Option<Param> {
 pub fn scanaliases(
     _alht: *mut HashTable,
     _ht: *mut HashTable, // c:1965
-    func: Option<ScanFunc>,
+    func: Option<ParamScanFunc>,
     pmflags: i32,
     alflags: i32,
 ) {
@@ -4142,6 +4302,12 @@ pub fn scanaliases(
         } else {
             aliastab_lock()
         };
+        // c:1994-1996 — value side only when values were asked for.
+        let want_val = (pmflags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+            || (pmflags as u32 & SCANPM_WANTKEYS) == 0;
+        // c:1987-1988 — one `struct param pm` for the whole walk
+        // (`assignaliasdefs` sets the gsu/flags per alias kind).
+        let mut pm = param::default();
         if let Ok(tab) = lock.read() {
             for (_, alias) in tab.iter() {
                 // c:1976 — `for (al = ...; al; ...)`
@@ -4154,12 +4320,14 @@ pub fn scanaliases(
                 if alias.node.flags != alflags {
                     continue;
                 }
-                let node = Box::new(hashnode {
-                    next: None,
-                    nam: alias.node.nam.clone(), // c:1979
-                    flags: alias.node.flags,
-                });
-                f(&node, pmflags); // c:1985
+                pm.node.nam = alias.node.nam.clone(); // c:1993
+                pm.node.flags = alias.node.flags;
+                pm.u_str = if want_val {
+                    Some(alias.text.clone()) // c:1997 pm.u.str = dupstring(al->text)
+                } else {
+                    None
+                };
+                f(&pm, pmflags); // c:1998
             }
         }
     }
@@ -4170,7 +4338,7 @@ pub fn scanaliases(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmraliases(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1990
+    func: Option<ParamScanFunc>, // c:1990
     flags: i32,
 ) {
     scanaliases(std::ptr::null_mut(), ht, func, flags, 0) // c:1993
@@ -4181,7 +4349,7 @@ pub fn scanpmraliases(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmdisraliases(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:1997
+    func: Option<ParamScanFunc>, // c:1997
     flags: i32,
 ) {
     scanaliases(std::ptr::null_mut(), ht, func, flags, DISABLED) // c:2000
@@ -4192,7 +4360,7 @@ pub fn scanpmdisraliases(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmgaliases(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:2004
+    func: Option<ParamScanFunc>, // c:2004
     flags: i32,
 ) {
     scanaliases(std::ptr::null_mut(), ht, func, flags, ALIAS_GLOBAL) // c:2007
@@ -4203,7 +4371,7 @@ pub fn scanpmgaliases(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmdisgaliases(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:2011
+    func: Option<ParamScanFunc>, // c:2011
     flags: i32,
 ) {
     scanaliases(
@@ -4220,7 +4388,7 @@ pub fn scanpmdisgaliases(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmsaliases(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:2018
+    func: Option<ParamScanFunc>, // c:2018
     flags: i32,
 ) {
     scanaliases(
@@ -4237,7 +4405,7 @@ pub fn scanpmsaliases(
 /// WARNING: param names don't match C — Rust=(ht, func) vs C=(ht, func, flags)
 pub fn scanpmdissaliases(
     ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:2025
+    func: Option<ParamScanFunc>, // c:2025
     flags: i32,
 ) {
     scanaliases(
@@ -4361,7 +4529,7 @@ pub fn getpmusergroups(ht: *mut HashTable, name: &str) -> Option<Param> {
 /// WARNING: param names don't match C — Rust=(_ht, func) vs C=(ht, func, flags)
 pub fn scanpmusergroups(
     _ht: *mut HashTable,
-    func: Option<ScanFunc>, // c:2143
+    func: Option<ParamScanFunc>, // c:2143
     flags: i32,
 ) {
     // c:2143
@@ -4402,18 +4570,31 @@ pub fn scanpmusergroups(
     if !gids.iter().any(|&g| g == egid) {
         gids.push(egid);
     }
+    // c:2182-2184 — value side only when values were asked for.
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    // c:2176-2177 — one `struct param pm` for the whole walk.
+    let mut pm = param {
+        node: hashnode {
+            next: None,
+            nam: String::new(),
+            flags: (PM_SCALAR | PM_READONLY) as i32, // c:2177
+        },
+        ..Default::default()
+    };
     for gid in gids {
         let grp = unsafe { libc::getgrgid(gid) };
         if grp.is_null() {
             continue; // c:2088
         }
         let name = unsafe { std::ffi::CStr::from_ptr((*grp).gr_name) };
-        let node = Box::new(hashnode {
-            next: None,
-            nam: name.to_string_lossy().into_owned(), // c:2160
-            flags: 0,
-        });
-        f(&node, flags); // c:2167
+        pm.node.nam = name.to_string_lossy().into_owned(); // c:2181
+        pm.u_str = if want_val {
+            Some(format!("{}", gid)) // c:2187-2188 sprintf(buf, "%d", gaptr->gid)
+        } else {
+            None
+        };
+        f(&pm, flags); // c:2190
     }
 }
 
@@ -4474,7 +4655,7 @@ pub struct pardef {
 /// for the magic-assoc table dispatch.
 pub type HashGetFn = fn(*mut HashTable, &str) -> Option<Param>;
 /// `HashScanFn` type alias.
-pub type HashScanFn = fn(*mut HashTable, Option<crate::ported::zsh_h::ScanFunc>, i32);
+pub type HashScanFn = fn(*mut HashTable, Option<crate::ported::zsh_h::ParamScanFunc>, i32);
 
 /// Strongly-typed PARTAB entry. C's `paramdef` keeps these as opaque
 /// pointers; Rust's static-initialization rules make explicit fn
@@ -5180,9 +5361,9 @@ mod scan_callback_tests {
     static COLLECTED_COUNT: AtomicI32 = AtomicI32::new(0);
     static LAST_NAME_LEN: AtomicI32 = AtomicI32::new(0);
 
-    fn counting_func(node: &HashNode, _flags: i32) {
+    fn counting_func(node: &param, _flags: i32) {
         COLLECTED_COUNT.fetch_add(1, Ordering::SeqCst);
-        LAST_NAME_LEN.store(node.nam.len() as i32, Ordering::SeqCst);
+        LAST_NAME_LEN.store(node.node.nam.len() as i32, Ordering::SeqCst);
     }
 
     fn reset_counters() {

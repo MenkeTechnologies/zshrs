@@ -744,10 +744,34 @@ pub type RemoveNodeFunc = fn(table: &mut hashtable, name: &str) -> Option<HashNo
 pub type FreeNodeFunc = fn(node: HashNode);
 /// `CompareFunc` type alias.
 pub type CompareFunc = fn(a: &str, b: &str) -> i32;
-/// `ScanFunc` type alias.
+/// `ScanFunc` type alias. // c:1189
 pub type ScanFunc = fn(node: &HashNode, flags: i32);
-/// `ScanTabFunc` type alias.
-pub type ScanTabFunc = fn(table: &hashtable, func: ScanFunc, flags: i32);
+/// `ParamScanFunc` — the `ScanFunc` (c:1189) of a PARAM table's scan.
+///
+/// C has ONE `ScanFunc` typedef because it is polymorphic by cast: the
+/// `HashNode` a param-table scan hands its callback is really
+/// `&pm.node` of a fully populated `struct param`
+/// (`Src/Modules/parameter.c:483` sets `pm.node.nam`, `:489/:514` set
+/// `pm.u.str`, `:524` passes `&pm.node`), and the callback casts it
+/// straight back — `v.pm = (Param)hn` at `Src/params.c:671`, after
+/// which `getstrvalue(&v)` at `:694` reads the value the scan already
+/// put there. That is why `paramvalarr` (`Src/params.c:708-722`) runs
+/// exactly two passes, `scancountparams` then `scanparamvals`, and
+/// never calls a `getfn` a second time.
+///
+/// The `ScanFunc` slot inside `ScanTabFunc` is monomorphically that
+/// param flavour: `ht->scantab` is installed by exactly one function,
+/// `createspecialhash` (`Src/params.c:1241`), i.e. only on param
+/// tables. The plain-node flavour is what `disablenode` / `enablenode`
+/// / `printnode` (c:1217-1220) take, and those are never params.
+///
+/// Rust cannot express the `(Param)hn` cast, so the two flavours C
+/// distinguishes only by context get one typedef each. Passing the
+/// whole `&param` is what makes the value available to the callback,
+/// exactly as in C.
+pub type ParamScanFunc = fn(pm: &param, flags: i32);
+/// `ScanTabFunc` type alias. // c:1190
+pub type ScanTabFunc = fn(table: &hashtable, func: ParamScanFunc, flags: i32);
 /// `PrintTableStats` type alias.
 pub type PrintTableStats = fn(table: &hashtable);
 

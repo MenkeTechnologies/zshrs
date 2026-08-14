@@ -6789,6 +6789,67 @@ pub fn paramsubst(
             || prefiltered_value.is_some()
             || subexp_arr_parts.is_some()
             || subexp_array_temp.is_some();
+        // c:Src/subst.c:2801-2807 — C calls `fetchvalue()` exactly ONCE per
+        // expansion, and BOTH the value and `vunset` come out of that single
+        // `Value`:
+        //     if (!(v = fetchvalue(...)) ||
+        //         (v->pm && (v->pm->node.flags & PM_UNSET)) ||
+        //         (v->valflags & VALFLAG_EMPTY))
+        //         vunset = 1;
+        // For a magic assoc (`Src/Modules/parameter.c` PARTAB) that fetch is a
+        // `ht->getnode(ht, key)` = `getpm*()` dispatch, and several of those
+        // getters are SIDE-EFFECTING: `getpmjobstate`/`getpmjobdir`/
+        // `getpmjobtext` (Src/Modules/parameter.c:1416/1488/1308) call
+        // `getjob(name, NULL)`, whose unguarded
+        // `zwarnnam(prog, "job not found: %s", s)` (Src/jobs.c:2150-2151)
+        // prints on every miss. zshrs used to dispatch the getter twice — once
+        // for the value below, once again for `is_set` further down — which
+        // double-printed that diagnostic. Dispatch once, memoize here, and let
+        // both consumers read the same node, exactly like C's single `v`.
+        //
+        // Cache shape: (subscript key, node value, node-is-unset). `unset`
+        // mirrors C's `vunset` test above: no node at all, or a node carrying
+        // PM_UNSET (Src/Modules/parameter.c:1422-1423 sets `PM_UNSET|
+        // PM_SPECIAL` on a job miss). It is NOT "value is empty" — C's
+        // `getfunction_source` (Src/Modules/parameter.c:549-566) returns a node
+        // with NO PM_UNSET and a NULL string for an unknown function, so
+        // `${+functions_source[x]}` is 1 in zsh even though the value is empty.
+        let mut partab_key_probe: Option<(String, Option<String>, bool)> = None;
+        // Single-key PARTAB getnode dispatch shared by the value path and the
+        // `is_set`/`vunset` path. Returns None when `name` is not a magic
+        // assoc, is shadowed by a plain `local NAME` (c:Src/params.c:1090-1115
+        // createparam), or belongs to a module that is not loaded.
+        let partab_key_dispatch = |name: &str, key: &str| -> Option<(Option<String>, bool)> {
+            let e_ = crate::ported::modules::parameter::PARTAB
+                .iter()
+                .find(|e_| e_.name == name)
+                .filter(|_| !crate::vm_helper::magic_special_shadowed(name))?;
+            if let Some(m_) = e_.module {
+                if !crate::ported::module::MODULESTAB
+                    .lock()
+                    .map(|t| t.is_loaded(m_))
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+            }
+            // c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode —
+            // resolving the CONTAINER name clears its PM_AUTOLOAD regardless
+            // of subscript. Mirrors vm_helper::partab_get.
+            crate::vm_helper::mark_module_param_used(name);
+            // c:99-110 — a single-key read RESOLVES the autoload stub, so later
+            // enumerations report its real type (see assoc_get).
+            if e_.name == "parameters" {
+                crate::vm_helper::mark_module_param_used(key);
+            }
+            let node = (e_.getfn)(std::ptr::null_mut(), key);
+            // c:Src/subst.c:2804-2805 — `!v` or `PM_UNSET` ⇒ vunset.
+            let unset = match &node {
+                None => true,
+                Some(p_) => (p_.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0,
+            };
+            Some((node.and_then(|p_| p_.u_str), unset))
+        };
         let raw_value: String = if let Some(pv) = prefiltered_value.clone() {
             // Pre-resolved scalar value from `${(flags)NAME[KEY]}`
             // fast-path. Skip lookup entirely; the flag chain
@@ -6960,43 +7021,45 @@ pub fn paramsubst(
             // getpmoption's optlookup alias handling while the scan
             // emits only canonical names. The materialized-map arm
             // below would miss those, so plain keys go getfn-first;
-            // flagged subscripts ((k)/(I)/…) and @/* fall through to
+            // FLAG-form subscripts ((I)/(r)/…) and @/* fall through to
             // the map machinery which needs full enumeration.
+            // `(k)` alone pivots the result to the KEY: Src/params.c:1602-1612
+            // still runs `ht->getnode(ht, s)` for the subscript and only sets
+            // `v->scanflags = SCANPM_WANTINDEX`, then c:Src/subst.c:2923-2925
+            // takes `val = dupstring(v->pm->node.nam)` — the node's own name,
+            // i.e. the key. A MISSING key gets a synthetic `createparam(s,
+            // PM_SCALAR|PM_UNSET)` node (c:Src/params.c:1606-1610), so vunset
+            // is 1 and c:Src/subst.c:3614-3616 replaces the key with "".
+            // `(kv)` sets both flags, leaves scanflags 0, and yields the value.
+            let want_index = (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
             let partab_plain_key: Option<String> = if !sub.starts_with('(')
                     && sub != "@"
                     && sub != "*"
-                    // `(k)`/`(v)` PARAM flags pivot the result to the
-                    // key / enumerated value — `${(k)parameters[PATH]}`
-                    // returns "PATH", not the getfn value. Those need
-                    // the map machinery below; only a flagless plain
-                    // key takes the getnode fast path.
-                    && (hkeys & SCANPM_WANTKEYS) == 0
+                    // `(v)` (and `(kv)`) want the enumerated VALUE shape the
+                    // map machinery below produces; only a flagless key or a
+                    // `(k)`-only key takes the getnode fast path.
                     && (hvals & SCANPM_WANTVALS) == 0
             {
-                crate::ported::modules::parameter::PARTAB
-                    .iter()
-                    .find(|e_| e_.name == var_name.as_str())
-                    // c:Src/params.c:1090-1115 createparam — a `local
-                    // NAME` replaces the special's paramtab node, so the
-                    // getnode fast path must not fire while the plain
-                    // node is the visible binding.
-                    .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))
-                    .filter(|e_| match e_.module {
-                        Some(m_) => crate::ported::module::MODULESTAB
-                            .lock()
-                            .map(|t| t.is_loaded(m_))
-                            .unwrap_or(false),
-                        None => true,
-                    })
-                    .map(|e_| {
-                        // c:Src/params.c:589-594 getparamnode → c:563-585
-                        // loadparamnode — resolving the CONTAINER name clears its
-                        // PM_AUTOLOAD regardless of subscript.
-                        crate::vm_helper::mark_module_param_used(&var_name);
-                        (e_.getfn)(std::ptr::null_mut(), sub)
-                            .and_then(|p_| p_.u_str)
-                            .unwrap_or_default()
-                    })
+                // c:Src/params.c:1090-1115 createparam — a `local NAME`
+                // replaces the special's paramtab node, so the getnode fast
+                // path must not fire while the plain node is the visible
+                // binding; `partab_key_dispatch` applies that filter (and the
+                // module gate) before touching the getfn. The result is
+                // memoized so the `is_set` consumer below reuses this ONE
+                // dispatch instead of re-running a side-effecting getter.
+                partab_key_dispatch(&var_name, sub).map(|(val_, unset_)| {
+                    partab_key_probe = Some((sub.to_string(), val_.clone(), unset_));
+                    if want_index {
+                        // c:Src/subst.c:2924 / c:3615 — key when set, else "".
+                        if unset_ {
+                            String::new()
+                        } else {
+                            sub.to_string()
+                        }
+                    } else {
+                        val_.unwrap_or_default()
+                    }
+                })
             } else {
                 None
             };
@@ -10094,38 +10157,26 @@ pub fn paramsubst(
                 // dispatch through PARTAB. Without this fallback,
                 // `${builtins[echo]:-X}` fired the `:-X` default because
                 // is_set was false even though the value is set.
-                || (|| -> Option<String> {
-                    // c:Src/Modules/parameter.c — special-hash getnode
-                    // dispatch (`ht->getnode(ht, key)` = getpm*) for one
-                    // key; module-gated rows resolve only after their
-                    // zmodload (former bridge partab_get, inlined —
-                    // single-key reads must NOT materialize the table:
-                    // ${commands[git]} would enumerate $PATH).
-                    let e_ = crate::ported::modules::parameter::PARTAB
-                        .iter()
-                        .find(|e_| e_.name == var_name.as_str())
-                        // c:Src/params.c:1090-1115 createparam — a `local NAME`
-                        // replaces the special's paramtab node with a plain one, so
-                        // the magic getfn must not answer for this read.
-                        .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
-                    if let Some(m_) = e_.module {
-                        if !crate::ported::module::MODULESTAB
-                            .lock()
-                            .map(|t| t.is_loaded(m_))
-                            .unwrap_or(false)
-                        {
-                            return None;
-                        }
-                    }
-                    // c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode —
-                    // resolving the CONTAINER name clears its PM_AUTOLOAD regardless
-                    // of subscript. Mirrors vm_helper::partab_get.
-                    crate::vm_helper::mark_module_param_used(&var_name);
-                    // c:99-110 — a single-key read RESOLVES the autoload stub, so later
-                    // enumerations report its real type (see assoc_get).
-                    if e_.name == "parameters" { crate::vm_helper::mark_module_param_used(sub); }
-                    (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
-                })().is_some_and(|v| !v.is_empty())
+                // c:Src/Modules/parameter.c — special-hash getnode dispatch
+                // (`ht->getnode(ht, key)` = getpm*) for one key; module-gated
+                // rows resolve only after their zmodload. Single-key reads must
+                // NOT materialize the table (${commands[git]} would enumerate
+                // $PATH). The VALUE path above already dispatched this getter
+                // for a plain key and cached the node, so reuse that instead of
+                // firing it a second time — C fetches once (c:Src/subst.c:2801)
+                // and re-reading a side-effecting getter double-printed
+                // `job not found` (Src/jobs.c:2150-2151) for
+                // ${jobstates[x]}/${jobdirs[x]}/${jobtexts[x]}.
+                || match partab_key_probe {
+                    // c:Src/subst.c:2804-2805 — set ⇔ a node came back WITHOUT
+                    // PM_UNSET. Not "non-empty value": `getfunction_source`
+                    // (c:Src/Modules/parameter.c:543-566) hands back an
+                    // unflagged node with a NULL string for an unknown
+                    // function, so `${+functions_source[nosuch]}` is 1.
+                    Some((ref k_, _, unset_)) if k_ == sub => !unset_,
+                    _ => partab_key_dispatch(&var_name, sub)
+                        .is_some_and(|(_, unset_)| !unset_),
+                }
         } else {
             // c:Src/params.c::getindex — positional parameters ($1,
             // $2, …) live in `arrays["@"]`, not in the named-vars
@@ -22438,34 +22489,41 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
     // captureless callback collects into a thread-local, exactly the
     // shape C's scanpm* helpers use with their static linked lists.
     thread_local! {
-        static PARTAB_SCAN_KEYS: std::cell::RefCell<Vec<String>> =
+        static PARTAB_SCAN_PAIRS: std::cell::RefCell<Vec<(String, String)>> =
             const { std::cell::RefCell::new(Vec::new()) };
     }
-    fn partab_scan_cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-        PARTAB_SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
+    // c:Src/params.c:663-704 scanparamvals — the callback takes the value
+    // straight off the `struct param` the scan populated (`v.pm = (Param)hn`
+    // at c:671, `getstrvalue(&v)` at c:694). It NEVER re-enters the getfn.
+    fn partab_scan_cb(pm: &crate::ported::zsh_h::param, _flags: i32) {
+        PARTAB_SCAN_PAIRS.with(|k| {
+            k.borrow_mut().push((
+                pm.node.nam.clone(),                  // c:685
+                pm.u_str.clone().unwrap_or_default(), // c:694
+            ))
+        });
     }
-    PARTAB_SCAN_KEYS.with(|k| k.borrow_mut().clear());
-    // c:Src/params.c:3138 `paramvalarr(…, SCANPM_WANTKEYS)` — this scan is
-    // used for KEY ENUMERATION only (the callback ABI carries the node, not
-    // the `struct param`, so the value side is read back through the row's
-    // getfn below). Saying so lets a scanfn skip materializing values it
-    // cannot hand over: `scanpmhistory` (c:1203) otherwise dups the whole
-    // history text — 574k `String`s per read on this host's ring.
+    PARTAB_SCAN_PAIRS.with(|k| k.borrow_mut().clear());
+    // c:Src/params.c:3117-3124 `paramvalarr(…, SCANPM_WANTKEYS|SCANPM_WANTVALS)`
+    // — ask for BOTH sides in the one scan. Each `scanpm*` gates its value
+    // construction on exactly these bits (e.g. c:Src/Modules/parameter.c:275-277
+    // for `commands`, :484-486 for `functions`), so a keys-only caller still
+    // pays nothing; see `assoc_keys` below, which passes SCANPM_WANTKEYS alone.
     (entry.scanfn)(
         std::ptr::null_mut(),
         Some(partab_scan_cb),
-        crate::ported::zsh_h::SCANPM_WANTKEYS as i32,
+        (crate::ported::zsh_h::SCANPM_WANTKEYS | crate::ported::zsh_h::SCANPM_WANTVALS) as i32,
     );
     // c:Src/params.c:712-719 paramvalarr — C reads the scan's output buffer in
     // place (`paramvals` is the collected array itself). Move the collected
-    // names out of the thread-local instead of copying them: a `.clone()` here
+    // pairs out of the thread-local instead of copying them: a `.clone()` here
     // re-allocated every name a second time (46,761 `String`s for
     // `$functions`), and the map was built with no capacity hint so it also
     // re-hashed the whole table through several growth rounds
     // (c:715 sizes the result from the counting pass up front).
-    let keys = PARTAB_SCAN_KEYS.with(|k| std::mem::take(&mut *k.borrow_mut()));
-    let mut out = indexmap::IndexMap::with_capacity(keys.len()); // c:715
-    for k in keys {
+    let pairs = PARTAB_SCAN_PAIRS.with(|k| std::mem::take(&mut *k.borrow_mut()));
+    let mut out = indexmap::IndexMap::with_capacity(pairs.len()); // c:715
+    for (k, scanned) in pairs {
         // c:Src/Modules/parameter.c:49-50 + :126-147 — ENUMERATING
         // `$parameters` runs `scanpmparameters`, which types each node with
         // `paramtypestr` and so reports a PM_AUTOLOAD stub as "undefined";
@@ -22491,9 +22549,7 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
         {
             "undefined".to_string() // c:50
         } else {
-            (entry.getfn)(std::ptr::null_mut(), &k)
-                .and_then(|p| p.u_str)
-                .unwrap_or_default()
+            scanned // c:694 — the value the scan already handed over
         };
         out.insert(k, v);
     }
@@ -22650,8 +22706,8 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
         static ASSOC_KEYS_SCAN: std::cell::RefCell<Vec<String>> =
             const { std::cell::RefCell::new(Vec::new()) };
     }
-    fn assoc_keys_scan_cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-        ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().push(node.nam.clone()));
+    fn assoc_keys_scan_cb(pm: &crate::ported::zsh_h::param, _flags: i32) {
+        ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().push(pm.node.nam.clone()));
     }
     ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().clear());
     // c:Src/params.c:3138 — `paramvalarr(pm->gsu.h->getfn(pm), SCANPM_WANTKEYS)`.

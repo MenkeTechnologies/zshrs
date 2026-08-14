@@ -1322,7 +1322,7 @@ pub fn getpmsysparams(
 /// Param per entry.
 pub fn scanpmsysparams(
     _ht: *mut crate::ported::zsh_h::HashTable,
-    func: Option<crate::ported::zsh_h::ScanFunc>,
+    func: Option<crate::ported::zsh_h::ParamScanFunc>,
     flags: i32,
 ) {
     // c:885
@@ -1358,8 +1358,7 @@ pub fn scanpmsysparams(
                 old: None,
                 level: 0,
             };
-            let node_box = Box::new(pm.node.clone());
-            f(&node_box, flags); // c:891 / c:893 func call
+            f(&pm, flags); // c:891 / c:893 func call
         }
     }
 }
@@ -1850,8 +1849,8 @@ mod tests {
         use std::sync::Mutex;
         static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
         KEYS.lock().unwrap().clear();
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            KEYS.lock().unwrap().push(node.nam.clone());
+        fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
+            KEYS.lock().unwrap().push(node.node.nam.clone());
         }
         scanpmsysparams(std::ptr::null_mut(), Some(cb), 0);
         let collected = KEYS.lock().unwrap().clone();

@@ -5908,8 +5908,8 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
                         static KEYS_: std::cell::RefCell<Vec<String>> =
                             const { std::cell::RefCell::new(Vec::new()) };
                     }
-                    fn cb_(node: &crate::ported::zsh_h::HashNode, _f: i32) {
-                        KEYS_.with(|k| k.borrow_mut().push(node.nam.clone()));
+                    fn cb_(pm: &crate::ported::zsh_h::param, _f: i32) {
+                        KEYS_.with(|k| k.borrow_mut().push(pm.node.nam.clone()));
                     }
                     // c:Src/params.c:589-594 getparamnode → c:563-585
                     // loadparamnode — resolving the NAME runs

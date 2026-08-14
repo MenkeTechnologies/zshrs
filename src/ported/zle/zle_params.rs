@@ -33,7 +33,7 @@ use crate::ported::zle::{
     zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 use crate::ported::zsh_h::{
-    hashnode, param, ScanFunc, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY,
+    hashnode, param, ParamScanFunc, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY,
     PM_REMOVABLE, PM_SCALAR, PM_SPECIAL, PM_UNSET, ZLCON_LINE_CONT, ZLCON_LINE_START, ZLCON_SELECT,
     ZLCON_VARED,
 };
@@ -1140,7 +1140,7 @@ pub fn unset_register(name: char, _exp: i32) {
 /// a no-op port; trait dispatch via the typed `vibuf()` accessor
 /// covers the read/write side. Rust idiom replacement.
 /// WARNING: param names don't match C — Rust=(_t, _flags) vs C=(ht, func, flags)
-pub fn scan_registers(_ht: i32, func: Option<ScanFunc>, flags: i32) {
+pub fn scan_registers(_ht: i32, func: Option<ParamScanFunc>, flags: i32) {
     // c:784
     let func = match func {
         Some(f) => f,
@@ -1177,7 +1177,7 @@ pub fn scan_registers(_ht: i32, func: Option<ScanFunc>, flags: i32) {
             old: None,
             level: 0,
         };
-        func(&Box::new(pm.node), flags); // c:802
+        func(&pm, flags); // c:802
         ch = if ch == b'z' { b'0' } else { ch + 1 }; // c:804-805 if (ch++ == 'z') ch = '0'
     }
 }

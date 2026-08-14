@@ -351,7 +351,7 @@ pub fn gettermcap(
 /// code arrays and invokes the callback per known cap.
 pub fn scantermcap(
     _ht: *mut crate::ported::zsh_h::HashTable,
-    func: Option<crate::ported::zsh_h::ScanFunc>,
+    func: Option<crate::ported::zsh_h::ParamScanFunc>,
     flags: i32,
 ) {
     // c:200
@@ -374,7 +374,7 @@ pub fn scantermcap(
             if (pm.node.flags & PM_UNSET as i32) != 0 {
                 continue;
             }
-            let node = param {
+            let entry = param {
                 node: hashnode {
                     next: None,
                     nam: name.to_string(),
@@ -399,8 +399,7 @@ pub fn scantermcap(
                 old: None,
                 level: 0,
             };
-            let node_box = Box::new(node.node.clone());
-            f(&node_box, flags);
+            f(&entry, flags);
         }
     }
 }
@@ -701,8 +700,8 @@ mod tests {
         use std::sync::Mutex;
         static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
         SEEN.lock().unwrap().clear();
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            SEEN.lock().unwrap().push(node.nam.clone());
+        fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
+            SEEN.lock().unwrap().push(node.node.nam.clone());
         }
         scantermcap(std::ptr::null_mut(), Some(cb), 0);
         let seen = SEEN.lock().unwrap().clone();
@@ -773,8 +772,8 @@ mod tests {
         use std::sync::Mutex;
         static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
         KEYS.lock().unwrap().clear();
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            KEYS.lock().unwrap().push(node.nam.clone());
+        fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
+            KEYS.lock().unwrap().push(node.node.nam.clone());
         }
         scantermcap(std::ptr::null_mut(), Some(cb), 0);
         let collected = KEYS.lock().unwrap().clone();
@@ -797,8 +796,8 @@ mod tests {
         use std::sync::Mutex;
         static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
         KEYS.lock().unwrap().clear();
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            KEYS.lock().unwrap().push(node.nam.clone());
+        fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
+            KEYS.lock().unwrap().push(node.node.nam.clone());
         }
         scantermcap(std::ptr::null_mut(), Some(cb), 0);
         for k in KEYS.lock().unwrap().iter() {
