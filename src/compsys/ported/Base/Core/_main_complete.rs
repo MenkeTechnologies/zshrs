@@ -1221,8 +1221,31 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let mut lastcomp: Vec<String> = Vec::new();
     {
         // sh:407 — `${(@kv)compstate}`: keys and values interleaved.
-        let keys = gethkparam("compstate").unwrap_or_default();
-        let vals = gethparam("compstate").unwrap_or_default();
+        //
+        // C reaches that through ONE `paramvalarr(pm->gsu.h->getfn(pm),
+        // SCANPM_WANTKEYS|SCANPM_WANTVALS)` (`Src/params.c:689-700`): the hash
+        // getfn runs once and the single scan emits each node's key and then
+        // its value, so every gsu-backed element getter fires exactly once.
+        // (C's `gethkparam`, c:params.c:3131-3140, is the WANTKEYS-only form,
+        // and `scanparamvals` c:params.c:4064-4079 returns right after the key
+        // without ever calling the value getter.)
+        //
+        // Asking zshrs for keys and values separately runs the getfn phase
+        // twice instead, and `$compstate`'s gsu-backed keys are not cheap
+        // reads: `list_lines` is a full `calclist()` over every match
+        // (`complete.c:1408-1420` → `compresult.c:1446-1459`) and `nmatches`
+        // flushes with `permmatches()` (`complete.c:1401-1405`). On a 47k-match
+        // listing that second scan was ~20% of the whole pre-paint phase, all
+        // of it recomputing values this scan already has.
+        //
+        // `gethparam` leaves the freshly computed table in the hashed storage,
+        // so the keys come out of that same single scan.
+        let vals = gethparam("compstate").unwrap_or_default(); // c:params.c:3117-3125
+        let keys: Vec<String> = crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .ok()
+            .and_then(|t| t.get("compstate").map(|h| h.keys().cloned().collect()))
+            .unwrap_or_default();
         for (k, v) in keys.iter().zip(vals.iter()) {
             lastcomp.push(k.clone());
             lastcomp.push(v.clone());

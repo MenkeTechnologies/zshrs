@@ -116,10 +116,19 @@ pub fn _have_glob_qual(args: &[String]) -> i32 {
     let complete = args.get(1).map(|x| x == "complete").unwrap_or(false);
 
     // sh:18 — inside a quote, never treat as glob qualifiers.
-    if let Some(q) = assoc_get("compstate", "quote") {
-        if !q.is_empty() {
-            return 1;
-        }
+    //
+    // `$compstate[quote]` is a SUBSCRIPT, so C reaches exactly one element:
+    // `getvalue` → `fetchvalue` → the assoc's `getnode` → that node's own
+    // getfn (`Src/params.c:966-1046`). Every other element's getfn stays
+    // untouched. Routing it through `gethkparam`/`gethparam` instead reads the
+    // whole hash, which for `$compstate` means running the gsu getter of every
+    // key — `list_lines` alone is a full `calclist()` over every match
+    // (`complete.c:1408-1420` → `compresult.c:1446-1459`). `_path_files` calls
+    // this predicate several times per completion, so on a 47k-match listing
+    // those whole-hash reads were about a third of the entire pre-paint phase.
+    let quote = crate::ported::zle::compcore::get_compstate_str("quote").unwrap_or_default();
+    if !quote.is_empty() {
+        return 1;
     }
     let bareglob = assoc_get("_comp_caller_options", "bareglobqual").as_deref() == Some("on");
     let extglob = assoc_get("_comp_caller_options", "extendedglob").as_deref() == Some("on");

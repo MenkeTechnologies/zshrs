@@ -7106,7 +7106,16 @@ pub fn mb_niceformat(
             decoded_c = None;
             cnt = 1;
         } else {
-            let remaining = &ums[ptr..ptr + umlen];
+            // c:5393 — `mbrtowc` decodes at most ONE character and looks at no
+            // more than the bytes that character occupies; it never validates
+            // the rest of the buffer. Handing the whole tail to `from_utf8`
+            // validated every remaining byte on every iteration, making the
+            // walk quadratic in the string length. A UTF-8 scalar is at most
+            // four bytes, so a four-byte window sees exactly what `mbrtowc`
+            // sees: a sequence that runs past it cannot be valid UTF-8, and a
+            // sequence truncated by end-of-input is still reported incomplete
+            // because the window is then shorter than four bytes.
+            let remaining = &ums[ptr..ptr + umlen.min(4)];
             match std::str::from_utf8(remaining) {
                 Ok(s_slice) => {
                     // Valid UTF-8 throughout remaining; consume one char.
