@@ -1,0 +1,165 @@
+//! Rust-only utility (NOT a port — lives outside `src/ported/` by design).
+//!
+//! C resolves the quoting inside a `[...]` subscript by RE-LEXING the
+//! subscript text: `getindex` (Src/params.c:2022) calls
+//! `parse_subscript(s, scanflags & SCANPM_DQUOTED, ']')` at c:2029, which
+//! untokenizes the text and pushes it back through the lexer
+//! (`dquote_parse`, Src/lex.c:1751-1769). zshrs has no equivalent step on
+//! that path — its `lex::parse_subscript` port throws away the tokenized
+//! text C copies back at c:Src/lex.c:1772, and re-entering the real lexer
+//! from inside paramsubst (and from the compiler, which resolves literal
+//! assignment keys at compile time) would mean re-entrant lexer state on
+//! the hottest expansion path.
+//!
+//! So the three C stages that decide what a backslash inside a subscript
+//! MEANS — `dquote_parse`'s backslash arm, `getarg`'s marker disposition,
+//! and the `remnulargs` / `parsestr` + `singsub` round that follows — are
+//! expressed here as the one string transform they add up to. Each rule
+//! cites the C line it comes from; see [`subscript_unescape`].
+//!
+//! Both callers are the "what key is this?" sites:
+//!   * `ported::subst::paramsubst`  — `${A[\[k\]]}` (read)
+//!   * `extensions::compile_zsh::compile_assign` — `A[\[k\]]=v` (store)
+
+use crate::ported::zsh_h::{Qstring, Qtick, Stringg, Tick};
+
+/// Backslash disposition inside a `[...]` subscript — the net effect of
+/// the re-lex C runs on a subscript's SOURCE text.
+///
+/// `getindex` NEVER reads the subscript the way the outer lexer left it.
+/// It calls `parse_subscript(s, scanflags & SCANPM_DQUOTED, ']')`
+/// (c:Src/params.c:2029), and `parse_subscript` untokenizes the text and
+/// re-lexes it through `dquote_parse(']', sub)`
+/// (c:Src/lex.c:1751-1769 — `untokenize(t = dupstring_wlen(s, l));
+/// inpush(t, 0, NULL); … err = dquote_parse(endchar, sub);`). That
+/// re-lex is where a backslash inside a subscript acquires its meaning:
+///
+/// ```text
+/// c:Src/lex.c:1497-1512
+///     if (c != '\n') {
+///         if (c == '$' || c == '\\' || (c == '}' && !intick && bct) ||
+///             c == endchar || c == '`' ||
+///             (endchar == ']' && (c == '[' || c == ']' ||
+///                                 c == '(' || c == ')' ||
+///                                 c == '{' || c == '}' ||
+///                                 (c == '"' && sub))))
+///             add(Bnull);
+///         else {
+///             /* lexstop is implicitly handled here */
+///             add('\\');
+///             goto cont;
+///         }
+///     } else if (sub || unset(CSHJUNKIEQUOTES) || endchar != '"')
+///         continue;
+/// ```
+///
+/// With `endchar == ']'` a backslash before one of ``$ \ ` ] [ ( ) { }``
+/// (plus `"` when the subscript is inside double quotes, `sub`) becomes
+/// the `Bnull` marker + the literal char; a backslash before ANY other
+/// char stays a literal backslash. That asymmetry is exactly why
+/// `A[\[k\]]` keys on `[k]` while `A[a\ b]` / `A[a\*b]` keep theirs.
+/// Backslash-newline is dropped outright (c:1513).
+///
+/// `getarg` then disposes of the markers (c:Src/params.c:1538-1551):
+///
+/// ```text
+///     if (inull(c)) {
+///         c = t[1];
+///         if (c == '[' || c == ']' || c == '(' || c == ')' ||
+///             c == '{' || c == '}') {
+///             if (ishash && i) *t = ztokens[*t - Pound];
+///             needtok = 1; ++t;
+///         } else if (c != '"')
+///             *t = ztokens[*t - Pound];
+///         continue;
+///     }
+/// ```
+///
+/// — a marker before a bracket/paren/brace (or before `"`) is KEPT and
+/// later DELETED by `remnulargs` (c:1583-1584, hash key path), so the
+/// escaped bracket reaches the hash table bare. Every other marker is
+/// untokenized back to a literal `\` (`ztokens[Bnull - Pound]` is `\`,
+/// c:Src/lex.c:38), which the `parsestr` + `singsub` round at
+/// c:1585-1593 re-marks and drops one stage later — so ``\$``, `\\` and
+/// ``\` `` also lose their backslash, just further down the pipeline.
+///
+/// zshrs has no equivalent re-lex step on this path (its
+/// `lex::parse_subscript` discards the tokenized text C copies back at
+/// c:Src/lex.c:1772), so a source-literal backslash reached the assoc
+/// key verbatim: `A[\[k\]]=v` stored the 5-char key `\[k\]` where zsh
+/// stores `[k]`. This function is that missing step, expressed as the
+/// composite string transform the three C stages add up to.
+///
+/// * `sub` — C's `SCANPM_DQUOTED`: the subscript sits inside `"…"`.
+/// * `resolve_dollar` — the caller has NO `parsestr`/`singsub` round
+///   after this call (compile-time literal key), so apply that stage's
+///   share of the work here as well.
+///
+/// Returns the rewritten text and whether an UNESCAPED `$` / `` ` ``
+/// (i.e. a live expansion, which C resolves in `singsub` at c:1592)
+/// is still present.
+pub fn subscript_unescape(s: &str, sub: bool, resolve_dollar: bool) -> (String, bool) {
+    // Fast path: no backslash and no expansion char — C's re-lex is an
+    // identity transform on such text.
+    if !s.contains('\\')
+        && !s.contains('$')
+        && !s.contains('`')
+        && !s.contains(Stringg)
+        && !s.contains(Qstring)
+        && !s.contains(Tick)
+        && !s.contains(Qtick)
+    {
+        return (s.to_string(), false);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut live = false;
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.peek().copied() {
+                // c:Src/lex.c:1497 — `if (c != '\n')`; the else arm at
+                // c:1513 `continue`s for endchar != '"', dropping both.
+                Some('\n') => {
+                    it.next();
+                }
+                // c:Src/lex.c:1503-1506 (the `endchar == ']'` set) +
+                // c:Src/params.c:1541-1548 (marker kept) +
+                // c:Src/params.c:1584 remnulargs (marker deleted).
+                Some(n)
+                    if matches!(n, '[' | ']' | '(' | ')' | '{' | '}') || (sub && n == '"') =>
+                {
+                    out.push(n);
+                    it.next();
+                }
+                // c:Src/lex.c:1501 (`$`, `\`, backtick) +
+                // c:Src/params.c:1549-1550 (marker → literal `\`) +
+                // c:Src/params.c:1585-1592 parsestr/singsub (re-marked,
+                // then dropped by prefork's remnulargs at c:169).
+                Some(n) if resolve_dollar && matches!(n, '$' | '\\' | '`') => {
+                    out.push(n);
+                    it.next();
+                }
+                // c:Src/lex.c:1508-1511 — `add('\\'); goto cont;`: the
+                // backslash is ordinary text and the escaped char is
+                // copied verbatim.
+                Some(n) => {
+                    out.push('\\');
+                    out.push(n);
+                    it.next();
+                }
+                // Trailing lone backslash: C hits EOF inside
+                // dquote_parse and errors out (c:1518 lexstop). Keep the
+                // char so the caller's own error path decides.
+                None => out.push('\\'),
+            }
+            continue;
+        }
+        // c:Src/params.c:1592 singsub — an UNESCAPED `$`/backtick (in
+        // either ASCII or lexer-token spelling) is a live expansion.
+        if c == '$' || c == '`' || c == Stringg || c == Qstring || c == Tick || c == Qtick {
+            live = true;
+        }
+        out.push(c);
+    }
+    (out, live)
+}

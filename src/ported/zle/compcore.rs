@@ -6803,6 +6803,38 @@ pub fn set_compstate_str(key: &str, val: &str) {
             .or_default()
             .insert(key.to_string(), val.to_string());
     }
+
+    // The `VAL(...)` rows in `compkparams` (`Src/Zle/complete.c:1292`,
+    // `:1297`, `:1300`) name a real variable rather than a getter, so in
+    // C an assignment to `$compstate[KEY]` updates that variable and a
+    // later read sees it. [`get_compstate_str`] serves those keys from
+    // the backing global, so the write has to land there too or the
+    // round-trip is lost. The getter-only rows are deliberately absent:
+    // C recomputes them on every read and a stored value would be stale.
+    match key {
+        // c:1292 `VAL(complistmax)`.
+        "list_max" => {
+            if let Ok(n) = val.parse::<i64>() {
+                crate::ported::zle::complete::COMPLISTMAX.store(n, Ordering::Relaxed);
+            }
+        }
+        // c:1297 `VAL(compvared)`.
+        "vared" => {
+            if let Ok(mut s) = crate::ported::zle::complete::COMPVARED
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+            {
+                *s = val.to_string();
+            }
+        }
+        // c:1300 `VAL(compignored)`.
+        "ignored" => {
+            if let Ok(n) = val.parse::<i64>() {
+                crate::ported::zle::complete::COMPIGNORED.store(n, Ordering::Relaxed);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The `$compstate` keys whose values C does not store: their

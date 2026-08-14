@@ -3652,6 +3652,43 @@ impl ZshCompiler {
                 })
             });
             let key: &str = key_norm.as_deref().unwrap_or(key);
+            // xtrace prints the assignment name as C left it after
+            // `untokenize(name)` (c:Src/exec.c:2582-2589) — i.e. the SOURCE
+            // spelling with its backslashes (`A[\[k\]]=v`, verified against
+            // `zsh -fxc`). Capture it before the subscript-escape pass below
+            // rewrites the key for storage.
+            let trace_key = key.to_string();
+            // c:Src/params.c:2029 getindex — the subscript is re-lexed by
+            // `parse_subscript(s, scanflags & SCANPM_DQUOTED, ']')` before any
+            // of it is read as a key, which is where a backslash inside `[…]`
+            // gets its meaning (c:Src/lex.c:1497-1512), and the markers it
+            // leaves are disposed of by getarg + remnulargs + parsestr/singsub
+            // (c:Src/params.c:1538-1551, 1583-1592). `untokenize_preserve_quotes`
+            // above already folded the lexer's `Bnull` markers to literal
+            // backslashes (`ztokens[Bnull - Pound]`, c:Src/lex.c:38), so run the
+            // composite over that text: `A[\[k\]]=v` stores the key `[k]`, not
+            // the 5-char `\[k\]`. `resolve_dollar` is true because this path has
+            // no parsestr/singsub round — a key with NO live expansion is stored
+            // as the literal below, so its `\$` / `\\` / `` \` `` must already be
+            // resolved here.
+            //
+            // c:Src/params.c:1592 singsub — a key that DOES still contain a live
+            // expansion keeps its source text and goes through the runtime word
+            // compiler (below), exactly as before; only the escaped-`$` case
+            // moves off that path, which is the point (`A[a\$b]=v` is the
+            // literal key `a$b` in zsh, not `a` + the expansion of `$b`).
+            let (resolved_key, key_live_expansion) =
+                crate::subscript_escape::subscript_unescape(key, false, true);
+            // A key that still holds a live expansion keeps its SOURCE text:
+            // the runtime word compiler owns its quoting (and would glob a
+            // now-bare `[…]`), so only the fully-resolvable literal key — the
+            // one stored verbatim as a constant below — is rewritten here.
+            let key_unescaped = if key_live_expansion {
+                key.to_string()
+            } else {
+                resolved_key
+            };
+            let key: &str = &key_unescaped;
             if let ZshAssignValue::Scalar(s) = &assign.value {
                 // c:Src/params.c:2895 setarrvalue — range subscript
                 // `a[lo,hi]=val` SPLICES the value into the array,
@@ -3738,8 +3775,12 @@ impl ZshCompiler {
                     && key.ends_with('\'')
                     && key.len() >= 3
                     && !key[2..key.len() - 1].contains('\'');
-                let key_has_expansion =
-                    !key_is_ansi_c_literal && (key.contains('$') || key.contains('`'));
+                // c:Src/params.c:1592 singsub — only an UNESCAPED `$`/backtick
+                // is a live expansion; `key_live_expansion` was computed on the
+                // pre-unescape text so an escaped `\$` (which the pass above
+                // resolved to a literal `$`) does NOT route through the word
+                // compiler and get re-expanded.
+                let key_has_expansion = !key_is_ansi_c_literal && key_live_expansion;
                 if key_has_expansion {
                     self.compile_word_str(key);
                 } else {
@@ -3787,15 +3828,11 @@ impl ZshCompiler {
                 // literal source text — same gap C zsh has (it
                 // pre-resolves at parse time too, per the asg.name
                 // store at Src/lex.c:2169).
-                let trace_name = if key_has_expansion {
-                    // Runtime-expand keys aren't pre-resolvable; fall
-                    // back to the source-literal `base[key]` form
-                    // which is what zsh emits when the key contains
-                    // expansions but the lexer didn't decompose them.
-                    format!("{}[{}]", base, key)
-                } else {
-                    format!("{}[{}]", base, key)
-                };
+                // c:Src/exec.c:2582-2589 — xtrace prints `name` straight after
+                // `untokenize(name)`, i.e. the SOURCE spelling including the
+                // backslashes of an escaped subscript (`A[\[k\]]=v`), not the
+                // resolved storage key. Use the pre-unescape text.
+                let trace_name = format!("{}[{}]", base, trace_key);
                 let tname_const = self.builder.add_constant(Value::str(trace_name.as_str()));
                 // Stack now: [name, key, value]
                 self.builder.emit(Op::Dup, 0);
