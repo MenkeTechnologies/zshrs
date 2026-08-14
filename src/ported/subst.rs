@@ -3428,8 +3428,8 @@ pub fn paramsubst(
     //     Src/glob.c:3605-3614 (a stray `<` is not a glob opener).
     let pretokenize_src_pat = |s: &str| -> String {
         use crate::ported::zsh_h::{
-            Bar, Bnull, Bnullkeep, Hat, Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace, Outbrack,
-            Outpar, Pound, Quest, Star, Tilde,
+            Bang, Bar, Bnull, Bnullkeep, Dash, Hat, Inang, Inbrace, Inbrack, Inpar, Outang,
+            Outbrace, Outbrack, Outpar, Pound, Quest, Star, Tilde,
         };
         let chars: Vec<char> = s.chars().collect();
         let mut out = String::with_capacity(s.len());
@@ -3608,6 +3608,39 @@ pub fn paramsubst(
                         out.push('|');
                     }
                 }
+                // c:Src/lex.c:1401-1409 LX2_BANG —
+                //     if (seen_brct && brct)
+                //         c = Bang;
+                //     else
+                //         c = '!';
+                // "Same logic as Dash, for ! to perform negation in range."
+                // `!` becomes the Bang TOKEN only INSIDE a `[…]` bracket
+                // (brct is the lexer's bracket depth); everywhere else it
+                // stays a raw byte. patcomppiece's class-negation test reads
+                // the TOKEN only (`if (*patparse == Hat || *patparse == Bang)`,
+                // c:Src/pattern.c:1447), so a raw `!` — one that came from a
+                // SPLICE or from a source `\!` (which the lexer turns into
+                // `Bnull !`, c:1268) — is an ordinary class member.
+                // Without this arm both spellings arrived here as the same
+                // raw `!` and the downstream `tokenize()` at subst.rs:13579
+                // promoted BOTH to Bang: `${v#[\!\#]}` compiled as the
+                // NEGATED class `[!#]` and ate one character of every value
+                // (zinit.zsh:1767 `${(s: :)${${v#[\!\#]}#[\!\#]}}` therefore
+                // defined `-browse-symbol` instead of `zi-browse-symbol`).
+                '!' if in_class => out.push(Bang),
+                // c:Src/lex.c:1390-1400 LX2_DASH — `c = Dash;` unconditional
+                // ("- shouldn't be treated as a special character unless we're
+                // in a pattern … So we'll make it special and turn it back any
+                // time we don't need it special"). patcomppiece consults the
+                // token only inside a class (`if (*patparse == Dash && …)`,
+                // c:Src/pattern.c:1483, the range operator) and untokenizes it
+                // back to `-` everywhere else, so restricting the token to the
+                // in-class case is behaviourally identical to C's unconditional
+                // tokenization while leaving every non-class `-` byte-for-byte
+                // untouched. Same splice/escape distinction as `!` above:
+                // `${v#[a\-b]}` is the three literals a/-/b in zsh, and a
+                // spliced `a-z` is literal too.
+                '-' if in_class => out.push(Dash),
                 other => out.push(other),
             }
             i += 1;
@@ -3633,12 +3666,20 @@ pub fn paramsubst(
     //   `\X` / Bnull/Bnullkeep pairs           -> verbatim.
     let literalize_spliced_metas = |s: &str| -> String {
         use crate::ported::zsh_h::{
-            Bar, Bnull, Bnullkeep, Hat, Inang, Inbrack, Inpar, Outang, Outbrack, Outpar, Pound,
-            Quest, Star, Tilde,
+            Bang, Bar, Bnull, Bnullkeep, Dash, Hat, Inang, Inbrack, Inpar, Outang, Outbrack,
+            Outpar, Pound, Quest, Star, Tilde,
         };
         let glob_subst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         let chars: Vec<char> = s.chars().collect();
         let mut out = String::with_capacity(s.len());
+        // `!` and `-` are special to patcomppiece ONLY inside a `[…]` class
+        // (negation at c:Src/pattern.c:1447, range at c:1483), so the
+        // splice-literalize arms for them are gated on the same bracket state
+        // the pretokenize pass used (c:Src/lex.c:1405 `seen_brct && brct`).
+        // Inbrack/Outbrack here are the SOURCE brackets (pretokenize emitted
+        // them as tokens); a spliced raw `[` is literalized below and rightly
+        // opens nothing.
+        let mut in_class = false;
         let mut i = 0usize;
         while i < chars.len() {
             let c = chars[i];
@@ -3678,13 +3719,40 @@ pub fn paramsubst(
                 x if x == Inpar => out.push('('),
                 x if x == Outpar => out.push(')'),
                 x if x == Bar => out.push('|'),
-                x if x == Inbrack => out.push('['),
-                x if x == Outbrack => out.push(']'),
+                x if x == Inbrack => {
+                    in_class = true;
+                    out.push('[');
+                }
+                x if x == Outbrack => {
+                    in_class = false;
+                    out.push(']');
+                }
                 x if x == Inang => out.push('<'),
                 x if x == Outang => out.push('>'),
                 x if x == Quest => out.push('?'),
                 x if x == Tilde => out.push('~'),
+                // c:Src/lex.c:1405 / c:1399 — source `!`/`-` inside a class
+                // reached here as the Bang/Dash token; transpose back to raw
+                // ASCII so the downstream `tokenize()` (subst.rs:13579)
+                // re-activates them for patcompile.
+                x if x == Bang => out.push('!'),
+                x if x == Dash => out.push('-'),
                 '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '^' | '#' | '~' => {
+                    if glob_subst {
+                        out.push(c); // c:1669 — GLOBSUBST: splice active
+                    } else {
+                        out.push('\\');
+                        out.push(c);
+                    }
+                }
+                // A raw `!`/`-` INSIDE a class is a splice (or an escaped
+                // source char whose `\` singsub consumed): C's patcomppiece
+                // dispatches class negation / ranges on the Bang / Dash TOKEN
+                // only (c:Src/pattern.c:1447, c:1483), so escape it. Outside a
+                // class both are ordinary bytes in C too — leave them raw so
+                // the KSH_GLOB `!(` trigger (zpc_chars[ZPC_KSH_BANG] is the
+                // RAW `!`, c:Src/pattern.c:250) keeps working on splices.
+                '!' | '-' if in_class => {
                     if glob_subst {
                         out.push(c); // c:1669 — GLOBSUBST: splice active
                     } else {
@@ -16715,9 +16783,21 @@ pub fn paramsubst(
                     elems.iter().flat_map(|s| split_one(s)).collect()
                 }
                 Some(elems) => {
-                    // c:3905-3907 sepjoin then c:3920 sepsplit.
-                    let joiner = sep.clone().unwrap_or_else(|| " ".to_string());
-                    split_one(&elems.join(&joiner))
+                    // c:Src/subst.c:3916-3918 — `if (nojoin == 0 || sep) { val =
+                    // sepjoin(aval, sep, 1); isarr = 0; }`, then c:3932
+                    // `aval = sepsplit(val, spsep, 0, 1)` re-splits.
+                    //
+                    // The separator is C's `sep` — NULL unless a (j:X:)/(F)
+                    // flag set one — and `sepjoin` resolves NULL to IFS[0]
+                    // (c:Src/utils.c:3936-3945: `if (ifs && *ifs != ' ')
+                    // sep = dupstrpfx(ifs, MB_METACHARLEN(ifs)); else sep = " ";`).
+                    // A hardcoded `" "` here ignored IFS entirely, so
+                    // `q=(a b); IFS=,; "${(s::)${(@)q}}"` char-split `a b`
+                    // instead of zsh's `a,b` and yielded ` ` where zsh has `,`.
+                    // Route through the ported sepjoin so IFS-set-but-empty
+                    // (concatenate) and multi-char IFS (first char only) come
+                    // out right as well.
+                    split_one(&crate::ported::utils::sepjoin(&elems, sep.as_deref()))
                 }
                 None => split_one(&value),
             };

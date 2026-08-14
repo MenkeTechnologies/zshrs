@@ -21,7 +21,7 @@
 //!   * `ported::subst::paramsubst`  — `${A[\[k\]]}` (read)
 //!   * `extensions::compile_zsh::compile_assign` — `A[\[k\]]=v` (store)
 
-use crate::ported::zsh_h::{Qstring, Qtick, Stringg, Tick};
+use crate::ported::zsh_h::{Bnull, Qstring, Qtick, Stringg, Tick};
 
 /// Backslash disposition inside a `[...]` subscript — the net effect of
 /// the re-lex C runs on a subscript's SOURCE text.
@@ -162,4 +162,67 @@ pub fn subscript_unescape(s: &str, sub: bool, resolve_dollar: bool) -> (String, 
         out.push(c);
     }
     (out, live)
+}
+
+/// Same C stages as [`subscript_unescape`], stopped one step earlier and
+/// re-encoded for a caller that still has to run C's `parsestr` + `singsub`
+/// round (c:Src/params.c:1585-1592) through the word compiler.
+///
+/// [`subscript_unescape`] returns PLAIN text, which is right for a key the
+/// caller stores verbatim but wrong for a key that still holds a live
+/// expansion: its resolved `$` would be re-expanded by the word compiler and
+/// its now-bare `[` would be read as a glob. C never has that problem because
+/// its intermediate text is MARKED — `getarg` keeps the `Bnull` before a
+/// bracket (c:1541-1548) and writes a literal `\` before the others
+/// (c:1549-1550), and `parsestr` re-marks those (c:1588) before `singsub`
+/// expands what is left. zshrs's word compiler consumes the same lexer
+/// encoding, so emit the marker directly and let it do `singsub`'s job:
+///
+/// | source | C intermediate                        | emitted here |
+/// |--------|---------------------------------------|--------------|
+/// | `\[` `\]` `\(` `\)` `\{` `\}` (and `\"` when `sub`) | marker kept (c:1547), deleted by `remnulargs` (c:1583) | `Bnull` + char |
+/// | `\$` `\\` `` \` ``                    | marker → `\` (c:1550), re-marked by `parsestr` (c:1588), dropped by `singsub`'s `prefork`/`remnulargs` (c:Src/subst.c:169) | `Bnull` + char |
+/// | any other `\X`                        | ordinary text (c:Src/lex.c:1510 `add('\\')`) — survives BOTH re-lexes because the second one runs with `endchar == '\0'` and never marks `X` | `\` + char |
+/// | `\` + newline                         | dropped (c:Src/lex.c:1513)            | — |
+/// | everything else                       | untouched                             | verbatim |
+///
+/// An unescaped `$` / `` ` `` is deliberately left live — that is exactly the
+/// work c:1592 `singsub` still has to do.
+///
+/// * `sub` — C's `SCANPM_DQUOTED`: the subscript sits inside `"…"`.
+pub fn subscript_escape_markers(s: &str, sub: bool) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.peek().copied() {
+                // c:Src/lex.c:1513
+                Some('\n') => {
+                    it.next();
+                }
+                // c:Src/lex.c:1501-1506 — the marked set for endchar == ']'.
+                Some(n)
+                    if matches!(n, '[' | ']' | '(' | ')' | '{' | '}' | '$' | '\\' | '`')
+                        || (sub && n == '"') =>
+                {
+                    out.push(Bnull);
+                    out.push(n);
+                    it.next();
+                }
+                // c:Src/lex.c:1508-1511 — `add('\\'); goto cont;`.
+                Some(n) => {
+                    out.push('\\');
+                    out.push(n);
+                    it.next();
+                }
+                None => out.push('\\'),
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }

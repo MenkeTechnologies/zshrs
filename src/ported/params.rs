@@ -7001,7 +7001,14 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
         // c:3231 `v = NULL;` — re-dispatch by storage type.
         let pm = tab.get_mut(name).unwrap();
-        pm.node.flags &= !(PM_DEFAULTED as i32); // c:3228
+        // c:3171 `v->pm->node.flags &= ~PM_DEFAULTED;` — see the
+        // PM_SPECIAL note on the same clear at c:3211 below.
+        let keep_dontimport =
+            (pm.node.flags as u32 & (PM_SPECIAL | PM_DONTIMPORT)) == (PM_SPECIAL | PM_DONTIMPORT);
+        pm.node.flags &= !(PM_DEFAULTED as i32); // c:3171
+        if keep_dontimport {
+            pm.node.flags |= PM_DONTIMPORT as i32;
+        }
         if (pm.node.flags as u32 & PM_HASHED) != 0 {
             // PM_HASHED element store. `param.u_hash` is typed
             // `Option<HashTable>` per Src/zsh.h:1841 but the
@@ -7333,9 +7340,40 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             check_warn_pm(pm_ref, "scalar", created_now as i32, 1); // c:3268
         }
     }
-    // c:3269 `v->pm->node.flags &= ~PM_DEFAULTED;`
-    let pm = tab.get_mut(name).unwrap(); // c:3269
-    pm.node.flags &= !(PM_DEFAULTED as i32); // c:3269
+    // c:3211 `v->pm->node.flags &= ~PM_DEFAULTED;`
+    //
+    // c:Src/zsh.h:1926-1927 — `PM_DONTIMPORT` and `PM_DECLARED` are the
+    // SAME bit (1<<22), and `PM_DEFAULTED` is `PM_DECLARED|PM_UNSET`
+    // (c:1933). So this clear also wipes the do-not-import marker that
+    // `createparamtable`'s environment-import loop reads through
+    // `dontimport()` (c:934, c:815-828).
+    //
+    // In C that is harmless: the values behind the PM_SPECIAL
+    // parameters are seeded by writing their backing globals in
+    // `setupvals` (`ifs`, `wordchars`, `zunderscore`, `zoptind`,
+    // `bangchar`/`hatchar`/`hashchar` — c:Src/init.c:1212-1224), which
+    // runs BEFORE `createparamtable` (c:Src/init.c:1286) and never
+    // touches a paramtab node, so no special ever reaches this line
+    // before the import. zshrs keeps those values on the paramtab node
+    // itself, so its startup seeds DO reach here — and `_`, `IFS`,
+    // `OPTIND`, `histchars`, `path` and `fpath` lost the bit before the
+    // import could read it (an inherited `_`/`IFS` was then imported and
+    // exported: `typeset -p _` printed `export _=…` and `_` appeared in
+    // `export -p` / `typeset +x -r`, where zsh shows nothing).
+    //
+    // Keep the bit when it can only mean PM_DONTIMPORT — i.e. on a
+    // PM_SPECIAL node that already carries it. Every C reader of
+    // PM_DECLARED is gated on PM_UNSET as well (c:Src/builtin.c:2038,
+    // c:2925; c:Src/params.c:5894, c:6140; c:Src/subst.c:2813-2814) and
+    // the value store below clears PM_UNSET (c:2704), so retaining it
+    // changes nothing those readers can observe.
+    let pm = tab.get_mut(name).unwrap(); // c:3211
+    let keep_dontimport =
+        (pm.node.flags as u32 & (PM_SPECIAL | PM_DONTIMPORT)) == (PM_SPECIAL | PM_DONTIMPORT);
+    pm.node.flags &= !(PM_DEFAULTED as i32); // c:3211
+    if keep_dontimport {
+        pm.node.flags |= PM_DONTIMPORT as i32;
+    }
 
     // c:3343 `assignstrvalue(v, val, flags)`. C aliases `v->pm`
     // through to the param in the hash table; Rust's borrow rules
@@ -8201,10 +8239,24 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     pm.u_arr = Some(val_final.clone());
     pm.u_str = None;
     pm.u_hash = None;
-    // c:2712 (setarrvalue head) — `v->pm->node.flags &= ~PM_UNSET;`
-    // a declared-but-unset (TYPESET_TO_UNSET) array becomes set on
-    // its first assignment.
-    pm.node.flags &= !((PM_UNSET | PM_DECLARED) as i32);
+    // c:3374 `v->pm->node.flags &= ~PM_DEFAULTED;` — a declared-but-unset
+    // (TYPESET_TO_UNSET) array becomes set on its first assignment.
+    // PM_DEFAULTED is `PM_DECLARED|PM_UNSET` (c:Src/zsh.h:1933), hence
+    // the two-bit mask here.
+    //
+    // PM_DECLARED is the same bit as PM_DONTIMPORT (c:Src/zsh.h:1926-1927);
+    // keep it on a PM_SPECIAL node that carries it, where it can only be
+    // the do-not-import marker the environment-import loop reads
+    // (c:934). Full rationale on the scalar twin of this clear in
+    // `assignsparam` (c:3211). Without it the IPDEF9 arrays `path` /
+    // `fpath` (c:425-432 — `PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`) lost the
+    // bit while being seeded at startup.
+    let keep_dontimport =
+        (pm.node.flags as u32 & (PM_SPECIAL | PM_DONTIMPORT)) == (PM_SPECIAL | PM_DONTIMPORT);
+    pm.node.flags &= !((PM_UNSET | PM_DECLARED) as i32); // c:3374
+    if keep_dontimport {
+        pm.node.flags |= PM_DONTIMPORT as i32;
+    }
     let ename_for_envsync: Option<String> = if setfn_ptr.is_some() {
         pm.ename.clone()
     } else {
@@ -8581,7 +8633,16 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 zerr(&format!("read-only variable: {}", pm.node.nam));
                 return None;
             }
-            pm.node.flags &= !(PM_DEFAULTED as i32);
+            // c:3671 `v->pm->node.flags &= ~PM_DEFAULTED;` — PM_DECLARED
+            // shares its bit with PM_DONTIMPORT (c:Src/zsh.h:1926-1927);
+            // keep it on a PM_SPECIAL node that carries it. Full
+            // rationale on the same clear in `assignsparam` (c:3211).
+            let keep_dontimport = (pm.node.flags as u32 & (PM_SPECIAL | PM_DONTIMPORT))
+                == (PM_SPECIAL | PM_DONTIMPORT);
+            pm.node.flags &= !(PM_DEFAULTED as i32); // c:3671
+            if keep_dontimport {
+                pm.node.flags |= PM_DONTIMPORT as i32;
+            }
             let t = PM_TYPE(pm.node.flags as u32);
             if t == PM_INTEGER {
                 // c:2874 — `pm->gsu.i->setfn(pm, val.u.l)`. MN_FLOAT

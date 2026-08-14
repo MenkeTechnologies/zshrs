@@ -2306,9 +2306,21 @@ pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
         // module, so per-key reads reported "loaded" for modules the
         // scan (and zsh -fc) reports "autoloaded".
         Some(m) => {
-            let loaded = (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
-                && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0;
+            // `m->u` is a UNION (`Src/zsh.h:1506-1508`): a loaded
+            // module fills `handle`/`linked`, while an ALIAS node
+            // (`zmodload -A x=zsh/main`, c:2597-2601) fills `u.alias`
+            // — so `m->u.handle` is non-NULL for an alias too, and
+            // c:1069-1071 takes the `alias:<target>` arm. Testing
+            // MOD_INIT_B alone dropped every alias out of
+            // `${modules[x]}` (it read as unset instead of
+            // `alias:zsh/main`).
             let alias = (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0;
+            let handle = if alias {
+                m.alias.is_some()
+            } else {
+                (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+            };
+            let loaded = handle && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0;
             (loaded, alias, m.alias.clone().unwrap_or_default())
         }
         None => (false, false, String::new()),
@@ -2427,14 +2439,23 @@ pub fn scanpmmodules(
         tab.modules
             .iter()
             .filter_map(|(name, m)| {
-                let loaded = (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
-                    && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0;
-                if !loaded {
+                // `m->u` is a UNION: an ALIAS node carries `u.alias`
+                // (c:2601), which makes C's `m->u.handle` test at
+                // c:1091 true, so aliases DO appear in `${(k)modules}`
+                // with an `alias:<target>` value. Gating on MOD_INIT_B
+                // alone hid every `zmodload -A` alias from the scan.
+                let is_alias = (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0;
+                let handle = if is_alias {
+                    m.alias.is_some()
+                } else {
+                    (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                };
+                if !handle || (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) != 0 {
                     return None; // c:1091 gate
                 }
                 // c:1093 — alias entries get 'alias:<target>', others
                 // get 'loaded'.
-                let val = if (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0 {
+                let val = if is_alias {
                     format!("alias:{}", m.alias.as_deref().unwrap_or(""))
                 } else {
                     "loaded".to_string()
