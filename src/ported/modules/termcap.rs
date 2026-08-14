@@ -4,15 +4,18 @@
 //!
 //! C source has 0 structs/enums (uses libtermcap globals + the
 //! `boolcodes[]`/`numcodes[]`/`strcodes[]` arrays from libtermcap
-//! itself). Rust port matches: 0 types, only static capability
-//! tables for an in-memory ANSI approximation.
+//! itself). Rust port matches: 0 types, only the `#ifndef HAVE_*CODES`
+//! fallback tables the C carries for libraries that export no arrays.
 //!
-//! Architectural divergence: C links against libtermcap (or
-//! libtinfo) and reads `/etc/termcap` via `tgetent(3)` /
-//! `tgetflag(3)` / `tgetnum(3)` / `tgetstr(3)`. zshrs computes a
-//! minimal capability set inline based on `$TERM` so we don't drag
-//! libtermcap into the build. Function signatures + observable
-//! outputs match C 1:1.
+//! Like the C, this links the curses/termcap library (`ncurses` on
+//! macOS/BSD, `tinfo` on Linux — see `build.rs`) and reads the real
+//! terminal database through `tgetflag(3)` / `tgetnum(3)` /
+//! `tgetstr(3)`, after `setupterm(3)` has initialised `cur_term`
+//! exactly as `zsetupterm()` (`Src/utils.c:386`) does for C's
+//! `boot_` (c:347). The capability set enumerated by `scantermcap`
+//! therefore comes from the library's own `boolcodes`/`numcodes`/
+//! `strcodes` arrays, as it does in C when `HAVE_BOOLCODES` etc. are
+//! defined.
 
 use crate::ported::options::optlookup;
 use crate::ported::params::{getsparam, TERMFLAGS};
@@ -20,7 +23,7 @@ use crate::ported::utils::{zsetupterm, zwarnnam};
 use crate::ported::zsh_h::{features, isset, module, INTERACTIVE};
 use crate::zsh_h::TERM_UNKNOWN;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 /// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
@@ -47,12 +50,20 @@ pub fn ztgetflag(s: &str) -> i32 {
         // c:62
         1 => 1, // c:64
         _ => {
-            // c:65-72 — `for (b = boolcodes; *b; b++) if (!strcmp(*b, s)) return 0;`
-            for b in BOOLCODES {
+            // c:65-67 — `for (b = (char **)boolcodes; *b; ++b)
+            //                if (s[0] == (*b)[0] && s[1] == (*b)[1]) return 0;`
+            // C compares only the first two bytes (every termcap code is
+            // exactly two characters), so port the byte compare rather
+            // than a whole-string equality.
+            let sb = s.as_bytes();
+            for b in BOOLCODES.iter() {
                 // c:65
-                if *b == s {
+                let bb = b.as_bytes();
+                let s0 = sb.first().copied().unwrap_or(0);
+                let s1 = sb.get(1).copied().unwrap_or(0);
+                if bb.len() >= 2 && s0 == bb[0] && s1 == bb[1] {
                     // c:66
-                    return 0; // c:68
+                    return 0; // c:67
                 }
             }
             -1 // c:80
@@ -94,10 +105,14 @@ pub fn bin_echotc(
         return 1; // c:88
     }
     // c:89 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return 1;`
+    // `init_term` is Src/init.c:787 — the shell's `tgetent` entry
+    // point, NOT this module's `ensure_termcap_loaded` setupterm
+    // stand-in. Getting that wrong changes what ncurses returns for
+    // `me`/`r2`/`rs` (see ensure_termcap_loaded's doc comment).
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         // c:89
         let interactive = isset(INTERACTIVE);
-        if interactive || !ensure_termcap_loaded() {
+        if interactive || crate::ported::init::init_term() == 0 {
             // c:89-90
             return 1; // c:90
         }
@@ -284,6 +299,23 @@ pub fn gettermcap(
         })
     };
 
+    // c:161 — `if (termflags & TERM_BAD) return NULL;`
+    use crate::ported::zsh_h::TERM_BAD;
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
+        return None; // c:162
+    }
+    // c:163 — `if ((termflags & TERM_UNKNOWN) &&
+    //              (isset(INTERACTIVE) || !init_term())) return NULL;`
+    // Same note as bin_echotc: `init_term` is Src/init.c:787's
+    // `tgetent` path, which the scan callback deliberately does NOT
+    // run — that asymmetry is what produces zsh's differing `me`
+    // between `${termcap[me]}` and `${(kv)termcap}`.
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
+        // c:163
+        if isset(INTERACTIVE) || crate::ported::init::init_term() == 0 {
+            return None; // c:164
+        }
+    }
     if !ensure_termcap_loaded() {
         return None;
     }
@@ -341,20 +373,25 @@ pub fn gettermcap(
     }
 }
 
-/// Port of `scantermcap(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/termcap.c:200`. The
-/// magic-assoc scan callback for `${(k)termcap}` / `${(kv)termcap}`.
-/// Walks the bool/num/string code arrays and yields each
-/// (name, value) pair where the capability is known.
-///
 /// Port of `static void scantermcap(UNUSED(HashTable ht), ScanFunc func, int flags)`
-/// from `Src/Modules/termcap.c:200-235`. Walks the bool/num/string
-/// code arrays and invokes the callback per known cap.
+/// from `Src/Modules/termcap.c:212-309`. The magic-assoc scan callback
+/// for `${(k)termcap}` / `${(kv)termcap}`.
+///
+/// C runs THREE separate loops over three arrays, each with its own
+/// probe: `boolcodes` via `ztgetflag` (c:272-278), `numcodes` via
+/// `tgetnum` (c:283-289), `strcodes` via `tgetstr` (c:294-309). The
+/// probe is NOT interchangeable with `gettermcap`'s cascade: a code
+/// such as `MT` lives in BOTH `boolcodes` and `strcodes`, and C emits
+/// it exactly once (the boolean loop finds it, the string loop's
+/// `tgetstr` returns NULL for it). Routing every array through
+/// `gettermcap` — which falls back to `ztgetflag` when `tgetstr`
+/// would have failed — emitted such codes twice.
 pub fn scantermcap(
     _ht: *mut crate::ported::zsh_h::HashTable,
     func: Option<crate::ported::zsh_h::ParamScanFunc>,
     flags: i32,
 ) {
-    // c:200
+    // c:212
     use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
     let f = match func {
         Some(f) => f,
@@ -363,43 +400,90 @@ pub fn scantermcap(
     if !ensure_termcap_loaded() {
         return;
     }
-    for &name in BOOLCODES
-        .iter()
-        .chain(NUMCODES.iter())
-        .chain(STRCODES.iter())
-    {
-        if let Some(pm) = gettermcap(std::ptr::null_mut(), name) {
-            // Skip PM_UNSET entries (unknown caps).
-            use crate::ported::zsh_h::PM_UNSET;
-            if (pm.node.flags & PM_UNSET as i32) != 0 {
-                continue;
-            }
-            let entry = param {
-                node: hashnode {
-                    next: None,
-                    nam: name.to_string(),
-                    flags: PM_SCALAR as i32,
-                },
-                u_data: 0,
-                u_tied: None,
-                u_arr: None,
-                u_str: pm.u_str.clone(),
-                u_val: 0,
-                u_dval: 0.0,
-                u_hash: None,
-                gsu_s: None,
-                gsu_i: None,
-                gsu_f: None,
-                gsu_a: None,
-                gsu_h: None,
-                base: 0,
-                width: 0,
-                env: None,
-                ename: None,
-                old: None,
-                level: 0,
-            };
-            f(&entry, flags);
+    // c:267-270 — one reused Param, PM_READONLY|PM_SCALAR. The Rust
+    // callback takes the value by reference, so build it per emit.
+    let emit_cap = |cap: &str, val: &str| {
+        let pm = param {
+            node: hashnode {
+                next: None,
+                nam: cap.to_string(), // c:275/286/305 pm->node.nam
+                flags: PM_SCALAR as i32,
+            },
+            u_data: 0,
+            u_tied: None,
+            u_arr: None,
+            u_str: Some(val.to_string()),
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        };
+        f(&pm, flags); // c:276/287/306
+    };
+
+    // c:272-278 — `for (capcode = boolcodes; *capcode; capcode++)
+    //                  if ((num = ztgetflag(*capcode)) != -1) ...`
+    for cap in BOOLCODES.iter() {
+        // c:272
+        let num = ztgetflag(cap); // c:273
+        if num != -1 {
+            // c:274 — `pm->u.str = num ? "yes" : "no";`
+            emit_cap(cap, if num != 0 { "yes" } else { "no" });
+        }
+    }
+
+    // c:283-289 — `for (capcode = numcodes; *capcode; capcode++)
+    //                  if ((num = tgetnum(*capcode)) != -1) ...`
+    // c:280-281 — this block's params are PM_READONLY|PM_INTEGER; the
+    // decimal rendering is identical for every consumer of the scan.
+    for cap in NUMCODES.iter() {
+        // c:283
+        let c_c = match std::ffi::CString::new(*cap) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let num = {
+            let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe { tgetnum(c_c.as_ptr()) } // c:284
+        };
+        if num != -1 {
+            // c:285 — `pm->u.val = num;`
+            emit_cap(cap, &num.to_string());
+        }
+    }
+
+    // c:294-309 — `for (capcode = strcodes; *capcode; capcode++) {
+    //                  char *u = buf;
+    //                  if ((tcstr = tgetstr(*capcode,&u)) != NULL &&
+    //                      tcstr != (char *)-1) ... }`
+    for cap in STRCODES.iter() {
+        // c:294
+        let c_c = match std::ffi::CString::new(*cap) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut buf = [0i8; 2048]; // c:217 `char buf[2048]`
+        let tcstr = {
+            let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let mut u = buf.as_mut_ptr() as *mut libc::c_char; // c:301 `char *u = buf;`
+            unsafe { tgetstr(c_c.as_ptr(), &mut u) } // c:302
+        };
+        if !tcstr.is_null() && tcstr as isize != -1 {
+            // c:302-303
+            let s = unsafe { std::ffi::CStr::from_ptr(tcstr) }
+                .to_string_lossy()
+                .into_owned();
+            emit_cap(cap, &s); // c:304-306
         }
     }
 }
@@ -411,7 +495,14 @@ pub fn scantermcap(
 // Each call site below now invokes those libc-level routines via FFI.
 
 unsafe extern "C" {
-    fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
+    // c:Src/utils.c:399 — `zsetupterm()` initialises `cur_term` with
+    // `setupterm`, which is what termcap.c:347 `boot_` calls. termcap.c
+    // itself never calls `tgetent`.
+    fn setupterm(
+        term: *const libc::c_char,
+        filedes: libc::c_int,
+        errret: *mut libc::c_int,
+    ) -> libc::c_int;
     fn tgetflag(id: *const libc::c_char) -> libc::c_int;
     fn tgetnum(id: *const libc::c_char) -> libc::c_int;
     fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
@@ -513,63 +604,191 @@ pub fn finish_(m: *const module) -> i32 {
 /// single-writer assumption.
 static TERMCAP_LOCK: Mutex<()> = Mutex::new(());
 
-/// `boolcodes[]` from libtermcap — list of all known boolean
-/// capability 2-char codes. The subset zshrs's in-memory table
-/// recognises; full libtermcap has more.
-static BOOLCODES: &[&str] = &[
-    "am", "bs", "bw", "da", "db", "eo", "es", "gn", "hc", "hs", "in", "km", "mi", "ms", "nc", "ns",
-    "os", "ul", "ut", "xb", "xn", "xo", "xs", "xt",
+// ---------------------------------------------------------------
+// Capability-code tables (c:44-49, c:219-225, c:227-265)
+//
+// termcap.c wraps each literal array in `#ifndef HAVE_<X>CODES`: when
+// the curses library exports `boolcodes[]` / `numcodes[]` /
+// `strcodes[]` itself (ncurses and libtinfo both do — term.h:712-719
+// declares them `extern char *const boolcodes[]` etc.), C walks the
+// LIBRARY arrays at c:266 / c:275 / c:288 and the literals below are
+// never compiled in. The literals are the `#ifndef` fallback,
+// transcribed verbatim from the C, and are used here only when the
+// library symbols resolve to an empty table.
+//
+// The previous Rust port had neither: it carried a hand-written
+// "subset zshrs's in-memory table recognises", which under-reported
+// `${(k)termcap}` by ~50 capabilities against the C.
+// ---------------------------------------------------------------
+
+/// c:45-49 — `#ifndef HAVE_BOOLCODES static char *boolcodes[] = {...}`
+static BOOLCODES_FALLBACK: &[&str] = &[
+    "bw", "am", "ut", "cc", "xs", "YA", "YF", "YB", "xt", "xn", "eo", "gn", "hc", "HC", "km",
+    "YC", "hs", "hl", "in", "YG", "da", "db", "mi", "ms", "nx", "xb", "NP", "ND", "NR", "os",
+    "5i", "YD", "YE", "es", "hz", "ul", "xo"
 ];
 
-/// `numcodes[]` from libtermcap — list of known numeric codes.
-static NUMCODES: &[&str] = &[
-    "co", "it", "lh", "lm", "lw", "li", "ma", "MW", "Nl", "pa", "Nco", "sg", "tw", "ug", "vt", "ws",
+/// c:220-224 — `#ifndef HAVE_NUMCODES static char *numcodes[] = {...}`
+static NUMCODES_FALLBACK: &[&str] = &[
+    "co", "it", "lh", "lw", "li", "lm", "sg", "ma", "Co", "pa", "MW", "NC", "Nl", "pb", "vt",
+    "ws", "Yo", "Yp", "Ya", "BT", "Yc", "Yb", "Yd", "Ye", "Yf", "Yg", "Yh", "Yi", "Yk", "Yj",
+    "Yl", "Ym", "Yn"
 ];
 
-/// `strcodes[]` from libtermcap — list of known string codes.
-static STRCODES: &[&str] = &[
-    "ae", "al", "AL", "ac", "as", "bc", "bl", "bt", "cb", "cd", "ce", "cm", "cr", "cs", "ct", "cl",
-    "cv", "DC", "DL", "DO", "do", "ds", "ec", "ed", "ei", "fs", "ho", "hd", "hu", "i1", "i3", "i2",
-    "ic", "IC", "if", "im", "ip", "is", "kA", "kb", "kB", "kC", "kd", "kD", "kE", "kF", "ke", "kh",
-    "kH", "kI",
-    // `km` is a BOOLEAN cap ("Has Meta Key") per termcap(5); it lives
-    // in BOOLCODES (line 316) and must NOT also appear here. Removed
-    // 2026-05 to fix scantermcap duplicate-key emission.
-    "kL", "kl", "kM", "kN", "kP", "kr", "kR", "kS", "ks", "kT", "kt", "ku", "l0", "l1", "l2", "l3",
-    "l4", "l5", "l6", "l7", "l8", "l9", "le", "ll", "ma", "mb", "MC", "md", "me", "mh", "mk", "mm",
-    "mo", "mp", "mr", "nd", "nl", "nw", "pc", "pf", "pk", "pl", "pn", "po", "pO", "ps", "px", "rc",
-    "rf", "RI", "rp", "rs", "sa", "sc", "se", "SF", "sf", "so", "SR", "sr", "st", "ta", "te", "ti",
-    "ts", "uc", "ue", "up", "UP", "us", "vb", "ve", "vi", "vs", "wi",
+/// c:228-264 — `#ifndef HAVE_STRCODES static char *zstrcodes[] = {...}`
+static ZSTRCODES_FALLBACK: &[&str] = &[
+    "ac", "bt", "bl", "cr", "ZA", "ZB", "ZC", "ZD", "cs", "rP", "ct", "MC", "cl", "cb", "ce",
+    "cd", "ch", "CC", "CW", "cm", "do", "ho", "vi", "le", "CM", "ve", "nd", "ll", "up", "vs",
+    "ZE", "dc", "dl", "DI", "ds", "DK", "hd", "eA", "as", "SA", "mb", "md", "ti", "dm", "mh",
+    "ZF", "ZG", "im", "ZH", "ZI", "ZJ", "ZK", "ZL", "mp", "mr", "mk", "ZM", "so", "ZN", "ZO",
+    "us", "ZP", "SX", "ec", "ae", "RA", "me", "te", "ed", "ZQ", "ei", "ZR", "ZS", "ZT", "ZU",
+    "se", "ZV", "ZW", "ue", "ZX", "RX", "PA", "fh", "vb", "ff", "fs", "WG", "HU", "i1", "is",
+    "i3", "if", "iP", "Ic", "Ip", "ic", "al", "ip", "K1", "K3", "K2", "kb", "@1", "kB", "K4",
+    "K5", "@2", "ka", "kC", "@3", "@4", "@5", "@6", "kt", "kD", "kL", "kd", "kM", "@7", "@8",
+    "kE", "kS", "@9", "k0", "k1", "k;", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9",
+    "k2", "FA", "FB", "FC", "FD", "FE", "FF", "FG", "FH", "FI", "FJ", "k3", "FK", "FL", "FM",
+    "FN", "FO", "FP", "FQ", "FR", "FS", "FT", "k4", "FU", "FV", "FW", "FX", "FY", "FZ", "Fa",
+    "Fb", "Fc", "Fd", "k5", "Fe", "Ff", "Fg", "Fh", "Fi", "Fj", "Fk", "Fl", "Fm", "Fn", "k6",
+    "Fo", "Fp", "Fq", "Fr", "k7", "k8", "k9", "@0", "%1", "kh", "kI", "kA", "kl", "kH", "%2",
+    "%3", "%4", "%5", "kN", "%6", "%7", "kP", "%8", "%9", "%0", "&1", "&2", "&3", "&4", "&5",
+    "kr", "&6", "&9", "&0", "*1", "*2", "*3", "*4", "*5", "*6", "*7", "*8", "*9", "kF", "*0",
+    "#1", "#2", "#3", "#4", "%a", "%b", "%c", "%d", "%e", "%f", "kR", "%g", "%h", "%i", "%j",
+    "!1", "!2", "kT", "!3", "&7", "&8", "ku", "ke", "ks", "l0", "l1", "la", "l2", "l3", "l4",
+    "l5", "l6", "l7", "l8", "l9", "Lf", "LF", "LO", "mo", "mm", "ZY", "ZZ", "Za", "Zb", "Zc",
+    "Zd", "nw", "Ze", "oc", "op", "pc", "DC", "DL", "DO", "Zf", "IC", "SF", "AL", "LE", "Zg",
+    "RI", "Zh", "SR", "UP", "Zi", "pk", "pl", "px", "pn", "ps", "pO", "pf", "po", "PU", "QD",
+    "RC", "rp", "RF", "r1", "r2", "r3", "rf", "rc", "cv", "sc", "sf", "sr", "Zj", "sa", "Sb",
+    "Zk", "Zl", "SC", "sp", "Sf", "ML", "Zm", "MR", "Zn", "st", "Zo", "Zp", "wi", "Zq", "Zr",
+    "Zs", "Zt", "Zu", "Zv", "ta", "Zw", "ts", "TO", "uc", "hu", "u0", "u1", "u2", "u3", "u4",
+    "u5", "u6", "u7", "u8", "u9", "WA", "XF", "XN", "Zx", "S8", "Yv", "Zz", "Xy", "Zy", "ci",
+    "Yw", "Yx", "dv", "S1", "Yy", "S2", "S4", "S3", "S5", "Gm", "Km", "Mi", "S6", "xl", "RQ",
+    "S7", "s0", "s1", "s2", "s3", "AB", "AF", "Yz", "ML", "YZ", "MT", "Xh", "Xl", "Xo", "Xr",
+    "Xt", "Xv", "sA", "sL"
 ];
 
-/// WARNING: NOT IN TERMCAP.C — AtomicI32-protected lazy termcap init; C uses libtermcap `tgetent` once at boot
-/// (equivalent C logic at Src/Modules/termcap.c:82).
-/// Initialize libtermcap's database for `$TERM`. Returns true on success.
-/// C call site: `tgetent(NULL, term)` (zsh.h-compatible portable form).
+// libtermcap/ncurses public capability-code arrays, declared exactly
+// as `term.h:713/716/719` declares them:
+//   extern NCURSES_CONST char * const boolcodes[];
+//   extern NCURSES_CONST char * const numcodes[];
+//   extern NCURSES_CONST char * const strcodes[];
+// Each is a NUL-pointer-terminated array of C strings. Declared as a
+// zero-length array so `as_ptr()` yields the symbol address.
+#[allow(non_upper_case_globals)]
+unsafe extern "C" {
+    static boolcodes: [*const libc::c_char; 0];
+    static numcodes: [*const libc::c_char; 0];
+    static strcodes: [*const libc::c_char; 0];
+}
+
+/// `boolcodes[]` — the library's array when it exports one (the
+/// HAVE_BOOLCODES path C takes), else the c:45-49 literal.
+static BOOLCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
+    let mut v: Vec<&'static str> = Vec::new();
+    let base = boolcodes.as_ptr();
+    let mut i = 0isize;
+    while !(*base.offset(i)).is_null() {
+        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
+            v.push(s);
+        }
+        i += 1;
+    }
+    if v.is_empty() { BOOLCODES_FALLBACK.to_vec() } else { v }
+});
+
+/// `numcodes[]` — library array (HAVE_NUMCODES path) else c:220-224.
+static NUMCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
+    let mut v: Vec<&'static str> = Vec::new();
+    let base = numcodes.as_ptr();
+    let mut i = 0isize;
+    while !(*base.offset(i)).is_null() {
+        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
+            v.push(s);
+        }
+        i += 1;
+    }
+    if v.is_empty() { NUMCODES_FALLBACK.to_vec() } else { v }
+});
+
+/// `strcodes[]` — library array (HAVE_STRCODES path) else c:228-264.
+static STRCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
+    let mut v: Vec<&'static str> = Vec::new();
+    let base = strcodes.as_ptr();
+    let mut i = 0isize;
+    while !(*base.offset(i)).is_null() {
+        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
+            v.push(s);
+        }
+        i += 1;
+    }
+    if v.is_empty() { ZSTRCODES_FALLBACK.to_vec() } else { v }
+});
+
+/// WARNING: NOT IN TERMCAP.C — AtomicI32-guarded once-only wrapper
+/// around the terminal setup that C performs in `boot_` (c:347
+/// `zsetupterm()`), so the Rust entry points work even when `boot_`
+/// hasn't run (unit tests, direct `${termcap[...]}` reads).
+///
+/// The C it stands in for is `zsetupterm(void)` at `Src/utils.c:386`:
+///
+///     if (term_count++ == 0)
+///         (void)setupterm((char *)0, 1, &errret);
+///
+/// Stand-in for the terminal setup C performs in `boot_` (c:347
+/// `zsetupterm()`), so the Rust entry points work even when `boot_`
+/// hasn't run (unit tests, direct `${termcap[...]}` reads).
+///
+/// The C it stands in for is `zsetupterm(void)` at `Src/utils.c:386`:
+///
+///     if (term_count++ == 0)
+///         (void)setupterm((char *)0, 1, &errret);
+///
+/// `setupterm`, NOT `tgetent`. termcap.c never calls `tgetent`; the
+/// only `tgetent` in the shell is `init_term()` (`Src/init.c:804`),
+/// which the C reaches from the `TERM_UNKNOWN` guards in
+/// `bin_echotc` (c:83) and `gettermcap` (c:162) — and, notably, NOT
+/// from `scantermcap`, which carries no guard at all.
+///
+/// That asymmetry is observable, because ncurses answers `tgetstr`
+/// differently depending on which initialisations have run:
+///
+///   setupterm only     me=\e[m^O  r2=\ec\e[?1000l…  rs=NULL
+///   tgetent+setupterm  me=\e[0m   r2=\ec\e[?1000l…  rs=NULL
+///   tgetent only       me=\e[0m   r2=NULL           rs=\ec\e[?1000l…
+///
+/// (`tgetent` caches `_nc_trim_sgr0`'s rebuilt `sgr(0)` and `tgetstr`
+/// substitutes it for `exit_attribute_mode` from then on.)
+///
+/// zsh reproduces exactly this split: in `zsh -fc`, TERM_UNKNOWN is
+/// still set, so `${(kv)termcap}` (no guard, setupterm only) reports
+/// `me=\e[m^O` while `${termcap[me]}` (guard runs `init_term`)
+/// reports `me=\e[0m`. Keeping `tgetent` out of this function and in
+/// the guards is what makes both match.
 fn ensure_termcap_loaded() -> bool {
-    // 0 = uninit, 1 = ok, -1 = failed. Cache the libtermcap state for
-    // the lifetime of the process, matching libtermcap's own behavior.
+    // 0 = uninit, 1 = ok, -1 = failed. Cache the curses state for
+    // the lifetime of the process, matching C's `term_count` guard
+    // at Src/utils.c:401 (setupterm runs exactly once).
     static STATE: AtomicI32 = AtomicI32::new(0);
     match STATE.load(Ordering::Relaxed) {
         1 => true,
         -1 => false,
         _ => {
-            // C `init_term` (Src/init.c:771) reads the `term` global
-            // which is the shell's $TERM param. The previous Rust port
-            // read \`std::env::var(\"TERM\")\` which diverges when the
-            // shell has updated TERM via paramtab without exporting yet.
-            // Route through getsparam — same env-vs-paramtab family as
-            // the recent newuser HOME / bin_strftime TZ fixes.
+            // c:Src/utils.c:397 passes a NULL term so ncurses falls
+            // back to getenv("TERM"); pass the shell's own $TERM
+            // parameter instead so a not-yet-exported `TERM=` is
+            // still honoured.
             let term = getsparam("TERM").unwrap_or_else(|| "dumb".into());
             let term_c = match std::ffi::CString::new(term) {
                 Ok(c) => c,
                 Err(_) => return false,
             };
+            // c:Src/utils.c:399 — `setupterm((char *)0, 1, &errret)`,
+            // which termcap.c:347 boot_ reaches via zsetupterm().
             let r = {
                 let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-                unsafe { tgetent(std::ptr::null_mut(), term_c.as_ptr()) }
+                let mut errret: libc::c_int = 0;
+                unsafe { setupterm(term_c.as_ptr(), 1, &mut errret) }
             };
-            let ok = r > 0;
+            let ok = r == 0; // curses OK
             STATE.store(if ok { 1 } else { -1 }, Ordering::Relaxed);
             ok
         }
