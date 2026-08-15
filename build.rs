@@ -55,12 +55,12 @@ fn main() {
     );
     fs::write(&dest, generated).expect("write zsh_version.rs");
 
-    // Link libtermcap (BSD/macOS) or libtinfo (Linux) for the
-    // tgetent/tgetflag/tgetnum/tgetstr FFI in src/ported/modules/termcap.rs.
-    #[cfg(target_os = "macos")]
-    println!("cargo:rustc-link-lib=ncurses");
-    #[cfg(target_os = "linux")]
-    println!("cargo:rustc-link-lib=tinfo");
+    // Link the terminal-handling library that backs the
+    // tgetent/tgetflag/tgetnum/tgetstr FFI in
+    // src/ported/modules/termcap.rs and the
+    // setupterm/tigetstr/tigetnum/tigetflag FFI in
+    // src/ported/modules/terminfo.rs. See `link_term_lib`.
+    link_term_lib();
 
     // Enlarge the MAIN-thread stack (binaries only). zshrs runs the
     // whole shell on the main thread to keep signal/job-control
@@ -188,6 +188,237 @@ fn main() {
             violations.join("\n")
         );
     }
+}
+
+/// Pick the terminal-handling library to link, reproducing what C's
+/// `./configure` decides at `configure.ac:725-771`.
+///
+/// C's decision, verbatim from `~/forkedRepos/zsh/configure.ac`:
+///
+/// ```text
+/// 725 AC_ARG_WITH(term-lib,
+/// 726 AS_HELP_STRING([--with-term-lib=LIBS],[search space-separated LIBS for terminal handling]),
+/// 727 [if test "x$withval" != xno && test "x$withval" != x ; then
+/// 728   termcap_curses_order="$withval"
+/// 730 else termcap_curses_order="$ncursesw_test $ncurses_test tinfow tinfo termcap curses"
+/// 732 [case "$host_os" in
+/// 734   solaris*)     termcap_curses_order="$ncursesw_test $ncurses_test curses termcap" ;;
+/// 737   hpux1[01].*)  termcap_curses_order="Hcurses $ncursesw_test $ncurses_test curses termcap" ;;
+/// 739   *)            termcap_curses_order="$ncursesw_test $ncurses_test tinfow tinfo termcap curses" ;;
+/// 758 dnl Check for tigetflag (terminfo) before tgetent (termcap).
+/// 759 dnl That's so that on systems where termcap and [n]curses are
+/// 760 dnl both available and both contain termcap functions, while
+/// 761 dnl only [n]curses contains terminfo functions, we only link against
+/// 762 dnl [n]curses.
+/// 764 AC_SEARCH_LIBS(tigetstr, [$termcap_curses_order])
+/// 765 AC_SEARCH_LIBS(tigetflag, [$termcap_curses_order])
+/// 766 AC_SEARCH_LIBS(tgetent, [$termcap_curses_order], true, AC_MSG_FAILURE(...))
+/// ```
+///
+/// So the policy is: a fixed preference order headed by `ncursesw`, and the
+/// winner is the first library in that order that supplies the *terminfo*
+/// entry points as well as the termcap ones (the `c:758-762` comment is
+/// explicit that this ordering exists to keep both halves in one library).
+/// This function reproduces that with a link probe rather than a hardcoded
+/// name, so the answer is derived on the build host the way `configure`
+/// derives it — see `emit_config_h_env` for the same principle applied to
+/// `config.h`.
+///
+/// Why a probe rather than the previous `#[cfg(target_os)]` constants:
+///
+///   * The old code emitted `ncurses` on macOS and `tinfo` on Linux from
+///     `#[cfg(target_os = ...)]`, which in a build script is the **host**
+///     cfg, not the target's — so cross-compiling from macOS to Linux
+///     emitted `-lncurses`. `CARGO_CFG_TARGET_OS` is the target and is what
+///     is read below.
+///   * `ncurses` on macOS resolves to the SDK's `/usr/lib/libncurses.5.4.dylib`,
+///     an ncurses 5.4 whose compiled-in terminfo search path is
+///     `/usr/share/terminfo`. The zsh built by Homebrew links
+///     `libncursesw.6.dylib` (formula `depends_on "ncurses"`, so Homebrew's
+///     superenv puts the keg-only `-L<prefix>/opt/ncurses/lib` on the
+///     `./configure` link line and `AC_SEARCH_LIBS` then takes `ncursesw`
+///     first). The two libraries answer `${(kv)terminfo}` differently
+///     (`hpa`, `vpa`, `indn`, `rin`, `u6`-`u9` present in one and not the
+///     other; `pairs` 65536 vs 32767), which is a real parity divergence.
+///
+/// Search directories, in the order they are offered to the probe:
+///
+///   1. `ZSHRS_TERM_LIB_DIR` — colon-separated, explicit override.
+///   2. `-L` entries parsed out of `LDFLAGS`, which is exactly the channel
+///      `configure` honours and the one Homebrew's superenv uses.
+///   3. macOS only: `<prefix>/opt/ncurses/lib` for each of `$HOMEBREW_PREFIX`,
+///      `/opt/homebrew`, `/usr/local`, when the directory exists. This
+///      mirrors the flag Homebrew hands zsh's own `./configure`; it is
+///      existence-gated, never taken on Linux, and falls through to the
+///      SDK's `ncurses` when the formula is not installed.
+///
+/// `ZSHRS_TERM_LIB` overrides the whole order, mirroring `--with-term-lib`.
+///
+/// When the target is not the host, or no C compiler is available, no probe
+/// is possible; the static per-target default is emitted instead
+/// (`tinfo` for linux/android, `ncurses` elsewhere — the pre-existing
+/// values), so `cargo check --target ...` and cross builds keep working.
+fn link_term_lib() {
+    println!("cargo:rerun-if-env-changed=ZSHRS_TERM_LIB");
+    println!("cargo:rerun-if-env-changed=ZSHRS_TERM_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=LDFLAGS");
+    println!("cargo:rerun-if-env-changed=HOMEBREW_PREFIX");
+    println!("cargo:rerun-if-env-changed=CC");
+
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let host = env::var("HOST").unwrap_or_default();
+    let target = env::var("TARGET").unwrap_or_default();
+
+    // configure.ac:730/734/737/739 — the per-host_os preference orders.
+    // `$ncursesw_test`/`$ncurses_test` are the plain library names when
+    // the ncurses headers were found (configure.ac:711-717); this port
+    // always offers them and lets the link probe be the filter.
+    let order: Vec<String> = match env::var("ZSHRS_TERM_LIB") {
+        Ok(v) if !v.trim().is_empty() => {
+            v.split_whitespace().map(|s| s.to_string()).collect()
+        }
+        _ => match target_os.as_str() {
+            // configure.ac:734
+            "solaris" | "illumos" => ["ncursesw", "ncurses", "curses", "termcap"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            // configure.ac:730/739 — the default everywhere else. (The
+            // `hpux1[01].*` Hcurses branch at c:737 has no Rust target.)
+            _ => ["ncursesw", "ncurses", "tinfow", "tinfo", "termcap", "curses"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        },
+    };
+
+    // The pre-probe default, kept identical to what this build script
+    // emitted before: `tinfo` on Linux, `ncurses` on macOS/BSD.
+    let fallback = if target_os == "linux" || target_os == "android" {
+        "tinfo"
+    } else {
+        "ncurses"
+    };
+
+    if !target.is_empty() && !host.is_empty() && target != host {
+        // Cross build: the host `cc` cannot answer for the target's
+        // libraries. Emit the static default rather than a wrong probe.
+        println!("cargo:rustc-link-lib={fallback}");
+        return;
+    }
+
+    let mut dirs: Vec<String> = Vec::new();
+    if let Ok(v) = env::var("ZSHRS_TERM_LIB_DIR") {
+        dirs.extend(v.split(':').filter(|s| !s.is_empty()).map(str::to_string));
+    }
+    if let Ok(v) = env::var("LDFLAGS") {
+        let mut toks = v.split_whitespace().peekable();
+        while let Some(t) = toks.next() {
+            if let Some(rest) = t.strip_prefix("-L") {
+                if rest.is_empty() {
+                    // `-L /path` (separated form).
+                    if let Some(p) = toks.next() {
+                        dirs.push(p.to_string());
+                    }
+                } else {
+                    dirs.push(rest.to_string());
+                }
+            }
+        }
+    }
+    if target_os == "macos" {
+        // Homebrew keeps ncurses keg-only, so its lib dir is never on the
+        // linker's default path; the formula's consumers get it from the
+        // superenv. Offer the same directory here when it exists.
+        let mut prefixes: Vec<String> = Vec::new();
+        if let Ok(p) = env::var("HOMEBREW_PREFIX") {
+            prefixes.push(p);
+        }
+        prefixes.push("/opt/homebrew".to_string());
+        prefixes.push("/usr/local".to_string());
+        for p in prefixes {
+            let d = format!("{p}/opt/ncurses/lib");
+            if Path::new(&d).is_dir() && !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    }
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    // configure.ac:764-766 probes tigetstr, tigetflag and tgetent. Pass 1
+    // demands all three from one library (the c:758-762 intent); pass 2
+    // relaxes to tgetent alone, the only check whose failure is fatal in C.
+    for require_terminfo in [true, false] {
+        for lib in &order {
+            if let Some(dir) = try_link_term_lib(&out_dir, lib, &dirs, require_terminfo) {
+                if let Some(d) = dir {
+                    println!("cargo:rustc-link-search=native={d}");
+                }
+                println!("cargo:rustc-link-lib={lib}");
+                return;
+            }
+        }
+    }
+
+    // No probe succeeded (no C compiler, or a linker-less sandbox). Emit
+    // the static default so the build behaves as it did before.
+    println!("cargo:rustc-link-lib={fallback}");
+}
+
+/// One `AC_SEARCH_LIBS` iteration: try to link a program that references
+/// `tgetent` (plus `tigetstr`/`tigetflag` when `require_terminfo`) against
+/// `-l{lib}`, first with the linker's default search path and then with
+/// each candidate `-L` directory.
+///
+/// Returns `Some(None)` when the default path sufficed, `Some(Some(dir))`
+/// when `dir` was needed, and `None` when the library does not supply the
+/// symbols anywhere.
+fn try_link_term_lib(
+    out_dir: &Path,
+    lib: &str,
+    dirs: &[String],
+    require_terminfo: bool,
+) -> Option<Option<String>> {
+    let src = out_dir.join(format!("term_probe_{}.c", u32::from(require_terminfo)));
+    let body = if require_terminfo {
+        "char *tigetstr(const char *);\n\
+         int tigetflag(const char *);\n\
+         int tgetent(char *, const char *);\n\
+         int main(void) { return (int)(long)tigetstr(\"x\") + tigetflag(\"x\") + tgetent(0, \"x\"); }\n"
+    } else {
+        "int tgetent(char *, const char *);\n\
+         int main(void) { return tgetent(0, \"x\"); }\n"
+    };
+    if fs::write(&src, body).is_err() {
+        return None;
+    }
+    let bin = out_dir.join("term_probe_bin");
+    let cc = env::var("CC").unwrap_or_else(|_| "cc".to_string());
+
+    // `None` = the linker's own search path, then each candidate dir.
+    let mut candidates: Vec<Option<&String>> = vec![None];
+    candidates.extend(dirs.iter().map(Some));
+
+    for cand in candidates {
+        let mut cmd = std::process::Command::new(&cc);
+        cmd.arg("-o").arg(&bin).arg(&src);
+        if let Some(d) = cand {
+            cmd.arg(format!("-L{d}"));
+        }
+        cmd.arg(format!("-l{lib}"));
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        match cmd.status() {
+            Ok(st) if st.success() => {
+                let _ = fs::remove_file(&bin);
+                return Some(cand.cloned());
+            }
+            // `cc` missing entirely — no probe is possible at all.
+            Err(_) => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Emit the `config.h` constants that C's `./configure` *derives* on the

@@ -24,9 +24,15 @@ use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, OnceLock};
 
 // FFI bindings to the system ncurses terminfo interface. Direct
-// port of the call sites in `zsh/Src/Modules/terminfo.c`. macOS
-// and Linux SDKs ship libcurses by default — no extra build dep.
-#[link(name = "ncurses")]
+// port of the call sites in `zsh/Src/Modules/terminfo.c`.
+//
+// The library NAME is deliberately not pinned here: `build.rs`
+// (`link_term_lib`) reproduces `configure.ac:725-771`'s
+// `ncursesw ncurses tinfow tinfo termcap curses` search and emits a
+// single `cargo:rustc-link-lib` for the whole crate. Re-adding
+// `#[link(name = "ncurses")]` would put a second, different terminal
+// library on the link line and let symbol resolution order decide
+// which terminfo database these calls read.
 extern "C" {
     fn setupterm(
         term: *const libc::c_char,

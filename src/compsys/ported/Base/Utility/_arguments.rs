@@ -120,6 +120,41 @@ fn save_param(name: &str) -> SavedParam {
     }
 }
 
+/// The sh:328-330 `local` names this port writes straight into the
+/// caller's parameter scope (`local action noargs aret expl local tried
+/// ret=1`, `local next direct odirect equal single matcher matched ws
+/// tmp1 tmp2 tmp3`, `local opts subc tc prefix suffix descrs actions
+/// subcs anum`).
+///
+/// zsh gives them a real dynamic scope, so a NESTED `_arguments` — an
+/// action that completes some other command, e.g. `_mail`'s rest-argument
+/// `_email_addresses` reaching the third-party `_email-sleuth` plugin
+/// (`_email_addresses` sh:156) — shadows the outer call's copies and
+/// hands them back untouched on return. The port has no local scope: it
+/// used to `unsetparam` these names in the epilogue, which DELETED the
+/// outer call's arrays. The outer `_describe` then passed the now-missing
+/// `direct` to `compdescribe -I`, which failed with
+/// `compdescribe: invalid argument: direct` (computil.c:515) and took the
+/// whole outer option list down with it.
+const SCRATCH_PARAMS: [&str; 14] = [
+    "descrs", "actions", "subcs", "next", "direct", "odirect", "equal", "matcher", "single",
+    "tmp1", "tmp2", "tmp3", "ws", "expl",
+];
+
+/// Snapshot every `SCRATCH_PARAMS` name ahead of the emulated
+/// `local` declarations at sh:328-330.
+fn save_scratch() -> Vec<(&'static str, SavedParam)> {
+    SCRATCH_PARAMS.iter().map(|n| (*n, save_param(n))).collect()
+}
+
+/// Undo `save_scratch` — the emulated end of the sh:328-330 `local`
+/// scope. Names the caller never had are unset, exactly as before.
+fn restore_scratch(saved: Vec<(&'static str, SavedParam)>) {
+    for (name, s) in saved {
+        restore_param(name, s);
+    }
+}
+
 /// Put back what `save_param` captured.
 fn restore_param(name: &str, saved: SavedParam) {
     match saved {
@@ -1021,6 +1056,8 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
     let origipre = getsparam("IPREFIX").unwrap_or_default();
     let nm = nmatches(); // sh:331 nm="$compstate[nmatches]"
     let nm_live = nmatches_live();
+    // sh:328-330 — enter the emulated `local` scope for the scratch names.
+    let saved_scratch = save_scratch();
 
     // sh:333-356 — get descrs/actions/subcs and the option lists, then
     // pick the right `_tags` set.
@@ -1070,9 +1107,11 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                 &make_ops(),
                 0,
             );
+            restore_scratch(saved_scratch);
             return 0;
         } else {
             let _ = _message(&[noargs.clone()]); // sh:353
+            restore_scratch(saved_scratch);
             return 1;
         }
     }
@@ -1673,21 +1712,18 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
             1
         }
     };
-    // Tear down the shell-`local` scratch params (the port has no local
-    // scope). NORMARG / state / state_descr / context are NOT local in
-    // the source — they persist to the caller — so they are left intact.
+    // Leave the emulated sh:328-330 `local` scope: put back whatever the
+    // caller had (see `SCRATCH_PARAMS`). At the outermost call the caller
+    // had nothing, so every name is unset — the previous behaviour.
+    // NORMARG / state / state_descr / context are NOT local in the source
+    // — they persist to the caller — so they are left intact.
     //
     // `line` / `opt_args` are NOT in this list: they are only ever local when
     // sh:406-407 ran (`local=yes`), and on the `->state` path (sh:393) they are
     // the CALLER's parameters that `comparguments -W` just filled in — the whole
     // point of the `->state` protocol (`_zstyle` reads `$line[2]`, etc.).
     // Unsetting them unconditionally deleted exactly that result.
-    for p in [
-        "descrs", "actions", "subcs", "next", "direct", "odirect", "equal", "matcher", "single",
-        "tmp1", "tmp2", "tmp3", "ws", "expl",
-    ] {
-        unsetparam(p);
-    }
+    restore_scratch(saved_scratch);
     // sh:406-407 — restore what the emulated `local line` / `typeset -A opt_args`
     // shadowed. Only when the declaration actually ran.
     if local_set {
