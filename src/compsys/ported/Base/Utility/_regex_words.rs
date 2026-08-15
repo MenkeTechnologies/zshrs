@@ -72,8 +72,12 @@ pub fn _regex_words(args: &[String]) -> i32 {
 
     // sh:41-47
     for arg in word_args {
-        // wds = split-on-':'
-        let wds: Vec<&str> = arg.splitn(3, ':').collect();
+        // sh:42 — `wds=(${(s.:.)argv[i]})`. An UNQUOTED split in an
+        // array assignment drops empty fields (`a::b` → `(a b)`), and it
+        // splits at EVERY `:`, so `wds[3]` is exactly the third field —
+        // not "the rest of the string". `splitn(3, ':')` folded any
+        // trailing fields into `wds[3]`.
+        let wds: Vec<&str> = arg.split(':').filter(|f| !f.is_empty()).collect();
         let w0 = wds.first().copied().unwrap_or("");
         let w1 = wds.get(1).copied().unwrap_or("");
         let w2 = wds.get(2).copied().unwrap_or("");
@@ -87,25 +91,49 @@ pub fn _regex_words(args: &[String]) -> i32 {
         let regex = format!("/{}{}/", w0.replace('*', &class), term);
         reply.push(regex);
 
-        // sh:44 — accumulate matches text
+        // sh:45/47 — accumulate matches text. `$matches` ends up as an
+        // `_alternative` action (`(( w1\:d1 w2\:d2 ))` / `_values …`)
+        // that is later `eval`-split into words, so upstream
+        // BACKSLASH-ESCAPES every character that would otherwise break
+        // that split:
+        //   sh:45  ${wds[2]//(#m)[: \(\)]/\\$MATCH}   →  `:`, ` `, `(`, `)`
+        //   sh:47  ${…//(#m)[:\[\]]/\\$MATCH}         →  `:`, `[`, `]`
+        // The port emitted the description raw, so a multi-word one
+        // (`add PKCS11 profile to the token`) split at its first space
+        // and every `p11-kit <TAB>` description was truncated to one
+        // word.
         if term == "\0" {
+            // sh:45 — `matches+="${wds[1]//\*}${wds[2]:+\\:…} "`.
             let mut m = w0.replace('*', "");
             if !w1.is_empty() {
-                m.push_str(&format!("\\:{}", w1));
+                m.push_str("\\:");
+                m.push_str(&backslash_escape(w1, &[':', ' ', '(', ')']));
             }
             m.push(' ');
             matches.push_str(&m);
         } else {
+            // sh:47 — `matches+=" ${(q)…}\\[${(q)…}\\]"`.
             matches.push_str(&format!(
                 " {}\\[{}\\]",
-                shell_quote(&w0.replace('*', "")),
-                shell_quote(w1),
+                shell_quote(&backslash_escape(
+                    &w0.replace('*', ""),
+                    &[':', '[', ']']
+                )),
+                shell_quote(&backslash_escape(w1, &[':', '[', ']'])),
             ));
         }
-        // sh:47  eval "reply+=($wds[3])" — append action expression
-        //   (already a parenthesized list); we push verbatim
-        reply.push(w2.to_string());
-        // sh:48
+        // sh:49 — `eval "reply+=($wds[3])"`. This is an ARRAY LITERAL
+        // eval, so a missing third field appends NOTHING (`reply+=()`)
+        // and a multi-word one appends one element PER WORD. Pushing
+        // `w2` unconditionally inserted an empty `''` element after
+        // every word: `_p11-kit`'s 14 commands produced a 40-element
+        // `$reply` instead of 30, and `zregexparse` stopped at the
+        // first `''` with `invalid regex : ` — `p11-kit <TAB>` lost the
+        // whole subcommand listing.
+        if !w2.is_empty() {
+            reply.extend(crate::compsys::ported::eval_action_words(w2));
+        }
+        // sh:50
         reply.push("|".to_string());
     }
     // sh:52
@@ -115,6 +143,19 @@ pub fn _regex_words(args: &[String]) -> i32 {
 
     setaparam("reply", reply);
     0
+}
+
+/// zsh `${v//(#m)[…]/\\$MATCH}` — prefix every character in `chars`
+/// with a backslash (sh:45 / sh:47).
+fn backslash_escape(s: &str, chars: &[char]) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if chars.contains(&c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Approximate zsh `${(q)v}` quoting — wrap with single quotes,

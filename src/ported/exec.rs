@@ -5851,6 +5851,33 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
             strs: Some(body.clone()),
             ..Default::default()
         })
+    } else if (shf.node.flags as u32 & PM_UNDEFINED) != 0 {
+        // c:Src/builtin.c:3763 `shf->funcdef = mkautofn(shf);` — an
+        // `autoload`ed-but-not-yet-loaded function is NOT body-less in C.
+        // `mkautofn` (c:3786-3809) hands it a five-word program whose only
+        // instruction is `WCB_AUTOFN()`, which `execautofn`
+        // (Src/exec.c:5786) turns into `loadautofn`; `functions NAME`
+        // prints that program back as `builtin autoload -X`.
+        //
+        // zshrs's autoload stub carries neither `funcdef` nor `body`, so
+        // this arm produced `None` and `execshfunc` returned having done
+        // NOTHING, status 0. That silently killed every autoloaded function
+        // reached through `execcmd_exec` — i.e. every call whose command
+        // word is not a compile-time literal (`$c`, `my$v`, `"$f"`), since
+        // a literal head goes through `CallFunction` →
+        // `dispatch_function_call`, which has its own autoload prelude.
+        // `_sh` dispatches with `_$variant "$@"` (Completion/Unix/Command/
+        // _sh sh:51), so `sh <TAB>` ran `_bash` as a no-op and completed
+        // nothing.
+        //
+        // Emit mkautofn's program as its printed source; zshrs's
+        // `autoload -X` arm (builtin.rs `bin_functions`, c:3613-3654) is
+        // the port of `execautofn`'s effect and re-invokes the function
+        // with the original arguments via `eval_autoload` (c:3167-3177).
+        Some(eprog {
+            strs: Some("builtin autoload -X".to_string()),
+            ..Default::default()
+        })
     } else {
         None
     };

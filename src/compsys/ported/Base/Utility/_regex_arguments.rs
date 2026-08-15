@@ -127,9 +127,20 @@ pub fn _regex_arguments_impl(args: &[String]) -> i32 {
     let regex: Vec<String> = args[1..]
         .iter()
         .map(|e| match e.strip_prefix(':') {
+            // `quotestring()` returns only the BODY of the `$'…'` form —
+            // subst.c c:4047-4051 reserves `pre = 2` / `post = 1` and
+            // c:4088-4092 writes the surrounding `'` pair and the leading
+            // `$` itself. Emitting the body bare turned the whole spec into
+            // an unquoted word list, so `zregexparse`'s `execstring` split
+            // `:commands:command: _describe -t sed-commands "sed command"
+            //  cmds_none -S "" -F excl` at every space; `_ra_comp` took only
+            // `$1` (`commands:command:`), and `_alternative` then saw an
+            // EMPTY action and fell through to `_message -e`.
             Some(rest) => format!(
-                ":_ra_comp {}",
-                crate::ported::utils::quotestring(rest, QT_DOLLARS)
+                ":_ra_comp ${}{}{}",
+                '\'',
+                crate::ported::utils::quotestring(rest, QT_DOLLARS),
+                '\''
             ),
             None => e.clone(),
         })
