@@ -338,3 +338,69 @@ mod plus_table_flags {
         assert_parity(r#"print -r ${+dirstack}"#);
     }
 }
+
+/// A tied colon/array special pair (`FPATH`/`fpath`, `PATH`/`path`, …) that is
+/// localized TWICE at the same `locallevel` — once through each half.
+///
+/// `Src/builtin.c:2394-2411` (`typeset_single`, `newspecial != NS_NONE` arm)
+/// special-cases exactly this: when `pm->ename`'s node is already at
+/// `locallevel`, the saved copy is stamped `PM_NORESTORE` instead of receiving
+/// a `copyparam` snapshot, which in turn makes `c:2608-2609` skip the
+/// "re-initialise the special parameter to empty" step. The second declaration
+/// therefore KEEPS the value the first one installed, and on scope exit only
+/// the first half's restore fires (`Src/params.c:5928`) — the tie propagates it
+/// to the other half.
+///
+/// zinit's `autoload` shadow (`:zinit-tmp-subst-autoload`) is built on this
+/// exact idiom — `local +h FPATH=…` then `local +h -a fpath` then
+/// `fpath=( $PLUGIN_DIR $fpath )` — so getting it wrong empties `$fpath` for
+/// the duration of every turbo-mode `autoload`, and `autoload +X NAME` then
+/// finds no definition file and leaves the stub in `$functions[NAME]`.
+mod tied_pair_double_local {
+    use super::*;
+
+    #[test]
+    fn array_half_after_scalar_half_keeps_value() {
+        assert_parity(
+            "f() { local +h FPATH=/aa:$FPATH; local +h -a fpath; print ${#fpath} $fpath[1] }; \
+             print $#fpath; f; print $#fpath",
+        );
+    }
+
+    #[test]
+    fn array_half_alone_still_empties() {
+        // No prior localization of the scalar half → no PM_NORESTORE → C's
+        // c:2626 `pm->gsu.a->setfn(pm, mkarray(NULL))` runs and the local
+        // starts empty. This is the arm the fix must NOT disturb.
+        assert_parity("f() { local +h -a fpath; print ${#fpath} }; f; print $#fpath");
+    }
+
+    #[test]
+    fn path_pair_matches_fpath_pair() {
+        assert_parity(
+            "f() { local +h PATH=/zz:$PATH; local +h -a path; print ${#path} $path[1] }; \
+             print $#path; f; print $#path",
+        );
+    }
+
+    #[test]
+    fn prepending_through_the_second_local_survives() {
+        // The zinit shape verbatim: build a new fpath on top of the value the
+        // scalar half installed, then check the global is intact afterwards.
+        assert_parity(
+            "f() { local +h FPATH=/aa:$FPATH; local +h -a fpath; fpath=(/q $fpath); \
+             print ${#fpath} $fpath[1] $fpath[2] }; print $#fpath; f; print $#fpath",
+        );
+    }
+
+    #[test]
+    fn scalar_half_after_array_half() {
+        // Reverse order: the array half is localized first, so when the scalar
+        // half is declared its `ename` peer IS at locallevel — same c:2394 arm,
+        // opposite direction.
+        assert_parity(
+            "f() { local +h -a fpath; local +h FPATH=/aa:$FPATH; print ${#fpath} $fpath[1] }; \
+             print $#fpath; f; print $#fpath",
+        );
+    }
+}
