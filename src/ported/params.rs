@@ -12232,7 +12232,43 @@ pub fn endparamscope() {
             // reaches the tied setter and refills the tied array's
             // global storage (fpath/path/cdpath…).
             None => {
+                // c:Src/params.c:5915-5933 — C restores by CALLING THE
+                // SPECIAL'S setfn directly (`pm->gsu.s->setfn(pm, ...)`).
+                // The `read-only variable` guard lives one level up in
+                // `assignsparam`/`setstrvalue` (c:3216), so C's restore
+                // never meets it: for a PM_READONLY_SPECIAL the setfn is
+                // simply a no-op (`varint_readonly_gsu` =
+                // `{intvargetfn, nullintsetfn, stdunsetfn}`, c:351).
+                //
+                // zshrs has no GSU wired for these rows, so the restore
+                // falls back to the name-routed `setsparam`, which DOES
+                // re-enter `assignsparam` and would emit `read-only
+                // variable: NAME` while unwinding a scope that shadowed
+                // one (`f() { local ARGC=2 }`). Drop the flag for the
+                // duration of the restore so the write behaves like C's
+                // direct setfn call, then put it back. The bit is
+                // re-read from the node rather than assumed, so a row
+                // that is not read-only is untouched.
+                let ro_bit = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(&n).map(|p| p.node.flags as u32 & PM_READONLY))
+                    .unwrap_or(0);
+                if ro_bit != 0 {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(&n) {
+                            pm.node.flags &= !(ro_bit as i32);
+                        }
+                    }
+                }
                 setsparam(&n, &val);
+                if ro_bit != 0 {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(&n) {
+                            pm.node.flags |= ro_bit as i32;
+                        }
+                    }
+                }
             }
         }
     }
@@ -13010,17 +13046,16 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                     // c:6207
                     continue;
                 }
-                // PM_RO_BY_DESIGN-expansion for the readonly attribute:
-                // zshrs's special params (e.g. `$!`, `$$`, `$?`, `LINENO`)
-                // carry PM_RO_BY_DESIGN instead of PM_READONLY so internal
-                // writes pass `assignstrvalue` (see vm_helper init at
-                // bug #97 in docs/BUGS.md). The C-side IPDEF4 entries
-                // declare PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
-                // PM_RO_BY_DESIGN (c:Src/params.c:351,zsh.h:1925), so both
-                // bits are set together. The attribute walk's readonly
-                // check has to expand its match to either bit; mirrors the
-                // `bin_typeset` listing filter at builtin.rs:3620. Bug #297
-                // in docs/BUGS.md.
+                // PM_RO_BY_DESIGN-expansion for the readonly attribute.
+                // The C-side IPDEF4 entries declare PM_READONLY_SPECIAL =
+                // PM_SPECIAL | PM_READONLY | PM_RO_BY_DESIGN
+                // (c:Src/params.c:351, zsh.h:1925), so both bits are set
+                // together and matching either is equivalent for them
+                // (`init_partab_params` stamps the full triple). The
+                // expansion is kept so the walk still reports "readonly"
+                // for any row that reaches here carrying only the
+                // by-design bit; mirrors the `bin_typeset` listing filter
+                // at builtin.rs:3620. Bug #297 in docs/BUGS.md.
                 //
                 // GATE on `!PM_REMOVABLE`: the IPDEF4 specials are NOT
                 // removable, but `private` vars (c:Modules/param_private.c:
