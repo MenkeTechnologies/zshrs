@@ -3858,6 +3858,22 @@ fn skipcomm() -> Result<(), ()> {
     // 2 = saw subject word, expecting `in`.
     let mut case_pending: i32 = 0;
 
+    // Same class of gap as Bug #291, different construct: the OLD `pct`
+    // counter also mis-tracks a `(` / `)` that appears INSIDE a `${…}`
+    // parameter expansion, where it is glob/pattern text and not shell
+    // grouping at all. C's NEW skipcomm (default since 5.0.x, the
+    // `#else` half of c:2082-2225) re-lexes the body, so `gettokstr`
+    // consumes `${…}` to its matching `}` as one string token and never
+    // sees those parens as structure. Riding the OLD counter, zshrs
+    // decremented `pct` on the `)` of e.g.
+    // `$(sed … ${IPREFIX%%[\\(]#}(.N))`
+    // (Completion/X/Command/_setxkbmap sh:80) and then ran off the end of
+    // the file — `_setxkbmap` failed to parse entirely and `setxkbmap -`
+    // completed nothing. Track `${` … `}` nesting and leave `pct` alone
+    // for anything inside it.
+    let mut brace_depth: i32 = 0;
+    let mut prev_dollar = false;
+
     loop {
         let c = hgetc();
         let c = match c {
@@ -3899,15 +3915,39 @@ fn skipcomm() -> Result<(), ()> {
             word_buf.push(c);
         }
 
+        // `${` opens a parameter expansion; inside one, every `{`/`}`
+        // nests and every paren is pattern text rather than grouping.
+        // `prev_dollar` is recomputed here (not at the bottom of the
+        // loop) so the arms below that swallow whole quoted runs cannot
+        // leave a stale `$` armed.
+        if c == '{' && (prev_dollar || brace_depth > 0) {
+            brace_depth += 1;
+        } else if c == '}' && brace_depth > 0 {
+            brace_depth -= 1;
+        }
+        prev_dollar = c == '$';
+
         match c {
             '(' => {
-                pct += 1;
+                // The Bug #291 `case` guard must be SYMMETRIC. zsh's case
+                // arms may be written with a leading paren — `(Buildfile:*)`
+                // (Completion/.../_ant sh:114) — and counting that `(` while
+                // refusing to count its `)` made `pct` climb by one per arm,
+                // so `skipcomm` never found its close and ran to EOF. That is
+                // what turned `_ant` into `unmatched "` and killed
+                // `ant <TAB>`. Ignoring both members of the pair keeps the
+                // counter balanced for everything inside the case, including
+                // a nested `$( … )` in an arm body.
+                if brace_depth == 0 && case_depth == 0 {
+                    pct += 1;
+                }
                 add(c);
             }
             ')' => {
                 // c:Bug #291 — inside a case block, `)` closes a
-                // pattern (not the cmdsub).
-                if case_depth > 0 {
+                // pattern (not the cmdsub). Likewise inside `${…}`,
+                // where it is glob text (`${x%%[\\(]#}`).
+                if case_depth > 0 || brace_depth > 0 {
                     add(c);
                 } else {
                     pct -= 1;

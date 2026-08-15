@@ -27,20 +27,31 @@
 //! / `_all_labels` / `_requested`. Both callees drive
 //! `comptags`, which is indexed by `locallevel` (`Src/Zle/computil.c:3782`
 //! "Array of tag-set infos. Index is the locallevel", `:3873` `level =
-//! locallevel - (args[0][2] ? 1 : 0)`). Routing them through
-//! `dispatch_function_call` adds `doshfunc`'s `inc_locallevel`
-//! (`src/ported/exec.rs:6131`), moving BOTH the `comptags -i` in `_tags`
-//! and the `comptags -A` in `_all_labels` from `_wanted`'s own level to one
-//! below it. That is what zsh does — `_tags` and `_all_labels` are real
-//! shell functions there — but it flips this module's
-//! `no_matching_tagset_returns_one` test and nine downstream `_hosts` /
-//! `_limits` / `_x_*` `returns_one_without_registered_tags` tests from 1 to
-//! 0, and the flip persists even when the `call_compfn` fallback is made to
-//! carry the same bump (so it is the level shift itself, not the missing
-//! frame). Establishing which answer matches zsh needs a live
-//! completion-context run of `_wanted` in the reference shell; that was not
-//! obtained, so the conversion is deliberately left undone rather than
-//! landed on a guess.
+//! locallevel - (args[0][2] ? 1 : 0)`). Calling the raw bodies skips
+//! `doshfunc`'s `inc_locallevel` (`src/ported/exec.rs`), leaving BOTH the
+//! `comptags -i` in `_tags` and the `comptags -A` in `_all_labels` at
+//! `_wanted`'s own level instead of one below it — so `_wanted` REPLACED its
+//! caller's tag set rather than nesting under it.
+//!
+//! The level shift is now applied explicitly (`inc_locallevel` /
+//! `dec_locallevel` around the block in [`_wanted_impl`]), same shape as the
+//! guard in `_message.rs`. The live completion-context evidence the earlier
+//! note asked for was obtained: dropping zsh's own
+//! `Completion/Base/Core/_wanted` into `$fpath` ahead of the port — which
+//! restores the real `doshfunc` frames and changes nothing else — makes
+//! `diff3 -<TAB>` byte-identical to the reference shell, while the port
+//! without the shift offered `$PWD` file names in place of the option list.
+//!
+//! KNOWN CONSEQUENCE, deliberately NOT papered over: nine unit tests still
+//! assert the pre-shift answer — this module's `no_matching_tagset_returns_one`
+//! and eight `returns_one_without_registered_tags` cases in `_bind_addresses`,
+//! `_completers`, `_domains`, `_file_systems`, `_global_tags`, `_hosts`,
+//! `_limits`, `_x_visual`. They call the `_impl` bodies with no `doshfunc`
+//! frame at all, so their "no tags registered" premise only held while
+//! `_wanted`'s own `_tags` registration silently landed on (and was read back
+//! from) the caller's level. With the shift, `_wanted` registers its tag and
+//! `_all_labels` adds matches, so 0 is the correct return. Those assertions
+//! need updating by the test owner; they are left failing rather than edited.
 
 use super::_all_labels::_all_labels_impl;
 use super::_tags::_tags_impl;
@@ -126,6 +137,26 @@ pub fn _wanted_impl(args: &[String]) -> i32 {
     // sh:3-5
     let (argv, targs, gopt) = run_zparseopts_wanted(args);
 
+    // `comptags` is indexed by `locallevel` (`Src/Zle/computil.c:3782`
+    // "Array of tag-set infos. Index is the locallevel"), and in zsh `_tags`
+    // / `_all_labels` are real shell functions, so their `comptags -i` /
+    // `comptags -A` register ONE level below `_wanted` and are discarded when
+    // they return. Calling the raw `_impl` bodies skips `doshfunc`'s
+    // `inc_locallevel` (`src/ported/exec.rs:6171`), so `_tags` here REPLACED
+    // the caller's tag set instead of nesting under it. Concretely: an
+    // `_arguments` spec whose positional action is a bare
+    // ` _wanted files expl "…" _files` call (`_diff3` sh:44) wiped the
+    // pending `options` tag set, so `diff3 -<TAB>` offered file names from
+    // `$PWD` (matched via the `m:{a-z\-}={A-Z\_}` matcher, `-` → `_`)
+    // instead of the option list. Same guard, and same reasoning, as
+    // `_message.rs:187` and `_requested.rs`.
+    //
+    // Live evidence that this is what zsh does: dropping zsh's own
+    // `Completion/Base/Core/_wanted` into `$fpath` ahead of the port — which
+    // restores the real `doshfunc` frames and nothing else — makes
+    // `diff3 -<TAB>` byte-identical to the reference shell.
+    crate::ported::utils::inc_locallevel();
+
     // sh:7  _tags "$__targs[@]" "$1"
     let arg1 = argv.first().cloned().unwrap_or_default();
     let mut tags_args: Vec<String> = targs.clone();
@@ -133,6 +164,7 @@ pub fn _wanted_impl(args: &[String]) -> i32 {
     let _ = _tags_impl(&tags_args);
 
     // sh:9-11  while _tags; do _all_labels … && return 0; done
+    let mut ret = 1; // sh:13
     loop {
         if _tags_impl(&[]) != 0 {
             // sh:9 — _tags's switch-to-next-tag-set form returns
@@ -143,12 +175,13 @@ pub fn _wanted_impl(args: &[String]) -> i32 {
         labels_args.extend(argv.iter().cloned());
         if _all_labels_impl(&labels_args) == 0 {
             // sh:10
-            return 0;
+            ret = 0;
+            break;
         }
     }
 
-    // sh:13
-    1
+    crate::ported::utils::dec_locallevel();
+    ret
 }
 
 #[cfg(test)]
