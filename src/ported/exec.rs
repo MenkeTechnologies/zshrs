@@ -8013,9 +8013,11 @@ pub fn unset_assoc(name: &str) {
 /// (full doshfunc scope wrap). `None` when no executor / not a
 /// function.
 pub fn dispatch_function_call(name: &str, args: &[String]) -> Option<i32> {
+    let __ft = crate::ftime::start(name);
     if let Some(r) =
         crate::fusevm_bridge::try_with_executor(|exec| exec.dispatch_function_call(name, args))
     {
+        crate::ftime::stop(__ft);
         return r;
     }
     // No active VM context: this is the loop()/zsh_main exit path where

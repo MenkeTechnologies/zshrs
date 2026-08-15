@@ -740,6 +740,14 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
 /// otherwise → `docompletion` (c:870). Finally fires the
 /// AFTERCOMPLETEHOOK chain (c:878).
 pub fn docomplete(lst: i32) -> i32 {
+    // TEMPORARY: ftime scaffold — one report per completion, every exit path.
+    struct FtimeDump;
+    impl Drop for FtimeDump {
+        fn drop(&mut self) {
+            crate::ftime::dump_and_reset();
+        }
+    }
+    let _ftdump = FtimeDump;
     // c:599
     // c:604 — `int olst = lst`; `lst` is then narrowed in place by the
     // expand-vs-complete decision at c:704-793. C captures `olst` at the
