@@ -303,11 +303,39 @@ pub fn ZC_inblank(c: ZLE_CHAR_T) -> bool {
 pub fn ZC_iupper(c: ZLE_CHAR_T) -> bool {
     c.is_uppercase()
 } // c:68
-/// Port of `ZC_iword` from zle.h:69 (`wcsitype(c, IWORD)`). Word
-/// char per zsh's IWORD class: alphanumeric or `_`.
+/// Port of `ZC_iword` from zle.h:69 (`wcsitype(c, IWORD)`).
+///
+/// IWORD is alphanumerics PLUS every character in `$WORDCHARS`. C builds
+/// it in `utils.c`: alnum get IWORD in the base table (c:4173-4175), then
+/// `for (s = wordchars ? wordchars : DEFAULT_WORDCHARS; *s; s++)
+/// typtab[c] |= IWORD;` (c:4249-4251) adds the rest.
+///
+/// `_` is NOT special-cased: `typtab['_'] = IIDENT | IUSER` (c:4197)
+/// grants it no IWORD at all — it counts as a word character purely
+/// because it appears in DEFAULT_WORDCHARS. A previous version hardcoded
+/// `is_alphanumeric() || c == '_'`, which both invented that `_` case and
+/// dropped the other 22 default word characters, so every word widget
+/// (backward-kill-word, forward-word, kill-word, transpose-words,
+/// capitalize-word) split on `- . / = ~ [ ] ...` where zsh keeps going.
+/// `bindkey -` + ^W cleared the whole line instead of killing just `-`.
+///
+/// An empty `WORDCHARS` is honoured as empty, matching C: the loop tests
+/// `*s`, so `WORDCHARS=''` contributes nothing, while an UNSET parameter
+/// falls back to DEFAULT_WORDCHARS.
 #[inline]
 pub fn ZC_iword(c: ZLE_CHAR_T) -> bool {
-    c.is_alphanumeric() || c == '_'
+    // c:4352-4361 `wcsitype(c, IWORD)` — alphanumeric always wins.
+    if c.is_alphanumeric() {
+        return true;
+    }
+    // c:4362-4368 — a zero-width combining mark continues the word.
+    if crate::zsh_h::IS_COMBINING(c) {
+        return true;
+    }
+    // c:4249-4251 — the $WORDCHARS members.
+    crate::ported::params::getsparam("WORDCHARS")
+        .unwrap_or_else(|| crate::ported::zsh_system_h::DEFAULT_WORDCHARS.to_string())
+        .contains(c)
 } // c:69
 /// Port of `ZC_ipunct` from zle.h:70.
 #[inline]
@@ -1234,14 +1262,29 @@ mod tests {
         assert!(!ZC_inblank('0'));
     }
 
+    /// IWORD = alphanumerics + every member of `$WORDCHARS` (`utils.c`
+    /// c:4173-4175 then c:4249-4251).
+    ///
+    /// This test previously asserted `!ZC_iword('-')`, which is backwards:
+    /// `-` is in DEFAULT_WORDCHARS, so C classes it a word character, and
+    /// the assertion was pinning the very bug that made `bindkey -` + ^W
+    /// kill the whole line. `_` is included for the SAME reason -- it is a
+    /// DEFAULT_WORDCHARS member, not a special case (`typtab['_'] =
+    /// IIDENT | IUSER`, c:4197, grants it no IWORD of its own).
     #[test]
-    fn zc_iword_includes_underscore() {
+    fn zc_iword_is_alnum_plus_wordchars() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         assert!(ZC_iword('a'));
         assert!(ZC_iword('1'));
-        assert!(ZC_iword('_'));
-        assert!(!ZC_iword('-'));
+        // every character of the default set counts as a word character
+        for c in crate::ported::zsh_system_h::DEFAULT_WORDCHARS.chars() {
+            assert!(ZC_iword(c), "DEFAULT_WORDCHARS member {c:?} must be IWORD");
+        }
+        // and a few that are in neither class
+        for c in [' ', '\t', '\n', '\'', '"', '|', ','] {
+            assert!(!ZC_iword(c), "{c:?} is in neither alnum nor WORDCHARS");
+        }
     }
 
     #[test]
