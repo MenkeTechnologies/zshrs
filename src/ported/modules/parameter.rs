@@ -2020,6 +2020,36 @@ pub fn scanbuiltins(
                 pm.node.nam = n;
                 f(&pm, flags);
             }
+            // The daemon `z*` family (`daemon::builtins::ZSHRS_BUILTIN_NAMES`
+            // — zjob, zcache, zls, zid, zping, ztag, zsend, …) is a SECOND
+            // extension registry, separate from EXT_BUILTIN_NAMES above.
+            // It dispatches by name through `try_dispatch` and never had a
+            // BUILTINS entry, so every consumer had to be patched one at a
+            // time: `builtin zjob` (fusevm_bridge.rs), `whence -w zjob`
+            // (builtin.rs). `${(k)builtins}` was never one of them, so
+            // `${+builtins[zjob]}` was 0 and compsys — which offers builtins
+            // via `compadd -Qk builtins` (_command_names sh:38) — left the
+            // whole family out of the "builtin command" group even though
+            // `whence -v zjob` answered "zjob is a shell builtin".
+            //
+            // Same `dis == 0` and `hide_ext_builtins()` gating as the block
+            // above: `--zsh` keeps zsh's exact builtin set.
+            for name in crate::daemon::builtins::ZSHRS_BUILTIN_NAMES {
+                let n = (*name).to_string();
+                if disabled_set.contains(&n) {
+                    continue; // c:825 honor `disable`
+                }
+                if !emitted.insert(n.clone()) {
+                    continue;
+                }
+                pm.u_str = if want_val {
+                    Some("defined".to_string()) // c:846 — dispatches in-process
+                } else {
+                    None
+                };
+                pm.node.nam = n;
+                f(&pm, flags);
+            }
         }
     }
 }
