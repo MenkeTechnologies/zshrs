@@ -1257,6 +1257,88 @@ pub fn cd_get(params: &[String]) -> i32 {
         }
     };
 
+    // c:702 — `l = MB_METACHARLEN(d)` resolves to `mbrtowc`, so the unit
+    // the description is copied in is LOCALE-driven: a whole character
+    // under a UTF-8 codeset, a single BYTE under a C/POSIX one. That is
+    // why zsh's cut can land in the middle of a UTF-8 sequence (`avconvert
+    // -<TAB>` under `LC_ALL=C` ends its line on a lone `\xe2`) — it is
+    // copying bytes, not characters. Same inlined CODESET gate as
+    // `mb_niceformat`'s (utils.rs) and the `${#…}` length arm's
+    // (subst.rs, Bug #378); src/ported/ forbids factoring it into a
+    // Rust-original helper. It is applied here rather than inside
+    // `mb_metacharlenconv` so the substitution walkers that also call
+    // that function keep their current behaviour.
+    let mb_single_byte = unsafe {
+        static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
+        SETLOCALE_DONE.call_once(|| {
+            let empty = std::ffi::CString::new("").unwrap();
+            libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
+        });
+        let cs_ptr = libc::nl_langinfo(libc::CODESET);
+        if cs_ptr.is_null() {
+            false
+        } else {
+            let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
+            !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
+        }
+    };
+
+    // c:695-715 (CRT_DESC) and c:795-815 (CRT_EXPL) — C writes the same
+    // copy loop twice: emit the description whole if its nice width fits
+    // the remaining screen width, else copy one `MB_METACHARLEN` unit at a
+    // time, charging each unit its own `ZMB_nicewidth`, and stop as soon as
+    // the budget is gone. Returns the copied text and what is left of
+    // `remw` (c:799/c:814, which the CRT_EXPL arm pads out with blanks).
+    let copy_desc = |d: &str, mut remw: i32| -> (String, i32) {
+        let mut out = String::new();
+        // c:696 / c:796 — `w = ZMB_nicewidth(d);`
+        let w = niceztrlen(d) as i32;
+        if w <= remw {
+            // c:697-698 / c:797-800 — it fits whole.
+            out.push_str(d);
+            remw -= w;
+            return (out, remw);
+        }
+        // c:699-715 / c:801-815 — "copy a character at once until no more
+        // screen width is available".
+        let bytes = crate::ported::utils::unmetafy_str(d);
+        let mut i = 0usize;
+        while remw > 0 && i < bytes.len() {
+            // c:702 / c:803 — `l = MB_METACHARLEN(d);`
+            let (l, unit) = if mb_single_byte {
+                let b = bytes[i];
+                // The unit in the port's `String` form: a byte that is not
+                // 7-bit cannot sit in a Rust `String` raw, so it takes the
+                // `Meta` + `byte ^ 32` escape `unmetafy_str` decodes — the
+                // same encoding `mb_metacharlenconv` produces (utils.rs).
+                let unit = if b < 0x80 {
+                    String::from(b as char)
+                } else {
+                    let mut u = String::with_capacity(2);
+                    u.push(char::from(crate::ported::zsh_h::Meta));
+                    u.push(char::from(b ^ 32));
+                    u
+                };
+                (1usize, unit)
+            } else {
+                let (n, _c, unit) = crate::ported::utils::mb_metacharlenconv(&bytes[i..]);
+                (n.max(1), unit)
+            };
+            // c:703-705 / c:804-806 — `memcpy(pp, d, l); pp[l] = '\0';
+            // w = ZMB_nicewidth(pp);` — `pp` is the write cursor, so the
+            // measured string is exactly the unit just copied.
+            let w = niceztrlen(&unit) as i32;
+            if w > remw {
+                // c:706-709 / c:807-810 — `*pp = '\0'; break;`
+                break;
+            }
+            out.push_str(&unit); // c:711 / c:812
+            i += l; // c:712 / c:813
+            remw -= w; // c:713 / c:814
+        }
+        (out, remw)
+    };
+
     if rtype == CRT_SIMPLE {
         // c:625
         let head_opts = run
@@ -1357,23 +1439,13 @@ pub fn cd_get(params: &[String]) -> i32 {
                 if (sep_str.len() as i32) < remw {
                     // c:685
                     buf.push_str(&sep_str);
-                    remw -= sep_str.len() as i32;
-                    let dw = niceztrlen(&desc_s) as i32;
-                    if dw <= remw {
-                        buf.push_str(&desc_s);
-                    } else {
-                        // c:701
-                        // Truncate desc to fit. Use char boundaries.
-                        let mut w_used = 0i32;
-                        for ch in desc_s.chars() {
-                            let cw = niceztrlen(&ch.to_string()) as i32;
-                            if w_used + cw > remw {
-                                break;
-                            }
-                            buf.push(ch);
-                            w_used += cw;
-                        }
-                    }
+                    remw -= sep_str.len() as i32; // c:688
+                                                  // c:690-715 — copy as much of the description as the
+                                                  // remaining width allows, one MB_METACHARLEN unit at a
+                                                  // time, "leaving 1 character at the end of screen as
+                                                  // safety margin" (the `- 3` already in `remw`).
+                    let (desc_out, _remw) = copy_desc(&desc_s, remw);
+                    buf.push_str(&desc_out);
                 }
                 mats.push(s.r#match.clone().unwrap_or_default()); // c:673
                 dpys.push(buf);
@@ -1507,21 +1579,10 @@ pub fn cd_get(params: &[String]) -> i32 {
                 buf.push_str(&sep_str);
                 let mut remw = cols - cd_gprew - cd_swidth - CM_SPACE;
                 let desc_s = s.desc.clone().unwrap_or_default();
-                let dw = niceztrlen(&desc_s) as i32;
-                if dw <= remw {
-                    // c:797
-                    buf.push_str(&desc_s);
-                    remw -= dw;
-                } else {
-                    for ch in desc_s.chars() {
-                        let cw = niceztrlen(&ch.to_string()) as i32;
-                        if cw > remw {
-                            break;
-                        }
-                        buf.push(ch);
-                        remw -= cw;
-                    }
-                }
+                // c:796-815 — same copy loop as the CRT_DESC arm.
+                let (desc_out, remw_left) = copy_desc(&desc_s, remw);
+                buf.push_str(&desc_out);
+                remw = remw_left;
                 while remw > 0 {
                     // c:817
                     buf.push(' ');
