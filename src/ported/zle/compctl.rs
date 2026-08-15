@@ -1440,37 +1440,35 @@ pub const CFN_DEFAULT: i32 = 2; // c:1673
 pub fn bin_compcall(
     name: &str,
     argv: &[String],
-    _ops: &crate::ported::zsh_h::options,
+    ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
     // C: c:1680-1683 — incompfunc check
     let incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
     if incompfunc != 1 {
-        eprintln!("{}: can only be called from completion function", name);
-        return 1;
+        // c:1681 — `zwarnnam(name, "can only be called from completion function")`.
+        crate::ported::utils::zwarnnam(name, "can only be called from completion function");
+        return 1; // c:1682
     }
 
-    // C: c:1686-1687 — option flags. Walk argv looking for -T / -D.
-    let mut flags = 0_i32;
-    let mut t_set = false;
-    let mut d_set = false;
-    for a in argv {
-        if a == "-T" {
-            t_set = true;
-        } else if a == "-D" {
-            d_set = true;
-        }
-    }
-    const CFN_FIRST: i32 = 1;
-    const CFN_DEFAULT: i32 = 2;
-    if !t_set {
-        flags |= CFN_FIRST;
-    }
-    if !d_set {
-        flags |= CFN_DEFAULT;
-    }
-    makecomplistctl(flags);
-    0
+    // C: c:1686-1687 — option flags. The BUILTIN spec is
+    // `BUILTIN("compcall", 0, bin_compcall, 0, 0, 0, "TD", NULL)`
+    // (c:4006), so the real builtin path arrives with `-T`/`-D` already
+    // parsed into `ops`. `_default` (Completion/Zsh/Context/_default sh:12
+    // `compcall "$opt[@]"`) reaches this port through a direct Rust call
+    // that has no flag-parsing shim in front of it, so accept the same
+    // letters spelled out in `argv` too.
+    let t_set = crate::ported::zsh_h::OPT_ISSET(ops, b'T') || argv.iter().any(|a| a == "-T");
+    let d_set = crate::ported::zsh_h::OPT_ISSET(ops, b'D') || argv.iter().any(|a| a == "-D");
+    let flags = (if t_set { 0 } else { CFN_FIRST })      // c:1686
+        | (if d_set { 0 } else { CFN_DEFAULT }); // c:1687
+    // c:1689 — `return ret`. The status is the CONTRACT: `compcall`
+    // reports non-zero when a compctl was found and used, and
+    // `_default` sh:12 (`compcall "$opt[@]" || return 0`) reads it to
+    // decide whether the compctl engine already answered or `_files`
+    // still has to run. Dropping it and returning a flat 0 made every
+    // caller take the "nothing was found" branch.
+    makecomplistctl(flags) // c:1689
 }
 
 /// Hook for completion-list build start.
@@ -2581,7 +2579,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
         .lock()
         .unwrap()
         .clone();
-    let ooffs = *OFFS.lock().unwrap();
+    let ooffs = crate::ported::zle::compcore::OFFS.load(std::sync::atomic::Ordering::Relaxed);
 
     // c:2330-2361 — quote-context setup driven by `compquote`.
     let compquote = crate::ported::zle::zle_tricky::COMPQUOTE
@@ -2657,7 +2655,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     *CLWORDS.lock().unwrap() = clw;
 
     // c:2378 — offs = lip + lp.
-    *OFFS.lock().unwrap() = lip + lp;
+    crate::ported::zle::compcore::OFFS.store(lip + lp, std::sync::atomic::Ordering::Relaxed);
 
     // c:2379-2381 — incompfunc = 2 during the nested list build, 1 after.
     INCOMPFUNC.store(2, std::sync::atomic::Ordering::Relaxed);
@@ -2680,7 +2678,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap() = oaq;
-    *OFFS.lock().unwrap() = ooffs;
+    crate::ported::zle::compcore::OFFS.store(ooffs, std::sync::atomic::Ordering::Relaxed);
     CMDSTR.with(|r| *r.borrow_mut() = os);
     *CLWORDS.lock().unwrap() = ow;
     *CLWNUM.lock().unwrap() = on;
@@ -2817,7 +2815,7 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                                 sv = untokenize(&sv); // c:2694
                                 if complete_in_word {
                                     // c:2695 — s[offs] = '\0'.
-                                    let off = (*OFFS.lock().unwrap()).max(0) as usize;
+                                    let off = crate::ported::zle::compcore::OFFS.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize;
                                     if off <= sv.len() && sv.is_char_boundary(off) {
                                         sv.truncate(off);
                                     }
@@ -2838,7 +2836,7 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                             } else if let CompcondData::S { p, s } = &cc.u {
                                 let mut sv = untokenize(os); // c:2708-2709
                                 if complete_in_word {
-                                    let off = (*OFFS.lock().unwrap()).max(0) as usize; // c:2710
+                                    let off = crate::ported::zle::compcore::OFFS.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize; // c:2710
                                     if off <= sv.len() && sv.is_char_boundary(off) {
                                         sv.truncate(off);
                                     }
@@ -3385,7 +3383,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let olwp = *CLWPOS.lock().unwrap();
     let obr = *BRANGE.lock().unwrap();
     let oer = *ERANGE.lock().unwrap();
-    let oof = *OFFS.lock().unwrap();
+    let oof = crate::ported::zle::compcore::OFFS.load(Ordering::Relaxed);
     let occ = CCONT.with(|c| c.get());
 
     // C: c:2986-2989 — push current quote char onto compqstack
@@ -3412,7 +3410,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     *ERANGE.lock().unwrap() = (foo.len() as i32) - 1;
     *QIPRE.lock().unwrap() = qp;
     *QISUF.lock().unwrap() = qs;
-    *OFFS.lock().unwrap() = soffs;
+    crate::ported::zle::compcore::OFFS.store(soffs, Ordering::Relaxed);
     CCONT.with(|c| c.set(CC_CCCONT));
 
     // C: c:3006 — nested dispatch
@@ -3420,7 +3418,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let _ = makecomplistcmd(&ns, cur == 0, CFN_FIRST);
 
     CCONT.with(|c| c.set(occ));
-    *OFFS.lock().unwrap() = oof;
+    crate::ported::zle::compcore::OFFS.store(oof, Ordering::Relaxed);
     CMDSTR.with(|r| *r.borrow_mut() = os);
     *CLWORDS.lock().unwrap() = ow;
     *CLWSIZE.lock().unwrap() = olws;
@@ -4689,8 +4687,19 @@ static CLWSIZE: Mutex<i32> = Mutex::new(0);
 static CLWNUM: Mutex<i32> = Mutex::new(0);
 static CLWPOS: Mutex<i32> = Mutex::new(0);
 
-/// `offs` — completion offset into the current word.
-static OFFS: Mutex<i32> = Mutex::new(0);
+// `offs` — completion offset into the current word — is ONE variable in C
+// (`mod_export int offs;`, Src/Zle/zle_tricky.c:88), ported as
+// `compcore::OFFS`. compctl.rs used to keep a private second copy, which
+// split the write side from the read side: `makecomplistctl` set the
+// private one (c:2378 `offs = lip + lp`) while `makecomplistflags` read the
+// canonical one for its line prefix/suffix split (c:3186 `lpl = offs`;
+// c:3211-3212 `lsuf = s + offs`). The cursor therefore landed at the START
+// of the word inside every `compcall`, so `lpre` came out empty and `lsuf`
+// held the whole word — and `addmatch`'s `addwhat == -3` arm
+// (c:Src/Zle/compctl.c:2021-2022, which matches names against
+// `lpre`/`lsuf`) anchored on the SUFFIX. `compcall` with the word `-`
+// offered every name ENDING in `-` (`-`, `_2to3-`) instead of the none that
+// start with it. Same dedup the `clwords`/`compwords` note above describes.
 
 /// `addedx` — non-zero while the dummy `x` cursor marker is in
 /// the line being lexed.

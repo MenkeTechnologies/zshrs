@@ -5730,7 +5730,28 @@ impl ZshCompiler {
                 // word_seg_depth > 0), globbing here in isolation would drop
                 // the surrounding literal/expansion parts — the parent word's
                 // assembled-scalar glob (driven by needs_glob) owns it.
-                if do_glob && self.word_seg_depth == 0 {
+                //
+                // The same three gates the BRACED `${~NAME}` arm below already
+                // carries (see the `dq_context_depth == 0 && scalar_assign_depth
+                // == 0 && word_seg_depth == 0` test there): the `~` flag only
+                // sets `globsubst` (c:Src/subst.c:2596 `case '~': globsubst =
+                // 2`), and filename generation is a separate, LATER pass that
+                // these three contexts never run —
+                //   * DQ / cond-operand: `[[ … -prefix $~pat ]]` reaches
+                //     `cond_str(a, n, 1)` (c:Src/cond.c:525) whose expansion is
+                //     `singsub` — prefork only, no `zglob`;
+                //   * scalar assignment: c:Src/exec.c stores the substituted
+                //     value verbatim, so `y=$~x` keeps `a*`.
+                // Globbing here made `x="a*"; y=$~x` store `aa ab`, and made
+                // `[[ -prefix $~pat ]]` (Completion/Base/Utility/_numbers sh:65)
+                // hand `cond_psfix` a directory listing — or, on a no-match
+                // pattern, the EMPTY string, whose pattern matches the empty
+                // prefix and fired the branch for every non-numeric word.
+                if do_glob
+                    && self.dq_context_depth == 0
+                    && self.scalar_assign_depth == 0
+                    && self.word_seg_depth == 0
+                {
                     self.emit_word_glob_expand();
                 }
                 return;
@@ -9765,6 +9786,20 @@ impl ZshCompiler {
                     self.dq_context_depth += 1;
                     self.compile_word_str(arg);
                     self.dq_context_depth -= 1;
+                    // c:Src/cond.c:525-534 `cond_str(args, num, raw)` runs
+                    // `singsub` and — for `raw` callers, which is every
+                    // COND_MOD handler (`cond_psfix` c:Src/Zle/complete.c:1666,
+                    // `cond_range` c:1688) — deliberately does NOT untokenize,
+                    // so a `$~spec` operand reaches `patcompile` with the
+                    // tokens c:Src/subst.c:4419-4420's `shtokenize` put there.
+                    // zshrs finishes the expansion up here, so re-apply that
+                    // one step for the operands that asked for it.
+                    if Self::seg_forces_glob_subst(arg) {
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_COND_SHTOKENIZE, 1),
+                            0,
+                        );
+                    }
                 }
                 let op_clean = crate::lex::untokenize(op);
                 let idx = self.builder.add_constant(Value::str(op_clean.as_str()));
