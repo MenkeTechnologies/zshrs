@@ -181,6 +181,9 @@ pub mod ast_sexp;
 /// `bash_arrays` submodule — bash sparse-array holes tracker (Rust-only).
 #[path = "extensions/bash_arrays.rs"]
 pub mod bash_arrays;
+/// `ftime` submodule — TEMPORARY per-function timing scaffold (Rust-only).
+#[path = "extensions/ftime.rs"]
+pub mod ftime;
 /// `dap` submodule.
 #[path = "extensions/dap.rs"]
 pub mod dap;
