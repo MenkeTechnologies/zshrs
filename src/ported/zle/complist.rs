@@ -5354,6 +5354,14 @@ pub fn domenuselect(
                     Some(&mut modelen),
                 );
 
+                // c:2785-2786 — "if we are completing a quoted word, by this
+                // point we've lost track of this, so put we back where it
+                // should be". `menucomplete()` above left `we` at the end of
+                // the word it inserted; every later keystroke in this loop
+                // reads it as the word end, so without the restore a quoted
+                // word keeps growing against a stale boundary.
+                crate::ported::zle::compcore::WE.store(savecs, Ordering::SeqCst);
+
                 // zshrs bridge — `setmstatus` performs the same whole-line
                 // rewrite `set_zlemetaline` does (c:2228-2232), restoring
                 // `saveline` (the line as the user typed it) over the line
@@ -5375,7 +5383,7 @@ pub fn domenuselect(
                 push_line_to_editor();
             }
 
-            // c:2786-2810 — nothing left after filtering.
+            // c:2789-2810 — nothing left after filtering.
             let has_cur = MINFO
                 .get()
                 .and_then(|g| g.lock().ok())
