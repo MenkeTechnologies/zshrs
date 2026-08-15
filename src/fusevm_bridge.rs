@@ -7593,12 +7593,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // to skip the trace-string-building block when xtrace is off,
         // avoiding side-effectful operand re-evaluation. Bug #159 in
         // docs/BUGS.md.
-        let on = with_executor(|_| opt_state_get("xtrace").unwrap_or(false));
+        let on = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         Value::Int(if on { 1 } else { 0 })
     });
 
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
-        let cmd_text = vm.pop().to_str();
+        // Keep the Value; `to_str()` allocates a String, and this handler
+        // runs on EVERY `(( … ))` / `[[ … ]]` / loop-head evaluation, where
+        // xtrace is off essentially always. Defer the allocation to the
+        // `on` branch below.
+        let cmd_val = vm.pop();
         // Sync exec.last_status with the live vm.last_status BEFORE
         // the next command runs. Direct port of the zsh exec.c
         // contract — `$?` reads the exit status of the *most recent*
@@ -7618,7 +7622,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // simple commands route to BUILTIN_XTRACE_ARGS instead. So
         // this handler always emits when xtrace is on — no prefix-
         // string heuristic.
-        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         if on {
             let already = XTRACE_DONE_PS4.with(|f| f.get());
             if !already {
@@ -7626,7 +7630,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             // c:exec.c:5240/5286 — `fprintf(xtrerr, "%s\n", expr)`. Buffer
             // the line + newline, flush once (single write).
-            xtrerr_fputs(&cmd_text);
+            xtrerr_fputs(&cmd_val.to_str());
             xtrerr_fputs("\n");
             xtrerr_flush();
             XTRACE_DONE_PS4.with(|f| f.set(false));
@@ -7648,7 +7652,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_last_status(live);
         });
-        let on = with_executor(|_exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         if on {
             let already = XTRACE_DONE_PS4.with(|f| f.get());
             if !already {
@@ -7714,7 +7718,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_last_status(live);
         });
-        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         if on {
             let n_args = argc.saturating_sub(1) as usize;
             let len = vm.stack.len();
@@ -7797,7 +7801,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // no newline; trailing `\n` comes from XTRACE_ARGS (cmd path)
     // or XTRACE_NEWLINE (assignment-only path).
     vm.register_builtin(BUILTIN_XTRACE_ASSIGN, |vm, _argc| {
-        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         if on {
             // PEEK [..., name, value] — argc==2 by contract.
             let len = vm.stack.len();
@@ -7824,7 +7828,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // C's `fputc('\n', xtrerr); fflush(xtrerr);` at exec.c:3398
     // (the assignment-only path through execcmd_exec).
     vm.register_builtin(BUILTIN_XTRACE_NEWLINE, |_vm, _argc| {
-        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         if on {
             let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
             if already_ps4 {
