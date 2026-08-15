@@ -4192,7 +4192,22 @@ pub fn bin_typeset(
         while i < argv.len() {
             let arg = &argv[i];
             let open = arg.find("=(");
+            // c:Src/lex.c:1228-1249 — whether `NAME=(` opens an array is a
+            // LEXICAL decision, taken on the RAW character after `=`:
+            // `e = hgetc(); if (e == '(') return ENVARRAY;`. A `(` that
+            // arrived inside quotes never reaches that test, so
+            // `local open='(' close=')'` is two ENVSTRINGs in C.
+            // zshrs marks the syntactic form with REJOIN_SEP — parse.rs's
+            // ENVARRAY synthetic word and compile_zsh's
+            // BUILTIN_TYPESET_PAREN_PACK both emit it, and `is_paren_init`
+            // (c:2095 `ASG_ARRAYP`) already keys on it. Requiring it here
+            // too stops a dequoted `(` VALUE from swallowing the following
+            // words: `local open='(' close=')'` (Completion/X/Command/
+            // _setxkbmap sh:34) stored `open` as `(<US>close=)` and never
+            // defined `close`, so `compquote open close` failed and
+            // `setxkbmap -` lost its whole listing.
             let is_open = open.is_some()
+                && arg.contains(REJOIN_SEP)
                 && arg
                     .as_bytes()
                     .first()
@@ -5627,6 +5642,52 @@ pub fn bin_typeset(
             } else {
                 0
             };
+            // c:2083-2085 — `newspecial = NS_NORMAL`:
+            //     if ((pm->node.flags & PM_SPECIAL)
+            //         && !(on & PM_HIDE) && !(pm->node.flags & PM_HIDE & ~off))
+            //         newspecial = NS_NORMAL;
+            // The apply branch (c:2386-2425, "For specials, we keep the same
+            // struct but zero everything") then re-uses the special's OWN
+            // Param — accessors and all — so the local still reads through
+            // the special's getfn. Note the `& ~off` term: a HIDDEN special
+            // (`${(t)commands}` is `association-hide-hideval-special`) is
+            // normally NOT preserved by `local -A commands`, but `+h` puts
+            // PM_HIDE into `off`, which cancels the test and preserves it.
+            // That is exactly what `_command_names` relies on:
+            //     local -a +h path
+            //     local -A +h commands
+            //     path=( $_saved_path )
+            // Reference zsh reports `association-local-special` / 5531 keys
+            // there; dropping the `& ~off` term made zshrs build a plain
+            // empty local assoc (`association-local` / 0 keys), so
+            // `compadd -k commands` had nothing to offer and every command
+            // completion routed through that idiom produced no matches.
+            //
+            // The lookup is C's `paramtab->getnode2()` — "getnode2() to avoid
+            // autoloading" (c:2460-2462). An untouched module-parameter stub
+            // is PM_AUTOLOAD with none of the real node's type/special flags
+            // (`loadparamnode`, Src/params.c:563-585, only swaps in the real
+            // node once something FETCHES the name), so `local -A +h commands`
+            // on a still-unloaded `zsh/parameter` stub creates a plain local
+            // assoc — `${(t)commands}` reads `association-local` and
+            // `$#commands` is 0. Touch `$commands` first and the very same
+            // statement yields `association-local-special` / the live table.
+            // zshrs installs the partab placeholders eagerly and models
+            // PM_AUTOLOAD as the MATERIALIZED_MODULE_PARAMS side-set, so the
+            // stub test has to be asked for explicitly here; without it,
+            // command-position completion (`pr<TAB>` → `_autocd` →
+            // `_command_names`, which never reads `$commands` beforehand)
+            // preserved a special that reference zsh does not.
+            let keep_special = !crate::vm_helper::module_param_is_autoload_stub(arg_name)
+                && paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(arg_name).map(|pm| pm.node.flags as u32))
+                    .is_some_and(|f| {
+                        (f & PM_SPECIAL) != 0
+                            && (on & PM_HIDE) == 0
+                            && (f & PM_HIDE & !off) == 0
+                    });
             // c:2475-2487 — C calls `assignsparam(pname, value, 0)`
             // which creates the pm via the assignsparam → createparam
             // path WITHOUT propagating PM_READONLY/PM_EXPORTED flags
@@ -5634,8 +5695,16 @@ pub fn bin_typeset(
             // Post-assign attribute stamps add PM_READONLY/PM_EXPORTED
             // later. Mirror by passing ONLY the type-kind + PM_LOCAL
             // (not the full `on` mask) so the freshly-created pm
-            // doesn't error on its own first assignment.
-            let _ = createparam(arg_name, kind as i32 | PM_LOCAL as i32);
+            // doesn't error on its own first assignment. PM_SPECIAL rides
+            // along only for the newspecial case above — c:2425 stamps it
+            // on the preserved struct (`… | on | PM_SPECIAL) & ~off`) and
+            // createparam keys its accessor inheritance off it.
+            let _ = createparam(
+                arg_name,
+                kind as i32
+                    | PM_LOCAL as i32
+                    | if keep_special { PM_SPECIAL as i32 } else { 0 },
+            );
             // c:2575 — `else if (on & PM_LOCAL) pm->level = locallevel;`
             // — stamp the just-created pm at the current scope so
             // endparamscope (params.c) unwinds the shadow when the
@@ -6499,7 +6568,26 @@ pub fn bin_typeset(
             // c:3060-3070 — bare name + `-A`/`-a` declares an empty
             // assoc/array.
             if is_hashed {
-                if crate::ported::exec::assoc(arg).is_none() {
+                // c:2521 — C just calls `createparam(pname, on & ~PM_READONLY)`
+                // here; it never installs an empty hash of its own. For the
+                // newspecial shadow (c:2386-2425) the preserved Param keeps
+                // pointing at the SPECIAL's table, so `local -A +h commands`
+                // still enumerates the live command hash. zshrs's magic module
+                // hashes (Src/Modules/parameter.c partab[]) are reached by
+                // FALLING THROUGH `paramtab_hashed_storage` to the row's
+                // scanfn (params.rs gethkparam), so materialising an empty bag
+                // for one of them is not "an empty local assoc", it is a
+                // blanked special: `$#commands` read 0 inside `_command_names`
+                // and `compadd -k commands` offered nothing.
+                let preserved_special_hash = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(arg).map(|pm| (pm.node.flags as u32 & PM_SPECIAL) != 0))
+                    .unwrap_or(false)
+                    && crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .any(|e| e.name == arg);
+                if !preserved_special_hash && crate::ported::exec::assoc(arg).is_none() {
                     crate::ported::exec::set_assoc(arg, IndexMap::new());
                 }
             } else if crate::ported::exec::array(arg).is_none() {
