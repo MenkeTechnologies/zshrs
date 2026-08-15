@@ -7,8 +7,10 @@
 //! itself). Rust port matches: 0 types, only the `#ifndef HAVE_*CODES`
 //! fallback tables the C carries for libraries that export no arrays.
 //!
-//! Like the C, this links the curses/termcap library (`ncurses` on
-//! macOS/BSD, `tinfo` on Linux — see `build.rs`) and reads the real
+//! Like the C, this links the curses/termcap library — the name is
+//! chosen by `build.rs::link_term_lib`, which reproduces the
+//! `ncursesw ncurses tinfow tinfo termcap curses` search that
+//! `configure.ac:725-771` performs — and reads the real
 //! terminal database through `tgetflag(3)` / `tgetnum(3)` /
 //! `tgetstr(3)`, after `setupterm(3)` has initialised `cur_term`
 //! exactly as `zsetupterm()` (`Src/utils.c:386`) does for C's

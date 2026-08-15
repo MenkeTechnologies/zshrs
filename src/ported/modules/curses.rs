@@ -2485,7 +2485,10 @@ fn flags_lock() -> &'static Mutex<u32> {
     zcurses_flags.get_or_init(|| Mutex::new(0))
 }
 
-#[link(name = "ncurses")]
+// The terminal library name comes from `build.rs` (`link_term_lib`,
+// which reproduces `configure.ac:725-771`), not from a `#[link]` here —
+// pinning `ncurses` would add a second terminal library to the link line
+// alongside the probed one.
 extern "C" {
     #[link_name = "tigetnum"]
     fn libc_tigetnum(name: *const libc::c_char) -> libc::c_int;

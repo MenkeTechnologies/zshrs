@@ -38,6 +38,8 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
+use crate::ported::hashtable::shfunctab_lock;
+use crate::ported::utils::getshfunc;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle, zstyletab};
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, unsetparam};
 use crate::ported::zle::compcore::set_compstate_str;
@@ -394,6 +396,22 @@ fn call_email_plugin(
     curtag: &str,
     reply: &mut Vec<String>,
 ) -> Option<i32> {
+    // sh:17/31/32/34/40/46/76  each built-in plugin is defined behind a
+    // `(( $+functions[_email-<name>] )) ||` guard, so a shell function of
+    // that name — whether a user override of a built-in plugin or an
+    // entirely third-party one (sh:10-14) — always wins. `_call_function`
+    // (sh:156) then invokes it by name.
+    let fname = format!("_email-{}", plugin);
+    if getshfunc(&fname).is_some() {
+        let fret = dispatch_function_call(&fname, call_args).unwrap_or(1);
+        // sh:11-13  a plugin that returns 300 has left its results in the
+        // (function-local) `reply` array; read it back for sh:162-176.
+        if fret == 300 {
+            *reply = getaparam("reply").unwrap_or_default();
+        }
+        return Some(fret);
+    }
+
     match plugin {
         "mail" | "mutt" | "mush" => {
             let cfg = files
@@ -544,12 +562,46 @@ pub fn _email_addresses(args: &[String]) -> i32 {
 
     // sh:137-140  plugins = config-less plugin fns + config-backed
     //   plugins whose file exists.
+    //
+    // sh:138  ${${(k)functions[(I)_email-*]#*-}:#(${(kj.|.)~files})}
+    //   `(k)functions[(I)_email-*]` enumerates EVERY key of the live
+    //   `$functions` table matching `_email-*` — the seven plugins the
+    //   upstream file defines at sh:17-88 AND any third-party plugin
+    //   function the user has loaded (sh:10-14 documents that "New
+    //   plugins will be picked up and run automatically"). `#*-` strips
+    //   through the first `-`, so `_email-sleuth` → `sleuth`.
+    //
+    //   In this port the seven upstream plugins are native Rust (they are
+    //   not in `shfunctab`), so `known` stands in for them; the live table
+    //   supplies everything else.
     let known = ["mail", "mutt", "mush", "MH", "pine", "ldap", "local"];
     let config_keys: Vec<&str> = files.iter().map(|(k, _)| k.as_str()).collect();
     let mut plugins: Vec<String> = Vec::new();
     for f in &known {
         if !config_keys.contains(f) {
             plugins.push(f.to_string());
+        }
+    }
+    // The rest of `${(k)functions[(I)_email-*]}` — plugins that only
+    // exist as shell functions.
+    let mut fn_plugins: Vec<String> = Vec::new();
+    if let Ok(tab) = shfunctab_lock().read() {
+        for (k, _) in tab.iter() {
+            // `(I)_email-*` then `#*-`
+            if let Some(name) = k.strip_prefix("_email-") {
+                if !name.is_empty() {
+                    fn_plugins.push(name.to_string());
+                }
+            }
+        }
+    }
+    fn_plugins.sort();
+    fn_plugins.dedup();
+    for f in fn_plugins {
+        // `:#(${(kj.|.)~files})` — drop the config-backed names; they are
+        // re-added below only when their config file exists.
+        if !config_keys.contains(&f.as_str()) && !plugins.iter().any(|p| *p == f) {
+            plugins.push(f);
         }
     }
     for (k, v) in &files {

@@ -1,10 +1,14 @@
 # cross-rs per-target Docker image overrides.
 #
-# src/ported/modules/{curses,terminfo,cap,db_gdbm}.rs declare
-# `#[link(name = "...")]` for ncurses + tinfo + cap + gdbm. The
-# default `ghcr.io/cross-rs/aarch64-unknown-linux-gnu` image ships
-# gcc-cross + libc6:arm64 but NOT these dev headers, so cargo's
-# linker invocation fails with `cannot find -lncurses` / `-ltinfo`.
+# The terminal library (`ncursesw`/`ncurses`/`tinfo`/...) is chosen by
+# `build.rs::link_term_lib`, which reproduces zsh's own
+# `configure.ac:725-771` search order; for a cross target (host !=
+# target) it emits `-ltinfo` on linux without probing. On top of that
+# src/ported/modules/{cap,db_gdbm}.rs declare `#[link(name = "...")]`
+# for cap + gdbm. The default
+# `ghcr.io/cross-rs/aarch64-unknown-linux-gnu` image ships gcc-cross +
+# libc6:arm64 but NOT these dev headers, so cargo's linker invocation
+# fails with `cannot find -ltinfo` / `cannot find -lgdbm`.
 #
 # `pre-build` runs once per cross-build inside the Docker image
 # before cargo. Enable arm64 / armhf multiarch then `apt-get install`
