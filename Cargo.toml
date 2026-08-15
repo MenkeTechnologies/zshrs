@@ -16,25 +16,22 @@ categories = ["command-line-utilities"]
 # local/CI use but is omitted from `cargo package` / the crates.io tarball.
 # Mirrors strykelang's exclude set.
 #
-# NOTE: the old `**/*parity*` glob also matched `bins/parity-fuzz.rs`, the
-# source of the declared `[[bin]] parity-fuzz` target — which would drop a
-# build input from the tarball. Excluded by directory instead.
+# NOTE: exclude entries name directories that exist in the repo. A glob such as
+# the old `**/*parity*` also matched `bins/parity-fuzz.rs`, the source of the
+# declared `[[bin]] parity-fuzz` target, and would drop a build input from the
+# tarball.
 exclude = [
     "/.github/",
     "/tests/",
     "/test/",
     "/test_data/",
     "/test_corpus/",
-    "/parity/",
     "/examples/",
     "/docs/",
     "/editors/",
     "/scripts/",
     "/bench/",
-    "/benches/",
     "/vendor/",
-    "/tools/",
-    "/fuzz/",
     "/completions/",
     "/zshrs_dump.*",
     "/tmux",
