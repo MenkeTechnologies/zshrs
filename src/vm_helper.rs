@@ -866,11 +866,12 @@ impl ShellExecutor {
     /// assignstrvalue at `Src/params.c:2699-2703` which gates on
     /// `pm->node.flags & PM_READONLY` where the IPDEF4 family declares
     /// `PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY | PM_RO_BY_DESIGN`
-    /// (both bits set together). zshrs's special_params table carries
-    /// PM_RO_BY_DESIGN alone for IPDEF4 entries so internal direct-write
-    /// paths (BUILTIN_SET_LINENO bypasses via pm.u_val) don't trip the
-    /// readonly guard. User-facing checks must accept either bit. Bug
-    /// #418-family / test_lineno_intrinsic_readonly.
+    /// (all three bits set together), which `init_partab_params` now
+    /// stamps in full. The PM_RO_BY_DESIGN arm below is therefore no
+    /// longer the IPDEF4 rows' only read-only marker — it remains
+    /// because `private` params (c:Src/Modules/param_private.c:174)
+    /// carry PM_RO_BY_DESIGN WITHOUT PM_READONLY and need the
+    /// scope-gated test. Bug #418-family / test_lineno_intrinsic_readonly.
     pub fn is_readonly_param(&self, name: &str) -> bool {
         let (flags, pm_level) = crate::ported::params::paramtab()
             .read()
@@ -898,9 +899,11 @@ impl ShellExecutor {
                     .load(Ordering::Relaxed);
                 return !(ll == pm_level || ll > wrap); // c:304 (negated: blocked)
             }
-            // Non-removable PM_RO_BY_DESIGN = IPDEF4 special (LINENO/$?/$$…)
-            // whose PM_READONLY bit zshrs strips for internal writes (bug
-            // #297); RO_BY_DESIGN is their only remaining read-only marker.
+            // Non-removable PM_RO_BY_DESIGN = IPDEF4-family special
+            // (LINENO/$?/$$…). These now also carry PM_READONLY and so
+            // return true from the branch above; this arm stays as the
+            // c:Src/zsh.h:1923 "readonly by design" fallback for any row
+            // reached before `init_partab_params` has stamped the flag.
             return true;
         }
         false
@@ -1363,16 +1366,54 @@ impl ShellExecutor {
                     // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
                     // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
                     //
-                    // Mask `entry.pm_flags` to ONLY the attribute bits
-                    // safe to OR onto an existing Param without changing
-                    // assignment semantics. PM_READONLY is excluded
-                    // here because many internal-runtime writes go
-                    // through setsparam (subshell ZSH_SUBSHELL bump,
-                    // ZSH_EVAL_CONTEXT push, etc.) and would be
-                    // rejected by assignstrvalue's PM_READONLY guard.
-                    // C zsh's PM_SPECIAL GSU setfn bypasses the guard;
-                    // the Rust port lacks that vtable wiring, so keep
-                    // the entries writable.
+                    // Mask `entry.pm_flags` to the attribute bits that
+                    // may be OR'd onto an existing Param.
+                    //
+                    // PM_READONLY IS included. C declares it on 16 rows
+                    // via `PM_READONLY_SPECIAL` (c:Src/zsh.h:1925 —
+                    // `PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN`): the
+                    // IPDEF1 pair `#`/`TTYIDLE` (c:304,314), IPDEF2 `-`
+                    // (c:318), the IPDEF4 block `!`/`$`/`?`/`HISTCMD`/
+                    // `LINENO`/`PPID`/`ZSH_SUBSHELL` (c:351-358) plus
+                    // `status` (c:424), IPDEF9 `*`/`@` (c:392-393) and
+                    // `zsh_eval_context` (c:438), and IPDEF8
+                    // `ZSH_EVAL_CONTEXT` (c:408). `special_params`
+                    // (params.rs:477+) declares exactly those 16 and no
+                    // others, so the bit lands on precisely C's set.
+                    //
+                    // An earlier revision stripped PM_READONLY here to
+                    // keep internal-runtime writes from tripping
+                    // `assignstrvalue`'s guard. Nearly all of those
+                    // writers already mutate the paramtab node in place
+                    // — exactly as C writes the backing C global behind
+                    // a no-op GSU (c:Src/params.c:351, IPDEF4 uses
+                    // `varint_readonly_gsu` =
+                    // `{intvargetfn, nullintsetfn, stdunsetfn}`). The
+                    // in-place sites are `fusevm_bridge.rs:242,261,13045`
+                    // (ZSH_SUBSHELL bump on `u_val`) and
+                    // `fusevm_bridge.rs:12590,12594,12714,12718` +
+                    // `exec.rs:7651,7655` (zsh_eval_context /
+                    // ZSH_EVAL_CONTEXT push+pop). None call
+                    // `setsparam`/`setiparam`.
+                    //
+                    // The ONE writer that did route through `setsparam`
+                    // was `endparamscope`'s deferred scope-pop restore
+                    // (`params.rs`, the `None =>` arm of the `deferred`
+                    // loop): with no GSU wired it name-routes the
+                    // restore and so re-entered the guard, emitting a
+                    // spurious `read-only variable: NAME` while
+                    // unwinding a scope that had shadowed one. C cannot
+                    // reach the guard there because c:5915-5933 calls
+                    // the setfn directly. That arm now drops the bit for
+                    // the duration of the restore, matching C.
+                    //
+                    // With that handled, restoring the flag costs the
+                    // runtime nothing while making `typeset X=v`,
+                    // `readonly X=v` and `X+=v` reject the way
+                    // c:Src/params.c:3216 does, and making
+                    // `paramtypestr` (c:Src/Modules/parameter.c:75-76)
+                    // emit the `-readonly` component that
+                    // `${parameters[X]}` is read for.
                     //
                     // PM_UNSET is included: lookup_special_var arms for
                     // TRY_BLOCK_ERROR / TRY_BLOCK_INTERRUPT (and other
@@ -1382,7 +1423,8 @@ impl ShellExecutor {
                     // gets cleared by assignstrvalue at c:3660 on any
                     // write, so it correctly tracks "ever assigned".
                     // Bug #143 in docs/BUGS.md.
-                    let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI | PM_UNSET);
+                    let safe_pm_flags = entry.pm_flags
+                        & (PM_TIED | PM_DI | PM_UNSET | crate::ported::zsh_h::PM_READONLY);
                     // c:Src/params.c — IPDEF macros set PM_TYPE bits
                     // (PM_INTEGER for IPDEF5/6, PM_ARRAY for IPDEF9,
                     // PM_HASHED for IPDEF-hash) along with PM_SPECIAL.
@@ -1395,17 +1437,15 @@ impl ShellExecutor {
                     // zsh's `typeset -i10 OPTIND=1`. OR the pm_type
                     // into the bits so the type attribute lands.
                     let mut bits = safe_pm_flags | PM_SPECIAL | entry.pm_type;
-                    // c:Src/params.c — IPDEF4/IPDEF1 set
-                    // PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
-                    // PM_RO_BY_DESIGN. zshrs masks PM_READONLY out
-                    // (see above) but the introspection bit can still
-                    // ride along. Replace dropped PM_READONLY with
-                    // PM_RO_BY_DESIGN so `typeset -r` recognises these
-                    // entries as logically-readonly without blocking
-                    // internal writes. The listing filter in
-                    // `bin_typeset` expands its PM_READONLY match to
-                    // also pick up PM_RO_BY_DESIGN. Bug #97 in
-                    // docs/BUGS.md.
+                    // c:Src/zsh.h:1925 — `PM_READONLY_SPECIAL` is the
+                    // three-bit set `PM_SPECIAL|PM_READONLY|
+                    // PM_RO_BY_DESIGN`. `special_params` stores only
+                    // PM_READONLY per row (the other two are implied by
+                    // the IPDEF macro), so complete the triple here:
+                    // PM_SPECIAL is already OR'd into `bits` above, and
+                    // this adds the PM_RO_BY_DESIGN companion that
+                    // distinguishes a by-design readonly special from a
+                    // user `readonly` (c:Src/zsh.h:1923).
                     if (entry.pm_flags & crate::ported::zsh_h::PM_READONLY) != 0 {
                         bits |= crate::ported::zsh_h::PM_RO_BY_DESIGN;
                     }
