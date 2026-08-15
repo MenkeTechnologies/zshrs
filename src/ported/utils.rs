@@ -7006,16 +7006,17 @@ pub fn nicezputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
 /// path.
 pub fn niceztrlen(s: &str) -> usize {
     // c:5343-5348 — under MULTIBYTE_SUPPORT (which zshrs targets) `niceztrlen`
-    // is the multibyte version: it walks whole characters via `mb_niceformat`,
-    // whose per-char width comes from `wcs_nicechar_sel`'s wcwidth — so a
-    // printable multibyte char (e.g. U+2010 `‐`, 3 bytes / 1 column) counts as
-    // 1, not 3. The port previously called `sb_niceformat`, the single-byte
-    // (`#else`, c:5320-5341) version that counts each byte separately, so any
-    // description/match with a multibyte glyph over-measured its display width
-    // by (bytes−columns). In `cd_get`'s described-list truncation
-    // (computil.rs) that over-measure consumed the remaining-width budget too
-    // early and clipped the tail off descriptions containing such a glyph —
-    // e.g. `xz -<TAB>`'s "…multi‐threaded decompression" lost its final "on".
+    // IS `mb_niceformat`, so the unit it walks is whatever the current locale's
+    // `mbrtowc` returns: a whole character under a UTF-8 locale (U+2010 `‐`,
+    // 3 bytes, counts 1), a single byte under a C/POSIX one (the same `‐`
+    // counts 1+5+5 = 11, because its two continuation bytes are non-printable
+    // and take `\M-^@`-style five-column representations). `mb_niceformat`
+    // carries that locale branch; see its body.
+    //
+    // The port previously called `sb_niceformat`, the single-byte (`#else`,
+    // c:5320-5341) version, which counts every byte through `nicechar` and so
+    // charges 4+5+5 = 14 for that `‐` in EITHER locale — over-measuring in a
+    // UTF-8 locale and still not matching zsh in a C one.
     mb_niceformat(s, None, None, 0)
 }
 
@@ -7025,13 +7026,17 @@ pub fn niceztrlen(s: &str) -> usize {
 /// invalid sequence emits a `^X`/`\\xNN` representation, otherwise
 /// passes the char through. The C source threads an
 /// `mbstate_t` through `mbrtowc()` and falls back to single-byte
-/// `\M-` notation on `MB_INVALID`; the Rust port uses Rust's
-/// chars iterator which already produces valid scalar values, so
-/// invalid-byte fallback collapses to the control-char branch.
+/// `\M-` notation on `MB_INVALID`.
+///
+/// `mbrtowc` is locale-driven, so the port is too: under a UTF-8
+/// codeset it decodes one UTF-8 scalar per iteration (Rust's own
+/// UTF-8 validation standing in for the `mbstate_t` machine, with
+/// the invalid-byte arm reached through `from_utf8`'s error), and
+/// under a single-byte codeset (`MB_CUR_MAX == 1`, the C/POSIX
+/// locale) it takes one byte per iteration whose value IS the wide
+/// character. The width this function returns differs between the
+/// two for any non-ASCII input — see the `mb_single_byte` block.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream, outstrp, flags)
-// Rust idiom replacement: `chars()` + `wcs_nicechar` covers the C
-// mbrtowc loop with `MB_INVALID` fallback (Rust UTF-8 guarantees
-// valid scalars, so the invalid-byte arm collapses).
 /// `mb_niceformat` — see implementation.
 pub fn mb_niceformat(
     s: &str,
@@ -7093,6 +7098,62 @@ pub fn mb_niceformat(
     umlen = ums.len(); // c:5389 *umlen
     ptr = 0; // c:5389 ptr starts at 0 in ums
 
+    // c:5393 — `mbrtowc` is LOCALE-driven: with `MB_CUR_MAX == 1` (the
+    // C/POSIX locale) it consumes exactly one byte per call and hands
+    // back that byte's value as the wide character, so a UTF-8 sequence
+    // sitting in the string is measured as its separate bytes — a
+    // printable one (`\xe2` = U+00E2) costs its own column, a
+    // non-printable one (`\x80`, `\x90`) costs the five columns of the
+    // `\M-^@` representation `wcs_nicechar_sel` returns for it. zsh
+    // therefore charges 1+5+5 = 11 columns for `‐` (U+2010) under
+    // `LC_ALL=C`, not the 1 column it charges under a UTF-8 locale, and
+    // every `ZMB_nicewidth` consumer (described-list truncation in
+    // computil.c's `cd_get`, `cd_calc`'s `premaxw`, `calclist`'s column
+    // widths) budgets against that number.
+    //
+    // The port decoded UTF-8 unconditionally, so under the C locale it
+    // measured 1 where zsh measured 11 and let descriptions run past
+    // zsh's cut column. Branch on the active locale's CODESET, the same
+    // way the `${#…}` length arm does (subst.rs, Bug #378), and take one
+    // byte at a time when it is not UTF-8. Inlined rather than factored
+    // out because src/ported/ forbids Rust-original helper fns.
+    //
+    // Platform note: this reproduces a C locale whose `mbrtowc` accepts
+    // all 256 byte values (macOS, and every 8-bit locale). A locale whose
+    // `mbrtowc` rejects bytes >= 0x80 outright (glibc's ASCII C locale)
+    // takes C's `MB_INVALID` arm instead, which charges `nicechar_sel`'s
+    // `\M-b` (4) for the lead byte rather than 1.
+    //
+    // Scope: the branch applies to the WIDTH-ONLY call shape — no stream,
+    // no `outstrp` — which is the one C names separately as
+    // `ZMB_nicewidth(s)` = `mb_niceformat(s, NULL, NULL, 0)`
+    // (Src/Zle/zle.h:57) and reaches through `niceztrlen`. In that shape
+    // the only result is the integer width, which the port can reproduce
+    // exactly. In the output shapes C emits the RAW byte for a printable
+    // high byte (`wcrtomb` in a single-byte locale writes one byte, and
+    // `zputs` un-metafies `wcs_nicechar_sel`'s buffer on the way out); a
+    // Rust `String`/`write_all` of that scalar would emit its two UTF-8
+    // bytes instead, so byte-wise decoding there would trade one
+    // divergence for another. Those shapes keep the character-oriented
+    // walk until the output side is byte-oriented too.
+    let mb_single_byte = stream.is_none() && outstrp.is_none() && unsafe {
+        // Rust never calls `setlocale` on its own, so run it once from
+        // the environment before asking `nl_langinfo` — otherwise the
+        // startup default ("C") would shadow the process's LC_CTYPE.
+        static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
+        SETLOCALE_DONE.call_once(|| {
+            let empty = std::ffi::CString::new("").unwrap();
+            libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
+        });
+        let cs_ptr = libc::nl_langinfo(libc::CODESET);
+        if cs_ptr.is_null() {
+            false
+        } else {
+            let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
+            !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
+        }
+    };
+
     // c:5391 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
     while umlen > 0 {
         // c:5392
@@ -7104,6 +7165,11 @@ pub fn mb_niceformat(
         if eol {
             // c:5396 — MB_INVALID arm via `eol = 1`.
             decoded_c = None;
+            cnt = 1;
+        } else if mb_single_byte {
+            // c:5393 — single-byte locale: `mbrtowc` returns 1 and sets
+            // `c` to the byte value itself.
+            decoded_c = Some(char::from(ums[ptr]));
             cnt = 1;
         } else {
             // c:5393 — `mbrtowc` decodes at most ONE character and looks at no
