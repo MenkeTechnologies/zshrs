@@ -827,8 +827,15 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // clears it below (c:1116), which the matcher now honours.
     let mut hoisted_globflags: i32 =
         GF_MULTIBYTE | (seeded_globflags & (GF_IGNCASE | GF_LCMATCHUC));
-    let hash_char_pre = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:957
-    while hash_char_pre == b'#' {
+    // c:953-954 gates BOTH bytes: `*patparse == zpc_special[ZPC_INPAR]`
+    // as well as `patparse[1] == zpc_special[ZPC_HASH]`. SHGLOB
+    // (c:500-510) and `disable -p '('` mask the INPAR slot to Marker,
+    // and then `(#i)abc` is ordinary text, not a flag spec.
+    let (inpar_char_pre, hash_char_pre) = {
+        let sp = zpc_special.lock().unwrap();
+        (sp[ZPC_INPAR as usize], sp[ZPC_HASH as usize]) // c:953, c:954
+    };
+    while hash_char_pre == b'#' && inpar_char_pre == b'(' {
         let off = patparse_off.load(Ordering::Relaxed);
         let p = patparse.lock().unwrap();
         if off + 1 >= p.len() || &p.as_bytes()[off..off + 2] != b"(#" {
@@ -1159,6 +1166,36 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
         last_branch = br;
     }
 
+    // !!! KNOWN GAP — c:913-917 "check for proper termination" !!!
+    //     if ((paren && *patparse++ != Outpar) ||
+    //         (!paren && *patparse &&
+    //          !((patflags & PAT_FILE) && *patparse == '/')))
+    //         return 0;
+    // The `paren` half IS ported — patcomppiece's `b'('` arm and
+    // patcompnot's paren arm both test for the closing `)` and consume
+    // it. The `!paren` half (a stray top-level `)` is a BAD PATTERN)
+    // is NOT ported, deliberately, and a leftover byte is dropped.
+    //
+    // Why: in C the test is only reachable for a `)` that the LEXER
+    // turned into the Outpar TOKEN, and lex.c makes that decision from
+    // the `sub` flag that zshrs's lexer does not model:
+    //   c:Src/lex.c:989-990  `case LX2_OUTPAR: if ((sub ||
+    //       in_brace_param) && isset(SHGLOB)) break;`  — inside a
+    //       `${...}` body under SHGLOB, `)` stays an ORDINARY char.
+    //   c:Src/lex.c:1007     `case LX2_BAR: if (unset(SHGLOB) ||
+    //       (!sub && !in_brace_param)) c = Bar;`      — ditto for `|`.
+    //   c:Src/lex.c:1079-1081 `case LX2_INPAR: if (isset(SHGLOB)) {
+    //       if (sub || in_brace_param) break; ... }`  — ditto for `(`.
+    // zshrs hands patcompile the same tokenized form for a `[[ ]]` /
+    // `case` pattern and for a `${s//pat/rep}` pattern, so this
+    // function cannot tell the two apart. Enforcing the check makes
+    // `setopt shglob; [[ x = -([AMO]*|[0CRSWnsw]) ]]` error the way
+    // zsh does, but it simultaneously REJECTS patterns zsh accepts in
+    // the substitution contexts (measured: 40 cells fixed, 170 cells
+    // newly over-rejected across `${s//p/r}` / `${s#p}` / `${a:#p}` /
+    // `case`). Over-rejecting is the worse failure, so the check stays
+    // out until the lexer models `sub`; then it can be restored here
+    // verbatim from c:913-917.
     let _ = first_branch;
     starter as i64
 }
@@ -1450,9 +1487,14 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         // `(#i)` to fire even without EXTENDEDGLOB. Parity bugs
         // #18/#19 vs real zsh.
         let hash_char = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:957
+        // c:953-954 compares the FIRST byte against
+        // `zpc_special[ZPC_INPAR]` too, which patcompcharsset masks to
+        // Marker under SHGLOB (c:500-510) or `disable -p '('`. With `(`
+        // disabled, `(#i)abc` is the LITERAL text `(#i)abc`, so the
+        // flag spec must not fire.
         if hash_char == b'#'
             && off + 1 < bytes.len()
-            && bytes[off] == b'('
+            && bytes[off] == sp_inpar
             && bytes[off + 1] == b'#'
         {
             let rest = std::str::from_utf8(&bytes[off..]).unwrap_or("").to_string();
@@ -1824,7 +1866,15 @@ pub fn pattern_range_to_string(rangestr: &str) -> String {
 /// pointer-arithmetic) substrate.
 pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     // c:1261
-    let _ = paren;
+    // c:1509-1512 — `case Inpar:` carries two DPUTS asserting that a
+    // BARE `(` (no kshchar prefix) never reaches the group compiler
+    // when `zpc_special[ZPC_INPAR] == Marker`. patcompcharsset sets
+    // that Marker for `isset(SHGLOB)` (c:500-510) and for a user
+    // `disable -p '('`. So `(` opens a group only when its slot still
+    // holds the literal byte, or when a ksh trigger (`@(`, `*(`, …)
+    // put us here deliberately (c:1419 consumes the trigger and then
+    // falls into `case Inpar`).
+    let inpar_active = { zpc_special.lock().unwrap()[ZPC_INPAR as usize] == b'(' };
     let off = patparse_off.load(Ordering::Relaxed);
     let parse = patparse.lock().unwrap();
     if off >= parse.len() {
@@ -2243,7 +2293,10 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             *tail_out = off2;
             off2 as i64
         }
-        b'(' => {
+        // c:1509-1512 — guard mirrors the two DPUTS: a disabled `(`
+        // (SHGLOB, or `disable -p '('`) is an ORDINARY character unless
+        // a ksh trigger routed us here.
+        b'(' if kshchar != 0 || inpar_active => {
             patparse_off.fetch_add(1, Ordering::Relaxed);
             *flagp &= !P_PURESTR;
             // c:1508-1525 — `if (kshchar == '!') patcompnot(1, ...) else
@@ -2582,10 +2635,27 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                 // EXTENDEDGLOB case. Gate the break on the actual
                 // zpc_special slot so an EXTENDEDGLOB-off run treats
                 // `^` and `#` as ordinary chars. Bug #421.
-                if matches!(b, b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'<')
-                    || (b == b'^' && sp_hat_lit == b'^')
-                    || (b == b'#' && sp_hash_lit == b'#')
-                {
+                // c:1294-1319 — the literal-run loop is WRAPPED in
+                //     if (zpc_special[ZPC_INPAR] != Marker ||
+                //         *patparse != Outpar || paren) { ...break... }
+                // "If '(' is disabled as a pattern char, allow ')' as
+                //  an ordinary string character if there are no
+                //  parentheses to close.  Don't allow it otherwise, it
+                //  changes the syntax."  So with `(` disabled (SHGLOB /
+                // `disable -p '('`) at top level, a `)` stays in the
+                // run; inside a group (`paren`) it still closes it.
+                // `(` itself is likewise only a run terminator while
+                // its slot is live (c:1312-1313 memchr over
+                // zpc_special, which holds Marker when disabled).
+                let stop_here = match b {
+                    b'(' => inpar_active,
+                    b')' => inpar_active || paren != 0,
+                    b'?' | b'*' | b'[' | b'|' | b'\\' | b'<' => true,
+                    b'^' => sp_hat_lit == b'^',
+                    b'#' => sp_hash_lit == b'#',
+                    _ => false,
+                };
+                if stop_here {
                     break;
                 }
                 if b == sp_tilde_lit && sp_tilde_lit != 0 {
@@ -7339,6 +7409,52 @@ mod tests {
         opt_state_set("extendedglob", saved_extended);
         opt_state_set("kshglob", saved_ksh);
         opt_state_set("shglob", saved_sh);
+    }
+
+    /// `Src/pattern.c:500-510` — under SHGLOB `zpc_special[ZPC_INPAR]`
+    /// is `Marker`, so `(` is an ORDINARY character: the compiler must
+    /// not open a group (c:1509-1512's two DPUTS assert exactly that),
+    /// the `(#…)` flag specifier must not fire (c:953-954 tests the
+    /// INPAR slot as well as the HASH slot), and a `)` with nothing to
+    /// close joins the literal run (c:1294-1319).
+    ///
+    /// Reference behaviour, `zsh -f`:
+    ///   `setopt shglob; [[ "(a" = (a|b) ]]`     → 0 (matched `(a`)
+    ///   `setopt shglob; [[ "a"  = (a|b) ]]`     → 1 (no group)
+    ///   `setopt shglob; [[ "(a)" = (a) ]]`      → 0 (all literal)
+    ///   `setopt shglob extendedglob; [[ abc = (#i)ABC ]]`  → 1
+    ///   `setopt shglob extendedglob; [[ "i)ABC" = (#i)ABC ]]` → 0
+    ///     (`(#` is a literal `(` under a `#` closure, not a flag spec)
+    #[test]
+    fn shglob_makes_paren_an_ordinary_character() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_sh = opt_state_get("shglob").unwrap_or(false);
+        let saved_extended = opt_state_get("extendedglob").unwrap_or(false);
+
+        opt_state_set("shglob", true);
+        opt_state_set("extendedglob", true);
+
+        // `(` / `)` are literal, `|` still separates alternatives, so
+        // `(a|b)` is "`(a`" OR "`b)`" — never the group "a or b".
+        assert!(patmatch("(a|b)", "(a"), "c:501 — `(` must be literal");
+        assert!(patmatch("(a|b)", "b)"), "c:1299 — trailing `)` literal");
+        assert!(!patmatch("(a|b)", "a"), "c:501 — no group under SHGLOB");
+        // A whole parenthesised run with no alternation is pure text.
+        assert!(patmatch("(a)", "(a)"), "c:1294-1319 — `(a)` is literal");
+        // The `(#…)` flag specifier needs an ACTIVE `(` (c:953). With
+        // EXTENDEDGLOB on the `#` is still the repetition closure, so
+        // `(#i)ABC` reads as "zero or more `(`" + the text `i)ABC`.
+        assert!(!patmatch("(#i)ABC", "abc"), "c:953 — no case folding");
+        assert!(patmatch("(#i)ABC", "i)ABC"), "c:953 — `(#` = `(` closure");
+        assert!(patmatch("(#i)ABC", "((i)ABC"), "c:953 — `(#` = `(` closure");
+
+        // With SHGLOB off the same patterns are groups / flags again.
+        opt_state_set("shglob", false);
+        assert!(patmatch("(a|b)", "a"), "c:478 — group restored");
+        assert!(patmatch("(#i)ABC", "abc"), "c:953 — flag restored");
+
+        opt_state_set("shglob", saved_sh);
+        opt_state_set("extendedglob", saved_extended);
     }
 
     /// `Src/pattern.c:4220-4233` — `savepatterndisables` encodes the
