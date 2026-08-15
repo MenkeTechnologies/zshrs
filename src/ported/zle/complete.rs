@@ -950,16 +950,29 @@ pub fn bin_compadd(
     // completer can install a `compadd` SHELL FUNCTION (e.g. `_complete_help`'s
     // `compadd(){ return 1 }` at sh:13, or `_approximate`'s correction body)
     // and `compadd` then resolves function-before-builtin. The Rust ports call
-    // `bin_compadd` directly, bypassing that override; route to it here. Gated
-    // on an active `_shadow` (`.shadow.depth` > 0) so NORMAL completion (depth
-    // 0) is completely untouched — zero overhead beyond one int read. The
-    // thread-local guard lets the override's `builtin compadd` / `compadd@suffix`
-    // (body `builtin compadd`) reach the real builtin below without re-entry.
+    // `bin_compadd` directly, bypassing that override; route to it here.
+    //
+    // c:Src/exec.c:execcmd_analyse — the command word is looked up in
+    // `shfunctab` BEFORE `builtintab`, unconditionally, for every call. The
+    // test is therefore just "is there a `compadd` shell function", with no
+    // further qualification: an earlier revision additionally required an
+    // active `_shadow` (`.shadow.depth` > 0), which made the hook fire for
+    // `_complete_help`/`_approximate` (both of which install their override
+    // through `_shadow`) but NOT for a plugin that assigns
+    // `functions[compadd]` directly and globally — fzf-tab's
+    // `functions[compadd]=$functions[_fzf_tab_compadd]` never touches
+    // `_shadow`, so depth stayed 0 and its capture hook was silently skipped.
+    // `.shadow.depth` is set nowhere but `_shadow` itself
+    // (`Completion/Base/Utility/_shadow:36,67,91`), so the extra term could
+    // only ever subtract overrides zsh honours.
+    //
+    // The thread-local guard lets the override's `builtin compadd` /
+    // `compadd@suffix` (body `builtin compadd`) reach the real builtin below
+    // without re-entry.
     thread_local! {
         static IN_COMPADD_OVERRIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
     if !IN_COMPADD_OVERRIDE.with(|g| g.get())
-        && crate::ported::params::getiparam(".shadow.depth") > 0
         && crate::ported::utils::getshfunc("compadd").is_some()
     {
         IN_COMPADD_OVERRIDE.with(|g| g.set(true));
