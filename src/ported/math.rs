@@ -4703,7 +4703,16 @@ pub(crate) fn with_lastval(val: i32) {
 // WARNING: NOT IN MATH.C — Rust-only cursor read. C uses `*ptr`
 // directly without an fn-shaped wrapper.
 pub(crate) fn peek() -> Option<char> {
-    m_input_clone()[m_pos()..].chars().next()
+    // Read the char in place. This used to be
+    // `m_input_clone()[m_pos()..].chars().next()`, which heap-allocates a
+    // COPY OF THE WHOLE EXPRESSION to look at one character — and `advance()`
+    // calls this per character, so lexing an n-char expression performed n
+    // full-string allocations, O(n^2) bytes copied per parse. `(( … ))` is
+    // parsed on every evaluation (compile_arith emits LoadConst(<expr text>)
+    // + CallBuiltin(ARITH_EVAL); nothing is compiled ahead of time), so this
+    // ran once per character per loop iteration. c:Src/math.c uses `*ptr`
+    // on the caller's buffer — no copy at all.
+    M_INPUT.with(|c| c.borrow()[m_pos()..].chars().next())
 }
 
 // WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses
