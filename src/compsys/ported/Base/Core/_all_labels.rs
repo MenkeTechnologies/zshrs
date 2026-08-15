@@ -127,6 +127,38 @@ fn spec_in_not_list(spec: &str, not: &str) -> bool {
     !not.is_empty() && !spec.is_empty() && not.contains(&format!(" {} ", spec))
 }
 
+/// sh:39 — the two array-slice bounds of
+/// `"${(@)argv[4,__pre]}" … "${(@)argv[__suf,-1]}"`, translated from
+/// zsh's 1-based, possibly-negative subscripts to 0-based Rust slice
+/// bounds over the post-`zparseopts` `argv`.
+///
+/// Returns `(pre_idx, suf_idx)`: the action chunk is `argv[3..pre_idx]`
+/// and the trailing extras are `argv[suf_idx..]`.
+///
+/// zsh's negative subscript `-k` names the 1-based element `len-k+1`, so
+/// the sh:19 branch's `__pre=-2` is `len-1`: `argv[4,-2]` DROPS the last
+/// element. That last element is exactly the bare `-` separator the
+/// caller wrote to mark where `$expl` should be spliced
+/// (`Completion/Unix/Type/_user_at_host:30`,
+/// `Completion/Unix/Type/_directories:5`, `Completion/Unix/Command/_rsync:11`).
+/// Reading `__pre=-2` as `len` instead left that `-` in the action's own
+/// argv, where it eventually reached `compadd` and ended its option
+/// parsing early (`Src/Zle/complete.c:635-637`
+/// `if (!(*argv)[1]) { argv++; break; }`), turning every following
+/// option word into a literal match.
+fn slice_bounds(pre: isize, suf: isize, argv_len: usize) -> (usize, usize) {
+    let len = argv_len as isize;
+    // 1-based inclusive end → 0-based exclusive end is the same number
+    //   once a negative index has been resolved to `len + pre + 1`.
+    let pre_idx = if pre < 0 { len + pre + 1 } else { pre }.clamp(0, len) as usize;
+    // 1-based start → 0-based start is one less; a negative start
+    //   resolves to `len + suf + 1` first. (sh:16-20 never produces a
+    //   negative `__suf`; both bounds follow one rule so they can't
+    //   drift apart.)
+    let suf_idx = if suf < 0 { len + suf } else { suf - 1 }.clamp(0, len) as usize;
+    (pre_idx, suf_idx)
+}
+
 /// sh:12 — `*[^\\]:*` test.
 fn has_unescaped_colon(s: &str) -> bool {
     let b = s.as_bytes();
@@ -349,25 +381,21 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
             // sh:39  "${(@)argv[4,__pre]}" "${(P@)2}" "${(@)argv[__suf,-1]}" && ret=0
             //   Translate 1-based [4,__pre] to 0-based [3..pre]
             //   (inclusive). Negative __pre (-2) means "len + __pre + 1"
-            //   per zsh's negative-subscript rule; pre=-2 → len-1
-            //   (last element index in 1-based terms). For our [3..]
-            //   slice that's the full action chunk through the end.
-            let pre_idx: usize = if pre < 0 {
-                // pre=-2 → len-1 in 1-based terms; in 0-based slice
-                //   bound (exclusive end), that's `argv_len` (full
-                //   tail).
-                argv_len
-            } else {
-                // 1-based inclusive → 0-based exclusive: pre+0 (zsh
-                //   inclusive end at 1-based pre = 0-based index
-                //   pre-1; exclusive end is pre).
-                (pre as usize).min(argv_len)
-            };
-            let suf_idx: usize = if suf < 0 {
-                argv_len
-            } else {
-                ((suf as usize).saturating_sub(1)).min(argv_len)
-            };
+            //   per zsh's negative-subscript rule: on a 13-element argv,
+            //   `argv[4,-2]` is 1-based [4,12] — it DROPS the last
+            //   element, which in the sh:19 branch is exactly the bare
+            //   `-` separator that ended the action's own arguments.
+            //   The port used `argv_len` here (an inclusive end of
+            //   `len`, i.e. -1 not -2), so that `-` stayed in the
+            //   action's argv: `_user_at_host`'s
+            //   `_wanted users expl user _combination … -q "$@" -`
+            //   handed `_combination`/`_users` a stray `-`, which ended
+            //   compadd's option parsing early (`Src/Zle/complete.c:635`
+            //   `if (!(*argv)[1]) { argv++; break; }`) and turned the
+            //   REST of the option list into literal match words —
+            //   `finger -<TAB>` offered `-  -J  -X  -k` instead of the
+            //   132 users zsh offers.
+            let (pre_idx, suf_idx) = slice_bounds(pre, suf, argv_len);
             let action_chunk: Vec<String> = if argv_len > 3 && pre_idx > 3 {
                 argv[3..pre_idx].to_vec()
             } else {
@@ -470,6 +498,79 @@ mod tests {
             dispatch_action(&["nonexistent_fn".to_string()], &[], &[]),
             1
         );
+    }
+
+    #[test]
+    fn slice_bounds_trailing_dash_branch_drops_the_separator() {
+        // sh:13-20 for `_user_at_host:30`'s
+        //   `_wanted users expl user _combination -s '[:@]' other-accounts \
+        //      users-hosts users -S @ -q -`
+        //   → argv (post-zparseopts) is 13 elements with the bare `-` LAST,
+        //   so `__tmp == $#` → `__pre=-2`, `__suf=$#+1`.
+        //   `argv[4,-2]` is 1-based [4,12]: the action keeps `-S @ -q` but
+        //   NOT the trailing `-`, and `argv[14,-1]` is empty.
+        let argv: Vec<&str> = vec![
+            "users",
+            "expl",
+            "user",
+            "_combination",
+            "-s",
+            "[:@]",
+            "other-accounts",
+            "users-hosts",
+            "users",
+            "-S",
+            "@",
+            "-q",
+            "-",
+        ];
+        let (pre_idx, suf_idx) = slice_bounds(-2, argv.len() as isize + 1, argv.len());
+        assert_eq!(
+            &argv[3..pre_idx],
+            &[
+                "_combination",
+                "-s",
+                "[:@]",
+                "other-accounts",
+                "users-hosts",
+                "users",
+                "-S",
+                "@",
+                "-q"
+            ],
+            "the bare `-` separator must not survive into the action's argv"
+        );
+        assert_eq!(suf_idx, argv.len(), "nothing follows the separator");
+    }
+
+    #[test]
+    fn slice_bounds_separator_in_the_middle_splits_around_it() {
+        // sh:15-17 — `_users`' `_wanted users expl user compadd "$@" -k - userdirs`
+        //   puts the bare `-` at index 10 of 11, i.e. `__tmp < $#` →
+        //   `__pre=__tmp-1`, `__suf=__tmp`. The action is argv[4,9]
+        //   (`compadd … -k`) and the extras are argv[10,-1] (`- userdirs`),
+        //   with `$expl` spliced between them.
+        let argv: Vec<&str> = vec![
+            "users", "expl", "user", "compadd", "-J", "users", "-X", "fmt", "-k", "-", "userdirs",
+        ];
+        let tmp = 10isize; // ${argv[(ib:4:)-]}
+        let (pre_idx, suf_idx) = slice_bounds(tmp - 1, tmp, argv.len());
+        assert_eq!(
+            &argv[3..pre_idx],
+            &["compadd", "-J", "users", "-X", "fmt", "-k"]
+        );
+        assert_eq!(&argv[suf_idx..], &["-", "userdirs"]);
+    }
+
+    #[test]
+    fn slice_bounds_no_separator_takes_only_the_command_word() {
+        // sh:22-23 — no bare `-` at/after index 4: `__pre=4`, `__suf=5`, so
+        //   the action is the single word argv[4] and everything from
+        //   argv[5] on is appended after `$expl`.
+        let argv: Vec<&str> = vec!["files", "expl", "file", "_files", "-/", "-W", "/tmp"];
+        let (pre_idx, suf_idx) = slice_bounds(4, 5, argv.len());
+        assert_eq!(&argv[3..pre_idx], &["_files"]);
+        assert_eq!(&argv[suf_idx..], &["-/", "-W", "/tmp"]);
     }
 
     #[test]
