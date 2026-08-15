@@ -90,6 +90,9 @@ pub fn _set_command_impl() -> i32 {
         // parameter.rs:4391). `commands` is NOT paramtab-hashed
         // storage, so the previous `getaparam("commands")` returned
         // None and every bare-name lookup here yielded "".
+        // See the sh:29 note below for why the fetch's `loadparamnode`
+        // side effect has to be requested explicitly.
+        crate::vm_helper::mark_module_param_used("commands");
         let resolved: String =
             crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), bare)
                 .and_then(|pm| pm.u_str.clone())
@@ -128,6 +131,20 @@ pub fn _set_command_impl() -> i32 {
     // `strs`, so an empty `_comp_command2` cost the full-path dispatch
     // key: zsh builds `-redirect-,<,/bin/cat`, zshrs built
     // `-redirect-,<,cat`.
+    //
+    // sh:29 writes `$commands[$command]`, so in zsh the subscript goes
+    // through `fetchvalue` → `getparamnode` (Src/params.c:588-595) →
+    // `loadparamnode` (c:563-585), which CLEARS the `zsh/parameter`
+    // PM_AUTOLOAD stub and installs the real special node. That side
+    // effect is observable: `local -A +h commands` preserves the special
+    // only once the stub has been loaded, so `_command_names`'s
+    // `local -A +h commands` behaves differently before and after this
+    // line has run. `_normal` calls `_set_command` only when
+    // `CURRENT != 1`, which is exactly why zsh's command-position
+    // completion sees a plain local assoc and argument-position
+    // completion sees the live command table. Calling the getfn
+    // directly skips the fetch, so the load has to be requested here.
+    crate::vm_helper::mark_module_param_used("commands");
     let cmd2: String =
         crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), &command)
             .and_then(|pm| pm.u_str.clone())

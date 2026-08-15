@@ -2341,7 +2341,27 @@ pub fn createparam(
                     }
                 }
             }
-            if (op.node.flags as u32 & PM_HASHED) != 0 && (flags as u32 & PM_LOCAL) != 0 {
+            // c:Src/builtin.c:2386-2425 — the newspecial shadow keeps the
+            // SAME Param, so `pm->u.hash` still points at the special's own
+            // table and the local reads through it. The magic module hashes
+            // (Src/Modules/parameter.c partab[]: commands / functions /
+            // aliases / …) have no `paramtab_hashed_storage` backing at all —
+            // `gethkparam` (params.rs:5919) reaches them by falling THROUGH
+            // that map to the row's `scanfn`. Inserting an empty local bag
+            // here therefore did not "shadow" such a hash, it BLANKED it:
+            // `local -A +h commands` read 0 keys where zsh reads the live
+            // command table. Only the newspecial case is excluded (the caller
+            // ORs PM_SPECIAL into `flags` per c:2083-2085); a plain
+            // `local -A commands` still decays to an empty local assoc, which
+            // is what zsh does too.
+            let keeps_special_hash = (flags as u32 & PM_SPECIAL) != 0
+                && crate::ported::modules::parameter::PARTAB
+                    .iter()
+                    .any(|e| e.name == name);
+            if (op.node.flags as u32 & PM_HASHED) != 0
+                && (flags as u32 & PM_LOCAL) != 0
+                && !keeps_special_hash
+            {
                 // Push current paramtab_hashed_storage[name] (Some/None)
                 // onto the shadow stack so endparamscope can restore.
                 // Then CLEAR the storage so the local shadow starts
@@ -2476,7 +2496,12 @@ pub fn createparam(
     // SAVEHIST / SECONDS / RANDOM / LINES / COLUMNS. Inherit from the shadowed
     // param generically rather than growing the list — that is what C does.
     // docs/BUGS.md #1039 (D).
-    if (pm.node.flags as u32 & PM_SPECIAL) == 0 {
+    // c:Src/builtin.c:2083-2085 — `newspecial`. The caller that KNOWS the
+    // `off` mask (bin_typeset's per-arg loop) evaluates the full test and
+    // signals the answer by ORing PM_SPECIAL into `flags`; createparam only
+    // sees `on`, so it cannot re-derive the `& ~off` term itself.
+    let caller_keeps_special = (flags as u32 & PM_SPECIAL) != 0;
+    if (pm.node.flags as u32 & PM_SPECIAL) == 0 || caller_keeps_special {
         let inherited = pm.old.as_ref().and_then(|old| {
             // c:2087-2089 — a HIDDEN special (PM_HIDE, e.g. the `commands`
             // special-hash) is NOT kept special when a `local`/`typeset`
@@ -2484,7 +2509,12 @@ pub fn createparam(
             // shadow decays to the plainly-requested type. Re-stamping it
             // special made `local -a commands` in the brew completer fail with
             // "can't change type of a special parameter".
-            if (old.node.flags as u32 & PM_SPECIAL) != 0 && (old.node.flags as u32 & PM_HIDE) == 0 {
+            // …unless the statement also carries `+h` (PM_HIDE in `off`),
+            // which cancels c:2084's `& ~off` term and preserves the special —
+            // `local -A +h commands` reads `association-local-special` in zsh.
+            if (old.node.flags as u32 & PM_SPECIAL) != 0
+                && ((old.node.flags as u32 & PM_HIDE) == 0 || caller_keeps_special)
+            {
                 Some((
                     old.gsu_s.clone(),
                     old.gsu_i.clone(),
