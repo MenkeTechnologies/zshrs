@@ -2274,6 +2274,18 @@ pub fn createparam(
         None => false,
     };
 
+    // c:Src/builtin.c:2608-2609 — set by the shadow arm below when the
+    // tied peer is already local at this level (c:2394-2408), which makes
+    // `pm->old` carry PM_NORESTORE and so suppresses the
+    // "re-initialise the special parameter to empty" step:
+    //     } else if (newspecial != NS_NONE &&
+    //                !(pm->old->node.flags & (PM_NORESTORE|PM_READONLY))) {
+    //         ... pm->gsu.a->setfn(pm, mkarray(NULL)); ...
+    // C keeps the SAME Param struct for a special, so "not zeroed" means
+    // the live value simply stays; zshrs allocates a fresh shadow struct,
+    // so the live value has to be carried over explicitly.
+    let mut inherit_live_value = false;
+
     let mut pm: Param = if reuse {
         // c:1132-1134 — `pm = oldpm; pm->base = pm->width = 0;
         // oldpm = pm->old;` Reuse the entry already in paramtab.
@@ -2310,7 +2322,39 @@ pub fn createparam(
         // endparamscope unwinds the PM_HASHED stale entry it can pop
         // and restore. Bug #415.
         let oldpm = if let Some(mut op) = oldpm {
-            if (op.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0 {
+            // c:Src/builtin.c:2394-2411 — the tied-pair NORESTORE test, run
+            // BEFORE the copyparam snapshot because it REPLACES it:
+            //     if (pm->ename &&
+            //         (pm2 = (Param) paramtab->getnode(paramtab, pm->ename)) &&
+            //         pm2->level == locallevel) {
+            //         /* This is getting silly, but anyway:  if one of a
+            //          * path/PATH pair has already been made local at the
+            //          * current level, we have to make sure that the other one
+            //          * does not have its value saved:  since that comes from
+            //          * an internal variable it will already reflect the local
+            //          * value, so restoring it on exit would be wrong. */
+            //         tpm->node.flags = pm->node.flags | PM_NORESTORE;
+            //     } else {
+            //         copyparam(tpm, pm, 1);
+            //     }
+            // The C test is only reached from the `newspecial != NS_NONE` arm
+            // (c:2377); the caller signals that decision by ORing PM_SPECIAL
+            // into `flags` (see the `keep_special` computation at
+            // builtin.rs:5681, which is c:2083-2085 verbatim).
+            let tie_peer_local = (flags as u32 & PM_SPECIAL) != 0
+                && op.ename.as_deref().is_some_and(|peer| {
+                    paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(peer).map(|p2| p2.level == cur_locallevel))
+                        .unwrap_or(false) // c:2396 pm2->level == locallevel
+                });
+            if tie_peer_local {
+                // c:2408 — `tpm->node.flags = pm->node.flags | PM_NORESTORE;`
+                // (and NO copyparam, so no value snapshot is taken).
+                op.node.flags |= PM_NORESTORE as i32;
+                inherit_live_value = true;
+            } else if (op.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0 {
                 // c:Src/builtin.c:2382-2424 copyparam — snapshot the
                 // CURRENT live value into the shadow chain. PM_TIED
                 // scalars (FPATH/PATH/CDPATH…) included: their value
@@ -2534,6 +2578,29 @@ pub fn createparam(
             // which would otherwise override the special's real type.
             pm.node.flags &= !(PM_TYPE(u32::MAX) as i32);
             pm.node.flags |= PM_SPECIAL as i32 | ty as i32;
+        }
+    }
+    // c:Src/builtin.c:2608-2633 — the zeroing step is SKIPPED when
+    // `pm->old` carries PM_NORESTORE, i.e. when the tied peer is already
+    // local at this level. In C nothing further is needed: `pm` is the
+    // special's own struct and its value lives in the internal variable
+    // the tie writes through, so it already holds the peer's local value.
+    // zshrs's shadow is a fresh struct, so read the live value across.
+    // The old node is still installed in paramtab at this point (the
+    // addnode below is what displaces it), so the plain getters see it.
+    if inherit_live_value {
+        match PM_TYPE(pm.node.flags as u32) {
+            t if t == PM_ARRAY => {
+                if let Some(arr) = getaparam(name) {
+                    pm.u_arr = Some(arr);
+                }
+            }
+            t if t == PM_SCALAR => {
+                if let Some(val) = getsparam(name) {
+                    pm.u_str = Some(val);
+                }
+            }
+            _ => {}
         }
     }
     // c:1146 `paramtab->addnode(paramtab, ztrdup(name), pm)`. For
@@ -12144,7 +12211,21 @@ pub fn endparamscope() {
                         None
                     }
                 });
-                if let Some(prev) = pm.old {
+                if let Some(mut prev) = pm.old {
+                    // c:Src/params.c:5928 — `if (!(tpm->node.flags &
+                    // (PM_NORESTORE|PM_READONLY)))` gates the value restore.
+                    // PM_NORESTORE is stamped by typeset_single (c:2408) when
+                    // the OTHER half of a tied path/PATH pair was already made
+                    // local at the same level: that half's own restore writes
+                    // through the tie, so re-firing this half's saved value
+                    // would clobber it with a copy that already reflects the
+                    // local state. (PM_READONLY is handled further down, where
+                    // the name-routed setter temporarily drops the flag.)
+                    let norestore = (prev.node.flags as u32 & PM_NORESTORE) != 0;
+                    // c:Src/params.c:5924 — `pm->node.flags =
+                    // (tpm->node.flags & ~PM_NORESTORE);` the bit never
+                    // survives into the re-exposed outer binding.
+                    prev.node.flags = (prev.node.flags as u32 & !PM_NORESTORE) as i32;
                     // c:scanendscope:5933 pm->old = tpm->old
                     // PM_TIED counts too — the tied array's GLOBAL
                     // storage was written through by the local's
@@ -12159,7 +12240,7 @@ pub fn endparamscope() {
                     let restored_arr = prev.u_arr.clone();
                     let restored_setfn = prev.gsu_s.as_ref().map(|g| g.setfn);
                     tab.insert(n.clone(), prev); // restore outer binding (Box<param>)
-                    if restored_is_special {
+                    if restored_is_special && !norestore {
                         if restored_is_array {
                             // ARRAY side of a tied pair — re-fire the
                             // saved element vector through the
