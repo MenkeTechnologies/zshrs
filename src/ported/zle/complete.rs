@@ -1688,16 +1688,12 @@ pub fn do_comp_vars(
                 return 0;
             } // c:965
               // c:968 — singsub(&sa); — caller already expanded.
-            let pp = patcompile(
-                &{
-                    let mut __pat_tok = (sa).to_string();
-                    crate::ported::glob::tokenize(&mut __pat_tok);
-                    crate::ported::glob::remnulargs(&mut __pat_tok); // c:1196/1199/1214
-                    __pat_tok
-                },
-                PAT_HEAPDUP,
-                None,
-            ); // c:969
+            // c:969 — the operand is compiled AS GIVEN. Both callers hand
+            // it over already tokenized: `bin_compset` runs
+            // `tokenize`/`remnulargs` in its own switch (c:1192-1196), and
+            // `cond_range` gets what `cond_str(a, n, 1)` (c:1688) kept from
+            // the lexer / `$~`'s GLOB_SUBST.
+            let pp = patcompile(sa, PAT_HEAPDUP, None); // c:969
                // c:971-977 — walk compwords backward looking for sa match.
             i -= 1; // c:971
             while i >= 0 {
@@ -1715,16 +1711,7 @@ pub fn do_comp_vars(
             if t != 0 && !sb.is_empty() {
                 // c:980
                 let mut tt = 0i32;
-                let pp2 = patcompile(
-                    &{
-                        let mut __pat_tok = (sb).to_string();
-                        crate::ported::glob::tokenize(&mut __pat_tok);
-                        crate::ported::glob::remnulargs(&mut __pat_tok); // c:1196/1199/1214
-                        __pat_tok
-                    },
-                    PAT_HEAPDUP,
-                    None,
-                ); // c:983
+                let pp2 = patcompile(sb, PAT_HEAPDUP, None); // c:983
                 i += 1; // c:984
                 while i < l {
                     if let Some(ref prog) = pp2 {
@@ -1814,17 +1801,9 @@ pub fn do_comp_vars(
             if na == 0 {
                 return 0;
             } // c:1045
-            let pp = match patcompile(
-                &{
-                    let mut __pat_tok = (sa).to_string();
-                    crate::ported::glob::tokenize(&mut __pat_tok);
-                    crate::ported::glob::remnulargs(&mut __pat_tok); // c:1196/1199/1214
-                    __pat_tok
-                },
-                PAT_HEAPDUP,
-                None,
-            ) {
-                // c:1047
+            // c:1047 — compiled AS GIVEN; see the note at c:969 above for why
+            // this must NOT tokenize again.
+            let pp = match patcompile(sa, PAT_HEAPDUP, None) {
                 Some(p) => p,
                 None => return 0,
             };
@@ -2046,27 +2025,46 @@ pub fn bin_compset(
         return 1; // c:1184
     }
     // c:1186-1216 — switch on `test` to compute (na, nb, sa, sb).
-    let sa_ref = sa.as_deref().unwrap_or("");
-    let sb_ref = sb.as_deref();
+    //
+    // C mutates the `argv` strings IN PLACE in this switch (`tokenize(sa);
+    // remnulargs(sa);` at c:1195-1200 and c:1213-1214) and `do_comp_vars`
+    // then compiles what it is handed, untouched (c:977 / c:990 / c:1057).
+    // The tokenize/remnulargs pair therefore belongs HERE, in the builtin,
+    // and ONLY here: `do_comp_vars` is also reached from `cond_psfix` /
+    // `cond_range` (c:1662 / c:1676), whose operand arrives from
+    // `cond_str(a, n, 1)` already carrying exactly the tokens the lexer
+    // (or `$~`'s GLOB_SUBST `shtokenize`) put in it. Tokenizing a second
+    // time re-tokenizes the raw bytes a first pass deliberately left
+    // alone — the `-` inside an already-built `Inang - Outang` numeric
+    // range becomes `Dash`, so `[[ -prefix $~'<->' ]]` compiled a pattern
+    // that matched the empty string and fired for a `-` prefix. That is
+    // what made `_numbers` (Completion/Base/Utility/_numbers sh:65) take
+    // its `-prefix $~pat` branch for `gtimeout -<TAB>` and emit an empty
+    // `duration` description group zsh never shows.
+    let mut sa = sa;
+    let mut sb = sb;
     match test {
         CVT_RANGENUM => {
             // c:1187
-            na = atoi(sa_ref); // c:1188
-            nb = sb_ref.map(atoi).unwrap_or(-1); // c:1189
+            na = atoi(sa.as_deref().unwrap_or("")); // c:1188
+            nb = sb.as_deref().map(atoi).unwrap_or(-1); // c:1189
         }
         CVT_RANGEPAT => {
             // c:1191
-            // c:1195-1200 — `tokenize(sa); remnulargs(sa);` plus the same on
-            // sb. C mutates the argv strings IN PLACE here so the already-
-            // tokenized text reaches patcompile inside do_comp_vars. This
-            // port instead tokenizes at the patcompile sites in do_comp_vars
-            // (c:977 / c:990 / c:1057), which is where `remnulargs` now runs
-            // too — doing it here as well would tokenize twice.
+            if let Some(s) = sa.as_mut() {
+                tokenize(s); // c:1192
+                remnulargs(s); // c:1193
+            }
+            if let Some(s) = sb.as_mut() {
+                // c:1194
+                tokenize(s); // c:1195
+                remnulargs(s); // c:1196
+            }
             nb = 0;
         }
         CVT_PRENUM | CVT_SUFNUM => {
             // c:1199
-            na = atoi(sa_ref); // c:1200
+            na = atoi(sa.as_deref().unwrap_or("")); // c:1200
             nb = 0;
         }
         CVT_PREPAT | CVT_SUFPAT => {
@@ -2081,10 +2079,23 @@ pub fn bin_compset(
             // `compset -P -` matched nothing and never stripped `-` off
             // `$PREFIX`. Result: `tar -<TAB>` (`compset -P -; _values …`) and
             // any `compset -P/-S <pat>` completer produced an empty list.
-            if sb_ref.is_some() {
-                na = atoi(sa_ref); // c:1209
+            // c:1206 — with two args the pattern is `sb`; C reassigns
+            // `sa = sb` so everything downstream (the tokenize below and
+            // the `patcompile` in `do_comp_vars`) sees the PATTERN.
+            // Passing the count string (e.g. "1") on instead made
+            // `compset -P 1 '='` test the prefix against pattern "1"
+            // rather than "=", so `_main_complete` wrongly set
+            // `$compstate[context]=equal` for ordinary words and every
+            // completion did command completion.
+            if sb.is_some() {
+                na = atoi(sa.as_deref().unwrap_or("")); // c:1209
+                sa = sb.clone(); // c:1210
             } else {
                 na = -1; // c:1212
+            }
+            if let Some(s) = sa.as_mut() {
+                tokenize(s); // c:1213
+                remnulargs(s); // c:1214
             }
             nb = 0;
         }
@@ -2093,16 +2104,8 @@ pub fn bin_compset(
         }
     }
     let _ = (na, nb);
-    // c:1206 — for -P/-S with two args the pattern is `sb` (C reassigns
-    // `sa = sb`). Passing `sa` here (the count string, e.g. "1") made
-    // `compset -P 1 '='` test the prefix against pattern "1" instead of
-    // "=", so `_main_complete` wrongly set `$compstate[context]=equal`
-    // for ordinary words and every completion did command completion.
-    let pat = if (test == CVT_PREPAT || test == CVT_SUFPAT) && sb_ref.is_some() {
-        sb_ref.unwrap()
-    } else {
-        sa_ref
-    };
+    let pat = sa.as_deref().unwrap_or("");
+    let sb_ref = sb.as_deref();
     // c:1217 — `return !do_comp_vars(test, na, sa, nb, sb, 1);`. The final
     // arg is `mod = 1` (MODIFY), NOT 0: for the PATTERN forms
     // (`compset -P`/`-S` = CVT_PREPAT/SUFPAT) do_comp_vars only calls

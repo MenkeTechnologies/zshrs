@@ -6720,6 +6720,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `[[ -prefix PAT ]]` / `-suffix` / `-after` / `-between` module condition.
     // Stack (pushed by the ModCond compile arm): arg0 … argN-1, then the
     // operator word last. argc = N+1.
+    // c:Src/subst.c:4419-4420 `if (globsubst) shtokenize(y)` — see the
+    // BUILTIN_COND_SHTOKENIZE doc for why a module condition needs it.
+    vm.register_builtin(BUILTIN_COND_SHTOKENIZE, |vm, _argc| {
+        let mut s = vm.pop().to_str();
+        crate::ported::glob::shtokenize(&mut s);
+        Value::str(s)
+    });
+
     vm.register_builtin(BUILTIN_COND_MOD, |vm, argc| {
         use crate::ported::zle::complete::{cond_psfix, cond_range, CVT_PREPAT, CVT_SUFPAT};
         let op = vm.pop().to_str(); // operator word (pushed last → popped first)
@@ -11538,6 +11546,17 @@ pub const BUILTIN_LOOP_BREAK_DRAIN: u16 = 658;
 /// Non-consuming `breaks != 0` probe for execlist's per-statement gate
 /// (c:Src/exec.c:1370).
 pub const BUILTIN_BREAKS_PENDING: u16 = 659;
+/// `shtokenize` the top-of-stack string in place — c:Src/subst.c:4419-4420
+/// `if (globsubst) shtokenize(y)`, the step that makes a `${~spec}` /
+/// `$~spec` value's metachars PATTERN-ACTIVE.
+///
+/// zshrs expands a `[[ ]]` operand at the VM level and hands `cond_str`
+/// (c:Src/cond.c:525) a finished string, so the token state C carries in
+/// the word itself has to be re-applied at the point of use. Without it a
+/// module condition compiles the value as a literal: `[[ -prefix $~pat ]]`
+/// (Completion/Base/Utility/_numbers sh:65) is the one shipped completer
+/// that depends on it.
+pub const BUILTIN_COND_SHTOKENIZE: u16 = 660;
 /// Fire the DEBUG trap (SIGDEBUG) before each statement.
 /// c:Src/exec.c:1357-1500 DEBUGBEFORECMD — when a "DEBUG" entry is
 /// installed via `trap '...' DEBUG`, run the body just before the

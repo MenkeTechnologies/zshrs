@@ -1641,6 +1641,20 @@ pub fn bin_compdescribe(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2700-2724 `resolvebuiltin` — in C every one of these
+    // is an AUTOLOADED builtin of `zsh/computil` (its `bltinmods.list`
+    // `autofeatures` row; the real BUILTIN() table is
+    // Src/Zle/computil.c:5131-5138). The first call from a compsys
+    // function goes through `execbuiltin` -> `resolvebuiltin`, whose
+    // `ensurefeature(modname, "b:", name)` (c:2711) LOADS the module —
+    // which is why `zmodload -e zsh/computil` / `zmodload -L` report it
+    // inside a completion in zsh but not before one. zshrs's native
+    // compsys ports call these `bin_*` functions DIRECTLY and so never
+    // reach that chokepoint, leaving `zsh/computil` un-booted while the
+    // completion ran. Re-apply it at the entry of each builtin. Cheap
+    // after the first call: `resolvebuiltin` drops the name from the
+    // autoload ledger, and a miss is one hashmap lookup.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:850
         zwarnnam(nam, "can only be called from completion function");
@@ -4892,6 +4906,9 @@ pub fn bin_comparguments(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
+    // `bin_compdescribe` for why this has to happen here.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:2590
         zwarnnam(nam, "can only be called from completion function");
@@ -6278,6 +6295,9 @@ pub fn bin_compvalues(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
+    // `bin_compdescribe` for why this has to happen here.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3479
         zwarnnam(nam, "can only be called from completion function");
@@ -6597,6 +6617,9 @@ pub fn bin_compquote(
     ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
+    // `bin_compdescribe` for why this has to happen here.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3685
         zwarnnam(nam, "can only be called from completion function");
@@ -6798,6 +6821,9 @@ pub fn bin_comptags(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
+    // `bin_compdescribe` for why this has to happen here.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3835
         zwarnnam(nam, "can only be called from completion function");
@@ -7024,6 +7050,9 @@ pub fn bin_comptry(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
+    // `bin_compdescribe` for why this has to happen here.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3963
         zwarnnam(nam, "can only be called from completion function");
@@ -8303,6 +8332,9 @@ pub fn bin_compfiles(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
+    // `bin_compdescribe` for why this has to happen here.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:4972
         zwarnnam(nam, "can only be called from completion function");
@@ -8480,6 +8512,9 @@ pub fn bin_compgroups(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
+    // `bin_compdescribe` for why this has to happen here.
+    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:5078
         zwarnnam(nam, "can only be called from completion function");
