@@ -2819,6 +2819,26 @@ pub fn inststrlen(
     if len == -1 {
         len = str.len() as i32;
     }
+    // `len` is a BYTE count: C's `strncpy(zlemetaline + zlemetacs, str, len)`
+    // copies raw bytes off a metafied buffer and does not care whether it
+    // splits a multibyte character. A Rust `&str` cannot hold a partial
+    // character, and slicing at a non-boundary PANICS, so clamp DOWN to the
+    // nearest boundary — dropping the straddled character rather than
+    // corrupting the line or aborting the shell.
+    //
+    // Observed crash (release build, `productsign --keychain --<TAB>`):
+    //   zle_tricky.rs:2838 end byte index 1 is not a char boundary;
+    //   it is inside '\u{fffd}' (bytes 0..3 of string)
+    // — a caller handed len=1 for a string whose first character is a
+    // 3-byte replacement char. Both the meta and the wide path sliced
+    // `str` by this count; neither clamped.
+    fn safe_prefix_len(s: &str, n: usize) -> usize {
+        let mut n = n.min(s.len());
+        while n > 0 && !s.is_char_boundary(n) {
+            n -= 1;
+        }
+        n
+    }
     // c:2237 — `if (zlemetaline != NULL) { meta path } else { wide path }`
     let zml_active = ZLEMETALINE.get().is_some();
     if zml_active {
@@ -2835,7 +2855,7 @@ pub fn inststrlen(
                 while cs > 0 && !g.is_char_boundary(cs) {
                     cs -= 1;
                 }
-                let take = (len as usize).min(str.len());
+                let take = safe_prefix_len(str, len as usize);
                 // c:2238-2239 — `spaceinline(len)` grows the line and shifts
                 // only the bytes from the cursor onwards; `strncpy` then
                 // drops `str` into the hole. `String::insert_str` is exactly
@@ -2854,7 +2874,7 @@ pub fn inststrlen(
         return len;
     }
     // c:2244-2253 — non-meta wide path.
-    let instr = &str[..(len as usize).min(str.len())]; // c:2247 ztrduppfx(str, len)
+    let instr = &str[..safe_prefix_len(str, len as usize)]; // c:2247 ztrduppfx(str, len)
     let zlestr: Vec<char> = stringaszleline(instr, 0, None, None, None); // c:2248
     let zlelen = zlestr.len();
     spaceinline(zlelen as i32); // c:2249
