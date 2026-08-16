@@ -4436,6 +4436,38 @@ pub fn do_module_features(
                 let enables_vec = enables.get_or_insert_with(Vec::new);
                 enables_vec.clear();
                 enables_vec.resize(module_features.len(), 1);
+                // c:2115-2116 — `for (ep = enables; n_features--; ep++) *ep = 1;`
+                // with the comment "Enable all features.  This is used when
+                // loading without using zmodload -F."  The commit below
+                // (`enables_module`, c:2119) runs the module's `enables_` →
+                // `handlefeatures` (c:3392) → `setfeatureenables` (c:3354) →
+                // `setparamdefs` (c:1169-1181), which calls `addparamdef`
+                // (c:1060) for EVERY `p:` feature whose enable bit is set.
+                // `addparamdef` installs the real special Param over the
+                // PM_AUTOLOAD stub `autofeatures` planted, so after a plain
+                // `zmodload zsh/parameter` NONE of that module's parameters
+                // is an autoload stub any more — only the single-feature
+                // form (`ensurefeature(mn, "p:", nam)` from `loadparamnode`,
+                // c:Src/params.c:568, which lands in the `Some(arr)` arm
+                // above) leaves the siblings as stubs.
+                //
+                // zshrs seeds every magic parameter eagerly
+                // (`vm_helper::init_partab_params`) and models PM_AUTOLOAD as
+                // the `MATERIALIZED_MODULE_PARAMS` side set instead of a node
+                // flag, so the stub-clearing half of `setparamdefs` has to be
+                // replayed here. Without it a plain `zmodload zsh/parameter`
+                // (which plugin managers such as zinit run at startup) left
+                // `commands` reading as a
+                // stub, so `local -A +h commands` in `_command_names` built a
+                // PLAIN empty local instead of a special one (c:Src/builtin.c
+                // :2083-2085 needs PM_SPECIAL on the node to set
+                // `newspecial`), and `_path_commands`' `compadd -k commands`
+                // added nothing until the user touched `$commands` by hand.
+                for f in &module_features {
+                    if let Some(pname) = f.strip_prefix("p:") {
+                        crate::vm_helper::mark_module_param_used(pname);
+                    }
+                }
             }
         }
 

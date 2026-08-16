@@ -1129,8 +1129,23 @@ fn load_module_i(name: &str) {
 /// (Src/Modules/parameter.mdd), so that bare `:` command is a module
 /// load in disguise — after any compinit, a real zsh lists
 /// `zsh/parameter` in `zmodload -L`.
+///
+/// It is a SINGLE-FEATURE load, not a `zmodload zsh/parameter`: reading
+/// the name runs `loadparamnode` → `ensurefeature(mn, "p:", "funcstack")`
+/// (c:Src/params.c:568 → c:Src/module.c:3426-3432), which enables only
+/// `p:funcstack`. The module's other parameters (`commands`, `aliases`,
+/// …) stay PM_AUTOLOAD stubs — verified against zsh 5.9:
+/// `: ${#aliases}; f(){ local -A +h commands; print ${(t)commands} }; f`
+/// prints `association-local`, while the same after an explicit
+/// `zmodload zsh/parameter` prints `association-local-special`.
+/// Routing this through the full `zmodload` marked every sibling
+/// materialized, so it must go through `ensurefeature`.
 pub fn touch_funcstack_param() {
-    load_module_i("zsh/parameter");
+    // c:Src/params.c:565-568 — `loadparamnode` on a PM_AUTOLOAD stub:
+    // `(void)ensurefeature(mn, "p:", nam)`. `mark_module_param_used` is
+    // zshrs's hook for exactly that (vm_helper.rs), and it boots the
+    // module, so `zmodload -L` still lists `zsh/parameter` afterwards.
+    crate::vm_helper::mark_module_param_used("funcstack");
 }
 
 /// sh:564-569 — when the configured `completer` chain includes

@@ -1268,6 +1268,62 @@ mod zmodload_builtin {
         assert_eq!(z.stdout, r.stdout);
     }
 
+    /// A plain `zmodload MODULE` (no `-F`) enables EVERY feature the
+    /// module provides — `Src/module.c:2108-2116`, "Enable all features.
+    /// This is used when loading without using zmodload -F." The commit
+    /// that follows (`enables_module`, c:2119) runs `handlefeatures`
+    /// (c:3392) → `setfeatureenables` (c:3354) → `setparamdefs`
+    /// (c:1169-1181), so `addparamdef` (c:1060) replaces the PM_AUTOLOAD
+    /// stub with the real special `Param` for every `p:` row — not just
+    /// the one name that happened to trigger the load.
+    ///
+    /// The observable is `${(t)commands}` inside a function that
+    /// localizes it: `Src/builtin.c:2083-2085` only sets `newspecial`
+    /// when the existing node carries PM_SPECIAL, so a still-stubbed
+    /// `commands` yields a PLAIN local (`association-local`) while a
+    /// defined one yields `association-local-special`.
+    ///
+    /// This is the whole `compadd -k commands` story: `_command_names`
+    /// localizes `commands` on every command-word completion, so with a
+    /// plain local `_path_commands` adds nothing.
+    #[test]
+    fn zmodload_all_features_defines_every_module_param() {
+        let script = "zmodload zsh/parameter; \
+                      f() { local -A +h commands; print ${(t)commands}; }; f";
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        assert_eq!(
+            z.stdout.trim(),
+            "association-local-special",
+            "reference zsh changed shape"
+        );
+        assert_eq!(r.stdout, z.stdout, "zshrs stderr: {}", r.stderr);
+    }
+
+    /// The single-feature form must NOT define the siblings.
+    /// `loadparamnode` (`Src/params.c:565-568`) resolves an autoload stub
+    /// with `ensurefeature(mn, "p:", nam)`, and `ensurefeature` builds a
+    /// ONE-element enables array for that name (c:3426-3432), so the
+    /// `Some(arr)` arm of `do_module_features` leaves every other `p:`
+    /// bit untouched. Reading `$aliases` therefore leaves `commands` a
+    /// stub, and localizing it gives a plain `association-local`.
+    ///
+    /// Pins the other side of the pair above: enabling all features on a
+    /// bare `zmodload` must not leak into the implicit, per-name path.
+    #[test]
+    fn single_feature_param_load_leaves_siblings_stubs() {
+        let script = ": ${#aliases}; \
+                      f() { local -A +h commands; print ${(t)commands}; }; f";
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        assert_eq!(
+            z.stdout.trim(),
+            "association-local",
+            "reference zsh changed shape"
+        );
+        assert_eq!(r.stdout, z.stdout, "zshrs stderr: {}", r.stderr);
+    }
+
     /// Loading a non-existent module fails.
     #[test]
     fn zmodload_missing_fails() {
