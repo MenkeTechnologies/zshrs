@@ -20752,89 +20752,103 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // port of zsh's `prefork()` Bnull-aware `$#` arm — Src/subst.c
     // around line 1860 dispatches via the param-name lookahead before
     // the math evaluator sees the expression.
-    let expr = {
-        let bytes: Vec<char> = expr.chars().collect();
-        let mut out = String::with_capacity(expr.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            // Accept literal `$` AND Stringg (\u{85}) / Qstring (\u{8c})
-            // — the lexer emits Stringg for `$X` at top level, Qstring
-            // for `$X` inside double quotes. arithsubst sees the
-            // tokenized form whenever the `$(( ))` body was lexed
-            // through a DQ context (e.g. `"x=$(( $#a ))"`).
-            let is_dollar = bytes[i] == '$' || bytes[i] == Stringg || bytes[i] == Qstring;
-            if is_dollar && i + 1 < bytes.len() && bytes[i + 1] == '#' {
-                let name_start = i + 2;
-                let mut name_end = name_start;
-                while name_end < bytes.len()
-                    && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == '_')
-                {
-                    name_end += 1;
-                }
-                if name_end > name_start {
-                    let name: String = bytes[name_start..name_end].iter().collect();
-                    // `$#NAME[SUB]` — the length applies to the SUBSCRIPTED
-                    // element, not to the whole parameter: zsh gives
-                    // `a=(one two three); $(( $#a[2] ))` → 3 (strlen "two"),
-                    // `$(( $#a[1,2] ))` → 2 (slice element count), and
-                    // `$(( $#h[k] ))` → strlen of the assoc value. Stopping at
-                    // the NAME left the raw `[...]` in the math text, where the
-                    // `[` parsed as a `[#base]`/`[base]` prefix and errored —
-                    // `_print:7`'s `$#compstate[unambiguous]` made `print
-                    // -<TAB>` print "bad output format specification" twice
-                    // over the completion list. Hand the whole thing to the
-                    // normal substitution path, which already computes every
-                    // one of these forms (including nested `$#` inside the
-                    // subscript, as in `$#a[$#a]`).
-                    let sub_open = bytes.get(name_end).copied();
-                    if sub_open == Some('[') || sub_open == Some(Inbrack) {
-                        let mut depth = 0i32;
-                        let mut j = name_end;
-                        while j < bytes.len() {
-                            match bytes[j] {
-                                '[' | Inbrack => depth += 1,
-                                ']' | Outbrack => {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        break;
-                                    }
-                                }
-                                _ => {}
-                            }
-                            j += 1;
-                        }
-                        if j < bytes.len() {
-                            let sub: String = bytes[name_end..=j].iter().collect();
-                            let expanded = singsub(&format!("${{#{}{}}}", name, sub));
-                            out.push_str(&expanded);
-                            i = j + 1;
-                            continue;
-                        }
+    // The `$#NAME` rewrite below can only fire at a `$` / Stringg (\u{85}) /
+    // Qstring (\u{8c}) char, so an expression containing none of them is
+    // copied through the loop verbatim (`out.push(bytes[i])` for every
+    // index). Skipping the loop in that case is byte-identical and drops a
+    // `Vec<char>` allocation plus a full UTF-8 decode+re-encode of the
+    // expression from EVERY arithmetic evaluation — `(( … ))` re-enters
+    // arithsubst once per execution, so this ran per loop iteration. The
+    // test is deliberately over-broad (any non-ASCII byte, not just the two
+    // token chars) so it stays correct if more token chars are handled here.
+    let has_param_intro = expr.bytes().any(|b| b == b'$' || b >= 0x80);
+    let expr: std::borrow::Cow<'_, str> = if !has_param_intro {
+        std::borrow::Cow::Borrowed(expr)
+    } else {
+        std::borrow::Cow::Owned({
+            let bytes: Vec<char> = expr.chars().collect();
+            let mut out = String::with_capacity(expr.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                // Accept literal `$` AND Stringg (\u{85}) / Qstring (\u{8c})
+                // — the lexer emits Stringg for `$X` at top level, Qstring
+                // for `$X` inside double quotes. arithsubst sees the
+                // tokenized form whenever the `$(( ))` body was lexed
+                // through a DQ context (e.g. `"x=$(( $#a ))"`).
+                let is_dollar = bytes[i] == '$' || bytes[i] == Stringg || bytes[i] == Qstring;
+                if is_dollar && i + 1 < bytes.len() && bytes[i + 1] == '#' {
+                    let name_start = i + 2;
+                    let mut name_end = name_start;
+                    while name_end < bytes.len()
+                        && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == '_')
+                    {
+                        name_end += 1;
                     }
-                    // Read from `state` (the snapshot built via
-                    // subst_state_from_executor); routes through the
-                    // same data the executor exposed without reaching
-                    // back into ShellExecutor from src/ported/.
-                    let count = if let Some(arr) = arrays_get(&name) {
-                        arr.len()
-                    } else if let Some(assoc) = assoc_get(&name) {
-                        assoc.len()
-                    } else if name == "@" || name == "*" {
-                        arrays_get("@").map(|a| a.len()).unwrap_or(0)
-                    } else if let Some(s) = vars_get(&name) {
-                        s.chars().count()
-                    } else {
-                        0
-                    };
-                    out.push_str(&count.to_string());
-                    i = name_end;
-                    continue;
+                    if name_end > name_start {
+                        let name: String = bytes[name_start..name_end].iter().collect();
+                        // `$#NAME[SUB]` — the length applies to the SUBSCRIPTED
+                        // element, not to the whole parameter: zsh gives
+                        // `a=(one two three); $(( $#a[2] ))` → 3 (strlen "two"),
+                        // `$(( $#a[1,2] ))` → 2 (slice element count), and
+                        // `$(( $#h[k] ))` → strlen of the assoc value. Stopping at
+                        // the NAME left the raw `[...]` in the math text, where the
+                        // `[` parsed as a `[#base]`/`[base]` prefix and errored —
+                        // `_print:7`'s `$#compstate[unambiguous]` made `print
+                        // -<TAB>` print "bad output format specification" twice
+                        // over the completion list. Hand the whole thing to the
+                        // normal substitution path, which already computes every
+                        // one of these forms (including nested `$#` inside the
+                        // subscript, as in `$#a[$#a]`).
+                        let sub_open = bytes.get(name_end).copied();
+                        if sub_open == Some('[') || sub_open == Some(Inbrack) {
+                            let mut depth = 0i32;
+                            let mut j = name_end;
+                            while j < bytes.len() {
+                                match bytes[j] {
+                                    '[' | Inbrack => depth += 1,
+                                    ']' | Outbrack => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                j += 1;
+                            }
+                            if j < bytes.len() {
+                                let sub: String = bytes[name_end..=j].iter().collect();
+                                let expanded = singsub(&format!("${{#{}{}}}", name, sub));
+                                out.push_str(&expanded);
+                                i = j + 1;
+                                continue;
+                            }
+                        }
+                        // Read from `state` (the snapshot built via
+                        // subst_state_from_executor); routes through the
+                        // same data the executor exposed without reaching
+                        // back into ShellExecutor from src/ported/.
+                        let count = if let Some(arr) = arrays_get(&name) {
+                            arr.len()
+                        } else if let Some(assoc) = assoc_get(&name) {
+                            assoc.len()
+                        } else if name == "@" || name == "*" {
+                            arrays_get("@").map(|a| a.len()).unwrap_or(0)
+                        } else if let Some(s) = vars_get(&name) {
+                            s.chars().count()
+                        } else {
+                            0
+                        };
+                        out.push_str(&count.to_string());
+                        i = name_end;
+                        continue;
+                    }
                 }
+                out.push(bytes[i]);
+                i += 1;
             }
-            out.push(bytes[i]);
-            i += 1;
-        }
-        out
+            out
+        })
     };
     // C: `singsub(&a);` — parameter-substitute the math expression
     // before evaluation. Without this `${(($n+1))}` won't see $n.

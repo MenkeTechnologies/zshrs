@@ -680,24 +680,38 @@ pub fn optlookup(name: &str) -> i32 {
     // divergence for non-ASCII option names (which shouldn't
     // exist but could from fuzzing). Match C: only fold the
     // ASCII A..=Z range; pass every other byte through.
-    let s: String = name
-        .chars() // c:689
-        .filter(|&c| c != '_') // c:693-694
-        .map(|c| {
-            if ('A'..='Z').contains(&c) {
-                // c:702 (*t >= 'A' && *t <= 'Z')
-                ((c as u8 - b'A') + b'a') as char // c:703 *t = (*t - 'A') + 'a'
-            } else {
-                c
-            }
-        })
-        .collect();
+    // A name that carries no `_` and no `A`..=`Z` is its own canonical form,
+    // so the filter+map+collect above would rebuild it byte-for-byte. Borrow
+    // it instead. `optlookup` is called per option query — `opt_state_get`
+    // routes every lookup through it, and BUILTIN_ERREXIT_CHECK queries
+    // "errexit" after every statement — so this `String` was allocated on a
+    // hot path to reproduce its own input. The predicate matches the
+    // transform's fixed points exactly: `_` is the only char dropped and
+    // `A`..=`Z` the only range rewritten.
+    let already_canonical = name.bytes().all(|b| b != b'_' && !b.is_ascii_uppercase());
+    let s: std::borrow::Cow<'_, str> = if already_canonical {
+        std::borrow::Cow::Borrowed(name)
+    } else {
+        std::borrow::Cow::Owned(
+            name.chars() // c:689
+                .filter(|&c| c != '_') // c:693-694
+                .map(|c| {
+                    if ('A'..='Z').contains(&c) {
+                        // c:702 (*t >= 'A' && *t <= 'Z')
+                        ((c as u8 - b'A') + b'a') as char // c:703 *t = (*t - 'A') + 'a'
+                    } else {
+                        c
+                    }
+                })
+                .collect(),
+        )
+    };
 
     // OPT_ALIAS rows from optns[]:269-280 — alias names resolve to
     // their target optno (signed for the alias's negation polarity).
     // C zsh stores these as hash entries in optiontab with
     // `optno = -target` (negative) for the `-PREFIX` rows.
-    let alias_optno: Option<i32> = match s.as_str() {
+    let alias_optno: Option<i32> = match s.as_ref() {
         "braceexpand" => Some(-IGNOREBRACES), // c:269 -IGNOREBRACES
         "dotglob" => Some(GLOBDOTS),          // c:270 GLOBDOTS
         "hashall" => Some(HASHCMDS),          // c:271 HASHCMDS
@@ -2173,6 +2187,46 @@ mod tests {
         // optno constant isn't yet defined in zsh_h.rs — only ~175
         // of 228 options have optno entries. The other three above
         // suffice to verify defset/OPT_ZSH/OPT_SPECIAL semantics.
+    }
+
+    /// `optlookup` borrows its argument instead of rebuilding it when the
+    /// name is already canonical (no `_`, no `A`..=`Z`). Pin that the
+    /// borrowed branch and the rebuilt branch agree for EVERY option name
+    /// the table knows, across the three spellings c:Src/options.c:691-705
+    /// is required to fold together: canonical, upper-cased, and
+    /// underscore-separated. A divergence here means the fast-path
+    /// predicate stopped matching the transform's fixed points.
+    #[test]
+    fn optlookup_canonical_fast_path_matches_folded_spellings() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        let mut checked = 0;
+        for idx in 1..OPT_SIZE {
+            let name = opt_name(idx);
+            if name.is_empty() {
+                continue;
+            }
+            let want = optlookup(name);
+            // Upper-case spelling exercises the `A`..=`Z` rewrite arm.
+            assert_eq!(
+                optlookup(&name.to_ascii_uppercase()),
+                want,
+                "upper-case spelling of `{}` diverged",
+                name
+            );
+            // A `_` between every pair of chars exercises the filter arm.
+            let underscored: String =
+                name.chars().map(|c| c.to_string()).collect::<Vec<_>>().join("_");
+            assert_eq!(
+                optlookup(&underscored),
+                want,
+                "underscored spelling of `{}` diverged",
+                name
+            );
+            checked += 1;
+        }
+        assert!(checked > 100, "expected the option table to be populated");
     }
 
     #[test]

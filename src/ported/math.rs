@@ -850,7 +850,7 @@ pub(crate) fn lexconstant() -> i32 {
                         break;
                     }
                 }
-                let hex_str: String = m_input_clone()[hex_start..m_pos()]
+                let hex_str: String = m_input_slice(hex_start, m_pos())
                     .chars()
                     .filter(|&c| c != '_')
                     .collect();
@@ -891,7 +891,7 @@ pub(crate) fn lexconstant() -> i32 {
                         break;
                     }
                 }
-                let bin_str: String = m_input_clone()[bin_start..m_pos()]
+                let bin_str: String = m_input_slice(bin_start, m_pos())
                     .chars()
                     .filter(|&c| c != '_')
                     .collect();
@@ -921,7 +921,7 @@ pub(crate) fn lexconstant() -> i32 {
                 // error-propagation path picks up the failure.
                 m_error_set(format!(
                     "bad math expression: operator expected at `{}'",
-                    &m_input_clone()[m_pos()..]
+                    m_input_slice_from(m_pos())
                 ));
                 m_yyval_set(mnumber {
                     l: 0,
@@ -992,7 +992,7 @@ pub(crate) fn lexconstant() -> i32 {
                                 break;
                             }
                         }
-                        let oct_str: String = m_input_clone()[oct_start..m_pos()]
+                        let oct_str: String = m_input_slice(oct_start, m_pos())
                             .chars()
                             .filter(|&c| c != '_')
                             .collect();
@@ -1062,7 +1062,7 @@ pub(crate) fn lexconstant() -> i32 {
                 }
             }
         }
-        let float_str: String = m_input_clone()[num_start..m_pos()]
+        let float_str: String = m_input_slice(num_start, m_pos())
             .chars()
             .filter(|&c| c != '_')
             .collect();
@@ -1101,7 +1101,7 @@ pub(crate) fn lexconstant() -> i32 {
     // errors like the real shell. --sh (bash-family) and --ksh keep accepting.
     if peek() == Some('#') && !crate::dash_mode::dash_strict() {
         advance();
-        let base_str: String = m_input_clone()[num_start..m_pos() - 1]
+        let base_str: String = m_input_slice(num_start, m_pos() - 1)
             .chars()
             .filter(|&c| c != '_')
             .collect();
@@ -1181,7 +1181,7 @@ pub(crate) fn lexconstant() -> i32 {
     }
 
     // Plain integer
-    let int_str: String = m_input_clone()[num_start..m_pos()]
+    let int_str: String = m_input_slice(num_start, m_pos())
         .chars()
         .filter(|&c| c != '_')
         .collect();
@@ -2110,7 +2110,7 @@ pub(crate) fn zzlex() -> i32 {
                         m_error_set("bad base syntax".to_string());
                         return EOI;
                     }
-                    let base_str: String = m_input_clone()[base_start..m_pos()].to_string();
+                    let base_str: String = m_input_slice(base_start, m_pos());
                     let base: u32 = base_str.parse().unwrap_or(10);
                     advance(); // skip ]
 
@@ -2142,8 +2142,8 @@ pub(crate) fn zzlex() -> i32 {
                             break;
                         }
                     }
-                    let val_str = &m_input_clone()[val_start..m_pos()];
-                    let val = crate::ported::utils::zstrtol(val_str, base as i32).0; // c:zstrtol base#N
+                    let val_str = m_input_slice(val_start, m_pos());
+                    let val = crate::ported::utils::zstrtol(&val_str, base as i32).0; // c:zstrtol base#N
                     m_lastbase_set(base as i32);
                     m_yyval_set(mnumber {
                         l: val,
@@ -2191,7 +2191,7 @@ pub(crate) fn zzlex() -> i32 {
                                 break;
                             }
                         }
-                        let radix_str: String = m_input_clone()[rstart..m_pos()].to_string();
+                        let radix_str: String = m_input_slice(rstart, m_pos());
                         let radix: i32 = radix_str.parse().unwrap_or(10);
                         m_outputradix_set(n * radix); // c:807
                         checkradix = true; // c:808
@@ -2209,7 +2209,7 @@ pub(crate) fn zzlex() -> i32 {
                                     break;
                                 }
                             }
-                            let us_str: String = m_input_clone()[ustart..m_pos()].to_string();
+                            let us_str: String = m_input_slice(ustart, m_pos());
                             m_outputunderscore_set(us_str.parse().unwrap_or(3));
                             // c:812-813
                         } else {
@@ -2260,7 +2260,7 @@ pub(crate) fn zzlex() -> i32 {
                     // `##\e` → 27, `##A` → 65. The previous port read a
                     // single literal char, so `##\n` yielded 92 (`\`)
                     // and left `n` dangling ("operator expected").
-                    let rest: String = m_input_clone()[m_pos()..].to_string();
+                    let rest: String = m_input_slice_from(m_pos());
                     if let Some((code, consumed)) = decode_math_keychar(&rest) {
                         for _ in 0..consumed {
                             advance();
@@ -2291,7 +2291,7 @@ pub(crate) fn zzlex() -> i32 {
                     }
                 }
                 if m_pos() > id_start {
-                    m_yylval_set(m_input_clone()[id_start..m_pos()].to_string());
+                    m_yylval_set(m_input_slice(id_start, m_pos()));
                     return CID;
                 }
                 // c:Src/math.c:911-915 — bare `#` (followed by non-ident) is
@@ -2321,7 +2321,7 @@ pub(crate) fn zzlex() -> i32 {
                         }
                     }
 
-                    let id = &m_input_clone()[id_start..m_pos()];
+                    let id = m_input_slice(id_start, m_pos());
 
                     // Check for Inf/NaN
                     let id_lower = id.to_lowercase();
@@ -2359,7 +2359,7 @@ pub(crate) fn zzlex() -> i32 {
                                 }
                             }
                         }
-                        m_yylval_set(m_input_clone()[func_start..m_pos()].to_string());
+                        m_yylval_set(m_input_slice(func_start, m_pos()));
                         return FUNC;
                     }
 
@@ -2380,7 +2380,7 @@ pub(crate) fn zzlex() -> i32 {
                         }
                     }
 
-                    m_yylval_set(m_input_clone()[id_start..m_pos()].to_string());
+                    m_yylval_set(m_input_slice(id_start, m_pos()));
                     return ID;
                 }
 
@@ -4712,7 +4712,29 @@ pub(crate) fn peek() -> Option<char> {
     // + CallBuiltin(ARITH_EVAL); nothing is compiled ahead of time), so this
     // ran once per character per loop iteration. c:Src/math.c uses `*ptr`
     // on the caller's buffer — no copy at all.
-    M_INPUT.with(|c| c.borrow()[m_pos()..].chars().next())
+    //
+    // ASCII fast path. `&s[pos..]` runs a UTF-8 char-boundary assertion and
+    // `.chars().next()` runs the multi-byte decoder; both are pure overhead
+    // for arithmetic, whose lexemes (digits, identifiers, operators) are
+    // ASCII by construction. A byte below 0x80 is always a char boundary and
+    // always encodes itself, so `Some(b as char)` is bit-identical to what
+    // the slice+decode returns. `pos >= len` yields `None`, same as slicing
+    // an empty tail. Anything else (a genuine multi-byte lead byte, or the
+    // Dnull/Snull \u{8x} token chars the lexer leaves in quoted operands)
+    // falls through to the original expression unchanged — including its
+    // panic-on-non-boundary behaviour, which this path cannot reach.
+    M_INPUT.with(|c| {
+        let s = c.borrow();
+        let pos = m_pos();
+        let b = s.as_bytes();
+        if pos >= b.len() {
+            return None;
+        }
+        if b[pos] < 0x80 {
+            return Some(b[pos] as char);
+        }
+        s[pos..].chars().next()
+    })
 }
 
 // WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses

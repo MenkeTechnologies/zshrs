@@ -10242,8 +10242,18 @@ impl ZshCompiler {
             // full float support including int→float promotion on
             // mixed-mode compound assigns (`((a *= 1.5))`).
             || inner_arith.contains('.')
-            || inner_arith.contains('e')
-            || inner_arith.contains('E')
+            // A bare `contains('e')` / `contains('E')` fired on any
+            // IDENTIFIER carrying the letter — `len`, `ret`, `sel`,
+            // `expl`, `nmatches` — none of which is a float. c:Src/math.c
+            // lexconstant only reads `e`/`E` as an exponent marker after
+            // it has already consumed mantissa digits, so require a digit
+            // immediately before the letter. Over-matching is harmless
+            // (it just routes to the same evaluator), under-matching is
+            // not, so `1e3` / `1.5E+3` / `.5e3` all still trigger.
+            || inner_arith
+                .as_bytes()
+                .windows(2)
+                .any(|w| w[0].is_ascii_digit() && (w[1] | 0x20) == b'e')
             // Comma operator — ArithCompiler's compound-assign emit
             // path only handles a single `op=` and drops subsequent
             // expressions in `a+=5, b*=2`. MathEval evaluates the
