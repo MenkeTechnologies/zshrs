@@ -3874,6 +3874,36 @@ fn skipcomm() -> Result<(), ()> {
     let mut brace_depth: i32 = 0;
     let mut prev_dollar = false;
 
+    // Same class of gap as Bug #291 and the `${…}` tracker above, third
+    // construct: a `)` inside a HERE-DOCUMENT body is literal text, not shell
+    // grouping. C's NEW skipcomm (the `#else` half of c:2082-2246) re-parses
+    // the body with `parse_event(OUTPAR)`, so the document is queued on `hdocs`
+    // by `zshlex` (c:277-304) and drained verbatim by `gethere`
+    // (Src/exec.c:4573) — its body never reaches the tokenizer at all. Riding
+    // the OLD `pct` counter, zshrs closed the cmdsub on the first `)` inside
+    // the body of the here-document `_store_cache`
+    // (Completion/Base/Utility/_store_cache:50-54) writes for EVERY cached
+    // array:
+    //     VAR=( ${(Q)"${(z)$(<<\EO:VAR
+    //     'jz:… \<\<\)ZPWR\(\>\> …'
+    //     EO:VAR
+    //     )}"} )
+    // and then re-lexed the tail as ordinary code, so `_retrieve_cache` handed
+    // back an array with `EO:VAR`, `;` and `)` appended and with `$VAR`
+    // expanded inside what is a quoted-terminator (unexpanded) body.
+    //
+    // Track the queue here instead: `<<WORD` / `<<-WORD` records the
+    // terminator, and the next newline consumes the body verbatim — every
+    // character goes to `add` and to the raw recording, but none of them
+    // reaches the `pct` / case / `${…}` state machine.
+    //
+    // Residual gap, deliberately not covered: a MULTI-LINE `$(( a << b ))`
+    // inside the substitution would record `b` as a terminator. Single-line
+    // arithmetic is safe (`pct` reaches 0 and skipcomm returns before any
+    // newline is seen), and distinguishing the two needs an arithmetic-depth
+    // heuristic with its own false positives.
+    let mut heredocs: Vec<(String, bool)> = Vec::new();
+
     loop {
         let c = hgetc();
         let c = match c {
@@ -3955,6 +3985,128 @@ fn skipcomm() -> Result<(), ()> {
                         return Ok(());
                     }
                     add(c);
+                }
+            }
+            '<' if case_depth == 0 && brace_depth == 0 => {
+                add(c);
+                // `<<WORD` / `<<-WORD` queue a here-document; `<<<` is a
+                // here-string with no body, and a lone `<` is an ordinary
+                // redirection. Anything over-read goes back through hungetc,
+                // exactly as C's lexer does when a lookahead misses.
+                match hgetc() {
+                    Some('<') => {
+                        add('<');
+                        let mut dash = false;
+                        let mut ch = hgetc();
+                        if ch == Some('-') {
+                            add('-');
+                            dash = true;
+                            ch = hgetc();
+                        }
+                        if ch == Some('<') {
+                            add('<'); // `<<<` — here-string, nothing to queue
+                        } else {
+                            // The terminator word, with its quoting removed:
+                            // `<<\EO:V`, `<<'EO:V'` and `<<"EO:V"` all end the
+                            // body at a line reading `EO:V` (Src/exec.c:4573
+                            // `gethere` compares against the unquoted word).
+                            while ch == Some(' ') || ch == Some('\t') {
+                                add(ch.unwrap());
+                                ch = hgetc();
+                            }
+                            let mut term = String::new();
+                            while let Some(k) = ch {
+                                match k {
+                                    ' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')' | '<'
+                                    | '>' => break,
+                                    '\\' => {
+                                        add(k);
+                                        match hgetc() {
+                                            Some(q) => {
+                                                add(q);
+                                                term.push(q);
+                                            }
+                                            None => break,
+                                        }
+                                    }
+                                    '\'' | '"' => {
+                                        add(k);
+                                        loop {
+                                            match hgetc() {
+                                                Some(q) if q == k => {
+                                                    add(q);
+                                                    break;
+                                                }
+                                                Some(q) => {
+                                                    add(q);
+                                                    term.push(q);
+                                                }
+                                                None => break,
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        add(k);
+                                        term.push(k);
+                                    }
+                                }
+                                ch = hgetc();
+                            }
+                            if let Some(k) = ch {
+                                hungetc(k);
+                            }
+                            if !term.is_empty() {
+                                heredocs.push((term, dash));
+                            }
+                        }
+                    }
+                    Some(other) => hungetc(other),
+                    None => {
+                        LEX_LEXSTOP.set(true);
+                        return Err(());
+                    }
+                }
+            }
+            '\n' if !heredocs.is_empty() => {
+                add(c);
+                // c:277-304 — the real lexer drains `hdocs` at the first
+                // newline after the command. Read each body verbatim: the
+                // characters are added to the token (and to the raw recording
+                // via hgetc) but never seen by the `pct` counter, so a `)` in
+                // the body cannot close the substitution.
+                for (term, dash) in std::mem::take(&mut heredocs) {
+                    loop {
+                        let mut line = String::new();
+                        loop {
+                            match hgetc() {
+                                Some('\n') => {
+                                    add('\n');
+                                    break;
+                                }
+                                Some(ch) => {
+                                    add(ch);
+                                    line.push(ch);
+                                }
+                                None => {
+                                    // `here document too long` in C; the body
+                                    // ran to EOF without its terminator.
+                                    LEX_LEXSTOP.set(true);
+                                    return Err(());
+                                }
+                            }
+                        }
+                        // `<<-` strips leading TABS from the terminator line
+                        // (Src/exec.c gethere, REDIR_HEREDOCDASH).
+                        let cmp = if dash {
+                            line.trim_start_matches('\t')
+                        } else {
+                            line.as_str()
+                        };
+
+                        if cmp == term {
+                            break;
+                        }
+                    }
                 }
             }
             '\\' => {
