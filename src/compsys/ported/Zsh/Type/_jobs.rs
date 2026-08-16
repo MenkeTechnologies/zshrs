@@ -106,9 +106,17 @@ pub fn _jobs(args: &[String]) -> i32 {
         ),
     };
 
-    if jids.is_empty() {
-        return 1;
-    }
+    // NO early return on an empty `jids` here: the shell source has none. It
+    // falls through to `_wanted jobs expl "$expls" compadd …` at sh:80-84
+    // unconditionally, and `_wanted` registers the description even when the
+    // match list that follows is empty — which is how the tag reaches the
+    // "No matches for `external command', …, `job', `parameter', …" line that
+    // compresult prints when nothing matched. Bailing early skipped the
+    // registration, so zshrs's enumeration was missing `job` on every
+    // zero-match completion (`qzxfoo <TAB>`, and the parity case
+    // `--only cmd_partial --sequences menusel_type_nomatch`). With no jobs the
+    // expansion `"%$^jobs[@]"` contributes zero words, so `compadd` still adds
+    // nothing and the return value is unchanged.
 
     // sh:30+  build display lines (verbose only)
     if verbose {
