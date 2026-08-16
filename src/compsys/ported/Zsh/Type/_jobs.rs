@@ -25,11 +25,30 @@
 
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::testforstyle;
-use crate::ported::params::{getaparam, getsparam, setaparam};
+use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;
 
-/// Helper: assoc lookup in flat key/value layout.
+/// Helper: key/value pairs of an associative parameter.
+///
+/// `$jobtexts` and `$jobstates` are PM_HASHED magic parameters
+/// (`${(t)jobtexts}` = `association-readonly-hide-hideval-special`), and
+/// `getaparam` only ever returns PM_ARRAY values, so a getaparam-only read
+/// came back empty and `_jobs` produced no matches even with a live job:
+/// after `sleep 300 &`, `kill %<TAB>` completed to `%sleep` in zsh and to
+/// nothing in zshrs. Read the hash the way `_files.rs:68-82` already does —
+/// `gethkparam` for the keys, `gethparam` for the values in the same scan
+/// order (c:params.c:3131 / c:3117) — and keep the flat key/value-array path
+/// as the fallback for assocs staged with `setaparam`.
 fn assoc_chunks(name: &str) -> Vec<(String, String)> {
+    let keys = gethkparam(name).unwrap_or_default();
+    if !keys.is_empty() {
+        let vals = gethparam(name).unwrap_or_default();
+        return keys
+            .into_iter()
+            .enumerate()
+            .map(|(i, k)| (k, vals.get(i).cloned().unwrap_or_default()))
+            .collect();
+    }
     let arr = getaparam(name).unwrap_or_default();
     let mut out = Vec::new();
     let mut i = 0;
@@ -118,43 +137,159 @@ pub fn _jobs(args: &[String]) -> i32 {
     // expansion `"%$^jobs[@]"` contributes zero words, so `compadd` still adds
     // nothing and the return value is unchanged.
 
-    // sh:30+  build display lines (verbose only)
+    let text_of = |job: &str| -> String {
+        jobtexts
+            .iter()
+            .find(|(k, _)| k == job)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+
+    // sh:27-34 — the verbose display column: `${pfx}${(r:2:: :)job} $sep
+    // ${(r:COLUMNS-8:: :)jobtexts[$job]}`.
+    let mut disp: Vec<String> = Vec::new();
     if verbose {
-        let mut disp: Vec<String> = Vec::new();
-        for j in &jids {
-            let text = jobtexts
-                .iter()
-                .find(|(k, _)| k == j)
-                .map(|(_, v)| v.clone())
-                .unwrap_or_default();
-            disp.push(format!("%{}\t{}", j, text));
+        let sep = {
+            let s = crate::ported::modules::zutil::lookupstyle(
+                &format!(":completion:{}:jobs", curcontext),
+                "list-separator",
+            );
+            if s.is_empty() {
+                "--".to_string() // sh:29 `|| sep=--`
+            } else {
+                s.join(" ")
+            }
+        };
+        let cols = crate::ported::params::getiparam("COLUMNS").max(9) as usize;
+        for job in &jids {
+            disp.push(format!(
+                "{}{:<2} {} {:<width$}",
+                pfx,
+                job,
+                sep,
+                text_of(job),
+                width = cols - 8
+            ));
         }
+    }
+
+    // sh:36 — `zstyle -s ":completion:${curcontext}:jobs" numbers how`.
+    let how = crate::ported::modules::zutil::lookupstyle(
+        &format!(":completion:{}:jobs", curcontext),
+        "numbers",
+    )
+    .join(" ");
+
+    // sh:38-77 — what actually gets added: the job NUMBERS when the `numbers`
+    // style says so, otherwise the shortest unambiguous PREFIX of each job's
+    // command text. The port used to add the numbers unconditionally (and, in
+    // the verbose branch, without the `%`), so with one running `sleep 300`,
+    // `kill %<TAB>` completed to `%sleep` in zsh and to nothing in zshrs — the
+    // bare `1` did not even match the typed `%`.
+    let mut jobs: Vec<String>;
+    if matches!(how.as_str(), "yes" | "true" | "on" | "1") {
+        jobs = jids.clone(); // sh:39
+    } else {
+        // sh:41-71 — grow each string one word at a time while two or more job
+        // texts still match it, tracking the worst word count in `max`.
+        let texts: Vec<String> = jobtexts.iter().map(|(_, v)| v.clone()).collect();
+        let mut max = 0usize; // sh:41 `max=0`
+        jobs = Vec::new(); // sh:46
+        for i in &jids {
+            let mut text = text_of(i);
+            let mut s = text.split(' ').next().unwrap_or("").to_string(); // sh:49
+            text = match text.split_once(' ') {
+                Some((_, rest)) => rest.to_string(), // sh:51
+                None => String::new(),               // sh:53
+            };
+            // sh:55 `tmp=( "${(@M)texts:#${str}*}" )` — an unquoted pattern, so
+            // glob characters in a job's text are live, exactly as in `_dispatch`.
+            let matching = |s: &str| -> usize {
+                let pat = format!("{}*", s);
+                texts
+                    .iter()
+                    .filter(|t| match crate::ported::pattern::patcompile(
+                        &{
+                            let mut tok = pat.clone();
+                            crate::ported::glob::tokenize(&mut tok);
+                            tok
+                        },
+                        0,
+                        None,
+                    ) {
+                        Some(prog) => crate::ported::pattern::pattry(&prog, t),
+                        None => t.starts_with(s),
+                    })
+                    .count()
+            };
+            let mut tmp = matching(&s);
+            let mut num = 1usize; // sh:56
+            while !text.is_empty() && tmp >= 2 {
+                // sh:57
+                s = format!("{} {}", s, text.split(' ').next().unwrap_or("")); // sh:58
+                text = match text.split_once(' ') {
+                    Some((_, rest)) => rest.to_string(), // sh:60
+                    None => String::new(),               // sh:62
+                };
+                tmp = matching(&s); // sh:64
+                num += 1; // sh:65
+            }
+            if num > max {
+                max = num; // sh:68
+            }
+            jobs.push(s); // sh:70
+        }
+        // sh:73-77 — too many words to be useful: fall back to the numbers.
+        let how_num = if !how.is_empty() && how.chars().all(|c| c.is_ascii_digit()) {
+            how.parse::<usize>().ok()
+        } else {
+            None
+        };
+        match how_num {
+            Some(n) if max > n => jobs = jids.clone(), // sh:74
+            _ => {
+                if pfx.is_empty() && verbose {
+                    // sh:76 `disp=( "${(@)disp#%}" )`
+                    disp = disp
+                        .iter()
+                        .map(|d| d.strip_prefix('%').unwrap_or(d).to_string())
+                        .collect();
+                }
+            }
+        }
+    }
+
+    // sh:80-84 — the `%` on the added matches is literal in BOTH branches;
+    // `pfx` only ever affects the display column above.
+    if verbose {
         setaparam("disp", disp);
-        // sh:81
+        // sh:81 `_wanted jobs expl "$expls" compadd "$@" -ld disp - "%$^jobs[@]"`
         let mut w_args: Vec<String> = vec![
-            "-V".to_string(),
             "jobs".to_string(),
             "expl".to_string(),
             expls,
             "compadd".to_string(),
-            "-d".to_string(),
-            "disp".to_string(),
+        ];
+        w_args.extend(argv);
+        w_args.push("-ld".to_string());
+        w_args.push("disp".to_string());
+        w_args.push("-".to_string());
+        for j in &jobs {
+            w_args.push(format!("%{}", j));
+        }
+        _wanted(&w_args)
+    } else {
+        // sh:83 `_wanted jobs expl "$expls" compadd "$@" - "%$^jobs[@]"`
+        let mut w_args: Vec<String> = vec![
+            "jobs".to_string(),
+            "expl".to_string(),
+            expls,
+            "compadd".to_string(),
         ];
         w_args.extend(argv);
         w_args.push("-".to_string());
-        w_args.extend(jids);
-        _wanted(&w_args)
-    } else {
-        // sh:83
-        let mut w_args: Vec<String> = vec![
-            "jobs".to_string(),
-            "expl".to_string(),
-            expls,
-            "compadd".to_string(),
-        ];
-        w_args.extend(argv);
-        for j in &jids {
-            w_args.push(format!("{}{}", pfx, j));
+        for j in &jobs {
+            w_args.push(format!("%{}", j));
         }
         _wanted(&w_args)
     }
