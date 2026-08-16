@@ -1124,8 +1124,10 @@ pub fn zrefresh() {
     // The cursor primitives (moveto automargin, scrollwindow, the line-opt)
     // read these globals; without this they'd stay at the static default
     // (80×24) on any other terminal size. VLN/VMAXLN are NOT reset here —
-    // the diff path manages them itself (unlike resetvideo, which C only
-    // calls on a size change).
+    // the diff path manages them itself. C calls resetvideo() on a geometry
+    // change (c:1232-1233) AND on every reset frame (c:1201); the reset-frame
+    // half of that lives in the `reset_frame` block below, which zeroes
+    // VLN/VMAXLN exactly as c:770 does.
     {
         use crate::ported::params::TERMFLAGS;
         use crate::ported::zsh_h::TERM_SHORT;
@@ -2310,6 +2312,20 @@ pub fn zrefresh() {
         tcout(crate::ported::zsh_h::TCUNDERLINEEND); // c:1193
         VCS.store(0, Ordering::SeqCst); // c:1157/1170 vcs = 0
         VLN.store(0, Ordering::SeqCst);
+        // c:1201 `resetvideo();` → c:770 `vln = vmaxln = winprompt = 0;`.
+        // vmaxln is the tallest frame drawn SINCE THE LAST RESET, not since the
+        // process started. moveto reads it at c:2247 (`if (vln < vmaxln - 1)`)
+        // to decide whether the target row is inside already-drawn territory —
+        // reachable with TCDOWN/TCMULTDOWN — or past it, where only real
+        // newlines work because they scroll the terminal. Leaving VMAXLN as a
+        // session-lifetime high-water mark means one wrapped command line makes
+        // every later single-row frame take the capability branch and emit
+        // `\e[1B\r` where zsh emits `\r\n`. Identical everywhere except on the
+        // terminal's LAST row, where `\n` scrolls and CSI B clamps: a
+        // completion listing then lands on the command-line row instead of
+        // below it and overwrites the prompt. Re-established from nlnct at
+        // c:1802-1803 at the end of each frame.
+        VMAXLN.store(0, Ordering::SeqCst);
         OBUF.lock().unwrap().clear(); // c:1142 resetvideo — drop the stale frame
         OLNCT.store(0, Ordering::SeqCst);
         OPUT_RPMPT.store(0, Ordering::SeqCst); // c:1144 no right-prompt on screen
