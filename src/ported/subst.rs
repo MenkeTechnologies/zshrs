@@ -16858,42 +16858,34 @@ pub fn paramsubst(
                 sorted.retain(|s| seen.insert(s.clone())); // c:4253
             } // c:4253
             if sortit != SORTIT_ANYOLDHOW {
-                // c:4290
-                // (a) flag (indord=1, c:2226) preserves insertion order
-                // — skip sort entirely.
-                if indord == 0 {
-                    // c:4292 if (!indord)
-                    if (sortit & SORTIT_NUMERICALLY) != 0 {
-                        // c:Src/sort.c:191 zstrcmp — canonical natural-
-                        // sort comparator. Routes through the existing
-                        // port at src/ported/sort.rs:120 with the same
-                        // sortflags bitmask C uses (SORTIT_NUMERICALLY
-                        // / SORTIT_NUMERICALLY_SIGNED).
-                        let flags = sortit as u32;
-                        sorted.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, flags));
-                    } else if (sortit & SORTIT_IGNORING_CASE) != 0 {
-                        // c:4187 SORTIT_IGNORING_CASE
-                        sorted.sort_by_key(|a| a.to_lowercase()); // c:4187
-                    } else {
-                        // c:4180 — default `(o)` sort. C dispatches to
-                        // strmetasort() (sort.c:303) which calls
-                        // zstrcmp() (sort.c:191) whose final tie-break
-                        // is `strcoll(as, bs)` at sort.c:134. strcoll
-                        // is locale-aware: under UTF-8 locales it
-                        // produces case-insensitive ordering (`a` < `B`).
-                        // Previously this arm used raw byte `sort()`
-                        // (ASCII order: `B` < `a`), diverging from zsh.
-                        // Parity bug #31.
-                        sorted.sort_by(|a, b| {
-                            crate::ported::sort::zstrcmp(a, b, 0) // c:191
-                        });
-                    } // c:4187
-                } // c:4292
-                if (sortit & SORTIT_BACKWARDS) != 0 {
-                    // c:4294 SORTIT_BACKWARDS
-                    sorted.reverse(); // c:4191
-                } // c:4294
-            } // c:4290
+                // c:4022 `if (sortit != SORTIT_ANYOLDHOW) {`
+                if indord != 0 {
+                    // c:4025-4037 — the (a) flag keeps insertion order; (O)
+                    // on top of it reverses the array without ever running a
+                    // comparator.
+                    if (sortit & SORTIT_BACKWARDS) != 0 {
+                        sorted.reverse(); // c:4030-4035
+                    }
+                } else {
+                    // c:4045 — ONE call: `strmetasort(aval, sortit, NULL)`.
+                    // strmetasort (sort.c:234) owns the whole flag set — the
+                    // SORTIT_IGNORING_CASE / SORTIT_IGNORING_BACKSLASHES
+                    // pre-pass that rewrites each element's compare key
+                    // (sort.c:289-385), then `sortdir = BACKWARDS ? -1 : 1`
+                    // and `sortnumeric` (sort.c:400-405) before the qsort.
+                    // This arm used to hand-roll a three-way dispatch —
+                    // numeric OR case-folded OR plain — which made the two
+                    // mutually exclusive: `${(ni)a}` took the numeric branch
+                    // and never lowered, so `(X2 x10)` compared 'X' against
+                    // 'x', found no digit run at the divergence, and fell
+                    // through to strcoll → `x10 X2` where zsh gives `X2 x10`
+                    // (lowered to `x2`/`x10`, then 2 < 10). It also applied
+                    // BACKWARDS as a post-sort `reverse()` instead of C's
+                    // negated comparator, which flips the order of tied
+                    // elements rather than leaving them alone.
+                    crate::ported::sort::strmetasort(&mut sorted, sortit as u32, None); // c:4045
+                }
+            } // c:4046
             let join_with = sep.as_deref().unwrap_or(" "); // c:4313
             value = sorted.join(join_with); // c:4313
                                             // Update split_parts so downstream operators (case mods,
@@ -17040,23 +17032,20 @@ pub fn paramsubst(
                 let mut seen = std::collections::HashSet::new(); // c:4253
                 parts.retain(|s| seen.insert(s.clone())); // c:4253
             }
-            if sortit != SORTIT_ANYOLDHOW && indord == 0 {
-                if (sortit & SORTIT_NUMERICALLY) != 0 {
-                    let flags = sortit as u32; // c:Src/sort.c:191 zstrcmp
-                    parts.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, flags));
-                } else if (sortit & SORTIT_IGNORING_CASE) != 0 {
-                    parts.sort_by_key(|a| a.to_lowercase()); // c:4187
+            if sortit != SORTIT_ANYOLDHOW {
+                // c:4022 — same dispatch as the array arm above.
+                if indord != 0 {
+                    // c:4025-4037 — (a) keeps insertion order, (O) on top of
+                    // it only reverses.
+                    if (sortit & SORTIT_BACKWARDS) != 0 {
+                        parts.reverse(); // c:4030-4035
+                    }
                 } else {
-                    parts.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, 0));
-                    // c:4180
+                    // c:4045 `strmetasort(aval, sortit, NULL)` — one call for
+                    // the whole flag set, so `(ni)` folds case AND compares
+                    // digit runs instead of picking one or the other.
+                    crate::ported::sort::strmetasort(&mut parts, sortit as u32, None); // c:4045
                 }
-                if (sortit & SORTIT_BACKWARDS) != 0 {
-                    parts.reverse(); // c:4191
-                }
-            } else if (sortit & SORTIT_BACKWARDS) != 0 && indord != 0 {
-                // c:4283-4292 — (a) flag (indord=1) + (O) reverses the
-                //   insertion-order list without applying the comparator.
-                parts.reverse();
             }
             if let Some(ref jsep) = sep {
                 value = parts.join(jsep.as_str()); // c:3906 sepjoin path

@@ -19,6 +19,104 @@ CI green pending the underlying fix.
 
 ---
 
+## #1079 — numeric sort parked every digit-initial element at the end of the array — fixed
+
+**Status:** `fixed` 2026-08-16.
+
+```sh
+$ /usr/local/bin/zsh -fc 'a=(1 a 2 b 10 c); print -r -- ${(n)a}'
+1 2 10 a b c
+$ zshrs --zsh -f -c 'a=(1 a 2 b 10 c); print -r -- ${(n)a}'
+a b c 1 2 10                                                    ✗
+```
+
+Same shape at the glob level, where `gmatchcmp`'s `GS_NAME` arm
+(`Src/glob.c:945`) hands the two names to the same comparator:
+
+```sh
+$ /usr/local/bin/zsh -fc 'print -rl -- num/*(n)'    → num/9  num/10  num/a  …
+$ zshrs --zsh -f -c 'print -rl -- num/*(n)'         → num/a  …  num/9  num/10   ✗
+```
+
+`zstrcmp`'s `sortnumeric` block (`Src/sort.c:137-172`) rewinds both cursors
+to the start of the digit run and then gates everything that follows on
+`if (idigit(*as) && idigit(*bs))` (`c:155`) — the digit-run comparison runs
+only when BOTH sides have a digit there. When just one does (`9` vs `a`,
+`x1` vs `xa`) C never enters the block and `cmp` keeps the `strcoll` value
+from `c:133`, so the digit collates by its own weight, ahead of the letter,
+exactly as it would without `(n)`.
+
+The port omitted that guard: it collected the digit run on each side
+unconditionally and compared run LENGTHS. Against a non-digit the other run
+is empty, "longer run wins" always fired, and every number sorted to the
+very end. Fixed by porting `c:139-172` cursor-for-cursor, including the
+guard, the leading-zero skip (`c:156-159`), the lockstep equal-digit walk
+(`c:160`) and both run-length early returns (`c:165-168`).
+
+Affects `${(n)}` / `${(On)}` / `${(n-)}`, the glob `(n)` qualifier, and
+`setopt NUMERIC_GLOB_SORT`.
+
+Regression tests: `zstrcmp_numeric_one_sided_digit_run_keeps_collation_order`,
+`strmetasort_numeric_interleaves_digit_and_letter_initial_elements`
+(`tests/sort_flag_combinations.rs`), plus the `numeric_sort_parity` module.
+
+---
+
+## #1080 — `${(ni)a}` applied numeric sort OR case folding, never both — fixed
+
+**Status:** `fixed` 2026-08-16.
+
+```sh
+$ /usr/local/bin/zsh -fc 'a=(X2 x10); print -r -- ${(ni)a}'
+X2 x10
+$ zshrs --zsh -f -c 'a=(X2 x10); print -r -- ${(ni)a}'
+x10 X2                                                          ✗
+```
+
+C handles the whole `(o)`-family flag set with ONE call —
+`strmetasort(aval, sortit, NULL)` at `Src/subst.c:4045`. `strmetasort`
+(`Src/sort.c:234`) owns all of it: the `SORTIT_IGNORING_CASE` /
+`SORTIT_IGNORING_BACKSLASHES` pre-pass that rewrites each element's compare
+key (`c:289-385`), then `sortdir = BACKWARDS ? -1 : 1` and `sortnumeric`
+(`c:400-405`) around the qsort.
+
+Both `${(...)}` sort call sites in `src/ported/subst.rs` instead hand-rolled
+a three-way dispatch — numeric ELSE case-folded ELSE plain — which made the
+first two mutually exclusive. `(ni)` took the numeric branch and never
+lowered, so `X2` vs `x10` diverged at `X`/`x`, found no digit run there, and
+fell through to collation. The same dispatch also applied `SORTIT_BACKWARDS`
+as a post-sort `Vec::reverse()` rather than C's negated comparator, which
+flips the order of tied elements instead of leaving them alone.
+
+Both sites now make C's single `strmetasort` call, with `indord` (the `(a)`
+flag) keeping its `c:4025-4037` reverse-only path.
+
+Regression tests:
+`strmetasort_case_insensitive_numeric_folds_case_then_compares_digit_runs`
+(`tests/sort_flag_combinations.rs`) and
+`case_insensitive_numeric_sort_folds_case_before_comparing_digit_runs`
+(`tests/parity/numeric_sort_parity.rs`).
+
+**Known residual (not a comparator bug).** zsh's numeric comparator is not a
+strict weak order, so `qsort`'s pivot choices leak into the answer — real zsh
+gives two different orderings for the same SET depending on input order:
+
+```sh
+$ /usr/local/bin/zsh -fc 'a=(z1 z10Z2 z0019 Z0zZ_z); print -r -- ${(n)a}'
+z1 z10Z2 z0019 Z0zZ_z
+$ /usr/local/bin/zsh -fc 'a=(Z0zZ_z z0019 z10Z2 z1); print -r -- ${(n)a}'
+z0019 Z0zZ_z z1 z10Z2
+```
+
+Every PAIRWISE comparison matches (7,200 random pairs × 4 flag forms,
+byte-identical), but multi-element arrays that contain a non-transitive
+triple can still order differently from zsh. Closing that would mean
+reproducing the host libc's exact `qsort` implementation, not fixing the
+comparator; `src/tolerant_sort.rs` exists because Rust's `sort_by` panics on
+such comparators outright.
+
+---
+
 ## #1071 — `zstyle -g` returned its contexts in HashMap order (nondeterministic) — fixed
 
 **Status:** `fixed` 2026-08-08.
