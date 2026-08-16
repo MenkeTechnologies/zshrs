@@ -3618,17 +3618,34 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
 
     let s = *pptr;
     // c:2006 — `*s++ = '['`. Caller asserts s[0] is '[' (or its
-    // tokenised form Inbrack); skip it.
-    if s.is_empty() || (s.as_bytes()[0] != b'[' && s.as_bytes()[0] != 0xa9) {
-        return 1;
-    }
-    let after_lbrack = &s[1..];
+    // tokenised form Inbrack); skip it. The byte test here read
+    // `s.as_bytes()[0] != 0xa9`, which is neither `Inbrack` (U+0091,
+    // encoded 0xC2 0x91 in a Rust `str`) nor anything else in the
+    // token range, so a lexer-tokenised subscript never got past this
+    // guard. Compare the leading CHARACTER instead.
+    let lbrack = match s.chars().next() {
+        Some(c) if c == '[' || c == crate::ported::zsh_h::Inbrack => c,
+        _ => return 1,
+    };
+    let after_lbrack = &s[lbrack.len_utf8()..];
 
     // c:2008 — `parse_subscript(s, dq, ']')`. Routes through the
     // existing lex-layer port at `crate::ported::lex::parse_subscript`
     // which honours `[...]` / `(...)` / `{...}` nesting and single/
     // double quoting (parse/src/lex.rs:3074).
-    let close_pos = parse_subscript(after_lbrack, ']');
+    //
+    // c:Src/lex.c:1749 `untokenize(t = dupstring_wlen(s, l));` plus
+    // c:2011-2018 (`if (itok(*tbrack)) *tbrack = ztokens[...]`) mean
+    // every offset C computes from here on indexes UNTOKENISED text.
+    // C gets that for free because its tokens are single bytes that
+    // untokenize in place; zshrs's are non-ASCII `char`s whose UTF-8
+    // length shrinks from 2 to 1, so the offsets `parse_subscript`
+    // returns do not index the tokenised string. Untokenize first and
+    // work in that string, then map the end offset back by CHARACTER
+    // count — untokenize is strictly one char in, one char out — to
+    // advance `*pptr` inside the caller's still-tokenised text.
+    let untok = crate::ported::lex::untokenize(after_lbrack);
+    let close_pos = parse_subscript(&untok, ']');
     let close_pos = match close_pos {
         Some(p) => p,
         None => {
@@ -3638,7 +3655,16 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
             return 1; // c:2022
         }
     };
-    let body = &after_lbrack[..close_pos];
+    let body = &untok[..close_pos];
+    // c:2156/2164 — `*tbrack = ']'; *pptr = s`, i.e. the text just past
+    // the closing bracket, in the ORIGINAL (tokenised) string.
+    let past_close: &str = {
+        let nchars = body.chars().count() + 1; // body + the `]` itself
+        match after_lbrack.char_indices().nth(nchars) {
+            Some((i, _)) => &after_lbrack[i..],
+            None => "",
+        }
+    };
 
     // c:2027 — special-case `[*]` / `[@]`.
     if body == "*" || body == "@" {
@@ -3649,7 +3675,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
         v.start = 0; // c:2030
         v.end = -1; // c:2031
                     // c:2156 — `*tbrack = ']'; *pptr = s` (s points past `]`).
-        *pptr = &after_lbrack[close_pos + 1..];
+        *pptr = past_close;
         return 0; // c:2160
     }
 
@@ -3680,7 +3706,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     });
     {
         if let Some(name) = hashed_name {
-            let past_bracket = &after_lbrack[close_pos + 1..];
+            let past_bracket = past_close;
 
             // ---------------------------------------------------------
             // c:1391-1483 — the subscript flag block. C parses it inside
@@ -3977,7 +4003,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                         v.scanflags = 0;
                         v.start = idx as i32;
                         v.end = (idx + 1) as i32;
-                        *pptr = &after_lbrack[close_pos + 1..];
+                        *pptr = past_close;
                         return 0;
                     }
                 }
@@ -4015,7 +4041,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                     v.start = 1; // c:2151 (1-based; see the c:2125 note below)
                     v.end = hits.len() as i32; // c:2152
                     v.arr = hits;
-                    *pptr = &after_lbrack[close_pos + 1..]; // c:2164
+                    *pptr = past_close; // c:2164
                     return 0; // c:2166
                 }
             }
@@ -4033,22 +4059,29 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
         Some((a, b)) => (a, Some(b)),
         None => (body, None),
     };
-    let start: i64 = match start_str.parse() {
-        Ok(n) => n,
-        Err(_) => {
-            // Non-numeric subscript — leave v unchanged, advance past `]`.
-            *pptr = &after_lbrack[close_pos + 1..];
-            return 0;
+    // c:Src/params.c:1597 — `r = mathevalarg(s, &s);`. A non-hashed
+    // subscript operand is an ARITHMETIC expression, not a decimal
+    // literal: `a[i]`, `a[1+1]`, `a[$#x]` all reach getarg's numeric
+    // arm and are handed to `mathevalarg`. This port bailed out with
+    // `return 0` (leaving `v` untouched) whenever `str::parse` failed,
+    // which silently swallowed BOTH of C's outcomes — an undefined
+    // name evaluating to 0 (c:Src/math.c:1534) and the empty operand
+    // that `mathevalarg` rejects outright with `zerr("bad math
+    // expression: empty string")` (c:Src/math.c:1530-1532). Keep the
+    // decimal fast path (matheval of "5" is 5) and route everything
+    // else through the canonical evaluator so both outcomes survive.
+    let evalarg = |t: &str| -> i64 {
+        match t.parse::<i64>() {
+            Ok(n) => n, // fast path; identical to mathevalarg on a decimal literal
+            Err(_) => crate::ported::math::mathevalarg(t), // c:1597
         }
     };
+    let start: i64 = evalarg(start_str);
     let mut end: i64 = match end_str {
-        Some(s) => match s.parse() {
-            Ok(n) => n,
-            Err(_) => {
-                *pptr = &after_lbrack[close_pos + 1..];
-                return 0;
-            }
-        },
+        // c:2112 — `end = getarg(&s, &inv, v, 1, ...)`, i.e. the same
+        // arithmetic evaluation for the range's second operand.
+        Some(s) => evalarg(s),
+        // c:2114 — `end = we ? we : start;`
         None => start,
     };
 
@@ -4084,7 +4117,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     v.end = end as i32; // c:2160
 
     // c:2164-2165 — advance `*pptr` past the close bracket.
-    *pptr = &after_lbrack[close_pos + 1..];
+    *pptr = past_close;
     0 // c:2166
 }
 

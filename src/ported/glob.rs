@@ -4965,11 +4965,75 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                     }
                 }
             }
-            // Subscript — c:1723-1724 `case '[': case Inbrack:`
+            // Subscript — c:1723-1741 `case '[': case Inbrack:`
+            //
+            //     char *os = --s;
+            //     struct value v;
+            //     v.scanflags = SCANPM_WANTVALS;
+            //     v.pm = NULL; v.start = 0; v.end = -1;
+            //     v.valflags = 0; v.arr = NULL;
+            //     if (getindex(&s, &v, 0) || s == os) {
+            //         zerr("invalid subscript");
+            //         restore_globstate(saved);
+            //         return;
+            //     }
+            //     first = v.start;
+            //     end = v.end;
+            //
+            // C hands the bracket straight to the ONE subscript parser
+            // the shell has (`getindex`, Src/params.c:2001), so a glob
+            // qualifier subscript gets the same unterminated-bracket
+            // diagnostic and the same arithmetic evaluation of its
+            // operands as `${a[...]}`. This port called a private
+            // RUST-ONLY `parse_subscript` that split on `,` and
+            // `str::parse`d each half, dropping the qualifier whenever
+            // either half was not a decimal literal — so `*(N[)`,
+            // `*(N[a])` and `*(N[1,])` all listed every match at rc=0
+            // where zsh reports `invalid subscript`, an empty result
+            // and `bad math expression: empty string` respectively.
             '[' | crate::ported::zsh_h::Inbrack => {
-                let (first, last) = parse_subscript(&mut chars);
-                qs.first = first;
-                qs.last = last;
+                // c:1725 `char *os = --s;` — rewind onto the bracket;
+                // getindex consumes it itself (c:2006 `*s++ = '['`).
+                let os: String = std::iter::once(c).chain(chars.clone()).collect();
+                // c:1727-1732 — the Value getindex fills in.
+                let mut v = crate::ported::zsh_h::value {
+                    pm: None,                                                 // c:1728
+                    arr: Vec::new(),                                          // c:1732
+                    scanflags: crate::ported::zsh_h::SCANPM_WANTVALS as i32,  // c:1727
+                    valflags: 0,                                              // c:1731
+                    start: 0,                                                 // c:1729
+                    end: -1,                                                  // c:1730
+                };
+                let mut s: &str = &os;
+                let rc = crate::ported::params::getindex(&mut s, &mut v, 0); // c:1735
+                if rc != 0 || s.len() == os.len() {
+                    // c:1735 `|| s == os`
+                    crate::ported::utils::zerr("invalid subscript"); // c:1736
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::utils::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return qs; // c:1738
+                }
+                // Re-sync the qualifier walker onto the text getindex
+                // stopped at. `os` carries the already-consumed `[`, so
+                // step the iterator over the remainder only.
+                let consumed = os.len() - s.len();
+                for _ in 1..os[..consumed].chars().count() {
+                    chars.next();
+                }
+                // c:1785-1788 — `if (errflag) { restore_globstate(saved);
+                // return; }`. getindex returns 0 after `mathevalarg`
+                // rejects an empty operand (`*(N[1,])`), so the abort has
+                // to come off errflag exactly as it does in C.
+                if crate::ported::utils::errflag
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    != 0
+                {
+                    return qs; // c:1787
+                }
+                qs.first = Some(v.start); // c:1740
+                qs.last = Some(v.end); // c:1741
             }
             // c:Src/glob.c:1579-1595 `case 'Y'` — short-circuit:
             // limit matches to at most N. Reads a numeric argument
@@ -5142,11 +5206,18 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // Bug #583: zshrs's `_ => {}` arm silently accepted any
             // unknown qualifier letter, so `*(z)` returned all files
             // rc=0 instead of erroring "unknown file attribute: z".
-            // Mirror C's strict behavior — but skip ASCII whitespace
-            // / `\0` (parser leftovers) and chars below 0x21 since
-            // C's qualifier loop stops on those naturally via its
-            // `case ')'` arm before reaching default.
-            ch if !ch.is_whitespace() && ch != '\0' && ch != ')' => {
+            // Mirror C's strict behavior. The exemption for ASCII
+            // whitespace that used to sit here was justified as "C's
+            // qualifier loop stops on those naturally via its `case ')'`
+            // arm" — C has no such arm. c:1308-1310 NULs the trailing
+            // `)` (`str[sl-1] = 0`) before the walk, so the loop
+            // condition is `while (*s && !newcolonmod)` over the body
+            // ALONE and a space reaches `default:` like any other
+            // unhandled byte: zsh answers `*(N )` with `unknown file
+            // attribute:  ` at rc=1 where the port listed every match at
+            // rc=0. `\0` still terminates the C loop, and `)` cannot
+            // appear because it was already overwritten.
+            ch if ch != '\0' && ch != ')' => {
                 crate::ported::utils::zerr(&format!("unknown file attribute: {}", ch));
                 crate::ported::utils::errflag.fetch_or(
                     crate::ported::utils::ERRFLAG_ERROR,
@@ -5488,39 +5559,11 @@ fn parse_range_spec(chars: &mut std::iter::Peekable<std::str::Chars>) -> (char, 
     (op, val)
 }
 
-/// Parse `[FIRST,LAST]` subscript range. **RUST-ONLY**.
-fn parse_subscript(
-    // RUST-ONLY
-    chars: &mut std::iter::Peekable<std::str::Chars>,
-) -> (Option<i32>, Option<i32>) {
-    let mut first_str = String::new();
-    let mut last_str = String::new();
-    let mut in_last = false;
-
-    while let Some(&c) = chars.peek() {
-        chars.next();
-        // The subscript body reaches `getindex` (c:1735) still tokenized,
-        // so the terminator is `Outbrack` on the lexed path and a raw `]`
-        // on the untokenized programmatic one. Accept both.
-        if c == ']' || c == crate::ported::zsh_h::Outbrack {
-            break;
-        } else if c == ',' || c == crate::ported::zsh_h::Comma {
-            in_last = true;
-        } else if in_last {
-            last_str.push(c);
-        } else {
-            first_str.push(c);
-        }
-    }
-
-    let first = first_str.parse().ok();
-    let last = if in_last {
-        last_str.parse().ok()
-    } else {
-        first
-    };
-    (first, last)
-}
+// `parse_subscript` (a RUST-ONLY `[FIRST,LAST]` splitter that
+// `str::parse`d each half and dropped the qualifier on any non-decimal
+// operand) is deleted: c:1735 routes the glob qualifier subscript
+// through `getindex` (Src/params.c:2001), the shell's one subscript
+// parser, and the `case '[':` arm above now does the same.
 
 /// Port of `static void insert(char *s, int checked)` from `Src/glob.c:346`.
 /// Records one matched path into the glob result list: runs the qualifier
