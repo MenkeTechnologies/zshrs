@@ -272,12 +272,54 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
             g.cur = None;
         } // c:350
         if useline.load(Ordering::Relaxed) < 0 {
-            // c:351
-            unmetafy_line();
-            ret = selfinsert(&[]); // c:353
-            metafy_line();
+            // c:352
+            unmetafy_line(); // c:354
+            // zshrs bridge, no C counterpart: C has ONE line buffer —
+            // `zleline`/`zlecs`/`zlell` (zle_main.c:43,48) — which `doinsert`
+            // (zle_misc.c:37,51) writes and `metafy_line`/`unmetafy_line`
+            // (zle_tricky.c:978,995) convert, so C's sandwich round-trips
+            // through the same characters. This port splits it into the editor
+            // buffer (`zle_main::ZLELINE`, the Vec<char> `selfinsert` writes —
+            // zle_misc.rs:205) and the completion staging buffer
+            // (`compcore::ZLELINE`, the only one the two conversions read), so
+            // the two copies below hand the unmetafied line to the widget and
+            // take the edited line back. Without them the inserted character
+            // landed in a buffer `metafy_line` never reads and vanished: TAB on
+            // an all-blank line inserted nothing where zsh inserts a literal
+            // TAB (the `wouldinstab` path, zle_tricky.c:183-197 → c:311 →
+            // c:782 → `_main_complete`'s insert-tab early return → c:860).
+            // Same idiom as docomplete's entry bridge (zle_tricky.rs:857).
+            {
+                let comp_line: Vec<char> = ZLELINE
+                    .get_or_init(|| Mutex::new(String::new()))
+                    .lock()
+                    .map(|g| g.chars().collect())
+                    .unwrap_or_default();
+                let comp_ll = comp_line.len();
+                let comp_cs = ZLECS.load(Ordering::SeqCst).clamp(0, comp_ll as i32) as usize;
+                if let Ok(mut g) = crate::ported::zle::zle_main::ZLELINE.lock() {
+                    *g = comp_line;
+                }
+                crate::ported::zle::zle_main::ZLECS.store(comp_cs, Ordering::SeqCst);
+                crate::ported::zle::zle_main::ZLELL.store(comp_ll, Ordering::SeqCst);
+            }
+            ret = selfinsert(&[]); // c:355
+            {
+                let ed_line: String = crate::ported::zle::zle_main::ZLELINE
+                    .lock()
+                    .map(|g| g.iter().collect())
+                    .unwrap_or_default();
+                let ed_ll = ed_line.chars().count() as i32;
+                let ed_cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+                if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+                    *g = ed_line;
+                }
+                ZLECS.store(ed_cs.clamp(0, ed_ll), Ordering::SeqCst);
+                ZLELL.store(ed_ll, Ordering::SeqCst);
+            }
+            metafy_line(); // c:356
         }
-        return goto_compend(ret); // c:356 goto compend
+        return goto_compend(ret); // c:358 goto compend
     }
 
     // c:359-361 — clear lastprebr/lastpostbr.
@@ -315,9 +357,38 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         ret = if nm == 0 { 1 } else { 0 }; // c:369
     } else if useline.load(Ordering::Relaxed) < 0 {
         // c:370
-        unmetafy_line();
-        ret = selfinsert(&[]); // c:372
-        metafy_line();
+        unmetafy_line(); // c:372
+        // zshrs bridge, no C counterpart — same split-line-buffer copies as the
+        // c:352-357 arm above; see the comment there.
+        {
+            let comp_line: Vec<char> = ZLELINE
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.chars().collect())
+                .unwrap_or_default();
+            let comp_ll = comp_line.len();
+            let comp_cs = ZLECS.load(Ordering::SeqCst).clamp(0, comp_ll as i32) as usize;
+            if let Ok(mut g) = crate::ported::zle::zle_main::ZLELINE.lock() {
+                *g = comp_line;
+            }
+            crate::ported::zle::zle_main::ZLECS.store(comp_cs, Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLELL.store(comp_ll, Ordering::SeqCst);
+        }
+        ret = selfinsert(&[]); // c:373
+        {
+            let ed_line: String = crate::ported::zle::zle_main::ZLELINE
+                .lock()
+                .map(|g| g.iter().collect())
+                .unwrap_or_default();
+            let ed_ll = ed_line.chars().count() as i32;
+            let ed_cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+            if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+                *g = ed_line;
+            }
+            ZLECS.store(ed_cs.clamp(0, ed_ll), Ordering::SeqCst);
+            ZLELL.store(ed_ll, Ordering::SeqCst);
+        }
+        metafy_line(); // c:374
     } else if useline.load(Ordering::Relaxed) == 0 && uselist.load(Ordering::Relaxed) != 0 {
         // c:374
         ZLEMETACS.store(0, Ordering::Relaxed); // c:375
