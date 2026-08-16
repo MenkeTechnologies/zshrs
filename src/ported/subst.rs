@@ -923,16 +923,43 @@ fn stringsubst(
                   // with_executor).
                 let cmd_open = pos + 1; // c:237 (s after $)
                                         // `chars` already mirrors `str3` — no re-collect.
+                                        //
+                // When the opening delimiter is the TOKEN `Inpar`, the lexer
+                // already decided where this substitution ends: `skipcomm`
+                // (lex.c:2164 `add(Inpar)`, its caller adding `Outpar`) marks
+                // the two delimiters and leaves every other paren in the body
+                // as a plain ASCII character. Counting ASCII parens as well
+                // therefore re-decides a question the lexer has answered, and
+                // gets it wrong wherever the body legitimately contains a
+                // paren the lexer skipped over — a here-document body:
+                //
+                //     x=$(cat <<\EOF
+                //     a)b
+                //     EOF
+                //     )
+                //
+                // stopped at the `)` in the body, ran `cat <<\EOF\na`, and
+                // spliced the leftover `b\nEOF\n)` back into the string, so
+                // `$x` came out as `ab\nEOF\n)` where zsh gives `a)b`. That is
+                // what corrupted every `_retrieve_cache` array, since
+                // Completion/Base/Utility/_store_cache:50-54 wraps each cached
+                // array in exactly this construct.
+                //
+                // A literal `(` / `)` reaches here only on the untokenized
+                // path, so keep counting ASCII when the opener itself is ASCII.
+                let tokenized = matches!(chars.get(cmd_open), Some(&c) if c == Inpar);
                 let mut depth = 0_i32; // c:237
                 let mut end = cmd_open; // c:237
                 while end < chars.len() {
                     // c:237
                     let ch = chars[end]; // c:237
-                    if ch == '(' || ch == Inpar {
+                    let opens = ch == Inpar || (!tokenized && ch == '(');
+                    let closes = ch == Outpar || (!tokenized && ch == ')');
+                    if opens {
                         depth += 1;
                     }
                     // c:237
-                    else if ch == ')' || ch == Outpar {
+                    else if closes {
                         // c:237
                         depth -= 1; // c:237
                         if depth == 0 {
