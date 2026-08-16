@@ -628,6 +628,18 @@ pub fn zprof_wrapper(
             zgettime_monotonic_if_available(&mut ts); // c:289
             let now = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0; // c:291-292
 
+            // C's `sf` IS the top of the `stack` list (c:277 `stack = &sf;`),
+            // so every nested call's c:304 `stack->beg += now - prev` has
+            // been landing on THIS frame's `beg` — that is precisely how
+            // c:293/c:299 subtract child time out of self-time. The Rust
+            // port pushed a COPY of `sf` onto `STACK`, and c:304 wrote to
+            // the copy, so `sf.beg` here is the un-incremented start time.
+            // Read the live value back before using it.
+            sf.beg = {
+                let st = STACK.lock().unwrap();
+                st.last().map(|top| top.beg).unwrap_or(sf.beg)
+            };
+
             // c:293 — `f->self += now - sf.beg;`
             {
                 let mut calls = CALLS.lock().unwrap();
@@ -717,13 +729,40 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 pub fn boot_(m: *const module) -> i32 {
     // c:355
     let mut calls = CALLS.lock().unwrap();
-    calls.clear(); // c:367
-    NCALLS.store(0, Ordering::SeqCst); // c:367
+    calls.clear(); // c:357 calls = NULL
+    NCALLS.store(0, Ordering::SeqCst); // c:358 ncalls = 0
     let mut arcs = ARCS.lock().unwrap();
-    arcs.clear(); // c:367
-    NARCS.store(0, Ordering::SeqCst); // c:367
-    STACK.lock().unwrap().clear(); // c:367
-    0 // c:367 addwrapper return
+    arcs.clear(); // c:359 arcs = NULL
+    NARCS.store(0, Ordering::SeqCst); // c:360 narcs = 0
+    STACK.lock().unwrap().clear(); // c:361 stack = NULL
+    drop(calls);
+    drop(arcs);
+    // c:362 — `return addwrapper(m, wrapper);`. The module arrives as a
+    // name because zshrs's module dispatcher passes a null
+    // `*const module` (module.rs:4140); see `addwrapper`'s WARNING.
+    //
+    // `wrapper` is C's file-static array at c:318-320:
+    //     static struct funcwrap wrapper[] = { WRAPDEF(zprof_wrapper), };
+    // `WRAPDEF` (`Src/zsh.h:1370-1371`) expands to `{ NULL, 0, func, NULL }`.
+    // It's data, not a function, so it's built inline at its one use.
+    // `handler` stays `None` rather than holding `zprof_wrapper`: a
+    // `WrapFunc` (`Src/zsh.h:1359`) is `int (*)(Eprog, FuncWrap, char *)`,
+    // and this port's `zprof_wrapper` takes the function body as a
+    // delegate because a zshrs function body is a caller-supplied closure,
+    // not a walkable `Eprog` — see the `BodyWrap` doc block in
+    // `src/ported/exec.rs` (`Src/exec.c:6166` `runshfunc`).
+    // `exec::runshfunc` therefore dispatches on the owning module, and
+    // this node is the `addwrapper`/`deletewrapper` bookkeeping entry C
+    // keeps in the same list.
+    crate::ported::module::addwrapper(
+        "zsh/zprof",
+        funcwrap {
+            next: None,    // c:1371 WRAPDEF
+            flags: 0,      // c:1371
+            handler: None, // c:1371 — WRAPDEF(zprof_wrapper); see above
+            module: None,  // c:1371
+        },
+    ) // c:362
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zprof.c:367`.
@@ -731,11 +770,15 @@ pub fn boot_(m: *const module) -> i32 {
 pub fn cleanup_(m: *const module) -> i32 {
     // c:367
     let mut calls = CALLS.lock().unwrap();
-    freepfuncs(&mut calls); // c:377
+    freepfuncs(&mut calls); // c:369 freepfuncs(calls)
     let mut arcs = ARCS.lock().unwrap();
-    freeparcs(&mut arcs); // c:377
+    freeparcs(&mut arcs); // c:370 freeparcs(arcs)
+    drop(calls);
+    drop(arcs);
     ZPROF_MODULE.store(false, Ordering::SeqCst);
-    setfeatureenables(m, module_features(), None) // c:377
+    // c:371 — `deletewrapper(m, wrapper);` (return value discarded in C).
+    let _ = crate::ported::module::deletewrapper("zsh/zprof"); // c:371
+    setfeatureenables(m, module_features(), None) // c:372
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/zprof.c:377`.

@@ -1957,6 +1957,8 @@ enum WrapKind {
     Comp,
     /// `WRAPDEF(wrap_private)` — `Src/Modules/param_private.c:541-542`.
     Private,
+    /// `WRAPDEF(zprof_wrapper)` — `Src/Modules/zprof.c:318-320`.
+    Zprof,
 }
 
 /// One node of the `wrappers` linked list C keeps at `Src/module.c:570`,
@@ -2001,6 +2003,18 @@ static BODY_WRAPPERS: &[BodyWrap] = &[
     BodyWrap {
         module: "zsh/param/private",
         kind: WrapKind::Private,
+    },
+    // `Src/Modules/zprof.c:318-320` — `static struct funcwrap wrapper[] =
+    // { WRAPDEF(zprof_wrapper) };` — installed by c:362
+    // `return addwrapper(m, wrapper);` in `zsh/zprof`'s `boot_`, removed
+    // by c:371 `deletewrapper(m, wrapper);` in `cleanup_`. `zsh/zprof` is
+    // never linked in at startup, so it always boots after the two nodes
+    // above and `addwrapper`'s tail-append (`Src/module.c:591-595`) puts
+    // it LAST — innermost, closest to the body, which is what makes its
+    // measured window the function itself.
+    BodyWrap {
+        module: "zsh/zprof",
+        kind: WrapKind::Zprof,
     },
 ];
 
@@ -2101,6 +2115,18 @@ pub fn runshfunc(
                         .unwrap_or(false)
                 })
                 .unwrap_or(false),
+            // Genuine `addwrapper` membership: `zsh/zprof`'s `boot_`
+            // calls `addwrapper(m, wrapper)` (`Src/Modules/zprof.c:362`)
+            // and its `cleanup_` calls `deletewrapper` (c:371), and both
+            // mirror the list into `module::WRAPPERS_ADDED`. So this is
+            // C's `while (wrap)` test verbatim — "is this node in the
+            // `wrappers` list" — costing one relaxed load, with no lock
+            // and no allocation when `zsh/zprof` was never loaded.
+            WrapKind::Zprof => {
+                (crate::ported::module::WRAPPERS_ADDED.load(Ordering::Relaxed)
+                    & crate::ported::module::WRAPPER_BIT_ZPROF)
+                    != 0
+            }
         };
         if !armed {
             // Not in C's `wrappers` list right now — no node to step over.
@@ -2135,6 +2161,12 @@ pub fn runshfunc(
                     std::ptr::null(),
                     std::ptr::null_mut(),
                     || status = run_next(), // param_private.c:556
+                ),
+                WrapKind::Zprof => crate::ported::modules::zprof::zprof_wrapper(
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    name,
+                    || status = run_next(), // zprof.c:285
                 ),
             }
         };
