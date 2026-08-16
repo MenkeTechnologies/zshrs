@@ -3536,6 +3536,26 @@ pub fn bin_kill(
             continue; // c:2803
         }
 
+        // c:2931-2934 —
+        // ```c
+        //     if (!*signame) {
+        //         zwarnnam(nam, "-: signal name expected");
+        //         return 1;
+        //     }
+        // ```
+        // C picks `signame` at c:2924-2930 (either `*argv + 1` for `-NAME` or
+        // the argument of `-s`) and runs this emptiness check ONCE, before any
+        // lookup. The port splits those two paths, so the check has to appear
+        // in both; the `-s` half already has it above. Without it here a bare
+        // `-` fell through to the lookup with an empty name and reported
+        // `unknown signal: SIG` plus the `type kill -L` follow-up, where zsh
+        // reports `-: signal name expected` and nothing else. `kill -<TAB>`
+        // then accept-line hits exactly this.
+        if body.is_empty() {
+            zwarnnam(nam, "-: signal name expected"); // c:2932
+            return 1; // c:2933
+        }
+
         // c:2960 — symbolic `-NAME` (no `s` prefix needed).
         let upper = body.to_ascii_uppercase();
         let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
