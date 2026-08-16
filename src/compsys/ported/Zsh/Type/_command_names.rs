@@ -34,7 +34,12 @@
 //! sh:39      'parameters:: _parameters …'
 //! sh:40      'parameters:: _parameters …'
 //! sh:41    )
-//! sh:42-47  aliases (verbose / non-verbose)
+//! sh:43  if zstyle -T ":completion:${curcontext}:aliases" verbose; then
+//! sh:44    printf -v verbose %s:%s\  ${(@q+)${(kv)aliases}[@]//\:/\\:}
+//! sh:45    defs+=( "aliases:alias:(( $verbose ))" )
+//! sh:46  else
+//! sh:47    defs+=( 'aliases:alias:compadd -Qk aliases' )
+//! sh:48  fi
 //! sh:50  args=( "$@" )
 //! sh:52-71  cmdpath / PATH shadowing
 //! sh:73  _alternative -O args "$defs[@]"
@@ -49,6 +54,46 @@ use crate::compsys::ported::_description::_description;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
+use crate::ported::utils::quotedzputs;
+
+/// `${(kv)aliases}` — key/value pairs of the REGULAR aliases.
+///
+/// `aliases` is a magic assoc served by `scanpmraliases`
+/// (`Src/Modules/parameter.c:1990` → `scanaliases(aliastab, …, alflags=0)`),
+/// NOT a plain `PM_HASHED` parameter: it has no entry in the paramtab
+/// storage that `gethkparam`/`gethparam` read, so those return nothing and
+/// building the sh:44 list from them yields an EMPTY `((…))` action —
+/// the `aliases` group then disappears from the completion entirely.
+/// Walk the canonical `aliastab` instead, applying the same
+/// `al->node.flags == alflags` filter (`parameter.c:1977`) that keeps
+/// global and suffix aliases out.
+fn regular_aliases() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
+        for (_, alias) in tab.iter() {
+            if alias.node.flags != 0 {
+                continue;
+            }
+            out.push((alias.node.nam.clone(), alias.text.clone()));
+        }
+    }
+    out
+}
+
+/// `zstyle -T <ctx> <style>` — true when the style is unset, or set with
+/// a boolean-true first value (`Src/Modules/zutil.c:700-724`).
+fn style_true_or_unset(ctx: &str, style: &str) -> bool {
+    match lookupstyle(ctx, style).first() {
+        Some(v) => matches!(v.as_str(), "true" | "yes" | "on" | "1"),
+        None => true,
+    }
+}
+
+/// `${word//\:/\\:}` (sh:44) — backslash-escape every colon so the pair
+/// separator printf writes stays the only unescaped one.
+fn escape_colons(s: &str) -> String {
+    s.replace(':', "\\:")
+}
 
 /// Reach `_command_names` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `"(-)1: :{ $cpp; _command_names -e }" \` (Completion/BSD/Command/_mdo sh:30) — so the normal function lookup runs.
@@ -148,8 +193,31 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
                 .to_string(),
         );
 
-        // sh:42-47 — aliases (verbose mode emission TODO sh:43)
-        defs.push("aliases:alias:compadd -Qk aliases".to_string());
+        // sh:43 — `zstyle -T` is DEFAULT-TRUE, so an unset `verbose` style
+        //   takes the verbose branch. The previous port hardcoded the sh:47
+        //   `else` arm, i.e. the branch zsh only reaches when the style is
+        //   explicitly set false — so every alias was offered bare, with no
+        //   expansion shown as its description.
+        if style_true_or_unset(&format!(":completion:{}:aliases", curcontext), "verbose") {
+            // sh:44  printf -v verbose %s:%s\  ${(@q+)${(kv)aliases}[@]//\:/\\:}
+            let mut verbose = String::new();
+            for (k, v) in regular_aliases() {
+                // `${…//\:/\\:}` — escape every colon so `_describe` splits
+                // on the ONE colon printf writes between the pair.
+                // `(@q+)` — QT_QUOTEDZPUTS (`Src/subst.c:2245`): quote only
+                // when the word needs it, so `_alternative`'s
+                // `eval ws=( … )` (sh:39) round-trips values with spaces.
+                verbose.push_str(&quotedzputs(&escape_colons(&k)));
+                verbose.push(':');
+                verbose.push_str(&quotedzputs(&escape_colons(&v)));
+                verbose.push(' ');
+            }
+            // sh:45  defs+=( "aliases:alias:(( $verbose ))" )
+            defs.push(format!("aliases:alias:(( {} ))", verbose));
+        } else {
+            // sh:47  defs+=( 'aliases:alias:compadd -Qk aliases' )
+            defs.push("aliases:alias:compadd -Qk aliases".to_string());
+        }
     }
 
     // sh:50  args=( "$@" )
