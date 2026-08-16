@@ -208,7 +208,25 @@ class ShellSession:
         rows = [row.rstrip() for row in self.screen.display]
         while rows and rows[-1] == "":
             rows.pop()
-        return rows
+        return [self._mask_pid(r) for r in rows]
+
+    def _mask_pid(self, row):
+        """Replace THIS shell's own pid with a stable token.
+
+        Ported verbatim from comptab_parity.py's Session._mask_pid so the two
+        harnesses cannot drift. `$$` is the pid of the shell under test, so the
+        reference and the candidate necessarily report different values — two
+        live processes cannot share a pid. A case that displays it (`unset
+        <TAB>` lists every parameter with its value, `$` among them) can
+        therefore never compare equal no matter how correct zshrs is, and
+        scored as a permanent failure on every key sequence.
+
+        Only the exact pid of this session's own child is substituted, taken
+        from the fork in ShellSession.__init__ — not a general digit mask. Any
+        other number on the screen, including one that merely looks like a pid,
+        still has to match byte for byte.
+        """
+        return row.replace(str(self.pid), "<PID>") if self.pid else row
 
     def fresh_prompt(self):
         """Clear to a clean prompt at row 0 via the shell's own clear-screen

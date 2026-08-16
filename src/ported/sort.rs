@@ -297,94 +297,114 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     // Numeric comparison — direct port of the `if (sortnumeric)`
     // block at Src/sort.c:137-172. Walks both strings to first
     // divergence, then either short-circuits on signed-mode
-    // `-DIGIT` vs `DIGIT`, or rewinds to the start of the digit
-    // run, skips leading zeros, compares run lengths (longer =
-    // bigger; flipped for negatives via `mul`). When NO digit run is
-    // involved (or the runs compare equal) `cmp` keeps the strcoll base
-    // (c:134), matching zsh's HAVE_STRCOLL path.
+    // `-DIGIT` vs `DIGIT`, or rewinds to the start of the digit run,
+    // skips leading zeros, and walks the two runs in lockstep. When NO
+    // digit run is involved (or the runs compare equal) `cmp` keeps the
+    // strcoll base (c:134), matching zsh's HAVE_STRCOLL path.
+    //
+    // The C walks two `const char *` cursors; this port walks two byte
+    // indices into the same strings. Reading past the end yields 0, which
+    // is exactly what C reads at the NUL terminator, so `at()` stands in
+    // for the `*ptr` dereference at every site.
     let cmp_numeric = |a: &str, bs: &str, signed_mode: bool| -> Ordering {
         let ab = a.as_bytes();
         let bb = bs.as_bytes();
-        let n = ab.len().min(bb.len());
-        let mut i = 0;
-        while i < n && ab[i] == bb[i] {
-            i += 1;
-        }
-        let ac = ab.get(i).copied().unwrap_or(0);
-        let bc = bb.get(i).copied().unwrap_or(0);
+        // c:139/141/144/… — `*as` on a NUL-terminated C string.
+        let at = |s: &[u8], i: usize| -> u8 { s.get(i).copied().unwrap_or(0) };
         let is_digit = |c: u8| c.is_ascii_digit();
-        let mut mul: i32 = 0;
-        let mut cmp: i32 = (ac as i32) - (bc as i32);
+
+        // c:139 — `for (; *as == *bs && *as; as++, bs++);`
+        let (mut ai, mut bi) = (0usize, 0usize);
+        while at(ab, ai) == at(bb, bi) && at(ab, ai) != 0 {
+            ai += 1;
+            bi += 1;
+        }
+
+        // c:143-150 — signed mode only: a leading `-` in front of a digit
+        // beats any bare digit. C sets `cmp = ∓1; mul = 1;`, which makes the
+        // `!mul` guard at c:152 skip the run comparison entirely and fall
+        // through to `return sortdir * cmp` with sortdir == 1 (c:207).
         if signed_mode {
-            if ac == b'-' && ab.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(bc) {
-                return Ordering::Less;
+            if at(ab, ai) == b'-' && is_digit(at(ab, ai + 1)) && is_digit(at(bb, bi)) {
+                return Ordering::Less; // c:145
             }
-            if bc == b'-' && bb.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(ac) {
-                return Ordering::Greater;
+            if at(bb, bi) == b'-' && is_digit(at(bb, bi + 1)) && is_digit(at(ab, ai)) {
+                return Ordering::Greater; // c:148
             }
         }
-        if is_digit(ac) || is_digit(bc) {
-            let mut start = i;
-            while start > 0 && is_digit(ab[start - 1]) {
-                start -= 1;
+
+        // c:152 — `if (!mul && (idigit(*as) || idigit(*bs)))`. `mul` is still
+        // 0 here: the only assignments above returned.
+        if is_digit(at(ab, ai)) || is_digit(at(bb, bi)) {
+            // c:153 — `for (; as > ao && idigit(as[-1]); as--, bs--);`
+            // Both cursors rewind together, bounded by the start of `as`.
+            // They are still equal at this point (the c:139 walk moved them
+            // in lockstep from 0), so `bi` cannot underflow.
+            while ai > 0 && is_digit(at(ab, ai - 1)) {
+                ai -= 1;
+                bi -= 1;
             }
-            if signed_mode && start > 0 && ab[start - 1] == b'-' {
-                mul = -1;
+            // c:154 — `mul = (sortnumeric < 0 && as > ao && as[-1] == '-') ? -1 : 1;`
+            let mul: i32 = if signed_mode && ai > 0 && at(ab, ai - 1) == b'-' {
+                -1
             } else {
-                mul = 1;
-            }
-            let run_a: Vec<u8> = ab[start..]
-                .iter()
-                .copied()
-                .take_while(|&c| is_digit(c))
-                .collect();
-            let run_b: Vec<u8> = bb[start..]
-                .iter()
-                .copied()
-                .take_while(|&c| is_digit(c))
-                .collect();
-            let stripped_a: &[u8] = {
-                let z = run_a.iter().take_while(|&&c| c == b'0').count();
-                &run_a[z..]
+                1
             };
-            let stripped_b: &[u8] = {
-                let z = run_b.iter().take_while(|&&c| c == b'0').count();
-                &run_b[z..]
-            };
-            match stripped_a.len().cmp(&stripped_b.len()) {
-                Ordering::Greater => {
-                    return if mul >= 0 {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Less
-                    };
+            // c:155 — `if (idigit(*as) && idigit(*bs))`. THE guard: the
+            // numeric override applies only when BOTH sides start a digit
+            // run at the rewound position. When just one does — `9` vs `a`,
+            // `x1` vs `xa` — C leaves `cmp` at the c:133 strcoll result, so
+            // the digit collates by its byte value ('9' = 0x39 sorts before
+            // 'a' = 0x61) exactly as it would without `(n)`. This port used
+            // to compare the two digit RUNS unconditionally, and a run of
+            // length 1 against the empty run on the non-digit side always
+            // won, sorting every digit-initial name to the very end:
+            // `${(n)${(a 9)}}` gave `a 9` where zsh gives `9 a`.
+            if is_digit(at(ab, ai)) && is_digit(at(bb, bi)) {
+                // c:156-159 — leading zeros are not significant.
+                while at(ab, ai) == b'0' {
+                    ai += 1;
                 }
-                Ordering::Less => {
-                    return if mul >= 0 {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    };
+                while at(bb, bi) == b'0' {
+                    bi += 1;
                 }
-                Ordering::Equal => {
-                    for k in 0..stripped_a.len() {
-                        if stripped_a[k] != stripped_b[k] {
-                            let d = (stripped_a[k] as i32) - (stripped_b[k] as i32);
-                            let signed_cmp = if mul >= 0 { d } else { -d };
-                            return match signed_cmp.cmp(&0) {
-                                Ordering::Equal => Ordering::Equal,
-                                o => o,
-                            };
-                        }
+                // c:160 — `for (; idigit(*as) && *as == *bs; as++, bs++);`
+                while is_digit(at(ab, ai)) && at(ab, ai) == at(bb, bi) {
+                    ai += 1;
+                    bi += 1;
+                }
+                // c:161 — the runs differ somewhere; if neither side still
+                // has a digit they were the same number and `cmp` keeps the
+                // strcoll base (`x02` vs `x2` orders lexically).
+                if is_digit(at(ab, ai)) || is_digit(at(bb, bi)) {
+                    // c:162 — first differing digit decides, unless one run
+                    // is longer (checked next).
+                    let cmp = mul * ((at(ab, ai) as i32) - (at(bb, bi) as i32));
+                    // c:163-164 — run to the end of the common digit span.
+                    while is_digit(at(ab, ai)) && is_digit(at(bb, bi)) {
+                        ai += 1;
+                        bi += 1;
                     }
-                    cmp = 0;
+                    // c:165-168 — the longer run is the larger number.
+                    if is_digit(at(ab, ai)) && !is_digit(at(bb, bi)) {
+                        return if mul >= 0 {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Less
+                        }; // c:166
+                    }
+                    if is_digit(at(bb, bi)) && !is_digit(at(ab, ai)) {
+                        return if mul >= 0 {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }; // c:168
+                    }
+                    return cmp.cmp(&0); // c:174 `return sortdir * cmp`
                 }
             }
         }
-        let _ = mul;
-        let _ = cmp;
-        // c:134 — no digit-run override fired (non-digit divergence, or
-        // digit runs compared equal). Keep the strcoll base.
+        // c:133/174 — no digit-run override fired. Keep the strcoll base.
         strcoll_cmp(a, bs)
     };
 
