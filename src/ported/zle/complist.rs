@@ -30,7 +30,7 @@ use crate::ported::zle::comp_h::{
     CMF_NOLIST,
 };
 use crate::ported::zle::compcore::{listdat, MINFO, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
-use crate::ported::zle::zle_refresh::{tcmultout, tcout, CLEARFLAG, NLNCT};
+use crate::ported::zle::zle_refresh::{tcmultout, tcout, CLEARFLAG, NLNCT, PROMPT_LAST_ROW};
 use crate::ported::zsh_h::{
     isset, Patprog, EXTENDEDGLOB, TCALLATTRSOFF, TCBOLDFACEBEG, TCCLEAREOD, TCCLEAREOL,
     TCSTANDOUTBEG, TCSTANDOUTEND, TCUNDERLINEBEG, TCUNDERLINEEND, USEZLE,
@@ -2088,7 +2088,15 @@ pub fn compprintlist(showall: i32) -> i32 {
     let mnew = MNEW.load(Ordering::SeqCst);
     let mhasstat = MHASSTAT.load(Ordering::SeqCst);
     let zterm_lines = adjustlines() as i32;
-    let nlnct = NLNCT.load(Ordering::SeqCst);
+    // c:1389 etc. read C's `nlnct` — the ZLE frame height EXCLUDING the
+    // multi-line prompt's leading rows, which C's video model never contains
+    // (zle_refresh.c:779-783 reserves only `lpromptw` cells of `nbuf[0]`;
+    // c:1163 writes the rest of the prompt as raw text). This port paints
+    // every prompt row into NBUF, so NLNCT is prompt-inclusive; subtracting
+    // PROMPT_LAST_ROW converts back. Using the raw NLNCT sized the list to fit BELOW the whole
+    // prompt (17 rows for a 4-line prompt at 24x80) instead of letting the
+    // terminal scroll the prompt off as zsh does (21 rows, prompt-independent).
+    let nlnct = (NLNCT.load(Ordering::SeqCst) - PROMPT_LAST_ROW.load(Ordering::SeqCst)).max(1);
     let invcount = crate::ported::zle::compresult::INVCOUNT.load(Ordering::SeqCst);
 
     MFIRSTL.store(-1, Ordering::SeqCst); // c:1381
@@ -3339,7 +3347,8 @@ pub fn singledraw() -> i32 {
     // was left at the moved-to cell (row `md2`); repeated menu-select
     // navigation then drifted the grid UP onto the command line and misaligned
     // columns. Mirrors the compprintlist epilogue fix.
-    let nlnct_sd = NLNCT.load(Ordering::SeqCst);
+    // c:1977/1983 `nlnct`
+    let nlnct_sd = (NLNCT.load(Ordering::SeqCst) - PROMPT_LAST_ROW.load(Ordering::SeqCst)).max(1);
     let zterm_lines_sd = adjustlines() as i32;
     if MSTATPRINTED.load(Ordering::SeqCst) != 0 {
         // c:1976-1981 — bottom status line present: park below it, print it,
@@ -3434,7 +3443,9 @@ pub fn complistmatches(
     // c:2007-2012 — early-exit: list too tall or errflag set.
     let zterm_lines = adjustlines() as i32;
     let zterm_columns = adjustcolumns() as i32;
-    let nlnct = NLNCT.load(Ordering::SeqCst);
+    // c:2007/2065/2078 `nlnct` — C's prompt-independent frame height; see
+    // the PROMPT_LAST_ROW note in zle_refresh.rs for why the raw NLNCT is wrong.
+    let nlnct = (NLNCT.load(Ordering::SeqCst) - PROMPT_LAST_ROW.load(Ordering::SeqCst)).max(1);
     let mselect = MSELECT.load(Ordering::SeqCst);
     let minfo_asked = MINFO
         .get()
@@ -4193,7 +4204,9 @@ pub fn domenuselect(
     let _lbeg: i32 = 0; // c:2393
     let mut step: i32 = 1; // c:2393
     let _wrap: i32 = 0; // c:2393
-    let _pl = NLNCT.load(Ordering::SeqCst); // c:2393
+
+    // c:2393 — `pl = nlnct`
+    let _pl = (NLNCT.load(Ordering::SeqCst) - PROMPT_LAST_ROW.load(Ordering::SeqCst)).max(1);
     let _broken: i32 = 0; // c:2393
     let _first: i32 = 1; // c:2393
     let mut _nolist: i32 = 0; // c:2394
@@ -4451,12 +4464,16 @@ pub fn domenuselect(
         if parsed == 0 {
             // c:2435
             let zterm_lines = adjustlines() as i32;
-            let nlnct = NLNCT.load(Ordering::SeqCst);
+            // c:2436/2438 `nlnct`
+            let nlnct =
+                (NLNCT.load(Ordering::SeqCst) - PROMPT_LAST_ROW.load(Ordering::SeqCst)).max(1);
             step = (zterm_lines - nlnct) >> 1; // c:2436
         } else if parsed < 0 {
             // c:2437
             let zterm_lines = adjustlines() as i32;
-            let nlnct = NLNCT.load(Ordering::SeqCst);
+            // c:2436/2438 `nlnct`
+            let nlnct =
+                (NLNCT.load(Ordering::SeqCst) - PROMPT_LAST_ROW.load(Ordering::SeqCst)).max(1);
             step = parsed + zterm_lines - nlnct;
             if step < 0 {
                 step = 1;
@@ -4529,7 +4546,11 @@ pub fn domenuselect(
     let mut lbeg = 0i32; // c:2393
     let mut first = 1i32; // c:2393
     let mut nolist = 0i32; // c:2394
-    let pl = NLNCT.load(Ordering::SeqCst); // c:2393
+
+    // c:2393 — `pl = nlnct`, captured once on entry; drives the scroll window
+    // `space = zterm_lines - pl - mhasstat` (c:2519) which MUST agree with
+    // `mlend` (c:2078). C's `nlnct` excludes the prompt's leading rows.
+    let pl = (NLNCT.load(Ordering::SeqCst) - PROMPT_LAST_ROW.load(Ordering::SeqCst)).max(1);
     let mut do_last_key = 0i32; // c:2391
     let mut modeline: Option<String> = None; // c:2396
     let mut modecs = 0i32; // c:2394

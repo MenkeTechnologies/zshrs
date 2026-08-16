@@ -1695,6 +1695,11 @@ pub fn zrefresh() {
         }
         // The edit line continues on the prompt's last row (C: nbuf[0]).
         prompt_last_row = rpms.ln.max(0) as usize;
+        // Publish it for the completion-list code, which needs C's
+        // prompt-independent `nlnct` (c:1636): this port's NLNCT counts the
+        // prompt rows C never models (c:779-783, c:1163, c:1206), so those
+        // sites use `(NLNCT - PROMPT_LAST_ROW).max(1)`.
+        PROMPT_LAST_ROW.store(prompt_last_row as i32, Ordering::SeqCst);
         // c:152 / zle_main.c:1280 — publish the prompt's trailing attribute
         // so refreshline's TCDEL attr-apply (c:2044) and tcoutclear (c:609)
         // make deleted/cleared cells carry the prompt's colour. C derives
@@ -2430,7 +2435,38 @@ pub fn zrefresh() {
             let out_fd = if fd >= 0 { fd } else { 1 };
             let _ = write_loop(out_fd, b"\r"); // c:1169 `zputc(&zr_cr)`
             VCS.store(0, Ordering::SeqCst); // c:1170
-            moveto(0, LPROMPTW.load(Ordering::SeqCst).max(0) as usize); // c:1171
+
+            // c:1171 `moveto(0, lpromptw)` — C's video row 0 IS the prompt's
+            // LAST physical row: only that row exists in its video buffer
+            // (c:779-783 reserves `lpromptw` cells of `nbuf[0]`, c:1206 starts
+            // the edit line there) and the prompt's earlier rows are raw text
+            // (c:1163) that C never repaints. This port lays EVERY prompt row
+            // into NBUF, so C's row 0 is row `prompt_last_row` here.
+            //
+            // Anchoring at row 0 instead repainted the whole prompt block over
+            // the listing: under always-last-prompt a full-screen list has
+            // SCROLLED those rows off the terminal (complist.c:1692-1698
+            // clamps the post-list cursor-up to `zterm_lines - 1`), and C's
+            // screen simply loses them. Seed OBUF with the rows above the
+            // anchor so the NBUF diff treats them as already displayed and
+            // emits nothing for them — the same bridge the `!clearflag`
+            // multiline anchor above uses.
+            if prompt_last_row > 0 {
+                {
+                    let nbuf = NBUF.lock().unwrap();
+                    let mut obuf = OBUF.lock().unwrap();
+                    obuf.clear();
+                    for r in 0..prompt_last_row {
+                        obuf.push(nbuf.get(r).cloned().unwrap_or_default());
+                    }
+                }
+                OLNCT.store(prompt_last_row as i32, Ordering::SeqCst);
+            }
+            VLN.store(prompt_last_row as i32, Ordering::SeqCst);
+            moveto(
+                prompt_last_row,
+                LPROMPTW.load(Ordering::SeqCst).max(0) as usize,
+            ); // c:1171
         }
     }
 
@@ -2534,7 +2570,17 @@ pub fn zrefresh() {
         Del,
         Ins,
     }
-    for iln in 0..nlnct {
+    // c:1671 — `for (iln = 0; iln < nlnct; iln++) refreshline(iln)`. C's row 0
+    // is the prompt's LAST physical row (see the c:1862 note in refreshline);
+    // the rows this port keeps above it have no C counterpart. Under
+    // `clearflag` they are not merely unnecessary — a full-screen listing has
+    // SCROLLED them off the terminal (complist.c:1692-1698 clamps the
+    // post-list cursor-up to `zterm_lines - 1`, i.e. the screen top), so
+    // walking up into them moves the real cursor to rows that now hold list
+    // output and paints the frame that many rows too low. C cannot make this
+    // mistake: those rows are not in its video buffer at all.
+    let first_iln = if clearf { prompt_last_row as i32 } else { 0 };
+    for iln in first_iln..nlnct {
         // olnct mutates as we insert/delete lines below; read it fresh.
         let olnct_now = OLNCT.load(Ordering::SeqCst);
         // c:1672-1674 — if we have more lines than last time, clear the
@@ -3136,8 +3182,14 @@ pub fn refreshline(ln: i32) {
 
     // 2c: prompt-line head skip                                         // c:1859-1860
     let lpromptw = LPROMPTW.load(Ordering::SeqCst);
-    if ln == 0 && lpromptw != 0 {
-        // c:1862
+    // c:1862 — `if (ln == 0 && lpromptw)`. C's video row 0 IS the prompt's
+    // last physical row: only that row exists in its video buffer (c:779-783
+    // reserves `lpromptw` cells of `nbuf[0]`), the earlier rows of a
+    // multi-line prompt are raw text (c:1163). This port lays every prompt row
+    // into NBUF, so C's row 0 is `PROMPT_LAST_ROW` here — testing `ln == 0`
+    // left the skip DEAD for multi-line prompts and re-emitted the prompt
+    // cells over the already-displayed prompt (zsh writes only the edit text).
+    if ln == PROMPT_LAST_ROW.load(Ordering::SeqCst) && lpromptw != 0 {
         i = lpromptw - ccs; // c:1863
         let j_loc = ol.len() as i32; // c:1864 j = ZR_strlen(ol)
                                      // c:1865 — nl += i (skip i cells)
@@ -5333,6 +5385,40 @@ pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 /// Number of lines counted in the prompt+buffer for the current
 /// refresh — drives nbuf allocation (`nlnct * winw` cells).
 pub static NLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:157
+
+// !!! WARNING: RUST-ONLY HELPER !!!
+//
+// C keeps ONLY the last physical row of a multi-line prompt in its video
+// model: `resetvideo` reserves `lpromptw` cells at the head of `nbuf[0]`
+// (c:779-783), the edit line starts right there (`rpms.s = nbuf[rpms.ln = 0]
+// + lpromptw`, c:1206), and the prompt's EARLIER rows are never cells at all —
+// they are written as raw text (`zputs(lpromptbuf, shout)`, c:1163) and are
+// only ever accounted for by `moveto`'s `tc_upcurs(lprompth - 1)` (c:2299,
+// c:2439). Consequently `nlnct = rpms.ln + 1` (c:1636) counts the EDIT-LINE
+// rows plus the optional statusline row (c:1443 `snextline`) and NOTHING
+// else: in C `nlnct` is independent of prompt height.
+//
+// This port materialises EVERY prompt row into NBUF (each `\n` in the prompt
+// runs `nextline`), so `NLNCT` here is `prompt rows + edit rows`. Every C site
+// that reads `nlnct` as "how many screen rows does the ZLE frame consume"
+// — the completion-list budgets `cl` (c:1389-1391) and `mlend` (c:2078), the
+// scroll window (c:2393 `pl`, c:2436-2438 `step`) and the "does it all fit"
+// tests (c:2007, c:2065) — needs C's value, otherwise the list is sized to fit
+// BELOW the whole prompt instead of letting the terminal scroll the prompt off
+// as zsh does.
+//
+// C's `nlnct` for this port's video model is therefore
+// `(NLNCT - PROMPT_LAST_ROW).max(1)`, inlined at every such site (it is not a
+// C function, so it must not become one here). It equals `NLNCT` for a
+// single-line prompt.
+
+/// !!! WARNING: RUST-ONLY GLOBAL !!!
+/// Video row of the prompt's LAST physical row in `NBUF` (`0` for a
+/// single-line prompt). C has no counterpart because only that last row lives
+/// in its video buffer (c:779-783, c:1206); this port paints the whole prompt
+/// into NBUF, so the row index has to be published: the completion-list sites
+/// read `(NLNCT - PROMPT_LAST_ROW).max(1)` as C's `nlnct`.
+pub static PROMPT_LAST_ROW: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `static REFRESH_STRING *nbuf` / `*obuf` from
 /// `Src/Zle/zle_refresh.c:670`. The new (`NBUF`) and old (`OBUF`) video
