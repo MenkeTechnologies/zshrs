@@ -49,155 +49,48 @@ pub fn strend(s: &str) -> Option<char> {
     s.chars().last()
 }
 
-/// Sort flags
+/// The canonical `SORTIT_*` bits live in `zsh.h` (ported at
+/// `crate::ported::zsh_h`). This module used to declare its own set with
+/// DIFFERENT values — `SORTIT_BACKWARDS = 1` / `SORTIT_IGNORING_CASE = 8`,
+/// i.e. those two swapped relative to c:Src/zsh.h:2360-2366 — so any flag
+/// word crossing between the two vocabularies silently changed meaning.
+/// Re-export the real ones instead of redeclaring them.
 pub mod sort_flags {
-    /// `SORTIT_BACKWARDS` constant.
-    pub const SORTIT_BACKWARDS: u32 = 1;
-    /// `SORTIT_NUMERICALLY` constant.
-    pub const SORTIT_NUMERICALLY: u32 = 2;
-    /// `SORTIT_NUMERICALLY_SIGNED` constant.
-    pub const SORTIT_NUMERICALLY_SIGNED: u32 = 4;
-    /// `SORTIT_IGNORING_CASE` constant.
-    pub const SORTIT_IGNORING_CASE: u32 = 8;
-    /// `SORTIT_IGNORING_BACKSLASHES` constant.
-    pub const SORTIT_IGNORING_BACKSLASHES: u32 = 16;
+    use crate::ported::zsh_h;
+
+    /// c:Src/zsh.h — `SORTIT_BACKWARDS`.
+    pub const SORTIT_BACKWARDS: u32 = zsh_h::SORTIT_BACKWARDS as u32;
+    /// c:Src/zsh.h — `SORTIT_NUMERICALLY`.
+    pub const SORTIT_NUMERICALLY: u32 = zsh_h::SORTIT_NUMERICALLY as u32;
+    /// c:Src/zsh.h — `SORTIT_NUMERICALLY_SIGNED`.
+    pub const SORTIT_NUMERICALLY_SIGNED: u32 = zsh_h::SORTIT_NUMERICALLY_SIGNED as u32;
+    /// c:Src/zsh.h — `SORTIT_IGNORING_CASE`.
+    pub const SORTIT_IGNORING_CASE: u32 = zsh_h::SORTIT_IGNORING_CASE as u32;
+    /// c:Src/zsh.h — `SORTIT_IGNORING_BACKSLASHES`.
+    pub const SORTIT_IGNORING_BACKSLASHES: u32 = zsh_h::SORTIT_IGNORING_BACKSLASHES as u32;
 }
 
-/// Compare two strings with various options
+/// Compare two strings under the `SORTIT_*` bits, delegating to the
+/// canonical port of `zstrcmp` (`Src/sort.c:191`) at
+/// `crate::ported::sort::zstrcmp`.
+///
+/// This function previously carried a SECOND, from-scratch comparator with
+/// its own `numeric_compare` / `extract_number` helpers. That copy had the
+/// same defect the ported one was fixed for in `Src/sort.c:155` — it entered
+/// the numeric branch on `a_is_digit || b_is_digit` where C requires
+/// `idigit(*as) && idigit(*bs)`, so a digit facing a non-digit compared as a
+/// number against 0 instead of falling through to collation. It had no
+/// callers, which is exactly why the defect survived: nothing exercised it.
+/// Route to the one comparator rather than keep a divergent twin alive.
 pub fn zstrcmp(a: &str, b: &str, flags: u32) -> Ordering {
-    let ignore_case = flags & sort_flags::SORTIT_IGNORING_CASE != 0;
-    let ignore_backslash = flags & sort_flags::SORTIT_IGNORING_BACKSLASHES != 0;
-    let numeric = flags & sort_flags::SORTIT_NUMERICALLY != 0;
-    let numeric_signed = flags & sort_flags::SORTIT_NUMERICALLY_SIGNED != 0;
-
-    // Prepare strings for comparison
-    let (a_cmp, b_cmp): (std::borrow::Cow<str>, std::borrow::Cow<str>) = if ignore_case {
-        (
-            std::borrow::Cow::Owned(a.to_lowercase()),
-            std::borrow::Cow::Owned(b.to_lowercase()),
-        )
-    } else {
-        (std::borrow::Cow::Borrowed(a), std::borrow::Cow::Borrowed(b))
-    };
-
-    let (a_final, b_final): (std::borrow::Cow<str>, std::borrow::Cow<str>) = if ignore_backslash {
-        (
-            std::borrow::Cow::Owned(a_cmp.replace('\\', "")),
-            std::borrow::Cow::Owned(b_cmp.replace('\\', "")),
-        )
-    } else {
-        (a_cmp, b_cmp)
-    };
-
-    if numeric || numeric_signed {
-        numeric_compare(&a_final, &b_final, numeric_signed)
-    } else {
-        a_final.cmp(&b_final)
+    // c:Src/sort.c:290-295/329 — SORTIT_IGNORING_CASE is NOT handled by the
+    // comparator in C; `strmetasort` case-folds when it builds each element's
+    // `cmp` key and hands the comparator the folded text. Do the same here so
+    // the delegate stays the unmodified C comparator.
+    if flags & sort_flags::SORTIT_IGNORING_CASE != 0 {
+        return crate::ported::sort::zstrcmp(&a.to_lowercase(), &b.to_lowercase(), flags);
     }
-}
-
-/// Numeric-aware string comparison
-fn numeric_compare(a: &str, b: &str, signed: bool) -> Ordering {
-    let mut a_chars = a.chars().peekable();
-    let mut b_chars = b.chars().peekable();
-
-    loop {
-        let a_next = a_chars.peek().copied();
-        let b_next = b_chars.peek().copied();
-
-        match (a_next, b_next) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(ac), Some(bc)) => {
-                // Check if we're at the start of a number
-                let a_is_digit = ac.is_ascii_digit();
-                let b_is_digit = bc.is_ascii_digit();
-                let a_is_neg = signed
-                    && ac == '-'
-                    && a_chars
-                        .clone()
-                        .nth(1)
-                        .map(|c| c.is_ascii_digit())
-                        .unwrap_or(false);
-                let b_is_neg = signed
-                    && bc == '-'
-                    && b_chars
-                        .clone()
-                        .nth(1)
-                        .map(|c| c.is_ascii_digit())
-                        .unwrap_or(false);
-
-                if a_is_digit || b_is_digit || a_is_neg || b_is_neg {
-                    // Extract and compare numbers
-                    let a_num = extract_number(&mut a_chars, signed);
-                    let b_num = extract_number(&mut b_chars, signed);
-
-                    match a_num.cmp(&b_num) {
-                        Ordering::Equal => continue,
-                        other => return other,
-                    }
-                } else {
-                    // Regular character comparison
-                    a_chars.next();
-                    b_chars.next();
-                    match ac.cmp(&bc) {
-                        Ordering::Equal => continue,
-                        other => return other,
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Extract a number from a character iterator
-fn extract_number<I: Iterator<Item = char>>(
-    chars: &mut std::iter::Peekable<I>,
-    signed: bool,
-) -> i64 {
-    let mut negative = false;
-    let mut num: i64 = 0;
-    let mut has_digit = false;
-
-    // Check for sign
-    if signed {
-        if let Some(&'-') = chars.peek() {
-            chars.next();
-            negative = true;
-        } else if let Some(&'+') = chars.peek() {
-            chars.next();
-        }
-    }
-
-    // Skip leading zeros
-    while let Some(&'0') = chars.peek() {
-        chars.next();
-        has_digit = true;
-    }
-
-    // Collect digits
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            has_digit = true;
-            num = num
-                .saturating_mul(10)
-                .saturating_add((c as i64) - ('0' as i64));
-            chars.next();
-        } else {
-            break;
-        }
-    }
-
-    if !has_digit {
-        return 0;
-    }
-
-    if negative {
-        -num
-    } else {
-        num
-    }
+    crate::ported::sort::zstrcmp(a, b, flags)
 }
 
 /// Sort an array of strings with various options

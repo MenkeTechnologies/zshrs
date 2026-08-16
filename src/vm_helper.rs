@@ -5223,6 +5223,21 @@ impl ShellExecutor {
             }
             return expanded;
         }
+        // c:Src/glob.c:1786-1788 — `if (errflag) { restore_globstate(saved);
+        // return; }`. A qualifier-parse error returns from `zglob` outright,
+        // so C never reaches the c:1873-1886 nullglob/nomatch dispatch below.
+        // The port has to re-derive `gf_nullglob` from the pattern because
+        // `glob_path` hands back only a `Vec` — and that SECOND qualifier
+        // parse re-runs every diagnostic the first one already emitted. It is
+        // normally invisible because `zerr` suppresses itself while
+        // ERRFLAG_ERROR is set (c:Src/utils.c:175), but a subscript qualifier
+        // runs the lexer (`getindex` → `parse_subscript` → `strinbeg` →
+        // `hbegin`, c:Src/hist.c:1115 `errflag &= ~ERRFLAG_ERROR`), which
+        // clears exactly that bit — so `*(N[1,])` printed `bad math
+        // expression: empty string` twice. Bail out where C's `return` lands.
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            return Vec::new();
+        }
         // No matches. Mirror zsh's `setopt nullglob` / `nomatch`
         // dispatch (Src/glob.c:1873-1886) here because glob_path
         // returns an empty Vec without knowing executor state.

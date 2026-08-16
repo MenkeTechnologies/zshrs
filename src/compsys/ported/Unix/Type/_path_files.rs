@@ -534,6 +534,13 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     );
     _locals.also(&["ignore"], PM_ARRAY); // sh:46
     _locals.also(&["accex", "fake"], PM_ARRAY); // sh:47
+    // sh:48 `local listfiles listopts tmpdisp origtmp1 Uopt` — `_list_files`
+    // (Unix/Type/_list_files:15-16) assigns both without `local` and relies on
+    // this declaration. Without it `setaparam` created them at level 0 and they
+    // survived the completion, so `_parameters` — which keeps every name whose
+    // `$parameters` type string does NOT contain `local` — offered `listfiles`
+    // and `listopts` in the `parameters` group, two matches zsh never lists.
+    _locals.also(&["listfiles", "listopts"], PM_ARRAY);
     _locals.also(&["exppaths"], PM_ARRAY | PM_UNIQUE); // sh:53 `typeset -U … exppaths`
 
     // sh:59-62 — option parse.
