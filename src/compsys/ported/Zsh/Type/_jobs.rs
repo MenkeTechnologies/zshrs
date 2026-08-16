@@ -64,6 +64,16 @@ fn assoc_chunks(name: &str) -> Vec<(String, String)> {
 /// prefix-needed check (returns 1 if not starting with `%`).
 pub fn _jobs(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_jobs");
+    // sh:3 `local expl disp jobs job jids pfx='%' desc how expls sep`. `disp`
+    // is the only one of those the port hands to a builtin BY NAME (compadd
+    // -ld), so it is the only one that has to exist in the paramtab — and
+    // without the declaration `setaparam` would create it at level 0, where it
+    // outlives the completion and `_parameters` then offers `disp` as a match
+    // zsh never lists.
+    let _locals = crate::compsys::ported::shared::LocalScope::declare(
+        &["disp"],
+        crate::ported::zsh_h::PM_ARRAY,
+    );
     let mut argv = args.to_vec();
     let curcontext = getsparam("curcontext").unwrap_or_default();
 
