@@ -3003,17 +3003,13 @@ fn par_cond() -> Option<ZshCommand> {
     set_incond(1);
     set_incmdpos(false);
     zshlex(); // skip [[
-              // Empty cond `[[ ]]` is a parse error in zsh — emit the
-              // diagnostic and return None so the caller produces a
-              // non-zero exit. Without this, `[[ ]]` silently passed and
-              // returned exit 0.
-    if tok() == DOUTBRACK {
-        zerr("parse error near `]]'");
-        set_incond(0);
-        set_incmdpos(true);
-        zshlex();
-        return None;
-    }
+              // c:1817 — no empty-cond special case here. `]]` reaches
+              // par_cond_2 as a DOUTBRACK that still carries its tokstr
+              // (lex.c:2010-2012 retypes the STRING in place), so
+              // c:2553-2560 re-reads it as `[[ -n "]]" ]]` and the
+              // MISSING `]]` is what fails, one token later — which is
+              // why zsh reports `[[ ]];` near `;' and `[[ ]] print`
+              // near `print', not near `]]'.
     let cond = parse_cond_expr();
 
     if tok() == DOUTBRACK {
@@ -3031,23 +3027,13 @@ fn par_cond() -> Option<ZshCommand> {
         // top-level parser interpreted BAR as a pipe — running `b`
         // as a command (security-relevant if pattern RHS is user
         // input). Mirror C: emit parse error and abort.
-        let tok_text = match tok() {
-            BAR_TOK => "|".to_string(),
-            DBAR => "||".to_string(),
-            AMPER => "&".to_string(),
-            DAMPER => "&&".to_string(),
-            SEMI => ";".to_string(),
-            DSEMI => ";;".to_string(),
-            NEWLIN | SEPER => String::new(),
-            _ => tokstr()
-                .map(|s| crate::ported::lex::untokenize(&s))
-                .unwrap_or_default(),
-        };
-        if tok_text.is_empty() {
-            zerr("parse error");
-        } else {
-            zerr(&format!("parse error near `{}'", tok_text));
-        }
+        // c:1819 YYERRORV → tok = LEXERR, and the top-level parse
+        // (c:673/708) calls yyerror once, which derives the token text
+        // from `zshlextext` — tokstr when the token captured one, else
+        // `tokstrings[tok]` (lex.c:1965). The port's yyerror already
+        // does both, so hand-rolling a token-name table here only
+        // produced a second, differently-worded message.
+        yyerror(0);
         set_incond(0);
         set_incmdpos(true);
         return None;
@@ -3487,18 +3473,15 @@ pub fn yyerror(noerr: i32) {
     // how "parse error near `)'" gets the `)` for OUTPAR. Mirror by
     // consulting `lex::tokstring(tok())` when the captured tokstr is
     // None.
-    let t_opt: Option<String> = match crate::ported::lex::tokstr() {
-        Some(raw) => Some(crate::ported::lex::untokenize(&raw).to_string()),
-        None => {
-            let t = crate::ported::lex::tok();
-            let i = t as usize;
-            if i < crate::ported::lex::tokstrings.len() {
-                crate::ported::lex::tokstrings[i].map(|s| s.to_string())
-            } else {
-                None
-            }
-        }
-    };
+    // `zshlextext` is published by exalias (lex.c:1965-2018) — tokstr
+    // for word tokens, `tokstrings[tok]` for punctuation — and is NOT
+    // refreshed at ENDINPUT, since zshlex stops calling exalias there
+    // (c:276). Reading `tokstr` instead lost that last-token memory,
+    // so a parse error at EOF printed a bare "parse error" where zsh
+    // names the token it died on.
+    let t_opt: Option<String> = crate::ported::lex::LEX_ZSHLEXTEXT
+        .with_borrow(|t| t.clone())
+        .map(|raw| crate::ported::lex::untokenize(&raw).to_string());
     let t_bytes: Vec<u8> = t_opt
         .as_ref()
         .map(|s| s.as_bytes().to_vec())
@@ -9876,18 +9859,14 @@ fn parse_cond_not() -> Option<ZshCond> {
     if tok() == INPAR_TOK {
         zshlex();
         skip_cond_separators();
-        // c:Src/parse.c:2534-2547 par_cond_2 INPAR branch — empty
-        // body `[[ ( ) ]]` makes the inner par_cond's recursive
-        // par_cond_2 see OUTPAR with no leading STRING/BANG/INPAR
-        // and YYERROR immediately. Mirror that here: if the very
-        // next token after `(` (post separator skip) is `)`, emit
-        // a parse error so the script aborts cleanly instead of
-        // silently swallowing every following command. Bug #538.
-        if tok() == OUTPAR_TOK {
-            crate::ported::utils::zerr("condition expected");
-            yyerror(0);
-            return None;
-        }
+        // c:2534-2547 par_cond_2 INPAR branch — an empty body
+        // `[[ ( ) ]]` reaches par_cond_2 with tok=OUTPAR, which the
+        // lexer produced from gettok with no tokstr, so c:2560 YYERRORs
+        // and yyerror names the token from `tokstrings[OUTPAR]`: zsh
+        // says "parse error near `)'". parse_cond_primary's `_` arm
+        // returns None for exactly that case, and par_cond's
+        // `tok != DOUTBRACK` arm runs yyerror while OUTPAR is still
+        // current — no separate diagnostic needed here. Bug #538.
         let inner = parse_cond_expr()?;
         skip_cond_separators();
         if tok() == OUTPAR_TOK {
@@ -9910,7 +9889,27 @@ fn parse_cond_primary() -> Option<ZshCond> {
             zshlex();
             s
         }
-        _ => return None,
+        _ => {
+            // c:2553-2560 — "Check first argument for [[ STRING ]]
+            // re-interpretation": a non-STRING token that still carries
+            // a tokstr (the lexer retypes `]]` and `!` in place, keeping
+            // it) is read as its own operand, `[[ -n "$tokstr" ]]`.
+            // c:2549 `dble` blocks that for a bare two-char `-X`, which
+            // stays a unary operator awaiting its argument. Everything
+            // else — LEXERR, and punctuation like `)` or `;` that never
+            // captured a tokstr — is the YYERROR case: return None and
+            // let par_cond's `tok != DOUTBRACK` arm run yyerror.
+            let s1 = tokstr().unwrap_or_default();
+            let s1_chars: Vec<char> = s1.chars().collect();
+            // c:2549 with n_testargs == 0: `IS_DASH(*s1) && !s1[2]`.
+            let dble = s1_chars.len() == 2 && IS_DASH(s1_chars[0]);
+            if s1.is_empty() || tok() == LEXERR || dble {
+                return None;
+            }
+            zshlex(); // c:2557 `do condlex(); while (COND_SEP());`
+            skip_cond_separators();
+            return Some(ZshCond::Unary("-n".to_string(), s1)); // c:2558
+        }
     };
 
     skip_cond_separators();
@@ -10118,10 +10117,12 @@ fn parse_cond_primary() -> Option<ZshCond> {
 }
 
 fn skip_cond_separators() {
-    while tok() == SEPER && {
-        let s = tokstr();
-        s.map(|s| !s.contains(';')).unwrap_or(true)
-    } {
+    // c:2405 `COND_SEP()` — a `;` is NOT a cond separator, so it ends
+    // the condition and becomes the token the parse error names
+    // (`[[ ]];` → "parse error near `;'"). Testing `tokstr` for a `;`
+    // never saw one: SEPER carries no tokstr, so the old `unwrap_or`
+    // swallowed every `;` and the error pointed one token too far.
+    while COND_SEP() {
         zshlex();
     }
 }

@@ -61,10 +61,8 @@ pub fn lex_context_save(ls: &mut lex_stack) {
     ls.lexflags = LEX_LEXFLAGS.get();
     ls.tok = tok();
     ls.tokstr = LEX_TOKSTR.with_borrow_mut(|t| t.take());
-    // `zshlextext` (c:225) — pointer alias of `tokstr` after
-    // untokenization. zshrs derives it on demand from `tokstr` +
-    // `untokenize` so there's no separate global to stash.
-    ls.zshlextext = None;
+    // c:225 `ls->zshlextext = zshlextext;`
+    ls.zshlextext = LEX_ZSHLEXTEXT.with_borrow_mut(|t| t.take());
     LEX_LEXBUF.with_borrow_mut(|b| {
         ls.lexbuf.ptr = b.ptr.take();
         ls.lexbuf.siz = b.siz;
@@ -115,8 +113,8 @@ pub fn lex_context_restore(ls: &mut lex_stack) {
     LEX_LEXFLAGS.set(ls.lexflags);
     set_tok(ls.tok);
     set_tokstr(ls.tokstr.take());
-    // ls.zshlextext discarded — derived from tokstr (see save).
-    let _ = ls.zshlextext.take();
+    // c:255 `zshlextext = ls->zshlextext;`
+    LEX_ZSHLEXTEXT.with_borrow_mut(|t| *t = ls.zshlextext.take());
     LEX_LEXBUF.with_borrow_mut(|b| {
         b.ptr = Some(ls.lexbuf.ptr.take().unwrap_or_default());
         b.siz = ls.lexbuf.siz;
@@ -983,6 +981,14 @@ thread_local! {
         = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// `char *tokstr` (lex.c:170).
     pub static LEX_TOKSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// `char *zshlextext` (lex.c:43) — the text of the current token as
+    /// `exalias` (c:1965-2018) last published it. NOT a view of
+    /// `tokstr`: `gettok` clears `tokstr` for every token, but
+    /// `zshlex` skips `exalias` at ENDINPUT (c:276), so at EOF this
+    /// still holds the LAST real token — which is why zsh reports
+    /// `[[ ]]` as "parse error near `]]'" and `[[ ]];` as
+    /// "parse error near `;'".
+    pub static LEX_ZSHLEXTEXT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// `enum lextok tok` (lex.c:180).
     pub static LEX_TOK: std::cell::Cell<lextok> = const { std::cell::Cell::new(ENDINPUT) };
     /// `int tokfd` (lex.c:191).
@@ -3467,7 +3473,13 @@ pub fn exalias() -> bool {
     if LEX_TOKSTR.with_borrow(|t| t.is_none()) {
         // lex.c:1965 — `zshlextext = tokstrings[tok];` — for tokens
         // like SEMI/AMPER/etc. the canonical text comes from a
-        // static table.
+        // static table. C publishes it for EVERY tokstr-less token,
+        // before the NEWLIN early return, so yyerror can name `)`,
+        // `;`, `&&` … afterwards.
+        let i = tok() as usize;
+        LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
+            *t = tokstrings.get(i).copied().flatten().map(|s| s.to_string())
+        });
         if tok() == NEWLIN {
             return false;
         }
@@ -3490,6 +3502,11 @@ pub fn exalias() -> bool {
     } else {
         tokstr.clone()
     };
+    // lex.c:1976/1980 — `zshlextext = p = copy;` / `zshlextext =
+    // tokstr;`. C's copy is transient: c:1987/1997/2017 all reset
+    // `zshlextext = tokstr` before exalias returns, so what survives is
+    // always the TOKENIZED tokstr, which yyerror untokenizes itself.
+    LEX_ZSHLEXTEXT.with_borrow_mut(|t| *t = Some(tokstr.clone()));
 
     // lex.c:1982-1991 — ZLE word-tracking for completion.
     if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
