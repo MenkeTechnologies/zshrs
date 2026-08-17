@@ -1558,16 +1558,47 @@ pub fn match_str(
                             map_tail.get(..map_len.max(0) as usize).unwrap_or(map_tail),
                         );
                         add_match_str(None, "", &map_cow, map_len, sfx);
-                        let ol_eff = if both != 0 {
+                        // c:825-831 —
+                        // ```c
+                        //     if (both) {
+                        //         add_match_sub(NULL, NULL, ol, op, ol);
+                        //         ol = -1;
+                        //     } else
+                        //         ct += ol;
+                        //     add_match_part(mp, l + aoff, wap, alen,
+                        //                    l + loff, llen, wmp, ct, ol, sfx);
+                        // ```
+                        // `ct` and `ol` are TWO variables: `ct` becomes the
+                        // string length (`sl`) and `ol` the count of those
+                        // characters that were already on the LINE (`osl`).
+                        // The port collapsed them into one value and passed it
+                        // for both, so `osl` came out as the whole string
+                        // length instead of 0 for text that is purely
+                        // inserted. `bld_parts` stamps CLF_NEW exactly when
+                        // `plen <= 0` (c:1661), i.e. "the characters before the
+                        // anchor were not on the line", so every part-cline
+                        // lost CLF_NEW and `join_clines` then kept a character
+                        // the other match does not share: with
+                        // matcher-list `r:|?=** m:{a-z\-}={A-Z\_}`, `cp -s<TAB>`
+                        // against test_corpus/ + zterm_columns/ inserted `tes`
+                        // where zsh inserts `te`.
+                        //
+                        // Measured against an instrumented zsh 5.9.0.3 built
+                        // from Src/ for this case:
+                        //   zsh   add_match_part(... s=test sl=4 osl=0 ...)
+                        //   zshrs add_match_part(... s=test sl=4 osl=4 ...)
+                        // and the resulting per-match clines differed by
+                        // exactly CLF_NEW (0x90 vs 0x80) on every node.
+                        let (sl_eff, osl_eff) = if both != 0 {
                             let op_tail = w_bytes.get(op_start..).unwrap_or(&[]);
                             let op_cow = String::from_utf8_lossy(
                                 op_tail.get(..ol.max(0) as usize).unwrap_or(op_tail),
                             );
                             let op_str: &str = &op_cow;
-                            add_match_sub(None, None, ol, Some(op_str), ol);
-                            -1
+                            add_match_sub(None, None, ol, Some(op_str), ol); // c:826
+                            (ct, -1) // c:827 `ol = -1` — `ct` is untouched
                         } else {
-                            ct + ol
+                            (ct + ol, ol) // c:829 `ct += ol`, `ol` unchanged
                         };
                         let l_aoff_tail =
                             l_bytes.get((l_pos + aoff).max(0) as usize..).unwrap_or(&[]);
@@ -1589,7 +1620,7 @@ pub fn match_str(
                         );
                         let wmp_tail = w_bytes.get(wmp_start..).unwrap_or(&[]);
                         let wmp_cow = String::from_utf8_lossy(
-                            wmp_tail.get(..ol_eff.max(0) as usize).unwrap_or(wmp_tail),
+                            wmp_tail.get(..sl_eff.max(0) as usize).unwrap_or(wmp_tail),
                         );
                         let l_aoff_str: &str = &l_aoff_cow;
                         let l_loff_str: &str = &l_loff_cow;
@@ -1602,8 +1633,8 @@ pub fn match_str(
                             Some(l_loff_str),
                             llen_p,
                             &wmp_cow,
-                            ol_eff,
-                            ol_eff,
+                            sl_eff,  // c:831 `ct`
+                            osl_eff, // c:831 `ol`
                             sfx,
                         );
                     }
