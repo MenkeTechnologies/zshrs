@@ -71,6 +71,19 @@ pub fn _set_command_impl() -> i32 {
     //   shfunc table; builtins are also enumerable but we keep it
     //   simple, falling through to the path-classify branches when
     //   not a known function).
+    //
+    // sh:12 reads BOTH `$builtins[$command]` and `$functions[$command]`
+    // as subscripts (`$+a + $+b` evaluates both operands), so in zsh each
+    // goes through `fetchvalue` → `getparamnode` (Src/params.c:588-595) →
+    // `loadparamnode` (c:563-585), clearing that `zsh/parameter`
+    // PM_AUTOLOAD stub exactly as the `$commands[...]` reads below do.
+    // Consulting the live tables directly skips the fetch, so the load has
+    // to be requested here — otherwise a later `${(k)parameters[(R)^a*]}`
+    // scan still types both "undefined" (Src/Modules/parameter.c:49-50)
+    // and `_parameters -g '^a*'` offers `builtins`/`functions` where zsh,
+    // typing them "association-…", does not.
+    crate::vm_helper::mark_module_param_used("builtins");
+    crate::vm_helper::mark_module_param_used("functions");
     let is_function = crate::ported::utils::getshfunc(&command).is_some();
     let is_builtin = is_known_builtin(&command);
     if is_function || is_builtin {
