@@ -7140,7 +7140,14 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
     while wc_code(code) == WC_LIST
         && BREAKS.load(Ordering::SeqCst) == 0
         && RETFLAG.load(Ordering::SeqCst) == 0
-        && (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0
+        // c:1390 — `while (wc_code(code) == WC_LIST && !breaks && !retflag &&
+        // !errflag)`: the WHOLE errflag. A user interrupt sets ERRFLAG_INT and
+        // never ERRFLAG_ERROR (signals.c:457), so the mask let the rest of the
+        // list run after ^C or an interrupting trap:
+        //   TRAPINT() { print T; return 1 }
+        //   f() { print A; kill -INT $$; print C }; f; print B
+        //   zsh: A T      zshrs: A T B
+        && errflag.load(Ordering::Relaxed) == 0
     {
         let ltype = WC_LIST_TYPE(code) as i32;
         // c:1396 — `csp = cmdsp;` — snapshot cmdstack depth at start

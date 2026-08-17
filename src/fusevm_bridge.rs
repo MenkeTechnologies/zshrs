@@ -9229,9 +9229,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // list in zsh, and no connector can consume it.
     vm.register_builtin(BUILTIN_FATAL_ABORT_CHECK, |vm, _argc| {
         use std::sync::atomic::Ordering;
-        let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
-            & crate::ported::zsh_h::ERRFLAG_ERROR)
-            != 0;
+        // c:Src/exec.c:1390 — `while (wc_code(code) == WC_LIST && !breaks &&
+        // !retflag && !errflag)`: the enclosing list loops test the WHOLE
+        // errflag. A user interrupt sets ERRFLAG_INT and never ERRFLAG_ERROR
+        // (signals.c:457), so masking here let the rest of the list run after
+        // an interrupt:
+        //   TRAPINT() { print T; return 1 }
+        //   f() { print A; kill -INT $$; print C }; f; print B
+        //   zsh: A T      zshrs: A T B
+        let errflag_set = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
         if !errflag_set || isset(crate::ported::zsh_h::INTERACTIVE) {
             return Value::Int(0);
         }
