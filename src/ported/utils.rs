@@ -1871,7 +1871,10 @@ pub fn preprompt() {
 
     // c:1573-1574 — `if (errflag) return;` — bail if a previous error
     // already set the global flag.
-    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+    // the C line cited above tests the WHOLE errflag, so masking here let an
+    // interrupted shell keep going where zsh stops.
+    if errflag.load(Ordering::Relaxed) != 0 {
         return;
     }
 
@@ -1910,7 +1913,10 @@ pub fn preprompt() {
         }
     }
     // c:1588-1589 — `if (errflag) return;` post-periodic bail.
-    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+    // the C line cited above tests the WHOLE errflag, so masking here let an
+    // interrupted shell keep going where zsh stops.
+    if errflag.load(Ordering::Relaxed) != 0 {
         return;
     }
 
@@ -4531,7 +4537,10 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
         }
     }
     // c:3250-3251 — `if (errflag) return;`
-    if (errflag.load(std::sync::atomic::Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+    // the C line cited above tests the WHOLE errflag, so masking here let an
+    // interrupted shell keep going where zsh stops.
+    if errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         return; // c:3251
     }
     // c:3252 — `if (best && strlen(best) > 1 && strcmp(best, guess))`.
