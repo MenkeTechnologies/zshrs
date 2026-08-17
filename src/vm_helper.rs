@@ -5873,6 +5873,14 @@ pub fn init_partab_params() {
         // getnode/scan fns, so the readonly bit has nothing to fight.
         "termcap",  // c:Src/Modules/termcap.c:312
         "terminfo", // c:Src/Modules/terminfo.c:305
+        // c:Src/Builtins/sched.c:382 — `SPECIALPMDEF(
+        // "zsh_scheduled_events", PM_ARRAY|PM_READONLY, &sched_gsu,
+        // NULL, NULL)`. Same shape as `funcstack` above: `schedgetfn`
+        // (sched.rs:582) walks the schedcmds list on every read and the
+        // PARTAB_ARRAY row's `setfn` is `None`, so no internal write
+        // needs the bit cleared. `sched`/`sched -N` mutate the list,
+        // never the param.
+        "zsh_scheduled_events", // c:Src/Builtins/sched.c:382
     ];
     let mk_pm = |name: &str, flags: i32| -> Param {
         let keep_readonly = user_protected.contains(&name);

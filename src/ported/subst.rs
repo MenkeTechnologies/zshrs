@@ -22348,15 +22348,10 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
             return Some(d.clone());
         }
     }
-    // c:Src/signals.c:signals — read-only array of signal names
-    // populated at startup. signals[1] = "EXIT", signals[2] = "HUP",
-    // etc. zsh exposes this as a special parameter via PM_ARRAY
-    // (Src/Modules/parameter.c).
-    if !magic_shadowed && name == "signals" {
-        // c:Src/params.c:589-594 — resolving the name materializes the stub.
-        crate::vm_helper::mark_module_param_used(name);
-        return Some(crate::ported::jobs::sig_names_for_signals_param());
-    }
+    // c:Src/params.c:974 populates `signals` with plain `setaparam`, so
+    // it lives in the paramtab like any other array — no magic arm, and
+    // `unset signals` really removes it (an ad-hoc arm here resurrected
+    // it on the next read).
     // c:Src/Modules/parameter.c — `funcstack` PM_SPECIAL array
     // reads the canonical FUNCSTACK Vec via getfn. Same routing
     // as dirstack above so `$#funcstack` returns the call-depth.
@@ -22472,7 +22467,7 @@ fn arrays_contains(name: &str) -> bool {
     // matching arrays_get arm above synthesizes the Vec on each
     // call; mirror the "exists" bit here so `${#dirstack}` /
     // `${#signals}` length-op picks up an array source.
-    if !magic_shadowed && (name == "dirstack" || name == "signals") {
+    if !magic_shadowed && name == "dirstack" {
         return true;
     }
     // c:Src/Modules/parameter.c — funcstack/funcfiletrace/

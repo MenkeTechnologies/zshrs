@@ -2647,7 +2647,14 @@ pub fn get_comp_string() -> Option<String> {
             // the command word and only ever offers command names.
             tracing::debug!(target: "compsys_args", ?ws, cur, "get_comp_string publish words");
             crate::ported::params::setaparam("words", ws);
-            crate::ported::params::setsparam("CURRENT", &cur.to_string());
+            // c:Src/Zle/complete.c:1251 — `{ "CURRENT", PM_INTEGER,
+            // VAL(compcurrent), NULL }`: `$CURRENT` is bound to the
+            // `compcurrent` INT through compvarinteger_gsu, so every
+            // write is an integer assignment. Publishing the decimal
+            // text with setsparam retyped the node, and `${(t)CURRENT}`
+            // read `scalar-local-special` where zsh reads
+            // `integer-local-special`.
+            let _ = crate::ported::params::setiparam("CURRENT", cur as i64);
         }
 
         // cmdstr/linredir/linarr now mirror into the file-scope globals

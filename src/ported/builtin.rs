@@ -1648,9 +1648,26 @@ pub fn set_pwd_env() {
                             // c:819 — `assignsparam("OLDPWD", ztrdup(oldpwd), 0);`
     if let Ok(oldpwd) = env::var("OLDPWD") {
         setsparam("OLDPWD", &oldpwd); // c:819
-        env::set_var("OLDPWD", &oldpwd); // c:825-826 addenv(pm, oldpwd)
     }
-    env::set_var("PWD", &pwd); // c:821-823 addenv(pm, pwd)
+    // c:821-826 — `pm = paramtab->getnode(paramtab, "PWD"); if
+    // (!(pm->node.flags & PM_EXPORTED)) addenv(pm, pwd);` and the same
+    // for OLDPWD. Writing the OS environment directly (the previous
+    // `env::set_var`) skipped `addenv`'s `pm->flags |= PM_EXPORTED`
+    // (params.c:5482-5484), so `${(t)PWD}` read `scalar` where zsh
+    // reads `scalar-export`.
+    for (name, value) in [("PWD", &pwd), ("OLDPWD", &env::var("OLDPWD").unwrap_or_default())] {
+        if value.is_empty() && name == "OLDPWD" {
+            continue;
+        }
+        let exported = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|tab| tab.get(name).map(|pm| (pm.node.flags & PM_EXPORTED as i32) != 0))
+            .unwrap_or(false);
+        if !exported {
+            crate::ported::params::addenv(name, value);
+        }
+    }
 }
 
 /// Port of `bin_cd(char *nam, char **argv, Options ops, int func)` from Src/builtin.c:840.

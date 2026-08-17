@@ -2109,7 +2109,13 @@ pub fn createparamtable() {
             node: hashnode {
                 next: None,
                 nam: "signals".to_string(),
-                flags: (PM_ARRAY | PM_SPECIAL) as i32,
+                // c:974 builds it with plain `setaparam`, i.e.
+                // createparam(name, PM_ARRAY) — `signals` is an ORDINARY
+                // array holding a snapshot of the signal names, not a
+                // special with a gsu. Stamping PM_SPECIAL made
+                // `${(t)signals}` read `array-special` against zsh's
+                // bare `array`.
+                flags: PM_ARRAY as i32,
             },
             u_data: 0,
             u_tied: None,
