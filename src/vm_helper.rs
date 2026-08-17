@@ -3880,7 +3880,17 @@ impl ShellExecutor {
                         // directory" (the OS error, since the path was
                         // tried directly), not "command not found"
                         // (which implies PATH search).
-                        if cmd.starts_with('/') {
+                        // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
+                        // else … zerr("command not found: %s", arg0);`. `eno` is set
+                        // by an execve that actually ran, and zsh runs execve directly
+                        // for ANY arg0 containing a slash (no PATH search), so
+                        // `./foo` and `dir/foo` report the errno, not "command not
+                        // found". Testing only for a LEADING slash mis-reported the
+                        // relative forms:
+                        //   ./nonexistent_script
+                        //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
+                        //   zshrs: zsh:1: command not found: ./nonexistent_script
+                        if cmd.contains('/') {
                             eprintln!("{}: no such file or directory: {}", zerr_prefix(&sn), cmd);
                         } else {
                             eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
@@ -3922,7 +3932,7 @@ impl ShellExecutor {
                         // The hook only fires for bare names (PATH search
                         // failed); absolute paths skip it and emit the
                         // OS-error path below — matches zsh behavior.
-                        if !cmd.starts_with('/') {
+                        if !cmd.contains('/') {
                             let mut hook_args = Vec::with_capacity(args.len() + 1);
                             hook_args.push(cmd.to_string());
                             hook_args.extend_from_slice(args);
@@ -3942,7 +3952,17 @@ impl ShellExecutor {
                         // directory" (the OS error, since the path was
                         // tried directly), not "command not found"
                         // (which implies PATH search).
-                        if cmd.starts_with('/') {
+                        // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
+                        // else … zerr("command not found: %s", arg0);`. `eno` is set
+                        // by an execve that actually ran, and zsh runs execve directly
+                        // for ANY arg0 containing a slash (no PATH search), so
+                        // `./foo` and `dir/foo` report the errno, not "command not
+                        // found". Testing only for a LEADING slash mis-reported the
+                        // relative forms:
+                        //   ./nonexistent_script
+                        //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
+                        //   zshrs: zsh:1: command not found: ./nonexistent_script
+                        if cmd.contains('/') {
                             eprintln!("{}: no such file or directory: {}", zerr_prefix(&sn), cmd);
                         } else {
                             eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
