@@ -2010,6 +2010,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
         };
+        // c:Src/exec.c:3468/3582 — execcmd bails out before running anything
+        // once a redirection has failed: the failure calls zerr, which sets
+        // errflag, and both bail-outs test it. `exec` is not exempt, so
+        //     exec ls 3>&98; print after
+        // in zsh reports the bad fd, does NOT run ls, and the SHELL SURVIVES
+        // to run `print after`. zshrs consumed the flag in
+        // BUILTIN_EXEC_PERM_REDIRS (returning status 1) but then dispatched
+        // the command regardless — replacing the shell with it, so anything
+        // after the exec never ran, and `exec 99>&98` reported a spurious
+        // `command not found: 99` for the leftover fd word.
+        if with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        }) {
+            vm.last_status = 1;
+            return Value::Status(1);
+        }
+
         // c:Src/exec.c::execcmd — `exec funcname` runs the function
         // in-process as the shell's last act, then exits with the
         // function's status. zsh's dispatcher falls through from the
