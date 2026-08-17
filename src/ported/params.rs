@@ -3518,9 +3518,19 @@ pub(crate) fn getarg<'a>(
             } else {
                 None
             };
-            // c:1697 — compile the search pattern ONCE (the scalar
-            // char-search tries O(n²) spans; a per-span recompile is
-            // quadratic × compile cost — same hazard as the assoc arm).
+            // c:1689-1706 — a SCALAR search compiles the pattern with an
+            // implicit trailing `Star` appended (c:1698 `d[l] = Star`)
+            // and then tries it against the SUFFIX at each position
+            // (c:1955-1976 `pattry(pprog, t)` where `t` walks forward
+            // through the string), so a hit means "the pattern matches a
+            // prefix of what starts here" — which is why
+            // `s=barfooxyz; ${s[(i)foo]}` is 4.
+            //
+            // Testing every SPAN instead (`s[start..start+len]` for all
+            // len) answers the same, but builds O(n²) candidate strings
+            // of average length n/2: `${${(k)parameters}[(r)PATH]}` —
+            // a 6KB scalar — ran for over 40 seconds where zsh replies
+            // instantly. Compile once, then match suffixes by slice.
             let compiled_span_pat = if flags.contains('e') {
                 None
             } else {
@@ -3528,12 +3538,20 @@ pub(crate) fn getarg<'a>(
                     &{
                         let mut __pat_tok = (pat).to_string();
                         crate::ported::glob::tokenize(&mut __pat_tok);
+                        __pat_tok.push(crate::ported::zsh_h::Star); // c:1698
                         __pat_tok
                     },
                     PAT_HEAPDUP as i32,
                     None,
                 )
             };
+            // Byte offset of each character, so a suffix is a slice of
+            // `s` rather than a fresh String per position.
+            let char_offsets: Vec<usize> = s
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(s.len()))
+                .collect();
             let mut found: Option<(usize, usize)> = None;
             let mut remaining = num;
             'outer: for start in positions {
@@ -3546,25 +3564,22 @@ pub(crate) fn getarg<'a>(
                         continue;
                     }
                 }
-                for span_len in 1..=(n - start) {
-                    let cand: String = s_chars[start..start + span_len].iter().collect();
-                    let hit = if flags.contains('e') {
-                        cand == pat
-                    } else {
-                        compiled_span_pat
-                            .as_ref()
-                            .map_or(false, |p| pattry(p, &cand))
-                    };
-                    if hit {
-                        remaining -= 1;
-                        if remaining == 0 {
-                            found = Some((start, start + span_len));
-                            break 'outer;
-                        }
-                        // Advance past this match position to find the
-                        // next-Nth instead of repeatedly matching same
-                        // start (mirrors C's pointer increment).
-                        break;
+                let suffix = &s[char_offsets[start]..];
+                let hit = if flags.contains('e') {
+                    // c:1687-1702 — `(e)` untokenizes the pattern and
+                    // still appends the Star, i.e. a literal prefix test.
+                    suffix.starts_with(pat)
+                } else {
+                    compiled_span_pat
+                        .as_ref()
+                        .map_or(false, |p| pattry(p, suffix))
+                };
+                if hit {
+                    remaining -= 1;
+                    if remaining == 0 {
+                        // c:1957 `!--num` — the position IS the answer.
+                        found = Some((start, start));
+                        break 'outer;
                     }
                 }
             }

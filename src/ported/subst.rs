@@ -9271,21 +9271,55 @@ pub fn paramsubst(
                         // Sliding-window match (glob unless (e)); scan forward
                         // for r/i, backward for R/I, returning the nth match's
                         // start position.
-                        let is_match = |start: usize, len: usize| -> bool {
-                            let cand: String = s_chars[start..start + len].concat();
+                        // c:Src/params.c:1689-1706 — a scalar search compiles
+                        // the pattern ONCE, with the implicit trailing `Star`
+                        // zsh appends for this case (c:1698 `d[l] = Star`), and
+                        // then tries it against the SUFFIX starting at each
+                        // position (c:1955-1976 walk `pattry(pprog, t)`): a hit
+                        // means the pattern matches a prefix of what starts
+                        // there, which is why `s=barfooxyz; ${s[(i)foo]}` is 4.
+                        //
+                        // Testing every (start, len) SPAN answers the same but
+                        // recompiled the pattern per span — O(n²) compiles.
+                        // `v="${(k)parameters}"; ${v[(i)PATH]}` (a 6KB scalar)
+                        // ran for 45+ seconds; zsh answers instantly.
+                        let compiled_scalar_pat = if exact {
+                            None
+                        } else {
+                            patcompile(
+                                &{
+                                    let mut __pat_tok = (&pat).to_string();
+                                    crate::ported::glob::tokenize(&mut __pat_tok);
+                                    __pat_tok.push(crate::ported::zsh_h::Star); // c:1698
+                                    __pat_tok
+                                },
+                                PAT_HEAPDUP as i32,
+                                None,
+                            )
+                        };
+                        // Units concatenated once, plus each unit's byte offset,
+                        // so a suffix is a slice instead of a fresh String.
+                        let s_joined: String = s_chars.concat();
+                        let unit_off: Vec<usize> = {
+                            let mut v = Vec::with_capacity(s_chars.len() + 1);
+                            let mut o = 0usize;
+                            for u in &s_chars {
+                                v.push(o);
+                                o += u.len();
+                            }
+                            v.push(o);
+                            v
+                        };
+                        let is_match = |start: usize| -> bool {
+                            let suffix = &s_joined[unit_off[start]..];
                             if exact {
-                                cand == pat
+                                // c:1687-1702 — `(e)` untokenizes and still
+                                // appends the Star: a literal PREFIX test.
+                                suffix.starts_with(&pat[..])
                             } else {
-                                patcompile(
-                                    &{
-                                        let mut __pat_tok = (&pat).to_string();
-                                        crate::ported::glob::tokenize(&mut __pat_tok);
-                                        __pat_tok
-                                    },
-                                    PAT_HEAPDUP as i32,
-                                    None,
-                                )
-                                .map_or(false, |__p| pattry(&__p, &cand))
+                                compiled_scalar_pat
+                                    .as_ref()
+                                    .map_or(false, |__p| pattry(__p, suffix))
                             }
                         };
                         let mut found: Option<usize> = None;
@@ -9309,14 +9343,12 @@ pub fn paramsubst(
                             Box::new(lo..=n)
                         };
                         'outer: for start in starts {
-                            for len in 1..=(n - start) {
-                                if is_match(start, len) {
-                                    count += 1;
-                                    if count == nth {
-                                        found = Some(start);
-                                        break 'outer;
-                                    }
-                                    break;
+                            if is_match(start) {
+                                count += 1;
+                                if count == nth {
+                                    // c:1957 `!--num` — the position IS the answer.
+                                    found = Some(start);
+                                    break 'outer;
                                 }
                             }
                         }
