@@ -1625,8 +1625,24 @@ pub fn dotrap(sig: i32) -> i32 {
             //              signal-handler context, route through the
             //              canonical `crate::exec::doshfunc` entry which
             //              handles the arg+env+local-scope wrap.
-            let args = vec![sig.to_string()];
-            let _ = crate::ported::exec::dispatch_function_call(&trap_fn, &args);
+            // c:1252-1255 — `dotrapargs(sig, sigtrapped+sig, funcprog)`.
+            // Calling the function directly skipped everything dotrapargs
+            // wraps around it, and two of those are load-bearing: the priming
+            // at c:1154-1155 (`trap_return = -1` — decremented to the -2
+            // sentinel by doshfunc at exec.c:5867 — plus `trap_state =
+            // TRAP_STATE_PRIMED`) and the epilogue at c:1183-1203. Without the
+            // priming, `return N` inside a TRAPxxx function saw trap_state == 0
+            // in bin_break (builtin.c:5845) and never promoted to
+            // TRAP_STATE_FORCE_RETURN, so a non-zero return did not abort the
+            // running command:
+            //     TRAPINT() { print CAUGHT; return 130 }; kill -INT $$; print DONE
+            //     zsh  : CAUGHT
+            //     zshrs: CAUGHT DONE
+            // The string-form arm below already set trap_return = -2 directly
+            // (c:1166), which is why `trap "print T; return 3" INT` aborted
+            // correctly while the function form did not.
+            let mut sigtr = trapped;
+            dotrapargs(sig, &mut sigtr, Some(&trap_fn));
             fn_dispatched = true;
         }
     }
@@ -1641,8 +1657,12 @@ pub fn dotrap(sig: i32) -> i32 {
         let signame = getsigname(sig);
         let trap_fn = format!("TRAP{}", signame);
         if getshfunc(&trap_fn).is_some() {
-            let args = vec![sig.to_string()];
-            let _ = crate::ported::exec::dispatch_function_call(&trap_fn, &args);
+            // Same dotrapargs routing as the ZSIG_FUNC arm above; the flag is
+            // OR'd in because this arm exists precisely for the case where
+            // sigtrapped never recorded it, and dotrapargs selects its
+            // function branch on `*sigtr & ZSIG_FUNC`.
+            let mut sigtr = trapped | ZSIG_FUNC;
+            dotrapargs(sig, &mut sigtr, Some(&trap_fn));
             fn_dispatched = true;
         }
     }

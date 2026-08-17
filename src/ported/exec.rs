@@ -6599,11 +6599,22 @@ pub fn doshfunc(
     ret // c:6157 return ret
 }
 
-/// `TRAP_STATE_PRIMED` per `Src/signals.h:55` — doshfunc tests this
-/// to decide whether to bump trap_return on entry/exit. Local
-/// const here because the canonical zsh_h port doesn't carry
-/// trap-state numeric constants yet.
-const TRAP_STATE_PRIMED: i32 = 2; // c:Src/signals.h:55
+/// `TRAP_STATE_PRIMED` — re-exported from the canonical enum port rather
+/// than redefined here.
+///
+/// This was a LOCAL `const … = 2`, which is `TRAP_STATE_FORCE_RETURN`'s value:
+/// `enum trap_state { TRAP_STATE_INACTIVE, TRAP_STATE_PRIMED,
+/// TRAP_STATE_FORCE_RETURN }` (zsh.h:2947-2960) makes PRIMED 1, and
+/// zsh_h.rs:4501-4505 already carries all three with the right values. With
+/// the wrong number, doshfunc's two trap_return adjustments (c:5866-5867 on
+/// entry, c:6116-6117 on exit) never fired for a primed trap, so trap_return
+/// stayed at -1 instead of reaching the -2 sentinel bin_break tests
+/// (builtin.c:5845). `return N` inside a TRAPxxx function therefore never
+/// promoted to TRAP_STATE_FORCE_RETURN:
+///     TRAPINT() { print CAUGHT; return 130 }; kill -INT $$; print DONE
+///     zsh  : CAUGHT
+///     zshrs: CAUGHT DONE
+use crate::ported::zsh_h::TRAP_STATE_PRIMED;
 
 /// Port of `execfuncdef(Estate state, Eprog redir_prog)` from
 /// `Src/exec.c:5309-5494`. Define a shell function: extract
