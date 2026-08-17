@@ -459,8 +459,37 @@ def run_case(sess: ShellSession, case: Case):
     for key in case.keys:
         sess.send_key(key)
         # A cold completion can take seconds to first render; wait for it.
-        sess.drain_settled(max_wait=12.0, first_wait=8.0)
-    sess.drain_settled(max_wait=3.0, first_wait=0.6)
+        # A LITERAL character (not a named key) typed into an interactive menu
+        # re-runs the whole completion, which is far slower than a TAB or an
+        # arrow — see the note on the final drain below — so hold it to the
+        # same quiet-window floor.
+        prev = sess.settle
+        if key not in KEYS:
+            sess.settle = max(prev, 1.2)
+        try:
+            sess.drain_settled(max_wait=12.0, first_wait=8.0)
+        finally:
+            sess.settle = prev
+    # Settle the FINAL screen against a longer quiet window than the
+    # per-keystroke one. A literal key typed into an interactive menu re-runs
+    # the whole completion, and an unoptimized zshrs build regularly takes
+    # longer than the 250ms default to finish that last redraw — so the grid
+    # got captured mid-flight and the last typed character was missing from
+    # BOTH the command line and the `interactive:` status. That reads exactly
+    # like a dropped keystroke: `git checkout <TAB><TAB>src` compared as
+    # `interactive: src[]` (zsh) vs `interactive: sr[]` (zshrs), and four cells
+    # of the corpus scored as divergences that pass verbatim at --settle 1200.
+    #
+    # This is a MEASUREMENT window, not a comparison weakening: it only waits
+    # longer for output to stop before the screens are diffed, applies to both
+    # shells identically, and hides no difference in what either one drew. An
+    # explicit --settle above the floor still wins.
+    prev_settle = sess.settle
+    sess.settle = max(prev_settle, 1.2)
+    try:
+        sess.drain_settled(max_wait=6.0, first_wait=0.6)
+    finally:
+        sess.settle = prev_settle
     return normalize_rows(sess.grid())
 
 
