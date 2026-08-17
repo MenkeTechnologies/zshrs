@@ -601,7 +601,22 @@ impl ZshCompiler {
             self.builder.emit(Op::SetStatus, 0);
             return;
         }
+        // c:Src/exec.c:1390 — `while (wc_code(code) == WC_LIST && !breaks &&
+        // !retflag && !errflag)`. execlist re-tests the flags before EVERY
+        // list element, so a command that sets errflag ends the whole list.
+        // Nothing was emitted between top-level statements here, so an
+        // interrupt raised inside one statement did not stop the next:
+        //   TRAPINT() { print T; return 1 }
+        //   f() { print A; kill -INT $$; print C }; f; print B
+        //   zsh: A T      zshrs: A T B
+        // The fatal-abort form is the right one: C's gate keys off the FLAGS,
+        // not off a non-zero status, which is what the full errexit check adds.
+        let mut first = true;
         for list in &program.lists {
+            if !first {
+                self.emit_fatal_abort_check();
+            }
+            first = false;
             self.compile_list(list);
         }
     }
