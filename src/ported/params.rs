@@ -6016,12 +6016,57 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
                 // an empty Vec so the C "param exists, no entries" shape
                 // is preserved (vs returning None which means "param
                 // doesn't exist").
-                let store = paramtab_hashed_storage().lock().ok()?;
-                let vals = store
-                    .get(name)
-                    .map(|m| m.values().cloned().collect())
-                    .unwrap_or_default();
-                return Some(vals); // c:3124
+                {
+                    let store = paramtab_hashed_storage().lock().ok()?;
+                    if let Some(m) = store.get(name) {
+                        return Some(m.values().cloned().collect()); // c:3124
+                    }
+                }
+                // c:3124 — for SPECIALPMDEF magic hashes (jobtexts/jobstates/
+                // jobdirs/parameters/commands/…, Src/Modules/parameter.c) the
+                // `getfn` is the module's scan fn, not hashgetfn, so there is
+                // no paramtab_hashed_storage backing to read. `gethkparam`
+                // below already falls back to the partab row's scanfn for the
+                // KEYS; without the mirror image here the VALUES came back
+                // empty, and every caller that pairs the two got keys with
+                // blank values. `_jobs` is the visible one: with `sleep 300 &`
+                // running it read `jobtexts` as [("1", "")], so
+                // `kill %<TAB>` added a bare `%` where zsh adds `%sleep` —
+                // and `kill %s<TAB>` deleted the typed `s`.
+                if let Some(vals) = (|| -> Option<Vec<String>> {
+                    let e_ = crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .find(|e_| e_.name == name)?;
+                    if let Some(m_) = e_.module {
+                        if !crate::ported::module::MODULESTAB
+                            .lock()
+                            .map(|t| t.is_loaded(m_))
+                            .unwrap_or(false)
+                        {
+                            return None;
+                        }
+                    }
+                    thread_local! {
+                        static VALS_: std::cell::RefCell<Vec<String>> =
+                            const { std::cell::RefCell::new(Vec::new()) };
+                    }
+                    fn cb_(pm: &crate::ported::zsh_h::param, _f: i32) {
+                        // c:665-670 — `paramvals[numparamvals] =
+                        // getstrvalue(&v)`, the same read scanparamvals does.
+                        VALS_.with(|v| v.borrow_mut().push(strgetfn(pm)));
+                    }
+                    crate::vm_helper::mark_module_param_used(name);
+                    VALS_.with(|v| v.borrow_mut().clear());
+                    (e_.scanfn)(
+                        std::ptr::null_mut(),
+                        Some(cb_),
+                        crate::ported::zsh_h::SCANPM_WANTVALS as i32,
+                    );
+                    Some(VALS_.with(|v| v.borrow().clone()))
+                })() {
+                    return Some(vals); // c:3124
+                }
+                return Some(Vec::new()); // c:3124
             }
         }
     }
