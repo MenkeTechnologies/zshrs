@@ -1362,6 +1362,30 @@ pub fn zleread(
     // Enter core loop
     zlecore();
 
+    // c:1368-1371 —
+    // ```c
+    //     if (errflag)
+    //         setsparam((zlecontext == ZLCON_VARED) ?
+    //                   "ZLE_VARED_ABORTED" :
+    //                   "ZLE_LINE_ABORTED", zlegetline(NULL, NULL));
+    // ```
+    // The name was registered as a module feature (the `p:ZLE_LINE_ABORTED`
+    // entry in this file's feature table) but nothing ever set it, so the
+    // documented recovery path — `print -zr -- $ZLE_LINE_ABORTED` after a
+    // ^C/^G-aborted line — had nothing to recover. Comparing
+    // `${+parameters[ZLE_LINE_ABORTED]}` after an aborted line: zsh 1, zshrs 0.
+    if crate::utils::errflag.load(SeqCst) != 0 {
+        let mut ll = 0i32;
+        let mut cs = 0i32;
+        let line = crate::ported::zle::zle_utils::zlegetline(&mut ll, &mut cs);
+        let name = if ZLECONTEXT.load(SeqCst) == crate::ported::zsh_h::ZLCON_VARED {
+            "ZLE_VARED_ABORTED"
+        } else {
+            "ZLE_LINE_ABORTED"
+        };
+        let _ = crate::ported::params::setsparam(name, &line);
+    }
+
     // c:1373 — `end_edit()` (termquery.c:744-748 → collate_seq(1, -1)):
     // leave sequences in reverse order — bracketed paste disable
     // (\e[?2004l) so pastes at the command's own stdin stay raw.
