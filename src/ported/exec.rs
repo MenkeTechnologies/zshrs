@@ -2645,7 +2645,10 @@ pub fn addfd(
         // c:2410 — `setiparam(varid, (zlong)fd1);`
         setiparam(vid, fd_moved as i64);
         // c:2415-2416 — `if (errflag) zclose(fd1);`
-        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+        // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+        // the C line cited above tests the WHOLE errflag, so masking here let an
+        // interrupted shell keep going where zsh stops.
+        if errflag.load(Ordering::Relaxed) != 0 {
             // c:2415
             let _ = zclose(fd_moved); // c:2416
         }
@@ -5816,7 +5819,10 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
 /// body executes and `lastval` is updated.
 pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // c:5546-5547 — `if (errflag) return;`
-    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+    // the C line cited above tests the WHOLE errflag, so masking here let an
+    // interrupted shell keep going where zsh stops.
+    if errflag.load(Ordering::Relaxed) != 0 {
         return;
     }
     // c:5550-5557 — drop empty job slot before nested shfunc invoke:
@@ -7007,7 +7013,10 @@ pub fn execsimple(state: &mut estate) -> i32 {
     let mut code = state.prog.prog[state.pc];
     state.pc += 1;
     // c:1295-1296 — `if (errflag) return (lastval = 1);`
-    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+    // the C line cited above tests the WHOLE errflag, so masking here let an
+    // interrupted shell keep going where zsh stops.
+    if errflag.load(Ordering::Relaxed) != 0 {
         LASTVAL.store(1, Ordering::Relaxed);
         return 1;
     }
@@ -10239,7 +10248,10 @@ pub fn execcmd_exec(
 
             // c:3423-3426 — `if (errflag || checked || is_builtin ||
             //   (isset(POSIXBUILTINS) ? (cflags & BINF_EXEC) : (cflags & BINF_COMMAND)))`
-            if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0
+            // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+            // the C line cited above tests the WHOLE errflag, so masking here let an
+            // interrupted shell keep going where zsh stops.
+            if errflag.load(Ordering::Relaxed) != 0
                 || checked != 0
                 || is_builtin != 0
                 || if isset(POSIXBUILTINS) {
@@ -10321,7 +10333,10 @@ pub fn execcmd_exec(
     }
 
     // c:3468-3478 — errflag bail-out.
-    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+    // the C line cited above tests the WHOLE errflag, so masking here let an
+    // interrupted shell keep going where zsh stops.
+    if errflag.load(Ordering::Relaxed) != 0 {
         // c:3468
         if LASTVAL.load(Ordering::Relaxed) == 0 {
             // c:3469
@@ -10376,7 +10391,10 @@ pub fn execcmd_exec(
         let args_v = args.as_ref().unwrap().clone();
         for s in args_v.iter().skip(1) {
             // c:3500
-            if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+            // the C line cited above tests the WHOLE errflag, so masking here let an
+            // interrupted shell keep going where zsh stops.
+            if errflag.load(Ordering::Relaxed) != 0 {
                 break;
             }
             let l = s.len();
@@ -10487,7 +10505,10 @@ pub fn execcmd_exec(
     }
 
     // c:3582-3591 — errflag bail-out (2).
-    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
+    // the C line cited above tests the WHOLE errflag, so masking here let an
+    // interrupted shell keep going where zsh stops.
+    if errflag.load(Ordering::Relaxed) != 0 {
         // c:3582
         LASTVAL.store(1, Ordering::Relaxed); // c:3583
         if oautocont >= 0 {
