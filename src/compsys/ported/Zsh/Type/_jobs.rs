@@ -79,8 +79,16 @@ pub fn _jobs(args: &[String]) -> i32 {
 
     // sh:5-7  -t prefix-needed guard
     if argv.first().map(|s| s == "-t").unwrap_or(false) {
-        let prefix_needed =
-            testforstyle(&format!(":completion:{}:jobs", curcontext), "prefix-needed") == 0;
+        // sh:6 is `zstyle -T`, not `-t`: the style defaults to TRUE when it
+        // is not set at all. The port tested it with `-t` semantics, so with
+        // no `prefix-needed` style in scope — the default — the guard never
+        // fired and `_jobs` ran its `compadd` anyway. zsh returns 1 here, so
+        // for `- <TAB>` (PREFIX not `%`, matches already added) zshrs issued
+        // one compadd call zsh never issues. Same `-T` idiom the `verbose`
+        // read below and _expand_alias.rs:113 already use.
+        let jobs_ctx = format!(":completion:{}:jobs", curcontext);
+        let prefix_needed = testforstyle(&jobs_ctx, "prefix-needed") == 0
+            || crate::ported::modules::zutil::lookupstyle(&jobs_ctx, "prefix-needed").is_empty();
         let prefix = getsparam("PREFIX").unwrap_or_default();
         let nm: i64 = get_compstate_str("nmatches")
             .and_then(|s| s.parse().ok())
