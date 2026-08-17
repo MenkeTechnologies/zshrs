@@ -1589,11 +1589,19 @@ pub fn dotrap(sig: i32) -> i32 {
         return 0;
     }
 
-    // c:1123 — `intrap++`. A COUNTER, not a flag (c:Src/signals.c:1057
-    // `volatile int intrap`): now that non-suppressed signals can dispatch
-    // from inside a trap body, a nested dotrap must not reset the outer
-    // one's state on the way out.
-    intrap.fetch_add(1, Ordering::SeqCst);
+    // c:1123 — `intrap++` is dotrapARGS' bookkeeping, not dotrap's. The
+    // function-form arms below now route through dotrapargs (matching
+    // c:1276 `dotrapargs(sig, sigtrapped+sig, funcprog)`), which does the
+    // increment itself at c:1123 and the guard at c:1112-1117. Incrementing
+    // here as well made that guard see intrap != 0 and bail for exactly the
+    // three synchronous pseudo-signals it protects, so
+    //     TRAPEXIT() { print BYE }; exit 3
+    //     TRAPZERR() { print Z }; false
+    //     TRAPDEBUG() { print D }; print x
+    // all fired nothing while their string-form equivalents worked. The
+    // string-form dispatch further down does NOT go through dotrapargs, so it
+    // keeps its own increment — see below.
+    let mut string_form_intrap = false;
     // c:1270 — `dont_queue_signals()`. C disables signal queueing for
     // the duration of the trap dispatch so signals delivered while
     // the trap is running run inline (not queued for later).
@@ -1764,6 +1772,11 @@ pub fn dotrap(sig: i32) -> i32 {
             }
         }
         let _trap_ctx_guard = TrapCtxGuard(sync_eval_ctx);
+        // c:1123 — the string form is executed here rather than through
+        // dotrapargs, so it needs dotrapargs' own intrap bracket: without it
+        // `trap "false" ERR; false` re-enters on its body's failure.
+        intrap.fetch_add(1, Ordering::SeqCst);
+        string_form_intrap = true;
         let _ = crate::ported::exec::execute_script(&body); // c:1268
         if let Some(b) = exit_stash {
             if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
@@ -1791,7 +1804,11 @@ pub fn dotrap(sig: i32) -> i32 {
     // captured at entry (c:1248). Now properly captured above; the
     // previous tail was a hardcoded `intrap.store(0)` only.
     crate::ported::signals_h::restore_queue_signals(q); // c:1280
-    intrap.fetch_sub(1, Ordering::SeqCst); // c:1236 — `intrap--`, paired with c:1123
+    // Paired with the string-form increment above only; the dotrapargs path
+    // balances its own (c:1123 / c:1236).
+    if string_form_intrap {
+        intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
+    }
     0
 }
 

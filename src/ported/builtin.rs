@@ -12221,10 +12221,30 @@ pub fn zexit(val: i32, from_where: i32) {
         // → trap body reads $?=7).
         let _ = crate::ported::exec::execute_script(&body);
     }
-    // c:Src/signals.c::dotrap(SIGEXIT) — fire ZSIG_FUNC handler
-    // installed by `TRAPEXIT() { ... }` (settrap with ZSIG_FUNC
-    // sets sigtrapped[SIGEXIT] = ZSIG_TRAPPED | ZSIG_FUNC).
-    let _ = crate::ported::signals::dotrap(crate::signals_h::SIGEXIT);
+    // c:6043-6044 — `if (sigtrapped[SIGEXIT]) dotrap(SIGEXIT);`.
+    //
+    // dotrap DOES reach its ZSIG_FUNC arm here, but the body cannot run: by
+    // this point we are outside the VM, and dotrapargs' doshfunc path has no
+    // executor to run the compiled function chunk in, so it returns silently.
+    // The natural end-of-script path already knows this and invokes the
+    // function through the script pipeline instead (vm_helper.rs:2850-2854);
+    // the explicit `exit` path did not, so
+    //     TRAPEXIT() { print BYE }; exit 3
+    // printed nothing where zsh prints BYE — while the string form
+    // (`trap "print S" EXIT; exit 3`) worked, because that one is dispatched
+    // from traps_table just above.
+    let exit_fn_trapped = crate::ported::signals::sigtrapped
+        .lock()
+        .ok()
+        .and_then(|g| g.get(crate::signals_h::SIGEXIT as usize).copied())
+        .unwrap_or(0)
+        & crate::ported::zsh_h::ZSIG_FUNC as i32
+        != 0;
+    if exit_fn_trapped {
+        let _ = crate::ported::exec::execute_script("TRAPEXIT");
+    } else {
+        let _ = crate::ported::signals::dotrap(crate::signals_h::SIGEXIT);
+    }
     // c:Src/init.c::zexit — `callhookfunc("zshexit", NULL, 1, NULL)`.
     // The hook fires both a `zshexit` function (if defined) AND
     // walks the `zshexit_functions` array. Distinct from SIGEXIT
