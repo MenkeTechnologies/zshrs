@@ -974,11 +974,11 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // completing inside `"…"` / `'…'` / `$'…'` dropped the opening
         // quote off the command line and every `$QIPREFIX`-testing
         // completer took its unquoted branch.
-        let _ = crate::ported::params::setsparam(
+        crate::vm_helper::set_readonly_special(
             "QIPREFIX",
             &crate::ported::zle::zle_tricky::qipre_get(),
         ); // c:743
-        let _ = crate::ported::params::setsparam(
+        crate::vm_helper::set_readonly_special(
             "QISUFFIX",
             &crate::ported::zle::zle_tricky::qisuf_get(),
         ); // c:745
@@ -1503,22 +1503,27 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     // offered as a completion for `unset <TAB>`.
     //
     // `PM_READONLY` (on QIPREFIX/QISUFFIX in the c:1256-1259 table) is
-    // deliberately not stamped: C re-creates the params on every
-    // `callcompfunc`, so its read-only bit never blocks the next call's
-    // write, whereas a sticky bit here would fail the next completion's
-    // `QIPREFIX=""`.
+    // stamped from each row's own type, the way c:1301 or's `cp->type`
+    // in. The bit used to be dropped here because a sticky one failed
+    // the next completion's publish; the publishes that run after this
+    // stamp now go through `vm_helper::set_readonly_special`, the
+    // gsu-setfn equivalent C uses (c:1308-1324), which is not subject to
+    // the assignment gate.
     {
-        use crate::ported::zsh_h::{PM_REMOVABLE, PM_SPECIAL};
+        use crate::ported::zsh_h::{PM_READONLY, PM_REMOVABLE, PM_SPECIAL};
         // c:1307 / c:1348 — `pm->level = locallevel + 1`.
         let level = crate::ported::params::locallevel.load(Ordering::Relaxed) + 1;
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            for name in crate::ported::zle::complete::COMPRPARAMS
+            for (name, ty) in crate::ported::zle::complete::COMPRPARAMS
                 .iter()
-                .map(|cp| cp.name)
-                .chain(["compstate"])
+                .map(|cp| (cp.name, cp.r#type))
+                .chain([("compstate", 0)])
             {
                 if let Some(pm) = tab.get_mut(name) {
                     pm.level = level;
+                    // c:1301 — the row's own type bits, which is where
+                    // QIPREFIX/QISUFFIX's PM_READONLY comes from.
+                    pm.node.flags |= ty & PM_READONLY as i32;
                     // c:1301 — `cp->type | PM_SPECIAL | PM_REMOVABLE |
                     // PM_LOCAL`. PM_REMOVABLE is load-bearing:
                     // `scanendscope` (params.c:5905) only takes the
@@ -3385,7 +3390,9 @@ pub fn set_comp_sep() -> i32 {
             ("QUOTE", &COMPQUOTE),
             ("QUOTING", &COMPQUOTING),
         ] {
-            let _ = crate::ported::params::setsparam(param, &snap(global));
+            // Same gsu-setfn bypass as the restore in complete.rs:
+            // QIPREFIX/QISUFFIX carry PM_READONLY (c:1256-1257).
+            crate::vm_helper::set_readonly_special(param, &snap(global));
         }
     }
 

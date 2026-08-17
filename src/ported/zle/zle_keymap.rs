@@ -976,7 +976,13 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {
     if crate::ported::builtins::sched::zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0
         && crate::zle_param_sync::active()
     {
-        let _ = crate::ported::params::setsparam("KEYMAP", &resolved);
+        // c:zle_params.c:151 `{ "KEYMAP", PM_SCALAR|PM_READONLY,
+        // GSU(keymap_gsu), NULL }` — C's `zle -K` moves `curkeymapname`,
+        // which get_keymap reads; the param itself is never assigned, so
+        // its read-only bit costs nothing. zshrs publishes the value, so
+        // route through the gsu-setfn equivalent that steps around the
+        // assignment gate.
+        crate::vm_helper::set_readonly_special("KEYMAP", &resolved);
     }
     if !oldname.is_empty()
         && oldname != resolved

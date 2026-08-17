@@ -112,30 +112,23 @@ zleparams_table! {
     "registers" => PM_HASHED,
 }
 
-/// `$KEYMAP` is `PM_SCALAR|PM_READONLY` in C (c:151) but is NOT stamped
-/// read-only here.
+/// `registers` is exempt from the `ro ? PM_READONLY : 0` stamp
+/// (c:200-201) for a structural reason: it is NOT a `zleparams[]` row.
+/// C creates it AFTER the loop, with `createspecialhash("registers", …,
+/// PM_LOCAL|PM_REMOVABLE)` (c:225-227), so the loop's read-only stamp
+/// never reaches it. It is listed in [`ZLEPARAM_TABLE`] only so the
+/// shadow / level / teardown passes cover it; stamping read-only from
+/// `ro` would make `$parameters[registers]` read
+/// `association-local-readonly-special` inside completion where zsh
+/// reports `association-local-special`.
 ///
-/// C backs it with a live getfn (`get_keymap`, c:456 → `curkeymapname`)
-/// so the value tracks `zle -K` with no write ever happening. zshrs has
-/// no gsu vtable: the only way to keep `$KEYMAP` current mid-widget is
-/// `zle_keymap::selectkeymap`'s `setsparam("KEYMAP", …)`
-/// (zle_keymap.rs:979), and `assignsparam` rejects a read-only target
-/// with a `zerr` (params.rs:7121-7122). Stamping PM_READONLY would turn
-/// every in-widget `zle -K` into a "read-only variable: KEYMAP" message
-/// on the user's terminal and freeze `$KEYMAP` at its entry value.
-///
-/// Removing this exemption is gated on `$KEYMAP` growing a real getfn
-/// (owner: params.rs gsu substrate + zle_keymap.rs), not on this file.
-///
-/// `registers` is exempt for a different, purely structural reason: it
-/// is NOT a `zleparams[]` row. C creates it AFTER the loop, with
-/// `createspecialhash("registers", …, PM_LOCAL|PM_REMOVABLE)`
-/// (c:225-227), so the loop's `ro ? PM_READONLY : 0` (c:200-201) never
-/// reaches it. It is listed in [`ZLEPARAM_TABLE`] only so the shadow /
-/// level / teardown passes cover it; stamping read-only from `ro` would
-/// make `$parameters[registers]` read `association-local-readonly-special`
-/// inside completion where zsh reports `association-local-special`.
-const ZLEPARAM_READONLY_EXEMPT: &[&str] = &["KEYMAP", "registers"];
+/// `$KEYMAP` used to be exempt too: C backs it with the `get_keymap`
+/// getfn (c:456 → `curkeymapname`) and never assigns the param, while
+/// zshrs has `selectkeymap` publish the value, which `assignsparam`
+/// rejected on a read-only target. That publish now goes through
+/// `vm_helper::set_readonly_special` — the gsu-setfn equivalent — so the
+/// C flag (`PM_SCALAR|PM_READONLY`, c:151) applies here as written.
+const ZLEPARAM_READONLY_EXEMPT: &[&str] = &["registers"];
 
 /// `$BUFFER` accessor — full edited line as a String.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c (the
