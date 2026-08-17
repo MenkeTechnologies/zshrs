@@ -628,9 +628,13 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             if (n == -1 || n == 0)
                 && errno == Some(libc::EINTR)
                 && eintr_retries < 20
-                && (crate::ported::utils::errflag.load(Ordering::Relaxed)
-                    & crate::ported::zsh_h::ERRFLAG_ERROR)
-                    == 0
+                // c:917 — `if (!errflag && …)`: the WHOLE errflag, not just
+                // ERRFLAG_ERROR. A user interrupt sets ERRFLAG_INT
+                // (signals.c:457), so masking with ERRFLAG_ERROR retried the
+                // read after ^C and the editor stayed blocked until the next
+                // keystroke — the aborted line kept its text on screen and no
+                // fresh prompt appeared until a key was pressed.
+                && crate::ported::utils::errflag.load(Ordering::Relaxed) == 0
                 && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0
                 && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
                 && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
@@ -722,9 +726,10 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         if (n == -1 || n == 0)
             && errno == Some(libc::EINTR)
             && eintr_retries < 20
-            && (crate::ported::utils::errflag.load(Ordering::Relaxed)
-                & crate::ported::zsh_h::ERRFLAG_ERROR)
-                == 0
+            // c:917 — the WHOLE errflag, as in the poll-path read above:
+            // ERRFLAG_INT (a user interrupt, signals.c:457) has to end the
+            // read too, otherwise ^C leaves the editor blocked.
+            && crate::ported::utils::errflag.load(Ordering::Relaxed) == 0
             && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0
             && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
             && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
@@ -1462,7 +1467,11 @@ pub fn zleread(
     // treats an empty (no-newline) result as EOF, a "\n" result as an
     // empty command line.
     let is_eof = EOFSENT.load(SeqCst) != 0
-        || (errflag.load(SeqCst) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0
+        // c:1387 — `if (eofsent || errflag || exit_pending)`: the whole
+        // errflag again. With the ERRFLAG_ERROR mask an interrupted line
+        // (ERRFLAG_INT) was not treated as EOF, so zleread handed the
+        // aborted buffer back as a command to run.
+        || errflag.load(SeqCst) != 0
         || crate::ported::builtin::EXIT_PENDING.load(SeqCst) != 0;
     if is_eof {
         Ok(String::new()) // c:1388 s = NULL
