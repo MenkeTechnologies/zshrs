@@ -796,7 +796,28 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
     // EIO tty-reattach kludge at c:898-938 need zlereadflags / attachtty
     // substrate and stay deferred; the common timeout/EOF result is the
     // load-bearing case and is now faithful.)
-    let b = match raw_getbyte(do_keytmout) {
+    // c:884-887 —
+    // ```c
+    //     int q = queue_signal_level();
+    //     dont_queue_signals();
+    //     r = raw_getbyte(do_keytmout, &cc, full);
+    //     restore_queue_signals(q);
+    // ```
+    // The main loop runs with a queueing BASELINE of 1 (init.c:118
+    // `queue_signals()`, matched at init.rs:2085), so without dropping the
+    // level across the blocking read every signal that arrives while ZLE waits
+    // for a key is pushed onto the deferred queue by zhandler
+    // (signals.c:410-424) and never acted on. ^C at the prompt did nothing at
+    // all: the handler ran, saw queueing_enabled == 1, queued SIGINT, and the
+    // line kept its buffer — where zsh clears the line, runs TRAPINT and sets
+    // $ZLE_LINE_ABORTED. `dont_queue_signals()` also DRAINS what is already
+    // queued (run_queued_signals), which is how a SIGCHLD that arrived during
+    // the previous keystroke gets reaped here.
+    let q = crate::ported::signals_h::queue_signal_level();
+    crate::ported::signals_h::dont_queue_signals();
+    let raw = raw_getbyte(do_keytmout);
+    crate::ported::signals_h::restore_queue_signals(q);
+    let b = match raw {
         Some(b) => b,
         None => {
             LASTCHAR.store(-1, SeqCst); // c:891 — `lastchar = EOF` (EOF == -1)
