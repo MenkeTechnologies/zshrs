@@ -12550,12 +12550,33 @@ pub fn paramsubst(
                 // `span_start_units` is C's `patoffset` for this match, already
                 // in `iincchar` units (bytes without MULTIBYTE, characters
                 // with it) — see `pattern::ioff_of_char`.
+                // c:Src/pattern.c:2526 — `if ((patglobflags & GF_MATCHREF) &&
+                // !(patflags & PAT_FILE))`. $MATCH/$MBEGIN/$MEND belong to the
+                // `(#m)` flag ALONE. The SUB_DOSUBST gate above is deliberately
+                // wider (c:Src/glob.c:2680 fires on capture groups too, because
+                // `$match[]` also needs the replacement re-evaluated per match),
+                // so using it for the match-ref variables as well CREATED a
+                // global $MATCH for any `${x//(pat)/repl}` with parentheses —
+                // where zsh leaves it unset. The user's `_files` override does
+                // exactly that during `- <TAB>`, so $MATCH/$MBEGIN/$MEND leaked
+                // to level 0 and `_parameters` then offered all three as
+                // completions zsh never lists.
+                let pat_has_matchref = prog_opt.as_ref().map_or(false, |p| {
+                    (p.0.globend & crate::ported::zsh_h::GF_MATCHREF as i32) != 0
+                });
                 let eval_repl_for_match = |span_text: &str, span_start_units: i32| -> String {
                     if !pat_needs_per_match {
                         return repl.clone();
                     }
                     // Set $MATCH / $MBEGIN / $MEND so the singsub
                     // pass below sees the current capture state.
+                    if !pat_has_matchref {
+                        let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                        SKIP_FILESUB.with(|c| c.set(true));
+                        let s = untokenize(&singsub(&raw_repl));
+                        SKIP_FILESUB.with(|c| c.set(saved_skip));
+                        return s;
+                    }
                     crate::ported::params::setsparam("MATCH", span_text);
                     let base = if isset(crate::ported::zsh_h::KSHARRAYS) {
                         0i64
@@ -13336,9 +13357,39 @@ pub fn paramsubst(
                 // `span_start_units` is C's `patoffset` for this match, already
                 // in `iincchar` units (bytes without MULTIBYTE, characters
                 // with it) — see `pattern::ioff_of_char`.
+                // Same c:Src/pattern.c:2526 gate as the `//` arm above: the
+                // per-match re-evaluation is driven by `pat_has_m_one` (which
+                // covers `(#b)` too, since `$match[]` needs it), but the
+                // match-ref VARIABLES are `(#m)`-only.
+                let pat_has_matchref_one = {
+                    let body = pat
+                        .strip_prefix("#%")
+                        .or(pat.strip_prefix('#'))
+                        .or(pat.strip_prefix('%'))
+                        .unwrap_or(&pat);
+                    patcompile(
+                        &{
+                            let mut t = body.to_string();
+                            crate::ported::glob::tokenize(&mut t);
+                            t
+                        },
+                        PAT_HEAPDUP as i32,
+                        None,
+                    )
+                    .map_or(false, |p| {
+                        (p.0.globend & crate::ported::zsh_h::GF_MATCHREF as i32) != 0
+                    })
+                };
                 let resolve_repl = move |span_text: &str, span_start_units: i32| -> String {
                     if !pat_has_m_one {
                         return repl_default.clone();
+                    }
+                    if !pat_has_matchref_one {
+                        let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                        SKIP_FILESUB.with(|c| c.set(true));
+                        let s = untokenize(&singsub(&raw_repl_clone));
+                        SKIP_FILESUB.with(|c| c.set(saved_skip));
+                        return s;
                     }
                     crate::ported::params::setsparam("MATCH", span_text);
                     let base = if isset(crate::ported::zsh_h::KSHARRAYS) {
