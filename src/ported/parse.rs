@@ -8314,13 +8314,41 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
     };
     // c:2240 — `fd1 = tokfd;`
     fd1 = tokfd();
+    // The operator's own text, kept for the YYERROR path below. C does not
+    // need this: `zshlextext` (c:225) is a pointer alias that still points at
+    // the redirection operator's lexeme after the `zshlex()` below moves on to
+    // a token that carries no text (EOF/NEWLIN), which is why zsh reports
+    // "parse error near `>'" and not a bare "parse error". This port derives
+    // yyerror's token text from `tokstr`/`tokstrings[tok]`, both of which are
+    // empty for those tokens, so the lexeme has to be carried by hand.
+    let redir_op_text: Option<String> = {
+        let i = tok() as usize;
+        if i < crate::ported::lex::tokstrings.len() {
+            crate::ported::lex::tokstrings[i].map(|t| t.to_string())
+        } else {
+            None
+        }
+    };
     // c:2241 — `zshlex();`
     zshlex();
     // c:2242-2243 — `if (tok != STRING && tok != ENVSTRING) YYERROR(ecused);`
     if tok() != STRING_LEX && tok() != ENVSTRING {
         set_incmdpos(oldcmdpos);
         set_nocorrect(oldnc);
-        zerr("expected word after redirection");
+        // c:2243 — `YYERROR(ecused)`, which is
+        // `{ tok = LEXERR; ecused = (O); return 0; }` (c:87). It prints
+        // NOTHING: the diagnostic comes from `yyerror` (c:2733) once the
+        // parse unwinds, as "parse error near `X'" built from the offending
+        // token. The port raised its own `zerr("expected word after
+        // redirection")` instead — a message with no counterpart in zsh — so
+        // `echo >`, `echo <>`, `cat <<` and friends reported
+        //   zshrs: zsh:1: expected word after redirection
+        // where zsh reports
+        //   zsh:1: parse error near `>'
+        if crate::ported::lex::tokstr().is_none() {
+            crate::ported::lex::set_tokstr(redir_op_text);
+        }
+        set_tok(LEXERR);
         return 0;
     }
     // c:2244 — `incmdpos = oldcmdpos;`
@@ -9160,6 +9188,16 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
     if cur != INANG_TOK && cur != INOUTANG {
         set_nocorrect(1);
     }
+    // The operator's own lexeme, kept for the YYERROR path below — see the
+    // note in the wordcode `par_redir` above for why C does not need it.
+    let redir_op_text: Option<String> = {
+        let i = cur as usize;
+        if i < crate::ported::lex::tokstrings.len() {
+            crate::ported::lex::tokstrings[i].map(|t| t.to_string())
+        } else {
+            None
+        }
+    };
     zshlex();
 
     let name = match tok() {
@@ -9179,7 +9217,13 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
         _ => {
             set_incmdpos(oldcmdpos);
             set_nocorrect(oldnc);
-            zerr("expected word after redirection");
+            // c:2243 `YYERROR(ecused)` — see the note on the wordcode arm
+            // above; the message is yyerror's "parse error near `X'", not a
+            // custom one.
+            if crate::ported::lex::tokstr().is_none() {
+                crate::ported::lex::set_tokstr(redir_op_text);
+            }
+            set_tok(LEXERR);
             return None;
         }
     };
