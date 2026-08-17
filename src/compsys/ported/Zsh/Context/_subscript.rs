@@ -156,6 +156,20 @@ fn dir_abbrev(val: &str) -> String {
 /// `_subscript` — `-subscript-` context: complete inside `${var[…]}`.
 pub fn _subscript(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_subscript");
+    // sh:3  local expl ind osuf flags sep
+    //
+    // The names this port writes to the paramtab have to carry the same
+    // `local` binding as the shell source, because sh:128 runs
+    // `_parameters` while they are still live and `_parameters` filters
+    // its candidates with `~*local*` (Completion/Zsh/Type/_parameters:24)
+    // — a global `ind` is offered as a parameter name where zsh offers
+    // nothing. `flags`, plus sh:94's `i`/`j`/`ret`/`disp`, stay Rust
+    // locals: this port never publishes them.
+    let mut _locals = crate::compsys::ported::shared::LocalScope::declare(
+        &["expl", "osuf", "sep"],
+        crate::ported::zsh_h::PM_SCALAR,
+    );
+    _locals.also(&["ind"], crate::ported::zsh_h::PM_ARRAY);
     // sh:5  [[ $ISUFFIX = *\]* ]] || osuf=\]
     let isuffix = getsparam("ISUFFIX").unwrap_or_default();
     let mut osuf: String = if isuffix.contains(']') {
@@ -435,6 +449,8 @@ pub fn _subscript(args: &[String]) -> i32 {
 
         // sh:91-92  _wanted association-keys expl 'association key'
         //           compadd -Q -S "$suf" -a keys
+        // sh:86  local -a keys  (sh:85's `suf` stays a Rust local above)
+        _locals.also(&["keys"], crate::ported::zsh_h::PM_ARRAY);
         setaparam("keys", keys);
         let r = _wanted(&[
             s("association-keys"),
@@ -453,7 +469,8 @@ pub fn _subscript(args: &[String]) -> i32 {
 
     // sh:93  elif (Pt) == array*  → array-index completion
     if param_type(&param).starts_with("array") {
-        // sh:94  local … ret=1
+        // sh:94  local list i j ret=1 disp
+        _locals.also(&["list"], crate::ported::zsh_h::PM_ARRAY);
         let mut ret: i32 = 1;
 
         // sh:96  _tags indexes parameters
