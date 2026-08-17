@@ -3182,7 +3182,10 @@ pub fn comp_wrapper(
             ("QUOTING", oqi_p),     // c:1610
         ] {
             if let Some(v) = val {
-                let _ = crate::ported::params::setsparam(param, &v);
+                // QIPREFIX/QISUFFIX are PM_READONLY (c:1256-1257); C
+                // restores them by writing compqiprefix/compqisuffix
+                // directly, so the bit never applies to this path.
+                crate::vm_helper::set_readonly_special(param, &v);
             }
         }
         if let Some(r) = oredirs {

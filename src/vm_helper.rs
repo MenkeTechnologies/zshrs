@@ -5713,6 +5713,43 @@ fn module_gated_partab_module(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Publish a value into a read-only special from shell-INTERNAL code.
+///
+/// C binds these params to C variables through a gsu vtable —
+/// `compvarscalar_gsu` for `$QIPREFIX`/`$QISUFFIX`
+/// (Src/Zle/complete.c:1308-1324), `keymap_gsu` for `$KEYMAP`
+/// (Src/Zle/zle_params.c:151) — and the shell's own writes go straight
+/// to that variable. PM_READONLY is only consulted on the ASSIGNMENT
+/// path (`assignsparam`, Src/params.c), so the bit stops a user's
+/// `QIPREFIX=x` without ever standing in the way of the completion
+/// machinery's own publish.
+///
+/// zshrs keeps the value in the param itself, so the internal publish
+/// has to step around the same gate explicitly: drop PM_READONLY,
+/// assign through the canonical path, put the bit back.
+pub fn set_readonly_special(name: &str, value: &str) {
+    use crate::ported::zsh_h::PM_READONLY;
+    let was_readonly = crate::ported::params::paramtab()
+        .write()
+        .ok()
+        .and_then(|mut tab| {
+            tab.get_mut(name).map(|pm| {
+                let ro = (pm.node.flags & PM_READONLY as i32) != 0;
+                pm.node.flags &= !(PM_READONLY as i32);
+                ro
+            })
+        })
+        .unwrap_or(false);
+    let _ = crate::ported::params::setsparam(name, value);
+    if was_readonly {
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut(name) {
+                pm.node.flags |= PM_READONLY as i32;
+            }
+        }
+    }
+}
+
 /// PM_ARRAY lookup for `${name}` / `${name[N]}` — walks
 /// PARTAB_ARRAY and dispatches the whole-array getfn (Src/Modules/
 /// parameter.c:2239-2291 ports). Returns `None` if name isn't a
