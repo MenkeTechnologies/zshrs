@@ -1735,15 +1735,9 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
     // present before their module loads. `resolve_autoload_builtin` is
     // that registry (Src/init.c:1708 `init_bltinmods`), and it is the
     // same call the `defined`/`undefined` decision below already makes.
-    let in_builtintab = match crate::ext_builtins::builtin_owning_module(name) {
-        // A `zsh/main` core builtin (always in the table), or a
-        // zshrs-original entry that belongs to no module at all.
-        None | Some("__zshrs_only") => true,
-        Some(modname) => crate::ported::module::MODULESTAB
-            .lock()
-            .map(|t| t.is_loaded(modname) || t.resolve_autoload_builtin(name).is_some())
-            .unwrap_or(false),
-    };
+    // Shared with `whence`/`type` (Src/builtin.c:4123 port) so the two can
+    // never drift again — the logic that used to live here verbatim.
+    let in_builtintab = crate::ext_builtins::module_builtin_available(name);
     let entry = if in_builtintab {
         BUILTINS
             .iter() // c:784
@@ -1833,9 +1827,17 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
             .lock()
             .map(|s| s.contains(name))
             .unwrap_or(false);
+        // Ask exactly what `whence -w`/`type` ask (Src/builtin.c:4123 port):
+        // the daemon `z*` family, then `is_extension_builtin` — the fusevm
+        // registry plus the folded extension bintabs plus LOCAL_ONLY_BUILTINS.
+        // Consulting the NAME LISTS instead left a third disagreement: names
+        // that fusevm registers but EXT_BUILTIN_NAMES does not spell out
+        // (`mkdir`, `sync`, `strftime`, `pcre_compile`, `ztie`, `zprof`,
+        // `zsystem`, …) reported `builtin` from whence and 0 from
+        // `${+builtins[...]}` in the same shell.
         let is_ext = !is_disabled
-            && (crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name)
-                || crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.contains(&name));
+            && (crate::daemon::builtins::is_zshrs_builtin(name)
+                || crate::extensions::ext_builtins::is_extension_builtin(name));
         if is_ext {
             // c:846 — extension builtins always dispatch in-process, so they
             // are unconditionally the "handlerfunc present" arm.
@@ -1997,7 +1999,20 @@ pub fn scanbuiltins(
             // One predicate, shared with the compctl namespace dump:
             // see `builtin_in_builtintab`.
             if !crate::ext_builtins::builtin_in_builtintab(&b.node.nam) {
-                continue;
+                // A name whose owning module is not loaded is normally absent
+                // — but a few of them (strftime, pcre_compile, …) are ALSO
+                // registered on the VM, so they dispatch right now and both
+                // `whence -w` and `${+builtins[...]}` report them as builtins.
+                // Emitting the key too is what keeps the three views in
+                // agreement; under `--zsh` / ZSHRS_HIDE_EXT_BUILTINS the
+                // module gate is all that applies and the name stays hidden,
+                // matching zsh.
+                let dispatches_anyway = dis == 0
+                    && !crate::ext_builtins::hide_ext_builtins()
+                    && crate::extensions::ext_builtins::is_extension_builtin(&b.node.nam);
+                if !dispatches_anyway {
+                    continue;
+                }
             }
             if !emitted.insert(b.node.nam.clone()) {
                 continue;

@@ -9537,67 +9537,22 @@ pub fn bin_whence(
             // Inline match-on-(wd|csh|v) reimplementation deleted —
             // route through the canonical port at builtin.rs:139.
             // c:Src/Modules/files.c:806-824 — bare `mkdir`/`rm`/`mv`/`ln`/
-            // `chmod`/`chown`/`chgrp`/`sync`/`rmdir` and their `zf_*`
-            // aliases are bound by `zsh/files`. Without explicit
-            // `zmodload zsh/files`, `type rm` reports `/bin/rm` (the
-            // PATH lookup result) — the builtin name shouldn't appear
-            // in builtintab at all per C's lazy paramtab/builtintab
-            // wiring. Skip the lookup here when the module is unloaded
-            // so the search falls through to the cmdnamtab/$PATH path
-            // below. Bug #28 in docs/BUGS.md.
-            let is_files_gated = matches!(
-                arg.as_str(),
-                "mkdir"
-                    | "rmdir"
-                    | "rm"
-                    | "mv"
-                    | "ln"
-                    | "chmod"
-                    | "chown"
-                    | "chgrp"
-                    | "sync"
-                    | "zf_mkdir"
-                    | "zf_rmdir"
-                    | "zf_rm"
-                    | "zf_mv"
-                    | "zf_ln"
-                    | "zf_chmod"
-                    | "zf_chown"
-                    | "zf_chgrp"
-                    | "zf_sync"
-            ) && !crate::ported::module::MODULESTAB
-                .lock()
-                .unwrap()
-                .is_loaded("zsh/files");
-            // c:Bug #532/#535 — same logic for module-bound builtin
-            // names that ship statically linked in zshrs but require
-            // an explicit `zmodload` before `type X` reports them as
-            // a builtin in C zsh:
-            //   * zsh/stat       → stat, zstat
-            //   * zsh/zselect    → zselect
-            //   * zsh/zpty       → zpty
-            //   * zsh/net/tcp    → ztcp
-            //   * zsh/zftp       → zftp
-            //   * zsh/system     → zsystem, syserror
-            let is_module_gated = |modname: &str, names: &[&str]| -> bool {
-                names.iter().any(|n| arg.as_str() == *n)
-                    && !crate::ported::module::MODULESTAB
-                        .lock()
-                        .unwrap()
-                        .is_loaded(modname)
-            };
-            let is_stat_gated = is_module_gated("zsh/stat", &["stat", "zstat"]);
-            let is_zselect_gated = is_module_gated("zsh/zselect", &["zselect"]);
-            let is_zpty_gated = is_module_gated("zsh/zpty", &["zpty"]);
-            let is_ztcp_gated = is_module_gated("zsh/net/tcp", &["ztcp"]);
-            let is_zftp_gated = is_module_gated("zsh/zftp", &["zftp"]);
-            let is_system_gated = is_module_gated("zsh/system", &["zsystem", "syserror"]);
-            let is_module_bound_gated = is_stat_gated
-                || is_zselect_gated
-                || is_zpty_gated
-                || is_ztcp_gated
-                || is_zftp_gated
-                || is_system_gated;
+            // `chmod`/... are bound by `zsh/files`, so without an explicit
+            // `zmodload zsh/files` the name is not in builtintab at all and
+            // `type rm` must fall through to the cmdnamtab/$PATH path below
+            // (docs/BUGS.md #28). That is one instance of the general rule:
+            // One predicate for every consumer — see
+            // `ext_builtins::module_builtin_available`. The previous code
+            // here was a hand-maintained list of gated names (zsh/files,
+            // zsh/stat, zsh/zselect, zsh/zpty, zsh/net/tcp, zsh/zftp,
+            // zsh/system) extended one bug at a time, so every module NOT on
+            // it leaked through: `whence -w strftime`, `pcre_compile`,
+            // `clone`, `zcurses`, `ztie`, `zgdbmpath`, `cap`, `getcap`,
+            // `zgetattr`, `zdelattr`, `sysopen`, `zsocket`, `zprof` and
+            // `example` all reported `builtin` where zsh -f reports `none`,
+            // and where this very shell's own `${+builtins[...]}` said 0.
+            let is_module_bound_gated =
+                !crate::extensions::ext_builtins::module_builtin_available(arg);
             // c:Src/builtin.c:4123 — `builtintab->getnode(name)` returns NULL
             // for a builtin carrying the DISABLED flag (set by `disable NAME`),
             // so whence/type do NOT report a disabled builtin as a builtin and
@@ -9607,7 +9562,7 @@ pub fn bin_whence(
                 .map(|s| s.contains(arg.as_str()))
                 .unwrap_or(false);
             let builtin_node: Option<*mut hashnode> =
-                if is_files_gated || is_module_bound_gated || is_disabled_builtin {
+                if is_module_bound_gated || is_disabled_builtin {
                     None
                 } else {
                     BUILTINS

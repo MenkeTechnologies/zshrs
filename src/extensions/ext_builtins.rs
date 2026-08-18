@@ -141,21 +141,81 @@ pub fn builtin_owning_module(name: &str) -> Option<&'static str> {
 /// zshrs mode keeps the auto-load posture where every statically-linked
 /// module builtin is callable without an explicit `zmodload`, and
 /// dispatch is never affected either way.
-pub fn builtin_in_builtintab(name: &str) -> bool {
-    if !crate::ext_builtins::hide_ext_builtins() {
-        return true;
-    }
+/// Would C's `builtintab` hold `name` right now, given which modules are
+/// loaded? This is the module gate ONLY — it says nothing about `disable`.
+///
+/// C adds a module's builtins to `builtintab` in `addbuiltins()` when the
+/// module loads (Src/module.c:551) and removes them on unload, so a name
+/// owned by an unloaded module simply is not there; names registered for
+/// AUTO-loading (Src/module.c:1265 `add_autobin`, seeded by Src/init.c:1708
+/// `init_bltinmods`) are present as stubs from the start. zshrs links every
+/// module statically into ONE flat table, so the gate has to be applied
+/// explicitly.
+///
+/// Every consumer must ask THIS question, or the shell answers differently
+/// depending on which one you ask. `whence`/`type` used to carry their own
+/// hand-maintained list of gated names, grown one bug report at a time
+/// (docs/BUGS.md #28, #532, #535), which covered zsh/files, zsh/stat,
+/// zsh/zselect, zsh/zpty, zsh/net/tcp, zsh/zftp and zsh/system — and nothing
+/// else. So `whence -w strftime` (zsh/datetime), `pcre_compile` (zsh/pcre),
+/// `clone`, `zcurses`, `ztie`, `cap`, `zgetattr`, `sysopen`, `zsocket`,
+/// `example` and `zprof` all answered `builtin` where zsh answers `none`,
+/// while `${+builtins[...]}` — which asks the generic question below —
+/// answered 0 for the very same names in the very same shell.
+pub fn module_builtin_available(name: &str) -> bool {
     match builtin_owning_module(name) {
-        None => true,
+        // A `zsh/main` core builtin (always in the table), or a
+        // zshrs-original entry that belongs to no module at all.
+        None | Some("__zshrs_only") => true,
         Some(modname) => crate::ported::module::MODULESTAB
             .lock()
-            .map(|t| t.is_loaded(modname))
+            .map(|t| {
+                // "Actually loaded" is C's `m->u.handle && !MOD_UNLOAD`
+                // (Src/module.c:1055); the static-link analogue is MOD_INIT_B
+                // set and MOD_UNLOAD clear — the same criterion `getpmmodule`
+                // uses to print `loaded` vs `autoloaded`. NOT `is_loaded()`,
+                // which keys off MOD_LINKED and is pre-seeded for every
+                // compiled-in module, so it answered "loaded" for zsh/datetime
+                // and zsh/pcre and made `whence -w strftime` /
+                // `${+builtins[pcre_compile]}` claim builtins that `zmodload`
+                // had never brought in.
+                let loaded = t.modules.get(modname).is_some_and(|md| {
+                    (md.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                        && (md.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+                });
+                // A name registered for AUTO-loading is a stub in builtintab
+                // from the start (Src/module.c:1265 `add_autobin`).
+                loaded || t.resolve_autoload_builtin(name).is_some()
+            })
             .unwrap_or(false),
     }
 }
 
+pub fn builtin_in_builtintab(name: &str) -> bool {
+    // The gate used to apply ONLY under `hide_ext_builtins()`, on the theory
+    // that default zshrs mode should show every statically-linked module
+    // builtin as available. Dispatch never agreed: `zshrs -fc 'builtin chmod'`
+    // runs /bin/chmod and `whence -w chmod` says `command` with or without
+    // that flag. So in default mode `${(k)builtins}` listed 40 names —
+    // chmod, rm, mv, stat, zpty, zselect, sys*, cap/getcap, z*attr, zf_* —
+    // that `${+builtins[$name]}` reported as unset in the SAME shell, and
+    // that no `builtin NAME` call could reach. Ask the same question every
+    // other consumer asks.
+    //
+    // The one thing this walk adds on top: zshrs-original entries that no
+    // `zmodload` could ever produce in a real zsh (`hashinfo`, `mem`,
+    // `patdebug`, `nameref`, `__rust_compile`) must disappear from the
+    // NAMESPACE under `--zsh` / ZSHRS_HIDE_EXT_BUILTINS, even though they stay
+    // perfectly available (that flag never affects dispatch). The previous
+    // gate got this for free by asking `is_loaded("__zshrs_only")`, which is
+    // false because no such module exists.
+    if hide_ext_builtins() && matches!(builtin_owning_module(name), Some("__zshrs_only")) {
+        return false;
+    }
+    module_builtin_available(name)
+}
+
 pub const EXT_BUILTIN_NAMES: &[&str] = &[
-    "add_zsh_hook",
     "arch",
     "async",
     "await",
@@ -171,7 +231,6 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "compgen",
     "compinit",
     "complete",
-    "cp",
     "cut",
     "date",
     "dbview",
@@ -247,6 +306,16 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "zbuild",
     "ztest_run",
     "ztest_skip",
+    // NOT listed here, deliberately, though both once were:
+    //   * `cp` — the dispatcher runs /usr/bin/cp (`cp --recursive` fails with
+    //     BSD cp's "illegal option", and `whence -w cp` says `command`), so
+    //     `cp_impl` is not what answers; zsh has no `cp` builtin either, and
+    //     zsh/files ships chmod/chown/ln/mkdir/mv/rm/rmdir/sync but no cp.
+    //   * `add_zsh_hook` — not callable at all (`command not found` with and
+    //     without -f); in zsh it is an autoloadable FUNCTION, not a builtin.
+    // Listing them made `${(k)builtins}` advertise two names that no
+    // `builtin NAME` call could reach and that `${+builtins[...]}` reported
+    // as unset.
 ];
 
 /// Body of the `compdef` shell-function stub that `compinit` installs so
