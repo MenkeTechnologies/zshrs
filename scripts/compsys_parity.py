@@ -52,6 +52,22 @@ try:
 except ImportError:
     sys.exit("compsys_parity: pyte not installed (pip install pyte)")
 
+
+class _TolerantScreen(pyte.Screen):
+    """pyte.Screen that survives a private-mode SGR (``CSI ? ... m``).
+
+    pyte's parser forwards ``private=True`` for any CSI it saw a ``?`` in,
+    but ``Screen.select_graphic_rendition`` takes no such keyword, so one
+    of those sequences raises ``TypeError`` mid-``feed`` and aborts the
+    whole sweep (it killed a 207-cell native run partway through, while
+    capturing the REFERENCE shell). Swallow the flag and render the
+    attributes normally; nothing about the comparison changes.
+    """
+
+    def select_graphic_rendition(self, *attrs, **kwargs):
+        kwargs.pop("private", None)
+        return super().select_graphic_rendition(*attrs, **kwargs)
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Unique, glob-free, unlikely-to-appear-in-completions prompt sentinel. Trailing
@@ -120,7 +136,7 @@ class ShellSession:
         self.rows = rows
         self.cols = cols
         self.settle = settle_ms / 1000.0
-        self.screen = pyte.Screen(cols, rows)
+        self.screen = _TolerantScreen(cols, rows)
         self.stream = pyte.ByteStream(self.screen)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:  # child
