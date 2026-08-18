@@ -9906,9 +9906,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Value::str(crate::ported::lex::untokenize(&out))
                 } else {
                     let (_first, nodes, _ms_ws, _ret) = crate::ported::subst::multsub(&prepped, 0);
-                    if std::env::var_os("ZSHRS_DQ_DBG").is_some() {
-                        eprintln!("DQ mode1 prepped={:?} nodes={:?}", prepped, nodes);
-                    }
                     // c:Src/subst.c:655 — multsub returns Vec::new()
                     // for zero-word results (quoted array splat that
                     // resolved to empty array). Surface as
