@@ -48,7 +48,14 @@ use std::os::unix::fs::MetadataExt;
 /// "ZRAL" little-endian.
 pub const SHARD_MAGIC: u32 = 0x5A52414C;
 /// `SHARD_FORMAT_VERSION` constant.
-pub const SHARD_FORMAT_VERSION: u32 = 1;
+///
+/// v2 added the source stamps below AND changed what `chunk_blob`
+/// means: it is now the compiled *definition program* (`name() { … }`
+/// as `autoload_register_source` builds it), which the loader runs to
+/// install the function. v1 stored the bare file body compiled as a
+/// top-level script — a different chunk, with a different `$LINENO`
+/// base — and nothing ever read it. The bump discards those entries.
+pub const SHARD_FORMAT_VERSION: u32 = 2;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
@@ -72,7 +79,17 @@ pub struct AutoloadEntry {
     pub binary_mtime_at_cache: i64,
     /// `cached_at_secs` field.
     pub cached_at_secs: i64,
-    /// `chunk_blob` field.
+    /// mtime of the definition FILE this chunk was compiled from.
+    /// The binary mtime above only catches a zshrs rebuild; a user
+    /// editing `~/.zsh/functions/_foo` leaves it untouched, so the
+    /// source has to be stamped too or the shell would keep running
+    /// yesterday's function body forever.
+    pub source_mtime_secs: i64,
+    /// Byte length of that file, checked alongside the mtime — a
+    /// same-second edit that changes length is caught by this, and
+    /// filesystems with coarse mtime granularity make that a real case.
+    pub source_len: u64,
+    /// bincode of the `fusevm::Chunk` for the definition program.
     pub chunk_blob: Vec<u8>,
 }
 /// `AutoloadShard` — see fields for layout.
@@ -168,7 +185,11 @@ impl AutoloadCache {
         let mut guard = self.mmap.lock();
         *guard = None;
     }
-    /// `get` — see implementation.
+    /// Raw probe: the chunk for `name` with only the binary-mtime
+    /// check applied. `dbview autoloads <name>` uses it to report
+    /// whether an entry exists. NOT for execution — use
+    /// [`AutoloadCache::get_for_source`], which also proves the entry
+    /// matches the definition file on disk.
     pub fn get(&self, name: &str) -> Option<Vec<u8>> {
         self.ensure_mmap();
         let guard = self.mmap.lock();
@@ -186,10 +207,46 @@ impl AutoloadCache {
         Some(entry.chunk_blob.as_slice().to_vec())
     }
 
+    /// The chunk for `name`, but only if it was compiled from a
+    /// definition file with exactly these stamps. A miss (edited file,
+    /// rebuilt binary, no entry) means "parse it yourself".
+    pub fn get_for_source(
+        &self,
+        name: &str,
+        source_mtime_secs: i64,
+        source_len: u64,
+    ) -> Option<Vec<u8>> {
+        self.ensure_mmap();
+        let guard = self.mmap.lock();
+        let shard = guard.as_ref()?;
+        if !shard.header_ok() {
+            return None;
+        }
+        let entry = shard.lookup(name)?;
+        if let Some(bin_mtime) = current_binary_mtime_secs() {
+            let cached_bin_mtime: i64 = entry.binary_mtime_at_cache.into();
+            if cached_bin_mtime < bin_mtime {
+                return None;
+            }
+        }
+        let cached_mtime: i64 = entry.source_mtime_secs.into();
+        let cached_len: u64 = entry.source_len.into();
+        if cached_mtime != source_mtime_secs || cached_len != source_len {
+            return None;
+        }
+        Some(entry.chunk_blob.as_slice().to_vec())
+    }
+
     /// Single-write: read shard, insert one entry, write shard. Used by the
     /// cold-start path when a function is autoloaded before compinit
     /// pre-warm completes.
-    pub fn put_one(&self, name: &str, chunk_blob: Vec<u8>) -> Result<(), String> {
+    pub fn put_one(
+        &self,
+        name: &str,
+        chunk_blob: Vec<u8>,
+        source_mtime_secs: i64,
+        source_len: u64,
+    ) -> Result<(), String> {
         let _lock = match acquire_lock(&self.lock_path) {
             Some(l) => l,
             None => return Ok(()),
@@ -210,6 +267,8 @@ impl AutoloadCache {
             AutoloadEntry {
                 binary_mtime_at_cache: bin_mtime,
                 cached_at_secs: now_secs(),
+                source_mtime_secs,
+                source_len,
                 chunk_blob,
             },
         );
@@ -219,73 +278,6 @@ impl AutoloadCache {
         Ok(())
     }
 
-    /// Merge `entries` into the existing shard, inserting/replacing each one.
-    /// Used by compinit's BACKFILL path — when an existing shard is missing
-    /// some entries (e.g. binary mtime bump invalidated a subset), the
-    /// caller computes the missing names + chunks and merges them in
-    /// without touching unrelated entries. Single read + single write,
-    /// even for 16k entries.
-    pub fn merge_in(&self, entries: HashMap<String, Vec<u8>>) -> Result<(), String> {
-        if entries.is_empty() {
-            return Ok(());
-        }
-        let _lock = match acquire_lock(&self.lock_path) {
-            Some(l) => l,
-            None => return Ok(()),
-        };
-        let mut shard = match read_owned_shard(&self.path) {
-            Some(s)
-                if s.header.zshrs_version == env!("CARGO_PKG_VERSION")
-                    && s.header.pointer_width as usize == std::mem::size_of::<usize>()
-                    && s.header.format_version == SHARD_FORMAT_VERSION =>
-            {
-                s
-            }
-            _ => fresh_shard(),
-        };
-        let bin_mtime = current_binary_mtime_secs().unwrap_or(0);
-        let now = now_secs();
-        for (name, chunk_blob) in entries {
-            shard.entries.insert(
-                name,
-                AutoloadEntry {
-                    binary_mtime_at_cache: bin_mtime,
-                    cached_at_secs: now,
-                    chunk_blob,
-                },
-            );
-        }
-        shard.header.built_at_secs = now as u64;
-        write_shard_atomic(&self.path, &shard)?;
-        self.invalidate_mmap();
-        Ok(())
-    }
-
-    /// Replace the entire shard with the given entries. Used by compinit's
-    /// bulk pre-warm — accumulate all (name, chunk_blob) pairs, then commit
-    /// once. Avoids re-serializing 16k entries on every batch flush.
-    pub fn replace_all(&self, entries: HashMap<String, Vec<u8>>) -> Result<(), String> {
-        let _lock = match acquire_lock(&self.lock_path) {
-            Some(l) => l,
-            None => return Ok(()),
-        };
-        let bin_mtime = current_binary_mtime_secs().unwrap_or(0);
-        let now = now_secs();
-        let mut shard = fresh_shard();
-        for (name, chunk_blob) in entries {
-            shard.entries.insert(
-                name,
-                AutoloadEntry {
-                    binary_mtime_at_cache: bin_mtime,
-                    cached_at_secs: now,
-                    chunk_blob,
-                },
-            );
-        }
-        write_shard_atomic(&self.path, &shard)?;
-        self.invalidate_mmap();
-        Ok(())
-    }
     /// `entry_count` — see implementation.
     pub fn entry_count(&self) -> usize {
         self.ensure_mmap();
@@ -451,38 +443,33 @@ pub static CACHE: once_cell::sync::Lazy<Option<AutoloadCache>> = once_cell::sync
     }
     AutoloadCache::open(&default_cache_path()).ok()
 });
-/// `try_load` — see implementation.
+/// Raw presence probe for `dbview autoloads <name>`. See
+/// [`AutoloadCache::get`].
 pub fn try_load(name: &str) -> Option<Vec<u8>> {
     let cache = CACHE.as_ref()?;
     cache.get(name)
 }
-/// `try_save_one` — see implementation.
-pub fn try_save_one(name: &str, chunk_blob: &[u8]) -> Result<(), String> {
-    let Some(cache) = CACHE.as_ref() else {
-        return Ok(());
-    };
-    cache.put_one(name, chunk_blob.to_vec())
+
+/// Execution-path lookup: the compiled definition program for `name`,
+/// valid only against a definition file with these stamps.
+pub fn try_load_for_source(name: &str, source_mtime_secs: i64, source_len: u64) -> Option<Vec<u8>> {
+    let cache = CACHE.as_ref()?;
+    cache.get_for_source(name, source_mtime_secs, source_len)
 }
 
-/// Replace the entire autoload shard with the given entries. Use this from
-/// compinit's bulk pre-warm path — accumulates all `(name, chunk_blob)` in
-/// the `entries` HashMap and writes the shard exactly once.
-pub fn try_replace_all(entries: HashMap<String, Vec<u8>>) -> Result<(), String> {
+/// Write-through after a real autoload compile.
+pub fn try_save_one(
+    name: &str,
+    chunk_blob: &[u8],
+    source_mtime_secs: i64,
+    source_len: u64,
+) -> Result<(), String> {
     let Some(cache) = CACHE.as_ref() else {
         return Ok(());
     };
-    cache.replace_all(entries)
+    cache.put_one(name, chunk_blob.to_vec(), source_mtime_secs, source_len)
 }
 
-/// Merge new entries into the existing shard. Use this from the compinit
-/// BACKFILL path (existing shard has most entries, just adding the missing
-/// ones).
-pub fn try_merge_in(entries: HashMap<String, Vec<u8>>) -> Result<(), String> {
-    let Some(cache) = CACHE.as_ref() else {
-        return Ok(());
-    };
-    cache.merge_in(entries)
-}
 /// `cached_names` — see implementation.
 pub fn cached_names() -> std::collections::HashSet<String> {
     CACHE.as_ref().map(|c| c.cached_names()).unwrap_or_default()
@@ -511,31 +498,25 @@ mod tests {
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();
-        cache.put_one("foo", vec![1, 2, 3]).unwrap();
+        cache.put_one("foo", vec![1, 2, 3], 7, 3).unwrap();
         assert_eq!(cache.get("foo"), Some(vec![1, 2, 3]));
         assert_eq!(cache.entry_count(), 1);
     }
 
     #[test]
-    fn replace_all_overwrites() {
+    fn source_stamp_mismatch_is_a_miss() {
+        // The whole point of the stamps: an edited definition file must
+        // not be served from a chunk compiled off the old bytes.
         let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();
-        cache.put_one("a", vec![10]).unwrap();
-        cache.put_one("b", vec![20]).unwrap();
-        assert_eq!(cache.entry_count(), 2);
-
-        let mut new_entries = HashMap::new();
-        new_entries.insert("c".to_string(), vec![30]);
-        new_entries.insert("d".to_string(), vec![40]);
-        cache.replace_all(new_entries).unwrap();
-
-        assert_eq!(cache.entry_count(), 2);
-        assert!(cache.get("a").is_none());
-        assert!(cache.get("b").is_none());
-        assert_eq!(cache.get("c"), Some(vec![30]));
-        assert_eq!(cache.get("d"), Some(vec![40]));
+        cache.put_one("foo", vec![1, 2, 3], 1_000, 42).unwrap();
+        assert_eq!(cache.get_for_source("foo", 1_000, 42), Some(vec![1, 2, 3]));
+        // Same second, different length (coarse-mtime filesystems).
+        assert!(cache.get_for_source("foo", 1_000, 43).is_none());
+        // Rewritten later.
+        assert!(cache.get_for_source("foo", 1_001, 42).is_none());
     }
 
     #[test]
@@ -544,8 +525,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();
-        cache.put_one("alpha", vec![1]).unwrap();
-        cache.put_one("beta", vec![2]).unwrap();
+        cache.put_one("alpha", vec![1], 1, 1).unwrap();
+        cache.put_one("beta", vec![2], 1, 1).unwrap();
         let names = cache.cached_names();
         assert!(names.contains("alpha"));
         assert!(names.contains("beta"));
@@ -569,7 +550,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();
-        cache.put_one("x", vec![1]).unwrap();
+        cache.put_one("x", vec![1], 1, 1).unwrap();
         assert!(cache_path.exists());
         cache.clear().unwrap();
         assert!(!cache_path.exists());

@@ -457,17 +457,46 @@ matching), and it means the list can be wider than the prompt's.
 Duplicates are merged in the LSP layer: `compdescribe`'s two-phase add
 proposes each word twice, once with a description and once without.
 
+## Autoload chunk cache
+
+The dominant cost of a cold in-editor completion is parsing the completer,
+not running it: `_git` is 424 KB of shell. The loader
+(`vm_helper::run_autoload_definition`) therefore caches the compiled
+DEFINITION PROGRAM — the chunk for `name() { <file body> }` as
+`autoload_register_source` builds it — in `~/.zshrs/autoloads.rkyv`, and
+on the next process runs that chunk instead of lexing, parsing and
+compiling the file again.
+
+Correctness comes from what is cached and what is stamped:
+
+- The cached chunk is the same one the non-cached path compiles and runs,
+  so the installed function is identical by construction — including
+  `$LINENO`'s base and `funcsourcetrace`, which is where a
+  wrong-shaped chunk shows up first. Verified against `zsh -f`:
+  `lineno=2`, `trace=<file>:0` for a body whose first statement is on
+  line 2, cold and cached alike (`tests/autoload_chunk_cache.rs`).
+- Each entry carries the definition file's mtime AND byte length. The
+  binary mtime alone (the pre-existing check) only catches a zshrs
+  rebuild; editing `~/.zsh/functions/_foo` leaves it untouched, and the
+  length catches a same-second edit on a coarse-mtime filesystem.
+- Caching is declined when the compiled program is not a function of the
+  file's bytes alone: `ksh_autoload` style (the file runs at top level
+  instead of being wrapped, so a runtime option changes the program) and
+  `autoload` without `-U` (the body is parsed WITH alias expansion, so
+  the chunk depends on the alias table).
+
+Shard format v2. v1 stored the bare file body compiled as a top-level
+script, which nothing ever read — the only caller of
+`autoload_cache::try_load` was `dbview` — and which would have installed
+a different program than the loader does. The version bump discards those
+entries, and the two speculative pre-warm paths that produced them (one
+fed from the SQLite mirror, one an opt-in loop inside the compinit
+background scan) are gone: the write-through cache fills exactly the
+functions a session actually calls, with chunks that are correct by
+construction.
+
 ## Remaining work
 
-- **Autoload bytecode from rkyv.** `~/.zshrs/autoloads.rkyv` holds
-  compiled chunks but nothing reads it at execution time
-  (`autoload_cache::try_load`'s only caller is `dbview`), so a cold
-  `_git` still parses 424 KB. Wiring it in needs the backfill to
-  compile with the function-body knobs the autoload install path uses
-  (`compile_funcdef` sets `is_function_body` + a `lineno_offset`;
-  the backfill uses a bare compiler, which changes `$LINENO` inside
-  the loaded function) plus a shard format-version bump to invalidate
-  the entries compiled the old way.
 - **`_arguments` spec internals.** Completion INSIDE a spec string
   (`'*:file:_fi'` → `_files`) still returns nothing; there is no
   completion context for optspec / `:msg:action` positions.

@@ -202,12 +202,16 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // (-U/-z/-k/-t/-d) details were never consumed elsewhere; the
     // canonical bit is just "shfunc exists with PM_UNDEFINED".
     let _ = AutoloadFlags::NO_ALIAS;
-    for name in shard.autoload_functions.keys() {
-        if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
-            tab.add(crate::ported::hashtable::shfunc_autoload(name));
-        }
-        total += 1;
-    }
+    // Register through compinit's own helper so the stubs carry the flag
+    // word `autoload -rUz` produces — PM_UNDEFINED | PM_UNALIASED |
+    // PM_ZSHSTORED (compinit sh:337/541). The bare `shfunc_autoload` used
+    // here before set only PM_UNDEFINED, which loses two things: the body
+    // is parsed WITH alias expansion (the `-U` that exists precisely to
+    // stop a caller's `alias helper=…` from rewriting a completer), and
+    // `autoload_source_stamps`-based chunk caching declines to cache a
+    // body whose parse could depend on the alias table.
+    total +=
+        crate::compsys::ported::compinit::register_autoload_stubs(shard.autoload_functions.keys());
 
     // zstyle: shard stores `Vec<(pattern, "style val val ...")>` —
     // split the joined-rest back into (style, values) so the exec
