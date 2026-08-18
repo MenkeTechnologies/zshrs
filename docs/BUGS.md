@@ -19,6 +19,78 @@ CI green pending the underlying fix.
 
 ---
 
+## #1083 — a quoted word that was entirely one expansion vanished when the pattern held a backslash — fixed
+
+**Status:** `fixed` 2026-08-18.
+
+```zsh
+setopt extendedglob; s=''
+f() { print $# }
+f "${s##[^:\\]}"
+```
+
+zsh prints `1` (one empty argument); zshrs printed `0` — the word was
+dropped entirely. `%%` behaved the same, `(M)` was irrelevant, a
+backslash-free pattern was fine, and `"X${…}"` / `"${…}X"` were fine.
+
+Two causes compounded. `stringsubst` deleted the lexer's `Dnull` quote
+markers as "noise"; C keeps every inull marker through stringsubst so
+prefork's empty-node test (c:Src/subst.c:100 `if (*(char *)getdata(node))
+… else if (!keep) uremnode`) still sees a NON-empty node, with
+`remnulargs` (c:170, c:3673-3675) stripping them afterwards and
+re-inserting the Nularg sentinel. Then `BUILTIN_BRACE_EXPAND` — which the
+word reaches only because its text carries the Inbrace token — routed the
+surviving lone empty node through `nodes_to_value`, which collapses it to
+zero words unless `in_dq_context > 0`, and `BUILTIN_EXPAND_TEXT` has
+already decremented that. `xpandbraces` only rewrites word TEXT
+(c:Src/glob.c), so a scalar that brace-expands to one word now stays
+scalar.
+
+---
+
+## #1084 — `"${unset[@]}"` expanded to zero words instead of one empty word — fixed
+
+**Status:** `fixed` 2026-08-18.
+
+```zsh
+unset u; e=()
+f() { print $# }
+f "${u[@]}"      # zsh 1, zshrs 0
+f "${e[@]}"      # zsh 0, zshrs 0   (already correct)
+a=( "${u[@]}" )  # zsh len 1, zshrs len 0
+```
+
+c:Src/subst.c:3603-3610 leaves `isarr` at 0 for an unset parameter and
+sets `val = ""`, i.e. a SCALAR empty — so a quoted splat of an unset name
+is one empty word, while a quoted splat of an empty ARRAY is none.
+`BUILTIN_ARRAY_ALL` returned an empty array for the unset case, collapsing
+both shapes. It now returns a scalar empty; the unquoted form still drops
+it because the compiler emits `BUILTIN_ARRAY_DROP_EMPTY` after the splice
+only for non-DQ words (`compile_zsh.rs`), and that builtin maps an empty
+`Str` to an empty array.
+
+---
+
+## #1085 — `_describe` added no match when the caller's array was never assigned — fixed
+
+**Status:** `fixed` 2026-08-18.
+
+`_describe` sh:82 builds its per-call stash with
+`eval local "_a_$_try$_i;_a_$_try$_i"'=( "${'$1'[@]}" )'` — a quoted SPLAT
+of the caller's array. Per #1084 that is one EMPTY element for an UNSET
+name and nothing for an empty array; the port's
+`getaparam(..).unwrap_or_default()` erased the difference, so sh:114-115
+expanded to no word where zsh expands to one and `_describe` added no
+match at all.
+
+Visible as a one-match difference in a 1843-item listing: a completer that
+fills its array only from an empty cache file (the tag group then carries
+zsh's invisible empty match and zshrs's carried none). Scoped to the stash
+— every other array read in the port keeps the plain resolver, so a
+completer with no registered tagset still returns 1.
+
+---
+
 ## #1079 — numeric sort parked every digit-initial element at the end of the array — fixed
 
 **Status:** `fixed` 2026-08-16.
