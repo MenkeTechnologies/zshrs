@@ -352,6 +352,69 @@ fn spawn_orphan_guard() {
     });
 }
 
+/// Take the JSON-RPC stream off fds 0/1 and leave `/dev/null` there.
+///
+/// The LSP hosts a real shell: completers spawn children (`_call_program`,
+/// command substitution inside a completer, `zle`-less `$(…)` in a
+/// user function), and every child inherits fds 0/1. On stdio transport
+/// those two fds ARE the protocol:
+///
+///   * a child that reads stdin eats the editor's requests — the server
+///     then sees EOF and exits mid-session (observed: "stdin EOF,
+///     shutting down" one dispatch after the first `git <tab>`);
+///   * a child that writes stdout injects its bytes between two
+///     `Content-Length` frames and corrupts the stream.
+///
+/// So dup the real endpoints to private fds, point 0/1 at `/dev/null`,
+/// and talk to the editor exclusively through the dups. No descendant
+/// can reach the protocol afterwards, whichever exec path it takes.
+///
+/// Falls back to plain stdin/stdout if the dance fails — a server that
+/// speaks LSP over a corruptible transport still beats one that will
+/// not start.
+fn claim_protocol_fds() -> (BufReader<Box<dyn io::Read + Send>>, Box<dyn Write + Send>) {
+    #[cfg(unix)]
+    {
+        use std::os::fd::FromRawFd;
+        // SAFETY: `dup` on 0/1 yields fresh owned descriptors; each is
+        // handed to exactly one File that owns it from here on. The
+        // `/dev/null` open + dup2 replaces 0/1 in this process only.
+        unsafe {
+            let in_fd = libc::dup(0);
+            let out_fd = libc::dup(1);
+            if in_fd >= 0 && out_fd >= 0 {
+                let devnull = std::ffi::CString::new("/dev/null").expect("static cstr");
+                let null_fd = libc::open(devnull.as_ptr(), libc::O_RDWR);
+                if null_fd >= 0 {
+                    libc::dup2(null_fd, 0);
+                    libc::dup2(null_fd, 1);
+                    if null_fd > 2 {
+                        libc::close(null_fd);
+                    }
+                    tracing::info!(
+                        target: "zshrs::lsp",
+                        in_fd,
+                        out_fd,
+                        "protocol fds moved off 0/1; children see /dev/null",
+                    );
+                    let r: Box<dyn io::Read + Send> = Box::new(std::fs::File::from_raw_fd(in_fd));
+                    let w: Box<dyn Write + Send> = Box::new(std::fs::File::from_raw_fd(out_fd));
+                    return (BufReader::new(r), w);
+                }
+                libc::close(in_fd);
+                libc::close(out_fd);
+            }
+            tracing::warn!(
+                target: "zshrs::lsp",
+                "could not move protocol fds off 0/1 — a completer subprocess could corrupt the stream",
+            );
+        }
+    }
+    let r: Box<dyn io::Read + Send> = Box::new(io::stdin());
+    let w: Box<dyn Write + Send> = Box::new(io::stdout());
+    (BufReader::new(r), w)
+}
+
 pub fn run_lsp() -> i32 {
     tracing::info!(
         target: "zshrs::lsp",
@@ -359,11 +422,10 @@ pub fn run_lsp() -> i32 {
         "starting --lsp",
     );
     spawn_orphan_guard();
+    // Move the JSON-RPC endpoints off fds 0/1 BEFORE anything shell-side
+    // can spawn a child (see `claim_protocol_fds`).
+    let (mut reader, mut writer) = claim_protocol_fds();
     let mut state = State::default();
-    let stdin = io::stdin();
-    let mut reader = BufReader::new(stdin.lock());
-    let stdout = io::stdout();
-    let mut writer = stdout.lock();
 
     let log_path = std::env::var("ZSHRS_LSP_LOG").ok();
     let mut log = log_path.as_ref().and_then(|p| {
@@ -409,6 +471,13 @@ pub fn run_lsp() -> i32 {
         let response = match method.as_deref() {
             Some("initialize") => {
                 ingest_workspace_init(&mut state, &params);
+                // Start the compsys shell thread now (non-blocking) so
+                // the first `git <tab>` in a script finds a warm shell:
+                // executor built, rkyv canonical shard applied, compdef
+                // map published. Completion requests that arrive before
+                // it is ready answer `isIncomplete` and the client
+                // re-requests.
+                crate::compsys::in_editor::bootstrap();
                 Some(handle_initialize(id, &params))
             }
             Some("initialized") => None,
@@ -1743,9 +1812,30 @@ fn completion(state: &State, params: &Value) -> Value {
     json!({ "isIncomplete": false, "items": items })
 }
 
-/// Phase-0 stub: returns `None` today. When Phase 0.5 lands this
-/// drives `crate::compsys::in_editor::complete_at` and translates
-/// the resulting `CompsysMatch`es to LSP `CompletionItem` JSON.
+/// Translate an LSP `character` offset (UTF-16 code units) into a
+/// byte offset inside `line`.
+///
+/// Clamps past-end positions to the line length — an IDE can report a
+/// cursor one past the last character on the line.
+fn utf16_col_to_byte(line: &str, col_u16: usize) -> usize {
+    let mut units = 0usize;
+    for (byte_idx, ch) in line.char_indices() {
+        if units >= col_u16 {
+            return byte_idx;
+        }
+        units += ch.len_utf16();
+    }
+    line.len()
+}
+
+/// Drive the real compsys engine for the cursor's line and translate
+/// the resulting `CompsysMatch`es to LSP `CompletionItem` JSON — this
+/// is what makes `git ch<tab>` inside a script complete `checkout`
+/// from the user's `_git`, same as the prompt.
+///
+/// Runs on the shared shell thread
+/// (`crate::compsys::in_editor::complete_at`); returns `None` when
+/// that produced nothing so the caller keeps its hand-table answer.
 /// Kept private so the LSP completion flow stays the one entry
 /// point; the public entry is the JSON-RPC `textDocument/completion`
 /// method.
@@ -1754,19 +1844,70 @@ fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
     let pos = &params["position"];
     let text = state.docs.get(uri)?;
     let line_no = pos["line"].as_u64()? as usize;
-    let col = pos["character"].as_u64()? as usize;
+    let col_u16 = pos["character"].as_u64()? as usize;
     let line_text = text.lines().nth(line_no)?;
-    // NB: Phase 0 ignores the multibyte distinction. Phase 0.5
-    // will translate the LSP `character` UTF-16 unit count to a
-    // byte index against `line_text`. Today the stub returns empty
-    // regardless of cursor position.
-    let req = crate::compsys::in_editor::CompsysRequest::new_with_default_budget(line_text, col);
+    // LSP `character` counts UTF-16 code units; compsys wants a byte
+    // offset into the line. Equal for ASCII, different the moment the
+    // line holds a non-BMP char or any multi-byte one.
+    let col = utf16_col_to_byte(line_text, col_u16);
+    // Cold-start budget: the first dispatch after editor launch may
+    // autoload a large completer from `$fpath` (`_git` is 424 KB of
+    // shell to parse), which does not fit the steady-state 200 ms.
+    // Every later request uses the tight budget.
+    static WARM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    // 350 ms steady: the slowest completers here are the exec-backed
+    // ones (`git checkout <tab>` → `git for-each-ref`, measured 223 ms
+    // cold on this tree), and the LSP request loop is single-threaded,
+    // so the budget doubles as the worst-case stall for any other
+    // request behind it. Overruns are not lost — the dispatch finishes
+    // in the background and the client's next request is served from
+    // `in_editor`'s late-result cache.
+    let budget = if WARM.load(std::sync::atomic::Ordering::Relaxed) {
+        std::time::Duration::from_millis(350)
+    } else {
+        std::time::Duration::from_millis(2000)
+    };
+    let req = crate::compsys::in_editor::CompsysRequest::new_with_budget(line_text, col, budget);
     let resp = crate::compsys::in_editor::complete_at(req);
+    if !resp.matches.is_empty() {
+        WARM.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if resp.matches.is_empty() && !resp.is_incomplete {
         return None;
     }
-    let items: Vec<Value> = resp
-        .matches
+    // Collapse the same word proposed more than once.
+    //
+    // Two sources of duplicates, both normal compsys behaviour:
+    //   * `compdescribe`'s two-phase add — a bare `compadd` pass plus a
+    //     `-d display-array` pass — so every `_git` flag arrives twice,
+    //     once with no description and once with one;
+    //   * a word that belongs to several groups (a flag that is both
+    //     global and subcommand-local).
+    //
+    // Keep first-seen ORDER but let a later described copy fill in an
+    // empty description, so the popup shows one row per word with the
+    // best text available.
+    let mut order: Vec<String> = Vec::with_capacity(resp.matches.len());
+    let mut best: std::collections::HashMap<String, crate::compsys::in_editor::CompsysMatch> =
+        std::collections::HashMap::new();
+    for m in &resp.matches {
+        match best.get_mut(&m.completion) {
+            None => {
+                order.push(m.completion.clone());
+                best.insert(m.completion.clone(), m.clone());
+            }
+            Some(prev) => {
+                let prev_empty = prev.description.as_deref().unwrap_or("").is_empty();
+                let now_has = !m.description.as_deref().unwrap_or("").is_empty();
+                if prev_empty && now_has {
+                    *prev = m.clone();
+                }
+            }
+        }
+    }
+    let deduped: Vec<crate::compsys::in_editor::CompsysMatch> =
+        order.iter().filter_map(|k| best.remove(k)).collect();
+    let items: Vec<Value> = deduped
         .iter()
         .map(|m| {
             // Map CompsysMatch.group → LSP kind:
@@ -1793,10 +1934,24 @@ fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
                 Some("files") | Some("directories") => "4",
                 _ => "5",
             };
+            // compsys descriptions arrive as the LIST DISPLAY line —
+            // `--version             -- display version information`.
+            // The word is already the label, so keep only the prose
+            // after the `--` separator zsh renders.
             let detail = m
                 .description
                 .clone()
-                .unwrap_or_else(|| m.group.clone().unwrap_or_default());
+                .map(|d| match d.split_once(" -- ") {
+                    Some((_, prose)) => prose.trim().to_string(),
+                    None => d.trim().to_string(),
+                })
+                .filter(|d| !d.is_empty())
+                // Group names are the fallback, but only real ones:
+                // compsys's internal groups are dash-wrapped
+                // (`-default-`), and showing that as a description is
+                // noise in a popup.
+                .or_else(|| m.group.clone().filter(|g| !g.starts_with('-')))
+                .unwrap_or_default();
             json!({
                 "label": m.completion,
                 "kind": kind,

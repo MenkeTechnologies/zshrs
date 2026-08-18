@@ -681,7 +681,7 @@ default build lean.
 
 | Capability                          | Trigger                                  |
 |-------------------------------------|------------------------------------------|
-| `completion`                        | builtins, keywords, options, special vars, in-file functions |
+| `completion`                        | builtins, keywords, options, special vars, in-file functions **plus live compsys matches** — the same `_git` / `_docker` / `_ssh` completers a Tab press drives, so `git ch` completes `checkout` and `git checkout ` lists branches (see `docs/IN_EDITOR_COMPSYS_COMPLETION.md`) |
 | `hover`                             | markdown cards for builtins / keywords / options / special vars |
 | `definition` / `references`         | function names declared in the open document |
 | `documentHighlight`                 | same scan as references                  |
@@ -694,6 +694,14 @@ default build lean.
 
 Trigger characters for completion: `$`, `{`, `-`, `:`. Optional
 `ZSHRS_LSP_LOG=<path>` env var dumps every request/response for debugging.
+
+Compsys completion reads the recorded environment from the canonical
+rkyv shard (`~/.zshrs/images/*-recorder.rkyv`) — `compdef` map, `fpath`,
+autoload stubs, `zstyle` — so it needs `zshrs record` to have run at
+least once; without a shard the LSP still completes everything else in
+the table above. Completers that shell out (`git for-each-ref` behind
+`git checkout <tab>`) run with their subprocess killed at the request
+deadline, and never inherit the editor's stdin/stdout.
 
 ### DAP capabilities (`zshrs --dap [HOST:PORT]`)
 

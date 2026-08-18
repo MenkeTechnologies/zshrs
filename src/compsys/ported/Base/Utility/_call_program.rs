@@ -38,7 +38,8 @@ use crate::compsys::ported::_comp_locale::_comp_locale;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use std::env;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Output, Stdio};
 
 /// `_call_program` — run a helper command and capture stdout.
 /// First arg is the style key suffix; flags `-p` (privileged) and
@@ -122,9 +123,29 @@ pub fn _call_program(args: &[String]) -> i32 {
         }
     }
 
-    let output = match cmd.output() {
-        Ok(o) => o,
-        Err(_) => return 1,
+    // In-editor dispatch (LSP): a completion helper must never
+    // outlive the request budget, and with exec disabled it must not
+    // run at all. Outside an in-editor dispatch `exec_policy()` is
+    // None and the interactive `output()` path below runs unchanged.
+    let output = match crate::compsys::in_editor::exec_policy() {
+        Some((false, _)) => {
+            // Exec-free mode: no subprocess. Callers see an empty
+            // `$REPLY` + non-zero status and fall back to their
+            // static specs, same as a helper that produced nothing.
+            let _ = crate::ported::params::setsparam("REPLY", "");
+            return 1;
+        }
+        Some((true, deadline)) => match run_with_deadline(cmd, deadline) {
+            Some(o) => o,
+            None => {
+                let _ = crate::ported::params::setsparam("REPLY", "");
+                return 1;
+            }
+        },
+        None => match cmd.output() {
+            Ok(o) => o,
+            Err(_) => return 1,
+        },
     };
 
     // Publish stdout for caller via REPLY (a zshrs convenience the native
@@ -182,6 +203,62 @@ pub fn _call_program(args: &[String]) -> i32 {
     } else {
         1
     }
+}
+
+/// Run `cmd` but kill it at `deadline`, returning its output if it
+/// finished in time.
+///
+/// Used only by the in-editor (LSP) dispatch. `Command::output()`
+/// waits forever, which is correct at an interactive prompt — the
+/// user can hit ^C — and wrong in an editor, where a slow or hung
+/// helper (`git ls-remote`, an unreachable `kubectl` context) would
+/// wedge the completion thread with nobody to interrupt it.
+///
+/// stdout is drained on a reader thread so a helper that fills the
+/// pipe buffer can still be killed: with an unread pipe the child
+/// blocks in `write()` and never exits, so `try_wait` would spin to
+/// the deadline even for fast commands.
+fn run_with_deadline(mut cmd: Command, deadline: std::time::Instant) -> Option<Output> {
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    // NEVER inherit stdin here. In the LSP the parent's fd 0 is the
+    // JSON-RPC stream from the editor: a helper that reads stdin (any
+    // `git` subcommand that thinks it can prompt, `sh -c` reading a
+    // heredoc it never got) consumes the protocol bytes, the server
+    // then sees EOF and exits mid-session. Observed as "stdin EOF,
+    // shutting down" one dispatch after the first `git <tab>`.
+    cmd.stdin(Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut stdout = stdout;
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            tracing::debug!(
+                target: "zshrs::compsys::in_editor",
+                "_call_program: helper killed at completion deadline",
+            );
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    let stdout = reader.join().unwrap_or_default();
+    Some(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
 }
 
 #[cfg(test)]
