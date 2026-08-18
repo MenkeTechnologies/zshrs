@@ -131,12 +131,25 @@ pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
     // reported "added nothing" and returned 1 — `unset <TAB>` offered 197
     // names against zsh's 496 — and the same idiom in `_alternative`,
     // `_describe` and `_arguments` mis-fired the same way.
-    if resolved == "compstate" && key == "nmatches" {
+    // The same applies to the other NINE gsu-backed rows
+    // (c:complete.c:1261-1300): list_lines, list_max, unambiguous,
+    // unambiguous_cursor, unambiguous_positions, insert_positions, vared,
+    // all_quotes, ignored. Only `nmatches` was served live here, so
+    // `$compstate[list_lines]` and friends read empty from shell code
+    // where zsh reports a value.
+    if resolved == "compstate"
+        && crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS.contains(&key)
+    {
         return Some((
             true,
             Some(
-                crate::ported::zle::compcore::get_compstate_str("nmatches")
-                    .unwrap_or_else(|| "0".to_string()),
+                crate::ported::zle::compcore::get_compstate_str(key).unwrap_or_else(|| {
+                    if key == "nmatches" {
+                        "0".to_string()
+                    } else {
+                        String::new()
+                    }
+                }),
             ),
         ));
     }

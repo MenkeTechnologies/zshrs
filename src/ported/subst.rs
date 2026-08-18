@@ -7233,10 +7233,24 @@ pub fn paramsubst(
                 // (`unset <TAB>` offered 197 names where zsh offers 496), and
                 // the same idiom in `_alternative`/`_describe`/`_arguments`
                 // silently mis-fired. Serve it live, exactly as C's getter.
-                let v = if resolved == "compstate" && sub == "nmatches" {
+                // c:complete.c:1261-1300 — TEN compstate keys carry a gsu
+                // vtable rather than stored data, so C recomputes each on
+                // every read. Only `nmatches` was served live here; the
+                // other nine came back from the hashed store, which never
+                // held them, so a subscripted read got the empty string —
+                // `$compstate[list_lines]` read empty where zsh reports a
+                // line count, and the same for `unambiguous`,
+                // `unambiguous_cursor`, `unambiguous_positions`,
+                // `insert_positions`, `list_max`, `vared`, `all_quotes`
+                // and `ignored`. The whole-hash paths (gethparam /
+                // gethkparam, params.rs:6004/6108) already refresh all
+                // ten; this is the same contract for `$compstate[KEY]`.
+                let v = if resolved == "compstate"
+                    && crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS.contains(&sub)
+                {
                     Some(
-                        crate::ported::zle::compcore::get_compstate_str("nmatches")
-                            .unwrap_or_else(|| "0".to_string()),
+                        crate::ported::zle::compcore::get_compstate_str(sub)
+                            .unwrap_or_else(|| if sub == "nmatches" { "0".into() } else { String::new() }),
                     )
                 } else {
                     paramtab_hashed_storage()
