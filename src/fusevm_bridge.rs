@@ -5134,7 +5134,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // `Some(vec![])` arm above), which sets isarr and gets
                             // the word deleted at c:4362.
                             note_empty_is_scalar(true);
-                            Value::array(vec![])
+                            // c:Src/subst.c:3603-3610 — an UNSET parameter leaves `isarr` at 0
+                            // and yields `val = ""`, i.e. a SCALAR empty, so a quoted
+                            // `"${u[@]}"` is ONE empty word (`f "${u[@]}"` → $# == 1) while
+                            // `"${empty_array[@]}"` is zero. Returning an empty ARRAY here
+                            // collapsed both to zero words. The unquoted form still drops it:
+                            // the compiler emits BUILTIN_ARRAY_DROP_EMPTY after this call for
+                            // non-DQ splices (compile_zsh.rs:6149), and that builtin maps an
+                            // empty Str to an empty array.
+                            Value::str(String::new())
                         } else if opt_state_get("shwordsplit").unwrap_or(false) {
                             // c:3921 `aval = sepsplit(val, spsep, 0, 1)` — same
                             // splitter as `${=name}` (Src/utils.c:3711 spacesplit),
