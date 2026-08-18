@@ -680,6 +680,7 @@ pub(crate) fn try_run_registered_builtin(name: &str, argv: &[String]) -> Option<
         "doctor" => with_executor(|e| e.builtin_doctor(argv)),
         "dbview" => with_executor(|e| e.builtin_dbview(argv)),
         "profile" => with_executor(|e| e.builtin_profile(argv)),
+        "provenance" => with_executor(|e| e.builtin_provenance(argv)),
         "caller" => with_executor(|e| e.builtin_caller(argv)),
         "help" => with_executor(|e| e.builtin_help(argv)),
         "cdreplay" => with_executor(|e| e.builtin_cdreplay(argv)),
@@ -2571,6 +2572,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_ext_overridable!(vm, BUILTIN_DOCTOR, "doctor", builtin_doctor);
     reg_ext_overridable!(vm, BUILTIN_DBVIEW, "dbview", builtin_dbview);
     reg_ext_overridable!(vm, BUILTIN_PROFILE, "profile", builtin_profile);
+    reg_ext_overridable!(
+        vm,
+        BUILTIN_PROVENANCE,
+        "provenance",
+        builtin_provenance
+    );
 
     reg_passthru!(vm, BUILTIN_ZPROF, "zprof");
 
@@ -5721,8 +5728,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         Value::str(val)
     }
-    vm.register_builtin(BUILTIN_GET_VAR, |vm, argc| get_var_impl(vm, argc, false));
-    vm.register_builtin(BUILTIN_GET_VAR_DQ, |vm, argc| get_var_impl(vm, argc, true));
+    // Provenance: BUILTIN_GET_VAR / _DQ are the bytecode-level parameter
+    // READ ops, so this is the tap that hands a tracked parameter's
+    // lineage to the value the read produced. The name is peeked off the
+    // stack before `get_var_impl` consumes it.
+    fn get_var_prov(vm: &mut fusevm::VM, argc: u8, force_dq: bool) -> Value {
+        if !crate::provenance::active() {
+            return get_var_impl(vm, argc, force_dq);
+        }
+        let name = vm.peek().to_str();
+        let value = get_var_impl(vm, argc, force_dq);
+        crate::provenance::on_param_read(&name, &value);
+        value
+    }
+    vm.register_builtin(BUILTIN_GET_VAR, |vm, argc| get_var_prov(vm, argc, false));
+    vm.register_builtin(BUILTIN_GET_VAR_DQ, |vm, argc| get_var_prov(vm, argc, true));
 
     // `name+=val` (no parens) — runtime dispatch:
     //   - if `name` is in `arrays` → push `val` as new element
@@ -6860,6 +6880,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // [n], updates `$LINENO` in the variable table.
     vm.register_builtin(BUILTIN_SET_LINENO, |vm, _argc| {
         let n = vm.pop().to_int();
+        // Provenance: mirror the line into the lineage ledger's own
+        // counter. The param-write hooks run inside the parameter
+        // table's lock, so they cannot read `$LINENO` back out of it.
+        if crate::provenance::active() {
+            crate::provenance::note_line(n.max(0) as usize);
+        }
         // c:Src/exec.c:lineno = N — direct write to the param's
         // u_val. Cannot go through setsparam because LINENO carries
         // PM_READONLY (so `(t)LINENO` reads `integer-readonly-special`
@@ -7271,9 +7297,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let rhs = vm.pop();
         let lhs = vm.pop();
         if plan9_active() {
-            return concat_plan9(lhs, rhs);
+            return concat_plan9_prov(lhs, rhs);
         }
-        concat_splice(lhs, rhs)
+        concat_splice_prov(lhs, rhs)
     });
 
     // BUILTIN_CONCAT_DISTRIBUTE — word-segment concat. With
@@ -7296,7 +7322,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_CONCAT_PLAN9, |vm, _argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
-        concat_plan9(lhs, rhs)
+        concat_plan9_prov(lhs, rhs)
     });
 
     // `${^^arr}` — RC_EXPAND_PARAM forced OFF (c:2553-2555 `plan9 = 0`). Every
@@ -7306,7 +7332,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_CONCAT_SPLICE_NOPLAN9, |vm, _argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
-        concat_splice(lhs, rhs)
+        concat_splice_prov(lhs, rhs)
     });
 
     vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE_FORCED, |vm, _argc| {
@@ -7414,6 +7440,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let strs: Vec<String> = arr.iter().map(|v| v.as_str_cow().into_owned()).collect();
                 crate::ported::utils::sepjoin(&strs, None)
             };
+            // Provenance: the DQ-join arm consumes both operands, so
+            // capture them first (Arc clones, only while armed).
+            let prov_operands = crate::provenance::active().then(|| (lhs.clone(), rhs.clone()));
             let l = match lhs {
                 Value::Array(a) => join_arr(&a),
                 other => other.as_str_cow().into_owned(),
@@ -7425,7 +7454,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let mut s = String::with_capacity(l.len() + r.len());
             s.push_str(&l);
             s.push_str(&r);
-            return Value::str(s);
+            let out = Value::str(s);
+            if let Some((pl, pr)) = prov_operands {
+                crate::provenance::on_concat(&pl, &pr, &out);
+            }
+            return out;
         }
         // Unquoted plain `${arr}`: same runtime dispatch as
         // BUILTIN_CONCAT_SPLICE — c:4245 `if (isarr)` always distributes
@@ -7434,9 +7467,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // concat_splice / concat_plan9 both honor EMPTY_EXPANSION_IS_SCALAR
         // so the p10k `${(P)2}` empty-array word-removal semantics survive.
         if plan9_active() {
-            return concat_plan9(lhs, rhs);
+            return concat_plan9_prov(lhs, rhs);
         }
-        concat_splice(lhs, rhs)
+        concat_splice_prov(lhs, rhs)
     });
 
     // See BUILTIN_WORD_ASSEMBLE_PLAN9's doc comment for the stack contract.
@@ -10702,7 +10735,40 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
         .into_iter()
         .map(|n| crate::ported::lex::untokenize(&n))
         .collect();
-    nodes_to_value(nodes)
+    let value = nodes_to_value(nodes);
+    // Provenance: this is the funnel every `${...}` bytecode fast path
+    // reaches, so it is where a tracked parameter's chain is handed to
+    // the value the expansion produced.
+    if crate::provenance::active() {
+        if let Some(name) = prov_subst_name(body) {
+            crate::provenance::on_param_read(&name, &value);
+        }
+    }
+    value
+}
+
+/// Parameter name inside a `${...}` expansion body, for the provenance
+/// tap in `paramsubst_to_value_pf`. Skips a leading `(flags)` group and
+/// the `#`/`+`/`^`/`=`/`~` prefix sigils, then takes the identifier —
+/// `${(k)assoc[key]}` yields `assoc`, `${#F}` yields `F`. Returns `None`
+/// for the forms with no single named source (`$(...)`, `${(%)...}`).
+fn prov_subst_name(body: &str) -> Option<String> {
+    let mut rest = body.strip_prefix("${").or_else(|| body.strip_prefix('$'))?;
+    rest = rest.trim_end_matches('}');
+    // Skip one leading `(flags)` group.
+    if let Some(after) = rest.strip_prefix('(') {
+        rest = after.split_once(')').map(|(_, r)| r)?;
+    }
+    rest = rest.trim_start_matches(['#', '+', '^', '=', '~']);
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Wrap a `Vec<String>` (e.g. paramsubst nodes, multsub parts,
@@ -10774,6 +10840,31 @@ fn restore_empty_shape(v: Value, was_scalar: bool) -> Value {
         note_empty_is_scalar(was_scalar);
     }
     v
+}
+
+/// `concat_splice` with the provenance tap applied to the result. Every
+/// concat bytecode op routes through this (or `concat_plan9_prov`), so a
+/// word built out of a tracked parameter keeps that parameter's lineage
+/// even though the concatenated bytes are a fresh allocation.
+fn concat_splice_prov(lhs: Value, rhs: Value) -> Value {
+    if !crate::provenance::active() {
+        return concat_splice(lhs, rhs);
+    }
+    let (l, r) = (lhs.clone(), rhs.clone());
+    let out = concat_splice(lhs, rhs);
+    crate::provenance::on_concat(&l, &r, &out);
+    out
+}
+
+/// `concat_plan9` with the provenance tap. See `concat_splice_prov`.
+fn concat_plan9_prov(lhs: Value, rhs: Value) -> Value {
+    if !crate::provenance::active() {
+        return concat_plan9(lhs, rhs);
+    }
+    let (l, r) = (lhs.clone(), rhs.clone());
+    let out = concat_plan9(lhs, rhs);
+    crate::provenance::on_concat(&l, &r, &out);
+    out
 }
 
 /// c:Src/subst.c:4366-4437 — the NON-plan9 arm of paramsubst's array
@@ -11901,6 +11992,14 @@ pub const BUILTIN_COND_ACCESS: u16 = 638;
 /// Bool (true = condition matched). Used by the `ZshCond::ModCond` compile arm.
 pub const BUILTIN_COND_MOD: u16 = 651;
 
+/// `provenance` — report the lineage of a tracked parameter: where its
+/// bytes entered the shell (command substitution, glob, heredoc, an
+/// earlier assignment) and every bytecode-level op that touched them
+/// since. Handler: `ShellExecutor::builtin_provenance`; engine:
+/// `src/extensions/provenance.rs`. ID 661 is the first free slot above
+/// the 653-660 block.
+pub const BUILTIN_PROVENANCE: u16 = 661;
+
 /// Update `$LINENO` to track the source line of the next statement.
 /// Stack: \[n\] (the line number from `ZshPipe.lineno`). Direct port
 /// of zsh's `lineno` global tracking (Src/input.c:330) — the
@@ -12444,9 +12543,29 @@ pub const BUILTIN_PARAM_FLAG: u16 = 297;
 /// directly (Src/exec.c lines 1349/1668).
 pub struct ZshrsHost;
 
+/// Short label for a sub-chunk, used as a provenance origin. A `Chunk`
+/// keeps no original source text (only ops, constants and a source
+/// *file* name), so the readable handle is reconstructed from the
+/// leading string constants — for `$(date +%s)` that is `date +%s`.
+fn prov_chunk_label(sub: &fusevm::Chunk) -> String {
+    sub.constants
+        .iter()
+        .filter_map(|c| match c {
+            Value::Str(s) if !s.is_empty() => Some(s.as_str()),
+            _ => None,
+        })
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl fusevm::ShellHost for ZshrsHost {
     fn glob(&mut self, pattern: &str, _recursive: bool) -> Vec<String> {
-        with_executor(|exec| exec.expand_glob(pattern))
+        let matches = with_executor(|exec| exec.expand_glob(pattern));
+        if crate::provenance::active() {
+            crate::provenance::on_glob(pattern, &matches);
+        }
+        matches
     }
 
     fn tilde_expand(&mut self, s: &str) -> String {
@@ -12510,7 +12629,15 @@ impl fusevm::ShellHost for ZshrsHost {
         // (value fetch) and paramsubst's modifier-walk loop. This
         // bridge is the value-fetch step only.
         let val_str = crate::ported::params::getsparam(name).unwrap_or_default();
-        Value::str(val_str)
+        let value = Value::str(val_str);
+        // Provenance: a read of a tracked parameter hands the
+        // parameter's chain to the produced value, by `Arc` identity
+        // for the rest of this chunk and by content for the host
+        // boundaries downstream that only see `String`.
+        if crate::provenance::active() {
+            crate::provenance::on_param_read(name, &value);
+        }
+        value
     }
 
     fn process_sub_in(&mut self, sub: &fusevm::Chunk) -> String {
@@ -12694,7 +12821,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 crate::fusevm_bridge::note_psub_child(child_pid);
             }
         }
-        format!("/dev/fd/{}", read_end)
+        let path = format!("/dev/fd/{}", read_end);
+        if crate::provenance::active() {
+            crate::provenance::on_process_subst(&prov_chunk_label(sub), &path);
+        }
+        path
     }
 
     fn process_sub_out(&mut self, sub: &fusevm::Chunk) -> String {
@@ -12797,7 +12928,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
                 let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
                 PSUB_PENDING_FDS.with(|v| v.borrow_mut().push((depth, write_end)));
-                format!("/dev/fd/{}", write_end)
+                let path = format!("/dev/fd/{}", write_end);
+                if crate::provenance::active() {
+                    crate::provenance::on_process_subst(&prov_chunk_label(sub), &path);
+                }
+                path
             }
         }
     }
@@ -13483,6 +13618,9 @@ impl fusevm::ShellHost for ZshrsHost {
         // before reaching here; unquoted forms route through the
         // BUILTIN_EXPAND_TEXT mode-4 emit path that calls singsub.
         // This handler covers the verbatim/quoted case.
+        if crate::provenance::active() {
+            crate::provenance::on_heredoc("heredoc", content);
+        }
         with_executor(|exec| exec.host_set_pending_stdin(content.to_string()));
     }
 
@@ -13495,6 +13633,9 @@ impl fusevm::ShellHost for ZshrsHost {
         // of `host.herestring` see the already-expanded form.
         let mut s = content.to_string();
         s.push('\n');
+        if crate::provenance::active() {
+            crate::provenance::on_heredoc("herestring", &s);
+        }
         with_executor(|exec| exec.host_set_pending_stdin(s));
     }
 
@@ -13613,6 +13754,11 @@ impl fusevm::ShellHost for ZshrsHost {
         if let Some(last) = args.last() {
             crate::ported::params::set_zunderscore(std::slice::from_ref(last)); // c:3546
         }
+        // Provenance: record which argv slot each tracked value landed
+        // in, before the command consumes it.
+        if crate::provenance::active() {
+            crate::provenance::on_exec("exec", &args);
+        }
         // Route external command spawning through `executor.execute_external`
         // so intercepts (AOP before/after/around), command_hash lookups,
         // pre/postexec hooks, and zsh-specific fork-then-exec all apply.
@@ -13700,6 +13846,11 @@ impl fusevm::ShellHost for ZshrsHost {
         while buf.ends_with('\n') {
             buf.pop();
         }
+        // Provenance: a command substitution is a lineage ORIGIN — the
+        // bytes did not exist in the shell before this ran.
+        if crate::provenance::active() {
+            crate::provenance::on_cmd_subst(&prov_chunk_label(sub), &buf);
+        }
         buf
     }
 
@@ -13737,6 +13888,16 @@ impl fusevm::ShellHost for ZshrsHost {
         if redir_failed {
             with_executor(|exec| exec.set_last_status(1));
             return Some(1);
+        }
+        // Provenance: same argv record as `exec`, but ONLY when the name
+        // really resolves to a shell function — an external command
+        // reaches `exec` further down and would otherwise be recorded
+        // twice for the same call site.
+        if crate::provenance::active() && with_executor(|exec| exec.function_exists(name)) {
+            let mut argv = Vec::with_capacity(args.len() + 1);
+            argv.push(name.to_string());
+            argv.extend(args.iter().cloned());
+            crate::provenance::on_exec("call", &argv);
         }
         // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln/zcalc are zsh autoload
         // functions, NOT builtins. zshrs ships fast native impls, but they

@@ -36,6 +36,12 @@
 //!
 //! [log]
 //! level = "info"      # trace, debug, info, warn, error
+//!
+//! [provenance]
+//! enabled = false     # disable the value-lineage engine outright
+//!                     # (default true; the engine still stays inert
+//!                     # until `provenance -m NAME` arms it).
+//!                     # `ZSHRS_PROVENANCE=0` is the env kill switch.
 //! ```
 
 use serde::Deserialize;
@@ -67,6 +73,9 @@ pub struct ZshrsConfig {
     /// `zle` field — native fish-ported editor engines (opt-in;
     /// `zshrs -f` stays zsh-identical by default). See [`ZleConfig`].
     pub zle: ZleConfig,
+    /// `provenance` field — value-lineage engine master switch. See
+    /// [`ProvenanceConfig`].
+    pub provenance: ProvenanceConfig,
 }
 /// Compsys backend selection — Rust port vs upstream shell functions.
 ///
@@ -174,7 +183,37 @@ pub struct ZleConfig {
     pub vi_backspace_unrestricted: bool,
 }
 
+/// `[provenance]` — master switch for the value-lineage engine
+/// (`src/extensions/provenance.rs`).
+///
+/// The engine is already inert until a `provenance -m NAME` call arms
+/// it, so `enabled = true` (the default) costs one relaxed atomic load
+/// per hook site and nothing else. Setting `enabled = false` refuses
+/// arming entirely: `provenance -m` reports the engine as disabled and
+/// no hook can ever fire, which is the setting to use on a machine
+/// where the ledger must not exist at all.
+///
+/// ```toml
+/// [provenance]
+/// enabled = false
+/// ```
+///
+/// `ZSHRS_PROVENANCE=0` in the environment overrides the config and
+/// disables the engine regardless of this field.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ProvenanceConfig {
+    /// Allow `provenance -m NAME` to arm the lineage ledger.
+    pub enabled: bool,
+}
+
 // ── Defaults ──
+
+impl Default for ProvenanceConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
 
 impl Default for CompletionConfig {
     fn default() -> Self {

@@ -204,6 +204,7 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "pmap",
     "printenv",
     "profile",
+    "provenance",
     "realpath",
     "rev",
     "run_tests",
@@ -700,6 +701,109 @@ impl ShellExecutor {
         println!();
 
         0
+    }
+
+    /// provenance — value lineage over bytecode execution.
+    ///
+    /// Usage:
+    ///   provenance                  — list tracked parameters
+    ///   provenance NAME             — print NAME's lineage
+    ///   provenance -m NAME...       — start tracking NAME
+    ///   provenance -u NAME...       — stop tracking NAME, drop its lineage
+    ///   provenance -j NAME          — print NAME's lineage as JSON
+    ///   provenance -c               — clear every lineage and disarm
+    ///
+    /// The engine records nothing until the first `-m`, and refuses to
+    /// arm at all when `[provenance] enabled = false` in
+    /// `~/.zshrs/zshrs.toml` or `ZSHRS_PROVENANCE=0` is set.
+    pub(crate) fn builtin_provenance(&self, args: &[String]) -> i32 {
+        use crate::provenance;
+
+        let list = || {
+            for name in provenance::tracked_names() {
+                match provenance::lookup_name(&name) {
+                    Some(node) => print!("{}", provenance::render(&name, &node)),
+                    None => println!("{}", name),
+                }
+            }
+            0
+        };
+
+        let Some(first) = args.first() else {
+            return list();
+        };
+
+        match first.as_str() {
+            "-l" => list(),
+            "-c" => {
+                provenance::clear();
+                0
+            }
+            "-m" => {
+                if !provenance::enabled() {
+                    eprintln!("zshrs: provenance: disabled by config");
+                    return 1;
+                }
+                let names = &args[1..];
+                if names.is_empty() {
+                    eprintln!("zshrs: provenance: -m: missing parameter name");
+                    return 1;
+                }
+                for name in names {
+                    let current = crate::ported::params::getsparam(name);
+                    provenance::track_name(name, current.as_deref());
+                }
+                0
+            }
+            "-u" => {
+                let names = &args[1..];
+                if names.is_empty() {
+                    eprintln!("zshrs: provenance: -u: missing parameter name");
+                    return 1;
+                }
+                let mut status = 0;
+                for name in names {
+                    if !provenance::untrack_name(name) {
+                        eprintln!("zshrs: provenance: not tracked: {}", name);
+                        status = 1;
+                    }
+                }
+                status
+            }
+            "-j" => {
+                let Some(name) = args.get(1) else {
+                    eprintln!("zshrs: provenance: -j: missing parameter name");
+                    return 1;
+                };
+                match provenance::lookup_name(name) {
+                    Some(node) => {
+                        println!("{}", provenance::render_json(name, &node));
+                        0
+                    }
+                    None => {
+                        eprintln!("zshrs: provenance: not tracked: {}", name);
+                        1
+                    }
+                }
+            }
+            flag if flag.starts_with('-') && flag.len() > 1 => {
+                eprintln!("zshrs: provenance: bad option: {}", flag);
+                1
+            }
+            _ => {
+                let mut status = 0;
+                for name in args {
+                    match provenance::lookup_name(name) {
+                        Some(node) => print!("{}", provenance::render(name, &node)),
+                        None => {
+                            eprintln!("zshrs: provenance: not tracked: {}", name);
+                            status = 1;
+                        }
+                    }
+                }
+                status
+            }
+        }
     }
 
     /// dbview — browse zshrs SQLite cache tables without SQL.

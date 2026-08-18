@@ -6369,6 +6369,20 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         );
         return None; // c:3207
     }
+    // !!! RUST-ONLY: provenance tap. Records the scalar write against
+    // the lineage ledger when `s` is a tracked name. Placed at the
+    // funnel head rather than at one of the 30-odd exits — a write
+    // rejected further down (read-only variable) therefore shows in the
+    // lineage as an attempted assign, which is documented in
+    // docs/PROVENANCE.md. Costs one relaxed atomic load otherwise.
+    if crate::provenance::active() {
+        let kind = if (flags & ASSPM_AUGMENT) != 0 {
+            "append"
+        } else {
+            "assign"
+        };
+        crate::provenance::on_param_write(s, kind, val);
+    }
     // !!! WARNING: RUST-ONLY ARM — ZLE GSU adapter !!!
     // C's makezleparams (Src/Zle/zle_params.c:194) installs LIVE GSU
     // setters for the editing specials; zshrs snapshots copies into
@@ -8098,6 +8112,18 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
+    // !!! RUST-ONLY: provenance tap (see assignsparam). An array write
+    // records the joined element list as the value summary — the same
+    // shape `${arr}` would produce — so a lineage that flows through
+    // `arr=( $(cmd) )` stays readable.
+    if crate::provenance::active() {
+        let kind = if (flags & ASSPM_AUGMENT) != 0 {
+            "append"
+        } else {
+            "array"
+        };
+        crate::provenance::on_param_write(name, kind, &val.join(" "));
+    }
     // c:Src/params.c:2922-2923 — `pm->gsu.a->setfn(pm, val)`: a special
     // PM_ARRAY param (e.g. `dirstack`) routes a whole-array assignment
     // through its GSU setter instead of plain paramtab storage. zshrs
@@ -8766,6 +8792,10 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
         zerr(&format!("not an identifier: {}", name));
         return None;
     }
+    // !!! RUST-ONLY: provenance tap (see assignsparam).
+    if crate::provenance::active() {
+        crate::provenance::on_param_write(name, "assoc", &val.join(" "));
+    }
     // c:3630 — `fetchvalue(&vbuf, &s, 1, SCANPM_ASSIGNING)` resolves
     // PM_NAMEREF chains (same shape as assignaparam c:3392-3398).
     if crate::ported::params::is_nameref(name) {
@@ -9255,6 +9285,12 @@ pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
 /// `paramtab().write().remove(...)` directly), so renaming is
 /// safe.
 pub fn unsetparam(name: &str) -> i32 {
+    // !!! RUST-ONLY: provenance tap — the unset is the last event in a
+    // tracked parameter's lineage; the chain itself is kept so
+    // `provenance NAME` still explains what the value was.
+    if crate::provenance::active() {
+        crate::provenance::on_param_unset(name);
+    }
     // c:3819 — C's unsetparam is void and discards unsetparam_pm's
     // status; bin_unset (c:Src/builtin.c:3952-3953) does the
     // paramtab lookup itself and calls `if (unsetparam_pm(pm, 0, 1))
