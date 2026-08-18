@@ -8072,6 +8072,18 @@ pub fn unset_assoc(name: &str) {
 /// (full doshfunc scope wrap). `None` when no executor / not a
 /// function.
 pub fn dispatch_function_call(name: &str, args: &[String]) -> Option<i32> {
+    // c:3490-3492 — `if (type != WC_FUNCDEF) setunderscore((args &&
+    // nonempty(args)) ? getdata(lastnode(args)) : "")`. C's `args` list
+    // carries the command word, so a bare `_pre` leaves `$_` == "_pre".
+    // The compsys ports call shell functions through this shim rather
+    // than through a parsed command, so those calls never reached
+    // execcmd's write and the callee saw whatever `$_` the caller left:
+    // zsh reports `_post` inside comppostfuncs where zshrs reported the
+    // stale value.
+    {
+        let last = args.last().cloned().unwrap_or_else(|| name.to_string());
+        crate::ported::params::set_zunderscore(std::slice::from_ref(&last)); // c:3491
+    }
     let __ft = crate::ftime::start(name);
     if let Some(r) =
         crate::fusevm_bridge::try_with_executor(|exec| exec.dispatch_function_call(name, args))

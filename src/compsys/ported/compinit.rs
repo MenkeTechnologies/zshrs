@@ -635,18 +635,23 @@ pub const COMP_OPTIONS: &[&str] = &[
 /// point evals to install the option set + IFS + null stdin + no-ZERR.
 /// Bit-identical to upstream so a user-supplied `_comp_setup`
 /// override (very rare) still matches.
+// sh:180-190 — the value is a single-quoted literal spanning eleven
+// lines, so the 13-space indentation of every continuation line is part
+// of the STRING, not just the source layout. `eval` ignores it, but
+// `$_comp_setup` is readable and was the one parameter whose value still
+// differed from zsh's inside a completion.
 pub const COMP_SETUP_EVAL: &str = concat!(
     "local -A _comp_caller_options;\n",
-    "_comp_caller_options=(${(kv)options[@]});\n",
-    "setopt localoptions localtraps localpatterns ${_comp_options[@]};\n",
-    "local IFS=$' \\t\\r\\n\\0';\n",
-    "builtin enable -p \\| \\~ \\( \\? \\* \\[ \\< \\^ \\# 2>&-;\n",
-    "exec </dev/null;\n",
-    "trap - ZERR;\n",
-    "local -a reply;\n",
-    "local REPLY;\n",
-    "local REPORTTIME;\n",
-    "unset REPORTTIME"
+    "             _comp_caller_options=(${(kv)options[@]});\n",
+    "             setopt localoptions localtraps localpatterns ${_comp_options[@]};\n",
+    "             local IFS=$' \\t\\r\\n\\0';\n",
+    "             builtin enable -p \\| \\~ \\( \\? \\* \\[ \\< \\^ \\# 2>&-;\n",
+    "             exec </dev/null;\n",
+    "             trap - ZERR;\n",
+    "             local -a reply;\n",
+    "             local REPLY;\n",
+    "             local REPORTTIME;\n",
+    "             unset REPORTTIME"
 );
 
 /// sh:558 — the 8 standard ZLE widgets that compinit rebinds to
