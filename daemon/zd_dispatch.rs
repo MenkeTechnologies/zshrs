@@ -119,6 +119,13 @@ pub const USAGE: &str = concat!(
     "    config set KEY VALUE          // write/override a runtime knob\n",
     "    config list                   // show every runtime override\n",
     "\n",
+    "  ── CACHES ─────────────────────────────────────────────\n",
+    "    prewarm [DIR ...] [--json]    // compile every _* completer on\n",
+    "                                  // $fpath (or the given dirs) into\n",
+    "                                  // autoloads.rkyv, so the first\n",
+    "                                  // `ls -<TAB>` is an O(1) shard\n",
+    "                                  // probe, not a parse + compile\n",
+    "\n",
     "  ── DIAGNOSTICS ────────────────────────────────────────\n",
     "    doctor [--json]               // health-report sweep (perms, db\n",
     "                                  // integrity, shards, fsnotify,\n",
@@ -342,6 +349,7 @@ pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
         "export" => cmd_export(t, &rest),
         "view" => cmd_view(t, &rest),
         "doctor" => cmd_doctor(t, &rest),
+        "prewarm" => cmd_prewarm(t, &rest),
         other => return usage_err(&format!("unknown command: {other}")),
     };
 
@@ -889,6 +897,34 @@ fn cmd_view(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
 /// to the widest in the response, then the detail string. Trailing
 /// summary line carries the pass/fail counts. Bare ASCII so
 /// non-TTY pipes (CI, jq, grep) don't see escape sequences.
+/// `zd prewarm [DIR ...] [--json]` — ask the daemon to compile the
+/// completer corpus into `~/.zshrs/autoloads.rkyv`.
+///
+/// With no directories the spawned shell uses its own `$fpath`. Give
+/// directories to prewarm just the plugin you installed rather than
+/// re-walking 46k files.
+fn cmd_prewarm(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
+    let envelope = rest.iter().any(|a| a == "--json" || a == "--envelope");
+    let dirs: Vec<&String> = rest.iter().filter(|a| !a.starts_with("--")).collect();
+    let response = t.post("autoload_prewarm", json!({ "dirs": dirs }))?;
+    if envelope {
+        return Ok(response);
+    }
+    let parsed: Value = serde_json::from_str(&response)
+        .map_err(|e| format!("prewarm response: {e}\nbody: {response}"))?;
+    let s = parsed.get("summary").unwrap_or(&Value::Null);
+    let n = |k: &str| s.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let bytes = n("bytes");
+    Ok(format!(
+        "autoload bytecode — {} compiled, {} already fresh, {} unparseable, {:.1} MB in {} ms\n",
+        n("compiled"),
+        n("fresh"),
+        n("failed"),
+        bytes as f64 / (1024.0 * 1024.0),
+        n("ms"),
+    ))
+}
+
 fn cmd_doctor(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
     let envelope = rest.iter().any(|a| a == "--json" || a == "--envelope");
     let response = t.post("doctor", json!({}))?;

@@ -14,6 +14,7 @@ pub const OP_NAMES: &[&str] = &[
     "ask_pending",
     "ask_response",
     "ask_take",
+    "autoload_prewarm",
     "cache_del",
     "cache_get",
     "cache_list",
@@ -158,6 +159,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "unsubscribe" => op_unsubscribe(state, client_id, args).await,
         "subscription_set_paused" => op_subscription_set_paused(state, client_id, args).await,
         "publish" => op_publish(state, client_id, args).await,
+        "autoload_prewarm" => op_autoload_prewarm(state, args).await,
         "fpath_changed" => op_fpath_changed(state, args).await,
         "watcher_stats" => op_watcher_stats(state).await,
         "log_level" => op_log_level(args).await,
@@ -2183,6 +2185,104 @@ async fn op_fpath_changed(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "registered": registered,
         "registered_count": registered.len(),
     }))
+}
+
+/// `autoload_prewarm {dirs?: [path], timeout_secs?: n}` — compile every
+/// `_*` completer on those fpath dirs into `~/.zshrs/autoloads.rkyv`,
+/// so a later `ls -<TAB>` is an O(1) shard probe instead of a parse +
+/// compile of the completer's file.
+///
+/// The daemon does not do the work itself, and cannot: the zsh parser
+/// and bytecode compiler live in the `zshrs` crate, which depends on
+/// this one. It spawns `zshrs --prewarm-autoloads` — which is also the
+/// right isolation, since `parse()` walks process-global lexer state
+/// and must not run beside anything else.
+///
+/// This is not "the daemon walking user config" in the docs/DAEMON.md
+/// sense: the directory list comes from the caller (or from the
+/// recorded `$fpath` the spawned shell already has), and the daemon
+/// only relays the child's summary.
+async fn op_autoload_prewarm(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let dirs: Vec<String> = args
+        .get("dirs")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let timeout_secs = args
+        .get("timeout_secs")
+        .and_then(Value::as_u64)
+        .unwrap_or(900);
+
+    let exe = zshrs_binary().ok_or_else(|| {
+        ErrPayload::new(
+            "not_found",
+            "no `zshrs` binary beside the daemon or on $PATH to run the compile",
+        )
+    })?;
+    let started = std::time::Instant::now();
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.arg("--prewarm-autoloads");
+    for d in &dirs {
+        cmd.arg(d);
+    }
+    cmd.stdin(std::process::Stdio::null());
+    cmd.kill_on_drop(true);
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        cmd.output(),
+    )
+    .await
+    .map_err(|_| ErrPayload::new("timeout", "prewarm exceeded timeout_secs"))?
+    .map_err(|e| ErrPayload::new("spawn_failed", format!("{e}")))?;
+
+    if !out.status.success() {
+        return Err(ErrPayload::new(
+            "prewarm_failed",
+            format!(
+                "{} exited {}: {}",
+                exe.display(),
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim(),
+            ),
+        ));
+    }
+    // The child prints one JSON line; pass it through so callers see the
+    // real counts rather than a summary of a summary.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let summary: Value = stdout
+        .lines()
+        .rev()
+        .find_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+        .unwrap_or_else(|| json!({}));
+    let _ = state;
+    Ok(json!({
+        "binary": exe.display().to_string(),
+        "dirs": dirs,
+        "summary": summary,
+        "elapsed_ms": started.elapsed().as_millis() as u64,
+    }))
+}
+
+/// Locate the `zshrs` binary: next to the running daemon first (the
+/// pair ships together and a dev tree must not pick up an installed
+/// copy), then `$PATH`.
+fn zshrs_binary() -> Option<std::path::PathBuf> {
+    if let Ok(me) = std::env::current_exe() {
+        if let Some(dir) = me.parent() {
+            let cand = dir.join("zshrs");
+            if cand.is_file() {
+                return Some(cand);
+            }
+        }
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|p| p.join("zshrs"))
+        .find(|p| p.is_file())
 }
 
 async fn op_watcher_stats(state: &Arc<DaemonState>) -> OpResult {

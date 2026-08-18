@@ -634,6 +634,7 @@ HTTP-surfaced contract per op.
 | meta     | `stats_flush` | merge batched per-call stats into `entry_stats` |
 | meta     | `replay_log` | per-shell replay log read-back |
 | recorder | `recorder_ingest` | ingest a `RecorderBundle`; replaces all rows for the bundle's `shell_id`; broadcasts `recorder_ingested` |
+| caches   | `autoload_prewarm` | compile every `_*` completer on the given (or recorded) `$fpath` into `autoloads.rkyv`. The daemon spawns `zshrs --prewarm-autoloads` rather than compiling in-process: the parser and bytecode compiler live in the `zshrs` crate, which depends on this one, and `parse()` walks process-global lexer state that must not be shared. CLI: `zd prewarm [DIR ...]` |
 | canon    | `canonical_hydrate_view` | rebuild SQLite mirror of canonical |
 | canon    | `push_canonical` / `pull_canonical` / `diff_canonical` | per-shell overlay promote / fetch / diff |
 | defs     | `definitions_query` | federated catalog query (filter by kind/name/prefix/shell_id) |

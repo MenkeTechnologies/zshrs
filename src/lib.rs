@@ -87,6 +87,9 @@ pub mod arith_compiler;
 /// `autoload_cache` submodule.
 #[path = "extensions/autoload_cache.rs"]
 pub mod autoload_cache;
+/// `autoload_prewarm` submodule.
+#[path = "extensions/autoload_prewarm.rs"]
+pub mod autoload_prewarm;
 /// `bash_complete` submodule.
 #[path = "extensions/bash_complete.rs"]
 pub mod bash_complete;

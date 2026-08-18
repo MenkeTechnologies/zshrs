@@ -933,6 +933,35 @@ normal startup time**, dominated by SQLite IO. Acceptable for a
 one-shot indexing run; not suitable for daily driver (which is why
 recorder is opt-in).
 
+## End-of-run autoload prewarm
+
+The last thing a recording does, after the init chain has finished and
+before the bundle ships, is compile every `_*` completer on the recorded
+`$fpath` into `~/.zshrs/autoloads.rkyv` (`--no-prewarm` opts out).
+
+This is the same work the shell would otherwise do lazily, one completer
+at a time, at a prompt: the loader installs an autoloaded function by
+running its definition program, and caches that compiled chunk keyed by
+name + the file's mtime and length. Front-loading it means the first
+`ls -<TAB>` after a fresh install is an O(1) probe into the shard rather
+than a parse + compile of the completer's file — for `_git`, 229 µs of
+chunk decode instead of 318 ms of parse + compile.
+
+**Why here and not in `compinit`.** `parse()` walks process-global lexer
+state. An earlier version of this ran on `compinit`'s worker pool
+concurrently with the interactive main thread and corrupted it — the
+prompt ended up emitting the xtrace prefix and stuck in PS2, so the pass
+was disabled behind an env var and its output (a bare file body compiled
+as a top-level script) was never read by anything. The recorder is a
+one-shot process that never returns to a prompt, which makes it the only
+place this can run safely today. The same pass is reachable as
+`zshrs --prewarm-autoloads` and, through the daemon, as `zd prewarm`.
+
+**Cost.** Roughly 6× the source size in bytecode and ~0.84 ms per
+completer (debug build): a 13k-file directory took 35 s and produced
+165 MB. Entries already current are skipped by mtime + length, so a
+re-run after installing one plugin is one `stat` per completer.
+
 ## fn_chain capture
 
 The function call-stack at the time of definition is captured from
