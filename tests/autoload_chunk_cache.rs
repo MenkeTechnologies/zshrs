@@ -51,6 +51,69 @@ fn run(bin: &PathBuf, home: &PathBuf, fpath: &PathBuf, script: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Run `zshrs --prewarm-autoloads DIR` and return its JSON summary line.
+fn prewarm(bin: &PathBuf, home: &PathBuf, fpath: &PathBuf) -> String {
+    let out = Command::new(bin)
+        .arg("--prewarm-autoloads")
+        .arg(fpath)
+        .env("ZSHRS_HOME", home)
+        .env_remove("ZDOTDIR")
+        .output()
+        .expect("spawn prewarm");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
+fn prewarm_fills_the_shard_so_the_first_call_never_compiles() {
+    // The point of the pass: after it runs, a shell that has never seen
+    // the function still installs it from bytecode. Proven by the shard
+    // not being rewritten on that first call — a compile would
+    // write-through and change it.
+    let Some(bin) = zshrs_bin() else {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    };
+    let tmp = std::env::temp_dir().join(format!("zshrs-prewarm-{}", std::process::id()));
+    let home = tmp.join("home");
+    let fpath = tmp.join("fpath");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::create_dir_all(&fpath).expect("mkdir fpath");
+    std::fs::write(fpath.join("_zt_prewarmed"), BODY).expect("write fn");
+    // A `.zwc` digest and a non-`_` file must both be ignored — the
+    // filename rule is compinit's.
+    std::fs::write(fpath.join("_zt_prewarmed.zwc"), b"not source").expect("write zwc");
+    std::fs::write(fpath.join("notacompleter"), BODY).expect("write other");
+
+    let summary = prewarm(&bin, &home, &fpath);
+    assert!(
+        summary.contains("\"seen\":1") && summary.contains("\"compiled\":1"),
+        "prewarm should have seen exactly the one `_` file: {summary}",
+    );
+    let shard = home.join("autoloads.rkyv");
+    let before = std::fs::metadata(&shard).expect("shard written").len();
+
+    let script = "autoload -Uz _zt_prewarmed; _zt_prewarmed a b";
+    let out = run(&bin, &home, &fpath, script);
+    assert!(
+        out.contains("lineno=2") && out.contains("args=a b"),
+        "prewarmed function misbehaved: {out:?}",
+    );
+    let after = std::fs::metadata(&shard).expect("shard still there").len();
+    assert_eq!(
+        before, after,
+        "shard was rewritten — the call recompiled instead of using the prewarmed chunk",
+    );
+
+    // Re-running the pass must not recompile what is already current.
+    let again = prewarm(&bin, &home, &fpath);
+    assert!(
+        again.contains("\"compiled\":0") && again.contains("\"fresh\":1"),
+        "second pass should be a no-op: {again}",
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[test]
 fn cached_autoload_chunk_matches_a_fresh_compile_and_yields_to_an_edit() {
     let Some(bin) = zshrs_bin() else {

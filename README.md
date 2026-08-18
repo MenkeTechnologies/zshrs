@@ -157,9 +157,28 @@ Autoload function    ──► autoloads.rkyv ──► deserialize Chunk ──
 
 Measured on `_git` (424 KB of shell, the largest completer in common use):
 first `git <tab>` in a process **1.06 s → 0.56 s** once the chunk is
-cached. The cache is bypassed for `ksh_autoload`-style bodies and for
-`autoload` without `-U`, where the compiled program is not a function of
-the file's bytes alone.
+cached, and decoding that cached 4.6 MB chunk costs **229 µs** against
+**318 ms** to parse + compile the file. The cache is bypassed for
+`ksh_autoload`-style bodies and for `autoload` without `-U`, where the
+compiled program is not a function of the file's bytes alone.
+
+The write-through fills one entry per function actually called. To
+compile the whole corpus up front — so the FIRST `ls -<TAB>` of a fresh
+install is already an O(1) shard probe:
+
+```zsh
+zshrs --prewarm-autoloads            # every dir on $fpath
+zshrs --prewarm-autoloads DIR ...    # just these
+zd prewarm [DIR ...]                 # same, via the daemon
+```
+
+`zshrs-recorder` runs the pass at the end of every recording (skip it
+with `--no-prewarm`), which is where it belongs: the parser walks
+process-global lexer state, so this must never run beside a live ZLE.
+Entries already current are skipped by mtime + length, so a re-run after
+installing one plugin costs one `stat` per completer. Budget roughly
+**6× the source size** — a 13k-completer directory compiles to 165 MB in
+35 s (debug build).
 
 Enabling the JIT is not the same as being compiled by it. `zshrs --tiers script.zsh` runs the script and then asks fusevm's own predicates — `is_block_eligible`, `block_jit_is_compiled`, `trace_is_compiled`, `find_jit_region` — which tier took each chunk, reporting the script body and every function body it dispatched. Chunks that reach neither tier list the op kinds responsible, so the output is a diagnosis (what to make native next) rather than a verdict.
 

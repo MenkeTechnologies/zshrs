@@ -278,6 +278,54 @@ impl AutoloadCache {
         Ok(())
     }
 
+    /// Insert many entries in one read + one write of the shard.
+    ///
+    /// The bulk path for `zshrs --prewarm-autoloads`: compiling 46k
+    /// completers one `put_one` at a time would re-serialize the whole
+    /// shard 46k times. Existing entries not named here are preserved,
+    /// so a prewarm of one fpath dir does not discard the rest.
+    ///
+    /// Every entry carries its own source stamps — that is what makes a
+    /// bulk writer safe at all. The stampless bulk API this replaces
+    /// could not say which file an entry came from, so a later edit of
+    /// that file went unnoticed.
+    pub fn put_many(&self, entries: &[(String, Vec<u8>, i64, u64)]) -> Result<(), String> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let _lock = match acquire_lock(&self.lock_path) {
+            Some(l) => l,
+            None => return Ok(()),
+        };
+        let mut shard = match read_owned_shard(&self.path) {
+            Some(s)
+                if s.header.zshrs_version == env!("CARGO_PKG_VERSION")
+                    && s.header.pointer_width as usize == std::mem::size_of::<usize>()
+                    && s.header.format_version == SHARD_FORMAT_VERSION =>
+            {
+                s
+            }
+            _ => fresh_shard(),
+        };
+        let bin_mtime = current_binary_mtime_secs().unwrap_or(0);
+        let now = now_secs();
+        for (name, chunk_blob, source_mtime_secs, source_len) in entries {
+            shard.entries.insert(
+                name.clone(),
+                AutoloadEntry {
+                    binary_mtime_at_cache: bin_mtime,
+                    cached_at_secs: now,
+                    source_mtime_secs: *source_mtime_secs,
+                    source_len: *source_len,
+                    chunk_blob: chunk_blob.clone(),
+                },
+            );
+        }
+        shard.header.built_at_secs = now as u64;
+        write_shard_atomic(&self.path, &shard)?;
+        self.invalidate_mmap();
+        Ok(())
+    }
     /// `entry_count` — see implementation.
     pub fn entry_count(&self) -> usize {
         self.ensure_mmap();
@@ -468,6 +516,15 @@ pub fn try_save_one(
         return Ok(());
     };
     cache.put_one(name, chunk_blob.to_vec(), source_mtime_secs, source_len)
+}
+
+/// Bulk write-through for the prewarm path. See
+/// [`AutoloadCache::put_many`].
+pub fn try_put_many(entries: &[(String, Vec<u8>, i64, u64)]) -> Result<(), String> {
+    let Some(cache) = CACHE.as_ref() else {
+        return Ok(());
+    };
+    cache.put_many(entries)
 }
 
 /// `cached_names` — see implementation.

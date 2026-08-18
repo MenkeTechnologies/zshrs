@@ -5446,11 +5446,25 @@ fn autoload_source_stamps(name: &str) -> Option<(i64, u64)> {
 }
 
 fn autoload_register_source(name: &str, body: &str) -> String {
+    autoload_definition_source(name, body, autoload_is_ksh_style(name))
+}
+
+/// The exact source text an autoload of `name` installs — either the
+/// file body verbatim (ksh style, or a file that already defines the
+/// function) or `name() { <body> }`.
+///
+/// Split out of [`autoload_register_source`] with the ksh decision
+/// passed IN so the prewarm (`autoload_prewarm`, which has no shfunc
+/// flags to consult because nothing is registered yet) compiles
+/// byte-identical text to what the loader will run. The two drifting
+/// apart is precisely what made the pre-v2 shard unusable: it cached a
+/// different program than the one the loader installs.
+pub(crate) fn autoload_definition_source(name: &str, body: &str, ksh_style: bool) -> String {
     // c:Src/exec.c:5781 — a ksh-style load executes the file contents at top
     // level (c:5795 `execode(prog, 1, 0, "evalautofunc")`) and expects the
     // file itself to define the function — so the body goes through the
     // pipeline VERBATIM, never wrapped.
-    if autoload_is_ksh_style(name) {
+    if ksh_style {
         return body.to_string(); // c:5795 execode(prog, ..., "evalautofunc")
     }
     let stripped = crate::ported::exec::parse_string(body, 0)

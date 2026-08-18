@@ -50,6 +50,11 @@ OPTIONS
         --json         Emit the end-of-run summary as one JSON line on
                        stdout instead of multi-line human text on stderr.
                        Lets scripts pipe straight to `jq`.
+        --no-prewarm   Skip the end-of-run autoload bytecode pass. That
+                       pass compiles every `_*` completer on the
+                       recorded $fpath into ~/.zshrs/autoloads.rkyv so
+                       the first `ls -<TAB>` of a later shell is an O(1)
+                       shard probe instead of a parse + compile.
         --no-daemon    Skip the end-of-run IPC bundle. Captured events
                        still print to stderr + log; nothing reaches the
                        daemon (no rkyv shard, no SQLite hydration). Used
@@ -93,6 +98,7 @@ struct Args {
     shell_id: Option<String>,
     quiet: bool,
     json: bool,
+    no_prewarm: bool,
 }
 
 fn parse_args() -> Result<Args, ExitCode> {
@@ -102,6 +108,7 @@ fn parse_args() -> Result<Args, ExitCode> {
     let mut shell_id: Option<String> = None;
     let mut quiet = false;
     let mut json = false;
+    let mut no_prewarm = false;
     let mut iter = std::env::args().skip(1);
     while let Some(a) = iter.next() {
         match a.as_str() {
@@ -131,6 +138,7 @@ fn parse_args() -> Result<Args, ExitCode> {
             "--quiet" => quiet = true,
             "--json" => json = true,
             "--no-daemon" => no_daemon = true,
+            "--no-prewarm" => no_prewarm = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Err(ExitCode::SUCCESS);
@@ -154,6 +162,7 @@ fn parse_args() -> Result<Args, ExitCode> {
         shell_id,
         quiet,
         json,
+        no_prewarm,
     })
 }
 
@@ -277,6 +286,32 @@ fn main() -> ExitCode {
                 eprintln!("zshrs-recorder: {}: {}", disp, e);
                 1
             });
+        }
+    }
+
+    // The init chain has finished, so every fpath dir the user's
+    // config registered is now on `$fpath` — and the shell is idle,
+    // which is the whole reason this pass lives here rather than in
+    // `compinit`: `parse()` walks process-global lexer state, and
+    // compiling 46k completers beside a live ZLE corrupted the prompt
+    // when that was tried. Nothing runs after this but the summary and
+    // the daemon bundle.
+    //
+    // Result: the first `ls -<TAB>` in any later shell is an O(1) probe
+    // into `~/.zshrs/autoloads.rkyv` instead of a parse + compile of
+    // the completer's file.
+    if !args.no_prewarm {
+        let dirs = zsh::autoload_prewarm::default_dirs();
+        let stats = zsh::autoload_prewarm::prewarm_fpath(&dirs);
+        if !args.quiet {
+            eprintln!(
+                "zshrs-recorder: autoload bytecode — {} compiled, {} already fresh, {} unparseable, {:.1} MB, {} ms",
+                stats.compiled,
+                stats.fresh,
+                stats.failed,
+                stats.bytes as f64 / (1024.0 * 1024.0),
+                stats.elapsed_ms,
+            );
         }
     }
 

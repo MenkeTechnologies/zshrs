@@ -1724,6 +1724,44 @@ pub fn zshrs_main() {
         std::process::exit(status);
     }
 
+    // --prewarm-autoloads [DIR ...]: compile every `_*` completer on
+    // $fpath into ~/.zshrs/autoloads.rkyv, so the first `ls -<TAB>` of
+    // a fresh shell is an O(1) probe into the shard instead of a parse
+    // + compile of the completer's file.
+    //
+    // Its own process on purpose: `parse()` walks process-global lexer
+    // state, and doing this beside a live ZLE corrupted the prompt when
+    // it was tried inside `compinit`. Callers are the user, the
+    // recorder's end-of-run pass, and the daemon's `autoload_prewarm`
+    // op (which spawns exactly this).
+    if let Some(idx) = args.iter().position(|a| a == "--prewarm-autoloads") {
+        let dirs: Vec<std::path::PathBuf> = args[idx + 1..]
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(std::path::PathBuf::from)
+            .collect();
+        let dirs = if dirs.is_empty() {
+            zsh::autoload_prewarm::default_dirs()
+        } else {
+            dirs
+        };
+        let stats = zsh::autoload_prewarm::prewarm_fpath(&dirs);
+        // Explicitly requested output, like --doctor: a summary the
+        // caller asked for, machine-readable so the daemon op can just
+        // forward it.
+        println!(
+            "{{\"dirs\":{},\"seen\":{},\"compiled\":{},\"fresh\":{},\"failed\":{},\"bytes\":{},\"ms\":{}}}",
+            dirs.len(),
+            stats.seen,
+            stats.compiled,
+            stats.fresh,
+            stats.failed,
+            stats.bytes,
+            stats.elapsed_ms,
+        );
+        std::process::exit(0);
+    }
+
     // --lsp: start the Language Server Protocol server on stdio.
     // Used by the IntelliJ plugin (editors/intellij) and any other LSP
     // client (Helix, Neovim, VS Code, etc.). Implementation lives in
