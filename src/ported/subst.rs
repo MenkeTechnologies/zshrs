@@ -1540,13 +1540,6 @@ pub fn singsub(s: &str) -> String {
         list.nodes.len() > 1, // c:524
         "BUG: singsub() produced more than one word!"
     ); // c:524
-    // !!! RUST-ONLY: provenance tap. `singsub` is the single-word
-    // expansion funnel, so this is where a word that NAMES a tracked
-    // parameter hands that parameter's lineage to the bytes it produced
-    // — including bytes that merely contain the value (`${F}.bak`).
-    if crate::provenance::active() {
-        crate::provenance::on_word_expand(s, &result);
-    }
     result // c:523
 }
 
@@ -1756,19 +1749,11 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
                                                                               // matching zsh's sepjoin defaults.
         let join_sep = ifs.chars().next().map(String::from).unwrap_or_default(); // c:649
         let joined = arr.join(&join_sep); // c:649
-        // !!! RUST-ONLY: provenance tap (see singsub).
-        if crate::provenance::active() {
-            crate::provenance::on_word_expand(s, &joined);
-        }
         return (joined, arr, true, ms_flags); // c:642-647 (array path)
     }
     if l == 1 {
         // c:653
         let result = strip_nul(list.getdata(0).cloned().unwrap_or_default()); // c:653
-        // !!! RUST-ONLY: provenance tap (see singsub).
-        if crate::provenance::active() {
-            crate::provenance::on_word_expand(s, &result);
-        }
         return (result.clone(), vec![result], false, ms_flags); // c:653
     }
     // c:Src/subst.c:655 — `*s = dupstring("");` with zero-length list.

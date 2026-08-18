@@ -562,13 +562,20 @@ pub fn on_concat(lhs: &Value, rhs: &Value, result: &Value) {
     let Some(mut node) = chosen else {
         return;
     };
-    let op = ProvOp {
-        op: "concat".to_string(),
-        args: vec![summarize_value(lhs), summarize_value(rhs)],
-        line,
-    };
-    l.extend_owner(&node, &op);
-    node.push_op(op);
+    // A segment concat where one side is empty adds no bytes — the word
+    // assembler emits one per leading/trailing segment. Propagate the
+    // lineage, but do not record an op that changed nothing.
+    let is_noop = matches!(lhs, Value::Str(s) if s.is_empty())
+        || matches!(rhs, Value::Str(s) if s.is_empty());
+    if !is_noop {
+        let op = ProvOp {
+            op: "concat".to_string(),
+            args: vec![summarize_value(lhs), summarize_value(rhs)],
+            line,
+        };
+        l.extend_owner(&node, &op);
+        node.push_op(op);
+    }
     l.put_ptr(result, node.clone());
     if let Value::Str(s) = result {
         l.put_content(s, node);
@@ -619,45 +626,6 @@ pub fn on_param_unset(name: &str) {
             args: vec![name.to_string()],
             line,
         });
-    }
-}
-
-/// A word whose source text is `source` expanded to `result`. This is
-/// the derivation link: when the word names a tracked parameter, the
-/// produced bytes — which need not equal the parameter's own value, as
-/// in `G=${F}x` — inherit that parameter's chain, so the assignment that
-/// consumes them can trace back to the original origin.
-pub fn on_word_expand(source: &str, result: &str) {
-    if result.is_empty() || !source.contains('$') {
-        return;
-    }
-    let line = current_line();
-    let mut l = lock();
-    // Tracked names are user-armed and few, so a scan per expansion is
-    // cheaper than parsing the word's substitution syntax here.
-    let named: Vec<String> = l
-        .tracked
-        .iter()
-        .filter(|n| {
-            source.contains(&format!("${}", n)) || source.contains(&format!("${{{}", n))
-        })
-        .cloned()
-        .collect();
-    for name in named {
-        let Some(mut node) = l.name.get(&name).cloned() else {
-            continue;
-        };
-        let op = ProvOp {
-            op: "expand".to_string(),
-            args: vec![format!("${}", name), summarize_str(result)],
-            line,
-        };
-        if let Some(target) = l.name.get_mut(&name) {
-            target.push_op(op.clone());
-        }
-        node.push_op(op);
-        node.owner = Some(name);
-        l.put_content(result, node);
     }
 }
 
@@ -807,6 +775,55 @@ mod tests {
         let exec_op = node.ops.iter().find(|o| o.op == "exec").unwrap();
         assert_eq!(exec_op.args[0], "wc");
         assert_eq!(exec_op.args[1], "argv[2]");
+    }
+
+    #[test]
+    fn concat_carries_the_lineage_of_whichever_operand_has_one() {
+        let _g = setup();
+        note_line(4);
+        track_name("F", Some("alpha"));
+        on_param_write("F", "assign", "alpha");
+        let read = Value::str("alpha");
+        on_param_read("F", &read);
+        let joined = Value::str("alpha.bak");
+        on_concat(&read, &Value::str(".bak"), &joined);
+        let node = lookup_value(&joined).expect("result inherited the chain");
+        assert_eq!(node.owner.as_deref(), Some("F"));
+        assert_eq!(node.ops.last().map(|o| o.op.as_str()), Some("concat"));
+        // The owner's own chain records the concat too, so
+        // `provenance F` shows what was built out of it.
+        let owner = lookup_name("F").unwrap();
+        assert!(owner.ops.iter().any(|o| o.op == "concat"), "{owner:?}");
+    }
+
+    #[test]
+    fn an_empty_segment_concat_propagates_without_recording_an_op() {
+        let _g = setup();
+        track_name("F", Some("alpha"));
+        on_param_write("F", "assign", "alpha");
+        let read = Value::str("alpha");
+        on_param_read("F", &read);
+        let before = lookup_name("F").unwrap().ops.len();
+        // The word assembler emits `"" + $F` for a leading segment.
+        let same = Value::str("alpha");
+        on_concat(&Value::str(""), &read, &same);
+        assert_eq!(
+            lookup_name("F").unwrap().ops.len(),
+            before,
+            "a concat that adds no bytes must not appear in the chain"
+        );
+        assert!(
+            lookup_value(&same).is_some(),
+            "the lineage still has to reach the produced value"
+        );
+    }
+
+    #[test]
+    fn concat_of_two_untracked_values_records_nothing() {
+        let _g = setup();
+        let out = Value::str("ab");
+        on_concat(&Value::str("a"), &Value::str("b"), &out);
+        assert!(lookup_value(&out).is_none());
     }
 
     #[test]

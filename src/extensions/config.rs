@@ -326,6 +326,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn provenance_defaults_to_enabled_and_parses_the_off_switch() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            ZshrsConfig::default().provenance.enabled,
+            "the engine stays inert until armed, so the config default is on"
+        );
+        let off: ZshrsConfig =
+            toml::from_str("[provenance]\nenabled = false\n").expect("parses");
+        assert!(!off.provenance.enabled);
+        // An unrelated section must not disturb the default.
+        let other: ZshrsConfig = toml::from_str("[log]\nlevel = \"debug\"\n").expect("parses");
+        assert!(other.provenance.enabled);
+    }
+
+    #[test]
     fn test_default_config() {
         let _g = crate::test_util::global_state_lock();
         let config = ZshrsConfig::default();
