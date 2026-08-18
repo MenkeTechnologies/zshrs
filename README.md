@@ -728,7 +728,7 @@ Trigger characters for completion: `$`, `{`, `-`, `:`. Optional
 
 Compsys completion reads the recorded environment from the canonical
 rkyv shard (`~/.zshrs/images/*-recorder.rkyv`) — `compdef` map, `fpath`,
-autoload stubs, `zstyle` — so it needs `zshrs record` to have run at
+autoload stubs, `zstyle` — so it needs `zshrs-recorder` to have run at
 least once; without a shard the LSP still completes everything else in
 the table above. Completers that shell out (`git for-each-ref` behind
 `git checkout <tab>`) run with their subprocess killed at the request

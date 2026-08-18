@@ -46,6 +46,7 @@ _arguments -S -s : \
   '(-)--help[show help message and exit]' \
   '(-)--version[show version number and exit]' \
   '(-)--doctor[full diagnostic report of shell health, caches, and performance]' \
+  '(-)--prewarm-autoloads[compile every _* completer on \$fpath into autoloads.rkyv]:*:fpath dir:_directories' \
   '--disasm[print fusevm bytecode to stdout before each VM run]' \
   '--zsh-compat[enable zsh compatibility mode (use .zcompdump, fpath scanning)]' \
   '--zsh[alias for --zsh-compat]' \
