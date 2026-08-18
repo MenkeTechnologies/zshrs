@@ -129,6 +129,10 @@ pub mod overlay_snapshot;
 /// `pat_cache` submodule — global compiled-pattern cache (Rust-only opt).
 #[path = "extensions/pat_cache.rs"]
 pub mod pat_cache;
+/// `provenance` submodule — value-lineage ledger over bytecode
+/// execution (zshrs-original; ported from stryke's `provenance.rs`).
+#[path = "extensions/provenance.rs"]
+pub mod provenance;
 /// `script_cache` submodule.
 #[path = "extensions/script_cache.rs"]
 pub mod script_cache;
