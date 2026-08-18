@@ -70,8 +70,11 @@ pub fn _jobs(args: &[String]) -> i32 {
     // without the declaration `setaparam` would create it at level 0, where it
     // outlives the completion and `_parameters` then offers `disp` as a match
     // zsh never lists.
+    // sh:3 `local expl disp jobs job jids pfx='%' desc how expls sep` —
+    // `expl` is published to `_description`/`_wanted` like `disp`, so it
+    // needs the same binding or it leaks into the global param table.
     let _locals = crate::compsys::ported::shared::LocalScope::declare(
-        &["disp"],
+        &["disp", "expl"],
         crate::ported::zsh_h::PM_ARRAY,
     );
     let mut argv = args.to_vec();
