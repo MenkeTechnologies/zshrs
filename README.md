@@ -20,7 +20,7 @@
 
 ## `[PATENT PENDING]`
 
-The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **856k lines, 824 source files** across a 3-crate workspace (`zshrs` runtime + `zshrs-daemon` + `znative`, the published plugin-ABI SDK; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 91 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search — on by default), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add znative`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md).
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **870k lines, 829 source files** across a 3-crate workspace (`zshrs` runtime + `zshrs-daemon` + `znative`, the published plugin-ABI SDK; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 93 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search, autopair — opt-in via `[zle]` in `~/.zshrs/zshrs.toml`, so bare `zshrs -f` stays byte-identical to `zsh -f`), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add znative`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
 ### [`Read the Docs`](https://menketechnologies.github.io/zshrs/index.html) &middot; [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](src/compsys/)
 
@@ -55,7 +55,7 @@ zshrs replaces `fork + exec` with a persistent worker thread pool, compiles ever
 
                  ┌──────────────────────────────────────┐
                  │       UNIFIED METAMORPHIC FRONT      │
-                 │   zshrs  •  8 Bourne Family Dialects  │
+                 │  zshrs  •  8 Bourne Family Dialects  │
                  └──────────────────────────────────────┘
                                     │
                                     ▼
@@ -67,7 +67,7 @@ zshrs replaces `fork + exec` with a persistent worker thread pool, compiles ever
                                     ▼
                  ┌──────────────────────────────────────┐
                  │        SECURE HARDWARE PORTAL        │
-                 │ Pure Rust Safety  •  Zero Memory CVEs │
+                 │ Pure Rust Safety • Zero Memory CVEs  │
                  └──────────────────────────────────────┘
 ```
 
@@ -277,6 +277,15 @@ async_writes = true
 [glob]
 parallel_threshold = 32
 recursive_parallel = true
+
+[zle]                      # fish-ported editor engines, all default off
+autosuggest = true
+syntax_highlight = true
+history_search = true
+autopair = true
+
+[provenance]               # value-lineage engine; default true, and inert
+enabled = true             # until `provenance -m NAME` arms it
 ```
 
 ---
@@ -546,7 +555,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 ```
                   ┌────────────────────────────────────────────────────────────────┐
                   │                        zshrs workspace                         │
-                  │             3 crates · 824 .rs files · 856k lines              │
+                  │             3 crates · 829 .rs files · 870k lines              │
                   ├──────────────────────────────────────────┬─────────────────────┤
                   │      src/ (462 .rs — runtime crate)      │  vendor/fish/ (157) │
                   │  ┌────────────────────────────────────┐  │  reader / line edit │
@@ -579,7 +588,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │     (default)        (--features recorder)  (--features zd)    │
                   ├────────────────────────────────────────────────────────────────┤
                   │                      fusevm (bytecode VM)                      │
-                  │            224 opcodes · fused superinstructions · JIT         │
+                  │            235 opcodes · fused superinstructions · JIT         │
                   └────────────────────────────────────────────────────────────────┘
 ```
 
