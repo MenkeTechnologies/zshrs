@@ -15,23 +15,29 @@ engine records, in order, every bytecode-level event that produces or
 consumes that parameter's value:
 
 ```console
-$ provenance -m REPORT
-$ REPORT=$(date +%Y-%m-%d)
-$ ARCHIVE=${REPORT}.tar.gz
-$ provenance -m ARCHIVE
-$ tar czf $ARCHIVE .
-$ provenance REPORT
+$ cat build.zsh
+provenance -m REPORT
+REPORT=$(date +%Y-%m-%d)
+ARCHIVE=${REPORT}.tar.gz
+provenance REPORT
+$ zshrs build.zsh
 REPORT
-  origin: cmdsubst "date +%Y-%m-%d" (line 2)
+  origin: cmdsubst "date +%Y-%m-%d" (build.zsh:2, 2026-08-18 11:27:50.486)
   ops:
-     1. assign     REPORT "2026-08-18"                      line 2
-     2. expand     $REPORT "2026-08-18"                     line 3
-     3. concat     "2026-08-18" ".tar.gz"                   line 3
+     1. assign     REPORT "2026-08-18"                      build.zsh:2              11:27:50.486
+     2. expand     $REPORT "2026-08-18"                     build.zsh:3              11:27:50.486
+     3. concat     "2026-08-18" ".tar.gz"                   build.zsh:3              11:27:50.486
 ```
 
 The chain starts at an **origin** — the event that created bytes that did
 not exist in the shell before — and extends with one **op** per bytecode
 event afterwards.
+
+Every row carries where and when it happened: the file and line, and the
+local wall clock to the millisecond. The origin line spells the date out;
+op lines print the time alone, and add the date only when the op happened
+on a different day than the origin. Where there is no file — `zshrs -c`
+input, an interactive line — the row reads `line N` instead.
 
 The chain is the whole life of the parameter, not of one value: every
 reassignment appends its own op and nothing earlier is dropped. When a
@@ -40,17 +46,13 @@ lineage is spliced in — an `origin` op naming it, then its ops — rather
 than replacing what the parameter already recorded:
 
 ```console
-$ z=seed
-$ provenance -m z
-$ z=23
-$ z=$(echo built)
-$ provenance z
+$ zshrs build.zsh
 z
-  origin: param z = "seed" (line 2)
+  origin: param z = "seed" (build.zsh:2, 2026-08-18 11:27:54.601)
   ops:
-     1. assign     z "23"                                   line 3
-     2. origin     cmdsubst "echo built"                    line 4
-     3. assign     z "built"                                line 4
+     1. assign     z "23"                                   build.zsh:3              11:27:54.601
+     2. origin     cmdsubst "echo built"                    build.zsh:4              11:27:54.602
+     3. assign     z "built"                                build.zsh:4              11:27:54.602
 ```
 
 Origins:
@@ -95,13 +97,16 @@ provenance -c               clear every lineage and disarm the engine
 Exit status is 1 when a named parameter is not tracked, when an option
 is malformed, or when the engine is disabled.
 
-The JSON form is stable and flat:
+The JSON form is stable and flat. `file` and `function` are `null` where
+there is none; `time` is RFC 3339 local time with milliseconds:
 
 ```json
 {"name":"REPORT","origin":"cmdsubst \"date +%Y-%m-%d\"","origin_line":2,
- "ops":[{"op":"assign","args":["REPORT","\"2026-08-18\""],"line":2},
-        {"op":"expand","args":["$REPORT","\"2026-08-18\""],"line":3},
-        {"op":"concat","args":["\"2026-08-18\"","\".tar.gz\""],"line":3}],
+ "origin_file":"build.zsh","origin_function":null,
+ "origin_time":"2026-08-18T11:27:50.486-04:00",
+ "ops":[{"op":"assign","args":["REPORT","\"2026-08-18\""],"line":2,
+         "file":"build.zsh","function":null,
+         "time":"2026-08-18T11:27:50.486-04:00"}],
  "dropped_ops":0}
 ```
 
@@ -168,10 +173,48 @@ port therefore keys on three things:
 
 Every tap is guarded by `provenance::active()` at the call site.
 
+### Where and when a row happened
+
+Each origin and each op stores a site: line, file, enclosing function,
+and a millisecond wall clock, captured at hook entry before the ledger
+lock is taken.
+
+* **Line** comes from the ledger's own `$LINENO` mirror, fed by the
+  `BUILTIN_SET_LINENO` tap — the hooks never read the parameter table,
+  which the param-write hooks run inside.
+* **File** is `scriptfilename` (what `PS4`'s `%x` prints) at top level,
+  and the file the running function was *defined* in while a function
+  frame is on top of `funcstack`. `zsh -c` stamps the literal `zsh`
+  there (`Src/init.c:479`); that is a shell name, not a file, so the row
+  reads `line N`.
+* **Inside a function**, `$LINENO` counts from the function's own first
+  line, so the site adds the frame's definition line to it — the
+  `f->prev->flineno + f->lineno` sum `funcfiletrace` reports
+  (`Src/Modules/parameter.c:747`) — and the report names the function:
+
+  ```console
+  NAME
+    origin: cmdsubst "echo 42" (lib.zsh:2 (build_name), 2026-08-18 11:25:31.862)
+    ops:
+       1. concat     "42" ".log"                              lib.zsh:3 (build_name)   11:25:31.862
+       2. assign     NAME "42.log"                            lib.zsh:3 (build_name)   11:25:31.862
+  ```
+
+  A `source` or `eval` frame above the function makes `$LINENO` count in
+  *that* text instead, so no definition line is added and no function is
+  named.
+* **Clock** is `SystemTime::now()` at hook entry, rendered in local time.
+  Two ops with the same op name, operands, file and line collapse into
+  one row even when their clocks differ — the clock never defeats the
+  repeat collapse, or nothing would ever collapse.
+
 ### Cost
 
 Disarmed: one relaxed atomic load per tap; no allocation, no lock, no
-map lookup. Armed: one mutex acquisition and an O(1) map lookup per tap.
+map lookup. Armed: one mutex acquisition and an O(1) map lookup per tap,
+plus the site capture — a `scriptfilename` read, a `funcstack` `try_lock`
+(never a blocking one: a hook can fire anywhere the VM runs) and a clock
+read.
 
 Every tap keys on an exact identity — an `Arc` address, a parameter
 name, or the full value bytes. No tap infers a link by scanning word

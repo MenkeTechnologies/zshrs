@@ -28,6 +28,20 @@ fn run(script: &str) -> (String, String, i32) {
     )
 }
 
+/// Write `body` to a uniquely named file under the test's temp dir and
+/// run it with `zshrs -f <file>`, returning (path, stdout).
+fn run_file(tag: &str, body: &str) -> (String, String) {
+    let path = std::env::temp_dir().join(format!("zshrs_prov_{}_{}.zsh", tag, std::process::id()));
+    std::fs::write(&path, body).expect("write script");
+    let out = Command::new(zshrs_bin())
+        .args(["-f", path.to_str().unwrap()])
+        .output()
+        .expect("zshrs failed to spawn");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    (path.to_string_lossy().into_owned(), stdout)
+}
+
 /// The op names in a `provenance NAME` report, in chain order. Each op
 /// line is `  NN. OP  ARGS…  line N`.
 fn ops(report: &str) -> Vec<String> {
@@ -47,7 +61,7 @@ fn command_substitution_is_the_origin_of_the_value_it_produces() {
     let (out, _, status) = run("provenance -m OUT\nOUT=$(echo hello world)\nprovenance OUT");
     assert_eq!(status, 0, "provenance OUT must succeed: {out}");
     assert!(
-        out.contains(r#"origin: cmdsubst "echo hello world" (line 2)"#),
+        out.contains(r#"origin: cmdsubst "echo hello world" (line 2, "#),
         "the substitution — not the assignment — is the origin:\n{out}"
     );
     assert_eq!(ops(&out), vec!["assign"], "report was:\n{out}");
@@ -181,4 +195,81 @@ fn a_bad_option_is_rejected_without_touching_the_ledger() {
     let (out, err, status) = run("provenance -Z");
     assert_eq!(status, 1, "{out}");
     assert!(err.contains("zshrs: provenance: bad option: -Z"), "{err}");
+}
+
+#[test]
+fn a_script_names_its_file_and_line_on_every_row() {
+    let (path, out) = run_file(
+        "script",
+        "provenance -m OUT\nOUT=$(echo hello)\nprovenance OUT\n",
+    );
+    assert!(
+        out.contains(&format!("origin: cmdsubst \"echo hello\" ({}:2, ", path)),
+        "the origin names the file it happened in:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{}:2", path)),
+        "the assign op names it too:\n{out}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_function_body_is_attributed_to_the_file_it_was_defined_in() {
+    // The lineage is built inside `build`, defined in a *different* file
+    // than the one running: the rows must name the definition file, at
+    // the body's real line in it, not the caller's.
+    let lib = std::env::temp_dir().join(format!("zshrs_prov_lib_{}.zsh", std::process::id()));
+    std::fs::write(
+        &lib,
+        "build() {\n  STAMP=$(echo 42)\n  NAME=${STAMP}.log\n}\n",
+    )
+    .expect("write lib");
+    let (main, out) = run_file(
+        "call",
+        &format!(
+            "provenance -m NAME\nsource {}\nbuild\nprovenance NAME\n",
+            lib.display()
+        ),
+    );
+    assert!(
+        out.contains(&format!("{}:2 (build)", lib.display())),
+        "origin must be the substitution's line in the defining file:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{}:3 (build)", lib.display())),
+        "the assignment's line in the defining file:\n{out}"
+    );
+    assert!(
+        !out.contains(&main),
+        "the calling script is not where any of this happened:\n{out}"
+    );
+    let _ = std::fs::remove_file(&lib);
+    let _ = std::fs::remove_file(&main);
+}
+
+#[test]
+fn json_carries_the_file_function_and_timestamp_of_every_row() {
+    let (path, out) = run_file(
+        "json",
+        "provenance -m OUT\nOUT=$(echo alpha)\nprovenance -j OUT\n",
+    );
+    assert!(
+        out.contains(&format!(r#""origin_file":"{}""#, path)),
+        "{out}"
+    );
+    assert!(out.contains(r#""origin_function":null"#), "{out}");
+    assert!(out.contains(r#""file":"#), "{out}");
+    // RFC 3339 local time with milliseconds, e.g. 2026-08-18T11:22:03.908-04:00.
+    let stamp = out
+        .split(r#""origin_time":""#)
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        stamp.len() >= 23 && stamp.contains('T') && stamp.contains('.'),
+        "origin_time must be an RFC 3339 instant, got {stamp:?}:\n{out}"
+    );
+    let _ = std::fs::remove_file(&path);
 }
