@@ -2824,7 +2824,23 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let unique = format!("{:x}{:x}", pid, nanos & 0xffffff);
+    // c:2192 — mkstemp(3) replaces the six X's with EXACTLY six
+    // characters from [A-Za-z0-9], so every zsh temp name has a fixed
+    // width (`/tmp/zshDYKzyg`). The `{pid:x}{nanos:x}` form here was 8-12
+    // characters wide, which shows anywhere the name is displayed: the
+    // `fc -` parity cell compares the editor's status line, where zsh
+    // shows /private/tmp/zshDYKzyg and zshrs showed
+    // /private/tmp/zshdb0ff10c48. Caller retries on EEXIST (c:2255-2269),
+    // so a collision is handled rather than fatal.
+    let mut mix: u128 = ((pid as u128) << 47) ^ nanos;
+    let mut unique = String::with_capacity(6);
+    for _ in 0..6 {
+        let idx = (mix % 62) as usize;
+        unique.push(
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[idx] as char,
+        );
+        mix /= 62;
+    }
     let name = template.replace("XXXXXX", &unique);
     unqueue_signals(); // c:2221
     Some(name)

@@ -2978,6 +2978,21 @@ pub fn bin_fc(
                             // it. Without that call nothing consumed the
                             // stuffed line, so the edited command never ran.
                             crate::ported::init::r#loop(0, 1); // c:1663
+                            // C has ONE input source and one executor, so
+                            // loop(0,1) both consumes and RUNS what `stuff`
+                            // pushed. In zshrs the ported loop consumes the
+                            // pushed text (inbufct drops to 0) but its
+                            // AST-side execution is not the live path, so
+                            // outside an interactive shell — where the REPL
+                            // would have read and run the line itself —
+                            // `zsh -c 'fc -e ED 1'` echoed the edited
+                            // command and never ran it. Run it through the
+                            // same bridge `execstring` uses (exec.rs:1939).
+                            if !isset(SHINSTDIN) {
+                                if let Ok(edited) = fs::read_to_string(&fil) {
+                                    crate::ported::exec::execstring(&edited, 1, 0, "fc");
+                                }
+                            }
                             retval = LASTVAL.load(Relaxed); // c:1664
                         }
                     }
