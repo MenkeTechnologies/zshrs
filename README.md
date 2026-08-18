@@ -693,7 +693,7 @@ default build lean.
 
 | Capability                          | Trigger                                  |
 |-------------------------------------|------------------------------------------|
-| `completion`                        | builtins, keywords, options, special vars, in-file functions **plus live compsys matches** — the same `_git` / `_docker` / `_ssh` completers a Tab press drives, so `git ch` completes `checkout` and `git checkout ` lists branches (see `docs/IN_EDITOR_COMPSYS_COMPLETION.md`) |
+| `completion`                        | builtins, keywords, options, special vars, in-file functions **plus live compsys matches** — the same `_git` / `_docker` / `_ssh` completers a Tab press drives, so `git ch` completes `checkout` and `git checkout ` lists branches (see `docs/IN_EDITOR_COMPSYS_COMPLETION.md`). Writing a completer is covered too: inside an `_arguments` spec, the action field offers completer names and the inline action forms (`(list)`, `((val\:desc))`, `->state`) |
 | `hover`                             | markdown cards for builtins / keywords / options / special vars |
 | `definition` / `references`         | function names declared in the open document |
 | `documentHighlight`                 | same scan as references                  |

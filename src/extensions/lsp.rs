@@ -1165,7 +1165,22 @@ fn completion(state: &State, params: &Value) -> Value {
     //   * Inside `${…}` parameter expansion — variable / option name
     //     completion is useful there.
     //   * Inside `$'…'` ANSI-C strings — opaque, no completion.
+    // …and one exception BEFORE that gate: an `_arguments` spec is a
+    // single-quoted string whose third field is executable completion
+    // code. `'*:file:_fi<cursor>'` should offer `_files`, which the
+    // blanket string suppression made impossible.
     if let Some(l) = line {
+        match arg_spec_part_at(l, col) {
+            Some(ArgSpecPart::Action { word_start }) => {
+                return arg_spec_action_items(word_start, col, l);
+            }
+            // Head is the option/positional spec (the command's own
+            // option names — not something this server can know) and
+            // Message is prose. Both stay empty rather than falling
+            // through to builtin/keyword noise inside a spec.
+            Some(_) => return json!({ "isIncomplete": false, "items": [] }),
+            None => {}
+        }
         if cursor_in_uninterpolated_string(l, col) {
             return json!({ "isIncomplete": false, "items": [] });
         }
@@ -1812,6 +1827,316 @@ fn completion(state: &State, params: &Value) -> Value {
     json!({ "isIncomplete": false, "items": items })
 }
 
+/// Which part of an `_arguments`-family spec string the cursor sits in.
+///
+/// A spec is colon-separated: `'-o[desc]:message:action'`,
+/// `'*:message:action'`, `'1:message:action'`. The action is what the
+/// editor can actually help with — it names a completer or a literal
+/// value list — so that is the part worth completing, and it is exactly
+/// the part the generic string gate used to suppress.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ArgSpecPart {
+    /// Before the first top-level `:` — the option / positional spec
+    /// itself (`-o[desc]`, `*`, `1`). Nothing generic to offer: the
+    /// option names belong to the command being completed.
+    Head,
+    /// Between the first and second `:` — free-text description shown
+    /// by `_message`. Prose, not code.
+    Message,
+    /// After the second `:`, on the action's FIRST word — the place a
+    /// completer name (`_files`) or an inline action form goes. Carries
+    /// the start of the word typed so far so the reply can pin an
+    /// explicit replacement range.
+    Action { word_start: usize },
+    /// Still in the action, but somewhere this server has nothing to
+    /// say: inside the user's own `(list)` / `((val\:desc))` / `{eval}`
+    /// body, or on an argument of the action's command
+    /// (`_files -g <here>`). Distinct from `None` so a double-quoted
+    /// spec stays quiet too — `None` would fall through to the generic
+    /// builtin/keyword tables.
+    ActionOpaque,
+}
+
+/// Commands whose quoted arguments are `:`-separated specs.
+const ARG_SPEC_COMMANDS: &[&str] = &["_arguments", "_values", "_regex_arguments", "_alternative"];
+
+/// Detect a cursor inside an `_arguments`-family spec string.
+///
+/// Returns `None` unless (a) the statement's leading command is one of
+/// [`ARG_SPEC_COMMANDS`] and (b) the cursor is inside a quoted word on
+/// that line. The scan is line-local and quote-aware, deliberately not a
+/// full parse: specs are written as single-quoted literals in practice
+/// (`'-v[verbose]'`), and a spec split across lines with `\` is the
+/// multi-line-continuation gap tracked in
+/// `docs/IN_EDITOR_COMPSYS_COMPLETION.md`.
+pub(crate) fn arg_spec_part_at(line: &str, col: usize) -> Option<ArgSpecPart> {
+    let bytes = line.as_bytes();
+    let cap = col.min(bytes.len());
+    // One quote-aware pass from the start of the line does two jobs:
+    // find the leading command of the statement the cursor is in, and
+    // find the quote that opens the word the cursor is in.
+    //
+    // `leading_command_at` cannot be reused here: it treats `(` as a
+    // statement separator, which is correct for shell code and wrong
+    // inside a spec — `'1:cmd:(build test)'` made it report `build` as
+    // the command, so the whole spec context evaporated exactly where a
+    // literal value list is being written.
+    let mut quote: Option<u8> = None;
+    let mut spec_start: Option<usize> = None;
+    let mut cmd_start: Option<usize> = None;
+    let mut cmd_end: Option<usize> = None;
+    let mut i = 0usize;
+    while i < cap {
+        let c = bytes[i];
+        match quote {
+            None => match c {
+                b'\'' | b'"' => {
+                    quote = Some(c);
+                    spec_start = Some(i + 1);
+                    if cmd_start.is_some() && cmd_end.is_none() {
+                        cmd_end = Some(i);
+                    }
+                }
+                // Statement separators reset the command word.
+                b';' | b'|' | b'&' | b'\n' => {
+                    cmd_start = None;
+                    cmd_end = None;
+                }
+                b' ' | b'\t' => {
+                    if cmd_start.is_some() && cmd_end.is_none() {
+                        cmd_end = Some(i);
+                    }
+                }
+                _ => {
+                    if cmd_start.is_none() {
+                        cmd_start = Some(i);
+                        cmd_end = None;
+                    }
+                }
+            },
+            Some(q) => {
+                // Single quotes take no escapes in zsh; double quotes do.
+                if q == b'"' && c == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == q {
+                    quote = None;
+                    spec_start = None;
+                }
+            }
+        }
+        i += 1;
+    }
+    let cmd = &line[cmd_start?..cmd_end.unwrap_or(cap)];
+    if !ARG_SPEC_COMMANDS.contains(&cmd) {
+        return None;
+    }
+    let start = spec_start?;
+    quote?; // still open at the cursor → we are inside the spec
+    let spec = &line[start..cap];
+    // Colon depth: `[...]` descriptions and `(...)` value lists hold
+    // colons that do not separate spec fields.
+    let mut colons = 0usize;
+    let mut last_colon = None;
+    let mut brackets = 0i32;
+    let mut parens = 0i32;
+    let mut braces = 0i32;
+    let sb = spec.as_bytes();
+    let mut j = 0usize;
+    while j < sb.len() {
+        match sb[j] {
+            b'\\' => {
+                j += 2;
+                continue;
+            }
+            b'[' => brackets += 1,
+            b']' => brackets = (brackets - 1).max(0),
+            b'(' => parens += 1,
+            b')' => parens = (parens - 1).max(0),
+            b'{' => braces += 1,
+            b'}' => braces = (braces - 1).max(0),
+            b':' if brackets == 0 && parens == 0 && braces == 0 => {
+                colons += 1;
+                last_colon = Some(j);
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    match colons {
+        0 => Some(ArgSpecPart::Head),
+        1 => Some(ArgSpecPart::Message),
+        _ => {
+            // Inside the user's own list / eval body there is nothing to
+            // suggest.
+            if parens > 0 || braces > 0 || brackets > 0 {
+                return Some(ArgSpecPart::ActionOpaque);
+            }
+            let action_start = start + last_colon.unwrap_or(0) + 1;
+            // Only the action's FIRST word names a completer; anything
+            // after a space is that command's own argument.
+            match line[action_start..cap].find(|c: char| c == ' ' || c == '\t') {
+                Some(_) => Some(ArgSpecPart::ActionOpaque),
+                None => Some(ArgSpecPart::Action {
+                    word_start: action_start,
+                }),
+            }
+        }
+    }
+}
+
+/// Completion items for the ACTION half of an `_arguments` spec.
+///
+/// Two kinds of thing go here: a compsys function that generates the
+/// matches (`_files`, `_hosts`, `_users`, …) and the inline action
+/// syntaxes zsh's own docs list — a literal list, a described list, a
+/// state dispatch, a shell-command action.
+fn arg_spec_action_items(word_start: usize, col: usize, line: &str) -> Value {
+    let typed = &line[word_start.min(line.len())..col.min(line.len())];
+    // A word starting with `-` is a FLAG of the action's own command
+    // (`_files -g …`, `_values -s ,`). Offering completer names there
+    // would be nonsense, and this server has no per-action flag table.
+    if typed.starts_with('-') {
+        return json!({ "isIncomplete": false, "items": [] });
+    }
+    let range_start = word_start;
+    let mk = |label: &str, detail: &str, insert: &str, doc: &str, sort: &str| -> Value {
+        json!({
+            "label": label,
+            "kind": if insert.contains("${") { 15 } else { 3 },
+            "detail": detail,
+            "documentation": { "kind": "markdown", "value": doc },
+            "filterText": label,
+            "insertTextFormat": if insert.contains("${") { 2 } else { 1 },
+            "sortText": format!("{sort}_{label}"),
+            "textEdit": {
+                "range": {
+                    "start": { "line": 0, "character": range_start },
+                    "end": { "line": 0, "character": col },
+                },
+                "newText": insert,
+            },
+        })
+    };
+    // The inline action forms, straight from `man zshcompsys`'s
+    // "ACTIONS" list. These rank first: they are syntax, and the
+    // function names below are a long tail.
+    let mut items = vec![
+        mk(
+            "(list)",
+            "literal value list",
+            "(${1:one} ${2:two})",
+            "**`(word ...)`** — complete these literal words.\n\n\
+             `'1:command:(build test)'`",
+            "0",
+        ),
+        mk(
+            "((val:desc))",
+            "described value list",
+            "((${1:val}\\:${2:description}))",
+            concat!(
+                "**`((word\\:desc ...))`** — literal words WITH ",
+                "descriptions, shown like `_describe` output.\n\n",
+                "`'1:cmd:((build\\:compile test\\:check))'`",
+            ),
+            "0",
+        ),
+        mk(
+            "->state",
+            "dispatch to $state",
+            "->${1:state}",
+            "**`->string`** — set `$state` to _string_ and return, so \
+             the caller handles this argument in a `case $state in` \
+             block. Needs `_arguments -C` for `$curcontext` to be \
+             writable.",
+            "0",
+        ),
+        mk(
+            "{eval}",
+            "shell-command action",
+            "{${1:_command}}",
+            "**`{eval-string}`** — run the shell code to generate \
+             matches. Anything more than a call belongs in a function.",
+            "0",
+        ),
+        mk(
+            " ",
+            "message-only (no completion)",
+            " ",
+            "**` `** (a single space) — accept the argument but offer \
+             nothing; the message half is still shown via `_message`.",
+            "0",
+        ),
+    ];
+    // Every compsys function is a legal action. `_files` /
+    // `_directories` / `_normal` lead because they are what most specs
+    // actually use.
+    const PREFERRED: &[&str] = &[
+        "_files",
+        "_directories",
+        "_normal",
+        "_command_names",
+        "_hosts",
+        "_users",
+        "_parameters",
+        "_options",
+        "_signals",
+        "_pids",
+        "_message",
+        "_nothing",
+        "_guard",
+        "_values",
+        "_describe",
+        "_alternative",
+    ];
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for name in crate::compsys::COMPSYS_FN_NAMES {
+        if !seen.insert(name) {
+            continue;
+        }
+        let rank = if PREFERRED.contains(name) { "1" } else { "2" };
+        items.push(mk(
+            name,
+            "compsys function",
+            name,
+            &format!("**`{name}`** — compsys completion function used as an `_arguments` action."),
+            rank,
+        ));
+    }
+    // Any `_`-prefixed function the shell knows about is also a legal
+    // action, and on a machine with a completion corpus installed that
+    // set is far larger than the ported table — `_git_commits`,
+    // `_docker_images`, the user's own helpers. They come from the
+    // autoload stubs the canonical rkyv shard registered, so this list
+    // only fills in once the compsys shell thread has bootstrapped.
+    let extra: Vec<String> = crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .map(|tab| {
+            tab.iter()
+                .map(|(name, _)| name)
+                .filter(|k| k.starts_with('_'))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    for name in &extra {
+        if !seen.insert(name.as_str()) {
+            continue;
+        }
+        items.push(mk(
+            name,
+            "completion function (fpath)",
+            name,
+            &format!("**`{name}`** — completion function known to this shell, usable as an `_arguments` action."),
+            "3",
+        ));
+    }
+    let _ = typed;
+    json!({ "isIncomplete": false, "items": items })
+}
+
 /// Translate an LSP `character` offset (UTF-16 code units) into a
 /// byte offset inside `line`.
 ///
@@ -2111,7 +2436,15 @@ fn hover(state: &State, params: &Value) -> Value {
             "contents": { "kind": "markdown", "value": module_doc }
         });
     }
-    if gate != HoverGate::Code {
+    // An `_arguments` spec is a quoted string, so the gate calls it
+    // String and suppresses — but its action field names a REAL
+    // function, and that is exactly the name an author writing a spec
+    // wants documented. `'*:file:_files'` hovers `_files`.
+    let in_spec_action = matches!(
+        arg_spec_part_at(line_text, col),
+        Some(ArgSpecPart::Action { .. }) | Some(ArgSpecPart::ActionOpaque)
+    ) && word.starts_with('_');
+    if gate != HoverGate::Code && !in_spec_action {
         tracing::debug!(
             target: "zshrs::lsp::hover",
             line = line_no, col, %word,
@@ -3163,7 +3496,17 @@ pub fn lookup_doc(name: &str) -> String {
         }
     }
     if let Some((canon, body)) = crate::zsh_builtin_docs::lookup_builtin_doc(name) {
-        return format!("**{}** — _zsh builtin_\n\n{}", canon, body);
+        // The doc table is one flat map over every `man zsh*` item, so
+        // `_arguments` and `_files` live in it beside `print` and `cd`.
+        // They are shell functions from `zshcompsys`, not builtins —
+        // calling them builtins in the hover card is simply wrong, and
+        // it is the card an author sees while writing a completer.
+        let kind = if crate::compsys::COMPSYS_FN_NAMES.contains(&canon) {
+            "_compsys function_"
+        } else {
+            "_zsh builtin_"
+        };
+        return format!("**{}** — {}\n\n{}", canon, kind, body);
     }
     // Special vars: try the raw name first (so `$` resolves to its
     // own `$$` PID entry stored as canonical `"$"` in the doc
@@ -11175,6 +11518,148 @@ foo() { echo second }\n\
             .as_array()
             .cloned()
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn arg_spec_part_detects_head_message_and_action() {
+        // `'-o[desc]:message:action'` — the three fields, plus the
+        // bracketed description that must NOT be read as a field.
+        let line = "  _arguments '-o[out]:outfile:_files'";
+        let head = line.find("[out").unwrap() + 2;
+        assert_eq!(
+            super::arg_spec_part_at(line, head),
+            Some(super::ArgSpecPart::Head)
+        );
+        let msg = line.find("outfile").unwrap() + 3;
+        assert_eq!(
+            super::arg_spec_part_at(line, msg),
+            Some(super::ArgSpecPart::Message)
+        );
+        let act = line.find("_files").unwrap() + 3;
+        match super::arg_spec_part_at(line, act) {
+            Some(super::ArgSpecPart::Action { word_start }) => {
+                assert_eq!(&line[word_start..act], "_fi", "action word start is wrong");
+            }
+            other => panic!("expected Action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arg_spec_action_argument_is_opaque() {
+        // On an ARGUMENT of the action's command (`_files -g <here>`)
+        // there is nothing generic to offer — a glob pattern is the
+        // user's, not ours.
+        let line = "  _arguments '*:f:_files -g pat'";
+        let col = line.find("pat").unwrap() + 3;
+        assert_eq!(
+            super::arg_spec_part_at(line, col),
+            Some(super::ArgSpecPart::ActionOpaque),
+        );
+    }
+
+    #[test]
+    fn arg_spec_literal_list_is_opaque_not_unknown() {
+        // A spec holding `(` used to lose its command entirely, because
+        // `leading_command_at` treats `(` as a statement separator: the
+        // cursor inside `'1:cmd:(build test)'` reported the command as
+        // `build`. It must be recognised as spec-internal instead.
+        let line = "  _arguments '1:cmd:(build test)'";
+        let col = line.find("build").unwrap() + 5;
+        assert_eq!(
+            super::arg_spec_part_at(line, col),
+            Some(super::ArgSpecPart::ActionOpaque),
+        );
+    }
+
+    #[test]
+    fn arg_spec_part_is_none_outside_a_spec() {
+        // Not an `_arguments`-family command …
+        let line = "  echo 'a:b:c'";
+        let col = line.find("b:c").unwrap();
+        assert_eq!(super::arg_spec_part_at(line, col), None);
+        // … and not inside a quoted word at all.
+        let line2 = "  _arguments -s ";
+        assert_eq!(super::arg_spec_part_at(line2, line2.len()), None);
+        // … and after the spec's closing quote.
+        let line3 = "  _arguments '*:f:_files' ";
+        assert_eq!(super::arg_spec_part_at(line3, line3.len()), None);
+    }
+
+    #[test]
+    fn completion_inside_arg_spec_action_offers_completers_and_action_syntax() {
+        // The gap this closes: the generic string gate used to return
+        // nothing for every position inside a spec, so `'*:file:_fi'`
+        // offered no `_files`.
+        let line = "_arguments '*:file:_fi'";
+        let items = complete_at(line, line.find("_fi").unwrap() + 3);
+        let labels: Vec<&str> = items.iter().filter_map(|i| i["label"].as_str()).collect();
+        assert!(labels.contains(&"_files"), "no _files in {labels:?}");
+        assert!(labels.contains(&"->state"), "no ->state action form");
+        assert!(labels.contains(&"(list)"), "no literal-list action form");
+        // Nothing from the generic tables — a spec action is not a
+        // place for `if` / `while` / `setopt`.
+        assert!(
+            !labels.contains(&"while"),
+            "keyword leaked into spec action"
+        );
+    }
+
+    #[test]
+    fn completion_inside_a_literal_value_list_stays_quiet() {
+        // `'1:cmd:(build test)'` — the cursor is inside the user's own
+        // literal list, so completer names are wrong there.
+        let line = "_arguments '1:cmd:(build test)'";
+        let items = complete_at(line, line.find("build").unwrap() + 5);
+        assert!(items.is_empty(), "literal list offered items: {items:?}");
+    }
+
+    #[test]
+    fn hover_reaches_a_completer_named_inside_a_spec() {
+        // The action field of a spec is a quoted string, so the hover
+        // gate calls it String and used to suppress — but `_files`
+        // there is a real function whose docs are exactly what an
+        // author writing the spec wants.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let text = "_arguments '*:file:_files'\n";
+        state.docs.insert("file:///t.zsh".into(), text.into());
+        let col = text.find("_files").unwrap() + 2;
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": col },
+        });
+        let card = super::hover(&state, &params);
+        let body = card["contents"]["value"].as_str().unwrap_or_default();
+        assert!(body.starts_with("**_files**"), "got: {body}");
+        assert!(
+            body.contains("_compsys function_"),
+            "compsys functions must not be labelled builtins: {body}",
+        );
+    }
+
+    #[test]
+    fn hover_stays_suppressed_for_ordinary_string_contents() {
+        // The spec exception must not reopen hover for every quoted
+        // word — `'print'` inside a plain string is still prose.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let text = "echo 'print this'\n";
+        state.docs.insert("file:///t.zsh".into(), text.into());
+        let col = text.find("print").unwrap() + 2;
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": col },
+        });
+        assert_eq!(super::hover(&state, &params), Value::Null);
+    }
+
+    #[test]
+    fn completion_inside_arg_spec_description_stays_quiet() {
+        // `[…]` is prose shown by `_message`; the old behaviour (silence)
+        // is correct here and must survive the new context.
+        let line = "_arguments '-v[be lo]'";
+        let items = complete_at(line, line.find("lo]").unwrap() + 2);
+        assert!(items.is_empty(), "description offered items: {items:?}");
     }
 
     #[test]

@@ -457,6 +457,37 @@ matching), and it means the list can be wider than the prompt's.
 Duplicates are merged in the LSP layer: `compdescribe`'s two-phase add
 proposes each word twice, once with a description and once without.
 
+## Writing specs, not just using them
+
+The other half of an editor's job here is helping the author of a
+completer, not only the caller of one. A spec is a quoted string, so the
+generic "no completion inside strings" rule suppressed everything —
+`'*:file:_fi<tab>'` offered nothing where `_files` is the obvious answer.
+
+`arg_spec_part_at` splits the spec the cursor is in
+(`_arguments` / `_values` / `_regex_arguments` / `_alternative`) on its
+top-level colons, ignoring the ones inside `[description]`, `(value
+list)` and `{eval}` bodies:
+
+| Cursor is in | Offered |
+|---|---|
+| `-o[desc]` / `*` / `1` — the spec head | nothing (those are the completed command's own option names) |
+| `:message:` | nothing (prose shown by `_message`) |
+| `:action` first word | the inline action forms — `(list)`, `((val\:desc))`, `->state`, `{eval}`, message-only — then every completer this shell knows, `_files` / `_directories` / `_normal` first |
+| inside the action's own `(…)` / `{…}`, or on an argument of it (`_files -g …`) | nothing |
+
+Hover follows the same rule: `_files` named in an action gets its
+`man zshcompsys` card, where the generic string gate used to suppress it.
+That card also stopped calling compsys functions "zsh builtin" — the doc
+table is one flat map over every `man zsh*` item, so `_arguments` sat in
+it beside `print`, and the label was simply wrong on the card an author
+sees while writing a completer.
+
+The completer list comes from the ported table plus every `_`-prefixed
+function in `shfunctab`, which on a machine with a completion corpus
+installed is the corpus itself — the stubs the canonical rkyv shard
+registered.
+
 ## Autoload chunk cache
 
 The dominant cost of a cold in-editor completion is parsing the completer,
@@ -497,9 +528,6 @@ construction.
 
 ## Remaining work
 
-- **`_arguments` spec internals.** Completion INSIDE a spec string
-  (`'*:file:_fi'` → `_files`) still returns nothing; there is no
-  completion context for optspec / `:msg:action` positions.
 - **Multi-line continuations.** `git \\\n add --pat` is not glued
   into one logical line before dispatch.
 
