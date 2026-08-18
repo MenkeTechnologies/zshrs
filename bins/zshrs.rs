@@ -1219,6 +1219,11 @@ pub fn zshrs_main() {
     // — "rebuilding your house every morning").
     let _ = zsh::daemon_presence::probe();
 
+    // Arm the lineage engine when `[provenance] track_all` asks for it.
+    // Before this call the engine is inert whatever the config says —
+    // nothing has read it.
+    zsh::provenance::init_from_config();
+
     // Pre-warm any per-process caches that depend on knowing the
     // current PID — pid lookup is cheap, but the call site here
     // exists so the call appears in the trace.

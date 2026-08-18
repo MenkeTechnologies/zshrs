@@ -42,6 +42,9 @@
 //!                     # (default true; the engine still stays inert
 //!                     # until `provenance -m NAME` arms it).
 //!                     # `ZSHRS_PROVENANCE=0` is the env kill switch.
+//! track_all = true    # arm every parameter and every shell function
+//!                     # without any `-m` call (default false).
+//!                     # `ZSHRS_PROVENANCE_ALL=1`/`=0` overrides it.
 //! ```
 
 use serde::Deserialize;
@@ -198,20 +201,39 @@ pub struct ZleConfig {
 /// enabled = false
 /// ```
 ///
+/// `track_all = true` skips the arming step entirely — every parameter
+/// write and every shell function records a chain:
+///
+/// ```toml
+/// [provenance]
+/// track_all = true
+/// ```
+///
 /// `ZSHRS_PROVENANCE=0` in the environment overrides the config and
-/// disables the engine regardless of this field.
+/// disables the engine regardless of these fields;
+/// `ZSHRS_PROVENANCE_ALL=1` / `=0` overrides `track_all` alone.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ProvenanceConfig {
     /// Allow `provenance -m NAME` to arm the lineage ledger.
     pub enabled: bool,
+    /// Track everything, with no `-m` call: every parameter the shell
+    /// writes and every shell function it defines or calls arms itself.
+    /// Off by default — with it on, the engine is armed from the first
+    /// line of the first rc file, so every hook does real work for the
+    /// life of the shell. `ZSHRS_PROVENANCE_ALL=1` / `=0` overrides this
+    /// field; `enabled = false` still wins over both.
+    pub track_all: bool,
 }
 
 // ── Defaults ──
 
 impl Default for ProvenanceConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            track_all: false,
+        }
     }
 }
 

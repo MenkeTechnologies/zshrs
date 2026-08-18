@@ -286,6 +286,8 @@ autopair = true
 
 [provenance]               # value-lineage engine; default true, and inert
 enabled = true             # until `provenance -m NAME` arms it
+track_all = false          # true = arm every parameter and every shell
+                           # function with no `-m` at all
 ```
 
 ---
@@ -370,8 +372,27 @@ The chain covers the parameter's whole life, not one value: reassignment
 appends an op and drops nothing, and a value arriving with its own lineage is
 spliced in under an `origin` op.
 
-Nothing is recorded until `provenance -m` arms it; `[provenance] enabled = false`
-in `~/.zshrs/zshrs.toml` (or `ZSHRS_PROVENANCE=0`) refuses arming altogether.
+Shell functions have chains of their own — definition site, every
+redefinition, every call at the caller's line, and the `unfunction` that
+ended it — reached with `-f`:
+
+```console
+$ provenance -f greet
+greet()
+  origin: function greet (greet.zsh:2, 2026-08-18 11:48:01.139)
+  ops:
+     1. call       greet()                                  greet.zsh:3              11:48:01.139
+     2. call       greet()                                  greet.zsh:4              11:48:01.140
+```
+
+Nothing is recorded until `provenance -m` arms it — or until something
+turns on track-everything mode, which arms every parameter write and
+every function with no `-m` at all: `provenance -a` at runtime,
+`[provenance] track_all = true` in `~/.zshrs/zshrs.toml` from startup, or
+`ZSHRS_PROVENANCE_ALL=1` in the environment. Self-rewriting parameters
+(`LINENO`, `RANDOM`, `status`, the positionals, …) stay out of it, and
+4096 auto-armed names is the ceiling. `[provenance] enabled = false` (or
+`ZSHRS_PROVENANCE=0`) refuses arming altogether.
 
 ### Unit Test Framework (port of [`strykelang`](https://github.com/MenkeTechnologies/strykelang))
 

@@ -85,14 +85,80 @@ Ops:
 ## Surface
 
 ```
-provenance                  list every tracked parameter with its lineage
+provenance                  list every tracked parameter and function
 provenance NAME…            print NAME's lineage
 provenance -m NAME…         start tracking NAME
 provenance -u NAME…         stop tracking NAME and drop its lineage
 provenance -j NAME          print NAME's lineage as JSON
+provenance -f …             act on shell functions instead of parameters
+provenance -a               track everything from here on
+provenance -ua              stop arming new names (keeps what is recorded)
 provenance -l               same as no arguments
 provenance -c               clear every lineage and disarm the engine
 ```
+
+Flags bundle: `-mf NAME` arms a function, `-jf NAME` prints one as JSON,
+`-uf NAME` drops one.
+
+## Tracking everything
+
+`provenance -a`, or `track_all` in the config, arms every parameter the
+shell writes and every shell function it defines or calls — no `-m` at
+all. The config form is armed before the first rc file runs, so it
+covers the whole life of the shell:
+
+```toml
+# ~/.zshrs/zshrs.toml
+[provenance]
+track_all = true
+```
+
+`ZSHRS_PROVENANCE_ALL=1` (or `=0`) overrides that field from the
+environment; `enabled = false` / `ZSHRS_PROVENANCE=0` still wins over
+both and refuses to arm anything.
+
+Two bounds keep a track-everything session finite:
+
+* **Volatile parameters are never armed by themselves** — `LINENO`,
+  `RANDOM`, `SECONDS`, `EPOCHSECONDS`, `EPOCHREALTIME`, `HISTCMD`,
+  `COLUMNS`, `LINES`, `status`, `pipestatus`, `_`, `?`, `!`, `$`, `#`,
+  and the positionals. The shell rewrites these on its own, once or more
+  per command; their chains would record its bookkeeping and nothing the
+  user did. `provenance -m LINENO` still arms one by hand.
+* **A ceiling of 4096 auto-armed names.** Past it, new names are counted
+  and ignored, and the listing ends with
+  `… N more names not tracked (cap 4096)`.
+
+## Shell functions
+
+A function has a lineage of its own — where it was defined, every
+redefinition, every call, and the removal that ended it:
+
+```console
+$ cat greet.zsh
+provenance -a
+greet() { MSG="hi $1"; }
+greet world
+greet again
+provenance -f greet
+$ zshrs greet.zsh
+greet()
+  origin: function greet (greet.zsh:2, 2026-08-18 11:48:01.139)
+  ops:
+     1. call       greet()                                  greet.zsh:3              11:48:01.139
+     2. call       greet()                                  greet.zsh:4              11:48:01.140
+```
+
+| Op           | Recorded when                                                |
+|--------------|--------------------------------------------------------------|
+| `call`       | the function is about to run — at the *caller's* site         |
+| `redefine`   | the name is defined again, at the new body's site             |
+| `unfunction` | `unfunction NAME` / `unset -f NAME`                           |
+
+The origin is the definition site `shfunctab` recorded
+(`Src/exec.c:5383-5388`): the defining file and the line the definition
+starts on. Functions and parameters are separate namespaces — `path` and
+`path()` keep separate chains — so function subcommands need `-f`.
 
 Exit status is 1 when a named parameter is not tracked, when an option
 is malformed, or when the engine is disabled.
@@ -170,6 +236,9 @@ port therefore keys on three things:
 | `ShellHost::glob` / `heredoc` / `herestring` / `exec` / `call_function` / `cmd_subst` / `process_sub_*` | `src/fusevm_bridge.rs` | origins and consumption |
 | `ShellExecutor::run_command_substitution` | `src/vm_helper.rs` | in-process `$(…)` |
 | `assignsparam` / `assignaparam` / `sethparam` / `unsetparam` | `src/ported/params.rs` | parameter writes |
+| `execfuncdef` install | `src/ported/exec.rs` | function definition / redefinition |
+| `doshfunc` entry | `src/ported/exec.rs` | function call, at the caller's site |
+| `bin_unhash` shfunc removal | `src/ported/builtin.rs` | `unfunction` / `unset -f` |
 
 Every tap is guarded by `provenance::active()` at the call site.
 
@@ -211,7 +280,10 @@ lock is taken.
 ### Cost
 
 Disarmed: one relaxed atomic load per tap; no allocation, no lock, no
-map lookup. Armed: one mutex acquisition and an O(1) map lookup per tap,
+map lookup. `track_all` arms the engine for the life of the shell, so
+every tap does real work from startup: measured at +0.9 ms on a
+`zshrs -f -c true` debug-build startup (18.2 → 19.1 ms, 20 runs each).
+Armed: one mutex acquisition and an O(1) map lookup per tap,
 plus the site capture — a `scriptfilename` read, a `funcstack` `try_lock`
 (never a blocking one: a hook can fire anywhere the VM runs) and a clock
 read.
