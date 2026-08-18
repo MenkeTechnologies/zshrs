@@ -2776,7 +2776,14 @@ impl ShellExecutor {
 
     /// Execute via the lex+parse free ported + ZshCompiler pipeline.
     /// This is the only execution path; `execute_script` delegates here.
-    pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
+    /// Parse + compile `script` in an isolated lexer context, without
+    /// running it.
+    ///
+    /// Split out of [`ShellExecutor::execute_script_zsh_pipeline`] so the
+    /// autoload loader can get its hands on the compiled chunk: that chunk
+    /// is what lands in `~/.zshrs/autoloads.rkyv`, so the next process can
+    /// install the same function without re-parsing the definition file.
+    fn compile_script_isolated(&mut self, script: &str) -> Result<fusevm::Chunk, String> {
         // Skip history expansion for non-interactive script execution
         // (`zsh -c '…'`, internal eval, sourced files). zsh's `!`
         // history sub only fires on the REPL command line, never on
@@ -2812,8 +2819,18 @@ impl ShellExecutor {
         }
 
         let compiler = crate::compile_zsh::ZshCompiler::new();
-        let chunk = compiler.compile(&program);
-        let status = self.run_chunk(chunk, "execute_script_zsh_pipeline")?;
+        Ok(compiler.compile(&program))
+    }
+
+    /// Run an already-compiled top-level chunk, then fire the end-of-script
+    /// hooks (`EXIT` trap, `TRAPEXIT`, `zshexit` + `zshexit_functions`) the
+    /// script pipeline owes them.
+    fn run_chunk_with_exit_hooks(
+        &mut self,
+        chunk: fusevm::Chunk,
+        label: &str,
+    ) -> Result<i32, String> {
+        let status = self.run_chunk(chunk, label)?;
 
         // Fire EXIT trap if set. Two storage paths:
         //   (a) `trap 'cmd' EXIT` writes the body text into
@@ -2930,6 +2947,76 @@ impl ShellExecutor {
         let _ = status;
         Ok(self.last_status())
     }
+    /// zshrs's script entry: lex + parse + compile + run, then the
+    /// end-of-script hooks. `eval`, `source`, trap bodies and autoload
+    /// registration all funnel through here.
+    pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
+        let chunk = self.compile_script_isolated(script)?;
+        self.run_chunk_with_exit_hooks(chunk, "execute_script_zsh_pipeline")
+    }
+
+    /// Install an autoloaded function by running its definition program,
+    /// reusing the rkyv-cached chunk when the definition file has not
+    /// changed since it was compiled.
+    ///
+    /// `registered` is what `autoload_register_source` produced: either
+    /// `name() { <file body> }` or, for a file that already contains the
+    /// definition, the body verbatim. Running it installs the function;
+    /// the compiled chunk for it is exactly what the cache stores, so a hit
+    /// skips lex+parse+compile of the whole file. For `_git` that is 424 KB
+    /// of shell — the dominant cost of the first `git <tab>`.
+    ///
+    /// Two conditions gate caching, because outside them the chunk is not a
+    /// function of the file's bytes alone:
+    ///   * ksh-style autoload (`KSHAUTOLOAD` / `PM_KSHSTORED`) runs the file
+    ///     at top level instead of wrapping it, so the same bytes produce a
+    ///     different program depending on a runtime option;
+    ///   * without `PM_UNALIASED` (`autoload` without `-U`) the body is
+    ///     parsed WITH alias expansion, so the chunk depends on the alias
+    ///     table too. Every compsys / plugin autoload uses `-Uz`.
+    fn run_autoload_definition(
+        &mut self,
+        name: &str,
+        registered: &str,
+        ksh_style: bool,
+    ) -> Result<i32, String> {
+        let unaliased = crate::ported::utils::getshfunc(name)
+            .map(|f| (f.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0)
+            .unwrap_or(false);
+        let stamps = if ksh_style || !unaliased {
+            None
+        } else {
+            autoload_source_stamps(name)
+        };
+        if let Some((mtime, len)) = stamps {
+            if let Some(blob) = crate::autoload_cache::try_load_for_source(name, mtime, len) {
+                match bincode::deserialize::<fusevm::Chunk>(&blob) {
+                    Ok(chunk) if !chunk.ops.is_empty() => {
+                        tracing::debug!(
+                            name,
+                            ops = chunk.ops.len(),
+                            "autoload: rkyv chunk hit, skipping parse+compile"
+                        );
+                        return self.run_chunk_with_exit_hooks(chunk, "autoload:cached");
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let chunk = self.compile_script_isolated(registered)?;
+        if let Some((mtime, len)) = stamps {
+            match bincode::serialize(&chunk) {
+                Ok(blob) => {
+                    if let Err(e) = crate::autoload_cache::try_save_one(name, &blob, mtime, len) {
+                        tracing::warn!(name, error = %e, "autoload: rkyv chunk save failed");
+                    }
+                }
+                Err(e) => tracing::warn!(name, error = %e, "autoload: chunk serialize failed"),
+            }
+        }
+        self.run_chunk_with_exit_hooks(chunk, "autoload:compiled")
+    }
+
     /// `execute_script` — see implementation.
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
@@ -3224,7 +3311,7 @@ impl ShellExecutor {
                         // synthesized wrapper here stamps line 1 instead, so
                         // put the stub's value back when the wrapper was ours.
                         let synthesized = registered != body;
-                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
                             // c:5384-5388 sets `shf->lineno` only where a
@@ -3290,7 +3377,7 @@ impl ShellExecutor {
                         // synthesized wrapper here stamps line 1 instead, so
                         // put the stub's value back when the wrapper was ours.
                         let synthesized = registered != body;
-                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
                             // c:5384-5388 sets `shf->lineno` only where a
@@ -3559,7 +3646,7 @@ impl ShellExecutor {
                         // synthesized wrapper here stamps line 1 instead, so
                         // put the stub's value back when the wrapper was ours.
                         let synthesized = registered != body;
-                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
                             // c:5384-5388 sets `shf->lineno` only where a
@@ -3668,7 +3755,7 @@ impl ShellExecutor {
                         // synthesized wrapper here stamps line 1 instead, so
                         // put the stub's value back when the wrapper was ours.
                         let synthesized = registered != body;
-                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
                             // c:5384-5388 sets `shf->lineno` only where a
@@ -5336,6 +5423,26 @@ fn autoload_is_ksh_style(name: &str) -> bool {
     };
     ksh == 2 || (ksh == 1 && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHAUTOLOAD))
     // c:5781
+}
+
+/// `(mtime_secs, len)` of the definition file an autoloaded function was
+/// loaded from, or `None` when it cannot be pinned down.
+///
+/// `loadautofn` records the resolved fpath directory on the shfunc
+/// (`filename` + `PM_LOADDIR`, c:Src/exec.c:5657), so the file is
+/// `<dir>/<name>`. A function whose `filename` is the placeholder `"zsh"`
+/// — or one loaded out of a `.zwc` digest, where no single file backs the
+/// body — yields `None` and simply is not cached.
+fn autoload_source_stamps(name: &str) -> Option<(i64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let dir = crate::ported::utils::getshfunc(name)
+        .and_then(|f| f.filename)
+        .filter(|d| d != "zsh")?;
+    let meta = std::fs::metadata(Path::new(&dir).join(name)).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    Some((meta.mtime(), meta.len()))
 }
 
 fn autoload_register_source(name: &str, body: &str) -> String {

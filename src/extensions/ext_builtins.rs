@@ -2278,99 +2278,6 @@ impl ShellExecutor {
         crate::compsys::ported::compinit::compdef(args)
     }
 
-    /// Fill in bytecode blobs for autoload bodies the rkyv shard has not
-    /// compiled yet, on the worker pool.
-    ///
-    /// Runs on every `-C` early-return path (dump-sourced and SQLite
-    /// cache-hit alike). It publishes no shell state; it only warms
-    /// `~/.zshrs/autoloads.rkyv` so the next `_<completer>` call skips
-    /// parse+compile.
-    fn spawn_autoload_bytecode_backfill(&self) {
-        // Background: fill bytecode blobs for any autoloads that have body but no chunk.
-        // Sources of missing entries: (1) brand-new SQLite cache, (2) zshrs binary
-        // mtime advanced and invalidated previously-cached chunks. The rkyv shard
-        // at ~/.zshrs/autoloads.rkyv is additive — we compute the delta and
-        // merge_in once at the end (single read + single write of the shard,
-        // even for 16k entries).
-        if let Some(ref cache) = self.compsys_cache {
-            if let Ok(total_with_body) = cache.count_autoloads_with_body() {
-                let cached_now = crate::autoload_cache::entry_count();
-                let missing = total_with_body.saturating_sub(cached_now);
-                if missing > 0 {
-                    tracing::info!(
-                        count = missing,
-                        "compinit: backfilling bytecode blobs on worker pool"
-                    );
-                    let cache_path = crate::compsys::cache::default_cache_path();
-                    let total_missing = missing;
-                    self.worker_pool.submit(move || {
-                        let cache = match crate::compsys::cache::CompsysCache::open(&cache_path) {
-                            Ok(c) => c,
-                            Err(_) => return,
-                        };
-                        // One pass: pull every body whose name isn't already in
-                        // the rkyv shard, parse+compile, accumulate into a
-                        // HashMap, merge_in once at the end.
-                        let exclude = crate::autoload_cache::cached_names();
-                        let bodies = match cache.get_autoload_bodies_excluding(&exclude, usize::MAX) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::warn!(error = %e, "compinit: body fetch failed");
-                                return;
-                            }
-                        };
-                        let mut batch: std::collections::HashMap<String, Vec<u8>> =
-                            std::collections::HashMap::with_capacity(bodies.len());
-                        // Mirror C's `strinbeg()` (hist.c:1033) input-side
-                        // gate for the whole batch: parsing a STRING must
-                        // report EOF when the lexer buffer drains, never
-                        // fall through to `inputline()`. `input::strin` is
-                        // thread-local, so this bumps only this worker; the
-                        // history half of strinbeg (hbegin/hend, global) is
-                        // deliberately NOT run here — these parses must not
-                        // touch the interactive history.
-                        crate::ported::input::strin.with(|s| s.set(s.get() + 1));
-                        for (name, body) in &bodies {
-                            // Mirror Src/init.c errflag save/clear/check around parse.
-                            let saved_errflag = errflag.load(Ordering::Relaxed);
-                            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                            crate::ported::parse::parse_init(body);
-                            let program = crate::ported::parse::parse();
-                            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-                            errflag.store(saved_errflag, Ordering::Relaxed);
-                            if parse_failed {
-                                continue;
-                            }
-                            if !program.lists.is_empty() {
-                                // ksh_autoload_body stub (deleted with the
-                                // old exec.c port) returned `Some(program)`
-                                // unchanged — same observable behavior as
-                                // using `&program` directly.
-                                let target = &program;
-                                let _ = name;
-                                let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
-                                if let Ok(blob) = bincode::serialize(&chunk) {
-                                    batch.insert(name.clone(), blob);
-                                }
-                            }
-                        }
-                        // Mirror `strinend()` (hist.c:1049) — input side only.
-                        crate::ported::input::strin.with(|s| s.set(s.get() - 1));
-                        let cached = batch.len();
-                        if let Err(e) = crate::autoload_cache::try_merge_in(batch) {
-                            tracing::warn!(error = %e, "compinit: rkyv merge_in failed");
-                        }
-                        tracing::info!(
-                            cached,
-                            total = total_missing,
-                            "compinit: bytecode backfill complete"
-                        );
-                    });
-                }
-            }
-        }
-    }
-
     /// compinit - initialize the completion system
     /// Scans fpath for completion functions and registers them
     #[tracing::instrument(level = "info", skip(self))]
@@ -2619,7 +2526,6 @@ impl ShellExecutor {
             self.set_assoc("_patcomps".to_string(), tables.patcomps);
             self.set_assoc("_postpatcomps".to_string(), tables.postpatcomps);
             self.set_assoc("_compautos".to_string(), tables.compautos);
-            self.spawn_autoload_bytecode_backfill();
             return 0;
         }
 
@@ -2693,7 +2599,6 @@ impl ShellExecutor {
                             result.compautos.into_iter().collect(),
                         );
 
-                        self.spawn_autoload_bytecode_backfill();
 
                         return 0;
                     }
@@ -2776,93 +2681,17 @@ impl ShellExecutor {
                 "compinit: background scan complete"
             );
 
-            // Pre-parse function bodies and cache bytecode blobs into the
-            // rkyv autoload shard. Whole-shard replace at the end — for 16k
-            // entries that's exactly one rkyv serialize + atomic-rename,
-            // versus the per-batch SQLite-era pattern that wrote 160 times.
-            //
-            // Memory: 16k chunks × ~10KB = ~160MB resident during this loop.
-            // That's the same envelope as the SQLite path which held the
-            // 100-batch buffer + the in-flight rusqlite transaction. If
-            // this turns out to be a problem on memory-tight hosts we can
-            // switch to incremental merge_in with smaller batches.
-            let parse_start = std::time::Instant::now();
-            let mut parse_ok = 0usize;
-            let mut parse_fail = 0usize;
-            let mut no_body = 0usize;
-            let mut all_entries: std::collections::HashMap<String, Vec<u8>> =
-                std::collections::HashMap::with_capacity(result.files.len());
-
-            // Speculative bytecode pre-warm — OFF by default.
-            //
-            // This loop parses every discovered function body via parse() on
-            // this worker thread, concurrently with the interactive main
-            // thread. parse()/the lexer touch process-global shell state that
-            // is not thread-safe (option flags, error/xtrace state, …), so a
-            // body the parser can't yet accept — or simply the race with the
-            // main thread's line lexing — corrupts the interactive shell:
-            // `compinit` left the prompt spewing the xtrace prefix and stuck
-            // in PS2 (reported as "ls -<Tab> = crash"). Disabling this loop
-            // makes `compinit` clean; confirmed by bisection.
-            //
-            // The pre-warm is a perf optimization, not correctness: function
-            // bodies are parsed lazily on first autoload regardless. And until
-            // the compsys function tree actually loads (fpath seeding +
-            // compinit bootstrap are separate open gaps), the cached bytecode
-            // isn't consumed anyway. Gate it behind an explicit opt-in so the
-            // default interactive shell can never be corrupted by it; re-enable
-            // once parse() is made thread-safe (thread-local option/error state)
-            // or the scan is serialized against the main lexer.
-            if std::env::var_os("ZSHRS_COMPINIT_PREWARM").is_some() {
-                // noerrs=1 keeps zerr silent (still sets errflag for the
-                // parse_failed check) so a bad body doesn't print; the state
-                // race above is why this stays opt-in even so.
-                let saved_noerrs = {
-                    let mut g = crate::ported::utils::noerrs_lock().lock().unwrap();
-                    let s = *g;
-                    *g = 1;
-                    s
-                };
-                for file in &result.files {
-                    if let Some(ref body) = file.body {
-                        // Mirror Src/init.c errflag save/clear/check around parse.
-                        let saved_errflag = errflag.load(Ordering::Relaxed);
-                        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                        crate::ported::parse::parse_init(body);
-                        let program = crate::ported::parse::parse();
-                        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-                        errflag.store(saved_errflag, Ordering::Relaxed);
-                        if parse_failed || program.lists.is_empty() {
-                            parse_fail += 1;
-                            continue;
-                        }
-                        let target = &program;
-                        let _ = &file.name;
-                        let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
-                        if let Ok(blob) = bincode::serialize(&chunk) {
-                            all_entries.insert(file.name.clone(), blob);
-                            parse_ok += 1;
-                        }
-                    } else {
-                        no_body += 1;
-                    }
-                }
-                *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
-                // Whole-shard replace — one read+write covers all entries.
-                if let Err(e) = crate::autoload_cache::try_replace_all(all_entries) {
-                    tracing::warn!(error = %e, "compinit: rkyv replace_all failed");
-                }
-            }
-
-            tracing::info!(
-                cached = parse_ok,
-                failed = parse_fail,
-                no_body = no_body,
-                total = result.files.len(),
-                ms = parse_start.elapsed().as_millis() as u64,
-                "compinit: bytecode blobs cached"
-            );
-
+            // No bytecode pre-warm here. Autoload chunks are cached
+            // write-through by the loader itself (`vm_helper`'s autoload
+            // arm → `autoload_cache::try_save_one`), stamped with the
+            // definition file's mtime + length. A speculative pre-warm on
+            // this worker thread cannot produce those chunks: it would have
+            // to parse 46k bodies against process-global lexer state that
+            // the interactive main thread is using concurrently — which is
+            // what corrupted the prompt into a stuck PS2 when the pre-warm
+            // was enabled — and the chunks it built were the bare file body
+            // compiled as a top-level script, not the definition program the
+            // loader installs.
             // Stamp completeness LAST, so `cache_is_valid` can tell a
             // finished cache from one that is still filling, then close the
             // connection: SQLite checkpoints the WAL into the db and removes

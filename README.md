@@ -117,7 +117,7 @@ Every operation that zsh forks for runs in-process. **Zero forks for builtins.**
 | `**/*.rs` | Single-threaded `opendir` | Parallel `walkdir` per-subdir on pool |
 | `*(.x)` qualifiers | N serial `stat` calls | One parallel metadata prefetch |
 | `rehash` | Serial `readdir` per PATH dir | Parallel scan across pool |
-| `compinit` | Synchronous fpath scan | Background scan + bytecode compilation |
+| `compinit` | Synchronous fpath scan | Background fpath scan on the worker pool |
 | History write | Synchronous `fsync` | Fire-and-forget to pool |
 | Autoload | Read file + parse every time | Bytecode mmap + zero-copy load from **rkyv** |
 | Plugin source | Parse + execute every startup | Delta replay from **rkyv** image |
@@ -147,9 +147,19 @@ Interactive command  ──► lex::zshlex ──► parse::parse ──► ZshC
 Script file (first)  ──► lex::zshlex ──► parse::parse ──► ZshCompiler ──► VM::run() ──► persist rkyv shard
 Script file (cached) ──► index.rkyv + mmap shard ──► deserialize Chunk ──► VM::run()
                          (no lex, no parse, no compile)
-Autoload function    ──► rkyv shard ──► deserialize Chunk ──► VM::run()
-                         (microseconds)
+Autoload function    ──► autoloads.rkyv ──► deserialize Chunk ──► VM::run()
+                         (first call in a process compiles the definition
+                          file and writes the chunk through; later processes
+                          skip lex+parse+compile entirely. Each entry is
+                          stamped with the definition file's mtime + length,
+                          so an edited function recompiles.)
 ```
+
+Measured on `_git` (424 KB of shell, the largest completer in common use):
+first `git <tab>` in a process **1.06 s → 0.56 s** once the chunk is
+cached. The cache is bypassed for `ksh_autoload`-style bodies and for
+`autoload` without `-U`, where the compiled program is not a function of
+the file's bytes alone.
 
 Enabling the JIT is not the same as being compiled by it. `zshrs --tiers script.zsh` runs the script and then asks fusevm's own predicates — `is_block_eligible`, `block_jit_is_compiled`, `trace_is_compiled`, `find_jit_region` — which tier took each chunk, reporting the script body and every function body it dispatched. Chunks that reach neither tier list the op kinds responsible, so the output is a diagnosis (what to make native next) rather than a verdict.
 
@@ -300,6 +310,8 @@ Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.zshrs/
 |------|---------|
 | **`index.rkyv`** | Top-level index: fq_name → shard id, generation, byte offset |
 | **`images/{hash8}-*.rkyv`** | Mmap-ready shards (system, completions, plugins, scripts, `.zshrc`, …) |
+| **`autoloads.rkyv`** | One compiled definition program per autoloaded function, keyed by name and stamped with the definition file's mtime + length |
+| **`scripts.rkyv`** | One compiled chunk per script file, keyed by path + mtime |
 
 **SQLite (read-only mirrors)** — same directory, different job: daemon-maintained copies you can query with SQL or `dbview`. They are **not** the bytecode cache and are **not** read when deciding cache hit/miss or when running compiled code.
 
