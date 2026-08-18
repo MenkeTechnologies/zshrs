@@ -71,6 +71,48 @@ only for non-DQ words (`compile_zsh.rs`), and that builtin maps an empty
 
 ---
 
+## #1086 — a function defined inside `eval` or another function body records the wrong definition line — open
+
+**Status:** `port-bug`, found 2026-08-18.
+
+```zsh
+# /tmp/ev.zsh
+eval 'g() { print -r -- "src=${funcsourcetrace[1]}"; }'
+g
+```
+
+```
+$ zsh -f /tmp/ev.zsh
+src=/tmp/ev.zsh:2
+$ zshrs -f /tmp/ev.zsh
+src=/tmp/ev.zsh:1
+```
+
+The line the definition is stamped with restarts at 1 inside the eval'd
+text instead of being offset by the eval's own line. C zsh keeps the
+enclosing file's numbering: `Src/exec.c:5384-5388` adds the funcstack
+top's `flineno` when that frame is `FS_FUNC` or `FS_EVAL`, and
+`Src/Modules/parameter.c:752-753` takes one back off for `FS_EVAL`,
+landing on 2 for this reproducer.
+
+zshrs's VM path stamps `shf.lineno` from the compiler's `line_base`
+(`src/fusevm_bridge.rs`, funcdef opcode), which counts within the chunk
+being compiled — for an `eval` that chunk starts at 1. The interpreter
+path (`execfuncdef`, `src/ported/exec.rs:6827-6843`) already does the
+`flineno + lineno` sum; the VM path does not.
+
+A nested definition has the same shape — `wrapper() { lib() { : v2; } }`
+on line 3 stamps `lib` at line 1, because the inner body is its own
+chunk.
+
+Surfaced by `provenance -f NAME`, whose `redefine` op reads the same
+`line_base`: a redefinition inside `eval` on line 6 is reported at line
+1. Every consumer of the definition line — `funcsourcetrace`,
+`whence -v`, provenance — inherits it, so the fix belongs in the funcdef
+opcode, not in any one reader.
+
+---
+
 ## #1085 — `_describe` added no match when the caller's array was never assigned — fixed
 
 **Status:** `fixed` 2026-08-18.
