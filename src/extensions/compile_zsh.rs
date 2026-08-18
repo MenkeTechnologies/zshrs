@@ -6397,7 +6397,8 @@ impl ZshCompiler {
                         if let Some(inner) =
                             untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                         {
-                            let body_const = self.builder.add_constant(Value::str(inner));
+                            let body_const =
+                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
                             self.builder.emit(Op::LoadConst(body_const), 0);
                             self.builder.emit(
                                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6458,7 +6459,25 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const = self.builder.add_constant(Value::str(inner));
+                        // Carry the DQ context the same way the sibling
+                        // BRIDGE_BRACE_ARRAY site below does: prefix the body with
+                        // Qstring (\u{8c}) so the bridge bumps `in_dq_context` and
+                        // `paramsubst_to_value` derives qt == true. Without it this
+                        // opcode handed paramsubst a RAW `${...}` body with qt
+                        // false, and c:Src/subst.c:4354's nulstring marking
+                        // (`qt && !*y`) never applied — so a quoted split dropped
+                        // its empty fields where zsh keeps them:
+                        // `a=(-O 'expl:'); b=( "${(@s/:/)a[2]}" )` gave $#b == 1
+                        // instead of 2. Only the SUBSCRIPTED spelling took this
+                        // path, which is why the identical scalar
+                        // `"${(@s/:/)scalar}"` was always right.
+                        //
+                        // Real-world bite: `_git`'s __git_recent_commits
+                        // (`argument_array_names=( "${(@s/:/)argument_array_names[2]}" )`)
+                        // saw one name instead of two, so `git checkout <TAB>`
+                        // offered 88 matches where zsh offers 107.
+                        let body_const =
+                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6482,7 +6501,8 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const = self.builder.add_constant(Value::str(inner));
+                        let body_const =
+                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6503,7 +6523,8 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const = self.builder.add_constant(Value::str(inner));
+                        let body_const =
+                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6621,7 +6642,8 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const = self.builder.add_constant(Value::str(inner));
+                        let body_const =
+                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6641,7 +6663,8 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const = self.builder.add_constant(Value::str(inner));
+                        let body_const =
+                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6659,7 +6682,8 @@ impl ZshCompiler {
                 // — non-splat-subscript casmod now applies to `value`
                 // directly instead of refetching the source array.
                 if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
-                    let body_const = self.builder.add_constant(Value::str(inner));
+                    let body_const =
+                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
                     self.builder.emit(Op::LoadConst(body_const), 0);
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -11305,6 +11329,34 @@ fn is_distribute_expansion(s: &str) -> bool {
 /// at brace/bracket/paren depth 0: a real single wrap has exactly 2,
 /// sibling spans have 4+, and Dnulls NESTED inside `${…}` (`"a${x:-"n"}b"`)
 /// sit at depth>0 and are ignored so the outer wrap still counts.
+impl ZshCompiler {
+    /// Body text for a `BUILTIN_BRIDGE_BRACE_ARRAY` call that forwards the
+    /// user's `${...}` source verbatim.
+    ///
+    /// c:Src/subst.c:1625 — `paramsubst`'s `qt` argument is "this expansion is
+    /// inside `"…"`". The bridge derives it from the executor's
+    /// `in_dq_context`, which only `BUILTIN_EXPAND_TEXT` bumps, so an opcode
+    /// that hands over a RAW body has to carry the flag itself. The channel is
+    /// a leading Qstring (`\u{8c}`) marker, which the bridge strips before
+    /// reconstructing the body — the same convention the array-op site uses.
+    ///
+    /// Every subscripted spelling used to skip this, so `qt` was false and
+    /// c:4354's nulstring marking (`qt && !*y`) never applied: a quoted split
+    /// silently dropped its empty fields.
+    ///     a=(-O 'expl:'); b=( "${(@s/:/)a[2]}" )   # $#b == 1, zsh says 2
+    /// The unsubscripted `"${(@s/:/)scalar}"` was always correct because it
+    /// never reaches these opcodes.
+    fn brace_array_body(&self, word: &str, inner: &str) -> String {
+        let in_dq = (word_is_single_dq_span(word) && self.synthetic_dq_wrap_depth == 0)
+            || self.dq_context_depth > 0;
+        if in_dq {
+            format!("\u{8c}{}", inner)
+        } else {
+            inner.to_string()
+        }
+    }
+}
+
 fn word_is_single_dq_span(s: &str) -> bool {
     use crate::ported::zsh_h::{
         Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Outbrack, Outpar, Outparmath,
