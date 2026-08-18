@@ -972,6 +972,20 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
     // first zstyle lookup in zsh. Without the bracket zshrs left the
     // scalar in place and `$parameters` reported one name zsh does not
     // have.
+    // c:449-450 — `s = (Style)zstyletab->getnode2(zstyletab, style);
+    // if (s) {`: the pattern walk AND its savematch/restorematch bracket
+    // run ONLY when a style of that NAME exists. Bracketing every lookup
+    // unconditionally unset `$match`/`$mbegin`/`$mend` (c:57-68) even
+    // where C returns immediately — with no zstyles defined, C never
+    // touches them, so `_main_complete`'s sh:27 `local match` scalar
+    // survives the whole completion in zsh and was disappearing here.
+    let style_exists = zstyletab
+        .lock()
+        .map(|t| t.list_styles().iter().any(|n| *n == style))
+        .unwrap_or(false);
+    if !style_exists {
+        return Vec::new(); // c:447 `found = NULL` → c:461 `return found`
+    }
     let mut saved = MatchData {
         r#match: None,
         mbegin: None,
@@ -1010,6 +1024,14 @@ pub fn testforstyle(ctxt: &str, style: &str) -> i32 {
     // bracketed by savematch/restorematch exactly as `lookupstyle` is
     // (c:473 / c:481). See the note there for why the bracket is
     // load-bearing rather than cosmetic.
+    // c:471-472 — same `if (s)` gate as lookupstyle above.
+    let style_exists = zstyletab
+        .lock()
+        .map(|t| t.list_styles().iter().any(|n| *n == style))
+        .unwrap_or(false);
+    if !style_exists {
+        return 1; // c:483 `return !found` with found == 0
+    }
     let mut saved = MatchData {
         r#match: None,
         mbegin: None,
