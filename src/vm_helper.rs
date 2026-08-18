@@ -2637,7 +2637,19 @@ impl ShellExecutor {
         // "/path/to/zshrs" at the top level. Function dispatch
         // overrides scriptname per c:5903; scriptfilename stays.
         crate::ported::utils::set_scriptname(Some("zsh".to_string()));
-        crate::ported::utils::set_scriptfilename(Some("zsh".to_string()));
+        // c:Src/init.c:470-479 — `scriptname = scriptfilename =
+        // ztrdup("zsh")` sits INSIDE the `-c` branch of the option parse.
+        // An interactive shell (or one running a script file) leaves
+        // `scriptfilename` NULL, and exec.c:5383 copies it onto every
+        // Shfunc it defines — which is why zsh reports an EMPTY
+        // `$functions_source[f]` for a function typed at the prompt.
+        // Stamping "zsh" unconditionally made zshrs answer "zsh" there.
+        let dash_c = std::env::args()
+            .skip(1)
+            .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'));
+        if dash_c {
+            crate::ported::utils::set_scriptfilename(Some("zsh".to_string())); // c:479
+        }
 
         // call once that port is complete.
         crate::ported::init::module_path_init();
@@ -3175,7 +3187,46 @@ impl ShellExecutor {
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let registered = autoload_register_source(name, &body);
+                        {
+                        // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
+                        // as the function body; it executes nothing at load
+                        // time, so the global `lineno` still holds the line the
+                        // CALL was made on when doshfunc records
+                        // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
+                        // installs the body by RUNNING `name() { … }` through
+                        // the pipeline, which walks the counter to the file's
+                        // last line — so the very first call of an autoloaded
+                        // function reported its caller's line as that instead:
+                        // `$functrace` read `script.zsh:1` where zsh reads
+                        // `script.zsh:4`, and inside completion `_subscript:0`
+                        // where zsh reads `_subscript:125`. Every LATER call
+                        // was already correct, because the load only happens
+                        // once.
+                        let caller_lineno = crate::ported::lex::lineno();
+                        // c:5384-5388 assigns `shf->lineno` only when a
+                        // `name() { … }` STATEMENT defines the function. An
+                        // autoload stub's Shfunc keeps the 0 it was created
+                        // with, and loadautofn replaces only `funcdef`, so zsh
+                        // reports `funcsourcetrace` as `<file>:0`. Running a
+                        // synthesized wrapper here stamps line 1 instead, so
+                        // put the stub's value back when the wrapper was ours.
+                        let synthesized = registered != body;
                         let _ = self.execute_script_zsh_pipeline(&registered);
+                        crate::ported::lex::set_lineno(caller_lineno);
+                        if synthesized {
+                            // c:5384-5388 sets `shf->lineno` only where a
+                            // `name() { … }` STATEMENT defines the function; an
+                            // autoload stub keeps the 0 it was created with and
+                            // loadautofn replaces only `funcdef`, so
+                            // `funcsourcetrace` reads `<file>:0`. Executing our
+                            // synthesized wrapper records a line base of 1
+                            // instead. -1 marks "autoload-installed" so the
+                            // call-time clamp below can tell that apart from an
+                            // INLINE `f() { … }`, whose base underflows to 0 but
+                            // whose def line really is >= 1.
+                            self.function_line_base.insert(name.to_string(), -1);
+                        }
+                    }
                     }
                     if let Some(dir) = loaded_dir.as_deref() {
                         restore_loaddir(name, dir, abspath_used, ksh_style);
@@ -3202,7 +3253,46 @@ impl ShellExecutor {
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     let registered = autoload_register_source(name, &body);
-                    let _ = self.execute_script_zsh_pipeline(&registered);
+                    {
+                        // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
+                        // as the function body; it executes nothing at load
+                        // time, so the global `lineno` still holds the line the
+                        // CALL was made on when doshfunc records
+                        // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
+                        // installs the body by RUNNING `name() { … }` through
+                        // the pipeline, which walks the counter to the file's
+                        // last line — so the very first call of an autoloaded
+                        // function reported its caller's line as that instead:
+                        // `$functrace` read `script.zsh:1` where zsh reads
+                        // `script.zsh:4`, and inside completion `_subscript:0`
+                        // where zsh reads `_subscript:125`. Every LATER call
+                        // was already correct, because the load only happens
+                        // once.
+                        let caller_lineno = crate::ported::lex::lineno();
+                        // c:5384-5388 assigns `shf->lineno` only when a
+                        // `name() { … }` STATEMENT defines the function. An
+                        // autoload stub's Shfunc keeps the 0 it was created
+                        // with, and loadautofn replaces only `funcdef`, so zsh
+                        // reports `funcsourcetrace` as `<file>:0`. Running a
+                        // synthesized wrapper here stamps line 1 instead, so
+                        // put the stub's value back when the wrapper was ours.
+                        let synthesized = registered != body;
+                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        crate::ported::lex::set_lineno(caller_lineno);
+                        if synthesized {
+                            // c:5384-5388 sets `shf->lineno` only where a
+                            // `name() { … }` STATEMENT defines the function; an
+                            // autoload stub keeps the 0 it was created with and
+                            // loadautofn replaces only `funcdef`, so
+                            // `funcsourcetrace` reads `<file>:0`. Executing our
+                            // synthesized wrapper records a line base of 1
+                            // instead. -1 marks "autoload-installed" so the
+                            // call-time clamp below can tell that apart from an
+                            // INLINE `f() { … }`, whose base underflows to 0 but
+                            // whose def line really is >= 1.
+                            self.function_line_base.insert(name.to_string(), -1);
+                        }
+                    }
                     if let Some(dir) = loaded_dir.as_deref() {
                         restore_loaddir(name, dir, abspath_used, ksh_style);
                     }
@@ -3432,7 +3522,46 @@ impl ShellExecutor {
                                 // the file body executes.
                                 let _ctx =
                                     crate::ported::exec::EvalContextFrame::push("evalautofunc");
-                                let _ = self.execute_script_zsh_pipeline(&registered);
+                                {
+                        // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
+                        // as the function body; it executes nothing at load
+                        // time, so the global `lineno` still holds the line the
+                        // CALL was made on when doshfunc records
+                        // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
+                        // installs the body by RUNNING `name() { … }` through
+                        // the pipeline, which walks the counter to the file's
+                        // last line — so the very first call of an autoloaded
+                        // function reported its caller's line as that instead:
+                        // `$functrace` read `script.zsh:1` where zsh reads
+                        // `script.zsh:4`, and inside completion `_subscript:0`
+                        // where zsh reads `_subscript:125`. Every LATER call
+                        // was already correct, because the load only happens
+                        // once.
+                        let caller_lineno = crate::ported::lex::lineno();
+                        // c:5384-5388 assigns `shf->lineno` only when a
+                        // `name() { … }` STATEMENT defines the function. An
+                        // autoload stub's Shfunc keeps the 0 it was created
+                        // with, and loadautofn replaces only `funcdef`, so zsh
+                        // reports `funcsourcetrace` as `<file>:0`. Running a
+                        // synthesized wrapper here stamps line 1 instead, so
+                        // put the stub's value back when the wrapper was ours.
+                        let synthesized = registered != body;
+                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        crate::ported::lex::set_lineno(caller_lineno);
+                        if synthesized {
+                            // c:5384-5388 sets `shf->lineno` only where a
+                            // `name() { … }` STATEMENT defines the function; an
+                            // autoload stub keeps the 0 it was created with and
+                            // loadautofn replaces only `funcdef`, so
+                            // `funcsourcetrace` reads `<file>:0`. Executing our
+                            // synthesized wrapper records a line base of 1
+                            // instead. -1 marks "autoload-installed" so the
+                            // call-time clamp below can tell that apart from an
+                            // INLINE `f() { … }`, whose base underflows to 0 but
+                            // whose def line really is >= 1.
+                            self.function_line_base.insert(name.to_string(), -1);
+                        }
+                    }
                             }
                             sourcelevel.fetch_sub(1, Relaxed);
                             RETFLAG.store(saved_retflag, Relaxed);
@@ -3502,7 +3631,46 @@ impl ShellExecutor {
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     let registered = autoload_register_source(name, &body);
-                    let _ = self.execute_script_zsh_pipeline(&registered);
+                    {
+                        // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
+                        // as the function body; it executes nothing at load
+                        // time, so the global `lineno` still holds the line the
+                        // CALL was made on when doshfunc records
+                        // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
+                        // installs the body by RUNNING `name() { … }` through
+                        // the pipeline, which walks the counter to the file's
+                        // last line — so the very first call of an autoloaded
+                        // function reported its caller's line as that instead:
+                        // `$functrace` read `script.zsh:1` where zsh reads
+                        // `script.zsh:4`, and inside completion `_subscript:0`
+                        // where zsh reads `_subscript:125`. Every LATER call
+                        // was already correct, because the load only happens
+                        // once.
+                        let caller_lineno = crate::ported::lex::lineno();
+                        // c:5384-5388 assigns `shf->lineno` only when a
+                        // `name() { … }` STATEMENT defines the function. An
+                        // autoload stub's Shfunc keeps the 0 it was created
+                        // with, and loadautofn replaces only `funcdef`, so zsh
+                        // reports `funcsourcetrace` as `<file>:0`. Running a
+                        // synthesized wrapper here stamps line 1 instead, so
+                        // put the stub's value back when the wrapper was ours.
+                        let synthesized = registered != body;
+                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        crate::ported::lex::set_lineno(caller_lineno);
+                        if synthesized {
+                            // c:5384-5388 sets `shf->lineno` only where a
+                            // `name() { … }` STATEMENT defines the function; an
+                            // autoload stub keeps the 0 it was created with and
+                            // loadautofn replaces only `funcdef`, so
+                            // `funcsourcetrace` reads `<file>:0`. Executing our
+                            // synthesized wrapper records a line base of 1
+                            // instead. -1 marks "autoload-installed" so the
+                            // call-time clamp below can tell that apart from an
+                            // INLINE `f() { … }`, whose base underflows to 0 but
+                            // whose def line really is >= 1.
+                            self.function_line_base.insert(name.to_string(), -1);
+                        }
+                    }
                     if let Some(dir) = loaded_dir.as_deref() {
                         restore_loaddir(name, dir, abspath_used, ksh_style);
                     }
@@ -3601,10 +3769,16 @@ impl ShellExecutor {
         // funcsourcetrace reports the def line as 1-based, so clamp
         // to >= 1 to handle the inline case without rebuilding
         // line tracking through the parser. Bug #396.
-        let synth_lineno = std::cmp::max(
-            1i64,
-            self.function_line_base.get(name).copied().unwrap_or(0),
-        );
+        let synth_lineno = {
+            let base = self.function_line_base.get(name).copied().unwrap_or(0);
+            if base < 0 {
+                // Autoload-installed (see the -1 marker at the install
+                // site): c:5384 never runs for it, so the def line is 0.
+                0
+            } else {
+                std::cmp::max(1i64, base)
+            }
+        };
         // Carry the REAL function's attribute flags over from shfunctab.
         // `functions -t/-T/-W` store PM_TAGGED / PM_TAGGED_LOCAL /
         // PM_WARNNESTED on the shfunctab node (builtin.rs c:3719), and
@@ -4673,6 +4847,14 @@ impl ShellExecutor {
         // POSIX: trailing newlines stripped from cmd-sub result.
         while output.ends_with('\n') {
             output.pop();
+        }
+        // !!! RUST-ONLY: provenance tap. `$(…)` is a lineage ORIGIN —
+        // these bytes did not exist in the shell before the inner list
+        // ran. This is the in-process cmd-subst funnel (the host
+        // `ShellHost::cmd_subst` path taps the same event for chunks
+        // that reach the VM as sub-chunks instead of source text).
+        if crate::provenance::active() {
+            crate::provenance::on_cmd_subst(cmd_str, &output);
         }
         output
     }
