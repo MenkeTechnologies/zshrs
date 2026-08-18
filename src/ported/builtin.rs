@@ -2896,7 +2896,13 @@ pub fn bin_fc(
         // c:1611-1668 — edit history range to a temp file, fcedit it,
         // then stuff() the result back as the next command.
         retval = 1; // c:1620
-        let fil_opt = gettempfile(Some("zshfc")); // c:1621 gettempfile
+        // c:1620 — `gettempfile(NULL, 1, &fil)`: a NULL prefix makes
+        // gettempfile fall back to `$TMPPREFIX` (c:2241-2242, default
+        // /tmp/zsh), so the editor buffer is `/tmp/zshXXXXXX`. Passing a
+        // bare "zshfc" prefix built a RELATIVE name instead, so `fc`
+        // wrote `zshfc.<hex>` into the CURRENT DIRECTORY — visible as
+        // stray untracked files in whatever repo you ran it from.
+        let fil_opt = gettempfile(None); // c:1621 gettempfile
         match fil_opt {
             None => {
                 // c:1623
@@ -2965,15 +2971,14 @@ pub fn bin_fc(
                                 &format!("{}: {}", io::Error::last_os_error(), fil),
                             );
                         } else {
-                            // c:1663-1664 — `loop(0,1); retval = lastval;`
-                            // The interactive loop drives the next stuffed
-                            // line through the parser. Static-link path:
-                            // the executor's input source picks it up on
-                            // the next read; lastval reflects that result.
-                            retval = LASTVAL.load(
-                                // c:1664
-                                Relaxed,
-                            );
+                            // c:1663-1664 — `loop(0,1); retval = lastval;`.
+                            // `stuff` only PUSHES the edited text onto the
+                            // input stack (input.c:657); C then runs one
+                            // pass of the input loop to parse and execute
+                            // it. Without that call nothing consumed the
+                            // stuffed line, so the edited command never ran.
+                            crate::ported::init::r#loop(0, 1); // c:1663
+                            retval = LASTVAL.load(Relaxed); // c:1664
                         }
                     }
                 } else {
@@ -3252,14 +3257,17 @@ pub fn fcedit(ename: &str, fn_: &str) -> i32 {
         // c:1888
         return 1; // c:1889
     }
-    // c:1891-1900 — execlp(ename, ename, fn, NULL) wrapped in fork/wait.
-    let status = std::process::Command::new(ename) // c:1895
-        .arg(fn_)
-        .status();
-    match status {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(_) => 1,
-    }
+    // c:1892-1896 — `s = tricat(ename, " ", fn); execstring(s, 1, 0,
+    // "fc"); return !lastval;`. Two things the spawn form got wrong:
+    // the editor is a COMMAND LINE run through the shell (so
+    // `fc -e "print -r --"` or `FCEDIT="vim -u NONE"` work), and the
+    // return is `!lastval` — 1 on SUCCESS. Returning the editor's exit
+    // code inverted the caller's `if (fcedit(...))` test, so the edited
+    // buffer was never stuffed back and `fc -e ED N` silently did
+    // nothing and reported failure.
+    let s = format!("{} {}", ename, fn_); // c:1892
+    crate::ported::exec::execstring(&s, 1, 0, "fc"); // c:1893
+    i32::from(LASTVAL.load(Relaxed) == 0) // c:1896 `return !lastval`
 }
 
 /// Port of `getasg(char ***argvp, LinkList assigns)` from Src/builtin.c:1908.
