@@ -78,6 +78,35 @@ pub const CONTENT_CAP: usize = 8192;
 /// unbounded chain; past the cap the ops are counted, not stored.
 pub const MAX_OPS: usize = 256;
 
+/// Ceiling on names [`track_all`] may arm by itself. A shell that runs
+/// long enough touches an unbounded number of parameters and functions;
+/// past the ceiling new names are counted and ignored, so a
+/// track-everything session cannot grow the ledger without limit.
+pub const MAX_AUTO_NAMES: usize = 4096;
+
+/// Parameters [`track_all`] never arms: the shell rewrites these on its
+/// own, once or more per command, so their chains would record the
+/// shell's own bookkeeping and nothing the user did. Positional
+/// parameters (`1`, `2`, …) are skipped by the same rule, tested
+/// numerically rather than listed.
+const VOLATILE: &[&str] = &[
+    "_",
+    "?",
+    "!",
+    "$",
+    "#",
+    "COLUMNS",
+    "EPOCHREALTIME",
+    "EPOCHSECONDS",
+    "HISTCMD",
+    "LINENO",
+    "LINES",
+    "RANDOM",
+    "SECONDS",
+    "pipestatus",
+    "status",
+];
+
 /// Longest value prefix stored as a content key. Content keying hashes
 /// the whole string, but the *summary* strings kept in the ledger are
 /// truncated to this so the ledger stays small next to the values it
@@ -88,6 +117,11 @@ const SUMMARY_MAX: usize = 64;
 /// marked. Every hook checks it via [`active`] — one inlined relaxed
 /// load on the universal path where nobody armed the engine.
 static PROV_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Track-everything mode: every parameter write and every shell function
+/// arms itself. Set from `[provenance] track_all` at startup, or by
+/// `provenance -a` at runtime.
+static TRACK_ALL: AtomicBool = AtomicBool::new(false);
 
 /// Last `$LINENO` seen by [`note_line`]. Updated from the
 /// `BUILTIN_SET_LINENO` bytecode handler while armed, so lineage
@@ -313,6 +347,15 @@ struct Ledger {
     /// Names armed via `provenance -m`, including names that have no
     /// lineage yet (they gain one on the next assignment).
     tracked: HashSet<String>,
+    /// Tracked shell functions, keyed by name. Separate from `name` so a
+    /// function and a parameter may share a name without sharing a
+    /// chain — `path` and `path()` are different things.
+    func: HashMap<String, ProvNode>,
+    /// Functions armed via `provenance -m -f`, or by [`track_all`].
+    tracked_funcs: HashSet<String>,
+    /// Names [`track_all`] declined to arm because [`MAX_AUTO_NAMES`]
+    /// was already reached.
+    auto_dropped: usize,
     /// Values that crossed a `String`-typed host boundary, keyed by a
     /// hash of their exact bytes.
     content: HashMap<u64, ProvNode>,
@@ -349,6 +392,65 @@ pub fn enabled() -> bool {
         }
         crate::config::current().provenance.enabled
     })
+}
+
+/// Whether `[provenance] track_all` (or `ZSHRS_PROVENANCE_ALL`) asked
+/// for track-everything mode. `ZSHRS_PROVENANCE_ALL` wins over the file
+/// in both directions: `=1` turns it on, `=0` off.
+fn track_all_configured() -> bool {
+    static CONFIGURED: OnceLock<bool> = OnceLock::new();
+    *CONFIGURED.get_or_init(|| match std::env::var("ZSHRS_PROVENANCE_ALL") {
+        Ok(v) if v == "1" => true,
+        Ok(v) if v == "0" => false,
+        _ => crate::config::current().provenance.track_all,
+    })
+}
+
+/// Arm track-everything mode when the config asks for it. Called once at
+/// shell startup — before that the engine is inert whatever the file
+/// says, because nothing has read it.
+pub fn init_from_config() {
+    if enabled() && track_all_configured() {
+        set_track_all(true);
+    }
+}
+
+/// Whether every parameter write and function arms itself.
+#[inline]
+pub fn track_all() -> bool {
+    TRACK_ALL.load(Ordering::Relaxed)
+}
+
+/// Turn track-everything mode on or off at runtime (`provenance -a`).
+/// Returns false when the engine is disabled by config/env, which is the
+/// one thing `-a` cannot override.
+pub fn set_track_all(on: bool) -> bool {
+    if on && !enabled() {
+        return false;
+    }
+    TRACK_ALL.store(on, Ordering::Relaxed);
+    if on {
+        PROV_ACTIVE.store(true, Ordering::Relaxed);
+    } else {
+        let l = lock();
+        let empty = l.tracked.is_empty()
+            && l.name.is_empty()
+            && l.tracked_funcs.is_empty()
+            && l.func.is_empty();
+        drop(l);
+        if empty {
+            PROV_ACTIVE.store(false, Ordering::Relaxed);
+        }
+    }
+    true
+}
+
+/// Whether [`track_all`] may arm `name` by itself: not one of the
+/// parameters the shell rewrites on its own, and not a positional.
+fn auto_armable(name: &str) -> bool {
+    !name.is_empty()
+        && !VOLATILE.contains(&name)
+        && !name.chars().all(|c| c.is_ascii_digit())
 }
 
 /// The hot gate. `false` until something is tracked, so every hook site
@@ -550,19 +652,27 @@ pub fn track_name(name: &str, current_value: Option<&str>) -> bool {
 pub fn untrack_name(name: &str) -> bool {
     let mut l = lock();
     let had = l.tracked.remove(name) | l.name.remove(name).is_some();
-    let empty = l.tracked.is_empty() && l.name.is_empty();
+    let empty = l.tracked.is_empty()
+        && l.name.is_empty()
+        && l.tracked_funcs.is_empty()
+        && l.func.is_empty();
     drop(l);
-    if empty {
+    // Track-everything mode keeps the engine armed: the next write to
+    // any parameter arms it again, so disarming here would only cost the
+    // rows between now and then.
+    if empty && !track_all() {
         PROV_ACTIVE.store(false, Ordering::Relaxed);
     }
     had
 }
 
-/// Drop every ledger entry and disarm the engine.
+/// Drop every ledger entry and disarm the engine, track-everything mode
+/// included — `provenance -c` is the full stop.
 pub fn clear() {
     let mut l = lock();
     *l = Ledger::default();
     drop(l);
+    TRACK_ALL.store(false, Ordering::Relaxed);
     PROV_ACTIVE.store(false, Ordering::Relaxed);
 }
 
@@ -731,7 +841,17 @@ pub fn on_param_write(name: &str, kind: &str, value: &str) {
     let site = Site::now();
     let mut l = lock();
     if !l.tracked.contains(name) {
-        return;
+        // Track-everything mode arms a parameter the first time the
+        // shell writes it, which is also the first moment its chain can
+        // say anything.
+        if !track_all() || !auto_armable(name) {
+            return;
+        }
+        if l.tracked.len() + l.tracked_funcs.len() >= MAX_AUTO_NAMES {
+            l.auto_dropped += 1;
+            return;
+        }
+        l.tracked.insert(name.to_string());
     }
     // A value whose bytes are this parameter's own current value carries
     // this same chain; splicing it back in would duplicate the chain
@@ -810,6 +930,153 @@ pub fn on_exec(kind: &str, args: &[String]) {
         l.extend_owner(&node, &op);
         node.push_op(op);
         l.put_content(a, node);
+    }
+}
+
+// ── Shell functions ─────────────────────────────────────────────────
+//
+// A function has a lineage of its own: where it was defined, every
+// redefinition, every call, and the `unfunction` that ended it. The
+// value taps above answer "where did these bytes come from?"; these
+// answer the same question about the code that produced them.
+
+/// Site of a function's definition, as `shfunctab` recorded it —
+/// `Src/exec.c:5383-5388` stores the defining file and the line the
+/// definition starts on. Falls back to the current site when the
+/// function came from somewhere with neither (an `eval`, a `-c` line).
+fn def_site(file: Option<&str>, line: i64) -> Site {
+    let mut site = Site::now();
+    if file.is_some() || line > 0 {
+        site.file = file.map(str::to_string).filter(|f| f != "zsh");
+        site.line = line.max(0) as usize;
+        site.func = None;
+    }
+    site
+}
+
+/// Arm tracking for shell function `name`, seeding its origin from where
+/// the function is defined right now. Returns false when the engine is
+/// disabled by config/env.
+pub fn track_func(name: &str, file: Option<&str>, line: i64) -> bool {
+    if !enabled() {
+        return false;
+    }
+    let site = def_site(file, line);
+    let mut l = lock();
+    l.tracked_funcs.insert(name.to_string());
+    l.func
+        .entry(name.to_string())
+        .or_insert_with(|| ProvNode::origin(format!("function {}", name), site));
+    drop(l);
+    PROV_ACTIVE.store(true, Ordering::Relaxed);
+    true
+}
+
+/// Drop tracking and lineage for function `name`.
+pub fn untrack_func(name: &str) -> bool {
+    let mut l = lock();
+    let had = l.tracked_funcs.remove(name) | l.func.remove(name).is_some();
+    let empty = l.tracked.is_empty()
+        && l.name.is_empty()
+        && l.tracked_funcs.is_empty()
+        && l.func.is_empty();
+    drop(l);
+    if empty && !track_all() {
+        PROV_ACTIVE.store(false, Ordering::Relaxed);
+    }
+    had
+}
+
+/// Lineage of a tracked function, or `None` when it is not tracked.
+pub fn lookup_func(name: &str) -> Option<ProvNode> {
+    lock().func.get(name).cloned()
+}
+
+/// Tracked function names, sorted.
+pub fn tracked_func_names() -> Vec<String> {
+    let l = lock();
+    let mut v: Vec<String> = l.tracked_funcs.iter().cloned().collect();
+    v.sort();
+    v
+}
+
+/// Names [`track_all`] declined to arm because [`MAX_AUTO_NAMES`] was
+/// already reached.
+pub fn auto_dropped() -> usize {
+    lock().auto_dropped
+}
+
+/// Arm `name` in the function namespace when track-everything mode is
+/// on and the ledger has room. Caller holds the lock.
+fn auto_arm_func(l: &mut Ledger, name: &str) -> bool {
+    if l.tracked_funcs.contains(name) {
+        return true;
+    }
+    if !track_all() || !auto_armable(name) {
+        return false;
+    }
+    if l.tracked.len() + l.tracked_funcs.len() >= MAX_AUTO_NAMES {
+        l.auto_dropped += 1;
+        return false;
+    }
+    l.tracked_funcs.insert(name.to_string());
+    true
+}
+
+/// A function was defined, at `file`:`line`. The first definition is the
+/// origin; a later one is a `redefine` op, so a chain shows every body
+/// the name ever had and where each came from.
+pub fn on_func_define(name: &str, file: Option<&str>, line: i64) {
+    let site = def_site(file, line);
+    let mut l = lock();
+    if !auto_arm_func(&mut l, name) {
+        return;
+    }
+    match l.func.get_mut(name) {
+        Some(node) => node.push_op(ProvOp {
+            op: "redefine".to_string(),
+            args: vec![name.to_string()],
+            site,
+        }),
+        None => {
+            l.func.insert(
+                name.to_string(),
+                ProvNode::origin(format!("function {}", name), site),
+            );
+        }
+    }
+}
+
+/// A function is about to run. The op records the *call* site, which is
+/// where the caller stands, not where the function was defined.
+pub fn on_func_call(name: &str, file: Option<&str>, line: i64) {
+    let site = Site::now();
+    let mut l = lock();
+    if !auto_arm_func(&mut l, name) {
+        return;
+    }
+    let node = l
+        .func
+        .entry(name.to_string())
+        .or_insert_with(|| ProvNode::origin(format!("function {}", name), def_site(file, line)));
+    node.push_op(ProvOp {
+        op: "call".to_string(),
+        args: vec![format!("{}()", name)],
+        site,
+    });
+}
+
+/// A function was removed (`unfunction`, `unset -f`). Kept on the chain
+/// as its final op, the same way an unset parameter is.
+pub fn on_func_unset(name: &str) {
+    let site = Site::now();
+    let mut l = lock();
+    if let Some(node) = l.func.get_mut(name) {
+        node.push_op(ProvOp {
+            op: "unfunction".to_string(),
+            args: vec![name.to_string()],
+            site,
+        });
     }
 }
 
@@ -1203,6 +1470,84 @@ mod tests {
             render("S", &node).contains("/tmp/lineage.zsh:11"),
             "the report names the file"
         );
+    }
+
+    #[test]
+    fn track_all_arms_a_parameter_on_its_first_write() {
+        let _g = setup();
+        assert!(set_track_all(true));
+        note_line(3);
+        on_param_write("NEVER_ARMED", "assign", "v");
+        let node = lookup_name("NEVER_ARMED").expect("track_all armed it");
+        assert_eq!(node.ops.len(), 1);
+        assert_eq!(tracked_names(), vec!["NEVER_ARMED".to_string()]);
+        set_track_all(false);
+        on_param_write("STILL_UNARMED", "assign", "v");
+        assert!(
+            lookup_name("STILL_UNARMED").is_none(),
+            "turning it off stops arming new names"
+        );
+    }
+
+    #[test]
+    fn track_all_skips_the_parameters_the_shell_rewrites_itself() {
+        let _g = setup();
+        assert!(set_track_all(true));
+        for volatile in ["LINENO", "RANDOM", "status", "_", "3"] {
+            on_param_write(volatile, "assign", "v");
+            assert!(
+                lookup_name(volatile).is_none(),
+                "{volatile} must not arm itself"
+            );
+        }
+        on_param_write("REPLY", "assign", "v");
+        assert!(lookup_name("REPLY").is_some(), "ordinary names still arm");
+    }
+
+    #[test]
+    fn track_all_stops_arming_at_the_ceiling_and_counts_the_rest() {
+        let _g = setup();
+        assert!(set_track_all(true));
+        for i in 0..MAX_AUTO_NAMES + 8 {
+            on_param_write(&format!("P{}", i), "assign", "v");
+        }
+        assert_eq!(tracked_names().len(), MAX_AUTO_NAMES);
+        assert_eq!(auto_dropped(), 8, "the overflow is counted, not stored");
+    }
+
+    #[test]
+    fn a_function_records_its_definition_calls_and_removal() {
+        let _g = setup();
+        assert!(set_track_all(true));
+        on_func_define("build", Some("/tmp/lib.zsh"), 12);
+        note_line(40);
+        on_func_call("build", Some("/tmp/lib.zsh"), 12);
+        on_func_define("build", Some("/tmp/lib.zsh"), 80);
+        on_func_unset("build");
+        let node = lookup_func("build").expect("the function has a chain");
+        assert_eq!(node.origin, "function build");
+        assert_eq!(node.origin_site.file.as_deref(), Some("/tmp/lib.zsh"));
+        assert_eq!(node.origin_site.line, 12, "origin is the first definition");
+        let ops: Vec<&str> = node.ops.iter().map(|o| o.op.as_str()).collect();
+        assert_eq!(ops, vec!["call", "redefine", "unfunction"], "{:?}", node.ops);
+        assert_eq!(node.ops[0].site.line, 40, "the call op is the caller's site");
+        assert_eq!(node.ops[1].site.line, 80, "the redefine op is the new body's");
+        assert_eq!(tracked_func_names(), vec!["build".to_string()]);
+        assert!(lookup_name("build").is_none(), "the parameter namespace is separate");
+    }
+
+    #[test]
+    fn an_unarmed_function_records_nothing_without_track_all() {
+        let _g = setup();
+        on_func_define("quiet", Some("/tmp/lib.zsh"), 1);
+        on_func_call("quiet", Some("/tmp/lib.zsh"), 1);
+        assert!(lookup_func("quiet").is_none());
+        assert!(track_func("quiet", Some("/tmp/lib.zsh"), 1));
+        on_func_call("quiet", Some("/tmp/lib.zsh"), 1);
+        let node = lookup_func("quiet").expect("armed by name");
+        assert_eq!(node.ops.len(), 1, "only the call after arming: {:?}", node.ops);
+        assert!(untrack_func("quiet"));
+        assert!(!active(), "the last untrack disarms the hot gate");
     }
 
     #[test]

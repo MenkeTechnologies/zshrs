@@ -10197,6 +10197,11 @@ pub fn bin_unhash(
                 .unwrap_or(false),
             Tab::NamedDir => crate::ported::hashnameddir::removenameddirnode(nm).is_some(),
             Tab::Shfunc => {
+                // Lineage tap: the removal is the last op on the
+                // function's chain, the way `unset` is on a parameter's.
+                if crate::provenance::active() {
+                    crate::provenance::on_func_unset(nm);
+                }
                 let from_tab = shfunctab_lock()
                     .write()
                     .map(|mut g| g.remove(nm).is_some())

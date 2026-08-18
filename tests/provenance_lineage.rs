@@ -273,3 +273,96 @@ fn json_carries_the_file_function_and_timestamp_of_every_row() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn track_all_arms_every_parameter_and_function_without_a_single_m() {
+    let (path, out) = run_file(
+        "trackall",
+        "provenance -a\n\
+         greet() {\n\
+         \x20 MSG=\"hi $1\"\n\
+         }\n\
+         greet world\n\
+         provenance MSG\n\
+         provenance -f greet\n",
+    );
+    // The parameter armed itself on the write inside the function.
+    assert!(
+        out.contains("origin: assign \"hi world\""),
+        "MSG must have a chain nobody armed:\n{out}"
+    );
+    // The function armed itself at its definition, and the call is an op.
+    assert!(
+        out.contains(&format!("greet()\n  origin: function greet ({}:2", path)),
+        "the function's origin is its definition site:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("call       greet()                                  {}:5", path)),
+        "the call op stands at the caller's line:\n{out}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn the_env_switch_arms_everything_from_startup() {
+    let path = std::env::temp_dir().join(format!("zshrs_prov_env_{}.zsh", std::process::id()));
+    std::fs::write(&path, "V=$(echo x)\nprovenance V\n").expect("write script");
+    let out = Command::new(zshrs_bin())
+        .env("ZSHRS_PROVENANCE_ALL", "1")
+        .args(["-f", path.to_str().unwrap()])
+        .output()
+        .expect("zshrs failed to spawn");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(r#"origin: cmdsubst "echo x""#),
+        "ZSHRS_PROVENANCE_ALL=1 must arm before the script runs:\n{stdout}"
+    );
+
+    // Same script, switch off: nothing is tracked.
+    let off = Command::new(zshrs_bin())
+        .env("ZSHRS_PROVENANCE_ALL", "0")
+        .args(["-f", path.to_str().unwrap()])
+        .output()
+        .expect("zshrs failed to spawn");
+    assert!(
+        String::from_utf8_lossy(&off.stderr).contains("not tracked: V"),
+        "=0 must leave the engine inert: {}",
+        String::from_utf8_lossy(&off.stderr)
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_function_and_a_parameter_of_the_same_name_keep_separate_chains() {
+    let (path, out) = run_file(
+        "namespaces",
+        "provenance -a\n\
+         path_of() { REPLY=deep; }\n\
+         path_of\n\
+         provenance -f path_of\n\
+         provenance REPLY\n",
+    );
+    assert!(out.contains("path_of()\n  origin: function path_of"), "{out}");
+    assert!(out.contains("REPLY\n  origin: assign \"deep\""), "{out}");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn track_all_can_be_switched_off_again() {
+    let (path, out) = run_file(
+        "trackoff",
+        "provenance -a\n\
+         EARLY=1\n\
+         provenance -ua\n\
+         LATE=1\n\
+         provenance -l\n",
+    );
+    assert!(out.contains("EARLY"), "what was recorded stays:\n{out}");
+    // `LATE` is written only after `-ua`, so it never arms: the listing
+    // shows `EARLY` and nothing else.
+    assert!(
+        !out.contains("LATE"),
+        "no name arms after -ua:\n{out}"
+    );
+    let _ = std::fs::remove_file(&path);
+}

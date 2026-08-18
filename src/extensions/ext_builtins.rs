@@ -706,113 +706,211 @@ impl ShellExecutor {
     /// provenance — value lineage over bytecode execution.
     ///
     /// Usage:
-    ///   provenance                  — list tracked parameters
+    ///   provenance                  — list every tracked parameter and function
     ///   provenance NAME             — print NAME's lineage
     ///   provenance -m NAME...       — start tracking NAME
     ///   provenance -u NAME...       — stop tracking NAME, drop its lineage
     ///   provenance -j NAME          — print NAME's lineage as JSON
+    ///   provenance -f ...           — act on shell functions instead of parameters
+    ///   provenance -a               — track everything from here on
+    ///   provenance -ua              — stop tracking everything (keeps what is recorded)
     ///   provenance -c               — clear every lineage and disarm
     ///
-    /// The engine records nothing until the first `-m`, and refuses to
-    /// arm at all when `[provenance] enabled = false` in
-    /// `~/.zshrs/zshrs.toml` or `ZSHRS_PROVENANCE=0` is set.
+    /// Flags bundle: `-mf NAME` arms a function, `-jf NAME` prints one
+    /// as JSON.
+    ///
+    /// The engine records nothing until the first `-m` or `-a` (or
+    /// `[provenance] track_all` at startup), and refuses to arm at all
+    /// when `[provenance] enabled = false` in `~/.zshrs/zshrs.toml` or
+    /// `ZSHRS_PROVENANCE=0` is set.
     pub(crate) fn builtin_provenance(&self, args: &[String]) -> i32 {
         use crate::provenance;
 
-        let list = || {
+        // ── flags, then names ───────────────────────────────────────
+        let (mut arm, mut disarm, mut json, mut list, mut clear) = (false, false, false, false, false);
+        let (mut funcs, mut all) = (false, false);
+        let mut names: Vec<&String> = Vec::new();
+        let mut rest = args.iter();
+        for a in rest.by_ref() {
+            if a == "--" {
+                break;
+            }
+            if a.len() > 1 && a.starts_with('-') {
+                for c in a.chars().skip(1) {
+                    match c {
+                        'm' => arm = true,
+                        'u' => disarm = true,
+                        'j' => json = true,
+                        'l' => list = true,
+                        'c' => clear = true,
+                        'f' => funcs = true,
+                        'a' => all = true,
+                        _ => {
+                            eprintln!("zshrs: provenance: bad option: -{}", c);
+                            return 1;
+                        }
+                    }
+                }
+                continue;
+            }
+            names.push(a);
+            break;
+        }
+        names.extend(rest);
+
+        // ── the two namespaces, behind one set of verbs ─────────────
+        let lookup = |name: &str| {
+            if funcs {
+                provenance::lookup_func(name)
+            } else {
+                provenance::lookup_name(name)
+            }
+        };
+        let label = |name: &str| {
+            if funcs {
+                format!("{}()", name)
+            } else {
+                name.to_string()
+            }
+        };
+        let print_all = || {
             for name in provenance::tracked_names() {
                 match provenance::lookup_name(&name) {
                     Some(node) => print!("{}", provenance::render(&name, &node)),
                     None => println!("{}", name),
                 }
             }
+            for name in provenance::tracked_func_names() {
+                match provenance::lookup_func(&name) {
+                    Some(node) => print!("{}", provenance::render(&format!("{}()", name), &node)),
+                    None => println!("{}()", name),
+                }
+            }
+            let dropped = provenance::auto_dropped();
+            if dropped > 0 {
+                println!(
+                    "… {} more names not tracked (cap {})",
+                    dropped,
+                    provenance::MAX_AUTO_NAMES
+                );
+            }
             0
         };
 
-        let Some(first) = args.first() else {
-            return list();
-        };
+        if clear {
+            provenance::clear();
+            return 0;
+        }
 
-        match first.as_str() {
-            "-l" => list(),
-            "-c" => {
-                provenance::clear();
-                0
+        // `-a` arms everything; `-ua` stops arming new names.
+        if all {
+            if disarm {
+                provenance::set_track_all(false);
+                return 0;
             }
-            "-m" => {
-                if !provenance::enabled() {
-                    eprintln!("zshrs: provenance: disabled by config");
-                    return 1;
-                }
-                let names = &args[1..];
-                if names.is_empty() {
-                    eprintln!("zshrs: provenance: -m: missing parameter name");
-                    return 1;
-                }
-                // The `$LINENO` tap is gated on `provenance::active()`,
-                // which is still false while this very statement runs,
-                // so seed the ledger's counter from the shell's own
-                // `$LINENO` — otherwise the seeded origin reads line 0.
-                if let Some(lineno) = crate::ported::params::getsparam("LINENO")
-                    .and_then(|v| v.trim().parse::<usize>().ok())
-                {
-                    provenance::note_line(lineno);
-                }
-                for name in names {
+            if !provenance::set_track_all(true) {
+                eprintln!("zshrs: provenance: disabled by config");
+                return 1;
+            }
+            return 0;
+        }
+
+        if arm {
+            if !provenance::enabled() {
+                eprintln!("zshrs: provenance: disabled by config");
+                return 1;
+            }
+            if names.is_empty() {
+                eprintln!(
+                    "zshrs: provenance: -m: missing {} name",
+                    if funcs { "function" } else { "parameter" }
+                );
+                return 1;
+            }
+            for name in names {
+                if funcs {
+                    let (file, line) = Self::shfunc_def_site(name);
+                    provenance::track_func(name, file.as_deref(), line);
+                } else {
                     let current = crate::ported::params::getsparam(name);
                     provenance::track_name(name, current.as_deref());
                 }
-                0
             }
-            "-u" => {
-                let names = &args[1..];
-                if names.is_empty() {
-                    eprintln!("zshrs: provenance: -u: missing parameter name");
-                    return 1;
-                }
-                let mut status = 0;
-                for name in names {
-                    if !provenance::untrack_name(name) {
-                        eprintln!("zshrs: provenance: not tracked: {}", name);
-                        status = 1;
-                    }
-                }
-                status
+            return 0;
+        }
+
+        if disarm {
+            if names.is_empty() {
+                eprintln!(
+                    "zshrs: provenance: -u: missing {} name",
+                    if funcs { "function" } else { "parameter" }
+                );
+                return 1;
             }
-            "-j" => {
-                let Some(name) = args.get(1) else {
-                    eprintln!("zshrs: provenance: -j: missing parameter name");
-                    return 1;
+            let mut status = 0;
+            for name in names {
+                let dropped = if funcs {
+                    provenance::untrack_func(name)
+                } else {
+                    provenance::untrack_name(name)
                 };
-                match provenance::lookup_name(name) {
-                    Some(node) => {
-                        println!("{}", provenance::render_json(name, &node));
-                        0
-                    }
-                    None => {
-                        eprintln!("zshrs: provenance: not tracked: {}", name);
-                        1
-                    }
+                if !dropped {
+                    eprintln!("zshrs: provenance: not tracked: {}", label(name));
+                    status = 1;
                 }
             }
-            flag if flag.starts_with('-') && flag.len() > 1 => {
-                eprintln!("zshrs: provenance: bad option: {}", flag);
-                1
-            }
-            _ => {
-                let mut status = 0;
-                for name in args {
-                    match provenance::lookup_name(name) {
-                        Some(node) => print!("{}", provenance::render(name, &node)),
-                        None => {
-                            eprintln!("zshrs: provenance: not tracked: {}", name);
-                            status = 1;
-                        }
-                    }
+            return status;
+        }
+
+        if json {
+            let Some(name) = names.first() else {
+                eprintln!(
+                    "zshrs: provenance: -j: missing {} name",
+                    if funcs { "function" } else { "parameter" }
+                );
+                return 1;
+            };
+            return match lookup(name) {
+                Some(node) => {
+                    println!("{}", provenance::render_json(&label(name), &node));
+                    0
                 }
-                status
+                None => {
+                    eprintln!("zshrs: provenance: not tracked: {}", label(name));
+                    1
+                }
+            };
+        }
+
+        if list || names.is_empty() {
+            return print_all();
+        }
+
+        let mut status = 0;
+        for name in names {
+            match lookup(name) {
+                Some(node) => print!("{}", provenance::render(&label(name), &node)),
+                None => {
+                    eprintln!("zshrs: provenance: not tracked: {}", label(name));
+                    status = 1;
+                }
             }
         }
+        status
+    }
+
+    /// Defining file and line of shell function `name`, as `shfunctab`
+    /// recorded them at definition time (`Src/exec.c:5383-5388`).
+    /// `(None, 0)` when the function does not exist.
+    fn shfunc_def_site(name: &str) -> (Option<String>, i64) {
+        crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get_including_disabled(name)
+                    .map(|f| (f.filename.clone(), f.lineno))
+            })
+            .unwrap_or((None, 0))
     }
 
     /// dbview — browse zshrs SQLite cache tables without SQL.

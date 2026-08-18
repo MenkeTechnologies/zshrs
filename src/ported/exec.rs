@@ -5990,6 +5990,11 @@ pub fn doshfunc(
 
     let name = shfunc.node.nam.clone(); // c:5827
     let flags = shfunc.node.flags; // c:5828
+    // Lineage tap, before the funcstack frame goes on: the op must
+    // record where the *caller* stands, not the body about to run.
+    if crate::provenance::active() {
+        crate::provenance::on_func_call(&name, shfunc.filename.as_deref(), shfunc.lineno);
+    }
     let fname = dupstring(&name); // c:5829
     let _ = fname; // c:5829 (kept for parity)
 
@@ -6986,6 +6991,11 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
             }
             // c:5483 — `shfunctab->addnode(shfunctab, ztrdup(s), shf);`
             shf.node.nam = nm.to_string();
+            // Lineage tap: the definition is a function's origin, and a
+            // second definition of the same name is a `redefine` op.
+            if crate::provenance::active() {
+                crate::provenance::on_func_define(nm, shf.filename.as_deref(), shf.lineno);
+            }
             if let Ok(mut wr) = shfunctab_lock().write() {
                 wr.add(*shf);
             }
