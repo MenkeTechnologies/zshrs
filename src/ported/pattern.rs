@@ -577,7 +577,23 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // below. A leading glob token (Star/Quest/Inbrack/…) is not plain, so
     // only a literal `.` is recorded; everything else stays 0.
     let patstartch_lead: u8 = if exp.starts_with('.') { b'.' } else { 0 };
+    // c:796 — `patcompstart()` has exactly ONE caller in C: `parsepat`
+    // (Src/glob.c:796), which runs it ONCE for a whole file glob before
+    // `parsecomplist` compiles the individual path components. C's
+    // `patcompile` never re-enters it. zshrs calls it here instead, which is
+    // harmless for the char-set setup but NOT for the globflags seed: a
+    // pattern-level `(#i)` that `parsepat` folded into `patglobflags`
+    // (Src/glob.c:801-807) was wiped on entry to every component after the
+    // first, so `(#i)SUB/DEEP.TXT` matched case-insensitively in `SUB` and
+    // case-SENSITIVELY in `DEEP.TXT` — i.e. not at all. Snapshot the incoming
+    // value and restore it for a FILE compile, which is exactly what C's
+    // `patcompile` does by leaving `patglobflags` alone unless the pattern is
+    // non-FILE (c:568-576).
+    let incoming_globflags = patglobflags.load(Ordering::Relaxed);
     patcompstart();
+    if (inflags & PAT_FILE as i32) != 0 {
+        patglobflags.store(incoming_globflags, Ordering::Relaxed); // c:568 — no reset for a file glob
+    }
     // c:525 — `patcompstart` seeds `patglobflags` with the option-derived
     // default (GF_IGNCASE when CASEGLOB/CASEPATHS are off, GF_MULTIBYTE when
     // MULTIBYTE is on). The `patglobflags.store(0)` reset below (clean slate
@@ -930,15 +946,26 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // globs when the only extra glob flag is GF_IGNCASE; GF_IGNCASE stays on
     // `hoisted_globflags` so the final wildcard component still matches
     // case-insensitively.
-    let pures_extra_mask = if (pf_pre & PAT_FILE as i32) != 0 {
-        !(GF_MULTIBYTE | GF_IGNCASE)
-    } else {
-        !GF_MULTIBYTE
-    };
-    if (pf_pre & PAT_FILE as i32) != 0
-        && (pf_pre & PAT_ANY as i32) == 0
-        && (hoisted_globflags & pures_extra_mask) == 0
-    {
+    //
+    // CORRECTION (see the `(#i)` note below): the exemption above transcribed
+    // C's `__CYGWIN__` arm. c:586's fast-path gate is
+    // `!(patglobflags & ~GF_MULTIBYTE)` on every other platform — the
+    // `|| (!(patglobflags & ~GF_IGNCASE) && (patflags & PAT_FILE))` alternative
+    // is inside `#ifdef __CYGWIN__` (c:587-594) precisely because only there is
+    // the FILESYSTEM itself case-insensitive, making a stat of the pattern's
+    // own spelling equivalent to a scan. Everywhere else C reaches PAT_PURES
+    // for a literal component only via the c:650-664 conversion, and c:1392-1417
+    // withholds it whenever `patglobflags & (0xFF|GF_LCMATCHUC|GF_IGNCASE)`:
+    // "It's much simpler to turn off pure string mode for any case-insensitive
+    // or approximate matching" (c:1382-1385). The single exception is a `.` or
+    // `..` file component, which stays pure (c:1414-1416).
+    //
+    // This matters beyond flag bookkeeping: the PURES path STATS the pattern's
+    // spelling, so on a case-insensitive filesystem `(#i)ALPHA.TXT` "found" the
+    // file and emitted `ALPHA.TXT` — the pattern echoed back — where zsh scans
+    // the directory and emits the real on-disk `alpha.txt`.
+    let case_or_approx = hoisted_globflags & (0xff | GF_LCMATCHUC | GF_IGNCASE); // c:1392, c:1409
+    if (pf_pre & PAT_FILE as i32) != 0 && (pf_pre & PAT_ANY as i32) == 0 {
         let off = patparse_off.load(Ordering::Relaxed);
         let p = patparse.lock().unwrap();
         let s = &p[off..];
@@ -965,8 +992,12 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 break;
             }
         }
-        // c:610 — pure iff we stopped at end or '/', not at a glob meta.
-        if !at_token {
+        // c:1414-1416 — `.` and `..` stay pure even under case-insensitive or
+        // approximate matching, so a `../x` path component still descends by
+        // name instead of being scanned for.
+        let dot_or_dotdot = matches!(&s[..cut], "." | ".."); // c:1414-1415
+                                                             // c:610 — pure iff we stopped at end or '/', not at a glob meta.
+        if !at_token && (case_or_approx == 0 || dot_or_dotdot) {
             let literal = s[..cut].as_bytes().to_vec();
             drop(p);
             let mlen = literal.len() as i64;
@@ -975,7 +1006,20 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 // tokenized buffer. Map the normalized cut back to the
                 // original char index and slice the untouched tokenized
                 // input, so the remainder keeps its exact original tokens.
-                *end = orig_remainder(&exp_tokenized, &norm_to_orig, cut);
+                // `cut` indexes into `s`, which starts at `off` — the offset
+                // patparse_off reached after the leading `(#...)` flag block
+                // was hoisted above. `orig_remainder` maps an ABSOLUTE
+                // normalized offset (the general path at the bottom of this
+                // function passes `consumed_off`, already absolute), so a
+                // bare `cut` under-reports the consumed length by exactly the
+                // width of the hoisted flags: `(#i)alpha.txt` compiled the
+                // literal correctly but reported `.txt` as unconsumed, and
+                // `parsecomplist` (Src/glob.c:773) then saw a remainder that
+                // was neither `/` nor empty and failed the whole pattern with
+                // "bad pattern". Only wildcard-free components hit this path,
+                // which is why `(#i)a*` always worked and `(#i)alpha.txt` did
+                // not.
+                *end = orig_remainder(&exp_tokenized, &norm_to_orig, off + cut);
             }
             let prog: Patprog = Box::new((
                 patprog {
@@ -2653,6 +2697,23 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     b'?' | b'*' | b'[' | b'|' | b'\\' | b'<' => true,
                     b'^' => sp_hat_lit == b'^',
                     b'#' => sp_hash_lit == b'#',
+                    // c:950 / c:1312-1317 — `/` is ZPC_SLASH, a segment
+                    // terminator, and C keeps it one by MASKING the slot
+                    // (`zpc_special[ZPC_SLASH] = Marker`) where it must stay
+                    // literal — for a non-FILE pattern (c:570) and inside
+                    // parens (c:840-842) — rather than by dropping the rule.
+                    // Mirror that with the same gate `patcompbranch` already
+                    // uses above, so `(...)` alternation and `[[ ]]`/`:#`
+                    // patterns are untouched. Without this a literal file
+                    // component swallowed the rest of the path: the general
+                    // compiler is only reached for such a component when the
+                    // PURES fast path is off, i.e. under `(#i)`/`(#a1)`, so
+                    // `(#i)sub/deep.txt` compiled `sub/deep.txt` as ONE
+                    // component and matched nothing — even with exact case.
+                    b'/' => {
+                        paren == 0
+                            && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0
+                    }
                     _ => false,
                 };
                 if stop_here {
