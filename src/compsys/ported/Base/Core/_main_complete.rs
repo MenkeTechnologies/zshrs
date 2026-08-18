@@ -976,6 +976,15 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // word (or `=word`) → 0, `=N` → N (clamped ≥0), otherwise 9999999.
         let threshold = |starts: &dyn Fn(&str) -> bool| -> Option<i64> {
             let sel: Vec<&String> = menu_style.iter().filter(|e| starts(e.as_str())).collect();
+            // sh:252 `sel=( "${(@M)_menu_style:#(yes|true|1|on)*}" )` — a
+            // real assignment to the shell-local declared at sh:32, which
+            // retypes it from scalar to array. Keeping the match list only
+            // in Rust left `${(t)sel}` reading `scalar-local` against zsh's
+            // `array-local`.
+            crate::ported::params::setaparam(
+                "sel",
+                sel.iter().map(|e| (*e).clone()).collect::<Vec<String>>(),
+            );
             if sel.is_empty() {
                 return None;
             }
