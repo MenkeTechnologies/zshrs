@@ -1155,6 +1155,17 @@ fn completion(state: &State, params: &Value) -> Value {
     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
     let text = state.docs.get(uri);
     let line = text.and_then(|t| t.lines().nth(line_no));
+    // The command the cursor belongs to may start lines above it: shell
+    // continuations are one logical command. Context detection runs on
+    // the joined line so `print \` + newline + `  -<cursor>` still knows
+    // it is completing a flag of `print`; the item bodies keep using the
+    // PHYSICAL line + column, because the word being typed is on the
+    // cursor's own line and that is what an edit range must address.
+    let (logical_line, logical_col, _logical_first) = match (text, line) {
+        (Some(t), _) => logical_line_at(t, line_no, col),
+        (None, Some(l)) => (l.to_string(), col, line_no),
+        (None, None) => (String::new(), col, line_no),
+    };
 
     // Context gate: inside a `"..."` or `'...'` literal segment we
     // should NOT fire arbitrary builtin / keyword / option completions
@@ -1170,9 +1181,17 @@ fn completion(state: &State, params: &Value) -> Value {
     // code. `'*:file:_fi<cursor>'` should offer `_files`, which the
     // blanket string suppression made impossible.
     if let Some(l) = line {
-        match arg_spec_part_at(l, col) {
+        // Specs are written one per continuation line, so the spec
+        // context is resolved against the JOINED command, not the
+        // physical fragment the cursor happens to sit on.
+        match arg_spec_part_at(&logical_line, logical_col) {
             Some(ArgSpecPart::Action { word_start }) => {
-                return arg_spec_action_items(word_start, col, l);
+                // Map the word start back onto the physical line: the
+                // word being typed is on the cursor's own line, so the
+                // offset differs by however much of the logical line
+                // preceded it.
+                let phys_start = word_start.saturating_sub(logical_col - col.min(logical_col));
+                return arg_spec_action_items(phys_start, col, line_no, l);
             }
             // Head is the option/positional spec (the command's own
             // option names — not something this server can know) and
@@ -1236,7 +1255,7 @@ fn completion(state: &State, params: &Value) -> Value {
         })
     }
     if let Some(l) = line {
-        match lsp_completion_context(l, col) {
+        match lsp_completion_context(&logical_line, logical_col) {
             LspCompletionContext::ParamFlag => {
                 // `${(LU)var}` / `${(jks)arr}` chain — use chain variant
                 // so the popup re-opens after each flag insertion.
@@ -1827,6 +1846,76 @@ fn completion(state: &State, params: &Value) -> Value {
     json!({ "isIncomplete": false, "items": items })
 }
 
+/// Join backslash-continued lines into the single logical line zsh sees,
+/// and map the cursor into it.
+///
+/// Returns `(logical_line, cursor_offset, first_line_no)`. A shell
+/// command written the way every real completer writes it —
+///
+/// ```text
+/// _arguments -s \
+///   '(-v --verbose)'{-v,--verbose}'[be loud]' \
+///   '*:file:_files'
+/// ```
+///
+/// — is ONE command, but `text.lines().nth(n)` hands back a fragment
+/// with no command word in it. Everything downstream that asks "what
+/// command am I completing an argument of" then gets the wrong answer:
+/// the spec context finds no `_arguments`, and the compsys engine
+/// receives `'*:file:_files'` as a whole command line.
+///
+/// zsh removes the backslash AND the newline (`Src/lex.c` — the
+/// continuation is consumed by the lexer), leaving the next line's
+/// leading whitespace intact, so joining is a plain concatenation with
+/// both characters dropped.
+///
+/// A trailing backslash inside a comment is not a continuation: the
+/// comment already runs to end of line. Lines whose first non-blank
+/// character is `#` are therefore never joined.
+pub(crate) fn logical_line_at(text: &str, line_no: usize, col: usize) -> (String, usize, usize) {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return (String::new(), 0, line_no);
+    }
+    let line_no = line_no.min(lines.len() - 1);
+    let is_comment = |l: &str| l.trim_start().starts_with('#');
+    // A line continues when it ends in a backslash that is not itself
+    // escaped — `foo \\` is a literal backslash, not a continuation.
+    let continues = |l: &str| {
+        if is_comment(l) {
+            return false;
+        }
+        let trailing = l.len() - l.trim_end_matches('\\').len();
+        trailing % 2 == 1
+    };
+    let mut first = line_no;
+    while first > 0 && continues(lines[first - 1]) {
+        first -= 1;
+    }
+    let mut last = line_no;
+    while last + 1 < lines.len() && continues(lines[last]) {
+        last += 1;
+    }
+    if first == last {
+        return (
+            lines[line_no].to_string(),
+            col.min(lines[line_no].len()),
+            line_no,
+        );
+    }
+    let mut joined = String::new();
+    let mut cursor = col;
+    for (i, l) in lines[first..=last].iter().enumerate() {
+        let idx = first + i;
+        let piece = if idx < last { &l[..l.len() - 1] } else { l };
+        if idx == line_no {
+            cursor = joined.len() + col.min(l.len());
+        }
+        joined.push_str(piece);
+    }
+    (joined, cursor, first)
+}
+
 /// Which part of an `_arguments`-family spec string the cursor sits in.
 ///
 /// A spec is colon-separated: `'-o[desc]:message:action'`,
@@ -1992,7 +2081,7 @@ pub(crate) fn arg_spec_part_at(line: &str, col: usize) -> Option<ArgSpecPart> {
 /// matches (`_files`, `_hosts`, `_users`, …) and the inline action
 /// syntaxes zsh's own docs list — a literal list, a described list, a
 /// state dispatch, a shell-command action.
-fn arg_spec_action_items(word_start: usize, col: usize, line: &str) -> Value {
+fn arg_spec_action_items(word_start: usize, col: usize, line_no: usize, line: &str) -> Value {
     let typed = &line[word_start.min(line.len())..col.min(line.len())];
     // A word starting with `-` is a FLAG of the action's own command
     // (`_files -g …`, `_values -s ,`). Offering completer names there
@@ -2012,8 +2101,8 @@ fn arg_spec_action_items(word_start: usize, col: usize, line: &str) -> Value {
             "sortText": format!("{sort}_{label}"),
             "textEdit": {
                 "range": {
-                    "start": { "line": 0, "character": range_start },
-                    "end": { "line": 0, "character": col },
+                    "start": { "line": line_no, "character": range_start },
+                    "end": { "line": line_no, "character": col },
                 },
                 "newText": insert,
             },
@@ -2174,7 +2263,14 @@ fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
     // LSP `character` counts UTF-16 code units; compsys wants a byte
     // offset into the line. Equal for ASCII, different the moment the
     // line holds a non-BMP char or any multi-byte one.
-    let col = utf16_col_to_byte(line_text, col_u16);
+    let phys_col = utf16_col_to_byte(line_text, col_u16);
+    // Backslash continuations are ONE command to the shell. Dispatching
+    // the physical fragment instead would hand `_main_complete` a line
+    // whose first word is an argument — `  --pat` for
+    // `git \` + newline + `  add --pat` — so the completer for `git`
+    // never runs.
+    let (line_text, col, _) = logical_line_at(text, line_no, phys_col);
+    let line_text = line_text.as_str();
     // Cold-start budget: the first dispatch after editor launch may
     // autoload a large completer from `$fpath` (`_git` is 424 KB of
     // shell to parse), which does not fit the steady-state 200 ms.
@@ -2440,8 +2536,9 @@ fn hover(state: &State, params: &Value) -> Value {
     // String and suppresses — but its action field names a REAL
     // function, and that is exactly the name an author writing a spec
     // wants documented. `'*:file:_files'` hovers `_files`.
+    let (logical_line, logical_col, _) = logical_line_at(text, line_no, col);
     let in_spec_action = matches!(
-        arg_spec_part_at(line_text, col),
+        arg_spec_part_at(&logical_line, logical_col),
         Some(ArgSpecPart::Action { .. }) | Some(ArgSpecPart::ActionOpaque)
     ) && word.starts_with('_');
     if gate != HoverGate::Code && !in_spec_action {
@@ -11518,6 +11615,85 @@ foo() { echo second }\n\
             .as_array()
             .cloned()
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn logical_line_joins_backslash_continuations() {
+        // The shape every real completer is written in.
+        let text = "_arguments -s \\\n  '-v[loud]' \\\n  '*:file:_files'\n";
+        // Cursor on the LAST fragment, which on its own has no command.
+        // Cursor on the `*` of the third fragment (its column 3).
+        let (joined, col, first) = super::logical_line_at(text, 2, 3);
+        assert_eq!(joined, "_arguments -s   '-v[loud]'   '*:file:_files'");
+        assert_eq!(first, 0);
+        // The offset must land on the same character it did in the
+        // fragment, now measured from the start of the joined command.
+        assert_eq!(&joined[col..col + 1], "*");
+    }
+
+    #[test]
+    fn logical_line_leaves_an_uncontinued_line_alone() {
+        let text = "echo one\necho two\n";
+        let (joined, col, first) = super::logical_line_at(text, 1, 4);
+        assert_eq!(joined, "echo two");
+        assert_eq!(col, 4);
+        assert_eq!(first, 1);
+    }
+
+    #[test]
+    fn logical_line_does_not_join_through_a_comment_or_an_escaped_backslash() {
+        // A trailing backslash in a comment is not a continuation …
+        let text = "# note \\\necho two\n";
+        let (joined, _, _) = super::logical_line_at(text, 1, 0);
+        assert_eq!(joined, "echo two");
+        // … and `\\` is a literal backslash, not a line continuation.
+        let text2 = "print a\\\\\nprint b\n";
+        let (joined2, _, _) = super::logical_line_at(text2, 1, 0);
+        assert_eq!(joined2, "print b");
+    }
+
+    #[test]
+    fn builtin_flag_context_survives_a_continuation() {
+        // `print \` + newline + `  -` is one command; the flag popup
+        // has to know it belongs to `print`, not to a bare `-`.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let text = "print \\\n  -\n";
+        state.docs.insert("file:///t.zsh".into(), text.into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 1, "character": 3 },
+        });
+        let items = completion(&state, &params)["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let labels: Vec<&str> = items.iter().filter_map(|i| i["label"].as_str()).collect();
+        assert!(
+            labels.contains(&"-l"),
+            "no print flags across continuation: {labels:?}"
+        );
+        // The edit range must address the PHYSICAL line the `-` is on.
+        let range = &items[0]["textEdit"]["range"];
+        assert_eq!(
+            range["start"]["line"],
+            json!(1),
+            "edit range on the wrong line"
+        );
+    }
+
+    #[test]
+    fn arg_spec_context_survives_a_continuation() {
+        // `_arguments` is two lines up; without joining, the spec
+        // context saw a fragment with no command and gave up.
+        let text = "_arguments -s \\\n  '-v[loud]' \\\n  '*:file:_fi'\n";
+        let (joined, col, _) = super::logical_line_at(text, 2, 13);
+        match super::arg_spec_part_at(&joined, col) {
+            Some(super::ArgSpecPart::Action { word_start }) => {
+                assert_eq!(&joined[word_start..col], "_fi");
+            }
+            other => panic!("expected Action across the continuation, got {other:?}"),
+        }
     }
 
     #[test]

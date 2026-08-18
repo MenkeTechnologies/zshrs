@@ -457,6 +457,34 @@ matching), and it means the list can be wider than the prompt's.
 Duplicates are merged in the LSP layer: `compdescribe`'s two-phase add
 proposes each word twice, once with a description and once without.
 
+## Backslash continuations are one command
+
+A shell command written across continuation lines is ONE command, and
+`text.lines().nth(n)` hands back a fragment that has no command word in
+it. Every question the server asks about "what command is this an
+argument of" therefore got the wrong answer on the shape completers are
+actually written in:
+
+```zsh
+_arguments -s \
+  '(-v --verbose)'{-v,--verbose}'[be loud]' \
+  '*:file:_files'
+```
+
+`logical_line_at` joins the chain the way zsh's lexer does — the
+backslash and the newline both vanish, the next line's leading
+whitespace stays — and maps the cursor into the joined line. It is used
+for the compsys dispatch (which otherwise received `'*:file:_files'` as
+a whole command line), for the spec context, for hover's spec
+exception, and for `lsp_completion_context`, so `print \` + newline +
+`  -<tab>` still knows it is completing a flag of `print`.
+
+Item bodies keep using the PHYSICAL line and column: the word being
+typed is on the cursor's own line, and that is what an edit range has to
+address. A trailing backslash inside a comment is not a continuation
+(the comment already ends at the newline), and `\\` is a literal
+backslash rather than a continuation.
+
 ## Writing specs, not just using them
 
 The other half of an editor's job here is helping the author of a
@@ -528,8 +556,22 @@ construction.
 
 ## Remaining work
 
-- **Multi-line continuations.** `git \\\n add --pat` is not glued
-  into one logical line before dispatch.
+- **Quoted strings spanning a raw newline.** `logical_line_at` joins
+  backslash continuations, not a single-quoted word that simply runs
+  across lines (`'…<newline>…'`). Rare in specs, wrong when it happens.
+- **The spec head.** `'-<cursor>[desc]:…'` offers nothing because the
+  option names belong to the command the completer is FOR. A completer
+  file names that command in its `#compdef` header, so the server could
+  dispatch compsys for it and offer its real options — the same trick
+  the completion engine already performs, pointed at the file being
+  edited.
+- **One-entry result cache.** A dispatch that overran its budget is
+  servable to the immediately-following request only. Keying by
+  (command, word) would survive a keystroke storm.
+- **Matcher-spec filtering.** Matches are captured before `addmatches`,
+  so the client gets a superset and filters it. Deliberate (client-side
+  fuzzy matching is better in an editor), but it does mean the list can
+  differ from what the prompt would show.
 
 ## Adoption Plan
 
