@@ -796,20 +796,20 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         inflags & !(PAT_PURES | PAT_HAS_EXCLUDP) as i32,
         Ordering::Relaxed,
     ); // c:566
-    // c:568-576 — `patcompile` re-seeds the RUNNING `patglobflags`
-    // (`if (isset(MULTIBYTE)) patglobflags = GF_MULTIBYTE; else
-    // patglobflags = 0;`) for a non-file pattern, and leaves
-    // `patcompstart`'s equally option-gated seed alone for a file glob.
-    // Every P_GFLAGS node emitted below records that running value
-    // verbatim (c:993 `up.l = patglobflags`), so storing a bare 0 here
-    // made a mid-pattern `(#i)` / `(#b)` node clear GF_MULTIBYTE for the
-    // remainder of the match (c:2942 assigns the payload ABSOLUTELY).
-    //
-    // GF_MULTIBYTE is forced ON rather than taken from `seeded_globflags`:
-    // the option gate is correct C (c:572-575) but zshrs's capture and
-    // substitution layers index the subject as UTF-8, and `unsetopt
-    // multibyte` makes zsh match in raw BYTES (c:1946), which those layers
-    // cannot yet represent — see the `charinc` note below.
+       // c:568-576 — `patcompile` re-seeds the RUNNING `patglobflags`
+       // (`if (isset(MULTIBYTE)) patglobflags = GF_MULTIBYTE; else
+       // patglobflags = 0;`) for a non-file pattern, and leaves
+       // `patcompstart`'s equally option-gated seed alone for a file glob.
+       // Every P_GFLAGS node emitted below records that running value
+       // verbatim (c:993 `up.l = patglobflags`), so storing a bare 0 here
+       // made a mid-pattern `(#i)` / `(#b)` node clear GF_MULTIBYTE for the
+       // remainder of the match (c:2942 assigns the payload ABSOLUTELY).
+       //
+       // GF_MULTIBYTE is forced ON rather than taken from `seeded_globflags`:
+       // the option gate is correct C (c:572-575) but zshrs's capture and
+       // substitution layers index the subject as UTF-8, and `unsetopt
+       // multibyte` makes zsh match in raw BYTES (c:1946), which those layers
+       // cannot yet represent — see the `charinc` note below.
     patglobflags.store(seeded_globflags | GF_MULTIBYTE, Ordering::Relaxed);
 
     // c:583-590 — emit P_GFLAGS placeholder. Phase 5.1: instead of
@@ -1531,11 +1531,11 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         // `(#i)` to fire even without EXTENDEDGLOB. Parity bugs
         // #18/#19 vs real zsh.
         let hash_char = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:957
-        // c:953-954 compares the FIRST byte against
-        // `zpc_special[ZPC_INPAR]` too, which patcompcharsset masks to
-        // Marker under SHGLOB (c:500-510) or `disable -p '('`. With `(`
-        // disabled, `(#i)abc` is the LITERAL text `(#i)abc`, so the
-        // flag spec must not fire.
+                                                                        // c:953-954 compares the FIRST byte against
+                                                                        // `zpc_special[ZPC_INPAR]` too, which patcompcharsset masks to
+                                                                        // Marker under SHGLOB (c:500-510) or `disable -p '('`. With `(`
+                                                                        // disabled, `(#i)abc` is the LITERAL text `(#i)abc`, so the
+                                                                        // flag spec must not fire.
         if hash_char == b'#'
             && off + 1 < bytes.len()
             && bytes[off] == sp_inpar
@@ -3733,11 +3733,11 @@ pub fn pattryrefs(
                     let lo = b.min(trial.len());
                     let hi = e.min(trial.len()).max(lo);
                     match_arr.push(metafy_span(lo, hi)); // c:2587 metafy(*sp..*ep)
-                                                               // c:2596-2599 — `CHARSUB(patinstart, *sp) + patoffset +
-                                                               // !isset(KSHARRAYS)`. CHARSUB (c:1997) counts CHARACTERS;
-                                                               // `patbeginp`/`patendp` hold BYTE offsets into `trial`, so
-                                                               // convert through charsub before adding the (already
-                                                               // character-based, c:2285-2286) patoffset.
+                                                         // c:2596-2599 — `CHARSUB(patinstart, *sp) + patoffset +
+                                                         // !isset(KSHARRAYS)`. CHARSUB (c:1997) counts CHARACTERS;
+                                                         // `patbeginp`/`patendp` hold BYTE offsets into `trial`, so
+                                                         // convert through charsub before adding the (already
+                                                         // character-based, c:2285-2286) patoffset.
                     begin_arr.push((charsub(trial, b) as i32 + patoffset + base).to_string()); // c:2596-2599
                                                                                                // c:2601-2604 — mend = last matched char index
                                                                                                // (inclusive): end + offset + base - 1.
@@ -5123,8 +5123,8 @@ pub fn patmatch(
             return 0; // c:2737 — no character left.
         }
         let multibyte = (gflags & GF_MULTIBYTE) != 0; // c:1946
-        // A non-boundary offset is only reachable while stepping bytes
-        // with GF_MULTIBYTE clear; C's raw-byte view advances one byte.
+                                                      // A non-boundary offset is only reachable while stepping bytes
+                                                      // with GF_MULTIBYTE clear; C's raw-byte view advances one byte.
         let Some(rest) = string.get(off..) else {
             return 1; // c:1947
         };
@@ -5330,7 +5330,14 @@ pub fn patmatch(
                         let advance = charinc(s_off, glob_flags);
                         if advance != 0 {
                             state.errsfound += 1; // c:3466 ++errsfound
-                            return patmatch(code, scan, string, s_off + advance, state, glob_flags);
+                            return patmatch(
+                                code,
+                                scan,
+                                string,
+                                s_off + advance,
+                                state,
+                                glob_flags,
+                            );
                         }
                     }
                     return None; // c:3452 fail, no budget → caller tries next alt
@@ -6931,7 +6938,10 @@ mod tests {
         // The pattern that used to panic; every `*` rewind position must be
         // a character start, so the trailing `?` sees a whole `ε`.
         let prog = compile("*(#b)(?)");
-        assert!(pattry(&prog, "αβγδε"), "c:3374-3382 — `*` then `?` must match");
+        assert!(
+            pattry(&prog, "αβγδε"),
+            "c:3374-3382 — `*` then `?` must match"
+        );
         assert_eq!(
             crate::ported::params::getaparam("match"),
             Some(vec!["ε".to_string()]),
