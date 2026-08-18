@@ -78,9 +78,13 @@ The JSON form is stable and flat:
 
 ```json
 {"name":"REPORT","origin":"cmdsubst \"date +%Y-%m-%d\"","origin_line":2,
- "ops":[{"op":"assign","args":["REPORT","\"2026-08-18\""],"line":2}],
+ "ops":[{"op":"assign","args":["REPORT","\"2026-08-18\""],"line":2},
+        {"op":"expand","args":["$REPORT","\"2026-08-18\""],"line":3},
+        {"op":"concat","args":["\"2026-08-18\"","\".tar.gz\""],"line":3}],
  "dropped_ops":0}
 ```
+
+(printed on one line; wrapped here for the page.)
 
 ## Turning it off
 
@@ -139,7 +143,6 @@ port therefore keys on three things:
 | `paramsubst_to_value_pf` | `src/fusevm_bridge.rs` | `${…}` fast-path expansion |
 | `ShellHost::glob` / `heredoc` / `herestring` / `exec` / `call_function` / `cmd_subst` / `process_sub_*` | `src/fusevm_bridge.rs` | origins and consumption |
 | `ShellExecutor::run_command_substitution` | `src/vm_helper.rs` | in-process `$(…)` |
-| `singsub` / `multsub` | `src/ported/subst.rs` | word expansion |
 | `assignsparam` / `assignaparam` / `sethparam` / `unsetparam` | `src/ported/params.rs` | parameter writes |
 
 Every tap is guarded by `provenance::active()` at the call site.
@@ -147,9 +150,12 @@ Every tap is guarded by `provenance::active()` at the call site.
 ### Cost
 
 Disarmed: one relaxed atomic load per tap; no allocation, no lock, no
-map lookup. Armed: one mutex acquisition and an O(1) map lookup per tap,
-plus an O(tracked-names) scan in the word-expansion tap — tracked names
-are user-armed and few.
+map lookup. Armed: one mutex acquisition and an O(1) map lookup per tap.
+
+Every tap keys on an exact identity — an `Arc` address, a parameter
+name, or the full value bytes. No tap infers a link by scanning word
+text for a parameter's name: an earlier revision did, and `eval "x=\$F"`
+(where `$F` is escaped and never expanded) was attributed to `F`.
 
 ## Limitations
 

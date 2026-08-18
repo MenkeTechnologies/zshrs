@@ -10455,5 +10455,18 @@ pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::
 ///    in-process. Without this they dispatch on a literal name but report
 ///    `none`/external — a builtin that `whence` can't see.
 pub fn is_extension_builtin(name: &str) -> bool {
-    fusevm::shell_builtins::is_builtin(name) || extension_builtin_defs().any(|b| b.node.nam == name)
+    fusevm::shell_builtins::is_builtin(name)
+        || LOCAL_ONLY_BUILTINS.contains(&name)
+        || extension_builtin_defs().any(|b| b.node.nam == name)
 }
+
+/// zshrs builtins that `register_builtins` installs on the VM and
+/// `try_run_registered_builtin` dispatches by name, but which the pinned
+/// `fusevm` release's shared name registry does not know yet (its
+/// `shell_builtins::is_builtin` is the table `is_extension_builtin`
+/// consults first). Without this list `whence -w`/`type` report such a
+/// name as `none` even though calling it runs the builtin.
+///
+/// Keep in sync with `fusevm_bridge::try_run_registered_builtin`; an
+/// entry graduates off this list once fusevm ships the name.
+pub const LOCAL_ONLY_BUILTINS: &[&str] = &["provenance"];

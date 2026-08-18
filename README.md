@@ -330,6 +330,29 @@ dbview history docker         # search history
 | `doctor` | Full diagnostic: pool metrics, cache stats, bytecode coverage |
 | `dbview` | Read-only browse of SQLite **mirrors** (not the rkyv cache) |
 | `profile` | In-process command profiling with nanosecond accuracy |
+| `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
+
+`provenance` (ported from strykelang's `mark` / `provenance` / `unmark`) answers
+"where did this value come from?" for a running shell — an origin plus the op
+chain the bytecode actually executed:
+
+```console
+$ provenance -m ARCHIVE
+$ REPORT=$(date +%Y-%m-%d)
+$ ARCHIVE=${REPORT}.tar.gz
+$ tar czf $ARCHIVE .
+$ provenance ARCHIVE
+ARCHIVE
+  origin: cmdsubst "date +%Y-%m-%d" (line 2)
+  ops:
+     1. concat     "2026-08-18" ".tar.gz"                   line 3
+     2. assign     ARCHIVE "2026-08-18.tar.gz"              line 3
+     3. expand     $ARCHIVE "2026-08-18.tar.gz"             line 4
+     4. exec       tar argv[2]                              line 4
+```
+
+Nothing is recorded until `provenance -m` arms it; `[provenance] enabled = false`
+in `~/.zshrs/zshrs.toml` (or `ZSHRS_PROVENANCE=0`) refuses arming altogether.
 
 ### Unit Test Framework (port of [`strykelang`](https://github.com/MenkeTechnologies/strykelang))
 

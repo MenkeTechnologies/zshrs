@@ -5578,6 +5578,7 @@ const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
     ("pmap", "Display the memory map of one or more processes. `pmap PID`."),
     ("printenv", "Print the value of one or more environment variables, or all if none given. coreutils drop-in."),
     ("profile", "CPU / wall-time profile a command and emit a flamegraph. `profile cmd …` → SVG path printed on stdout. Backed by the same sampler as `zprof`."),
+    ("provenance", "Value lineage over bytecode execution. `provenance -m NAME` arms tracking for a parameter; `provenance NAME` then prints where its bytes came from (`$(…)`, `<(…)`, glob, heredoc, an earlier assignment) and every bytecode op that produced or consumed them — `assign`, `expand`, `concat`, `exec`, `call`, `unset` — each with its `$LINENO`. `-j` emits JSON, `-u` untracks, `-c` clears. Records nothing until armed; disable entirely with `[provenance] enabled = false` in `~/.zshrs/zshrs.toml` or `ZSHRS_PROVENANCE=0`."),
     ("realpath", "Resolve symlinks and `.` / `..` to a canonical absolute path. coreutils drop-in."),
     ("rev", "Reverse each input line character-by-character. coreutils drop-in."),
     ("run_tests", "Alias for `ztest_run` — print the per-block test summary and roll the per-block counters into the run-wide totals. Returns 0 on all-pass, 1 if any assertion failed. Port of strykelang's `test_run` / `run_tests` builtin pair."),
