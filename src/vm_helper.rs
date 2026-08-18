@@ -4335,6 +4335,52 @@ impl ShellExecutor {
     }
     /// `run_command_substitution` — see implementation.
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
+        // c:Src/subst.c / Src/lex.c — the text inside `$(…)` is a FRESH
+        // command line. The double quotes that may surround the substitution
+        // apply to its RESULT, not to the words inside it: in `"$(f $x)"` the
+        // `$x` is unquoted. `in_dq_context` is the runtime signal the
+        // `${(flags)…}` bridges read for paramsubst's `qt` (c:1625), and it
+        // stayed set for the whole body, so every flag-expansion inside a
+        // DQ command substitution ran as if quoted.
+        //
+        // What that broke: `qt` suppresses RC_EXPAND_PARAM's word removal, so
+        // under `setopt rcexpandparam` an EMPTY array kept a word instead of
+        // deleting it (c:4327's `while ((x = *aval++))` emits nothing for an
+        // empty array; the `!plan9` single-empty-word path at c:4261 is the
+        // one that must NOT run):
+        //     setopt rcexpandparam
+        //     f() { declare -a x; print "n=$(set -- H ${(q)x}; print $#)" }
+        //     f            # zsh: n=1, zshrs was n=2
+        // Only the `"$(…)"` spelling was affected — unquoted `$(…)`,
+        // backticks, and `v=$(…)` were all already correct, which is what
+        // made it look like a quoting bug rather than an option bug.
+        //
+        // Bit through compsys: completion runs with rcexpandparam ON, and
+        // `_git`'s __git_recent_commits passes `${(q)commit_opts}` to
+        // `_call_program` inside `"$(…)"`. The stray empty word became a
+        // bogus `''` argument to `git rev-list`, the command failed, and
+        // `git checkout <TAB>` lost its whole recent-commits group.
+        //
+        // `SUBEXP_SCALAR_CTX` carries the same thing one level down — it is
+        // what a NESTED expansion reads as `subexp_dq` (subst.rs:18873) to
+        // learn that its OUTER `${…}` was quoted. A `$(…)` inside a quoted
+        // outer expansion is still a fresh command line, so it has to be
+        // cleared too:
+        //     setopt rcexpandparam
+        //     f() { declare -a co; local -a c
+        //           c=("${(f)"$(cmd HEAD ${(q)co})"}") }
+        // is `_git`'s exact shape, and the leaked context flipped c:4354's
+        // `mark_empty`, keeping the empty element that plan9 must delete.
+        let saved_dq = std::mem::replace(&mut self.in_dq_context, 0);
+        let saved_subexp =
+            crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.replace(0));
+        let out = self.run_command_substitution_inner(cmd_str);
+        crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.set(saved_subexp));
+        self.in_dq_context = saved_dq;
+        out
+    }
+
+    fn run_command_substitution_inner(&mut self, cmd_str: &str) -> String {
         // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
         // than spawning `cat`. The leading `<` (after stripping
         // whitespace) means "read this file". Trailing newline is
