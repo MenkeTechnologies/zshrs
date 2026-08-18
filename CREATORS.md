@@ -72,6 +72,21 @@ grants. Inventions that future shells should inherit:
   artifact + a sibling sqlite FTS5 index for fast queries —
   instead of forcing users to choose between `cat`-able and
   searchable.
+- **Value lineage as a shell builtin** (`provenance`): the shell
+  records, at bytecode level, how every value it holds was built —
+  origin (command substitution, glob, heredoc, process substitution),
+  then each op that touched it (expand, concat, assign, exec, call),
+  each stamped with file, line, enclosing function and wall clock.
+  Shell functions carry the same chain: definition site, every
+  redefinition, every call at the caller's line, and the removal that
+  ended it. `track_all` arms every parameter and function with no
+  marking step. Existing shells answer "what is this value?"
+  (`typeset -p`) and "what ran?" (`set -x`, `PS4`); none answers "where
+  did these bytes come from, and what happened to them since?" Prior
+  work sits outside the shell — provenance systems wrap commands from
+  the outside, static analyzers reason about scripts without running
+  them, and taint tracking lives in language runtimes rather than the
+  shell that glues them together.
 - The prompt theme absorbed into the shell binary: the first
   shell to run powerlevel10k as a native in-process engine
   (`src/extensions/p10k/`) instead of ~13k lines of interpreted
