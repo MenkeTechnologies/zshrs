@@ -21002,10 +21002,38 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         if r != 0 {
             r // c:580 — `[#N]`/`[##N]` set this during matheval
         } else {
-            vars_get("OUTPUT_RADIX")
-                .as_ref()
-                .and_then(|s| s.parse::<i32>().ok())
+            // Read this WITHOUT `getsparam`'s environment fallback
+            // (params.rs:5791). That fallback calls `getenv()`, which takes a
+            // global lock and linearly scans `environ`, and this lookup runs on
+            // EVERY arithmetic substitution — the name is normally unset, so
+            // every `$(( … ))` missed paramtab and paid the scan. In a profile
+            // of a 200k-iteration `for (( ))` loop, `__findenv_locked` was ~11%
+            // of the main thread's non-idle samples, all of it from here.
+            //
+            // paramtab first, which still picks up `OUTPUT_RADIX=16` set as a
+            // shell parameter or exported (export creates a paramtab entry);
+            // only a name absent from paramtab falls back to a ONE-TIME
+            // snapshot of the environment zshrs was started with, which cannot
+            // change without going through a paramtab-creating assignment.
+            static OUTPUT_RADIX_ENV: std::sync::OnceLock<Option<i32>> =
+                std::sync::OnceLock::new();
+            let in_paramtab = crate::ported::params::paramtab()
+                .read()
+                .map(|t| t.get("OUTPUT_RADIX").is_some())
+                .unwrap_or(false);
+            if in_paramtab {
+                vars_get("OUTPUT_RADIX")
+                    .as_ref()
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .unwrap_or(0)
+            } else {
+                (*OUTPUT_RADIX_ENV.get_or_init(|| {
+                    std::env::var("OUTPUT_RADIX")
+                        .ok()
+                        .and_then(|s| s.parse::<i32>().ok())
+                }))
                 .unwrap_or(0) // c:4492 (env fallback)
+            }
         }
     };
     let outputunderscore: i32 = crate::math::outputunderscore(); // c:583
