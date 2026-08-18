@@ -306,9 +306,6 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
         } // c:100
 
         if let Some(data) = list.getdata(node_idx) {
-            if std::env::var_os("ZSHRS_DQ_DBG").is_some() {
-                eprintln!("GATE node={:?} keep={} flags={}", data, keep, flags);
-            }
             // c:100
             if !data.is_empty() {
                 // c:Src/subst.c:170 — `remnulargs(getdata(node));`
@@ -1728,10 +1725,6 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
     // array; else single scalar (or empty).
     let l = list.len(); // c:633
-    if std::env::var_os("ZSHRS_DQ_DBG").is_some() {
-        let v: Vec<String> = list.iter().cloned().collect();
-        eprintln!("MS after-prefork l={} list={:?} lf_array={}", l, v, list.flags & LF_ARRAY);
-    }
                         // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{a1}`)
                         //   sentinel and other INULL bytes (Snull/Dnull/Bnull) that
                         //   paramsubst's splat block emits for empty array elements to
