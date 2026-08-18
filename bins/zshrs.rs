@@ -2609,7 +2609,7 @@ pub fn zshrs_main() {
 
     // Recording-staleness oracle: the startup path ignores rc files and
     // replays the recorder shard, so an edited `.zshrc` is invisible until
-    // `zshrs record` re-runs. Log it (never printed to the tty — see the
+    // `zshrs-recorder` re-runs. Log it (never printed to the tty — see the
     // no-startup-chatter rule) so the "I edited config and forgot" case is
     // discoverable via `~/.cache/zshrs/zshrs.log` + `--doctor` instead of
     // silently serving yesterday's environment. One directory listing + a
@@ -2617,7 +2617,7 @@ pub fn zshrs_main() {
     if let Some(stale_rc) = zsh::daemon_presence::recording_staleness() {
         tracing::warn!(
             rc = %stale_rc,
-            "recording is stale: {} is newer than the recorded environment — run `zshrs record` to refresh",
+            "recording is stale: {} is newer than the recorded environment — run `zshrs-recorder` to refresh",
             stale_rc
         );
     }
@@ -2989,7 +2989,7 @@ fn run_doctor() {
     } else {
         match zsh::daemon_presence::recording_staleness() {
             Some(rc) => println!(
-                "  {} recording: {} ({} is newer — run `zshrs record`)",
+                "  {} recording: {} ({} is newer — run `zshrs-recorder`)",
                 yellow("!"),
                 yellow("STALE"),
                 rc,

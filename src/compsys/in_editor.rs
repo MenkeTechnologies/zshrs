@@ -48,7 +48,7 @@
 //! ```
 //!
 //! rkyv shard only — no SQLite anywhere on this path. When no shard
-//! exists (`zshrs record` never ran) `apply_all` returns 0 and the
+//! exists (`zshrs-recorder` never ran) `apply_all` returns 0 and the
 //! thread still serves: matches come from whatever the ported Rust
 //! completers produce without user state.
 //!
@@ -309,7 +309,7 @@ const LAST_RESULT_TTL: Duration = Duration::from_secs(3);
 static SHARD_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Rows applied from the rkyv canonical shard at bootstrap. 0 means
-/// no shard on disk (`zshrs record` never ran) — completions still
+/// no shard on disk (`zshrs-recorder` never ran) — completions still
 /// work, they just carry no user state (fpath, compdef, zstyle).
 pub fn shard_rows() -> usize {
     SHARD_ROWS.load(Ordering::SeqCst)
@@ -355,7 +355,7 @@ fn bootstrap_shell() {
         if rows == 0 {
             tracing::warn!(
                 target: "zshrs::compsys::in_editor",
-                "no canonical rkyv shard applied — run `zshrs record` for user fpath/compdef state",
+                "no canonical rkyv shard applied — run `zshrs-recorder` for user fpath/compdef state",
             );
         }
     }

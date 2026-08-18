@@ -4,10 +4,10 @@
 (`git ch` → `checkout`, `cherry-pick`; `git checkout ` → branch names)
 **Tracks**: zshrs LSP, IntelliJ plugin, future Helix/Neovim adapters
 
-## Problem
+## Problem (as it stood before this shipped)
 
-Today the zshrs IntelliJ plugin (and any LSP client) completes shell
-script tokens through a small, hand-curated path:
+The zshrs IntelliJ plugin (and any LSP client) completed shell script
+tokens through a small, hand-curated path:
 
 - Reserved words (`if`, `for`, `case`) — keyword table
 - Builtin names + flags — `BUILTIN_FLAG_DOCS_OVERRIDE` etc.
@@ -23,11 +23,11 @@ It does NOT complete:
   with `g`.
 - **Subcommand names** for external commands. `git a<TAB>` should
   offer `add`, `am`, `apply`, `archive` — sourced from `_git` (one
-  of the most-used compsys functions in existence). Today: nothing.
+  of the most-used compsys functions in existence). Was: nothing.
 - **Argument values for known options**. `git add --<TAB>` should
   offer `--all`, `--patch`, `--update`. `kubectl get p<TAB>` should
   query the cluster and offer pod names. `ssh user@<TAB>` should
-  read `~/.ssh/known_hosts`. Today: nothing.
+  read `~/.ssh/known_hosts`. Was: nothing.
 - **Dynamic completions** that depend on runtime state — directories
   from `$PATH`, hosts from SSH config, branches from `git`, packages
   from `apt`/`brew`/`pacman`. These are the whole point of compsys.
@@ -36,7 +36,9 @@ The hand tables are a stopgap. The user already has the full
 compsys ecosystem installed — `_git`, `_kubectl`, `_docker`,
 `_systemctl`, `_brew`, plus everything from zsh-completions and
 oh-my-zsh and their own plugins. **The LSP should drive that
-ecosystem instead of duplicating it.**
+ecosystem instead of duplicating it** — which is what it now does; the
+hand tables remain as the answer when no recorded shard exists, and as
+the first-ranked items for pure-syntax positions.
 
 ## Goal
 
@@ -302,46 +304,57 @@ Completion functions can run arbitrary code:
 - `_curl` reads `~/.curlrc`.
 - A malicious `_evil` could run `rm -rf ~/`.
 
-Default position: **opt-in for exec-spawning, on-by-default for
-static**. Settings:
+**What shipped: exec on, bounded by the request deadline** — not the
+opt-in toggle this section originally proposed, and no trusted-fpath
+allowlist. The reasoning that changed the answer: these are the same
+completers the same user already runs on every Tab at their own prompt,
+from the same `$fpath`, in the same account. An allowlist would gate the
+editor against a trust boundary the shell does not enforce, while doing
+nothing about the far larger surface the user crosses every day.
 
-```kotlin
-// IntelliJ plugin: Settings → Tools → zshrs
-allowCompsysCompletion: Boolean = true   // master switch
-allowExecCompletions: Boolean = false    // _kubectl, _npm, etc.
-trustedFpathDirs: List<String> = []      // ~/.zsh/functions, etc.
-```
+What DOES constrain them is mechanical rather than declarative:
 
-`allowExecCompletions = false` blocks ANY completion function that
-shells out. `allowCompsysCompletion = false` blocks compsys
-entirely (just hand-table behavior, today's default).
+- `CompsysRequest::allow_exec = false` spawns no subprocess at all;
+  `_call_program` returns 1 with an empty `$REPLY` and the completer
+  falls back to its static specs. The LSP does not use this mode today,
+  but the plumbing is real and per-request.
+- With exec on, every helper is spawned with stdout on a reader thread
+  and **killed at the request deadline**
+  (`_call_program::run_with_deadline`), so a hung `kubectl` against an
+  unreachable context cannot wedge the editor.
+- No helper inherits the editor's stdin or stdout: `run_lsp` moves the
+  JSON-RPC endpoints to private fds and points 0/1 at `/dev/null`. A
+  child that read stdin used to eat the editor's requests outright.
 
-Trusted-fpath gating: only completion functions found in
-`trustedFpathDirs` (or system paths like `/usr/share/zsh/functions/Completion`)
-run under `allowExec`. The user's own ad-hoc `_foo` in
-`~/scripts/` requires explicit allowlisting before the LSP runs
-it under exec.
+If a per-project switch is wanted later, `allow_exec` is the field to
+wire it to; the gating it implies is already implemented on the shell
+side.
 
 ## Telemetry / Debuggability
 
-The completion timeline is visible in `~/.cache/zshrs/lsp.log`
-when `STRYKE_LSP_LOG` is set:
+Every dispatch is traced to the shell log
+(`$ZSHRS_HOME/zshrs-lsp.log`, default `~/.zshrs/zshrs-lsp.log`) — one
+`complete_at done` line per request with the line, cursor, match count
+and elapsed µs, plus `shell thread ready` with the shard row count at
+bootstrap. `ZSHRS_LOG=zshrs::compsys::in_editor=debug` turns them on;
+`ZSHRS_LSP_LOG=<path>` additionally dumps every JSON-RPC message for
+protocol debugging. What that looks like:
 
 ```
-[compsys] line=`git add --p` cursor=12 dispatch=_git tags=[options]
-[compsys]   _git: 6 matches in 23ms
-[compsys]   --patch (option, "Add changes interactively, hunk by hunk")
-[compsys]   --prune-empty (option, "…")
-[compsys]   ...
-[compsys] returned 6 items, isIncomplete=false
+INFO zshrs-compsys-editor zshrs::compsys::in_editor: shell thread ready
+     shard_rows=4 elapsed_ms=7
+DEBUG zshrs-compsys-editor zshrs::compsys::in_editor: complete_at done
+     line="git ch" cursor=6 match_count=197 elapsed_us=750594
 ```
 
-When a completion times out:
+When a dispatch overruns its budget the client is answered
+`isIncomplete: true` immediately, the dispatch keeps running on the
+shell thread, and its result lands in the late-result cache for the
+next request. A helper that outlives the budget is killed:
 
 ```
-[compsys] line=`kubectl get p` cursor=13 dispatch=_kubectl
-[compsys]   TIMEOUT after 200ms — process `kubectl get pods -o name` still running, killed
-[compsys] returned 0 items, isIncomplete=true
+DEBUG zshrs::compsys::in_editor: _call_program: helper killed at
+      completion deadline
 ```
 
 ## How it works today
@@ -383,7 +396,7 @@ mmap'd zero-copy. That shard is where the completion state lives:
 | `zstyle` | the user's completion styles |
 | `aliases`, `params`, `bindkeys` | the rest of the recorded environment |
 
-**Prerequisite**: the shard is written by `zshrs record` (recorder →
+**Prerequisite**: the shard is written by `zshrs-recorder` (recorder →
 daemon → `images/`). With no shard, `apply_all` returns 0, the thread
 still serves, and matches are limited to what the ported Rust
 completers produce with no user state — no `_comps` map means no

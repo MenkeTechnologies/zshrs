@@ -66,6 +66,27 @@ Print the zshrs version and exit.
 .B \-\-doctor
 Full diagnostic report of shell health, cache state, daemon presence,
 worker pool, and integrity scan results.
+.TP
+.BI \-\-prewarm\-autoloads " [DIR ...]"
+Compile every
+.B _*
+completion function on
+.I $fpath
+(or on the named directories) into
+.IR ~/.zshrs/autoloads.rkyv ,
+then print a one-line JSON summary and exit. A later autoload of any of
+those functions installs it straight from the cached bytecode instead of
+reading and parsing its definition file, so the first
+.B "ls \-<TAB>"
+of a fresh shell costs an index lookup rather than a parse. Entries whose
+definition file still matches the recorded mtime and length are skipped.
+.IP
+Runs in its own process on purpose: the parser walks process-global lexer
+state and must not run beside a live line editor. The same pass runs at
+the end of every
+.BR zshrs\-recorder (1)
+run, and is reachable through the daemon as
+.BR "zd prewarm" .
 .SS Parser-pipeline dumpers
 Each dumper writes to stdout and accepts
 .B \-
@@ -271,12 +292,26 @@ filter for the structured log written to
 Seconds before a long-running command warning fires.
 .SH FILES
 .TP
-.I ~/.cache/zshrs/
-Cache root. Contains
-.BR script_cache.rkyv ,
-.BR plugin_cache.rkyv ,
-.BR autoloads.rkyv ,
+.I ~/.zshrs/
+Cache root (override with
+.BR $ZSHRS_HOME ).
+Contains
+.B scripts.rkyv
+(compiled script chunks, keyed by path + mtime),
+.B autoloads.rkyv
+(one compiled definition program per autoloaded function, keyed by name
+and stamped with the definition file's mtime + length),
+.I images/
+(the daemon's canonical-state and bytecode shards) with
+.B index.rkyv
+above it,
 .BR catalog.db ,
+.B compsys.db
+and
+.B history.db
+(read-only SQL mirrors for
+.B dbview
+and ad-hoc queries \(em never consulted for cache hit/miss),
 .B daemon.sock
 (when the daemon is running), and
 .BR zshrs.log .

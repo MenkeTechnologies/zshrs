@@ -33,6 +33,7 @@ _zd_commands() {
         'view:human-readable dump of a catalog target'
         'config:get/set/list runtime knobs'
         'doctor:health-report sweep (perms, db integrity, shards, fsnotify, pidlock, jobs, legacy litter)'
+        'prewarm:compile every _* completer on \$fpath into autoloads.rkyv'
     )
     _describe -t commands 'zd command' cmds
 }

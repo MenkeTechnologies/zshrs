@@ -319,6 +319,17 @@ DEFINITIONS — shell-state catalog (recorder-fed, federated by shell_id)
   // `recorder_ingested` Frame::Event. HTTP /stream/definitions auto-
   // subscribes its synthetic session.
 
+CACHES — bytecode
+  autoload_prewarm {dirs?, timeout_secs?}                                                 ✅
+      → {binary, dirs, summary:{seen, compiled, fresh, failed, bytes, ms}, elapsed_ms}
+  // Compiles every `_*` completer on those fpath dirs (or the spawned
+  // shell's own $fpath) into ~/.zshrs/autoloads.rkyv, so a later
+  // autoload installs from bytecode instead of parsing its file.
+  // The daemon spawns `zshrs --prewarm-autoloads`: the compiler lives
+  // in the `zshrs` crate, which depends on this one, and `parse()`
+  // walks process-global lexer state that must not be shared.
+  // CLI: `zd prewarm [DIR ...]`.
+
 SNAPSHOT — portable canonical-state artifacts
   snapshot_save  {tag, notes?}     → {tag, path, bytes, generation, total_rows}           ✅
   snapshot_list  {}                → {snapshots[{tag, path, bytes}]}                      ✅
