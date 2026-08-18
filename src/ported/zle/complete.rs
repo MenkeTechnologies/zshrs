@@ -1046,19 +1046,6 @@ pub fn bin_compadd(
         crate::ported::params::setaparam("_complete_help_funcs", buf);
         return 1;
     }
-    // In-editor capture shadow (Phase 0.5 of the LSP completion
-    // path — see `docs/IN_EDITOR_COMPSYS_COMPLETION.md` +
-    // `crate::compsys::in_editor::COMPADD_CAPTURE_BUFFER`).
-    // When the buffer is `Some`, every compadd call routes its
-    // proposed matches into the buffer as `CompsysMatch` records
-    // instead of into the ZLE state. The buffer's installer (the
-    // LSP / `complete_at`) drains it after `_main_complete`
-    // returns and translates each match to a `CompletionItem`.
-    // Parsing happens in `crate::compsys::in_editor` (Rust-only
-    // space) so this ported file stays a faithful C port.
-    if crate::compsys::in_editor::try_capture_compadd_argv(argv) {
-        return 0; // mimic "matches were added" status
-    }
     ret
 }
 
@@ -1523,6 +1510,24 @@ pub fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32)
         return 1;
     }
     dat.match_ = matcher; // c:856 `dat.match = match = cpcmatcher(match)`
+    // In-editor capture shadow (the LSP completion path — see
+    // `docs/IN_EDITOR_COMPSYS_COMPLETION.md` +
+    // `crate::compsys::in_editor::COMPADD_CAPTURE_BUFFER`). While the
+    // buffer is `Some`, the proposed matches go into it as
+    // `CompsysMatch` records and never reach ZLE state.
+    //
+    // The hook sits HERE, after the c:632-820 flag loop, rather than at
+    // the top of the builtin: `dat` + `matches` are the parsed result,
+    // so the capture inherits this port's flag semantics for free
+    // (bundled flags like `-2V-default-`, `-o order`'s argument, `-a`
+    // array mode, `-d` display array, the `-`/`--` terminators). An
+    // earlier version re-parsed `argv` on the in_editor side and had to
+    // track that table by hand; it silently mistook `-o nosort`'s
+    // argument for a match, so `git --<tab>` in the editor proposed
+    // `nosort`, `-J`, `-default-`, `_a_11`.
+    if crate::compsys::in_editor::try_capture_compadd(&dat, matches) {
+        return 0; // mimic "matches were added" status
+    }
     compcore::addmatches(&mut dat, matches) // c:857
 }
 

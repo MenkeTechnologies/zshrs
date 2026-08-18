@@ -1,7 +1,7 @@
 # In-Editor Compsys Completion
 
-**Status**: Design proposal (May 2026)
-**Author**: MenkeTechnologies
+**Status**: Implemented — the LSP serves real compsys matches
+(`git ch` → `checkout`, `cherry-pick`; `git checkout ` → branch names)
 **Tracks**: zshrs LSP, IntelliJ plugin, future Helix/Neovim adapters
 
 ## Problem
@@ -344,91 +344,202 @@ When a completion times out:
 [compsys] returned 0 items, isIncomplete=true
 ```
 
+## How it works today
+
+`textDocument/completion` answers from the hand tables first, then
+appends whatever compsys proposes for the same line + cursor
+(`lsp.rs`, `try_compsys_completion`). The compsys half is the real
+engine — the same `docomplete` → `_main_complete` → `_git` →
+`_arguments` path a Tab press takes — reached through
+`compsys::in_editor::complete_at`.
+
+### The shell thread
+
+One dedicated thread owns the shell (`in_editor::shell_thread`). Two
+reasons it cannot be the LSP's own thread:
+
+- `exec::dispatch_function_call` resolves the VM through
+  `fusevm_bridge::try_with_executor` / `SESSION_EXECUTOR`, both
+  thread-local. Without an executor installed on the calling thread,
+  every shell-defined completer silently returns nothing.
+- The ported compsys runtime keeps non-reentrant process globals.
+
+Requests are handed over a bounded channel; replies come back on a
+per-request channel, so a client that gives up on its deadline cannot
+block the thread.
+
+### Bootstrap: rkyv shard, no SQLite
+
+Thread startup builds a `ShellExecutor` (option table, params, env
+import) and pours in the daemon's canonical rkyv shard via
+`canonical_apply::apply_all` — `~/.zshrs/images/*-recorder.rkyv`,
+mmap'd zero-copy. That shard is where the completion state lives:
+
+| Shard field | Effect |
+|---|---|
+| `compdef` | `_comps[git]=_git` — which function completes which command |
+| `fpath` | where completer bodies autoload from |
+| `autoload_functions` | `PM_UNDEFINED` stubs in `shfunctab` |
+| `zstyle` | the user's completion styles |
+| `aliases`, `params`, `bindkeys` | the rest of the recorded environment |
+
+**Prerequisite**: the shard is written by `zshrs record` (recorder →
+daemon → `images/`). With no shard, `apply_all` returns 0, the thread
+still serves, and matches are limited to what the ported Rust
+completers produce with no user state — no `_comps` map means no
+`git` dispatch. `in_editor::shard_rows()` reports what was applied.
+
+### Capturing the matches
+
+`COMPADD_CAPTURE_BUFFER` shadows `compadd`: while it is `Some`, the
+proposed matches are recorded instead of entering ZLE state. The hook
+sits in `bin_compadd` AFTER the flag loop (`complete.rs`, just before
+`addmatches`), so it reads the port's own parse — bundled flags
+(`-2V-default-`), `-o order`'s argument, `-a` array mode, `-k` keys
+mode, `-d` display array, the `-` / `--` terminators. An earlier
+version re-parsed the argv itself and mistook `-o nosort`'s argument
+for a match.
+
+Query forms are NOT shadowed: `-O name` / `-A name` / `-D name` store
+or narrow a parameter and add nothing, so they run for real. `_git`
+depends on it — it measures its longest command with `compadd -O
+allmatching -a allcmds` and pads every description to that width.
+
+### Per-request state the editor has to fake
+
+- **`compfunc = _main_complete`** — `makecomplist` reads it to choose
+  the compsys path; interactively `completecall` plants it from the
+  `zle -C` widget, which the editor path skips.
+- **The editor line buffer** — `docomplete` re-derives the completion
+  buffer from `zle_main::ZLELINE` (char indices), so that is the one
+  to write; setting only `compcore::ZLELINE` was overwritten and the
+  engine ran against an empty line.
+- **Fresh-Tab reset** — `menucmp` / `minfo.cur` / `lastambig` /
+  `validlist` / `hasoldlist` are cleared before each dispatch.
+  Otherwise `before_complete` reads the previous dispatch's menu state
+  and short-circuits into "advance the menu", returning no matches.
+- **`COLUMNS=80`, `LINES=24`** — zsh's own no-tty fallback. Completers
+  do arithmetic on them: `_git` pads descriptions with
+  `${(r.COLUMNS-4.)…}`, which at `COLUMNS=0` clipped every description
+  to four characters, and at 200 was slow enough to look like a hang.
+
+### Exec policy
+
+`allow_exec` is on: an editor completion should match the prompt, and
+the prompt's `git checkout <tab>` runs `git for-each-ref`. The
+deadline is the safety net — `_call_program` spawns the helper with
+stdout piped, drains it on a reader thread, and kills it when the
+budget expires (`_call_program::run_with_deadline`). With
+`allow_exec = false` no subprocess is spawned at all and callers fall
+back to their static specs.
+
+Helpers never inherit the editor's fds. `run_lsp` dups the JSON-RPC
+endpoints to private descriptors and points 0/1 at `/dev/null`
+(`lsp::claim_protocol_fds`): a helper that reads stdin would eat the
+editor's requests — the server then sees EOF and exits mid-session,
+which is exactly what happened before the fix — and one that writes
+stdout would corrupt the frame stream.
+
+### Budget and late results
+
+2 s for the first dispatch (cold `_git` is a 424 KB autoload), 350 ms
+after that. An overrun is not lost work: the dispatch finishes in the
+background, lands in `in_editor`'s one-entry result cache (3 s TTL),
+and the client's next request for the same line is served from memory.
+Measured on this tree with a real `_git`: 0.79 s cold, 0.0-0.3 s warm.
+
+### What compsys returns vs what the popup shows
+
+Matches are captured before `addmatches`, so they are NOT filtered by
+zsh's matcher specs — the client gets the superset and filters with
+`filterText`. That is the right shape for an editor (client-side fuzzy
+matching), and it means the list can be wider than the prompt's.
+Duplicates are merged in the LSP layer: `compdescribe`'s two-phase add
+proposes each word twice, once with a description and once without.
+
+## Remaining work
+
+- **Autoload bytecode from rkyv.** `~/.zshrs/autoloads.rkyv` holds
+  compiled chunks but nothing reads it at execution time
+  (`autoload_cache::try_load`'s only caller is `dbview`), so a cold
+  `_git` still parses 424 KB. Wiring it in needs the backfill to
+  compile with the function-body knobs the autoload install path uses
+  (`compile_funcdef` sets `is_function_body` + a `lineno_offset`;
+  the backfill uses a bare compiler, which changes `$LINENO` inside
+  the loaded function) plus a shard format-version bump to invalidate
+  the entries compiled the old way.
+- **`_arguments` spec internals.** Completion INSIDE a spec string
+  (`'*:file:_fi'` → `_files`) still returns nothing; there is no
+  completion context for optspec / `:msg:action` positions.
+- **Multi-line continuations.** `git \\\n add --pat` is not glued
+  into one logical line before dispatch.
+
 ## Adoption Plan
 
-**Phase 0 — extract entry point** (~1 week)
+Phases 0-2 are done (see "How it works today"): the entry point ships
+as `pub fn compsys::in_editor::complete_at`, the LSP drives it from
+`textDocument/completion`, and exec is on with a deadline rather than
+an opt-in toggle. `tests/lsp_compsys_editor.rs` is the hermetic
+regression test — it writes a synthetic recorder shard into a temp
+`$ZSHRS_HOME` pointing at a fixture completer, so it never reads the
+developer's `~/.zshrs` and passes on a machine with no shard.
 
-Public `compsys::complete_at(req) → matches`. Pure refactor: take
-the existing compsys dispatch + `compadd` capture and expose them
-as a callable function. No LSP wiring yet.
+Still open:
 
-**Phase 1 — LSP integration, static-only** (~1 week)
+**fpath inspector UI** — IntelliJ tool window listing every compsys
+function discovered in fpath, with per-function exec trust. Right-click
+→ "Show docs" pops the function's top `##` block (the LSP doc-hover
+scanner already extracts it).
 
-Wire `try_compsys_completion` into `handle_completion`. Run with
-`allow_exec = false` by default. Verifies the protocol shape end-
-to-end before opening exec.
-
-Test fixtures: `git`, `setopt`, `ssh`, `man`, `ls` — all have
-upstream compsys functions that work without subprocess spawn.
-Audit test (`tests/lsp_compsys_integration.rs`) drives the LSP
-with a canned `.zsh` source and asserts each completion appears.
-
-**Phase 2 — exec opt-in** (~3 days)
-
-Settings panel in IntelliJ plugin. `allow_exec` flag plumbed
-through. `kubectl`, `npm`, `brew`, `docker` start working when
-enabled. Result-cache with mtime invalidation.
-
-**Phase 3 — fpath inspector UI** (~1 week)
-
-IntelliJ tool window listing every compsys function discovered in
-fpath, with toggle per function for exec-trust. Right-click →
-"Show docs" pops the hand-written description from the function's
-top `##` block (LSP doc-hover already does this for `.zsh` files;
-re-use the same scanner).
-
-**Phase 4 — Helix / Neovim adapters** (~1 week each)
-
-Both already speak LSP. No code change in zshrs — they get
-compsys completion for free once Phase 1 lands. Document the
-config-file snippets.
+**Helix / Neovim adapters** — both already speak LSP and get compsys
+completion with no zshrs change. Needs the config snippets documented.
 
 ## Risks
 
 | Risk | Mitigation |
 |---|---|
-| Slow completion functions block editor | Hard 200 ms deadline; client gets `isIncomplete=true`; user can keep typing |
-| Malicious / buggy fpath fn runs `rm -rf` | `allow_exec=false` default; trusted-fpath allowlist |
+| Slow completion functions block editor | 350 ms steady deadline (2 s first dispatch); client gets `isIncomplete=true`; the overrunning dispatch lands in the late-result cache so the retry is instant |
+| Malicious / buggy fpath fn runs `rm -rf` | Same trust boundary as the user's own prompt — these are the completers already installed in their fpath. Helpers are killed at the deadline and get `/dev/null` for stdin/stdout |
 | User's fpath has competing definitions | Standard compsys dispatch already handles this — first match wins, exactly as in interactive shell |
 | Completion result differs from prompt completion | Both go through same dispatch + same compadd port. If they diverge, it's a porting bug to fix once, benefits both contexts |
-| Editor flicker on long results | LSP `isIncomplete` flag + 5 s exec-result cache absorb keystroke storm |
+| Editor flicker on long results | LSP `isIncomplete` flag + 3 s late-result cache absorb the keystroke storm |
 | Compsys runtime cost on every keystroke | Per-fpath-fn parse cache; per-command result cache. Steady state: hash-lookup + memoized invocation |
 
 ## Open Questions
 
-1. **`compstate` mutations.** Compsys functions can set
-   `compstate[insert]`, `compstate[list]`, etc. to change the
-   *editing* behavior — auto-list, no-insert, menu-completion.
-   These don't map cleanly to LSP semantics. Drop them
-   (collect matches, ignore compstate side-effects)?
-2. **Continuous completion vs Tab-only.** Interactive zsh fires
-   completion on Tab. LSP fires on every keystroke (or trigger
-   char). Does running `_git` on every key feel right, or do we
-   want a "completion trigger" gate (don't run `_git` until the
-   user pauses or hits Ctrl-Space)?
-3. **Per-document `setopt`.** A `.zsh` file may set its own
-   `setopt extended_glob` etc. Should completion honor those, or
-   use the LSP-server-wide default?
-4. **Completion in `"…"` strings.** `"git $(git $1)"` — should
-   the inner `git` get subcommand completion? Per the
-   existing string-context gate, today no. With compsys
-   integration: probably yes, but it's a UX call.
-5. **Multi-line completions.** `git \\\n  add \\\n  --pat<TAB>` —
-   the cursor's logical line is the joined three-line `git add
-   --pat`. Need a small parser to glue them before dispatch.
+Settled:
 
-## Decision Required
+1. **`compstate` mutations** — collected matches only; the editing-side
+   side effects (`compstate[insert]`, `[list]`, menu behaviour) are
+   dropped, and the interactive continuation state they leave behind is
+   reset before every dispatch.
+2. **`allow_exec` default** — on, bounded by the request deadline.
+3. **Entry point** — `pub fn`, called in-process by the LSP. No
+   separate daemon, no JSON-RPC method for other clients yet.
 
-- Is the in-process architecture acceptable, or do you want a
-  separate completion daemon (process boundary for security)?
-- Phase 0 entry point: ship as `pub fn compsys::complete_at` and
-  let the LSP call it directly, OR ship as a JSON-RPC method
-  (`zshrs/completeShellLine`) so non-LSP clients can also drive
-  it?
-- Default for `allow_exec`: off (most cautious) vs on (best UX
-  out of the box for users who've already accepted their fpath)?
+Still open:
 
-Recommended defaults: in-process, `pub fn` entry, `allow_exec = on`
-gated by trusted-fpath allowlist. Matches what the user's
-interactive shell already does — same trust boundary they accepted
-when they installed those completion functions in the first place.
+1. **Continuous completion vs Tab-only.** Interactive zsh fires on Tab;
+   LSP fires per keystroke. Running `_git` on every key is affordable
+   warm (60 ms) but not free — a trigger gate (pause / Ctrl-Space)
+   may still be worth it.
+2. **Per-document `setopt`.** A `.zsh` file may `setopt extended_glob`
+   for itself. Completion currently uses the recorded environment, not
+   the document's own options.
+3. **Completion in `"…"` strings.** `"git $(git $1)"` — the inner `git`
+   is gated off today by the string-context check.
+4. **Multi-line continuations.** The cursor's logical line spans the
+   backslash continuations; they are not glued before dispatch.
+
+## Decisions taken
+
+- **In-process**, on a dedicated shell thread — not a separate
+  completion daemon. The thread-local executor requirement makes the
+  thread boundary mandatory; the process boundary bought nothing the
+  deadline + `/dev/null` fds do not already cover.
+- **`pub fn` entry point** (`compsys::in_editor::complete_at`), called
+  directly by the LSP. A JSON-RPC method for non-LSP clients can wrap
+  it later without changing the engine.
+- **`allow_exec = on`**, bounded by the request deadline: same trust
+  boundary the user accepted when they installed those completers, and
+  the only way `git checkout <tab>` can offer branch names.
