@@ -13211,12 +13211,17 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 typeflag: 0,
                 flags: PMTF_TEST_LEVEL,
             },
-            PmType {
-                binflag: PM_HIDE,
-                string: "hide",
-                typeflag: b'h',
-                flags: 0,
-            },
+            // c:6018 `{ PM_HIDE, "hide", 'h', 0 }` is deliberately ABSENT.
+            // That row was added upstream on 2024-02-20 by commit
+            // 6b21e5c0e2 ("52559: revise \"typeset -p\" with respect to
+            // local readonly special parameters"), which postdates the
+            // patchlevel this port targets (patchlevel.rs:22,
+            // zsh-5.9.2-0-gddee3e7). zsh 5.9.2 prints `typeset foo=1` /
+            // `association readonly modules`; carrying the newer row made
+            // zshrs print `typeset -h foo=1` / `association hide readonly
+            // modules` for every PM_HIDE param — 13 rows of one parity
+            // cell. Restore it when the target patchlevel moves past
+            // 5.9.2.
             PmType {
                 binflag: PM_LEFT,
                 string: "left justified",
