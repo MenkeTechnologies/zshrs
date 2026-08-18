@@ -749,6 +749,15 @@ impl ShellExecutor {
                     eprintln!("zshrs: provenance: -m: missing parameter name");
                     return 1;
                 }
+                // The `$LINENO` tap is gated on `provenance::active()`,
+                // which is still false while this very statement runs,
+                // so seed the ledger's counter from the shell's own
+                // `$LINENO` — otherwise the seeded origin reads line 0.
+                if let Some(lineno) = crate::ported::params::getsparam("LINENO")
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                {
+                    provenance::note_line(lineno);
+                }
                 for name in names {
                     let current = crate::ported::params::getsparam(name);
                     provenance::track_name(name, current.as_deref());
