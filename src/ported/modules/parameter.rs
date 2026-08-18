@@ -1816,6 +1816,34 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
     } else {
         (String::new(), false) // c:793
     };
+    // The two views of this parameter have to agree. `scanbuiltins` below
+    // emits the zshrs extension builtins and the daemon `z*` family as
+    // additional keys, so `${(k)builtins}` listed `cat`, `paste`, `peach`,
+    // `zjob`, … while THIS lookup — which only ever consulted the C-port
+    // BUILTINS table — reported them unset: `${(k)builtins}` contained the
+    // name and `${+builtins[$name]}` was 0 at the same time. Compsys reads
+    // the subscript form directly (`_set_command` sh:12 `$builtins[$cmd]`,
+    // `_pick_variant` sh:19 `$+builtins[...]`), so those names looked like
+    // external commands to completion. Same `dis == 0` / `hide_ext_builtins`
+    // / `disable` gating the scan uses.
+    let (value, found) = if found || dis != 0 || crate::ext_builtins::hide_ext_builtins() {
+        (value, found)
+    } else {
+        let is_disabled = crate::ported::builtin::BUILTINS_DISABLED
+            .lock()
+            .map(|s| s.contains(name))
+            .unwrap_or(false);
+        let is_ext = !is_disabled
+            && (crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name)
+                || crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.contains(&name));
+        if is_ext {
+            // c:846 — extension builtins always dispatch in-process, so they
+            // are unconditionally the "handlerfunc present" arm.
+            ("defined".to_string(), true)
+        } else {
+            (value, found)
+        }
+    };
     let pm = Box::new(param {
         // c:780 hcalloc
         node: hashnode {

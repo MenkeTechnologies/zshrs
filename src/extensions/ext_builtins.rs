@@ -5456,79 +5456,178 @@ impl ShellExecutor {
     /// paste(1). Default delim is TAB; -d cycles through the
     /// supplied delimiter chars.
     pub(crate) fn builtin_paste(&self, args: &[String]) -> i32 {
-        let mut delims: Vec<char> = vec!['\t'];
+        // paste(1) delimiter list: backslash escapes are decoded, and `\0`
+        // means "no separator at all" — so a delimiter is a STRING, not a
+        // char. Treating the list as raw chars emitted a literal backslash
+        // where both BSD and GNU paste emit a newline (`paste -d'\n'`).
+        fn decode_delims(spec: &str) -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            let mut it = spec.chars();
+            while let Some(c) = it.next() {
+                if c != '\\' {
+                    out.push(c.to_string());
+                    continue;
+                }
+                match it.next() {
+                    Some('n') => out.push("\n".to_string()),
+                    Some('t') => out.push("\t".to_string()),
+                    Some('\\') => out.push("\\".to_string()),
+                    Some('0') => out.push(String::new()), // empty separator
+                    // A trailing lone backslash, or any other escape, stays
+                    // literal — matching both implementations' leniency.
+                    Some(other) => out.push(other.to_string()),
+                    None => out.push("\\".to_string()),
+                }
+            }
+            out
+        }
+
+        let mut delims: Vec<String> = vec!["\t".to_string()];
         let mut serial = false;
         let mut files: Vec<&str> = Vec::new();
         let mut iter = args.iter();
+        let mut no_more_opts = false;
         while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "-d" | "--delimiters" => {
+            let a = arg.as_str();
+            if no_more_opts || a == "-" || !a.starts_with('-') {
+                files.push(a);
+                continue;
+            }
+            match a {
+                "--" => {
+                    no_more_opts = true;
+                    continue;
+                }
+                "--serial" => {
+                    serial = true;
+                    continue;
+                }
+                "--delimiters" => {
                     if let Some(s) = iter.next() {
-                        delims = s.chars().collect();
+                        delims = decode_delims(s);
                         if delims.is_empty() {
-                            delims = vec!['\t'];
+                            delims = vec!["\t".to_string()];
                         }
                     }
+                    continue;
                 }
-                s if s.starts_with("-d") && s.len() > 2 => {
-                    delims = s[2..].chars().collect();
-                    if delims.is_empty() {
-                        delims = vec!['\t'];
+                _ => {}
+            }
+            if let Some(spec) = a.strip_prefix("--delimiters=") {
+                delims = decode_delims(spec);
+                if delims.is_empty() {
+                    delims = vec!["\t".to_string()];
+                }
+                continue;
+            }
+            // Short options CLUSTER, and `-d` takes the rest of the cluster as
+            // its argument (or the next argv element when it ends the
+            // cluster). `paste -sd, -` is the canonical spelling and was
+            // rejected outright as an unknown option.
+            let mut chars = a[1..].chars();
+            let mut bad = false;
+            while let Some(c) = chars.next() {
+                match c {
+                    's' => serial = true,
+                    'd' => {
+                        let rest: String = chars.by_ref().collect();
+                        let spec = if rest.is_empty() {
+                            iter.next().map(|s| s.as_str()).unwrap_or("")
+                        } else {
+                            &rest
+                        };
+                        delims = decode_delims(spec);
+                        if delims.is_empty() {
+                            delims = vec!["\t".to_string()];
+                        }
+                    }
+                    _ => {
+                        eprintln!("paste: unrecognized option: '{}'", a);
+                        bad = true;
+                        break;
                     }
                 }
-                "-s" | "--serial" => serial = true,
-                "--" => {
-                    for rest in iter.by_ref() {
-                        files.push(rest);
-                    }
-                    break;
-                }
-                s if !s.starts_with('-') || s == "-" => files.push(s),
-                s => {
-                    eprintln!("paste: unrecognized option: '{}'", s);
-                    return 1;
-                }
+            }
+            if bad {
+                return 1;
             }
         }
         if files.is_empty() {
             files.push("-");
         }
-        let mut readers: Vec<Box<dyn BufRead>> = Vec::with_capacity(files.len());
+        // Every `-` operand names the SAME stdin stream, so they must share
+        // one reader: `paste - -` interleaves consecutive lines of one input
+        // (`a<TAB>b`), which is the documented idiom for pairing up lines.
+        // Giving each `-` its own BufReader let the first one buffer the
+        // whole stream, so the second saw EOF and the output degraded to one
+        // column per line.
+        enum Src {
+            Stdin,
+            File(BufReader<std::fs::File>),
+        }
+        let mut stdin_reader = BufReader::new(std::io::stdin());
+        let mut srcs: Vec<Src> = Vec::with_capacity(files.len());
         for file in &files {
-            let r: Box<dyn BufRead> = if *file == "-" {
-                Box::new(BufReader::new(std::io::stdin()))
+            if *file == "-" {
+                srcs.push(Src::Stdin);
             } else {
                 match std::fs::File::open(file) {
-                    Ok(f) => Box::new(BufReader::new(f)),
+                    Ok(f) => srcs.push(Src::File(BufReader::new(f))),
                     Err(e) => {
                         eprintln!("paste: {}: {}", file, e);
                         return 1;
                     }
                 }
+            }
+        }
+        fn next_line(src: &mut Src, stdin: &mut BufReader<std::io::Stdin>) -> Option<String> {
+            let mut buf = String::new();
+            let n = match src {
+                Src::Stdin => stdin.read_line(&mut buf),
+                Src::File(f) => f.read_line(&mut buf),
             };
-            readers.push(r);
+            match n {
+                Ok(0) | Err(_) => None,
+                Ok(_) => {
+                    if buf.ends_with('\n') {
+                        buf.pop();
+                        if buf.ends_with('\r') {
+                            buf.pop();
+                        }
+                    }
+                    Some(buf)
+                }
+            }
         }
         if serial {
             // -s: each file's lines on a single output line.
-            for r in readers.iter_mut() {
-                let lines: Vec<String> = r.lines().map_while(Result::ok).collect();
+            for src in srcs.iter_mut() {
+                let mut lines: Vec<String> = Vec::new();
+                while let Some(l) = next_line(src, &mut stdin_reader) {
+                    lines.push(l);
+                }
+                // An input with no lines produces NO output line at all —
+                // `paste -s /dev/null` prints nothing, where emitting one
+                // unconditionally added a stray blank line.
+                if lines.is_empty() {
+                    continue;
+                }
                 let mut out = String::new();
                 for (i, l) in lines.iter().enumerate() {
                     out.push_str(l);
                     if i + 1 < lines.len() {
-                        out.push(delims[i % delims.len()]);
+                        out.push_str(&delims[i % delims.len()]);
                     }
                 }
                 println!("{}", out);
             }
             return 0;
         }
-        // Parallel-merge: round-robin one line from each reader.
-        let mut iters: Vec<_> = readers.into_iter().map(|r| r.lines()).collect();
+        // Parallel-merge: round-robin one line from each operand.
         loop {
-            let mut row: Vec<Option<String>> = Vec::with_capacity(iters.len());
-            for it in iters.iter_mut() {
-                row.push(it.next().and_then(|r| r.ok()));
+            let mut row: Vec<Option<String>> = Vec::with_capacity(srcs.len());
+            for src in srcs.iter_mut() {
+                row.push(next_line(src, &mut stdin_reader));
             }
             if row.iter().all(|c| c.is_none()) {
                 break;
@@ -5539,7 +5638,7 @@ impl ShellExecutor {
                     out.push_str(s);
                 }
                 if i + 1 < row.len() {
-                    out.push(delims[i % delims.len()]);
+                    out.push_str(&delims[i % delims.len()]);
                 }
             }
             println!("{}", out);
@@ -10576,4 +10675,49 @@ pub fn is_extension_builtin(name: &str) -> bool {
 ///
 /// Keep in sync with `fusevm_bridge::try_run_registered_builtin`; an
 /// entry graduates off this list once fusevm ships the name.
-pub const LOCAL_ONLY_BUILTINS: &[&str] = &["provenance"];
+///
+/// The coreutils-shaped entries below are NOT optional bookkeeping. Each
+/// one has a dispatch arm in `fusevm_bridge` and therefore ANSWERS when the
+/// user types the name — but the pinned fusevm registry doesn't list them,
+/// so `whence -w paste` reported `command`, `whence -a paste` showed only
+/// `/usr/bin/paste`, and `${+builtins[paste]}` was 0. The shell ran its own
+/// implementation while every tool you could ask about it pointed at the
+/// system binary, which is the worst of both: `command paste -sd, -` and
+/// `paste -sd, -` behaved differently with nothing to explain why. The
+/// names registered through `reg_overridable!` (cat, head, sort, …) never
+/// had this problem because fusevm knows them.
+pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
+    "provenance",
+    // Dispatched by `fusevm_bridge`'s command-name match arms.
+    "arch",
+    "base64",
+    "cksum",
+    "comm",
+    "dircolors",
+    "env",
+    "expand",
+    "expr",
+    "factor",
+    "fold",
+    "groups",
+    "link",
+    "logname",
+    "mkfifo",
+    "nice",
+    "nl",
+    "nproc",
+    "paste",
+    "printenv",
+    "sha256sum",
+    "shuf",
+    "sum",
+    "tac",
+    "tput",
+    "tsort",
+    "tty",
+    "unexpand",
+    "unlink",
+    "users",
+    "yes",
+    "zbuild",
+];
