@@ -4289,7 +4289,30 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         .map(|q| !q.sorts.is_empty())
         .unwrap_or(false);
     if colon_mods.is_some() && !explicit_sort {
-        results.sort();
+        // c:945 — that sort compares the keys with `zstrcmp` (Src/sort.c:191),
+        // i.e. `strcoll` under the current locale, and honours gf_numsort.
+        // Rust's `Vec::sort` is BYTEWISE, so `*.txt(:r)` came back as
+        // `Bravo Charlie alpha delta` while the very same directory globbed
+        // as plain `*.txt` — which goes through `sort_matches` → `gmatchcmp`
+        // → `zstrcmp` — gave zsh's `alpha Bravo Charlie delta`. The two
+        // orderings inside one shell disagreed; only the modified one was
+        // wrong.
+        let numeric = state
+            .qualifiers
+            .as_ref()
+            .and_then(|q| q.numsort)
+            .unwrap_or_else(|| glob_isset(NUMERICGLOBSORT)); // c:1258/1575
+        results.sort_by(|a, b| {
+            crate::ported::sort::zstrcmp(
+                a,
+                b,
+                if numeric {
+                    crate::zsh_h::SORTIT_NUMERICALLY as u32
+                } else {
+                    0
+                },
+            )
+        });
     }
 
     // c:1744-1756 / insert_glob_match c:1430 — `P:word:` (gf_pre_words)
