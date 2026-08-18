@@ -155,9 +155,24 @@ greet()
 | `redefine`   | the name is defined again, at the new body's site             |
 | `unfunction` | `unfunction NAME` / `unset -f NAME`                           |
 
+```console
+$ zshrs redef.zsh
+greet()
+  origin: function greet (redef.zsh:2, 2026-08-18 11:52:50.209)
+  ops:
+     1. call       greet()                                  redef.zsh:3              11:52:50.209
+     2. redefine   greet                                    redef.zsh:4              11:52:50.210
+     3. call       greet()                                  redef.zsh:5              11:52:50.210
+     4. unfunction greet                                    redef.zsh:8              11:52:50.210
+```
+
 The origin is the definition site `shfunctab` recorded
 (`Src/exec.c:5383-5388`): the defining file and the line the definition
-starts on. Functions and parameters are separate namespaces — `path` and
+starts on. A definition inside `eval`, or nested in another function's
+body, is stamped with a line that restarts at 1 — the compiler's
+`line_base` counts within the chunk it is compiling. That is BUGS #1086,
+and it predates this engine: `funcsourcetrace` and `whence -v` read the
+same number. Functions and parameters are separate namespaces — `path` and
 `path()` keep separate chains — so function subcommands need `-f`.
 
 Exit status is 1 when a named parameter is not tracked, when an option
@@ -236,7 +251,8 @@ port therefore keys on three things:
 | `ShellHost::glob` / `heredoc` / `herestring` / `exec` / `call_function` / `cmd_subst` / `process_sub_*` | `src/fusevm_bridge.rs` | origins and consumption |
 | `ShellExecutor::run_command_substitution` | `src/vm_helper.rs` | in-process `$(…)` |
 | `assignsparam` / `assignaparam` / `sethparam` / `unsetparam` | `src/ported/params.rs` | parameter writes |
-| `execfuncdef` install | `src/ported/exec.rs` | function definition / redefinition |
+| funcdef opcode | `src/fusevm_bridge.rs` | function definition / redefinition (the VM path — where `f() { … }` lands) |
+| `execfuncdef` install | `src/ported/exec.rs` | the same, on the interpreter path |
 | `doshfunc` entry | `src/ported/exec.rs` | function call, at the caller's site |
 | `bin_unhash` shfunc removal | `src/ported/builtin.rs` | `unfunction` / `unset -f` |
 

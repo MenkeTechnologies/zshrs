@@ -10458,6 +10458,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // dot's set_scriptfilename calls propagate.
                 let def_file = crate::ported::utils::scriptfilename_get()
                     .or_else(|| exec.scriptfilename.clone());
+                let def_file_for_prov = def_file.clone();
                 if !body_source.is_empty() {
                     exec.function_source
                         .insert(name.clone(), body_source.clone());
@@ -10504,6 +10505,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             crate::ported::zsh_h::ZSIG_FUNC as i32,
                         );
                     }
+                }
+                // Lineage tap: this is where a `name() { … }` actually
+                // lands in the VM path — `execfuncdef`'s shfunctab
+                // install only runs for the interpreter path. The first
+                // definition is the function's origin; a later one is a
+                // `redefine` op on the same chain.
+                if crate::provenance::active() {
+                    crate::provenance::on_func_define(
+                        &name,
+                        def_file_for_prov.as_deref(),
+                        std::cmp::max(1, line_base),
+                    );
                 }
                 exec.functions_compiled.insert(name, chunk);
                 0

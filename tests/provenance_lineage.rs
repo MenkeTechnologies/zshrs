@@ -366,3 +366,33 @@ fn track_all_can_be_switched_off_again() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn every_redefinition_of_a_function_lands_on_its_chain() {
+    // The `redefine` op only proves anything end-to-end: the VM's
+    // funcdef opcode is where `f() { … }` actually installs, and an
+    // earlier revision tapped only the interpreter path — the chain
+    // still had an origin (seeded by the first call) and looked fine
+    // while every redefinition went unrecorded.
+    let (path, out) = run_file(
+        "redef",
+        "provenance -a\n\
+         greet() { : one; }\n\
+         greet\n\
+         greet() { : two; }\n\
+         greet\n\
+         unfunction greet\n\
+         provenance -f greet\n",
+    );
+    let ops = ops(&out);
+    assert_eq!(
+        ops,
+        vec!["call", "redefine", "call", "unfunction"],
+        "report was:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("redefine   greet                                    {}:4", path)),
+        "the redefinition stands at the new body's line:\n{out}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
