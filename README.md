@@ -339,26 +339,32 @@ dbview history docker         # search history
 | `doctor` | Full diagnostic: pool metrics, cache stats, bytecode coverage |
 | `dbview` | Read-only browse of SQLite **mirrors** (not the rkyv cache) |
 | `profile` | In-process command profiling with nanosecond accuracy |
-| `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
+| `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them, each stamped with file, line and wall clock ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
 
 `provenance` (ported from strykelang's `mark` / `provenance` / `unmark`) answers
 "where did this value come from?" for a running shell — an origin plus the op
 chain the bytecode actually executed:
 
 ```console
-$ provenance -m ARCHIVE
-$ REPORT=$(date +%Y-%m-%d)
-$ ARCHIVE=${REPORT}.tar.gz
-$ tar czf $ARCHIVE .
-$ provenance ARCHIVE
+$ cat build.zsh
+provenance -m ARCHIVE
+REPORT=$(date +%Y-%m-%d)
+ARCHIVE=${REPORT}.tar.gz
+tar czf $ARCHIVE .
+provenance ARCHIVE
+$ zshrs build.zsh
 ARCHIVE
-  origin: cmdsubst "date +%Y-%m-%d" (line 2)
+  origin: cmdsubst "date +%Y-%m-%d" (build.zsh:2, 2026-08-18 11:22:03.908)
   ops:
-     1. concat     "2026-08-18" ".tar.gz"                   line 3
-     2. assign     ARCHIVE "2026-08-18.tar.gz"              line 3
-     3. expand     $ARCHIVE "2026-08-18.tar.gz"             line 4
-     4. exec       tar argv[2]                              line 4
+     1. concat     "2026-08-18" ".tar.gz"                   build.zsh:3              11:22:03.908
+     2. assign     ARCHIVE "2026-08-18.tar.gz"              build.zsh:3              11:22:03.908
+     3. expand     $ARCHIVE "2026-08-18.tar.gz"             build.zsh:4              11:22:03.909
+     4. exec       tar argv[2]                              build.zsh:4              11:22:03.909
 ```
+
+Every row carries where and when it happened — file and line, the local
+clock to the millisecond, and the enclosing shell function when the op
+ran inside one (at its line in the file the function was *defined* in).
 
 The chain covers the parameter's whole life, not one value: reassignment
 appends an op and drops nothing, and a value arriving with its own lineage is

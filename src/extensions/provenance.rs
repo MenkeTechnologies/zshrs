@@ -56,11 +56,13 @@
 //! catalog, no bundle emission. The recorder answers "what state did
 //! this shell define?"; this answers "how was this value built?".
 
+use chrono::{Local, NaiveDate, SecondsFormat, TimeZone};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use fusevm::Value;
 
@@ -93,6 +95,116 @@ static PROV_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// parameter-table lock (which the param write hooks run inside).
 static CURRENT_LINE: AtomicUsize = AtomicUsize::new(0);
 
+/// Where and when a tap fired. Every origin and every op carries one, so
+/// a chain reads as a timeline: which file and line produced the bytes,
+/// and at what wall-clock instant.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Site {
+    /// `$LINENO` as last mirrored by [`note_line`], or 0 when unknown.
+    pub line: usize,
+    /// File the line belongs to: the file a shell function was defined
+    /// in while one is on the stack, otherwise the script being run or
+    /// sourced. `None` for `-c` input and interactive lines, which have
+    /// no file.
+    pub file: Option<String>,
+    /// Shell function the op ran inside, when there is one. Without it
+    /// a line number taken inside a function — which zsh counts from the
+    /// function's own first line — has nothing to anchor it.
+    pub func: Option<String>,
+    /// Wall clock, milliseconds since the Unix epoch.
+    pub time_ms: i64,
+}
+
+impl Site {
+    /// Capture the current site. Called at hook entry, before the ledger
+    /// lock is taken, so the `scriptfilename` read never nests inside it.
+    fn now() -> Self {
+        // Inside a function `$LINENO` counts from the function's own
+        // first line, so the line is only meaningful next to the file
+        // the function was defined in, offset by where that definition
+        // starts — `funcstack`'s `f->prev->flineno + f->lineno`
+        // (`Src/Modules/parameter.c:747`), the same sum `funcfiletrace`
+        // reports. Outside one, `$LINENO` already indexes the script.
+        let frame = current_function();
+        let (func, file, line) = match frame {
+            Some((name, file, flineno)) => (
+                Some(name),
+                file,
+                current_line() + flineno.max(0) as usize,
+            ),
+            None => (
+                None,
+                crate::ported::utils::scriptfilename_get(),
+                current_line(),
+            ),
+        };
+        Self {
+            line,
+            // `zsh -c` stamps the literal "zsh" into `scriptfilename`
+            // (`Src/init.c:479`), which is a shell name, not a file. A
+            // chain says `line N` there rather than naming a file that
+            // does not exist.
+            file: file.filter(|f| f != "zsh"),
+            func,
+            time_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+        }
+    }
+
+    /// Same source position — the comparison [`ProvNode::push_op`] uses
+    /// to collapse an immediate repeat, which must ignore the clock or
+    /// no two ops would ever compare equal.
+    fn same_position(&self, other: &Self) -> bool {
+        self.line == other.line && self.file == other.file && self.func == other.func
+    }
+
+    /// `file:line` when the line belongs to a file, `line N` otherwise,
+    /// with the enclosing function appended when the op ran inside one.
+    pub fn location(&self) -> String {
+        let base = match &self.file {
+            Some(f) => format!("{}:{}", f, self.line),
+            None => format!("line {}", self.line),
+        };
+        match &self.func {
+            Some(fun) => format!("{} ({})", base, fun),
+            None => base,
+        }
+    }
+
+    /// Local wall clock. `with_date` spells out the day as well as the
+    /// time — used on the origin line, and on any op that happened on a
+    /// different day than the origin.
+    pub fn clock(&self, with_date: bool) -> String {
+        let fmt = if with_date {
+            "%Y-%m-%d %H:%M:%S%.3f"
+        } else {
+            "%H:%M:%S%.3f"
+        };
+        match Local.timestamp_millis_opt(self.time_ms).single() {
+            Some(dt) => dt.format(fmt).to_string(),
+            None => String::new(),
+        }
+    }
+
+    /// RFC 3339 local timestamp with millisecond precision, for `-j`.
+    pub fn rfc3339(&self) -> String {
+        match Local.timestamp_millis_opt(self.time_ms).single() {
+            Some(dt) => dt.to_rfc3339_opts(SecondsFormat::Millis, false),
+            None => String::new(),
+        }
+    }
+
+    /// Calendar day, for deciding whether an op line needs the date.
+    fn day(&self) -> Option<NaiveDate> {
+        Local
+            .timestamp_millis_opt(self.time_ms)
+            .single()
+            .map(|dt| dt.date_naive())
+    }
+}
+
 /// One operation in a value's lineage chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvOp {
@@ -101,8 +213,8 @@ pub struct ProvOp {
     pub op: String,
     /// Short summaries of the operands, in argument order.
     pub args: Vec<String>,
-    /// `$LINENO` at the time the op ran, or 0 when unknown.
-    pub line: usize,
+    /// Where and when the op ran.
+    pub site: Site,
 }
 
 /// Lineage record for a single value.
@@ -111,8 +223,8 @@ pub struct ProvNode {
     /// How the value entered the shell — e.g. `cmdsubst "date +%s"`,
     /// `glob "*.rs"`, `param FOO`.
     pub origin: String,
-    /// `$LINENO` at the origin site.
-    pub origin_line: usize,
+    /// Where and when the value entered the shell.
+    pub origin_site: Site,
     /// Append-only chain of operations that touched the value after the
     /// origin. Latest op last.
     pub ops: Vec<ProvOp>,
@@ -127,10 +239,10 @@ pub struct ProvNode {
 
 impl ProvNode {
     /// New origin node with an empty op chain.
-    fn origin(origin: impl Into<String>, line: usize) -> Self {
+    fn origin(origin: impl Into<String>, site: Site) -> Self {
         Self {
             origin: origin.into(),
-            origin_line: line,
+            origin_site: site,
             ops: Vec::new(),
             owner: None,
             dropped_ops: 0,
@@ -141,7 +253,11 @@ impl ProvNode {
     /// and line — a value read several times while evaluating one
     /// statement) and counting instead of storing past [`MAX_OPS`].
     fn push_op(&mut self, op: ProvOp) {
-        if self.ops.last() == Some(&op) {
+        if self
+            .ops
+            .last()
+            .is_some_and(|l| l.op == op.op && l.args == op.args && l.site.same_position(&op.site))
+        {
             return;
         }
         if self.ops.len() >= MAX_OPS {
@@ -254,6 +370,25 @@ pub fn note_line(line: usize) {
 /// Line most recently reported by [`note_line`], or 0 when unknown.
 pub fn current_line() -> usize {
     CURRENT_LINE.load(Ordering::Relaxed)
+}
+
+/// The shell function whose body is executing right now: its name, the
+/// file it was defined in, and the file line that definition starts on
+/// (`funcsourcetrace`'s pair — `Src/exec.c:1613` fills the frame's
+/// filename from `scriptfilename` at call time).
+///
+/// Only the topmost frame counts. A `source` or `eval` frame above a
+/// function makes `$LINENO` count in *that* text instead, so the
+/// function's definition line is the wrong thing to add to it.
+///
+/// Takes the stack with `try_lock`: a hook can fire from anywhere the VM
+/// runs, and a lineage row is worth less than a deadlock against the
+/// frame push/pop that a blocking lock would risk.
+fn current_function() -> Option<(String, Option<String>, i64)> {
+    let stack = crate::ported::modules::parameter::FUNCSTACK.try_lock().ok()?;
+    let frame = stack.last()?;
+    (frame.tp == crate::ported::zsh_h::FS_FUNC)
+        .then(|| (frame.name.clone(), frame.filename.clone(), frame.flineno))
 }
 
 // ── Summaries ───────────────────────────────────────────────────────
@@ -393,7 +528,7 @@ pub fn track_name(name: &str, current_value: Option<&str>) -> bool {
     if !enabled() {
         return false;
     }
-    let line = current_line();
+    let site = Site::now();
     let mut l = lock();
     l.tracked.insert(name.to_string());
     // A parameter that already holds a value gets that value as its
@@ -401,7 +536,7 @@ pub fn track_name(name: &str, current_value: Option<&str>) -> bool {
     // supplies the origin, so `X=$(date)` reads as a cmdsubst origin
     // rather than a placeholder the assignment has to argue with.
     if let Some(v) = current_value {
-        let mut node = ProvNode::origin(format!("param {} = {}", name, summarize_str(v)), line);
+        let mut node = ProvNode::origin(format!("param {} = {}", name, summarize_str(v)), site);
         node.owner = Some(name.to_string());
         l.name.insert(name.to_string(), node);
     }
@@ -465,25 +600,25 @@ pub fn lookup_content(s: &str) -> Option<ProvNode> {
 /// A command substitution produced `out`. Records a speculative origin
 /// so a later assignment of the same bytes can inherit it.
 pub fn on_cmd_subst(source: &str, out: &str) {
-    let line = current_line();
+    let site = Site::now();
     let origin = if source.is_empty() {
         "cmdsubst".to_string()
     } else {
         format!("cmdsubst {}", summarize_str(source))
     };
-    lock().put_content(out, ProvNode::origin(origin, line));
+    lock().put_content(out, ProvNode::origin(origin, site));
 }
 
 /// A process substitution produced the path `out` for sub-chunk source
 /// `source`.
 pub fn on_process_subst(source: &str, out: &str) {
-    let line = current_line();
+    let site = Site::now();
     let origin = if source.is_empty() {
         "procsubst".to_string()
     } else {
         format!("procsubst {}", summarize_str(source))
     };
-    lock().put_content(out, ProvNode::origin(origin, line));
+    lock().put_content(out, ProvNode::origin(origin, site));
 }
 
 /// A glob expanded to `results`. Skips high-fanout expansions: a
@@ -493,20 +628,20 @@ pub fn on_glob(pattern: &str, results: &[String]) {
     if results.is_empty() || results.len() > 32 {
         return;
     }
-    let line = current_line();
+    let site = Site::now();
     let mut l = lock();
     for r in results {
         l.put_content(
             r,
-            ProvNode::origin(format!("glob {}", summarize_str(pattern)), line),
+            ProvNode::origin(format!("glob {}", summarize_str(pattern)), site.clone()),
         );
     }
 }
 
 /// A heredoc / herestring body became the next command's stdin.
 pub fn on_heredoc(kind: &str, body: &str) {
-    let line = current_line();
-    lock().put_content(body, ProvNode::origin(kind.to_string(), line));
+    let site = Site::now();
+    lock().put_content(body, ProvNode::origin(kind.to_string(), site));
 }
 
 /// Parameter `name` was read by an `ExpandParam` bytecode op, producing
@@ -514,7 +649,7 @@ pub fn on_heredoc(kind: &str, body: &str) {
 /// parameter's chain forward — by `Arc` identity for the rest of the
 /// chunk, and by content for the host boundaries that only see `String`.
 pub fn on_param_read(name: &str, value: &Value) {
-    let line = current_line();
+    let site = Site::now();
     let mut l = lock();
     let Some(mut node) = l.name.get(name).cloned() else {
         return;
@@ -522,7 +657,7 @@ pub fn on_param_read(name: &str, value: &Value) {
     let op = ProvOp {
         op: "expand".to_string(),
         args: vec![format!("${}", name), summarize_value(value)],
-        line,
+        site,
     };
     if let Some(target) = l.name.get_mut(name) {
         target.push_op(op.clone());
@@ -542,7 +677,7 @@ pub fn on_param_read(name: &str, value: &Value) {
 /// link that keeps derived values traceable: `G=${F}.bak` does not hold
 /// F's bytes, but it was built from them.
 pub fn on_concat(lhs: &Value, rhs: &Value, result: &Value) {
-    let line = current_line();
+    let site = Site::now();
     let mut l = lock();
     let mut chosen: Option<ProvNode> = None;
     for operand in [lhs, rhs] {
@@ -572,7 +707,7 @@ pub fn on_concat(lhs: &Value, rhs: &Value, result: &Value) {
         let op = ProvOp {
             op: "concat".to_string(),
             args: vec![summarize_value(lhs), summarize_value(rhs)],
-            line,
+            site,
         };
         l.extend_owner(&node, &op);
         node.push_op(op);
@@ -593,7 +728,7 @@ pub fn on_concat(lhs: &Value, rhs: &Value, result: &Value) {
 /// discards the parameter's history: the chain is the whole life of the
 /// parameter, one write op per assignment.
 pub fn on_param_write(name: &str, kind: &str, value: &str) {
-    let line = current_line();
+    let site = Site::now();
     let mut l = lock();
     if !l.tracked.contains(name) {
         return;
@@ -614,7 +749,7 @@ pub fn on_param_write(name: &str, kind: &str, value: &str) {
                 existing.push_op(ProvOp {
                     op: "origin".to_string(),
                     args: vec![inh.origin],
-                    line: inh.origin_line,
+                    site: inh.origin_site,
                 });
                 for op in inh.ops {
                     existing.push_op(op);
@@ -624,14 +759,15 @@ pub fn on_param_write(name: &str, kind: &str, value: &str) {
         }
         // First write to a parameter armed while unset: the value's own
         // lineage is the origin, or the assignment itself is.
-        None => inherited
-            .unwrap_or_else(|| ProvNode::origin(format!("{} {}", kind, summarize_str(value)), line)),
+        None => inherited.unwrap_or_else(|| {
+            ProvNode::origin(format!("{} {}", kind, summarize_str(value)), site.clone())
+        }),
     };
     node.owner = Some(name.to_string());
     node.push_op(ProvOp {
         op: kind.to_string(),
         args: vec![name.to_string(), summarize_str(value)],
-        line,
+        site,
     });
     l.name.insert(name.to_string(), node.clone());
     l.put_content(value, node);
@@ -640,13 +776,13 @@ pub fn on_param_write(name: &str, kind: &str, value: &str) {
 /// Parameter `name` was unset. Keeps the chain (that is the interesting
 /// part) and records the unset as its final op.
 pub fn on_param_unset(name: &str) {
-    let line = current_line();
+    let site = Site::now();
     let mut l = lock();
     if let Some(node) = l.name.get_mut(name) {
         node.push_op(ProvOp {
             op: "unset".to_string(),
             args: vec![name.to_string()],
-            line,
+            site,
         });
     }
 }
@@ -659,7 +795,7 @@ pub fn on_exec(kind: &str, args: &[String]) {
     if args.is_empty() {
         return;
     }
-    let line = current_line();
+    let site = Site::now();
     let cmd = args[0].clone();
     let mut l = lock();
     for (i, a) in args.iter().enumerate().skip(1) {
@@ -669,7 +805,7 @@ pub fn on_exec(kind: &str, args: &[String]) {
         let op = ProvOp {
             op: kind.to_string(),
             args: vec![cmd.clone(), format!("argv[{}]", i)],
-            line,
+            site: site.clone(),
         };
         l.extend_owner(&node, &op);
         node.push_op(op);
@@ -683,21 +819,28 @@ pub fn on_exec(kind: &str, args: &[String]) {
 pub fn render(label: &str, node: &ProvNode) -> String {
     let mut out = format!("{}\n", label);
     out.push_str(&format!(
-        "  origin: {} (line {})\n",
-        node.origin, node.origin_line
+        "  origin: {} ({}, {})\n",
+        node.origin,
+        node.origin_site.location(),
+        node.origin_site.clock(true)
     ));
     if node.ops.is_empty() {
         out.push_str("  ops: (none)\n");
         return out;
     }
+    // An op that ran on a different day than the origin spells its date
+    // out; the rest carry the time alone, which is what a chain built
+    // inside one session needs.
+    let origin_day = node.origin_site.day();
     out.push_str("  ops:\n");
     for (i, op) in node.ops.iter().enumerate() {
         out.push_str(&format!(
-            "    {:>2}. {:<10} {:<40} line {}\n",
+            "    {:>2}. {:<10} {:<40} {:<24} {}\n",
             i + 1,
             op.op,
             op.args.join(" "),
-            op.line
+            op.site.location(),
+            op.site.clock(op.site.day() != origin_day)
         ));
     }
     if node.dropped_ops > 0 {
@@ -709,14 +852,27 @@ pub fn render(label: &str, node: &ProvNode) -> String {
     out
 }
 
+/// A JSON string, or `null` when there is no file to name.
+fn json_str_or_null(s: Option<&str>) -> String {
+    match s {
+        Some(v) => format!("{:?}", v),
+        None => "null".to_string(),
+    }
+}
+
 /// JSON lineage report, as printed by `provenance -j NAME`. Hand-rolled
 /// so the engine pulls in no serializer of its own; the shapes here are
 /// flat strings and integers.
 pub fn render_json(label: &str, node: &ProvNode) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "{{\"name\":{:?},\"origin\":{:?},\"origin_line\":{},\"ops\":[",
-        label, node.origin, node.origin_line
+        "{{\"name\":{:?},\"origin\":{:?},\"origin_line\":{},\"origin_file\":{},\"origin_function\":{},\"origin_time\":{:?},\"ops\":[",
+        label,
+        node.origin,
+        node.origin_site.line,
+        json_str_or_null(node.origin_site.file.as_deref()),
+        json_str_or_null(node.origin_site.func.as_deref()),
+        node.origin_site.rfc3339(),
     ));
     for (i, op) in node.ops.iter().enumerate() {
         if i > 0 {
@@ -729,7 +885,13 @@ pub fn render_json(label: &str, node: &ProvNode) -> String {
             }
             out.push_str(&format!("{:?}", a));
         }
-        out.push_str(&format!("],\"line\":{}}}", op.line));
+        out.push_str(&format!(
+            "],\"line\":{},\"file\":{},\"function\":{},\"time\":{:?}}}",
+            op.site.line,
+            json_str_or_null(op.site.file.as_deref()),
+            json_str_or_null(op.site.func.as_deref()),
+            op.site.rfc3339(),
+        ));
     }
     out.push_str(&format!("],\"dropped_ops\":{}}}", node.dropped_ops));
     out
@@ -754,7 +916,7 @@ mod tests {
         note_line(7);
         assert!(track_name("FOO", Some("bar")));
         let node = lookup_name("FOO").expect("tracked name has a node");
-        assert_eq!(node.origin_line, 7);
+        assert_eq!(node.origin_site.line, 7);
         assert!(node.origin.contains("param FOO"), "origin = {}", node.origin);
         assert!(node.ops.is_empty(), "no ops at the origin");
         assert_eq!(tracked_names(), vec!["FOO".to_string()]);
@@ -941,11 +1103,11 @@ mod tests {
         note_line(4);
         on_param_write("X", "assign", "55");
         let node = lookup_name("X").expect("X has a chain");
-        assert_eq!(node.origin_line, 2, "origin is the first write");
+        assert_eq!(node.origin_site.line, 2, "origin is the first write");
         let seen: Vec<(&str, &str, usize)> = node
             .ops
             .iter()
-            .map(|o| (o.op.as_str(), o.args[1].as_str(), o.line))
+            .map(|o| (o.op.as_str(), o.args[1].as_str(), o.site.line))
             .collect();
         assert_eq!(
             seen,
@@ -1004,6 +1166,46 @@ mod tests {
     }
 
     #[test]
+    fn a_repeat_at_the_same_position_collapses_despite_a_later_clock() {
+        let _g = setup();
+        note_line(4);
+        track_name("Q", None);
+        on_param_write("Q", "assign", "v");
+        let first = lookup_name("Q").unwrap().ops[0].site.time_ms;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        on_param_write("Q", "assign", "v");
+        let node = lookup_name("Q").unwrap();
+        assert_eq!(node.ops.len(), 1, "the clock must not defeat the collapse");
+        assert_eq!(node.ops[0].site.time_ms, first, "the first stamp stands");
+    }
+
+    #[test]
+    fn a_site_carries_the_file_the_line_belongs_to() {
+        let _g = setup();
+        let saved = crate::ported::utils::scriptfilename_get();
+        crate::ported::utils::set_scriptfilename(Some("/tmp/lineage.zsh".to_string()));
+        note_line(11);
+        track_name("S", None);
+        on_param_write("S", "assign", "v");
+        crate::ported::utils::set_scriptfilename(saved);
+        let node = lookup_name("S").unwrap();
+        assert_eq!(node.origin_site.file.as_deref(), Some("/tmp/lineage.zsh"));
+        assert_eq!(node.origin_site.line, 11);
+        assert_eq!(node.origin_site.func, None, "no function frame is active");
+        assert!(node.origin_site.time_ms > 0, "the origin is stamped");
+        assert_eq!(node.origin_site.location(), "/tmp/lineage.zsh:11");
+        assert!(
+            node.origin_site.clock(true).starts_with("20"),
+            "clock = {}",
+            node.origin_site.clock(true)
+        );
+        assert!(
+            render("S", &node).contains("/tmp/lineage.zsh:11"),
+            "the report names the file"
+        );
+    }
+
+    #[test]
     fn unset_is_recorded_as_the_final_op() {
         let _g = setup();
         track_name("Z", Some("v"));
@@ -1055,7 +1257,7 @@ mod tests {
             h.join().expect("thread");
         }
         let node = lookup_name("SHARED").expect("origin still live");
-        assert_eq!(node.origin_line, 1);
+        assert_eq!(node.origin_site.line, 1);
         assert_eq!(node.owner.as_deref(), Some("SHARED"));
     }
 }
