@@ -499,6 +499,31 @@
             per prompt. The theme&rsquo;s own optimization layer becomes
             unnecessary &mdash; the workaround is deleted, not ported.</p>
           </div>
+          <div class="cat-card">
+            <h4>Value lineage as a builtin (<code>provenance</code>)</h4>
+            <p><strong>First shell to record how the values it holds were
+            built.</strong> The engine taps the bytecode itself: an
+            <em>origin</em> (command substitution, glob, heredoc, process
+            substitution) and then every op that touched the value
+            &mdash; expand, concat, assign, exec, call &mdash; each
+            stamped with file, line, enclosing shell function and
+            wall clock to the millisecond. Shell functions carry the
+            same chain: definition site, every redefinition, every call
+            at the <em>caller&rsquo;s</em> line, and the
+            <code>unfunction</code> that ended it.
+            <code>[provenance] track_all</code> arms every parameter and
+            function with no marking step; disarmed, each tap is one
+            relaxed atomic load. Other shells answer &ldquo;what is this
+            value?&rdquo; (<code>typeset -p</code>) and &ldquo;what
+            ran?&rdquo; (<code>set -x</code>, <code>PS4</code>) &mdash;
+            neither answers &ldquo;where did these bytes come from, and
+            what happened to them since?&rdquo; Every prior approach
+            lives outside the shell: provenance systems wrap commands,
+            static analyzers read scripts without running them, taint
+            tracking sits in language runtimes rather than the shell
+            that glues them together. See
+            <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PROVENANCE.md"><code>docs/PROVENANCE.md</code></a>.</p>
+          </div>
         </div>
 
         <p style="font-size: 12px; color: var(--text-muted); margin-top: 0.8rem;">

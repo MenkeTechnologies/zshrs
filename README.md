@@ -341,11 +341,14 @@ dbview history docker         # search history
 | `doctor` | Full diagnostic: pool metrics, cache stats, bytecode coverage |
 | `dbview` | Read-only browse of SQLite **mirrors** (not the rkyv cache) |
 | `profile` | In-process command profiling with nanosecond accuracy |
-| `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them, each stamped with file, line and wall clock ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
+| `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them, each stamped with file, line and wall clock; shell functions carry the same chain ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
 
 `provenance` (ported from strykelang's `mark` / `provenance` / `unmark`) answers
 "where did this value come from?" for a running shell — an origin plus the op
-chain the bytecode actually executed:
+chain the bytecode actually executed. No other shell records this: `typeset -p`
+answers what a value *is*, `set -x` / `PS4` answer what *ran*, and every
+provenance or taint-tracking system that answers the lineage question does it
+from outside the shell.
 
 ```console
 $ cat build.zsh
@@ -910,7 +913,8 @@ invariants: [MAINTAINERS.md](MAINTAINERS.md).
 recorder-owns-rebuild AOP intercept, single `~/.zshrs/` rule,
 session-persistent supervised jobs with bidirectional ptmx
 attach, cross-shell pub/sub + named-lock builtins, auto-derived
-OpenAPI surface, flat-text history + sibling FTS5 index) is
+OpenAPI surface, flat-text history + sibling FTS5 index,
+bytecode-level value lineage as a builtin) is
 prior art for the shell-design commons under the MIT grant.
 Future shells — bash, fish, nushell, elvish, oil, xonsh, murex,
 projects that don't exist yet — should inherit any of it. The
