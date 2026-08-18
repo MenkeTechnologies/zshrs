@@ -4623,6 +4623,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // input through unchanged.
         let brace_expand = opt_state_get("braceexpand").unwrap_or(true);
         let brace_ccl = opt_state_get("braceccl").unwrap_or(false);
+        // c:Src/glob.c xpandbraces rewrites word TEXT; it never turns a
+        // scalar word into an array one. Remember the incoming shape so a
+        // scalar that brace-expands to exactly one word stays SCALAR:
+        // nodes_to_value collapses a lone EMPTY node to zero words unless
+        // in_dq_context > 0, and BUILTIN_EXPAND_TEXT has already decremented
+        // that by the time this runs — so a quoted word whose expansion came
+        // out empty, and which carries the Inbrace token so it reaches this
+        // builtin at all, lost its argument entirely.
+        let raw_was_scalar = !matches!(raw, Value::Array(_));
         let inputs: Vec<String> = match raw {
             Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
             other => vec![other.to_str()],
@@ -4635,6 +4644,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             for w in crate::ported::glob::xpandbraces(&s, brace_ccl) {
                 out.push(w);
             }
+        }
+        if raw_was_scalar && out.len() == 1 {
+            let mut only = out.into_iter().next().unwrap();
+            crate::ported::glob::remnulargs(&mut only);
+            return Value::str(only);
         }
         restore_empty_shape(nodes_to_value(out), incoming_empty_is_scalar)
     });
@@ -9892,6 +9906,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Value::str(crate::ported::lex::untokenize(&out))
                 } else {
                     let (_first, nodes, _ms_ws, _ret) = crate::ported::subst::multsub(&prepped, 0);
+                    if std::env::var_os("ZSHRS_DQ_DBG").is_some() {
+                        eprintln!("DQ mode1 prepped={:?} nodes={:?}", prepped, nodes);
+                    }
                     // c:Src/subst.c:655 — multsub returns Vec::new()
                     // for zero-word results (quoted array splat that
                     // resolved to empty array). Surface as

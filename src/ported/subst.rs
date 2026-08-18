@@ -306,6 +306,9 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
         } // c:100
 
         if let Some(data) = list.getdata(node_idx) {
+            if std::env::var_os("ZSHRS_DQ_DBG").is_some() {
+                eprintln!("GATE node={:?} keep={} flags={}", data, keep, flags);
+            }
             // c:100
             if !data.is_empty() {
                 // c:Src/subst.c:170 — `remnulargs(getdata(node));`
@@ -717,23 +720,20 @@ fn stringsubst(
             list.setdata(node_idx, str3.clone()); // c:237
             continue; // c:237
         } // c:237
-          // Lexer-emitted double-bslashquote marker (`\u{9e}`, Dnull) — strip;
-          // contents inside DQ already had `$`/`${…}` tokenized to STRING
-          // / Qstring by the lexer, so the surrounding pass picks them
-          // up. The markers themselves are noise for substitution.
+          // Lexer-emitted double-quote marker (`\u{9e}`, Dnull). C does NOT
+          // remove inull markers here: they must survive stringsubst so
+          // prefork's empty-node test (c:100 `if (*(char *)getdata(node))
+          // … else if (!keep) uremnode`) still sees a NON-empty node for a
+          // word whose expansion came out empty. `remnulargs` (c:170, and
+          // c:3673-3675) then strips them and re-inserts the Nularg
+          // sentinel, which the loop below collapses to a true empty.
+          // Stripping them here made `"${s##[^:\\]}"` — a quoted word that
+          // is entirely one expansion, with a backslash in the pattern, so
+          // the lexer keeps the markers — collapse to NOTHING: zsh passes
+          // one empty argument, zshrs passed none. Skip over the marker
+          // instead of deleting it.
         if c == '\u{9e}' {
-            // c:237
-            let prefix: String = chars[..pos].iter().collect(); // c:237
-            let suffix: String = if pos + 1 < chars.len() {
-                // c:237
-                chars[pos + 1..].iter().collect() // c:237
-            } else {
-                // c:237
-                String::new() // c:237
-            }; // c:237
-            str3 = format!("{}{}", prefix, suffix); // c:237
-            chars = str3.chars().collect(); // c:237
-            list.setdata(node_idx, str3.clone()); // c:237
+            pos += 1; // c:237 (marker retained for remnulargs)
             continue; // c:237
         } // c:237
           // Lexer Bnull (`\u{9f}`) escapes the next char as literal.
@@ -1728,6 +1728,10 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
     // array; else single scalar (or empty).
     let l = list.len(); // c:633
+    if std::env::var_os("ZSHRS_DQ_DBG").is_some() {
+        let v: Vec<String> = list.iter().cloned().collect();
+        eprintln!("MS after-prefork l={} list={:?} lf_array={}", l, v, list.flags & LF_ARRAY);
+    }
                         // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{a1}`)
                         //   sentinel and other INULL bytes (Snull/Dnull/Bnull) that
                         //   paramsubst's splat block emits for empty array elements to
