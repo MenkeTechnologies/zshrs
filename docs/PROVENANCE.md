@@ -33,6 +33,26 @@ The chain starts at an **origin** — the event that created bytes that did
 not exist in the shell before — and extends with one **op** per bytecode
 event afterwards.
 
+The chain is the whole life of the parameter, not of one value: every
+reassignment appends its own op and nothing earlier is dropped. When a
+later assignment brings a value that carries its own lineage, that
+lineage is spliced in — an `origin` op naming it, then its ops — rather
+than replacing what the parameter already recorded:
+
+```console
+$ z=seed
+$ provenance -m z
+$ z=23
+$ z=$(echo built)
+$ provenance z
+z
+  origin: param z = "seed" (line 2)
+  ops:
+     1. assign     z "23"                                   line 3
+     2. origin     cmdsubst "echo built"                    line 4
+     3. assign     z "built"                                line 4
+```
+
 Origins:
 
 | Origin        | Created by                                        |
@@ -43,7 +63,7 @@ Origins:
 | `heredoc`     | `<<EOF` body                                       |
 | `herestring`  | `<<<` body                                         |
 | `param NAME`  | the value the parameter held when `-m` armed it    |
-| `assign …`    | an assignment whose value has no earlier lineage   |
+| `assign …`    | the first assignment to a parameter armed while unset, when the value has no earlier lineage |
 
 Ops:
 
@@ -57,6 +77,7 @@ Ops:
 | `concat` | a word-segment concat that consumed a value with a lineage        |
 | `exec`   | the value was passed to an external command, with its argv slot   |
 | `call`   | same, for a shell function                                        |
+| `origin` | a later assignment brought a value carrying its own lineage — that lineage's origin, followed by its ops |
 | `unset`  | `unset NAME`                                                      |
 
 ## Surface

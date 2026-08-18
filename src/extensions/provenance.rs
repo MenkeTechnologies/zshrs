@@ -97,7 +97,7 @@ static CURRENT_LINE: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvOp {
     /// Operation name — `cmdsubst`, `glob`, `expand`, `assign`, `exec`,
-    /// `function`, `unset`.
+    /// `function`, `origin`, `unset`.
     pub op: String,
     /// Short summaries of the operands, in argument order.
     pub args: Vec<String>,
@@ -385,8 +385,9 @@ impl Ledger {
 
 // ── Tracking control (the `provenance` builtin's surface) ───────────
 
-/// Arm tracking for parameter `name`. Seeds an origin from the
-/// parameter's current value so lineage starts at "what it holds now".
+/// Arm tracking for parameter `name`. A parameter that already holds a
+/// value gets it as the chain's origin, so lineage starts at "what it
+/// holds now"; an unset one takes its origin from its first assignment.
 /// Returns false when the engine is disabled by config/env.
 pub fn track_name(name: &str, current_value: Option<&str>) -> bool {
     if !enabled() {
@@ -395,15 +396,15 @@ pub fn track_name(name: &str, current_value: Option<&str>) -> bool {
     let line = current_line();
     let mut l = lock();
     l.tracked.insert(name.to_string());
-    let mut node = ProvNode::origin(
-        match current_value {
-            Some(v) => format!("param {} = {}", name, summarize_str(v)),
-            None => format!("param {} (unset)", name),
-        },
-        line,
-    );
-    node.owner = Some(name.to_string());
-    l.name.insert(name.to_string(), node);
+    // A parameter that already holds a value gets that value as its
+    // origin. An unset one gets no node at all: its first assignment
+    // supplies the origin, so `X=$(date)` reads as a cmdsubst origin
+    // rather than a placeholder the assignment has to argue with.
+    if let Some(v) = current_value {
+        let mut node = ProvNode::origin(format!("param {} = {}", name, summarize_str(v)), line);
+        node.owner = Some(name.to_string());
+        l.name.insert(name.to_string(), node);
+    }
     drop(l);
     PROV_ACTIVE.store(true, Ordering::Relaxed);
     true
@@ -587,25 +588,46 @@ pub fn on_concat(lhs: &Value, rhs: &Value, result: &Value) {
 /// summary of what was stored. When the assigned bytes already carry a
 /// lineage — a command substitution's output, a glob match, another
 /// tracked parameter's value — that chain becomes this parameter's
-/// origin instead of a bare "assigned here".
+/// origin on the first write, and is spliced into the chain (as an
+/// `origin` op followed by its ops) on later ones. Reassignment never
+/// discards the parameter's history: the chain is the whole life of the
+/// parameter, one write op per assignment.
 pub fn on_param_write(name: &str, kind: &str, value: &str) {
     let line = current_line();
     let mut l = lock();
     if !l.tracked.contains(name) {
         return;
     }
-    let inherited = l.content_node(value);
-    let mut node = match inherited {
-        Some(mut n) => {
-            n.owner = Some(name.to_string());
-            n
+    // A value whose bytes are this parameter's own current value carries
+    // this same chain; splicing it back in would duplicate the chain
+    // onto itself.
+    let inherited = l
+        .content_node(value)
+        .filter(|n| n.owner.as_deref() != Some(name));
+    let mut node = match l.name.remove(name) {
+        // The parameter already has a chain: the assignment extends it.
+        // A value that arrived with its own lineage contributes that
+        // lineage — recorded as an `origin` op, then its ops — instead
+        // of replacing the parameter's history.
+        Some(mut existing) => {
+            if let Some(inh) = inherited {
+                existing.push_op(ProvOp {
+                    op: "origin".to_string(),
+                    args: vec![inh.origin],
+                    line: inh.origin_line,
+                });
+                for op in inh.ops {
+                    existing.push_op(op);
+                }
+            }
+            existing
         }
-        None => {
-            let mut n = ProvNode::origin(format!("{} {}", kind, summarize_str(value)), line);
-            n.owner = Some(name.to_string());
-            n
-        }
+        // First write to a parameter armed while unset: the value's own
+        // lineage is the origin, or the assignment itself is.
+        None => inherited
+            .unwrap_or_else(|| ProvNode::origin(format!("{} {}", kind, summarize_str(value)), line)),
     };
+    node.owner = Some(name.to_string());
     node.push_op(ProvOp {
         op: kind.to_string(),
         args: vec![name.to_string(), summarize_str(value)],
@@ -905,6 +927,80 @@ mod tests {
         clear();
         assert!(!active());
         assert!(tracked_names().is_empty());
+    }
+
+    #[test]
+    fn reassignment_extends_the_chain_instead_of_replacing_it() {
+        let _g = setup();
+        note_line(1);
+        track_name("X", None);
+        note_line(2);
+        on_param_write("X", "assign", "23");
+        note_line(3);
+        on_param_write("X", "assign", "1");
+        note_line(4);
+        on_param_write("X", "assign", "55");
+        let node = lookup_name("X").expect("X has a chain");
+        assert_eq!(node.origin_line, 2, "origin is the first write");
+        let seen: Vec<(&str, &str, usize)> = node
+            .ops
+            .iter()
+            .map(|o| (o.op.as_str(), o.args[1].as_str(), o.line))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("assign", "\"23\"", 2),
+                ("assign", "\"1\"", 3),
+                ("assign", "\"55\"", 4),
+            ],
+            "every assignment stays on the chain: {:?}",
+            node.ops
+        );
+    }
+
+    #[test]
+    fn a_later_substitution_is_spliced_in_not_swapped_for_the_chain() {
+        let _g = setup();
+        note_line(1);
+        track_name("X", Some("seed"));
+        note_line(2);
+        on_param_write("X", "assign", "23");
+        note_line(3);
+        on_cmd_subst("date +%s", "1750000000");
+        on_param_write("X", "assign", "1750000000");
+        let node = lookup_name("X").expect("X has a chain");
+        assert!(
+            node.origin.contains("param X = "),
+            "the armed value stays the origin, got {}",
+            node.origin
+        );
+        let ops: Vec<&str> = node.ops.iter().map(|o| o.op.as_str()).collect();
+        assert_eq!(ops, vec!["assign", "origin", "assign"], "{:?}", node.ops);
+        assert!(
+            node.ops[1].args[0].starts_with("cmdsubst"),
+            "the substitution is recorded where it happened: {:?}",
+            node.ops[1]
+        );
+    }
+
+    #[test]
+    fn rewriting_a_parameter_with_its_own_value_does_not_duplicate_the_chain() {
+        let _g = setup();
+        track_name("X", None);
+        on_param_write("X", "assign", "same");
+        on_param_write("X", "assign", "same");
+        let node = lookup_name("X").unwrap();
+        assert_eq!(node.ops.len(), 1, "immediate repeat collapses: {:?}", node.ops);
+        note_line(9);
+        on_param_write("X", "assign", "same");
+        let node = lookup_name("X").unwrap();
+        assert_eq!(
+            node.ops.iter().filter(|o| o.op == "origin").count(),
+            0,
+            "a parameter never inherits from itself: {:?}",
+            node.ops
+        );
     }
 
     #[test]

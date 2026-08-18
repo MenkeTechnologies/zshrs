@@ -360,6 +360,10 @@ ARCHIVE
      4. exec       tar argv[2]                              line 4
 ```
 
+The chain covers the parameter's whole life, not one value: reassignment
+appends an op and drops nothing, and a value arriving with its own lineage is
+spliced in under an `origin` op.
+
 Nothing is recorded until `provenance -m` arms it; `[provenance] enabled = false`
 in `~/.zshrs/zshrs.toml` (or `ZSHRS_PROVENANCE=0`) refuses arming altogether.
 
