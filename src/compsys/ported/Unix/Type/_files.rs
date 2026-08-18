@@ -208,6 +208,16 @@ fn glob_subdirs() -> Vec<String> {
 /// `_files` — file/directory completion entry point.
 pub fn _files(argv: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_files");
+    // sh:27 `local opts tmp glob pat pats expl tag i def descr end ign tried`
+    // — of that list this port publishes `expl` (sh:393/411 hand it to
+    // `_next_label` and write it back), so it needs the shell's `local`
+    // binding; otherwise the array outlives the completion in the global
+    // param table and `_parameters` (which filters with `~*local*`)
+    // offers `expl` as a parameter name.
+    let _locals = crate::compsys::ported::shared::LocalScope::declare(
+        &["expl"],
+        crate::ported::zsh_h::PM_ARRAY,
+    );
     let curcontext = get_str("curcontext");
     let ctx = format!(":completion:{}:", curcontext);
     let mut ret = 1;

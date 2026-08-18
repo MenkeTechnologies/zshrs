@@ -121,7 +121,16 @@ pub fn _command_names(args: &[String]) -> i32 {
 /// restricts to externals only.
 pub fn _command_names_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_command_names");
-    // sh:7
+    // sh:7 `local args defs expl ffilt verbose` — `expl` is the one this
+    // port publishes (sh:16 hands it to `_description`); the rest stay
+    // Rust locals. Without the declaration the write lands in the GLOBAL
+    // param table and survives the completion, so `expl` itself was
+    // offered as a parameter name — the same leak `_subscript`'s `ind`
+    // had, and `_parameters` filters candidates with `~*local*`.
+    let _locals = crate::compsys::ported::shared::LocalScope::declare(
+        &["expl"],
+        crate::ported::zsh_h::PM_ARRAY,
+    );
     let mut ffilt = String::new();
     let curcontext = getsparam("curcontext").unwrap_or_default();
 
