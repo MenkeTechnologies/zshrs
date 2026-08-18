@@ -155,6 +155,22 @@ fn resolve_array_arg(arg: &str) -> Vec<String> {
     }
 }
 
+/// sh:82 `eval local "_a_$_try$_i;_a_$_try$_i"'=( "${'$1'[@]}" )'` — the
+/// per-call stash is built by SPLATTING the caller's array, and a quoted
+/// splat of an UNSET name is one EMPTY element (c:Src/subst.c:3603-3610
+/// leaves `isarr` 0 and `val` ""), where an empty ARRAY splats to nothing.
+/// Only this stash sees that distinction; every other array read in the port
+/// wants the plain value, so it stays on [`resolve_array_arg`].
+fn stash_array_arg(arg: &str) -> Vec<String> {
+    if arg.starts_with('(') && arg.ends_with(')') && arg.len() >= 2 {
+        return resolve_array_arg(arg);
+    }
+    match getaparam(arg) {
+        Some(v) => v,
+        None => vec![String::new()],
+    }
+}
+
 /// Reach `_describe` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_describe \` (Completion/Unix/Command/_7zip sh:132) — so the
 /// normal function lookup runs.
@@ -367,7 +383,7 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                 while p < _oargv.len() {
                     // sh:76-84 — value array → _a_<try><i>.
                     let _strs = format!("_a_{}{}", _try, _i);
-                    let vals = resolve_array_arg(&_oargv[p]);
+                    let vals = stash_array_arg(&_oargv[p]); // sh:82
                     setaparam(&_strs, vals.clone());
                     a_names.push(_strs.clone());
                     _argv.push(_strs.clone());
@@ -383,7 +399,7 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                         (None, Vec::new())
                     } else {
                         let mn = format!("_a_{}{}", _try, _i);
-                        let mv = resolve_array_arg(&_oargv[p]);
+                        let mv = stash_array_arg(&_oargv[p]); // sh:95
                         setaparam(&mn, mv.clone());
                         a_names.push(mn.clone());
                         _argv.push(mn.clone());
