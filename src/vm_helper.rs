@@ -590,7 +590,14 @@ pub struct ShellExecutor {
     pub profiling_enabled: bool,
     // compsys - completion system cache
     /// `compsys_cache` field.
-    pub compsys_cache: Option<CompsysCache>,
+    /// SQLite mirror, opened on FIRST USE via [`ShellExecutor::compsys_cache`].
+    ///
+    /// It is a dbview/FTS mirror for inspection — the authoritative completion
+    /// cache is the rkyv shards — so nothing on a normal command path touches
+    /// it. Opening it in the constructor still cost every shell three file
+    /// opens (`compsys.db`, `-wal`, `-shm`) plus WAL setup, including
+    /// `zshrs -f -c exit`, which cannot consult it at all.
+    pub compsys_cache: std::cell::OnceCell<Option<CompsysCache>>,
     // Background compinit — receiver for async fpath scan result
     /// `compinit_pending` field.
     pub compinit_pending: Option<(
@@ -1267,7 +1274,7 @@ impl ShellExecutor {
             in_dq_context: 0,
             in_scalar_assign: 0,
             profiling_enabled: false,
-            compsys_cache: None, // worker: no per-thread SQLite mirror
+            compsys_cache: std::cell::OnceCell::from(None), // worker: no per-thread SQLite mirror
             compinit_pending: None,
             plugin_cache: None, // worker: no per-thread plugin cache
             deferred_compdefs: Vec::new(),
@@ -1950,29 +1957,7 @@ impl ShellExecutor {
             in_dq_context: 0,
             in_scalar_assign: 0,
             profiling_enabled: false,
-            compsys_cache: {
-                let cache_path = crate::compsys::cache::default_cache_path();
-                if cache_path.exists() {
-                    let db_size = fs::metadata(&cache_path).map(|m| m.len()).unwrap_or(0);
-                    match CompsysCache::open(&cache_path) {
-                        Ok(c) => {
-                            tracing::info!(
-                                db_bytes = db_size,
-                                path = %cache_path.display(),
-                                "compsys: sqlite mirror opened (dbview/SQL inspection only; rkyv shards are the authoritative cache)"
-                            );
-                            Some(c)
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "compsys: failed to open cache");
-                            None
-                        }
-                    }
-                } else {
-                    tracing::debug!("compsys: no cache at {}", cache_path.display());
-                    None
-                }
-            },
+            compsys_cache: std::cell::OnceCell::new(),
             compinit_pending: None, // (receiver, start_time)
             plugin_cache: {
                 let pc_path = crate::plugin_cache::default_cache_path();
@@ -4393,6 +4378,37 @@ impl ShellExecutor {
         }
     }
     /// `run_command_substitution` — see implementation.
+    /// The SQLite mirror, opened the first time anything asks for it.
+    ///
+    /// Returns `None` when no cache file exists yet (or it failed to open),
+    /// which is the same answer the eager constructor produced.
+    pub fn compsys_cache(&self) -> Option<&CompsysCache> {
+        self.compsys_cache
+            .get_or_init(|| {
+                let cache_path = crate::compsys::cache::default_cache_path();
+                if !cache_path.exists() {
+                    tracing::debug!("compsys: no cache at {}", cache_path.display());
+                    return None;
+                }
+                let db_size = fs::metadata(&cache_path).map(|m| m.len()).unwrap_or(0);
+                match CompsysCache::open(&cache_path) {
+                    Ok(c) => {
+                        tracing::info!(
+                            db_bytes = db_size,
+                            path = %cache_path.display(),
+                            "compsys: sqlite mirror opened (dbview/SQL inspection only; rkyv shards are the authoritative cache)"
+                        );
+                        Some(c)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "compsys: failed to open cache");
+                        None
+                    }
+                }
+            })
+            .as_ref()
+    }
+
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
         // c:Src/subst.c / Src/lex.c — the text inside `$(…)` is a FRESH
         // command line. The double quotes that may surround the substitution
@@ -6608,7 +6624,7 @@ impl ShellExecutor {
     pub fn enter_posix_mode(&mut self) {
         self.posix_mode = true;
         self.plugin_cache = None;
-        self.compsys_cache = None;
+        self.compsys_cache = std::cell::OnceCell::new();
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
         // Direct call to the canonical `emulate()` port
@@ -6621,7 +6637,7 @@ impl ShellExecutor {
     /// `enter_ksh_mode` — see implementation.
     pub fn enter_ksh_mode(&mut self) {
         self.plugin_cache = None;
-        self.compsys_cache = None;
+        self.compsys_cache = std::cell::OnceCell::new();
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
         crate::ported::options::emulate("ksh", true);
@@ -6634,7 +6650,7 @@ impl ShellExecutor {
     pub fn enter_dash_mode(&mut self) {
         self.posix_mode = true;
         self.plugin_cache = None;
-        self.compsys_cache = None;
+        self.compsys_cache = std::cell::OnceCell::new();
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
         crate::ported::options::emulate("dash", true);

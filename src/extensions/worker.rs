@@ -64,8 +64,13 @@ pub fn in_worker_thread() -> bool {
 /// multi-consumer dispatch — each worker calls `recv()` directly,
 /// no mutex.
 pub struct WorkerPool {
-    /// `workers` field.
-    workers: Vec<Worker>,
+    /// `workers` field. Behind a Mutex because the threads are spawned on
+    /// FIRST USE (see `ensure_spawned`), not in `new`.
+    workers: std::sync::Mutex<Vec<Worker>>,
+    /// Kept so the workers can be spawned later; cloned per thread.
+    receiver: crossbeam_channel::Receiver<Task>,
+    /// Set once the threads exist.
+    spawned: AtomicBool,
     /// `sender` field.
     sender: Option<crossbeam_channel::Sender<Task>>,
     /// `size` field.
@@ -99,7 +104,40 @@ impl WorkerPool {
         let queued = Arc::new(AtomicUsize::new(0));
         let completed = Arc::new(AtomicUsize::new(0));
 
-        let mut workers = Vec::with_capacity(size);
+        WorkerPool {
+            workers: std::sync::Mutex::new(Vec::new()),
+            receiver,
+            spawned: AtomicBool::new(false),
+            sender: Some(sender),
+            size,
+            cancelled,
+            queued,
+            completed,
+        }
+    }
+
+    /// Spawn the worker threads if they do not exist yet.
+    ///
+    /// zshrs-original. The pool used to spawn every thread in `new`, which
+    /// runs while the shell is still starting: `zshrs -f -c exit` paid 18
+    /// `pthread_create`s plus their stacks to run one builtin and exit, and a
+    /// profile of any short command showed all of them parked in
+    /// `semaphore_wait_trap` for the whole run. Nothing is deferred that a
+    /// caller can observe — the first `submit` spawns the pool before the task
+    /// is queued, so a task never waits on a thread that is not there.
+    fn ensure_spawned(&self) {
+        if self.spawned.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut workers = self.workers.lock().unwrap_or_else(|e| e.into_inner());
+        if self.spawned.load(Ordering::Relaxed) {
+            return; // lost the race; the winner already spawned
+        }
+        let size = self.size;
+        let receiver = &self.receiver;
+        let cancelled = &self.cancelled;
+        let queued = &self.queued;
+        let completed = &self.completed;
         for id in 0..size {
             let rx = receiver.clone();
             let cancelled = Arc::clone(&cancelled);
@@ -162,20 +200,9 @@ impl WorkerPool {
             });
         }
 
-        tracing::info!(
-            pool_size = size,
-            channel_capacity = capacity,
-            "worker pool started"
-        );
-
-        WorkerPool {
-            workers,
-            sender: Some(sender),
-            size,
-            cancelled,
-            queued,
-            completed,
-        }
+        self.spawned.store(true, Ordering::Relaxed);
+        drop(workers);
+        tracing::info!(pool_size = size, "worker pool started");
     }
 
     /// Create a pool sized to the machine's parallelism, clamped to
@@ -198,6 +225,7 @@ impl WorkerPool {
     where
         F: FnOnce() + Send + 'static,
     {
+        self.ensure_spawned();
         let depth = self.queued.fetch_add(1, Ordering::Relaxed) + 1;
         if depth > self.size * 2 {
             tracing::debug!(queue_depth = depth, "worker pool queue building up");
@@ -273,7 +301,8 @@ impl Drop for WorkerPool {
         drop(self.sender.take());
         // Give workers a brief window to finish their current task.
         // Don't block indefinitely — the process is exiting.
-        for w in &mut self.workers {
+        let mut workers = self.workers.lock().unwrap_or_else(|e| e.into_inner());
+        for w in workers.iter_mut() {
             if let Some(handle) = w.handle.take() {
                 // Detach the thread — OS cleans up on process exit.
                 // join() would block if a worker is mid-parse on a 500-line
