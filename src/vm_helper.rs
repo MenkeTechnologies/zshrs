@@ -839,6 +839,49 @@ fn zerr_prefix(sn: &str) -> String {
     }
 }
 
+thread_local! {
+    /// `(function name, its source file)` while that function's AUTOLOAD body
+    /// is being run. Empty at every other moment.
+    pub static AUTOLOAD_DEF_FILE: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Scope guard for [`AUTOLOAD_DEF_FILE`].
+pub struct AutoloadFileGuard(bool);
+
+impl AutoloadFileGuard {
+    fn enter(name: &str) -> Self {
+        match crate::ported::hashtable::getshfuncfile(name) {
+            Some(f) => {
+                AUTOLOAD_DEF_FILE.with(|s| s.borrow_mut().push((name.to_string(), f)));
+                Self(true)
+            }
+            None => Self(false),
+        }
+    }
+}
+
+impl Drop for AutoloadFileGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            AUTOLOAD_DEF_FILE.with(|s| {
+                s.borrow_mut().pop();
+            });
+        }
+    }
+}
+
+/// The file `name` is being autoloaded from, if that is happening right now.
+pub fn autoload_def_file(name: &str) -> Option<String> {
+    AUTOLOAD_DEF_FILE.with(|s| {
+        s.borrow()
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, f)| f.clone())
+    })
+}
+
 impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
     /// (`Src/params.c:3350 setsparam`). The single store.
@@ -3210,6 +3253,12 @@ impl ShellExecutor {
     /// double-wrap the scope). Mirrors C's `runshfunc(prog, wrappers,
     /// name)` at `exec.c:6042` from doshfunc's perspective.
     pub fn run_function_body_only(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // Held for the WHOLE call, not just the load: an autoloaded function is
+        // registered TWICE — once when its file's text defines it, and again
+        // (unchanged) when its chunk is compiled at call time — and the second
+        // stamp would otherwise relabel it with the caller's scriptfilename.
+        // See the AUTOLOAD_DEF_FILE consumer in fusevm_bridge.
+        let mut _autoload_file_guard: Option<AutoloadFileGuard> = None;
         // Same Rust-port short-circuit as dispatch_function_call,
         // sans the doshfunc wrap.
         if let Some(rc) = crate::compsys::router::dispatch_compsys(name, args) {
@@ -3286,6 +3335,7 @@ impl ShellExecutor {
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
+                        _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
                         let registered = autoload_register_source(name, &body);
                         {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
@@ -3352,6 +3402,7 @@ impl ShellExecutor {
                     let abspath_used =
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
+                    _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
                     let registered = autoload_register_source(name, &body);
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
@@ -3424,6 +3475,12 @@ impl ShellExecutor {
     }
 
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // Held for the WHOLE call, not just the load: an autoloaded function is
+        // registered TWICE — once when its file's text defines it, and again
+        // (unchanged) when its chunk is compiled at call time — and the second
+        // stamp would otherwise relabel it with the caller's scriptfilename.
+        // See the AUTOLOAD_DEF_FILE consumer in fusevm_bridge.
+        let mut _autoload_file_guard: Option<AutoloadFileGuard> = None;
         // Nested scope for `>(cmd)` fd ownership — builtins running
         // inside the function body must not close the CALLER's
         // pending psub fds (`myfn >(cmd)` keeps /dev/fd/N alive for
@@ -3574,6 +3631,7 @@ impl ShellExecutor {
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
+                        _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
                         let registered = autoload_register_source(name, &body);
                         // c:Src/exec.c:5739 — the ksh-autoload body runs via
                         // `execode(prog, 1, 0, "evalautofunc")` at the function
@@ -3730,6 +3788,7 @@ impl ShellExecutor {
                     let abspath_used =
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
+                    _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
                     let registered = autoload_register_source(name, &body);
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
