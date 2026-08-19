@@ -408,7 +408,10 @@ spliced in under an `origin` op.
 
 Shell functions have chains of their own — definition site, every
 redefinition, every call at the caller's line, and the `unfunction` that
-ended it — reached with `-f`:
+ended it. `provenance -m NAME` arms whichever the name actually is, so a
+function needs no extra flag; `-f` forces the function reading when a
+parameter of the same name would otherwise win, and reads the chain
+back:
 
 ```console
 $ provenance -f greet
