@@ -10483,6 +10483,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
                 if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
                     let mut shf = crate::ported::hashtable::shfunc_with_body(&name, &body_source);
+                    // `shfunc_with_body` stamps the AMBIENT `scriptfilename`
+                    // (c:Src/exec.c:5383). That is right for an ordinary
+                    // definition but wrong twice over for an autoloaded one:
+                    //
+                    //  * c:Src/exec.c:5622-5630 — while an autoload file's text
+                    //    runs, C sets `scriptfilename = getshfuncfile(shf)`, so a
+                    //    `name() { … }` INSIDE it records the fpath file. zshrs
+                    //    runs that body on the normal VM path with the CALLER's
+                    //    scriptfilename still in place, so a ksh-style autoload
+                    //    file — one that defines the function and then calls it —
+                    //    got attributed to whoever triggered the load.
+                    //  * the function is then re-registered UNCHANGED when its
+                    //    chunk is compiled at call time, and that second stamp
+                    //    would overwrite the first even if the first were right.
+                    //
+                    // Result before this: `whence -v f` said "from ./caller.zsh"
+                    // where zsh says "from dir/f", and `funcsourcetrace[1]`
+                    // pointed at the caller — which compsys reads directly
+                    // (`_git` locates git-completion.bash through
+                    // `"$(dirname ${funcsourcetrace[1]%:*})"`).
+                    if let Some(f) = crate::vm_helper::autoload_def_file(&name) {
+                        shf.filename = Some(f); // c:5625 getshfuncfile(shf)
+                    } else if let Some(prev) = tab.get(&name) {
+                        // Re-registration of an unchanged body relabels nothing.
+                        if prev.body.as_deref() == Some(body_source.as_str()) {
+                            shf.filename = prev.filename.clone();
+                            shf.node.flags |= prev.node.flags
+                                & crate::ported::zsh_h::PM_LOADDIR as i32;
+                        }
+                    }
                     // c:Src/exec.c:5409 — `shf->lineno = lineno;`. Use
                     // the same max(1, line_base) clamp as the synth_shf
                     // in vm_helper::dispatch_function_call. Bug #396.
