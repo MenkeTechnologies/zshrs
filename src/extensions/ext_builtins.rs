@@ -902,7 +902,21 @@ impl ShellExecutor {
                     provenance::track_func(name, file.as_deref(), line);
                 } else {
                     let current = crate::ported::params::getsparam(name);
-                    provenance::track_name(name, current.as_deref());
+                    // Follow the name to whatever it actually IS. Without this,
+                    // `provenance -m ff` on a shell function armed a PARAMETER
+                    // named `ff` — an entry that can never record, because
+                    // nothing writes a parameter by that name. It then listed as
+                    // a bare `ff` with no origin and no ops no matter how many
+                    // times the function was defined or called, which reads as
+                    // "provenance is broken" rather than "you wanted -f".
+                    // An explicit `-f` still forces the function reading, and a
+                    // real parameter still wins when both exist.
+                    if current.is_none() && crate::ported::utils::getshfunc(name).is_some() {
+                        let (file, line) = Self::shfunc_def_site(name);
+                        provenance::track_func(name, file.as_deref(), line);
+                    } else {
+                        provenance::track_name(name, current.as_deref());
+                    }
                 }
             }
             return 0;
@@ -921,7 +935,9 @@ impl ShellExecutor {
                 let dropped = if funcs {
                     provenance::untrack_func(name)
                 } else {
-                    provenance::untrack_name(name)
+                    // Mirror the `-m` rule above: a bare `-u NAME` drops
+                    // whichever of the two `-m NAME` would have armed.
+                    provenance::untrack_name(name) || provenance::untrack_func(name)
                 };
                 if !dropped {
                     eprintln!("zshrs: provenance: not tracked: {}", label(name));
