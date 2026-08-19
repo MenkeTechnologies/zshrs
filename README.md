@@ -414,13 +414,18 @@ parameter of the same name would otherwise win, and reads the chain
 back:
 
 ```console
-$ provenance -f greet
+$ provenance -m greet          # arm it first — nothing is recorded until you do
+$ greet; greet
+$ provenance greet             # or `provenance -f greet`
 greet()
   origin: function greet (greet.zsh:2, 2026-08-18 11:48:01.139)
   ops:
      1. call       greet()                                  greet.zsh:3              11:48:01.139
      2. call       greet()                                  greet.zsh:4              11:48:01.140
 ```
+
+Reading a name that was never armed is an error, not an empty chain —
+`provenance -f greet` on its own answers `not tracked: greet()`.
 
 Nothing is recorded until `provenance -m` arms it — or until something
 turns on track-everything mode, which arms every parameter write and

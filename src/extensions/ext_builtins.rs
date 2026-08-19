@@ -828,15 +828,22 @@ impl ShellExecutor {
         names.extend(rest);
 
         // ── the two namespaces, behind one set of verbs ─────────────
+        // `-f` picks the function namespace explicitly. WITHOUT it a bare
+        // name reads whichever namespace holds it, mirroring the way `-m NAME`
+        // arms whichever the name actually is: arming a function with a bare
+        // `provenance -m ff` and then reading it back with a bare
+        // `provenance ff` has to work, or the two halves of the same spelling
+        // disagree. A parameter still wins when both are tracked.
+        let tracked_as_func = |name: &str| !funcs && provenance::lookup_name(name).is_none();
         let lookup = |name: &str| {
             if funcs {
                 provenance::lookup_func(name)
             } else {
-                provenance::lookup_name(name)
+                provenance::lookup_name(name).or_else(|| provenance::lookup_func(name))
             }
         };
         let label = |name: &str| {
-            if funcs {
+            if funcs || tracked_as_func(name) {
                 format!("{}()", name)
             } else {
                 name.to_string()
