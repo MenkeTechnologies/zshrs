@@ -961,12 +961,28 @@ pub fn track_func(name: &str, file: Option<&str>, line: i64) -> bool {
     if !enabled() {
         return false;
     }
-    let site = def_site(file, line);
     let mut l = lock();
     l.tracked_funcs.insert(name.to_string());
-    l.func
-        .entry(name.to_string())
-        .or_insert_with(|| ProvNode::origin(format!("function {}", name), site));
+    // Same rule as `track_name`, which this used to break: a function that
+    // ALREADY EXISTS gets its definition site as the origin, and one that does
+    // not exist yet gets no node at all, so its first definition supplies the
+    // origin.
+    //
+    // Seeding a node unconditionally meant arming a function before defining it
+    // stamped an origin of `function NAME (line 0)` — a definition site that had
+    // never happened — and then `on_func_define` found a node already there and
+    // logged the REAL first definition as a `redefine` against it. Arming early
+    // is the normal way to watch a function get defined, so that is the common
+    // path, not an edge case.
+    //
+    // `(None, 0)` is `shfunc_def_site`'s documented "no such function"; a defined
+    // one always carries a 1-based line.
+    if file.is_some() || line > 0 {
+        let site = def_site(file, line);
+        l.func
+            .entry(name.to_string())
+            .or_insert_with(|| ProvNode::origin(format!("function {}", name), site));
+    }
     drop(l);
     PROV_ACTIVE.store(true, Ordering::Relaxed);
     true
@@ -1534,6 +1550,70 @@ mod tests {
         assert_eq!(node.ops[1].site.line, 80, "the redefine op is the new body's");
         assert_eq!(tracked_func_names(), vec!["build".to_string()]);
         assert!(lookup_name("build").is_none(), "the parameter namespace is separate");
+    }
+
+    // Arming a function BEFORE it is defined is the normal way to watch one get
+    // defined, and it used to produce a lineage that was wrong twice over: an
+    // origin of `function NAME` at line 0 -- a definition site that never
+    // happened -- and the real first definition logged as a `redefine` against
+    // it. `track_name` has always got this right for parameters (an unset one
+    // gets no node, so its first assignment supplies the origin); this is the
+    // same rule for functions.
+    #[test]
+    fn arming_a_function_before_it_exists_leaves_the_origin_to_its_definition() {
+        let _g = setup();
+        // `(None, 0)` is shfunc_def_site's "no such function".
+        assert!(track_func("later", None, 0));
+        assert!(
+            lookup_func("later").is_none(),
+            "no definition has happened yet, so there is nothing to attribute"
+        );
+        assert_eq!(
+            tracked_func_names(),
+            vec!["later".to_string()],
+            "but it IS armed"
+        );
+
+        on_func_define("later", Some("/tmp/lib.zsh"), 7);
+        let node = lookup_func("later").expect("the definition creates the chain");
+        assert_eq!(node.origin, "function later");
+        assert_eq!(
+            node.origin_site.line, 7,
+            "the origin is where it was defined"
+        );
+        assert_eq!(node.origin_site.file.as_deref(), Some("/tmp/lib.zsh"));
+        assert!(
+            node.ops.is_empty(),
+            "the first definition is the origin, not a redefine: {:?}",
+            node.ops
+        );
+
+        // A LATER definition is still a redefine, against the real origin.
+        on_func_define("later", Some("/tmp/lib.zsh"), 20);
+        let node = lookup_func("later").expect("still tracked");
+        assert_eq!(node.origin_site.line, 7, "the origin does not move");
+        let ops: Vec<&str> = node.ops.iter().map(|o| o.op.as_str()).collect();
+        assert_eq!(ops, vec!["redefine"], "{:?}", node.ops);
+        assert_eq!(node.ops[0].site.line, 20);
+    }
+
+    // The other half of the same rule: a function that already exists when it is
+    // armed keeps its definition site, so arming does not erase where it came
+    // from.
+    #[test]
+    fn arming_an_existing_function_seeds_the_origin_from_its_definition_site() {
+        let _g = setup();
+        assert!(track_func("known", Some("/tmp/lib.zsh"), 3));
+        let node = lookup_func("known").expect("armed with a known definition site");
+        assert_eq!(node.origin_site.line, 3);
+        assert_eq!(node.origin_site.file.as_deref(), Some("/tmp/lib.zsh"));
+        assert!(node.ops.is_empty());
+
+        // Re-arming does not move the origin or duplicate the node.
+        assert!(track_func("known", Some("/tmp/lib.zsh"), 3));
+        let node = lookup_func("known").expect("still there");
+        assert_eq!(node.origin_site.line, 3);
+        assert_eq!(tracked_func_names(), vec!["known".to_string()]);
     }
 
     #[test]
