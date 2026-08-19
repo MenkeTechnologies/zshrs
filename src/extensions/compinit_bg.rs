@@ -52,7 +52,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                         "_patcomps".to_string(),
                         bg.result.patcomps.into_iter().collect(),
                     );
-                    self.compsys_cache = Some(bg.cache);
+                    self.compsys_cache = std::cell::OnceCell::from(Some(bg.cache));
                     tracing::info!(
                         wall_ms = start.elapsed().as_millis() as u64,
                         comps,
@@ -143,7 +143,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         crate::compsys::ported::compinit::apply_keybindings(&result);
 
         // No SQLite cache in compat mode
-        self.compsys_cache = None;
+        self.compsys_cache = std::cell::OnceCell::from(None);
 
         0
     }

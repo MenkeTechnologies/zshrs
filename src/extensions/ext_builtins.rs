@@ -605,7 +605,7 @@ impl ShellExecutor {
         // functions have a parsed body in the SQLite inspection mirror
         // but no compiled bytecode blob in the rkyv shard yet. A
         // healthy daemon-hydrated cache reports 0 missing.
-        if let Some(ref cache) = self.compsys_cache {
+        if let Some(cache) = self.compsys_cache() {
             if let Ok(total_bodies) = cache.count_autoloads_with_body() {
                 let missing = total_bodies.saturating_sub(autoload_count);
                 if missing == 0 {
@@ -634,7 +634,7 @@ impl ShellExecutor {
             "  {}",
             dim("daemon-maintained; not read on cache lookup / hot path")
         );
-        if let Some(ref cache) = self.compsys_cache {
+        if let Some(cache) = self.compsys_cache() {
             let count = crate::compsys::cache_entry_count(cache);
             println!("  compsys:     {} completions  {}", count, dim("mirror"));
         } else {
@@ -1022,7 +1022,7 @@ impl ShellExecutor {
             println!("{}", bold("zshrs SQLite caches"));
             println!();
 
-            if let Some(ref cache) = self.compsys_cache {
+            if let Some(cache) = self.compsys_cache() {
                 println!("  {} {}", bold("compsys.db"), dim("(completion cache)"));
                 if let Ok(n) = cache.count_table("autoloads") {
                     let bc_count = cache
@@ -1074,7 +1074,7 @@ impl ShellExecutor {
 
         match table {
             "autoloads" => {
-                let Some(ref cache) = self.compsys_cache else {
+                let Some(cache) = self.compsys_cache() else {
                     eprintln!("zshrs:dbview:1: no compsys cache");
                     return 1;
                 };
@@ -1166,7 +1166,7 @@ impl ShellExecutor {
             }
 
             "comps" => {
-                let Some(ref cache) = self.compsys_cache else {
+                let Some(cache) = self.compsys_cache() else {
                     eprintln!("zshrs:dbview:1: no compsys cache");
                     return 1;
                 };
@@ -1200,7 +1200,7 @@ impl ShellExecutor {
             }
 
             "executables" => {
-                let Some(ref cache) = self.compsys_cache else {
+                let Some(cache) = self.compsys_cache() else {
                     eprintln!("zshrs:dbview:1: no compsys cache");
                     return 1;
                 };
@@ -2547,7 +2547,7 @@ impl ShellExecutor {
 
         // Try to use existing cache if -C and cache is valid
         if use_cache {
-            if let Some(cache) = &self.compsys_cache {
+            if let Some(cache) = self.compsys_cache() {
                 if crate::compsys::cache_is_valid(cache) {
                     // Load from cache instead of rescanning
                     if let Ok(result) = crate::compsys::load_from_cache(cache) {
@@ -2784,7 +2784,7 @@ impl ShellExecutor {
                     "_compautos".to_string(),
                     bg.result.compautos.into_iter().collect(),
                 );
-                self.compsys_cache = Some(bg.cache);
+                self.compsys_cache = std::cell::OnceCell::from(Some(bg.cache));
                 tracing::info!(
                     wall_ms = bg_start.elapsed().as_millis() as u64,
                     comps,
