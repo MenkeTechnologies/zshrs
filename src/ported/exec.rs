@@ -6312,8 +6312,84 @@ pub fn doshfunc(
         }
     };
     // c:6018-6019 — flineno: shfunc->lineno (function def line)
-    let flineno = shfunc.lineno;
-    let filename = shfunc.filename.clone().or_else(|| Some(String::new()));
+    let mut flineno = shfunc.lineno;
+    let mut filename = shfunc.filename.clone().or_else(|| Some(String::new()));
+    // !!! WARNING: RUST-ONLY HELPER !!!
+    //
+    // c:6019 — `funcsave->fstack.filename = getshfuncfile(shfunc);`, which
+    // reads the shfunc's OWN `filename`, set by `loadautofnsetfile`
+    // (c:5713) when the function was autoloaded out of `$fpath`.
+    //
+    // zshrs has no C counterpart for a function that exists ONLY as a Rust
+    // port: `_main_complete`, `_normal`, `_dispatch`, … are dispatched from
+    // `compsys::router::try_rust_dispatch` and the autoload prelude is
+    // skipped entirely (vm_helper.rs — "no upstream shell function to
+    // load"), so no `shfunctab` node is ever created and the synthesized
+    // shfunc handed to us carries the caller's `scriptfilename` ("zsh") or
+    // nothing at all. `$funcsourcetrace` / `$funcfiletrace` then reported
+    // `zsh:1` for every completer frame where zsh names the `$fpath` file
+    // — and `funcfiletrace` is read by real completion code (`_git` derives
+    // its git-completion.bash search path from `${funcsourcetrace[1]%:*}`).
+    //
+    // Stand in for `loadautofnsetfile` in exactly that case — the name has
+    // NO shfunctab node, so nothing shell-defined can be shadowed — by
+    // resolving the defining file out of `$fpath` the way `getfpfunc`
+    // (c:6219) does for a real autoload. An autoload-installed function
+    // gets `shf->lineno == 0` (c:5384-5388 only stamps a `name() { … }`
+    // STATEMENT), so the def line is 0, matching zsh's
+    // `<fpath-file>:0` in `$funcsourcetrace`.
+    //
+    // Memoised, and deliberately never invalidated: C stamps `shf->filename`
+    // ONCE, at autoload time, and a later `fpath=(…)` does not restamp it —
+    // so a permanent per-name answer is what matches zsh, not a re-scan. It
+    // also keeps `doshfunc` off the filesystem on the completion hot path.
+    if crate::compsys::router::try_rust_dispatch(&name).is_some()
+        && crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .map(|t| t.get_including_disabled(&name).is_none())
+            .unwrap_or(false)
+    {
+        static RUST_PORT_FILE: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
+        > = std::sync::OnceLock::new();
+        let cache = RUST_PORT_FILE.get_or_init(|| std::sync::Mutex::new(Default::default()));
+        let cached = cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&name)
+            .cloned();
+        let resolved = match cached {
+            Some(hit) => hit,
+            None => {
+                let mut fdir: Option<String> = None;
+                let mut dump: Option<(eprog, i32)> = None;
+                // c:6219 `getfpfunc(s, ksh, test, fdir, 1)` with test_only —
+                // a pure probe: it fills `*fdir` (c:6240 `*fdir = *pp;`)
+                // without parsing the file.
+                let hit = getfpfunc(&name, &mut fdir, None, 1, &mut dump)
+                    .and(fdir)
+                    // c:1061 (Src/hashtable.c, getshfuncfile) — a PM_LOADDIR
+                    // filename renders as
+                    // `zhtricat(shf->filename, "/", shf->node.nam)`.
+                    .map(|d| {
+                        if d.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{d}/{name}")
+                        }
+                    });
+                cache
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(name.clone(), hit.clone());
+                hit
+            }
+        };
+        if let Some(file) = resolved {
+            filename = Some(file);
+            flineno = 0; // c:5384-5388 — never runs for an autoload stub
+        }
+    }
     {
         let frame = crate::ported::zsh_h::funcstack {
             prev: None,             // c:6014 (Vec-stack: index encodes link)
@@ -6639,6 +6715,146 @@ pub fn doshfunc(
     }
 
     ret // c:6157 return ret
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// `(eval)` funcstack frame — the `FS_EVAL` half of the funcstack/functrace/
+// funcfiletrace subsystem whose `FS_FUNC` half is `doshfunc` above.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// C keeps `struct funcstack fstack;` as an automatic in `eval()`
+/// (`Src/builtin.c:6148`) and unwinds it with a plain
+/// `funcstack = funcstack->prev;` on the single return path
+/// (`Src/builtin.c:6210`). zshrs's `FUNCSTACK` is a `Mutex<Vec<funcstack>>`
+/// and its eval entry points have MANY early-return paths (errflag
+/// containment, recursion backstop, `?` from `execute_script`), so the pop
+/// is carried by `Drop` instead. There is no C counterpart for this type;
+/// the pushed frame itself is a line-by-line port of `Src/builtin.c:6155-6193`.
+///
+/// Every caller that stands in for C's `eval()` — the `BUILTIN_EVAL`
+/// handler and `eval_string` below — must hold one of these for the
+/// duration of the eval'd body, or `$funcstack` / `$functrace` /
+/// `$funcfiletrace` lose a frame relative to zsh.
+pub struct EvalFuncstackFrame {
+    /// c:6191/6193 `fpushed` — whether the frame was actually pushed.
+    fpushed: bool,
+}
+
+impl EvalFuncstackFrame {
+    /// Port of the funcstack prologue of `eval(char **argv)` from
+    /// `Src/builtin.c:6155-6193`.
+    ///
+    /// ```c
+    /// ineval = !isset(EVALLINENO);
+    /// if (!ineval) {
+    ///     scriptname = "(eval)";
+    ///     fstack.prev = funcstack;
+    ///     fstack.name = scriptname;
+    ///     fstack.caller = funcstack ? funcstack->name : dupstring(argzero);
+    ///     fstack.lineno = lineno;
+    ///     fstack.tp = FS_EVAL;
+    ///     if (!funcstack || funcstack->tp == FS_SOURCE) {
+    ///         fstack.flineno = fstack.lineno;
+    ///         fstack.filename = fstack.caller;
+    ///     } else {
+    ///         fstack.flineno = funcstack->flineno + lineno;
+    ///         if (funcstack->tp == FS_EVAL)
+    ///             fstack.flineno--;
+    ///         fstack.filename = funcstack->filename;
+    ///         if (!fstack.filename)
+    ///             fstack.filename = "";
+    ///     }
+    ///     funcstack = &fstack;
+    ///     fpushed = 1;
+    /// } else
+    ///     fpushed = 0;
+    /// ```
+    ///
+    /// `scriptname` (c:6157) is left to the caller: the `BUILTIN_EVAL`
+    /// handler saves/restores it around the whole builtin, which is where
+    /// C's `oscriptname` (c:6146) / restore (c:6222) live.
+    pub fn push() -> Self {
+        use crate::ported::modules::parameter::FUNCSTACK;
+        use crate::ported::zsh_h::{FS_EVAL, FS_SOURCE};
+        // c:6155 — `ineval = !isset(EVALLINENO);`
+        let ineval = !crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO);
+        if ineval {
+            return EvalFuncstackFrame { fpushed: false }; // c:6193 fpushed = 0
+        }
+        // c:6161 — `fstack.lineno = lineno;`. zshrs mirrors C's single
+        // `lineno` global (params.c:123) in `lex::LEX_LINENO`, the one
+        // `BUILTIN_SET_LINENO` drives per statement — the same mirror
+        // `doshfunc` reads for its `FS_FUNC` frame (see c:6013 there).
+        let lineno = crate::ported::lex::lineno() as i64;
+        let frame = {
+            let stk = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
+            // c:6160 — `fstack.caller = funcstack ? funcstack->name
+            //                                     : dupstring(argzero);`
+            let caller = match stk.last() {
+                Some(f) => Some(f.name.clone()),
+                None => crate::ported::utils::argzero(),
+            };
+            // c:6174-6188 — flineno/filename deduction. Identical logic to
+            // `funcfiletracegetfn` (Src/Modules/parameter.c:724-762): an eval
+            // is an inlined call from a tracing perspective.
+            let (flineno, filename) = match stk.last() {
+                // c:6174 — `if (!funcstack || funcstack->tp == FS_SOURCE)`
+                None => (lineno, caller.clone()), // c:6175-6176
+                Some(p) if p.tp == FS_SOURCE => (lineno, caller.clone()), // c:6175-6176
+                Some(p) => {
+                    // c:6178 — `fstack.flineno = funcstack->flineno + lineno;`
+                    let mut flineno = p.flineno + lineno;
+                    // c:6183-6184 — `if (funcstack->tp == FS_EVAL) fstack.flineno--;`
+                    // Line numbers in eval start from 1, not zero, so offset
+                    // by one to get line in file.
+                    if p.tp == FS_EVAL {
+                        flineno -= 1;
+                    }
+                    // c:6185-6187 — `fstack.filename = funcstack->filename;
+                    //                if (!fstack.filename) fstack.filename = "";`
+                    (
+                        flineno,
+                        Some(p.filename.clone().unwrap_or_else(String::new)),
+                    )
+                }
+            };
+            crate::ported::zsh_h::funcstack {
+                prev: None,                 // c:6158 (Vec-stack: index encodes link)
+                name: "(eval)".to_string(), // c:6159 fstack.name = scriptname
+                filename,                   // c:6176 / c:6185
+                caller,                     // c:6160
+                flineno,                    // c:6175 / c:6178
+                lineno,                     // c:6161
+                tp: FS_EVAL,                // c:6162
+            }
+        };
+        FUNCSTACK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(frame); // c:6189 funcstack = &fstack
+        EvalFuncstackFrame { fpushed: true } // c:6191 fpushed = 1
+    }
+
+    /// c:6191/6193 `fpushed` — whether `EVALLINENO` was set and a frame
+    /// really went on. Callers mirror C's `if (!ineval) scriptname =
+    /// "(eval)";` (c:6157) off the same test.
+    pub fn pushed(&self) -> bool {
+        self.fpushed
+    }
+}
+
+impl Drop for EvalFuncstackFrame {
+    /// c:6209-6210 — `if (fpushed) funcstack = funcstack->prev;`
+    fn drop(&mut self) {
+        if self.fpushed {
+            crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .pop();
+        }
+    }
 }
 
 /// `TRAP_STATE_PRIMED` — re-exported from the canonical enum port rather

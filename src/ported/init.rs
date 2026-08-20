@@ -234,8 +234,23 @@ fn parseargs(
         flags
     };
 
-    *argv0.lock().unwrap() = argv[idx].clone(); // c:271
-                                                // argzero = posixzero = *argv++                                         // c:271
+    // c:282 — `argv0 = argzero = posixzero = *argv++;` — all THREE are
+    // seeded from the kernel-supplied argv[0]. Only `argv0` was; `argzero`
+    // and `posixzero` stayed unset for an interactive shell, so `$0` read
+    // empty at the prompt where zsh reads `/bin/zsh`, and the empty value
+    // cascaded into `doshfunc`'s funcstack push: with `argzero` NULL,
+    // `funcsave->argv0` (c:6011) is None, so the outermost frame's
+    // `fstack.caller` fell through to a re-read of `argzero` — which
+    // doshfunc had just overwritten with the callee's own name (c:5986) —
+    // and `$functrace[-1]` reported `_main_complete:2` instead of
+    // `/bin/zsh:2`. The same None also skipped the c:6116 restore
+    // (`if let Some(saved) = funcsave_argv0`), leaking the completer's name
+    // into the interactive shell's `$0` after every TAB.
+    // A `-c` name argument (c:299) and a runscript (c:1402) both overwrite
+    // this later, exactly as in C.
+    *argv0.lock().unwrap() = argv[idx].clone(); // c:282
+    crate::ported::utils::set_argzero(Some(argv[idx].clone())); // c:282
+    crate::ported::utils::set_posixzero(Some(argv[idx].clone())); // c:282
     idx += 1;
     // SHIN = 0;                                                             // c:272
 

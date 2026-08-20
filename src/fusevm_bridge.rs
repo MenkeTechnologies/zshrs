@@ -1589,42 +1589,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `unsetopt evallineno` (no frame), so the option gate is load-bearing
         // and is mirrored here. Popped on every return path by the guard.
         // Bug #1066.
-        let eval_pushed_frame = crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO);
-        if eval_pushed_frame {
-            let caller = {
-                let stk = crate::ported::modules::parameter::FUNCSTACK
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                stk.last()
-                    .map(|f| f.name.clone()) // c:6167 funcstack->name
-                    .or_else(|| crate::ported::utils::argzero()) // c:6167 argzero
-            };
-            let frame = crate::ported::zsh_h::funcstack {
-                prev: None,                 // c:6166 (Vec-stack: index encodes link)
-                name: "(eval)".to_string(), // c:6166 fstack.name = scriptname
-                filename: None,
-                caller,
-                flineno: 0,
-                lineno: 0,                         // c:6169
-                tp: crate::ported::zsh_h::FS_EVAL, // c:6170
-            };
-            crate::ported::modules::parameter::FUNCSTACK
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(frame); // c:6178 funcstack = &fstack
-        }
-        struct EvalFuncstackGuard(bool);
-        impl Drop for EvalFuncstackGuard {
-            fn drop(&mut self) {
-                if self.0 {
-                    crate::ported::modules::parameter::FUNCSTACK
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .pop();
-                }
-            }
-        }
-        let _eval_fs_guard = EvalFuncstackGuard(eval_pushed_frame);
+        // The push itself is the canonical port (`EvalFuncstackFrame::push`,
+        // exec.rs, c:6155-6193) — shared with `eval_string`, which the
+        // compsys `_dispatch` port uses for its `eval "$comp"` sites so both
+        // eval entry points produce a byte-identical `(eval)` frame. It was
+        // inline here and set `lineno`/`flineno` to 0 with no `filename`,
+        // which C computes at c:6161 / c:6174-6188 — so `$functrace` read
+        // `<caller>:0` and `$funcfiletrace` lost the defining file.
+        let _eval_fs_guard = crate::ported::exec::EvalFuncstackFrame::push();
         let oscriptname = crate::ported::utils::scriptname_get();
         crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
         // Recursion backstop — c:Src/jobs.c:1878-1884. zsh caps eval recursion
