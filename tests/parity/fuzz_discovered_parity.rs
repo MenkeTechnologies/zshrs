@@ -3323,23 +3323,25 @@ mod ztst_mined {
     use super::*;
 
     /// D08cmdsubst — an UNBRACED `$*`/`$@` in the SAME word as ANY
-    /// backslash-escape marker (`\"`, `\\`, …) is left unexpanded, so
-    /// its `*` globs and fails "no matches found". Isolated precisely:
-    /// `${*}` (braced) works; `$1` (digit) works; `$*` in a SEPARATE
-    /// word works (`print a\"b $*` → ok). Only the same-word
-    /// backslash-marker + unbraced `$*`/`$@` combination fails. Runtime
-    /// paramsubst issue (disasm identical to the working `$1` case) —
-    /// the fix must preserve the (correct) quoted-`$*`-joins behavior,
-    /// so it needs careful quote-state tracing. zsh: `"hi"`; zshrs:
-    /// nomatch error.
+    /// backslash-escape marker (`\"`, `\\`, …). The marker routes the
+    /// word off the compiler's segment fast path onto the runtime
+    /// prefork→stringsubst→paramsubst path, where the bare-`@`/`*` arm
+    /// built its nodes with a first/last sticking loop for EVERY array
+    /// length. With exactly ONE positional `i == 0` matched first, so
+    /// the element took the prefix and the SUFFIX WAS DROPPED
+    /// (`print \"$*\"x` → `"hi`, `print \"$*\"` → `"hi`).
+    ///
+    /// FIXED: the `<= 1` case now follows c:Src/subst.c:4272-4298
+    /// ("Empty array or single element") — one node of
+    /// prefix + aval[0] + fstr with the resume cursor left at the start
+    /// of the suffix. Two-or-more values keep the sticking loop
+    /// (c:4377-4437). Regression pins — no longer ignored.
     #[test]
-    #[ignore = "zshrs gap: unbraced $*/$@ not expanded when the same word holds a backslash-escape marker"]
     fn escaped_quote_with_dollar_star() {
         assert_parity(r#"set -- hi; print \"$*\""#);
     }
 
     #[test]
-    #[ignore = "zshrs gap: same as above via \\\\ escape — backslash marker + unbraced $* in one word"]
     fn escaped_backslash_with_dollar_star() {
         assert_parity(r#"set -- hi; print \\$*"#);
     }
@@ -3351,9 +3353,35 @@ mod ztst_mined {
     }
 
     #[test]
-    #[ignore = "zshrs gap: unbraced $@ in a \\\"-escaped word drops its trailing quote"]
     fn escaped_quote_with_dollar_at() {
         assert_parity(r#"set -- hi; print \"$@\""#);
+    }
+
+    /// Same word shape with a literal suffix AFTER the closing escape:
+    /// the dropped text is not limited to the escape itself.
+    #[test]
+    fn escaped_quote_with_dollar_star_and_suffix() {
+        assert_parity(r#"set -- hi; print \"$*\"x"#);
+    }
+
+    /// A single EMPTY positional: prefix and suffix must both survive
+    /// around a zero-length value (c:4292 `if (vallen)`).
+    #[test]
+    fn escaped_quote_with_dollar_at_single_empty_value() {
+        assert_parity(r#"set -- ""; print -rl A\"$@\"B"#);
+    }
+
+    /// TWO positionals take the first/last sticking loop instead —
+    /// pin that the single-element fix didn't disturb it.
+    #[test]
+    fn escaped_quote_with_dollar_star_two_values() {
+        assert_parity(r#"set -- hi ho; print \"$*\"x"#);
+    }
+
+    /// Zero positionals: the word collapses to prefix + suffix.
+    #[test]
+    fn escaped_quote_with_dollar_star_no_values() {
+        assert_parity(r#"set --; print -rl \"$*\"end"#);
     }
 
     /// The braced/positional forms already work — pin so a fix to the
@@ -3368,12 +3396,21 @@ mod ztst_mined {
     }
 
     /// A06assign — `typeset a` under TYPESET_TO_UNSET declares an
-    /// unset scalar; `a+=(1 2 3)` converts it to an array and zsh
-    /// prepends the (empty) scalar value as element 0 (`'' 1 2 3`).
-    /// zshrs drops the empty element (`1 2 3`). Without the option the
-    /// two agree (declared-empty scalar → element 0 IS kept).
+    /// unset scalar; `a+=(1 2 3)` converts it to an array. The local
+    /// Homebrew oracle (zsh-5.9.2) prepends the (empty) scalar value as
+    /// element 0 (`'' 1 2 3`); zshrs yields `1 2 3`.
+    ///
+    /// NOT a zshrs gap — an ORACLE/SPEC split. Upstream commit
+    /// 85172998f4 ("52619: no empty element when appending array to
+    /// unset scalar", Feb 2024) added the `&& !(v->pm->node.flags &
+    /// PM_UNSET)` term to the augment arm at
+    /// c:Src/params.c:3344-3352, which is exactly zshrs's `1 2 3`. The
+    /// Homebrew 5.9.2 build predates that commit. zshrs matches the C
+    /// SPEC; the test stays ignored until the oracle is a fork build.
+    /// Without the option the two agree (declared-empty scalar → PM_UNSET
+    /// is clear → element 0 IS kept, and zshrs keeps it too).
     #[test]
-    #[ignore = "zshrs gap: TYPESET_TO_UNSET + scalar+=(array) drops the empty element-0"]
+    #[ignore = "oracle/spec split: Homebrew zsh-5.9.2 predates upstream 85172998f4 (params.c:3344); zshrs matches the fork"]
     fn typeset_to_unset_append_array_keeps_empty_elem() {
         assert_parity(r#"setopt typeset_to_unset; typeset a; a+=(1 2 3); print "${(q@)a}""#);
     }
