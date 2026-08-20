@@ -16,17 +16,28 @@ Three tables:
 `matrix()` is the cross product, minus the pairs that cannot say anything
 (see `_applicable`).
 
+`discover_cases()` builds cases from THIS HOST: every `_name` completer in the
+live `$fpath` that also has a `name` binary on `$PATH`. The hand-written CASES
+are the fixed, machine-independent floor; discovery is the ceiling (4k+ cases
+on the author's box) and is opt-in per run because its size and content depend
+on what is installed.
+
 Run this file directly to print the tables:
 
     scripts/parity_corpus.py --list-keys
     scripts/parity_corpus.py --list-cases
     scripts/parity_corpus.py --list-sequences
+    scripts/parity_corpus.py --list-discovered
     scripts/parity_corpus.py --matrix-size
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 
 # ── keystroke vocabulary ─────────────────────────────────────────────────────
@@ -50,12 +61,21 @@ KEYS: dict[str, bytes] = {
     "end": b"\x1b[F",
     "pgup": b"\x1b[5~",
     "pgdn": b"\x1b[6~",
+    "delete": b"\x1b[3~",       # forward-delete (its own CSI, not ^D)
     "ctrl-p": b"\x10",          # up-line-or-history / menu up
     "ctrl-n": b"\x0e",          # down-line-or-history / menu down
     "ctrl-f": b"\x06",          # forward-char / menu right
     "ctrl-b": b"\x02",          # backward-char / menu left
     "ctrl-a": b"\x01",          # beginning-of-line
     "ctrl-e": b"\x05",          # end-of-line
+    # incremental search. `menusel_isearch_back` referenced "ctrl-r" while the
+    # table did not define it, and the harness fallback (`KEYS.get(name,
+    # name.encode())`) silently transmitted the ASCII text `ctrl-r` — six
+    # literal characters self-inserted into the menu instead of the ^R the
+    # sequence is named for. `key_bytes()` below now rejects an unknown
+    # multi-character name outright so a typo can never masquerade as input.
+    "ctrl-r": b"\x12",          # history-incremental-search-backward
+    "ctrl-s": b"\x13",          # history-incremental-search-forward
     # accept / abort / edit
     "cr": b"\r",
     "esc": b"\x1b",
@@ -65,6 +85,8 @@ KEYS: dict[str, bytes] = {
     "ctrl-u": b"\x15",          # kill-whole-line
     "ctrl-w": b"\x17",          # backward-kill-word
     "ctrl-h": b"\x08",          # backward-delete-char
+    "ctrl-k": b"\x0b",          # kill-line
+    "ctrl-y": b"\x19",          # yank
     "bs": b"\x7f",              # backspace
     "ctrl-_": b"\x1f",          # undo
     "ctrl-x-ctrl-x": b"\x18\x18",
@@ -72,6 +94,27 @@ KEYS: dict[str, bytes] = {
     "space": b" ",
     "slash": b"/",
 }
+
+
+class UnknownKey(KeyError):
+    """A key sequence named something KEYS does not define."""
+
+
+def key_bytes(name: str) -> bytes:
+    """The bytes for one key name, strictly.
+
+    A single character is taken literally — that is how the interactive
+    menuselect filter sequences type `s`, `r`, `c`. Anything longer MUST be a
+    defined key name; the old `KEYS.get(name, name.encode())` fallback turned a
+    misspelled or missing entry into six self-inserted characters that looked
+    like a completion bug on both shells at once (see the `ctrl-r` note above).
+    """
+    if name in KEYS:
+        return KEYS[name]
+    if len(name) == 1:
+        return name.encode()
+    raise UnknownKey(name)
+
 
 # ── keystroke sequences ──────────────────────────────────────────────────────
 #
@@ -107,10 +150,12 @@ KEY_SEQUENCES: dict[str, list[str]] = {
     "tab_end": ["tab", "end"],
     # reverse menu
     "btab1": ["btab"],
+    "btab2": ["btab", "btab"],
     "tab_btab": ["tab", "btab"],
     "tab2_btab": ["tab", "tab", "btab"],
     # list without inserting
     "ctrl_d": ["ctrl-d"],
+    "ctrl_d2": ["ctrl-d", "ctrl-d"],
     "tab_ctrl_d": ["tab", "ctrl-d"],
     # abort paths — the original line has to come back intact
     "tab_ctrl_g": ["tab", "ctrl-g"],
@@ -120,13 +165,44 @@ KEY_SEQUENCES: dict[str, list[str]] = {
     # accept paths
     "tab_cr": ["tab", "cr"],
     "tab_down_cr": ["tab", "down", "cr"],
+    "tab2_cr": ["tab", "tab", "cr"],
     # edit-after-complete: the completion state has to be discarded cleanly
     "tab_bs": ["tab", "bs"],
     "tab_ctrl_w": ["tab", "ctrl-w"],
+    "tab_ctrl_u": ["tab", "ctrl-u"],
     "tab_undo": ["tab", "ctrl-_"],
+    "tab_delete": ["tab", "delete"],
     # continue typing after a completion
     "tab_slash_tab": ["tab", "slash", "tab"],
     "tab_space_tab": ["tab", "space", "tab"],
+    # re-complete after editing / aborting: the second TAB must start from a
+    # clean state, not from whatever the first one left behind.
+    "tab_bs_tab": ["tab", "bs", "tab"],
+    "tab_esc_tab": ["tab", "esc", "tab"],
+    "tab_down_tab": ["tab", "down", "tab"],
+
+    # ── cursor NOT at end of line ───────────────────────────────────────
+    #
+    # Every sequence above completes with the cursor at the end of the
+    # buffer, which is the one position `compset -p`/`PREFIX`/`SUFFIX` math
+    # cannot get wrong. Moving left first makes the word split into a real
+    # prefix and a real suffix, and completing at column 0 exercises the
+    # command-position path with text already to the right of the cursor.
+    "left_tab": ["left", "tab"],
+    "left2_tab": ["left", "left", "tab"],
+    "left_tab_tab": ["left", "tab", "tab"],
+    "home_tab": ["home", "tab"],
+    "ctrl_a_tab": ["ctrl-a", "tab"],
+    "bs_tab": ["bs", "tab"],
+
+    # ── redraw after the list is on screen ──────────────────────────────
+    #
+    # ^L has to repaint the prompt, the command line AND decide what happens
+    # to the completion listing below it. That is the exact surface where a
+    # multiline prompt made the list climb up the screen, and no sequence
+    # above ever redraws once a list exists.
+    "tab_ctrl_l": ["tab", "ctrl-l"],
+    "tab_down_ctrl_l": ["tab", "down", "ctrl-l"],
 
     # ── menuselect INTERACTIVE mode ─────────────────────────────────────
     #
@@ -149,6 +225,7 @@ KEY_SEQUENCES: dict[str, list[str]] = {
     # history-incremental-search bindings the menuselect keymap inherits.
     "menusel_slash_search": ["tab", "tab", "slash", "s"],
     "menusel_isearch_back": ["tab", "tab", "ctrl-r", "s"],
+    "menusel_isearch_fwd": ["tab", "tab", "ctrl-s", "s"],
 }
 
 # One sequence per printable filter character. Menu filtering is per-CHARACTER
@@ -164,7 +241,7 @@ del _ch
 
 # A small default battery for runs that cannot afford the full matrix. Chosen
 # to hit one of each shape: single, menu-entry, navigation, reverse, list,
-# abort, accept.
+# abort, accept, mid-word, redraw.
 #
 # All FOUR arrow directions are in the default set, not just `down`. They are
 # not interchangeable: `cd /<TAB><UP>` diverges (zsh clears the completion
@@ -186,6 +263,10 @@ DEFAULT_SEQUENCES = [
     "ctrl_d",
     "tab_ctrl_g",
     "tab_cr",
+    # cursor not at end of buffer, and a repaint with a list on screen —
+    # neither shape was reachable from any other default sequence.
+    "left_tab",
+    "tab_ctrl_l",
     # menuselect interactive filtering — only meaningful under a combo that
     # sets `menu select interactive`, but harmless elsewhere (the characters
     # just self-insert on both shells, which must ALSO match).
@@ -294,6 +375,81 @@ CASES: list[Case] = [
     Case("glob_recursive", "ls **/", "recursive glob completion", ("glob",)),
     # user's own surface
     Case("zpwr_verb", "zpwr ", "zpwr verb completion", ("optional", "zpwr")),
+
+    # ── `--opt=` : the argument half of a long option ────────────────────
+    #
+    # `--opt<TAB>` and `--opt=<TAB>` are different code paths: the second one
+    # has to strip the option name with `compset -P '*='`, look up that
+    # option's ARGUMENT spec, and complete against it with an ignored prefix.
+    # Nothing above reached it — every option case stopped at the name.
+    Case("opteq_git_format", "git log --format=", "argument after `=` on a long option", ("opt", "opteq", "git")),
+    Case("opteq_git_pretty", "git log --pretty=", "named-value argument after `=`", ("opt", "opteq", "git")),
+    Case("opteq_partial", "git log --format=medi", "partial argument after `=`", ("opt", "opteq", "git")),
+    Case("opteq_ls_color", "ls --color=", "GNU-style `=` argument", ("opt", "opteq", "optional")),
+    Case("opteq_grep_color", "grep --color=", "GNU-style `=` argument", ("opt", "opteq", "optional")),
+
+    # ── quoted words ─────────────────────────────────────────────────────
+    #
+    # Inside quotes the word is not word-split, the completer has to re-quote
+    # what it inserts, and `compquote`/`compset -q` decide what the suffix
+    # looks like. A path case outside quotes says nothing about any of it.
+    Case("quote_dq_path", 'ls "/us', "path completion inside double quotes", ("quote", "path")),
+    Case("quote_sq_path", "ls '/us", "path completion inside single quotes", ("quote", "path")),
+    Case("quote_dq_param", 'echo "$PA', "parameter completion inside double quotes", ("quote", "param")),
+    Case("quote_bs_space", "ls /Applications/Ut", "path needing a backslash-escaped space", ("quote", "path")),
+    Case("quote_dq_open", 'echo "', "completion just inside an opened quote", ("quote",)),
+
+    # ── `$var` in the word being completed ───────────────────────────────
+    Case("var_in_path", "ls $HOME/", "path completion through a parameter", ("param", "path")),
+    Case("var_brace_path", "ls ${HOME}/", "path completion through a braced parameter", ("param", "path")),
+    Case("var_partial", "ls $HOM", "parameter name mid-word", ("param",)),
+
+    # ── `~user` / named directories ──────────────────────────────────────
+    Case("tilde_user", "ls ~root/", "path under another user's home", ("path", "tilde")),
+    Case("tilde_partial", "ls ~ro", "username completion after `~`", ("path", "tilde")),
+
+    # ── precommands ──────────────────────────────────────────────────────
+    #
+    # `sudo`/`command`/`env` shift the command position one word right. The
+    # completer has to recognise the precommand and re-dispatch, which is a
+    # different path from plain command completion.
+    Case("pre_sudo", "sudo ", "command position after a precommand", ("cmd", "pre", "huge")),
+    Case("pre_sudo_partial", "sudo gi", "partial command after a precommand", ("cmd", "pre")),
+    Case("pre_sudo_args", "sudo git ", "subcommand two words after a precommand", ("sub", "pre", "git")),
+    Case("pre_command", "command l", "partial command after `command`", ("cmd", "pre")),
+    Case("pre_env", "env ", "command position after `env`", ("cmd", "pre", "huge")),
+    Case("pre_assign", "FOO=bar l", "command position after a prefix assignment", ("cmd", "pre")),
+
+    # ── command position that is NOT the first word ──────────────────────
+    Case("cmd_after_pipe", "ls | gr", "command position after a pipe", ("cmd", "compound")),
+    Case("cmd_after_semi", "true; gr", "command position after `;`", ("cmd", "compound")),
+    Case("cmd_after_andand", "true && gr", "command position after `&&`", ("cmd", "compound")),
+    Case("cmd_in_subshell", "(gr", "command position inside an unclosed subshell", ("cmd", "compound")),
+    Case("cmd_in_cmdsubst", "echo $(gr", "command position inside `$(`", ("cmd", "compound")),
+    Case("cmd_in_backtick", "echo `gr", "command position inside a backtick", ("cmd", "compound")),
+    Case("cmd_after_for", "for f in /us", "word inside a `for` list", ("compound", "path")),
+    Case("cond_test", "[[ -", "condition operator completion", ("compound",)),
+
+    # ── more redirection shapes ──────────────────────────────────────────
+    Case("redir_append", "echo x >> /tm", "append-redirection target", ("path", "redir")),
+    Case("redir_fd", "echo x 2> /tm", "fd-qualified redirection target", ("path", "redir")),
+    Case("redir_herestring", "cat <<< $PA", "here-string operand", ("param", "redir")),
+
+    # ── namespaces with their own completers ─────────────────────────────
+    Case("ns_unalias", "unalias ", "alias-name completion", ("builtin",)),
+    Case("ns_unfunction", "unfunction ", "function-name completion", ("builtin",)),
+    Case("ns_bindkey_widget", "zle ", "widget-name completion", ("builtin",)),
+    Case("ns_hash", "hash -d ", "named-directory assignment", ("builtin",)),
+    Case("ns_jobs", "fg %", "job-spec completion", ("builtin",)),
+    Case("ns_kill_signame", "kill -s ", "signal NAME completion (argument of -s)", ("builtin", "opteq")),
+    Case("ns_chown_user", "chown ", "username completion", ("sub",)),
+    Case("ns_ssh_host", "ssh ", "hostname completion from known_hosts/config", ("sub", "host")),
+    Case("ns_make_target", "make ", "makefile target completion", ("sub", "optional")),
+
+    # ── brace / glob shapes not covered above ────────────────────────────
+    Case("brace_expand", "ls /usr/{b", "word inside a brace expansion", ("glob", "path")),
+    Case("glob_suffix", "ls /usr/bin/z*", "trailing glob with a literal prefix", ("glob", "path")),
+    Case("glob_qual_partial", "ls *(.", "partially typed glob qualifier", ("glob",)),
 ]
 
 # Sequences that cannot say anything for a given case tag, so the matrix skips
@@ -305,6 +461,33 @@ _SKIP: dict[str, set[str]] = {
 }
 
 
+def _validate() -> None:
+    """Corpus integrity, checked at import.
+
+    Two cases with the same NAME collide in every by-name report; two with the
+    same BUFFER collide in `gen_compsys_parity_report.py`'s buffer -> case map,
+    so one of them is silently attributed to the other's tags and note. Both
+    are silent mislabelling of results, which is exactly what an audit corpus
+    cannot afford — fail loudly at import instead.
+    """
+    for what, seen in (("name", [c.name for c in CASES]),
+                       ("buffer", [c.buffer for c in CASES])):
+        dupes = sorted({v for v in seen if seen.count(v) > 1})
+        if dupes:
+            raise ValueError(f"parity_corpus: duplicate case {what}(s): {dupes}")
+    for seq, keys in KEY_SEQUENCES.items():
+        for k in keys:
+            if k not in KEYS and len(k) != 1:
+                raise ValueError(
+                    f"parity_corpus: sequence {seq!r} names undefined key {k!r}")
+    unknown = [s for s in DEFAULT_SEQUENCES if s not in KEY_SEQUENCES]
+    if unknown:
+        raise ValueError(f"parity_corpus: DEFAULT_SEQUENCES has unknown {unknown}")
+
+
+_validate()
+
+
 def _applicable(case: Case, seq: str) -> bool:
     return not any(seq in _SKIP.get(tag, ()) for tag in case.tags)
 
@@ -313,6 +496,20 @@ def cases_by_tag(tag: str | None) -> list[Case]:
     if not tag:
         return list(CASES)
     return [c for c in CASES if tag in c.tags]
+
+
+def adhoc_case(buffer: str, prefix: str = "adhoc") -> Case:
+    """A Case for a buffer that is not in CASES (`--case`, `--corpus FILE`).
+
+    The name is derived from the buffer, so the same ad-hoc buffer gets the
+    same stable id in every run and across machines — a JSON result stream is
+    only diffable across commits if the ids do not move.
+    """
+    known = {c.buffer: c for c in CASES}
+    if buffer in known:
+        return known[buffer]
+    digest = hashlib.sha1(buffer.encode()).hexdigest()[:8]
+    return Case(f"{prefix}_{digest}", buffer, "ad-hoc", ("adhoc",))
 
 
 def matrix(
@@ -395,11 +592,99 @@ def shrink(statements: list[str], still_fails, max_probes: int = 60) -> list[str
     return current
 
 
+# ── host discovery ───────────────────────────────────────────────────────────
+#
+# The hand-written CASES above are a fixed floor that any machine reproduces.
+# They are not the coverage ceiling: this host carries 44k `_name` completers
+# across 50 fpath directories, ~4.1k of which name a binary that is actually
+# installed. Every one of those is a completer neither shell has ever been
+# compared on. `discover_cases()` turns them into cases mechanically.
+#
+# Discovery is OPT-IN per run (`--discover N` on the harness) because the set
+# depends on what is installed, so two machines produce different corpora and
+# the results are not directly comparable. Order is sorted, so a given N always
+# selects the same prefix of the same list on the same host.
+
+# Commands whose COMPLETER may run the command itself. `_pick_variant` and
+# `_call_program` execute `$cmd --version` / `$cmd --help` to decide which
+# variant is installed, so discovering a case for one of these means the
+# harness may actually run it — twice per cell, once per shell. This list is
+# about not rebooting the machine mid-sweep; it suppresses no comparison and no
+# divergence. `--discover-all` includes them anyway.
+DISCOVER_UNSAFE = frozenset("""
+    dd fdisk gdisk halt init mkfs mkswap newfs nvram parted poweroff pkill
+    reboot rm shutdown sudo su swapoff swapon sysctl systemctl telinit umount
+    mount kill killall diskutil launchctl pmset scutil softwareupdate
+    csrutil erase_all_content_and_settings
+""".split())
+
+
+def _fpath_dirs() -> list[str]:
+    """The fpath a bare `zsh -f` sees on this host."""
+    try:
+        out = subprocess.run(
+            ["zsh", "-f", "-c", "print -rl -- $fpath"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+    except Exception:
+        return []
+    return [d for d in out.splitlines() if d and os.path.isdir(d)]
+
+
+def completer_names(dirs: list[str] | None = None) -> list[str]:
+    """Sorted command names that have a `_name` completer somewhere in fpath."""
+    names: set[str] = set()
+    for d in (dirs if dirs is not None else _fpath_dirs()):
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            continue
+        for e in entries:
+            # `_name`, but not `__helper`, not `_name.zwc`, not a bare `_`.
+            if (len(e) > 1 and e[0] == "_" and e[1] != "_"
+                    and "." not in e and "/" not in e):
+                names.add(e[1:])
+    return sorted(names)
+
+
+def discover_cases(limit: int | None = None, include_unsafe: bool = False,
+                   dirs: list[str] | None = None) -> list[Case]:
+    """Cases for every installed command that ships a completer on this host.
+
+    Two cases per command — `cmd ` (operand/subcommand position) and `cmd -`
+    (option position) — because those are the two shapes almost every completer
+    implements and they fail independently.
+    """
+    out: list[Case] = []
+    taken = {c.buffer for c in CASES}
+    for name in completer_names(dirs):
+        if not include_unsafe and name in DISCOVER_UNSAFE:
+            continue
+        if not shutil.which(name):
+            continue
+        for suffix, kind, tag in ((" ", "arg", "sub"), (" -", "opt", "opt")):
+            buf = name + suffix
+            if buf in taken:
+                continue
+            taken.add(buf)
+            out.append(Case(f"auto_{kind}_{name}", buf,
+                            f"discovered completer _{name}",
+                            ("auto", tag, "optional")))
+        if limit is not None and len(out) >= limit:
+            break
+    return out[:limit] if limit is not None else out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list-keys", action="store_true")
     ap.add_argument("--list-cases", action="store_true")
     ap.add_argument("--list-sequences", action="store_true")
+    ap.add_argument("--list-discovered", action="store_true",
+                    help="cases this host would contribute via discover_cases()")
+    ap.add_argument("--discover-limit", type=int, default=None)
+    ap.add_argument("--discover-all", action="store_true",
+                    help="include commands whose completer may execute them")
     ap.add_argument("--matrix-size", action="store_true")
     ap.add_argument("--all-sequences", action="store_true",
                     help="size the matrix against every sequence, not the default battery")
@@ -415,6 +700,11 @@ def main() -> int:
     if args.list_cases:
         for c in CASES:
             print(f"{c.name:20s} {c.buffer!r:28s} [{','.join(c.tags)}] {c.note}")
+    if args.list_discovered:
+        found = discover_cases(args.discover_limit, args.discover_all)
+        for c in found:
+            print(f"{c.name:32s} {c.buffer!r}")
+        print(f"# {len(found)} discovered case(s) on this host")
     if args.matrix_size:
         seqs = list(KEY_SEQUENCES) if args.all_sequences else DEFAULT_SEQUENCES
         cells = matrix(CASES, seqs)

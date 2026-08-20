@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 import pty
 import select
@@ -193,13 +194,22 @@ class ShellSession:
                 return
 
     def wait_for_prompt(self, timeout=15.0):
-        waited = 0.0
-        step = 0.05
-        while waited < timeout:
-            self._drain_once(step)
+        """Wait for the prompt sentinel against a WALL-CLOCK deadline.
+
+        The previous loop added a flat `step` per iteration no matter how long
+        the iteration actually took. `_drain_once` returns as soon as data is
+        ready — often in well under a millisecond — so a child that was writing
+        steadily burned the whole counter in a fraction of `timeout` seconds
+        and a shell that was booting normally, just chattily, was declared
+        never to have reached a prompt. A monotonic deadline measures the thing
+        the argument is named for. (Same fix as comptab_parity.Session.
+        wait_prompt.)
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self._drain_once(0.05)
             if self._prompt_visible():
                 return True
-            waited += step
         return False
 
     def _prompt_visible(self):
@@ -560,11 +570,16 @@ def run_cases_against(init_file, cases, args, env, confirm=1):
     init_file. Returns (passed, failed, fail_records) where each fail_record is
     (case, ref_grid, test_grid, diffs|None).
 
-    A completion occasionally renders slower than the settle window under load
-    and gets captured mid-render, so a lone FAIL can be a timing false positive.
-    `confirm` re-runs a failing case up to that many extra times; a divergence
-    counts as real only if it reproduces EVERY time (deterministic). Any pass on
-    retry marks it flaky and it is dropped."""
+    `confirm` re-runs a failing case up to that many extra times. A pass on
+    re-run means the case is NONDETERMINISTIC, which is itself a bug class (see
+    the worker-pool tty race) — it is reported as FLAKY and counted as a
+    failure. It used to be counted as a pass and dropped, which is exactly the
+    trust problem comptab_parity.py was written to get away from: the number
+    the harness prints has to be the number of cells that agreed EVERY time.
+
+    Returns (passed, failed, fail_records) where each fail_record is
+    (case, ref_grid, test_grid, diffs|None); a flaky record carries its last
+    failing capture."""
     ref_argv = [args.zsh, "-f", "-i"]
     test_argv = [args.zshrs, "--zsh", "-f", "-i"]
     source_cmd = f"source {shlex.quote(init_file)}\n".encode()
@@ -595,19 +610,16 @@ def run_cases_against(init_file, cases, args, env, confirm=1):
             if diffs == []:
                 passed += 1
                 continue
-        # Either a real diff or a prompt failure — confirm it reproduces.
-        stable = True
+        # Either a real diff or a prompt failure — re-run only to LABEL it.
+        flaky = False
         for _ in range(max(0, confirm)):
             r2, t2, d2 = attempt(case)
-            if d2 == []:  # a clean pass on retry -> flaky, not a real gap
-                stable = False
+            if d2 == []:            # passed on re-run -> nondeterministic
+                flaky = True
                 break
             ref_grid, test_grid, diffs = r2, t2, d2  # keep the latest failing capture
-        if stable:
-            failed += 1
-            fails.append((case, ref_grid, test_grid, diffs))
-        else:
-            passed += 1  # flaky pass
+        failed += 1
+        fails.append((case, ref_grid, test_grid, diffs, "FLAKY" if flaky else "FAIL"))
     return passed, failed, fails
 
 
@@ -808,6 +820,8 @@ def main():
                     help="only run shared-corpus cases carrying this tag")
     ap.add_argument("--skip-optional", action="store_true",
                     help="drop cases needing a binary that may be absent")
+    ap.add_argument("--json", default=None, metavar="PATH",
+                    help="write the result document here ('-' for stdout)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -885,13 +899,29 @@ def main():
             sess.close()
 
     passed = failed = 0
+    results = []
     for case in cases:
         ref_grid = capture(ref_argv, "zsh", case)
         test_grid = capture(test_argv, "zshrs", case)
         keyspec = "+".join(case.keys)
+        record = {
+            # `case.name` is already `<corpus case>.<sequence>` for the built-in
+            # set, so it is a stable id across runs and machines.
+            "id": case.name,
+            "buffer": case.buffer,
+            "keys": list(case.keys),
+            "status": "PASS",
+            "detail": "",
+            "rows_differ": 0,
+            "first_diff": None,
+            "diff_rows": [],
+        }
+        results.append(record)
         if ref_grid is None or test_grid is None:
             failed += 1
             who = "zsh" if ref_grid is None else "zshrs"
+            record["status"] = "FAIL"
+            record["detail"] = f"{who} never reached prompt"
             print(f"FAIL {case.name:16s} {case.buffer!r} [{keyspec}]  ({who} never reached prompt)")
             continue
         diffs = diff_grids(ref_grid, test_grid)
@@ -902,18 +932,49 @@ def main():
                 print(render_grid(ref_grid))
         else:
             failed += 1
+            row, a, b = diffs[0]
+            col = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y),
+                       min(len(a), len(b)))
+            record.update(status="FAIL", detail=f"{len(diffs)} rows differ",
+                          rows_differ=len(diffs),
+                          first_diff={"row": row, "col": col, "ref": a, "test": b},
+                          diff_rows=[{"row": i, "ref": x, "test": y}
+                                     for i, x, y in diffs[:50]])
             print(f"FAIL {case.name:16s} {case.buffer!r} [{keyspec}]  ({len(diffs)} rows differ)")
             print("  --- zsh (ref) ---")
             print(render_grid(ref_grid))
             print("  --- zshrs (test) ---")
             print(render_grid(test_grid))
+            print(f"  --- first divergence: row {row}, col {col} ---")
+            print(f"  zsh  : {a}")
+            print(f"  zshrs: {b}")
+            print("  " + "-" * (col + 7) + "^")
             print("  --- row diffs ---")
-            for i, a, b in diffs:
-                print(f"  row {i:2d}: zsh  = {a!r}")
-                print(f"          zshrs= {b!r}")
+            for i, x, y in diffs:
+                print(f"  row {i:2d}: zsh  = {x!r}")
+                print(f"          zshrs= {y!r}")
 
     print()
     print(f"# {passed} passed, {failed} failed, {len(cases)} total")
+    if args.json:
+        doc = {
+            "schema": "compsys-parity/1",
+            "argv": sys.argv[1:],
+            "zshrs": args.zshrs,
+            "zsh": args.zsh,
+            "dump": dump,
+            "zstyle": zstyle_file,
+            "geom": {"rows": args.rows, "cols": args.cols, "settle_ms": args.settle},
+            "summary": {"passed": passed, "failed": failed, "cells": len(cases)},
+            "results": results,
+        }
+        text = json.dumps(doc, indent=2)
+        if args.json == "-":
+            print(text)
+        else:
+            with open(args.json, "w") as f:
+                f.write(text + "\n")
+            print(f"# json: {args.json}")
     return 1 if failed else 0
 
 

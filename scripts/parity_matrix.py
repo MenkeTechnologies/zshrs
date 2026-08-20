@@ -22,8 +22,10 @@ finds a CPython explicitly and says which one it picked.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -94,6 +96,12 @@ FAILCELL_RE = re.compile(r"^#\s+--case (.*) --keys (\S+)$")
 
 
 def _scrape(log: str, rc: int) -> tuple[int, int, list[tuple[str, str]]]:
+    """Legacy stdout scrape — the fallback when the harness produced no JSON.
+
+    Kept because a harness that died before writing its JSON still printed
+    whatever it got through, and losing that is worse than parsing it loosely.
+    `_collect` prefers the JSON.
+    """
     passed = failed = 0
     cells: list[tuple[str, str]] = []
     for line in open(log, errors="replace"):
@@ -111,10 +119,48 @@ def _scrape(log: str, rc: int) -> tuple[int, int, list[tuple[str, str]]]:
     return passed, failed, cells
 
 
+def _collect(log: str, jsonpath: str, rc: int
+             ) -> tuple[int, int, list[tuple[str, str]], list[dict]]:
+    """One harness run's numbers, from its JSON when it wrote one.
+
+    Scraping stdout meant every count depended on prose staying byte-stable and
+    on no completion listing ever printing a line that looked like a summary.
+    The JSON carries the per-cell verdicts directly, so the matrix aggregates
+    the same objects the harness scored rather than a re-parse of its report.
+
+    A missing or unreadable JSON is never treated as a clean run: the stdout
+    scrape is used and, if that yields nothing while the harness exited
+    abnormally, the run is counted as a failure.
+    """
+    results: list[dict] = []
+    if jsonpath and os.path.exists(jsonpath):
+        try:
+            with open(jsonpath) as f:
+                doc = json.load(f)
+            results = doc.get("results", [])
+            summ = doc.get("summary", {})
+            passed = int(summ.get("passed", 0))
+            failed = int(summ.get("failed", 0))
+            cells = [(r["buffer"], ",".join(r.get("keys", [])))
+                     for r in results if r.get("status") != "PASS"]
+            if rc not in (0, 1):
+                cells.append(("<harness exited %d>" % rc, "-"))
+                failed = max(failed, 1)
+            return passed, failed, cells, results
+        except (ValueError, KeyError, OSError) as exc:
+            print(f"# warning: unreadable json {jsonpath}: {exc} — falling back "
+                  f"to the stdout scrape", file=sys.stderr)
+    p_, f_, c_ = _scrape(log, rc)
+    if not p_ and not f_ and rc != 0:
+        f_ = max(f_, 1)
+        c_.append(("<no results parsed from %s>" % os.path.basename(log), "-"))
+    return p_, f_, c_, results
+
+
 def run_combo(py: str, harness: str, combo: str, sequences: list[str],
               tag: str | None, skip_optional: bool, extra: list[str],
               logdir: str, cases: list, jobs: int = 1
-              ) -> tuple[int, int, list[tuple[str, str]], str]:
+              ) -> tuple[int, int, list[tuple[str, str]], str, list[dict]]:
     """One combo, optionally sharded across `jobs` concurrent harness runs.
 
     Sharding is by CASE: every cell is an independent pty pair either way, so
@@ -137,14 +183,15 @@ def run_combo(py: str, harness: str, combo: str, sequences: list[str],
             cmd += ["--tag", tag]
         if skip_optional:
             cmd += ["--skip-optional"]
-        cmd += extra
         log = os.path.join(logdir, f"{harness}.{combo}.log")
+        js = log[:-4] + ".json"
+        cmd += ["--json", js] + extra
         with open(log, "w") as f:
             f.write("$ " + " ".join(cmd) + "\n\n")
             f.flush()
             rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
-        p_, f_, cells = _scrape(log, rc)
-        return p_, f_, cells, log
+        p_, f_, cells, results = _collect(log, js, rc)
+        return p_, f_, cells, log, results
 
     # Round-robin so a slow tag (huge listings) spreads over the shards instead
     # of landing entirely on one.
@@ -159,24 +206,28 @@ def run_combo(py: str, harness: str, combo: str, sequences: list[str],
         with open(corpus, "w") as f:
             for c in sh:
                 f.write(c.buffer + "\n")
-        cmd = base_cmd() + ["--corpus", corpus] + extra
         log = os.path.join(logdir, f"{harness}.{combo}.shard{i}.log")
+        js = log[:-4] + ".json"
+        cmd = base_cmd() + ["--corpus", corpus, "--json", js] + extra
         fh = open(log, "w")
         fh.write("$ " + " ".join(cmd) + "\n\n")
         fh.flush()
         procs.append((subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT),
-                      fh, log))
+                      fh, log, js))
 
     passed = failed = 0
     cells: list[tuple[str, str]] = []
-    for proc, fh, log in procs:
+    results: list[dict] = []
+    for proc, fh, log, js in procs:
         rc = proc.wait()
         fh.close()
-        p_, f_, c_ = _scrape(log, rc)
+        p_, f_, c_, r_ = _collect(log, js, rc)
         passed += p_
         failed += f_
         cells += c_
-    return passed, failed, cells, os.path.join(logdir, f"{harness}.{combo}.shard*.log")
+        results += r_
+    return (passed, failed, cells,
+            os.path.join(logdir, f"{harness}.{combo}.shard*.log"), results)
 
 
 def main() -> int:
@@ -254,13 +305,11 @@ def main() -> int:
     print(f"# sequences: {len(sequences)} ({', '.join(sequences[:8])}"
           + (", ..." if len(sequences) > 8 else "") + ")")
     print(f"# cells    : {per_combo}/combo, {total} total")
-    # Each cell boots two fresh interactive shells through compinit and waits
-    # for both screens to settle. Measured ~30s/cell on this host with the
-    # user's real dump; the boot dominates, not the keystrokes.
-    # ~30s/cell is the measured floor (two shells booted through compinit per
-    # cell); --jobs runs that many cells at once, so wall time divides by it.
-    print(f"# estimate : ~{total * 30 / 60 / max(1, args.jobs):.0f} min "
-          f"at ~30s/cell across {max(1, args.jobs)} job(s)")
+    # No hardcoded seconds-per-cell here. Each cell boots two fresh interactive
+    # shells through compinit, so the rate depends on the machine, the dump and
+    # how loaded the box is; a literal baked into this line goes stale silently
+    # and has already been wrong by 4x. The real rate is measured from the
+    # first completed combo and the remaining time is projected from it.
     print(f"# outdir   : {outdir}")
     print()
     if args.dry_run:
@@ -269,20 +318,28 @@ def main() -> int:
     started = time.monotonic()
     grid = []
     all_fail = []
-    for harness in harnesses:
-        for combo in combos:
-            t0 = time.monotonic()
-            passed, failed, cells, log = run_combo(
-                py, harness, combo, sequences, tag, skip_optional, args.extra,
-                outdir, cases, args.jobs)
-            dt = time.monotonic() - t0
-            status = "PASS" if failed == 0 else "FAIL"
-            print(f"{status:4s} {harness:6s} {combo:28s} "
-                  f"{passed:4d} pass {failed:4d} fail  {dt:6.1f}s  {os.path.basename(log)}")
-            sys.stdout.flush()
-            grid.append((harness, combo, passed, failed))
-            for buf, keys in cells:
-                all_fail.append((harness, combo, buf, keys))
+    all_results = []
+    runs = [(h, c) for h in harnesses for c in combos]
+    for idx, (harness, combo) in enumerate(runs):
+        t0 = time.monotonic()
+        passed, failed, cells, log, results = run_combo(
+            py, harness, combo, sequences, tag, skip_optional, args.extra,
+            outdir, cases, args.jobs)
+        dt = time.monotonic() - t0
+        status = "PASS" if failed == 0 else "FAIL"
+        print(f"{status:4s} {harness:6s} {combo:28s} "
+              f"{passed:4d} pass {failed:4d} fail  {dt:6.1f}s  {os.path.basename(log)}")
+        if idx == 0 and len(runs) > 1 and per_combo:
+            rate = dt / per_combo
+            left = (len(runs) - 1) * per_combo * rate
+            print(f"# measured : {rate:.1f}s/cell on this run -> "
+                  f"~{left / 60:.0f} min left for {len(runs) - 1} more combo run(s)")
+        sys.stdout.flush()
+        grid.append((harness, combo, passed, failed))
+        for buf, keys in cells:
+            all_fail.append((harness, combo, buf, keys))
+        for r in results:
+            all_results.append(dict(r, harness=harness, combo=combo))
 
     random_rc = 0
     if args.random_combos:
@@ -323,13 +380,39 @@ def main() -> int:
             f.write("#!/bin/sh\n# Replay each failing cell on its own.\n")
             for harness, combo, buf, keys in all_fail:
                 script = "comptab_parity.py" if harness == "native" else "compsys_parity.py"
+                # The buffer is shell text — `ls /usr/{b`, `echo $path[`,
+                # `ls "/us` — so it MUST be quoted here. Unquoted, the replay
+                # line word-split into a different case than the one that
+                # failed, or did not parse at all.
                 f.write(
                     f"{py} {os.path.join(SCRIPTS, script)} "
                     f"--zstyle {os.path.join(COMBOS, combo + '.zsh')} "
-                    f"--case {buf} --keys {keys}\n"
+                    f"--case {shlex.quote(buf)} --keys {shlex.quote(keys)}\n"
                 )
         os.chmod(repro, 0o755)
         print(f"# {len(all_fail)} failing cell(s); replay individually: {repro}")
+
+    # One document for the whole matrix, so two runs at two commits can be
+    # diffed directly (`jq -S '.results|map({key:(.harness+"/"+.combo+"/"+.id),
+    # value:.status})|from_entries'`) instead of eyeballing two logs.
+    summary_path = os.path.join(outdir, "matrix.json")
+    with open(summary_path, "w") as f:
+        json.dump({
+            "schema": "parity-matrix/1",
+            "profile": args.profile,
+            "harnesses": harnesses,
+            "combos": combos,
+            "sequences": sequences,
+            "tag": tag,
+            "skip_optional": skip_optional,
+            "summary": {"passed": tot_pass, "failed": tot_fail,
+                        "combo_runs": len(grid),
+                        "elapsed_seconds": round(elapsed, 1)},
+            "combo_grid": [{"harness": h, "combo": c, "passed": p, "failed": f}
+                           for h, c, p, f in grid],
+            "results": all_results,
+        }, f, indent=2)
+    print(f"# matrix json: {summary_path}")
 
     # A failing combo whose PEERS pass isolates the axis, so surface that.
     failing = sorted({c for _h, c, _p, f in grid if f}) if grid else []
