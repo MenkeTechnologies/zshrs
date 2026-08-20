@@ -16941,127 +16941,6 @@ pub fn paramsubst(
                 value = transform(&value); // c:3937
             }
         }
-        // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
-        // subst.c:4180-4253 array sortit/unique post-processing.
-        //
-        // c:4245 — `if (isarr) { ... }` — the sort + unique +
-        // splat block is INSIDE this gate. Scalar shape (isarr=0)
-        // after DQ sepjoin at c:3034 means no sort applies. C does
-        // not have a separate "sort the joined string" path.
-        //
-        // sep.is_none() guard: C's sepjoin at c:3906 runs BEFORE c:4245
-        // and clears isarr=0 when (j)/(F) flag was set, so the sort
-        // block at c:4245 is gated out by `if (isarr)`. zshrs's port
-        // ordering inverts that (sort here at 5819, sep below at 5924),
-        // so explicitly skip sort when sep is set to mirror C's
-        // join-collapses-first behavior. `${(oj/-/)arr}` for
-        // (charlie alpha bravo) returns "charlie-alpha-bravo" in zsh —
-        // the o flag is a no-op because j collapsed shape first.
-        // c:Src/subst.c:3901-3921 — a pending `=`/spbreak force_split
-        // splits the scalar into words BEFORE the c:4245 unique/sort
-        // block (C runs the c:3901 split first). zshrs's force_split
-        // block lives later (line ~13560), so when `(u)`/`(o)`/etc. is
-        // ALSO requested the split hadn't happened yet and the c:4245
-        // gate below (`isarr != 0`) skipped — `${(u)=s}` left the
-        // word-split result un-deduped. Pre-apply the split here so the
-        // unique/sort block sees the array; the later force_split block
-        // then no-ops via its `split_parts.is_none()` guard. Only fires
-        // when sort/unique is requested, so plain `${=s}` is unaffected.
-        if force_split
-            && pf_flags & PREFORK_SINGLE == 0
-            && split_parts.is_none()
-            && isarr == 0
-            && (sortit != SORTIT_ANYOLDHOW || unique)
-        {
-            // c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
-            let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false);
-            if !parts.is_empty() {
-                value = parts.join(" ");
-                split_parts = Some(parts);
-                isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
-            }
-        }
-        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() {
-            // c:4245 + c:4290
-            // Sort/unique source: prefer split_parts (any prior
-            // operator result like :# filter, (s::) split, or
-            // assoc-splat) so sort applies to the actual element
-            // list, not a whitespace re-split of the joined view.
-            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
-                // c:4290
-                sp // c:4290 (operator-result)
-            } else if let Some(arr) = arrays_get(&var_name) {
-                // c:4290
-                arr.clone() // c:4290 (real array)
-            } else if let Some(map) = assoc_get(&var_name) {
-                // c:4290
-                map.values().cloned().collect() // c:4290 (assoc values)
-            } else if matches!(var_name.as_str(), "@" | "*" | "argv") {
-                // c:Src/params.c:3262 IPDEF9 — `@`, `*`, `argv` map
-                // to `pparams`. Source the sort/unique input from the
-                // canonical positional vec instead of the whitespace-
-                // re-split joined view, so individual positionals
-                // with embedded spaces survive `${(o)@}` etc.
-                crate::ported::builtin::PPARAMS
-                    .lock()
-                    .map(|p| p.clone())
-                    .unwrap_or_default()
-            } else {
-                // c:4290
-                value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
-            }; // c:4290
-               // KSHARRAYS bare array → sort/unique fold only element 0.
-            let parts: Vec<String> = if split_parts.is_none()
-                && !was_at_star_splat
-                && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                && subscript.is_none()
-                && arrays_contains(&var_name)
-            {
-                parts.into_iter().take(1).collect()
-            } else {
-                parts
-            };
-            let mut sorted: Vec<String> = parts; // c:4290
-            if unique {
-                // c:4253
-                let mut seen = std::collections::HashSet::new(); // c:4253
-                sorted.retain(|s| seen.insert(s.clone())); // c:4253
-            } // c:4253
-            if sortit != SORTIT_ANYOLDHOW {
-                // c:4022 `if (sortit != SORTIT_ANYOLDHOW) {`
-                if indord != 0 {
-                    // c:4025-4037 — the (a) flag keeps insertion order; (O)
-                    // on top of it reverses the array without ever running a
-                    // comparator.
-                    if (sortit & SORTIT_BACKWARDS) != 0 {
-                        sorted.reverse(); // c:4030-4035
-                    }
-                } else {
-                    // c:4045 — ONE call: `strmetasort(aval, sortit, NULL)`.
-                    // strmetasort (sort.c:234) owns the whole flag set — the
-                    // SORTIT_IGNORING_CASE / SORTIT_IGNORING_BACKSLASHES
-                    // pre-pass that rewrites each element's compare key
-                    // (sort.c:289-385), then `sortdir = BACKWARDS ? -1 : 1`
-                    // and `sortnumeric` (sort.c:400-405) before the qsort.
-                    // This arm used to hand-roll a three-way dispatch —
-                    // numeric OR case-folded OR plain — which made the two
-                    // mutually exclusive: `${(ni)a}` took the numeric branch
-                    // and never lowered, so `(X2 x10)` compared 'X' against
-                    // 'x', found no digit run at the divergence, and fell
-                    // through to strcoll → `x10 X2` where zsh gives `X2 x10`
-                    // (lowered to `x2`/`x10`, then 2 < 10). It also applied
-                    // BACKWARDS as a post-sort `reverse()` instead of C's
-                    // negated comparator, which flips the order of tied
-                    // elements rather than leaving them alone.
-                    crate::ported::sort::strmetasort(&mut sorted, sortit as u32, None); // c:4045
-                }
-            } // c:4046
-            let join_with = sep.as_deref().unwrap_or(" "); // c:4313
-            value = sorted.join(join_with); // c:4313
-                                            // Update split_parts so downstream operators (case mods,
-                                            // padding, splat) see the sorted/uniq list.
-            split_parts = Some(sorted); // c:4313
-        } // c:4290
 
         // (s::SEP:) split-on-SEP: apply BEFORE dopadding/bslashquote/case
         // (per zsh order). Port of subst.c flag-loop spsep usage
@@ -17422,130 +17301,138 @@ pub fn paramsubst(
             }
         }
 
-        // (l:N::PRE:) / (r:N::POST:) padding — apply via dopadding.
-        // c:4245 `if (isarr)` gates array vs scalar. In array (list)
-        // context each element is padded independently (c:4327/4377/
-        // 4396/4416/4455 pad `aval[i]`); in scalar context padding runs
-        // ONCE on the already-reduced `val` (c:4455 scalar branch). Do
-        // NOT re-fetch the source array here: the subscript/join already
-        // selected what padding must see.
+        // c:Src/subst.c:3912-3932 — the (s:X:) split (`aval = sepsplit(val,
+        // spsep, 0, 1)`) and the (j:X:) join (`val = sepjoin(aval, sep, 1);
+        // isarr = 0`) BOTH run above, at c:3917/c:3932, long before the
+        // sort/unique block at c:4264-4326. The split is what decides `isarr`
+        // (c:3922-3927: a 0- or 1-element split result leaves isarr == 0), and
+        // c:4301 sorts only `if (isarr)`. Running the sort FIRST therefore
+        // sorted an array that C had already collapsed to a scalar:
+        // `a=('a b' c); ${(ps:\t:O)a}` splits the space-joined `a b c` on TAB,
+        // gets ONE element, and zsh emits `a b c` unsorted — the sort-first
+        // order emitted `c a b`.
+        // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
+        // subst.c:4180-4253 array sortit/unique post-processing.
         //
-        // Bugs fixed: `${(r:6::-:)arr[1]}` padded every element of the
-        // source array instead of just element 1; `"${(r:6::-:)arr}"`
-        // and `${(j:_:r:6::-:)arr}` padded per-element instead of once
-        // on the joined scalar.
+        // c:4245 — `if (isarr) { ... }` — the sort + unique +
+        // splat block is INSIDE this gate. Scalar shape (isarr=0)
+        // after DQ sepjoin at c:3034 means no sort applies. C does
+        // not have a separate "sort the joined string" path.
         //
-        // Known limitation: a QUOTED range slice `"${(r:6::-:)arr[1,2]}"`
-        // should sepjoin-then-pad-once (c:3034 clears isarr, c:4444 pads
-        // val), but zshrs does not propagate `qt` to subscripted refs —
-        // the quoted range reaches here with the same state as the
-        // unquoted list form (`qt=false, isarr=0`, joined `value`), so
-        // it is padded per-element like the (common) unquoted list form.
-        if prenum > 0 || postnum > 0 {
-            // c:2319/2330
-            let mul_default = " ".to_string(); // c:907 (def = " ")
-            let pad_one = |s: &str| -> String {
-                // c:893
-                dopadding(
-                    s,
-                    prenum.max(0) as usize,
-                    postnum.max(0) as usize,
-                    preone.as_deref(),
-                    postone.as_deref(),
-                    premul.as_deref().unwrap_or(&mul_default),
-                    postmul.as_deref().unwrap_or(&mul_default),
-                    multi_width as i32, // c:2376 (m)
-                )
-            };
-            // A non-splat subscript (`[N]`, `[N,M]`, `[key]`, `[(r)pat]`)
-            // reduced the array to the picked value(s) that now live in
-            // `value` — `@`/`*` keep whole-array shape and fall through
-            // to the isarr arm. Mirrors the case-conversion block's
-            // subscript handling (subst.rs `has_non_splat_subscript`).
-            let has_non_splat_subscript =
-                subscript.as_deref().map_or(false, |s| s != "@" && s != "*");
-            if let Some(parts) = split_parts.clone() {
-                // c:4245 array branch — array shape already materialized.
-                let new_parts: Vec<String> = parts.iter().map(|s| pad_one(s)).collect();
-                value = new_parts.join(" ");
-                split_parts = Some(new_parts);
-            } else if has_non_splat_subscript {
-                // c:4327 — subscript-reduced slice lives in `value`
-                // (single element, or a whitespace-joined range slice).
-                // Pad each element; re-materialize split_parts for ranges
-                // so list-context rendering emits the padded elements.
-                let parts: Vec<String> = value.split_whitespace().map(|s| pad_one(s)).collect();
+        // sep.is_none() guard: C's sepjoin at c:3906 runs BEFORE c:4245
+        // and clears isarr=0 when (j)/(F) flag was set, so the sort
+        // block at c:4245 is gated out by `if (isarr)`. zshrs's port
+        // ordering inverts that (sort here at 5819, sep below at 5924),
+        // so explicitly skip sort when sep is set to mirror C's
+        // join-collapses-first behavior. `${(oj/-/)arr}` for
+        // (charlie alpha bravo) returns "charlie-alpha-bravo" in zsh —
+        // the o flag is a no-op because j collapsed shape first.
+        // c:Src/subst.c:3901-3921 — a pending `=`/spbreak force_split
+        // splits the scalar into words BEFORE the c:4245 unique/sort
+        // block (C runs the c:3901 split first). zshrs's force_split
+        // block lives later (line ~13560), so when `(u)`/`(o)`/etc. is
+        // ALSO requested the split hadn't happened yet and the c:4245
+        // gate below (`isarr != 0`) skipped — `${(u)=s}` left the
+        // word-split result un-deduped. Pre-apply the split here so the
+        // unique/sort block sees the array; the later force_split block
+        // then no-ops via its `split_parts.is_none()` guard. Only fires
+        // when sort/unique is requested, so plain `${=s}` is unaffected.
+        if force_split
+            && pf_flags & PREFORK_SINGLE == 0
+            && split_parts.is_none()
+            && isarr == 0
+            && (sortit != SORTIT_ANYOLDHOW || unique)
+        {
+            // c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
+            let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false);
+            if !parts.is_empty() {
                 value = parts.join(" ");
-                if subscript.as_deref().map_or(false, |s| s.contains(',')) {
-                    split_parts = Some(parts);
-                }
-            } else if isarr != 0 {
-                // c:4245 array branch — whole-array reference (`${arr}`,
-                // `${arr[@]}`): pad each element of the source array.
-                if let Some(arr) = arrays_get(&var_name) {
-                    let new_arr: Vec<String> = arr.iter().map(|s| pad_one(s)).collect();
-                    value = new_arr.join(" ");
-                    split_parts = Some(new_arr);
-                } else {
-                    value = pad_one(&value);
-                }
-            } else {
-                // c:4444 scalar branch — plain scalar, DQ-joined array
-                // (c:3034), or (j:STR:) join (c:3907): pad the value once.
-                value = pad_one(&value);
+                split_parts = Some(parts);
+                isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
             }
         }
-
-        // (e) eval — re-substitute the result. Per-element on arrays.
-        // Direct port of subst.c:2268 eval bit which iterates aval.
-        if eval {
-            // c:2268
-            // c:4346 — `if (eval && subst_parse_str(&x, (qt && !nojoin),
-            // quoteerr))`. Each element is re-lexed via subst_parse_str (which
-            // tokenizes its quotes) BEFORE singsub, so quote removal fires. The
-            // previous port called singsub on the RAW value, leaving literal
-            // quotes intact (`${(e)'${x:-"ab"}'}` → `"ab"`; p10k → `""""""`).
-            let single_e = qt && nojoin == 0;
-            let esub = |s: &str| -> String {
-                // A NUL byte (e.g. from a preceding `(#)` char-eval, `${(e#)x}`)
-                // must survive: parsestr re-lexes and treats NUL as a string
-                // terminator, dropping it. NUL-bearing input has no quotes to
-                // remove, so skip the re-lex and singsub the raw value.
-                if s.contains('\u{0}') {
-                    return singsub(s);
-                }
-                match subst_parse_str(s, single_e, quoteerr) {
-                    Some(parsed) => singsub(&parsed),
-                    None => singsub(s),
-                }
+        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() {
+            // c:4245 + c:4290
+            // Sort/unique source: prefer split_parts (any prior
+            // operator result like :# filter, (s::) split, or
+            // assoc-splat) so sort applies to the actual element
+            // list, not a whitespace re-split of the joined view.
+            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
+                // c:4290
+                sp // c:4290 (operator-result)
+            } else if let Some(arr) = arrays_get(&var_name) {
+                // c:4290
+                arr.clone() // c:4290 (real array)
+            } else if let Some(map) = assoc_get(&var_name) {
+                // c:4290
+                map.values().cloned().collect() // c:4290 (assoc values)
+            } else if matches!(var_name.as_str(), "@" | "*" | "argv") {
+                // c:Src/params.c:3262 IPDEF9 — `@`, `*`, `argv` map
+                // to `pparams`. Source the sort/unique input from the
+                // canonical positional vec instead of the whitespace-
+                // re-split joined view, so individual positionals
+                // with embedded spaces survive `${(o)@}` etc.
+                crate::ported::builtin::PPARAMS
+                    .lock()
+                    .map(|p| p.clone())
+                    .unwrap_or_default()
+            } else {
+                // c:4290
+                value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
+            }; // c:4290
+               // KSHARRAYS bare array → sort/unique fold only element 0.
+            let parts: Vec<String> = if split_parts.is_none()
+                && !was_at_star_splat
+                && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                && subscript.is_none()
+                && arrays_contains(&var_name)
+            {
+                parts.into_iter().take(1).collect()
+            } else {
+                parts
             };
-            if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> = parts.iter().map(|s| esub(s)).collect();
-                value = new_parts.join(" ");
-                split_parts = Some(new_parts);
-            } else if isarr != 0 {
-                // Whole-array reference: eval each element. A single-slot
-                // subscript (`a[3]`) clears isarr and already selected the
-                // element into `value`, so DON'T re-fetch the whole array —
-                // `${(e)a[3]}` must eval just element 3. This mirrors the
-                // `(#)` evalchar arm above; without the `isarr` guard the
-                // arm re-fetched + re-`singsub`'d the ENTIRE array on every
-                // subscripted `(e)` read, turning a self-referential element
-                // (p10k's `${(e)_p9k_t[$i]}` prompt-length templates, where
-                // one ruler element expands to `${(e)_p9k_t[...]}` again)
-                // into unbounded recursion → stack overflow at interactive
-                // prompt time. zsh evals only the picked element and stops.
-                if let Some(arr) = arrays_get(&var_name) {
-                    let new_arr: Vec<String> = arr.iter().map(|s| esub(s)).collect();
-                    value = new_arr.join(" ");
-                    split_parts = Some(new_arr);
+            let mut sorted: Vec<String> = parts; // c:4290
+            if unique {
+                // c:4253
+                let mut seen = std::collections::HashSet::new(); // c:4253
+                sorted.retain(|s| seen.insert(s.clone())); // c:4253
+            } // c:4253
+            if sortit != SORTIT_ANYOLDHOW {
+                // c:4022 `if (sortit != SORTIT_ANYOLDHOW) {`
+                if indord != 0 {
+                    // c:4025-4037 — the (a) flag keeps insertion order; (O)
+                    // on top of it reverses the array without ever running a
+                    // comparator.
+                    if (sortit & SORTIT_BACKWARDS) != 0 {
+                        sorted.reverse(); // c:4030-4035
+                    }
                 } else {
-                    value = esub(&value);
+                    // c:4045 — ONE call: `strmetasort(aval, sortit, NULL)`.
+                    // strmetasort (sort.c:234) owns the whole flag set — the
+                    // SORTIT_IGNORING_CASE / SORTIT_IGNORING_BACKSLASHES
+                    // pre-pass that rewrites each element's compare key
+                    // (sort.c:289-385), then `sortdir = BACKWARDS ? -1 : 1`
+                    // and `sortnumeric` (sort.c:400-405) before the qsort.
+                    // This arm used to hand-roll a three-way dispatch —
+                    // numeric OR case-folded OR plain — which made the two
+                    // mutually exclusive: `${(ni)a}` took the numeric branch
+                    // and never lowered, so `(X2 x10)` compared 'X' against
+                    // 'x', found no digit run at the divergence, and fell
+                    // through to strcoll → `x10 X2` where zsh gives `X2 x10`
+                    // (lowered to `x2`/`x10`, then 2 < 10). It also applied
+                    // BACKWARDS as a post-sort `reverse()` instead of C's
+                    // negated comparator, which flips the order of tied
+                    // elements rather than leaving them alone.
+                    crate::ported::sort::strmetasort(&mut sorted, sortit as u32, None); // c:4045
                 }
-            } else {
-                value = esub(&value); // c:2268
-            }
-        }
+            } // c:4046
+            let join_with = sep.as_deref().unwrap_or(" "); // c:4313
+            value = sorted.join(join_with); // c:4313
+                                            // Update split_parts so downstream operators (case mods,
+                                            // padding, splat) see the sorted/uniq list.
+            split_parts = Some(sorted); // c:4313
+        } // c:4290
+
 
         // (%) prompt-expand — interpret %F{red}, %~, %n, %{...%},
         // etc. Per-element on arrays. Direct port of subst.c:2405 /
@@ -18210,9 +18097,19 @@ pub fn paramsubst(
             }
             out
         };
+        // c:Src/subst.c:3917 — `val = sepjoin(aval, sep, 1); isarr = 0;`.
+        // An explicit (j:X:)/(F) separator collapses the array to a SCALAR
+        // BEFORE the quote block at c:4041, so every one of the per-element
+        // arms below has to take C's `else` (scalar) branch on the joined
+        // `val` — exactly like the DQ collapse at c:3032 does. `sep_forced_join`
+        // is the port's record of that c:3907 `isarr = 0`; without it the arms
+        // re-fetched the ORIGINAL array by name and quoted element-by-element,
+        // so `a=(a b); print -rl -- ${(j:-:q)a}` printed `a b` (two words,
+        // separator lost) where zsh prints the single word `a-b`.
+        let joined_scalar_c3907 = dq_collapsed || sep_forced_join; // c:3907
         if quotemod < 0 {
             // c:4030 if (quotemod) — negative arm (Q)
-            if dq_collapsed {
+            if joined_scalar_c3907 {
                 // c:4065 `if (isarr) { per element } else { … }` — the DQ
                 // collapse (c:3032-3034) already joined with `sep`/`$IFS[1]`
                 // and cleared isarr, so the dequote runs ONCE on that scalar.
@@ -18306,7 +18203,7 @@ pub fn paramsubst(
         // bare `(V)` (quotemod == 0) still get V.
         if (mods & 2) != 0 && quotemod <= 0 {
             // c:4157 if (mods & 2)
-            if dq_collapsed {
+            if joined_scalar_c3907 {
                 // c:4158-4170 — same `if (isarr)` gate as every other
                 // per-element flag: after the DQ collapse (c:3032-3034) the
                 // value is a single sepjoin'd scalar, so `(V)` renders it
@@ -18492,10 +18389,22 @@ pub fn paramsubst(
             // `var_name == "@"` arm `"${(q)@}"` gave `a\ b\ c` instead of zsh's
             // `a b\ c`, and zinit's `${(j: :)${(q)@}}` compdef-replay produced
             // one escaped word (a bogus `compdef: unknown command` per call).
-            let want_per_element =
-                !dq_collapsed && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
+            // c:Src/subst.c:3932 — `aval = sepsplit(val, spsep, 0, 1)` puts the
+            // expansion BACK into array shape (c:3922-3927 sets isarr), and
+            // c:3328's qt-sepjoin is gated on `!spsep`, so a (s:X:) split keeps
+            // its words inside `"…"` and c:4065 `if (isarr)` takes the
+            // PER-ELEMENT quote arm. Without this disjunct `"${(s: :q)a}"`
+            // quoted the re-joined scalar (`p$'\t'q\ r`) instead of quoting each
+            // split word (`p$'\t'q r`).
+            let spsep_arr_c3932 = spsep.is_some() && pf_flags & PREFORK_SINGLE == 0; // c:3932
+            let want_per_element = !joined_scalar_c3907
+                && (nojoin == 2
+                    || !qt
+                    || is_at_subscript_splat
+                    || var_name == "@"
+                    || spsep_arr_c3932);
             // c:2237
-            if dq_collapsed {
+            if joined_scalar_c3907 {
                 // c:4065 `if (isarr) … else` — after the DQ collapse
                 // (c:3032-3034) `val` IS the sepjoin'd scalar, so quote it
                 // once. Re-deriving the join from the element list here
@@ -18619,8 +18528,8 @@ pub fn paramsubst(
             // must stay identical. `is_at_subscript_splat` is re-derived here
             // because that arm scopes it to its own block.
             let is_at_subscript_splat = matches!(subscript.as_deref(), Some("@") | Some("*"));
-            let want_per_element =
-                !dq_collapsed && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
+            let want_per_element = !joined_scalar_c3907
+                && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
             if !want_per_element {
                 // c:3970 scalar arm on the already-joined value.
                 let joined = match split_parts.clone() {
@@ -18697,7 +18606,7 @@ pub fn paramsubst(
                 let s1 = render_d(s);
                 render_v(&s1)
             };
-            if dq_collapsed {
+            if joined_scalar_c3907 {
                 // c:4155-4170 `if (isarr) { per element } else { … }` — the DQ
                 // collapse (c:3032-3034) already joined with `sep`/`$IFS[1]`,
                 // so (D)/(V) render that scalar once. The per-element walk
@@ -18715,6 +18624,162 @@ pub fn paramsubst(
                 split_parts = Some(new_arr);
             } else {
                 value = pipeline(&value);
+            }
+        }
+
+        // c:Src/subst.c:4041 (quotemod) / 4155 (mods D+V) / 4185 (shsplit)
+        // / 4301 (sort) ALL precede the four `dopadding()` call sites at
+        // c:4339, c:4387, c:4406 and c:4426 (plus the scalar one at c:4465).
+        // The (l:)/(r:) padding is therefore the LAST value transformation in
+        // paramsubst, and the (e) eval that C runs at c:4346 sits immediately
+        // after it on the very same element walk. This pair used to run here
+        // BEFORE the quoting block, which padded the raw value and then quoted
+        // the padding — zsh quotes first and pads (or TRUNCATES) the quoted
+        // form: `a=($'p\tq' r); "${(r:6:qq)a}"` is `'p<TAB>q r` in zsh (the
+        // 8-char `'p<TAB>q r' cut to 6) where the pad-first order gave
+        // `'p<TAB>q r '`. Same inversion for (V): c:4155 mods runs before
+        // c:4339 dopadding, so `"${(Vl:6::.:)a}"` pads the ALREADY-nicified
+        // string (no padding needed) instead of padding then nicifying.
+        // (l:N::PRE:) / (r:N::POST:) padding — apply via dopadding.
+        // c:4245 `if (isarr)` gates array vs scalar. In array (list)
+        // context each element is padded independently (c:4327/4377/
+        // 4396/4416/4455 pad `aval[i]`); in scalar context padding runs
+        // ONCE on the already-reduced `val` (c:4455 scalar branch). Do
+        // NOT re-fetch the source array here: the subscript/join already
+        // selected what padding must see.
+        //
+        // Bugs fixed: `${(r:6::-:)arr[1]}` padded every element of the
+        // source array instead of just element 1; `"${(r:6::-:)arr}"`
+        // and `${(j:_:r:6::-:)arr}` padded per-element instead of once
+        // on the joined scalar.
+        //
+        // Known limitation: a QUOTED range slice `"${(r:6::-:)arr[1,2]}"`
+        // should sepjoin-then-pad-once (c:3034 clears isarr, c:4444 pads
+        // val), but zshrs does not propagate `qt` to subscripted refs —
+        // the quoted range reaches here with the same state as the
+        // unquoted list form (`qt=false, isarr=0`, joined `value`), so
+        // it is padded per-element like the (common) unquoted list form.
+        if prenum > 0 || postnum > 0 {
+            // c:2319/2330
+            let mul_default = " ".to_string(); // c:907 (def = " ")
+            let pad_one = |s: &str| -> String {
+                // c:893
+                // The (q) arm wraps its result in Snull markers (see wrap_snull
+                // above) so stringsubst does not re-read the literal `'` chars
+                // it emitted. Those two markers are internal bookkeeping, not
+                // value bytes — C's c:4339 dopadding sees the bare quoted
+                // string — so strip them for the width computation and re-wrap
+                // afterwards. Counting them made `"${(r:6:qq)a}"` truncate two
+                // chars early and `${(r:6:qqqq)a}` skip padding entirely.
+                let had_snull = s.contains(Snull);
+                let bare = if had_snull {
+                    s.replace(Snull, "")
+                } else {
+                    s.to_string()
+                };
+                let padded = dopadding(
+                    &bare,
+                    prenum.max(0) as usize,
+                    postnum.max(0) as usize,
+                    preone.as_deref(),
+                    postone.as_deref(),
+                    premul.as_deref().unwrap_or(&mul_default),
+                    postmul.as_deref().unwrap_or(&mul_default),
+                    multi_width as i32, // c:2376 (m)
+                );
+                if had_snull {
+                    format!("{}{}{}", Snull, padded, Snull)
+                } else {
+                    padded
+                }
+            };
+            // A non-splat subscript (`[N]`, `[N,M]`, `[key]`, `[(r)pat]`)
+            // reduced the array to the picked value(s) that now live in
+            // `value` — `@`/`*` keep whole-array shape and fall through
+            // to the isarr arm. Mirrors the case-conversion block's
+            // subscript handling (subst.rs `has_non_splat_subscript`).
+            let has_non_splat_subscript =
+                subscript.as_deref().map_or(false, |s| s != "@" && s != "*");
+            if let Some(parts) = split_parts.clone() {
+                // c:4245 array branch — array shape already materialized.
+                let new_parts: Vec<String> = parts.iter().map(|s| pad_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if has_non_splat_subscript {
+                // c:4327 — subscript-reduced slice lives in `value`
+                // (single element, or a whitespace-joined range slice).
+                // Pad each element; re-materialize split_parts for ranges
+                // so list-context rendering emits the padded elements.
+                let parts: Vec<String> = value.split_whitespace().map(|s| pad_one(s)).collect();
+                value = parts.join(" ");
+                if subscript.as_deref().map_or(false, |s| s.contains(',')) {
+                    split_parts = Some(parts);
+                }
+            } else if isarr != 0 {
+                // c:4245 array branch — whole-array reference (`${arr}`,
+                // `${arr[@]}`): pad each element of the source array.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| pad_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = pad_one(&value);
+                }
+            } else {
+                // c:4444 scalar branch — plain scalar, DQ-joined array
+                // (c:3034), or (j:STR:) join (c:3907): pad the value once.
+                value = pad_one(&value);
+            }
+        }
+
+        // (e) eval — re-substitute the result. Per-element on arrays.
+        // Direct port of subst.c:2268 eval bit which iterates aval.
+        if eval {
+            // c:2268
+            // c:4346 — `if (eval && subst_parse_str(&x, (qt && !nojoin),
+            // quoteerr))`. Each element is re-lexed via subst_parse_str (which
+            // tokenizes its quotes) BEFORE singsub, so quote removal fires. The
+            // previous port called singsub on the RAW value, leaving literal
+            // quotes intact (`${(e)'${x:-"ab"}'}` → `"ab"`; p10k → `""""""`).
+            let single_e = qt && nojoin == 0;
+            let esub = |s: &str| -> String {
+                // A NUL byte (e.g. from a preceding `(#)` char-eval, `${(e#)x}`)
+                // must survive: parsestr re-lexes and treats NUL as a string
+                // terminator, dropping it. NUL-bearing input has no quotes to
+                // remove, so skip the re-lex and singsub the raw value.
+                if s.contains('\u{0}') {
+                    return singsub(s);
+                }
+                match subst_parse_str(s, single_e, quoteerr) {
+                    Some(parsed) => singsub(&parsed),
+                    None => singsub(s),
+                }
+            };
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| esub(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if isarr != 0 {
+                // Whole-array reference: eval each element. A single-slot
+                // subscript (`a[3]`) clears isarr and already selected the
+                // element into `value`, so DON'T re-fetch the whole array —
+                // `${(e)a[3]}` must eval just element 3. This mirrors the
+                // `(#)` evalchar arm above; without the `isarr` guard the
+                // arm re-fetched + re-`singsub`'d the ENTIRE array on every
+                // subscripted `(e)` read, turning a self-referential element
+                // (p10k's `${(e)_p9k_t[$i]}` prompt-length templates, where
+                // one ruler element expands to `${(e)_p9k_t[...]}` again)
+                // into unbounded recursion → stack overflow at interactive
+                // prompt time. zsh evals only the picked element and stops.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| esub(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = esub(&value);
+                }
+            } else {
+                value = esub(&value); // c:2268
             }
         }
 
