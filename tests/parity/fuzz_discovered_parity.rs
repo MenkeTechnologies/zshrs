@@ -3841,3 +3841,101 @@ mod flag_staging_order {
         assert_parity(r#"y=ab; x='${y}'; print -r -- "[${(er:8:)x}]""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Expansion-error containment and cond status shape (`reject` fuzz mode)
+//
+// Three separate refusal-shape gaps, all measured by
+// `parity-fuzz --mode reject`:
+//
+//  1. c:Src/params.c:2029 `getindex` parses a subscript with
+//     `parse_subscript` (c:Src/lex.c:1743), which brackets the parse with
+//     `zcontext_save()` / `zcontext_restore()` (c:1750 / c:1786).
+//     `zcontext_restore` ends in `parse_context_restore`, whose last line is
+//     `errflag &= ~ERRFLAG_ERROR;` (c:Src/parse.c:354). Parsing ANY subscript
+//     therefore clears a pending error — so a failed INNER expansion still
+//     reports its diagnostic but the outer expansion yields empty and the
+//     enclosing command runs at status 0.
+//
+//  2. c:Src/subst.c:2650 `isstring(*s) && (s[1] == Inbrace || s[1] == Inpar ||
+//     s[1] == Inparmath)` — `isstring` (c:Src/zsh.h:167) matches only the
+//     String/Qstring TOKENS. Inside `'…'` the lexer tokenizes nothing, so a
+//     `$` there stays literal and can never open a subexpression; the body
+//     falls through to c:2994-3004 "bad substitution".
+//
+//  3. c:Src/cond.c:186-193 — a `-word` condition with no matching conddef is
+//     `zwarnnam(... "unknown condition: %s" ...)` followed by `return 2`, and
+//     c:Src/exec.c:5216-5221 turns that 2 into a shell error. Status 2, not 1.
+// ─────────────────────────────────────────────────────────────────────
+mod expansion_error_containment {
+    use super::*;
+
+    /// A flag error in the INNER of `${${(flags)x}[N]}` is contained: zsh
+    /// prints the diagnostic, the expansion is empty, and the command still
+    /// runs. zshrs used to abort the whole command.
+    #[test]
+    fn subscript_parse_clears_pending_expansion_error() {
+        assert_parity(r#"s=a:b; print -r -- "[${${(ZZ)s}[1]}]"; print -r -- after"#);
+        assert_parity(r#"s=a:b; print -r -- "[${${(s:::)s}[1]}]"; print -r -- after"#);
+        assert_parity(r#"s=a:b; print -r -- "[${${(ps:::)s}[1]}]"; print -r -- after"#);
+        assert_parity(r#"a=(1 2); print -r -- "[${${(l)a}[1]}]"; print -r -- after"#);
+        assert_parity(r#"s=a:b; print -r -- "[${${(ZZ)s}[2,3]}]"; print -r -- after"#);
+    }
+
+    /// The clear happens at subscript PARSE time (c:Src/lex.c:1750 is reached
+    /// before `getarg` substitutes), so an error raised while EVALUATING the
+    /// subscript text still aborts — and with no subscript at all there is no
+    /// `parse_subscript` call and therefore no clear.
+    #[test]
+    fn containment_does_not_swallow_later_or_unsubscripted_errors() {
+        assert_parity(r#"s=a:b; print -r -- "[${z[${(ZZ)s}]}]"; print -r -- after"#);
+        assert_parity(r#"s=a:b; print -r -- "[${${(ZZ)s}}]"; print -r -- after"#);
+        assert_parity(r#"s=a:b; print -r -- "[${(ZZ)s}]"; print -r -- after"#);
+    }
+
+    /// c:Src/lex.c:1748 `if (!*s || *s == endchar) return 0;` — an EMPTY
+    /// subscript returns before `zcontext_save`, so it clears nothing.
+    /// Ordinary subscripts must keep working unchanged.
+    #[test]
+    fn ordinary_subscripts_unaffected() {
+        assert_parity(r#"a=(1 2 3); print -r -- ${a[2]}${a[(r)2]}${a[1,2]}"#);
+        assert_parity(r#"typeset -A h=(k v); print -r -- ${h[k]}"#);
+    }
+
+    /// A single-quoted expansion body is never a subexpression (c:2650), so
+    /// it is "bad substitution" — not an expansion of the quoted text.
+    #[test]
+    fn single_quoted_body_is_bad_substitution() {
+        assert_parity(r#"print -r -- ${(e)'$(print hi)'}; print -r -- after"#);
+        assert_parity(r#"print -r -- ${(P)'$(print hi)'}; print -r -- after"#);
+        assert_parity(r#"x=y; print -r -- ${(e)'$x'}; print -r -- after"#);
+    }
+
+    /// The DOUBLE-quoted wrapper is different — the lexer does tokenize
+    /// inside `"…"`, so c:2650 still sees String/Inpar and the subexpression
+    /// runs. Pin it so the Snull gate never widens to Dnull.
+    #[test]
+    fn double_quoted_subexpression_still_expands() {
+        assert_parity(r#"print -rl -- ${(f)"$(print -l a b)"}"#);
+        assert_parity(r#"print -r -- ${(e)"$(print hi)"}"#);
+    }
+
+    /// c:Src/cond.c:193 `return 2` for a `-word` with no conddef — the shell
+    /// error is status 2, not the plain false status 1.
+    #[test]
+    fn unknown_module_condition_exits_two() {
+        assert_parity(r#"[[ -nt a ]]; print -r -- after"#);
+        assert_parity(r#"[[ -zz a ]]; print -r -- after"#);
+        assert_parity(r#"[[ -X a ]]; print -r -- after"#);
+    }
+
+    /// Conditions that DO resolve keep their ordinary true/false status.
+    #[test]
+    fn resolvable_conditions_keep_their_status() {
+        assert_parity(r#"[[ -n a ]]; print -r -- "rc=$?""#);
+        assert_parity(r#"[[ -z "" ]]; print -r -- "rc=$?""#);
+        assert_parity(r#"[[ a -nt b ]]; print -r -- "rc=$?""#);
+        assert_parity(r#"[[ -f /nonexistent-zshrs-parity ]]; print -r -- "rc=$?""#);
+        assert_parity(r#"[[ -o extendedglob ]]; print -r -- "rc=$?""#);
+    }
+}
