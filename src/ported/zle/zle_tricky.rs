@@ -902,18 +902,18 @@ pub fn docomplete(lst: i32) -> i32 {
         g.clear(); // c:659-660 — `zsfree(autoq); autoq = NULL;`
     }
 
-    // c:664-810 — `get_comp_string()` extracts the cursor word and
-    // sets origword/lincmd/wb/we. The Rust port runs the (best-effort)
-    // extractor for its side effects (LINCMD/WB/WE) and uses the
-    // returned word as `origword`; if it returns None we fall back
-    // to the full line.
-    let origword = get_comp_string();
-    let line = crate::ported::zle::compcore::ZLELINE
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let s_word: String = origword.unwrap_or_else(|| line.clone());
+    // c:664 — `s = get_comp_string();` extracts the cursor word and sets
+    // origword/lincmd/wb/we as side effects.
+    //
+    // C treats `s == NULL` as "there is nothing here to complete": the whole
+    // c:703-869 body is inside `if (s) { … } else ret = 1;`. The port used to
+    // fall back to the ENTIRE LINE (`origword.unwrap_or_else(|| line.clone())`),
+    // a Rust-only invention with no C counterpart, so every context the
+    // extractor declines to handle (command position inside `$(`, an
+    // unterminated compound, …) completed the whole buffer instead of nothing:
+    // `echo $(gr<TAB>` offered 47315 matches where zsh offers none.
+    let s = get_comp_string(); // c:664
+    let s_word: String = s.clone().unwrap_or_default();
     // c:701-702 — `if (inwhat == IN_ENV) lincmd = 0;`. Missing from the port:
     // completing the VALUE of an environment assignment (`FOO=<TAB>`) still
     // reported command position, so `_main_complete` dispatched the
@@ -938,7 +938,8 @@ pub fn docomplete(lst: i32) -> i32 {
     //     the second, contextless run discarded the first run's matches.
     //     That is what made `echo ${<TAB>` list nothing even though the
     //     `-brace-parameter-` pass had already built 241 matches.
-    if lst == COMP_EXPAND_COMPLETE {
+    if s.is_some() && lst == COMP_EXPAND_COMPLETE {
+        // c:703-704 — `if (s) { if (lst == COMP_EXPAND_COMPLETE) {`
         use crate::ported::hashtable::cmdnamtab_lock;
         use crate::ported::utils::{itype_end, skipparens, strpfx};
         use crate::ported::zsh_h::{
@@ -1124,14 +1125,19 @@ pub fn docomplete(lst: i32) -> i32 {
     {
         use crate::ported::zle::compcore::INWHAT;
         use crate::ported::zsh_h::{IN_CMD, IN_NOTHING};
-        if lincmd != 0 && INWHAT.load(Ordering::SeqCst) == IN_NOTHING {
+        // c:703 — still inside `if (s)`.
+        if s.is_some() && lincmd != 0 && INWHAT.load(Ordering::SeqCst) == IN_NOTHING {
             INWHAT.store(IN_CMD, Ordering::SeqCst); // c:799
         }
     }
 
     // c:817-870 — dispatch on `lst`.
     let ret;
-    if lst == COMP_SPELL {
+    if s.is_none() {
+        // c:870-871 — `} else ret = 1;`. No word to complete: the widget
+        // reports failure and the line is left exactly as the user typed it.
+        ret = 1;
+    } else if lst == COMP_SPELL {
         // c:801-815 — spell-word path. Direct port:
         //   foredel(we - wb, CUT_RAW);
         //   spckword(&x, 0, lincmd, 0);
