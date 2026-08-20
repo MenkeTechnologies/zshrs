@@ -2332,6 +2332,34 @@ pub fn get_comp_string() -> Option<String> {
             // c:1549-1560 — not a completable word. The tmp cmdsubst
             // restart (c:1550-1556) needs the parbegin zlemetaline dup
             // (c:1467-1468), which is omitted, so this always returns.
+            //
+            // c:1545-1548 — C restores `zlemetaline = tmp` BEFORE this
+            // return: `addx` (c:937-946) spliced the `x` into a SCRATCH
+            // copy, `tmp` still holds the untouched line, so the caller
+            // never sees the placeholder. This port lexes ONE buffer and
+            // deletes the placeholder by hand in the function epilogue,
+            // which this early return skips — `echo $(gr<TAB>` left
+            // `echo $(grx` on the line where zsh leaves it alone. Same
+            // deletion as the epilogue, inlined (a shared helper has no C
+            // counterpart and the port gate rejects one).
+            {
+                let addedx = ADDEDX.load(Ordering::SeqCst);
+                if addedx > 0 {
+                    if let Some(m) = ZLEMETALINE.get() {
+                        if let Ok(mut g) = m.lock() {
+                            let mut bytes = g.as_bytes().to_vec();
+                            let cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize)
+                                .min(bytes.len());
+                            let end = (cs + addedx as usize).min(bytes.len());
+                            if cs < end {
+                                bytes.drain(cs..end);
+                                *g = String::from_utf8_lossy(&bytes).into_owned();
+                            }
+                        }
+                    }
+                    ADDEDX.store(0, Ordering::SeqCst);
+                }
+            }
             set_noaliases(ona);
             zcontext_restore();
             return None; // c:1559
