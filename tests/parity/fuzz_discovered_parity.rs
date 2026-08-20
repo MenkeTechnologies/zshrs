@@ -3710,3 +3710,26 @@ mod word_count_flags {
         assert_parity(r#"s="a b c"; print -r -- ${s[(w)2]}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// printf `%F`
+//
+// c:Src/builtin.c:5398-5403 — the float `type=2` case list is exactly
+// `e E f g G`. `%F` falls through to the c:5413 default and is
+// "%F: invalid directive" with rc 1. (bash and POSIX sh accept `%F`, so
+// only the zsh spelling rejects it.)
+// ─────────────────────────────────────────────────────────────────────
+mod printf_percent_f_upper {
+    use super::*;
+
+    #[test]
+    fn percent_upper_f_is_invalid_directive() {
+        assert_parity(r#"printf '%F\n' 1"#);
+    }
+
+    /// The five directives that ARE in the list still work.
+    #[test]
+    fn float_directives_still_accepted() {
+        assert_parity(r#"printf '%f|%e|%E|%g|%G\n' 1 1 1 1.5 1.5"#);
+    }
+}

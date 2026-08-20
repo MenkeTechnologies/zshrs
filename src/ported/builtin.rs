@@ -18018,7 +18018,16 @@ fn printf_format(
                     out.push_str(&format_spec_radix(&spec, n, 'o'));
                     arg_i += 1;
                 }
-                Some(conv @ ('f' | 'F' | 'g' | 'G' | 'e' | 'E')) => {
+                // c:Src/builtin.c:5398-5403 — the float `type=2` case list is
+                // exactly `e E f g G`; `%F` is NOT in it and falls to the
+                // c:5413 default arm ("%F: invalid directive", rc 1). bash and
+                // POSIX `sh` DO accept `%F` (verified: `/bin/sh -c "printf
+                // '%F\n' 1"` → 1.000000), so keep it valid in those modes.
+                Some(conv @ ('f' | 'F' | 'g' | 'G' | 'e' | 'E'))
+                    if conv != 'F'
+                        || crate::dash_mode::bash_mode()
+                        || crate::dash_mode::posix_faithful() =>
+                {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     // c:Src/builtin.c:5479-5488 — `doubleval = strtod(curarg,
                     // &eptr); if (*eptr) mnumval = matheval(curarg)`. The arg
