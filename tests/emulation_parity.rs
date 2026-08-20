@@ -2668,3 +2668,79 @@ fn unterminated_cond_group_is_a_parse_error() {
     assert_eq!(run_zshrs(&["--zsh"], "[[ ( -n a && -n b ) ]]").1, 0);
     assert_eq!(run_zshrs(&["--zsh"], "[[ ( -z a ) ]]").1, 1);
 }
+
+#[test]
+fn dash_family_reports_two_for_a_fatal_shell_error() {
+    // dash's `sh_error()` unwinds through `exraise(EXERROR)`, whose handler
+    // sets `exitstatus = 2` before `exitshell()` — so every fatal expansion,
+    // assignment and arithmetic error leaves 2, not zsh's
+    // `lastval == ERRFLAG_ERROR == 1`. Measured on dash and ash:
+    //   dash -c '(set -u; : "$nope") 2>/dev/null; printf "%d\n" $?'  → 2
+    //   dash -c '(: "${nope:?msg}")  2>/dev/null; printf "%d\n" $?'  → 2
+    //   dash -c '(readonly r=1; r=2) 2>/dev/null; printf "%d\n" $?'  → 2
+    //   dash -c '(: $((1/0)))        2>/dev/null; printf "%d\n" $?'  → 2
+    // bash, ksh93, mksh and zsh all answer 1 for the same four.
+    let fatal = [
+        r#"set -u; : "$nope""#,
+        r#": "${nope:?msg}""#,
+        r#": "${nope:?}""#,
+        r#"readonly r=1; r=2"#,
+        r#": $((1/0))"#,
+        r#": $((1%0))"#,
+    ];
+    for body in fatal {
+        // Inside a subshell — dash's unwind stops at the `( … )` boundary.
+        let sub = format!(r#"({body}) 2>/dev/null; printf '%d\n' $?"#);
+        for flags in [&["--dash"][..], &["--ash"][..]] {
+            assert_eq!(
+                run_zshrs(flags, &sub).0,
+                "2\n",
+                "{flags:?}: `({body})` must report 2"
+            );
+        }
+        // At the top level the unwind reaches the shell's own exit.
+        for flags in [&["--dash"][..], &["--ash"][..]] {
+            assert_eq!(
+                run_zshrs(flags, body).1,
+                2,
+                "{flags:?}: `{body}` must exit 2"
+            );
+        }
+        // Every other personality keeps 1.
+        for flags in [
+            &["--zsh"][..],
+            &["--bash"][..],
+            &["--ksh"][..],
+            &["--mksh"][..],
+        ] {
+            assert_eq!(
+                run_zshrs(flags, &sub).0,
+                "1\n",
+                "{flags:?}: `({body})` must stay at 1"
+            );
+        }
+    }
+
+    // A deliberate `exit N` is NOT an error unwind and keeps its own status.
+    assert_eq!(
+        run_zshrs(&["--dash"], r#"(exit 5); printf '%d\n' $?"#).0,
+        "5\n"
+    );
+    assert_eq!(
+        run_zshrs(&["--dash"], r#"(exit 5; : "${nope:?}") 2>/dev/null; printf '%d\n' $?"#).0,
+        "5\n",
+        "`exit 5` runs first, so no error is ever raised"
+    );
+    // …but an error raised BEFORE the exit wins, because exraise assigns
+    // exitstatus at the raise. dash agrees: this prints 2.
+    assert_eq!(
+        run_zshrs(&["--dash"], r#"(: "${nope:?}"; exit 5) 2>/dev/null; printf '%d\n' $?"#).0,
+        "2\n"
+    );
+    // Ordinary non-zero statuses are untouched.
+    assert_eq!(run_zshrs(&["--dash"], r#"(false); printf '%d\n' $?"#).0, "1\n");
+    assert_eq!(
+        run_zshrs(&["--dash"], r#"nonexistent_cmd_zz 2>/dev/null; printf '%d\n' $?"#).0,
+        "127\n"
+    );
+}

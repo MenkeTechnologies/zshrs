@@ -103,6 +103,49 @@ pub fn bash_mode() -> bool {
     BASH_MODE.load(Ordering::Relaxed)
 }
 
+/// The exit status a FATAL shell error leaves behind, when the emulated
+/// shell disagrees with zsh's `1`.
+///
+/// zsh's `errflag` abort ends the list and the status is whatever `lastval`
+/// held — `ERRFLAG_ERROR` is literally `1` (c:Src/zsh.h:2970), so
+/// c:Src/exec.c:3001 `lastval = errflag ? errflag : cmdoutval` yields 1.
+/// dash does not model errors that way: `sh_error()` calls
+/// `exraise(EXERROR)`, whose handler sets `exitstatus = 2` before
+/// `exitshell()`, so EVERY fatal expansion / assignment / arithmetic error
+/// leaves 2 no matter what the previous status was. Measured on
+/// dash 0.5.x and ash, all four fatal shapes:
+///
+/// ```text
+/// dash -c '(set -u; : "$nope")   2>/dev/null; printf "%d\n" $?'  → 2
+/// dash -c '(: "${nope:?msg}")    2>/dev/null; printf "%d\n" $?'  → 2
+/// dash -c '(readonly r=1; r=2)   2>/dev/null; printf "%d\n" $?'  → 2
+/// dash -c '(: $((1/0)))          2>/dev/null; printf "%d\n" $?'  → 2
+/// ```
+///
+/// bash, ksh93 and mksh all answer `1` for the same four, which is what
+/// zshrs already produces — so this returns `None` outside the dash family
+/// and every other mode is untouched. `/bin/sh` is deliberately NOT covered:
+/// on this platform it is bash 3.2, which answers `127`, while on Linux it
+/// is dash and answers `2`; encoding either would be encoding the host, not
+/// the shell.
+///
+/// Applied at the two places dash's `exitshell` would be reached — the
+/// `( … )` boundary and the end of a `-c` script — rather than at each
+/// individual `zerr` call, which is exactly where `exraise` unwinds to.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn fatal_error_status() -> Option<i32> {
+    // `dash_strict` alone would also fire for the zsh-STYLE leg
+    // (`--dash --zsh`), which must keep zsh's 1; `posix_faithful` is what
+    // distinguishes the drop-in from it.
+    if posix_faithful() && dash_strict() {
+        Some(2)
+    } else {
+        None
+    }
+}
+
 /// True in a bare Korn drop-in — `zshrs --ksh`, `--mksh` or `--pdksh`.
 ///
 /// Composed rather than stored: [`posix_faithful`] is raised only by a

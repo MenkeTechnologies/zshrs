@@ -13654,6 +13654,24 @@ impl fusevm::ShellHost for ZshrsHost {
         // so the next eval/source's parse silently "failed" and the
         // D04 harness shell wedged after chunk 10's
         // `(print ${unset1:?exiting1})`.
+        //
+        // !!! DASH-FAMILY GATE — see dash_mode::fatal_error_status !!!
+        // dash's `sh_error()` unwinds via `exraise(EXERROR)`, which sets
+        // `exitstatus = 2` before `exitshell()`; the `( … )` boundary IS
+        // one of the two places that unwind lands, so the subshell reports
+        // 2 rather than zsh's `lastval == ERRFLAG_ERROR == 1`. Read the
+        // flag BEFORE the clear below; the status is published at the
+        // deferred-`exit` arm uses (run_chunk otherwise restores
+        // `vm.last_status` over any write made here).
+        let dash_fatal_status = {
+            let ef = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+            let fatal = crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD;
+            if ef & fatal != 0 {
+                crate::extensions::dash_mode::fatal_error_status()
+            } else {
+                None
+            }
+        };
         crate::ported::utils::errflag.fetch_and(
             !(crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD),
             std::sync::atomic::Ordering::Relaxed,
@@ -13683,7 +13701,12 @@ impl fusevm::ShellHost for ZshrsHost {
             // in-process subshell propagated the full i32 (256) into
             // the parent's $?, diverging from zsh.
             let raw = crate::ported::builtin::EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed);
-            let val = raw & 0xFF;
+            // dash's `exraise(EXERROR)` assigns `exitstatus = 2` at the
+            // RAISE, so a fatal error wins over whatever deferred-exit
+            // value the unwind happened to carry. Only an errflag-driven
+            // unwind reaches this — a real `(exit 5)` never sets the flag,
+            // so `(exit 5)` still reports 5.
+            let val = dash_fatal_status.unwrap_or(raw & 0xFF);
             with_executor(|exec| exec.set_last_status(val));
             crate::ported::builtin::EXIT_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
             crate::ported::builtin::RETFLAG.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -13693,6 +13716,12 @@ impl fusevm::ShellHost for ZshrsHost {
             // `set_last_status(vm.last_status)` would clobber LASTVAL
             // back to the stale pre-subshell value.
             return Some(val);
+        }
+        // Same publication path for a fatal error that did NOT arm a
+        // deferred exit (e.g. the failed-assignment unwind).
+        if let Some(st) = dash_fatal_status {
+            with_executor(|exec| exec.set_last_status(st));
+            return Some(st);
         }
         None
     }

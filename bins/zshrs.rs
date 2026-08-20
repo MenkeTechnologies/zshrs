@@ -2527,6 +2527,22 @@ pub fn zshrs_main() {
             }
             std::process::exit(1);
         }
+        // !!! DASH-FAMILY GATE — see dash_mode::fatal_error_status !!!
+        // The end of a `-c` script is the second place dash's
+        // `exraise(EXERROR)` unwind lands (the other is the `( … )`
+        // boundary, handled in fusevm_bridge::subshell_end). dash reports 2
+        // for a fatal expansion / assignment / arithmetic error; zsh reports
+        // `lastval == ERRFLAG_ERROR == 1`. No-op in every other mode.
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            let ef = zsh::ported::utils::errflag.load(Relaxed);
+            let fatal = zsh::ported::zsh_h::ERRFLAG_ERROR | zsh::ported::zsh_h::ERRFLAG_HARD;
+            if ef & fatal != 0 {
+                if let Some(st) = zsh::extensions::dash_mode::fatal_error_status() {
+                    std::process::exit(st);
+                }
+            }
+        }
         std::process::exit(executor.last_status());
         #[allow(unreachable_code)]
         return;

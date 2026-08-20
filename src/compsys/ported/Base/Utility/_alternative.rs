@@ -187,11 +187,7 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
             } else if action.starts_with('(') && action.ends_with(')') {
                 // sh:43  (literal list) → compadd direct
                 let body = &action[1..action.len() - 1];
-                // sh:46 — `eval ws\=\( "${action[2,-2]}" \)`, the same
-                // shell-parsed array literal as the `((…))` arm above, so a
-                // quoted or backslash-escaped space joins one value instead of
-                // starting a new one.
-                let items: Vec<String> = crate::compsys::ported::eval_action_words(body);
+                let items: Vec<String> = body.split_whitespace().map(|s| s.to_string()).collect();
                 setaparam("ws", items);
                 loop {
                     let mut nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
