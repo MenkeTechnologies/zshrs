@@ -1,0 +1,103 @@
+# comptab_divergent_cases.txt — TAB-completion cases that diverge from zsh.
+#
+#   scripts/comptab_parity.py --corpus scripts/comptab_divergent_cases.txt \
+#                             --sequences tab1 --jobs 3
+#
+# One command-line prefix per line; `#` comments are ignored (comptab_parity.py
+# --corpus). Every entry below was mined from the host-discovered corpus
+# (`--discover`, 8270 cases over 4149 installed commands with a `_name`
+# completer) and then RE-CONFIRMED serially, because a parallel sweep's
+# verdicts are not trustworthy: at --jobs 8..10 roughly 80% of the failures
+# were the debug-build zshrs missing the harness's 10s per-key budget, not a
+# divergence. Anything that only failed under parallel load is NOT in here.
+#
+# Grouped by root cause, worst first. A group's first entry is the one with the
+# smallest reproduction.
+
+# ── 1. `(...)` / `((...))` action lists are split on whitespace, blind to
+#      quoting and to backslash escapes ─────────────────────────────────────
+# zsh word-splits an _arguments action body the way the shell splits a command
+# line: `a\:"add files to archive"` is ONE value whose description contains
+# spaces. zshrs splits on bare whitespace, so the value becomes four matches
+# (`a` described as `"add`, plus `files`, `to`, `archive"`) and the quote
+# characters survive into the display. Double quotes, single quotes and
+# `backslash-space` are all affected; `_values`-style `name[desc]` is not.
+# Smallest repro, in a file earlier in $fpath than the stock completer:
+#     _arguments '1:command:((a\:"add files to archive" b\:"benchmark"))'
+#   zsh  : `a  -- add files to archive`
+#   zshrs: `a         -- "add` + a second row `archive"  files     to`
+# Also implicated in a >25s completion on `7z ` (zsh: 0.10s) — splitting the
+# descriptions multiplies the match count.
+7z 
+7za 
+7zr 
+ansible-config 
+
+# ── 2. non-ASCII bytes in a description are not nice-printed under LC_ALL=C ──
+# Both shells run with LANG=LC_ALL=C, where a byte >0x7f is unprintable. zsh
+# renders it metafied (`don\M-^@\M-^Yt`); zshrs writes the raw UTF-8 through
+# (`don’t`). Affects every completer whose descriptions contain a curly
+# apostrophe, a minus sign, an en dash, etc.
+gifdiff -
+gi-compile-repository -
+gi-decompile-typelib -
+avconvert -
+
+# ── 3. matches that tie on the display string come out in the opposite order ─
+# When two matches share a name but carry different descriptions, zsh's order
+# and zshrs's are reversed. `busted -` has a five-entry tied run (`--` with
+# -c/-R/-k/-s/-v) and zshrs emits the tail exactly backwards; the others are
+# two-entry swaps. `_afconvert` lists `--soundcheck-generate` twice, source
+# order "analyze audio…" then "Also enabled." — zsh prints "Also enabled."
+# first, zshrs prints source order.
+afconvert -
+busted -
+cjk-gs-integrate -
+elixirc -
+gptx -
+hexgplc -
+httpd-wrapper -
+hwloc-distrib -
+
+# ── 4. a match added twice with different `-S` suffixes is not suppressed ────
+# `_getconf` puts PIPE_BUF in both `pathkeys1` (added `compadd -S ''`) and
+# `pathkeys2` (added `compadd -S ' '`). zsh ends up showing it zero times,
+# zshrs once — 294 possibilities against zsh's 293, with every other name
+# identical. Independent of terminal geometry: the ask-prompt fires off
+# LISTMAX, so `--rows 200` reproduces it too.
+getconf 
+irb -
+gpg-agent 
+
+# ── 5. a nested-frame diagnostic loses its line number ──────────────────────
+#   zsh  : _values:compvalues:11: not enough arguments
+#   zshrs: _values:compvalues: not enough arguments
+gtk-launch 
+gtk-launch -
+gtk4-launch 
+
+# ── 6. _arguments spec parse + glob-qualifier / subscript-flag failures ─────
+# `_git-cvsserver` makes zsh emit one complaint (`bad pattern:
+# -([AMO]*|[0CRSWnsw])`) and zshrs a cascade of its own:
+#   _arguments:36: parse error: condition expected:
+#   __origfiles:30: bad math expression: operand expected at `/[(I)-g*]'
+#   __origfiles:82: bad output format specification
+#   __origfiles:82: bad math expression: operand expected at `*(#q-/): *...'
+#   __origfiles:41: bad math expression: operator expected at `(I)-F'
+# i.e. `(#q-/)` glob qualifiers and `(I)` subscript flags inside the generated
+# code are being fed to the arithmetic evaluator.
+git-cvsserver 
+git-cvsserver -
+
+# ── 7. match sets that differ outright ─────────────────────────────────────
+# `ansible-galaxy ` offers 11 subcommands under zsh and 2 under zshrs
+# (collection, role — the rest of `import init list setup delete info install
+# remove search` are missing). `chflags ` gains `arch`/`noarch` in zshrs.
+# `CC ` completes uniquely to `files` under zsh and lists 20 directories under
+# zshrs. `fc-list `/`fc-match ` differ by one match AND by eleven display rows,
+# so the column layout diverges too.
+ansible-galaxy 
+chflags 
+CC 
+fc-list 
+fc-match 
