@@ -379,6 +379,22 @@ impl ZshCompiler {
         self.builder.patch_jump(skip, self.builder.current_pos());
     }
 
+    /// Emit the per-command PRINT_EXIT_VALUE report
+    /// (c:Src/exec.c:4308-4316). C runs it at the tail of `execcmd_exec`,
+    /// for every simple command, INCLUDING the operands of `&&` / `||` and
+    /// an `if`/`while` condition — so it must not be folded into
+    /// `emit_errexit_check`, which those contexts suppress
+    /// (`errexit_suppress_depth`). The runtime builtin does the whole
+    /// PRINTEXITVALUE / SHINSTDIN / lastval / subsh test, so the option can
+    /// still be flipped mid-script.
+    fn emit_print_exit_value(&mut self) {
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_PRINT_EXIT_VALUE, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
     fn emit_errexit_check(&mut self) {
         if self.errexit_suppress_depth > 0 {
             // Suppressed for errexit/ZERR — but a fatal errflag still ends
@@ -2926,7 +2942,8 @@ impl ZshCompiler {
         if let Some(builtin_id) = builtin_id {
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
-            // `return`/`exit` short-circuit. Drain cmd_stack so the
+            self.emit_print_exit_value(); // c:Src/exec.c:4308-4316
+                                          // `return`/`exit` short-circuit. Drain cmd_stack so the
             // pushes from enclosing if/then/for/etc. don't leak past
             // the function's return target.
             if first == "return"
@@ -3012,6 +3029,7 @@ impl ZshCompiler {
             let name_idx = self.builder.add_name(&cleaned_first);
             self.builder.emit(Op::CallFunction(name_idx, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
+            self.emit_print_exit_value(); // c:Src/exec.c:4308-4316
             self.emit_errexit_check();
         }
 

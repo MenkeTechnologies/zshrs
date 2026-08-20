@@ -4803,6 +4803,7 @@ pub struct SubshStateGuard {
     saved_shout: usize,
     saved_usezle: bool,
     saved_zleactive: i32,
+    saved_subsh: i32,
 }
 
 impl SubshStateGuard {
@@ -4813,7 +4814,13 @@ impl SubshStateGuard {
             saved_shout: *shout.lock().unwrap(),
             saved_usezle: isset(USEZLE),
             saved_zleactive: zleactive.load(Ordering::Relaxed),
+            saved_subsh: subsh.load(Ordering::Relaxed),
         };
+        // c:1153-1154 — `if (!(flags & ESUB_FAKE)) subsh = 1;`. The
+        // substitution's body is "in a subshell" for every consumer that
+        // asks, which is what keeps PRINT_EXIT_VALUE quiet inside
+        // `x=$(false)` (c:4309 `&& !subsh`).
+        subsh.store(1, Ordering::Relaxed); // c:1154
         // `force = 1`: C assigns the `opts[]` slots directly, so the
         // dosetopt gatekeeping (c:743-861, which only guards turning
         // options ON) must not apply in either direction.
@@ -4829,6 +4836,7 @@ impl Drop for SubshStateGuard {
     fn drop(&mut self) {
         // Reverse order of `enter`; the C child never restores because it
         // `_realexit()`s, so this half has no C counterpart to cite.
+        subsh.store(self.saved_subsh, Ordering::Relaxed);
         zleactive.store(self.saved_zleactive, Ordering::Relaxed);
         dosetopt(USEZLE, self.saved_usezle as i32, 1);
         *shout.lock().unwrap() = self.saved_shout;

@@ -2750,6 +2750,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
                         crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
                     });
+                    // c:Src/exec.c:1153-1154 — the same entersubsh call sets
+                    // `subsh = 1` in the forked stage. PRINT_EXIT_VALUE reads
+                    // it (c:4309 `&& !subsh`), which is why zsh prints nothing
+                    // for the failing stage of `false | true`.
+                    crate::ported::exec::subsh.store(1, std::sync::atomic::Ordering::Relaxed);
                     *crate::ported::jobs::THISJOB
                         .get_or_init(|| std::sync::Mutex::new(-1))
                         .lock()
@@ -9328,6 +9333,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         vm.last_status = with_executor(|exec| exec.last_status());
         Value::Int(1)
     });
+    vm.register_builtin(BUILTIN_PRINT_EXIT_VALUE, |vm, _argc| {
+        // c:Src/exec.c:4308-4316 — `if (isset(PRINTEXITVALUE) &&
+        // isset(SHINSTDIN) && lastval && !subsh) fprintf(stderr,
+        // "zsh: exit %lld\n", lastval);`
+        //
+        // SHINSTDIN keeps this to a shell reading its program from stdin
+        // (`zsh -f < script`, the interactive shell) — `-c` and script-file
+        // runs never report. `subsh` keeps it out of forked pipeline stages
+        // and `(...)` subshells, which is why zsh prints nothing for
+        // `false | true` or `(exit 3)`. A function BODY is silent for a
+        // different reason: c:Src/exec.c:6037 `opts[PRINTEXITVALUE] = 0`
+        // in doshfunc (ported at exec.rs), restored at c:6158.
+        let lastval = vm.last_status; // c:4309 lastval
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEXITVALUE) // c:4308
+            && crate::ported::zsh_h::isset(crate::ported::zsh_h::SHINSTDIN)  // c:4308
+            && lastval != 0                                                  // c:4309
+            && crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed) == 0
+        // c:4309
+        {
+            eprintln!("zsh: exit {lastval}"); // c:4311/4313
+            let _ = std::io::Write::flush(&mut std::io::stderr()); // c:4315 fflush(stderr)
+        }
+        Value::Status(0)
+    });
     vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
         // Returns Value::Int(1) when the caller should jump to the
         // current scope's return-patch landing (subshell-end / func-
@@ -12064,6 +12093,20 @@ pub const BUILTIN_COND_MOD: u16 = 651;
 /// `src/extensions/provenance.rs`. ID 661 is the first free slot above
 /// the 653-660 block.
 pub const BUILTIN_PROVENANCE: u16 = 661;
+
+/// PRINT_EXIT_VALUE report for one finished simple command. Direct port
+/// of c:Src/exec.c:4308-4316 (`execcmd_exec`'s tail):
+/// ```c
+///     if (isset(PRINTEXITVALUE) && isset(SHINSTDIN) && lastval && !subsh)
+///         fprintf(stderr, "zsh: exit %lld\n", lastval);
+/// ```
+/// The ported `execcmd_exec` carries the same code (exec.rs), but fusevm —
+/// not that walker — is what actually runs a command, so the report never
+/// fired. `compile_simple` emits this call right after the dispatch's
+/// `Op::SetStatus` (both the builtin and the function/external arm), which
+/// is exactly where the C line sits. Pushes Status(0), which the emit side
+/// pops; `vm.last_status` is left untouched.
+pub const BUILTIN_PRINT_EXIT_VALUE: u16 = 662;
 
 /// Update `$LINENO` to track the source line of the next statement.
 /// Stack: \[n\] (the line number from `ZshPipe.lineno`). Direct port
