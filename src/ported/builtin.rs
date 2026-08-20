@@ -6186,22 +6186,48 @@ pub fn bin_typeset(
                     // to alternating pairs.
                     let bracket_shape = !elems.is_empty()
                         && elems.iter().all(|e| e.starts_with('[') && e.contains("]="));
-                    let mut map: IndexMap<String, String> = IndexMap::new();
-                    if bracket_shape {
-                        for e in &elems {
-                            let close = e.find("]=").unwrap();
-                            let k = e[1..close].to_string();
-                            let v = e[close + 2..].to_string();
-                            map.insert(k, v);
-                        }
+                    // c:Src/params.c:4076-4085 arrhashsetfn — the element list is
+                    // counted first and an ODD total is refused outright:
+                    //     for (aptr = val; *aptr; ++aptr)
+                    //         if (**aptr != Marker) ++alen;
+                    //     if (alen % 2) {
+                    //         freearray(val);
+                    //         zerr("bad set of key/value pairs for associative array");
+                    //         return;
+                    //     }
+                    // The flat `m=(k1 v1 k2 v2)` form IS that list, so a trailing
+                    // key with no value is an error and the parameter is left
+                    // untouched. The pair walk below invented an empty value with
+                    // `it.next().unwrap_or_default()`, so `typeset -A a=(k)`
+                    // silently defined `a[k]=""` where zsh refuses the assignment.
+                    // In C's `[k]=v` form every element carries a Marker, so its
+                    // `alen` is always even and the gate cannot fire — which is why
+                    // the test is scoped to the flat shape here.
+                    let odd_pairs = !bracket_shape && elems.len() % 2 != 0; // c:4081
+                    if odd_pairs {
+                        // c:4083 — `zerr(...)`; zshrs's zerr raises ERRFLAG_ERROR
+                        // itself (c:Src/utils.c:194), so the shell aborts the rest
+                        // of the input exactly as C does.
+                        zerr("bad set of key/value pairs for associative array"); // c:4083
+                        // c:4084 `return;` — the parameter is NOT set.
                     } else {
-                        let mut it = elems.into_iter(); // c:2960 pair walk
-                        while let Some(k) = it.next() {
-                            let v = it.next().unwrap_or_default();
-                            map.insert(k, v); // c:2964 hashtab insert
+                        let mut map: IndexMap<String, String> = IndexMap::new();
+                        if bracket_shape {
+                            for e in &elems {
+                                let close = e.find("]=").unwrap();
+                                let k = e[1..close].to_string();
+                                let v = e[close + 2..].to_string();
+                                map.insert(k, v);
+                            }
+                        } else {
+                            let mut it = elems.into_iter(); // c:2960 pair walk
+                            while let Some(k) = it.next() {
+                                let v = it.next().unwrap_or_default();
+                                map.insert(k, v); // c:2964 hashtab insert
+                            }
                         }
+                        crate::ported::exec::set_assoc(n, map.clone());
                     }
-                    crate::ported::exec::set_assoc(n, map.clone());
                 } else if crate::dash_mode::bash_mode()
                     && !elems.is_empty()
                     && elems.iter().all(|e| e.starts_with('[') && e.contains("]="))
