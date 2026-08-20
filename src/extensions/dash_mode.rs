@@ -63,6 +63,32 @@ static BASH_MODE: AtomicBool = AtomicBool::new(false);
 /// own flag. Toggled by the `shopt` builtin; read by cond.rs / case matching.
 static NOCASEMATCH: AtomicBool = AtomicBool::new(false);
 
+/// Process-global "this Korn drop-in is the pdksh line, not ksh93" flag,
+/// raised for `zshrs --mksh` / `--pdksh`.
+///
+/// `--ksh`, `--mksh` and `--pdksh` all install the same `emulate ksh`
+/// option preset and are otherwise indistinguishable at run time, but the
+/// two lines genuinely differ where mksh inherited pdksh behavior ksh93
+/// never had. The one this currently decides is `$PIPESTATUS`:
+/// mksh(1) documents it ("PIPESTATUS: An array variable holding the exit
+/// statuses of the last pipeline"), ksh93 has no such parameter —
+/// `mksh -c 'true|false|true; print -r -- "[${PIPESTATUS[*]}]"'` → `[0 1 0]`
+/// while ksh93 prints `[]`.
+static PDKSH_FAMILY: AtomicBool = AtomicBool::new(false);
+
+/// True for a bare `zshrs --mksh` / `--pdksh`. See [`PDKSH_FAMILY`].
+#[inline]
+pub fn pdksh_family() -> bool {
+    PDKSH_FAMILY.load(Ordering::Relaxed)
+}
+
+/// Select the pdksh/mksh line of the Korn family. Called from the binary's
+/// CLI mode application; cleared for `--ksh` and every other mode.
+#[inline]
+pub fn set_pdksh_family(on: bool) {
+    PDKSH_FAMILY.store(on, Ordering::Relaxed);
+}
+
 /// True when `shopt -s nocasematch` is active (bash case-insensitive matching).
 #[inline]
 pub fn nocasematch() -> bool {
@@ -277,7 +303,14 @@ pub fn strip_replacement_backslashes(s: &str) -> String {
 /// special or synthesizing it. Returns `None` for any other name (or outside
 /// bash mode) so callers fall through to normal array resolution.
 pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
-    if !bash_mode() {
+    // `$PIPESTATUS` is not bash's alone: mksh(1) documents it verbatim —
+    // "PIPESTATUS: An array variable holding the exit statuses of the last
+    // pipeline" — and `mksh -c 'true|false|true; print -r --
+    // "[${PIPESTATUS[*]}]"'` prints `[0 1 0]`. ksh93 has NO such parameter
+    // (same command prints `[]`), so this widens to the pdksh line only,
+    // not to `--ksh`. `FUNCNAME` and `BASH_VERSINFO` stay bash-only —
+    // neither Korn shell has them.
+    if !bash_mode() && !(name == "PIPESTATUS" && pdksh_family()) {
         return None;
     }
     match name {

@@ -6666,11 +6666,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `BIN_PREFIX("command", BINF_COMMAND)`) and resets the
             // behavior, so it keeps the save.
             let is_command_prefix = name == "command";
-            // !!! dash EXCEPTION — C's `is_shfunc` leg has no counterpart
-            // in the Almquist family: `f(){ :; }; v=0; v=4 f` leaves `v`
-            // at 0 in dash and ash, while ksh93 and bash-as-sh (the `--sh`
+            // !!! dash / pdksh EXCEPTION — C's `is_shfunc` leg is not
+            // universal. `f(){ :; }; v=0; v=4 f` leaves `v` at 0 in dash,
+            // ash AND mksh, while ksh93 and bash-as-sh (the `--sh`
             // reference) leave it at 4. Only the builtin legs are shared.
             let is_shfunc = !crate::dash_mode::dash_strict()
+                && !crate::dash_mode::pdksh_family()
                 && crate::ported::hashtable::shfunctab_lock()
                     .read()
                     .map(|t| t.get(&name).is_some())

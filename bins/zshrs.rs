@@ -1519,6 +1519,14 @@ pub fn zshrs_main() {
     let zsh_style_requested = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
     zsh::extensions::dash_mode::set_posix_faithful(posix_family && !zsh_style_requested);
 
+    // `--mksh` / `--pdksh` install the same `emulate ksh` preset as `--ksh`
+    // and are otherwise indistinguishable at run time, but the pdksh line
+    // has behavior ksh93 never had. Record which line was asked for so
+    // dash_mode can answer per-shell; see dash_mode::PDKSH_FAMILY.
+    zsh::extensions::dash_mode::set_pdksh_family(
+        !zsh_style_requested && args.iter().any(|a| a == "--mksh" || a == "--pdksh"),
+    );
+
     // bash-specific option deltas on top of the shared `sh` emulation base.
     // bash is a SUPERSET of POSIX sh: unlike `emulate sh` (which sets
     // IGNOREBRACES), bash performs brace expansion by default
