@@ -399,7 +399,7 @@ class Session:
         self.mark = 0            # raw offset where the case interaction starts
         self.dead = False
         self.status = None       # child wait status once reaped
-        self.events = []         # (phase, settle-outcome) per wait
+        self.events = []         # (phase, settle-outcome, first-byte s, waited s)
         with _FORK_LOCK:
             self.pid, self.fd = pty.fork()
             if self.pid == 0:
@@ -451,22 +451,31 @@ class Session:
         """
         start = last = time.monotonic()
         seen = False
+        # Time from entering the wait to the FIRST byte the child produced.
+        # Without it a NO_OUTPUT verdict is indistinguishable between "the
+        # shell had nothing to say" and "the shell was still computing when
+        # the budget ran out" — which is the single most common triage
+        # question on a discovered-corpus sweep. Purely additive: no wait
+        # budget, outcome or comparison depends on it.
+        first = None
         while True:
             now = time.monotonic()
             if now - start > max_wait:
                 outcome = CAPPED if seen else NO_OUTPUT
-                self.events.append((phase, outcome))
+                self.events.append((phase, outcome, first, now - start))
                 return outcome
             got = self._read_once(0.05)
             now = time.monotonic()
             if got:
+                if first is None:
+                    first = now - start
                 seen, last = True, now
             elif not seen:
                 if now - start > first_wait:
-                    self.events.append((phase, NO_OUTPUT))
+                    self.events.append((phase, NO_OUTPUT, first, now - start))
                     return NO_OUTPUT
             elif now - last >= self.settle:
-                self.events.append((phase, QUIET))
+                self.events.append((phase, QUIET, first, now - start))
                 return QUIET
 
     def wait_prompt(self, timeout=30.0):
@@ -599,6 +608,10 @@ def exit_note(status):
 
 # ── one shell's capture for one case ─────────────────────────────────────────
 
+def _secs(v):
+    return "none" if v is None else "%.2fs" % v
+
+
 class Capture:
     def __init__(self, grid=None, reason=None, crash=None, attrs=None,
                  cursor=None, raw=b"", diags=None, events=(), status=None):
@@ -615,12 +628,14 @@ class Capture:
     def warnings(self):
         """Reasons this capture is worth less than a clean one."""
         out = []
-        for phase, outcome in self.events:
+        for phase, outcome, first, waited in self.events:
             if outcome == CAPPED:
-                out.append("settle capped after %s — screen may be mid-render"
-                           % phase)
+                out.append("settle capped after %s — screen may be mid-render "
+                           "(first byte %s, waited %.1fs)"
+                           % (phase, _secs(first), waited))
             elif outcome == NO_OUTPUT and phase.startswith("key "):
-                out.append("no output at all after %s" % phase)
+                out.append("no output at all after %s (waited %.1fs)"
+                           % (phase, waited))
         note = exit_note(self.status)
         if note:
             out.append("child %s" % note)
@@ -835,6 +850,12 @@ def to_json(v):
             "rows": len(c.grid) if c.grid is not None else None,
             "warnings": c.warnings(),
             "diagnostics": sorted(c.diags),
+            # Per-wait timing, so a sweep's JSON can separate "answered
+            # differently" from "answered too late to be captured".
+            "phases": [{"phase": p, "outcome": o,
+                        "first_byte": (round(f, 3) if f is not None else None),
+                        "waited": round(w, 3)}
+                       for p, o, f, w in c.events],
         }
     first = None
     if v.diffs:
