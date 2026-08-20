@@ -19,14 +19,35 @@ Replaces the trust problems in compsys_parity.py:
   * Both shells' raw PTY byte streams are scanned for panics and for
     diagnostics that appear on only one side.
 
-Cases come from a corpus file (one command-line prefix per line, `#`
-comments ignored) or the built-in list. Every case is `<buffer>` + TAB.
+What a FAIL prints, so it can be acted on without re-running anything:
+
+    both grids, the (row, col) of the FIRST differing cell with a caret,
+    every differing row, the cursor position on each side, rows that match as
+    text but differ in SGR attributes, diagnostics only one shell emitted, any
+    settle window that was truncated while output was still flowing, each
+    child's exit status, a token-level diff of the two raw escape-sequence
+    streams for the case interaction, and a copy-pasteable command that
+    replays exactly that cell (geometry, fixture and dump included).
+
+Signals that are REPORTED but do not by themselves fail a cell, because the
+default verdict set is the text grid: SGR attribute divergence
+(`--compare-attrs` promotes it to FAIL), cursor-position divergence
+(`--strict-cursor`), and one-sided stream diagnostics (`--strict-stream`).
+Each is counted in the summary and carried in `--json`, so the gap is visible
+whether or not the flag is on.
+
+Cases come from the shared corpus (`parity_corpus.CASES`), a corpus file (one
+command-line prefix per line, `#` comments ignored), `--case`, or `--discover`
+(every installed command on this host that ships a `_name` completer).
 
 Usage:
-    scripts/comptab_parity.py                       # built-in corpus
+    scripts/comptab_parity.py                       # shared corpus
     scripts/comptab_parity.py --corpus cases.txt    # your own list
     scripts/comptab_parity.py --case 'wget -'       # one ad-hoc case
     scripts/comptab_parity.py --keys tab,tab        # keystrokes per case
+    scripts/comptab_parity.py --discover 200        # 200 host-discovered cases
+    scripts/comptab_parity.py --json out.json       # machine-readable results
+    scripts/comptab_parity.py --jobs 4              # 4 cells at a time
     scripts/comptab_parity.py -v                    # print grids for passes too
     scripts/comptab_parity.py --mode zsh            # emulation path instead
 
@@ -36,10 +57,13 @@ Exit status: 0 only when every case is byte-identical.
 from __future__ import annotations
 
 import argparse
+import difflib
 import fcntl
 import glob
+import json
 import os
 import pty
+import re
 import select
 import shlex
 import signal
@@ -47,6 +71,7 @@ import struct
 import sys
 import tempfile
 import termios
+import threading
 import time
 
 try:
@@ -71,6 +96,7 @@ class _TolerantScreen(pyte.Screen):
         return super().select_graphic_rendition(*attrs, **kwargs)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SELF = os.path.join("scripts", "comptab_parity.py")
 SENTINEL = "@CT@"
 
 # Keystrokes, cases and key SEQUENCES all live in parity_corpus so this
@@ -81,8 +107,11 @@ from parity_corpus import (  # noqa: E402
     CASES,
     DEFAULT_SEQUENCES,
     KEY_SEQUENCES,
-    KEYS,
+    UnknownKey,
+    adhoc_case,
     cases_by_tag,
+    discover_cases,
+    key_bytes,
     random_subset,
     read_statements,
     shrink,
@@ -103,6 +132,58 @@ CRASH_MARKERS = (
     "Abort trap",
     "fatal runtime error",
 )
+
+# Lines that mean "a shell complained". Matched against the raw pty text of
+# each side with the escape sequences stripped, then set-differenced: a message
+# BOTH shells print is not a divergence, one only zsh or only zshrs prints is.
+# That comparison is what makes the patterns safe to keep broad — a completion
+# listing that happens to contain the words appears on both sides and cancels.
+DIAG_PATTERNS = tuple(re.compile(p, re.I) for p in (
+    # zsh's own diagnostic shape. It is `funcname:lineno: message` for a
+    # top-level shell function but nests one segment per frame when the error
+    # comes from something the function called — the real emission that
+    # motivated this was `_describe:compadd:114: bad option: -b`, which a
+    # single-segment pattern did not match, so the harness printed 24 rows of
+    # `<absent>` without ever naming the `compadd -b` gap that caused them.
+    # FIRST in the tuple on purpose: the scan keeps the first pattern that
+    # matches, and this one carries the calling frames that say WHERE the
+    # message came from, which the bare message text does not.
+    r"\b_[a-z_][a-z0-9_]*(?::[a-z_][a-z0-9_]*)*:\d+:.*",
+    r"command not found\b.*",
+    r"no such file or directory\b.*",
+    r"permission denied\b.*",
+    r"parse error\b.*",
+    r"bad pattern\b.*",
+    r"bad substitution\b.*",
+    r"bad math expression\b.*",
+    r"bad set of key/value pairs\b.*",
+    r"unknown file attribute\b.*",
+    r"not valid in this context\b.*",
+    r"function definition file not found\b.*",
+    r"invalid argument\b.*",
+    r"bad option\b.*",
+    r"unknown (?:option|module|signal)\b.*",
+    r"no matches found\b.*",
+    r"event not found\b.*",
+    r"maximum nested function level reached\b.*",
+    r"can't (?:open|find|read)\b.*",
+))
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+_SHELLPREFIX_RE = re.compile(r"^(?:zsh|zshrs)(?:\s*\(\w+\))?:\s*")
+
+# Settle outcomes. Which one ended a wait is a property of the MEASUREMENT, and
+# a FAIL captured under `capped` (output still flowing) or a PASS captured under
+# `no-output` (nothing ever rendered) is worth strictly less than one captured
+# under `quiet` — so the harness records it instead of pretending all three are
+# the same observation.
+QUIET, NO_OUTPUT, CAPPED = "quiet", "no-output", "capped"
+
+# `pty.fork()` forks a process that is running Python threads. The child execs
+# immediately, but between fork and exec it must not touch a lock another
+# thread held at fork time. Serialising the fork+exec pair keeps that window to
+# one thread at a time; it costs nothing at --jobs 1.
+_FORK_LOCK = threading.Lock()
 
 # The case corpus now lives in parity_corpus.CASES (shared with
 # compsys_parity.py). `--corpus FILE` still overrides it.
@@ -189,6 +270,17 @@ def child_env():
         "ZSHRS_HIDE_EXT_BUILTINS": "1",
         "RUST_BACKTRACE": "1",
     }
+    # The child env is built from scratch — nothing of the parent's leaks in
+    # except what is listed here — and BOTH shells get the identical dict, so
+    # the environment is not a variable in the comparison.
+    #
+    # HOME is deliberately the real one rather than a throwaway: `-f` already
+    # guarantees no rc file is read on either side, the dump lives under the
+    # user's HOME, and `cd ~/<TAB>` is only a meaningful case if it completes
+    # against a real home. HISTFILE is deliberately NOT pinned either — a
+    # `<UP>` on an empty line was measured to render nothing on both shells, so
+    # there is no history state to isolate and inventing an isolation for it
+    # would only add a difference from how the shell really starts.
     if "HOME" in os.environ:
         env["HOME"] = os.environ["HOME"]
     # Debug passthrough: the child env is built from scratch, so without this
@@ -200,6 +292,103 @@ def child_env():
     return env
 
 
+# ── raw pty stream analysis ──────────────────────────────────────────────────
+
+_TOKEN_RE = re.compile(
+    rb"\x1b\[[0-?]*[ -/]*[@-~]"                  # CSI
+    rb"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"       # OSC
+    rb"|\x1b[P^_X][^\x1b]*(?:\x1b\\)?"           # DCS / PM / APC / SOS
+    rb"|\x1b[@-Z\\-_]"                           # two-byte ESC
+    rb"|[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]"       # lone control byte
+    rb"|[\t\n\r]"                                # layout controls, one each
+    rb"|[^\x00-\x1f\x7f]+"                       # printable run
+)
+
+_CTRL_NAMES = {0x07: r"\a", 0x08: r"\b", 0x09: r"\t", 0x0a: r"\n",
+               0x0b: r"\v", 0x0c: r"\f", 0x0d: r"\r", 0x1b: r"\e", 0x7f: r"\x7f"}
+
+
+def esc_bytes(b: bytes) -> str:
+    """One token rendered readably: `\\e[K`, `\\r`, `cd /usr/`."""
+    out = []
+    for ch in b:
+        if ch in _CTRL_NAMES:
+            out.append(_CTRL_NAMES[ch])
+        elif ch < 0x20:
+            out.append("\\x%02x" % ch)
+        else:
+            out.append(chr(ch))
+    return "".join(out)
+
+
+def tokenize_stream(raw: bytes) -> list[str]:
+    """Split a raw pty stream into escape sequences and printable runs.
+
+    Diffing the streams line-by-line is useless (a redraw stream has almost no
+    newlines) and byte-by-byte is unreadable. One token per escape sequence is
+    the granularity the bug actually lives at: `zsh emitted \\e[5C where zshrs
+    emitted \\e[K` is a sentence about the redraw path.
+    """
+    out, i, n = [], 0, len(raw)
+    while i < n:
+        m = _TOKEN_RE.match(raw, i)
+        if m and m.end() > i:
+            out.append(esc_bytes(m.group()))
+            i = m.end()
+        else:                       # unmatchable byte (e.g. stray 0x80-0xff)
+            out.append(esc_bytes(raw[i:i + 1]))
+            i += 1
+    return out
+
+
+def stream_diff(ref: bytes, test: bytes, max_lines: int = 40) -> list[str]:
+    """Token-level unified diff of the two raw streams."""
+    a, b = tokenize_stream(ref), tokenize_stream(test)
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    lines: list[str] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            continue
+        if len(lines) >= max_lines:
+            lines.append("... (truncated; raise --raw-diff-lines)")
+            break
+        ctx = "".join(a[max(0, i1 - 3):i1])
+        if ctx:
+            lines.append("  after %s" % ctx)
+        if tag in ("replace", "delete"):
+            lines.append("    zsh  - %s" % "".join(a[i1:i2])[:200])
+        if tag in ("replace", "insert"):
+            lines.append("    zshrs+ %s" % "".join(b[j1:j2])[:200])
+    return lines
+
+
+def diagnostics(raw: bytes, pid: int | None) -> set[str]:
+    """Complaint-shaped lines in one shell's raw output, normalised.
+
+    The shell name prefix and this session's own pid are stripped so `zsh: no
+    such file` and `zshrs: no such file` are the SAME message and cancel out —
+    only a message one side emits and the other does not survives the set
+    difference.
+    """
+    text = _ANSI_RE.sub("", raw.decode("utf-8", "replace"))
+    if pid:
+        text = text.replace(str(pid), "<PID>")
+    found = set()
+    for line in re.split(r"[\r\n]+", text):
+        line = line.strip()
+        if not line or SENTINEL in line:
+            continue
+        line = _SHELLPREFIX_RE.sub("", line)
+        for pat in DIAG_PATTERNS:
+            m = pat.search(line)
+            if m:
+                found.add(re.sub(r"\s+", " ", m.group()).strip())
+                break
+    return found
+
+
+# ── one shell on one pty ─────────────────────────────────────────────────────
+
 class Session:
     def __init__(self, argv, env, rows, cols, settle_ms):
         self.rows, self.cols = rows, cols
@@ -207,12 +396,34 @@ class Session:
         self.screen = _TolerantScreen(cols, rows)
         self.stream = pyte.ByteStream(self.screen)
         self.raw = bytearray()
+        self.mark = 0            # raw offset where the case interaction starts
         self.dead = False
-        self.pid, self.fd = pty.fork()
-        if self.pid == 0:
-            os.execvpe(argv[0], argv, env)
-        fcntl.ioctl(self.fd, termios.TIOCSWINSZ,
-                    struct.pack("HHHH", rows, cols, 0, 0))
+        self.status = None       # child wait status once reaped
+        self.events = []         # (phase, settle-outcome) per wait
+        with _FORK_LOCK:
+            self.pid, self.fd = pty.fork()
+            if self.pid == 0:
+                # A failed exec must never fall through into the parent's code
+                # — the child is a fork of a Python process midway through a
+                # sweep, and returning from here would run the rest of the run
+                # a second time.
+                try:
+                    os.execvpe(argv[0], argv, env)
+                except BaseException as exc:  # pragma: no cover — child only
+                    try:
+                        os.write(2, ("exec failed: %s\n" % exc).encode())
+                    finally:
+                        os._exit(127)
+        try:
+            fcntl.ioctl(self.fd, termios.TIOCSWINSZ,
+                        struct.pack("HHHH", rows, cols, 0, 0))
+        except OSError:
+            # Geometry is not optional — the completion column math depends on
+            # it — so this is fatal for the cell. Reap the child first: raising
+            # out of __init__ means no caller holds this Session and nothing
+            # would ever close its pty or wait for the shell.
+            self.close()
+            raise
 
     def _read_once(self, timeout):
         r, _, _ = select.select([self.fd], [], [], timeout)
@@ -230,32 +441,52 @@ class Session:
         self.stream.feed(data)
         return True
 
-    def settle_out(self, max_wait=10.0, first_wait=6.0):
+    def settle_out(self, max_wait=10.0, first_wait=6.0, phase="?"):
+        """Read until the screen stops changing; report HOW the wait ended.
+
+        Returns QUIET (a real quiet window elapsed — the only outcome that
+        means "this screen is final"), NO_OUTPUT (nothing arrived at all
+        within first_wait) or CAPPED (max_wait hit while bytes were still
+        arriving, so the screen may be mid-render).
+        """
         start = last = time.monotonic()
         seen = False
         while True:
             now = time.monotonic()
             if now - start > max_wait:
-                return
+                outcome = CAPPED if seen else NO_OUTPUT
+                self.events.append((phase, outcome))
+                return outcome
             got = self._read_once(0.05)
             now = time.monotonic()
             if got:
                 seen, last = True, now
             elif not seen:
                 if now - start > first_wait:
-                    return
+                    self.events.append((phase, NO_OUTPUT))
+                    return NO_OUTPUT
             elif now - last >= self.settle:
-                return
+                self.events.append((phase, QUIET))
+                return QUIET
 
     def wait_prompt(self, timeout=30.0):
-        waited = 0.0
-        while waited < timeout:
+        """Wait for the prompt sentinel, against a WALL-CLOCK deadline.
+
+        The previous loop added a flat 0.05 per iteration regardless of how
+        long the iteration took. When the child was writing steadily, each
+        `_read_once` returned as soon as data was ready — often in under a
+        millisecond — so the counter reached `timeout` after a small fraction
+        of that many seconds and a shell that was booting normally, just
+        chattily, was declared "never reached a prompt". A monotonic deadline
+        measures the thing the flag is named for.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             self._read_once(0.05)
             if any(SENTINEL in line for line in self.screen.display):
                 return True
             if self.dead:
                 return False
-            waited += 0.05
         return False
 
     def send(self, data):
@@ -266,13 +497,35 @@ class Session:
 
     def clear(self):
         self.send(b"\x0c")
-        self.settle_out(max_wait=3.0, first_wait=2.0)
+        self.settle_out(max_wait=3.0, first_wait=2.0, phase="clear")
 
     def grid(self):
         rows = [r.rstrip() for r in self.screen.display]
         while rows and rows[-1] == "":
             rows.pop()
         return [self._mask_pid(r) for r in rows]
+
+    def attrs(self, nrows):
+        """Per-cell SGR attributes for the first `nrows` rows.
+
+        `screen.display` throws every attribute away, so a listing drawn in the
+        wrong colour, without the bold on the selected menu entry, or missing
+        the `list-colors` SGR run compares byte-identical as text. This is the
+        raw material for reporting that (see `--compare-attrs`).
+        """
+        buf = self.screen.buffer
+        out = []
+        for y in range(min(nrows, self.rows)):
+            row = buf[y]
+            out.append(tuple(
+                (c.fg, c.bg, c.bold, c.italics, c.underscore,
+                 c.strikethrough, c.reverse, c.blink)
+                for c in (row[x] for x in range(self.cols))
+            ))
+        return out
+
+    def cursor(self):
+        return (self.screen.cursor.y, self.screen.cursor.x)
 
     def _mask_pid(self, row):
         """Replace THIS shell's own pid with a stable token.
@@ -295,12 +548,6 @@ class Session:
         text = self.raw.decode("utf-8", "replace")
         return [m for m in CRASH_MARKERS if m in text]
 
-    def alive(self):
-        if self.dead:
-            return False
-        pid, _ = os.waitpid(self.pid, os.WNOHANG)
-        return pid != self.pid
-
     def close(self):
         for b in (b"\x03", b"\x04"):
             try:
@@ -313,57 +560,122 @@ class Session:
             pass
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGKILL):
             try:
-                pid, _ = os.waitpid(self.pid, os.WNOHANG)
+                pid, st = os.waitpid(self.pid, os.WNOHANG)
                 if pid == self.pid:
+                    self.status = st
                     return
                 os.kill(self.pid, sig)
             except OSError:
                 return
             for _ in range(20):
                 try:
-                    pid, _ = os.waitpid(self.pid, os.WNOHANG)
+                    pid, st = os.waitpid(self.pid, os.WNOHANG)
                     if pid == self.pid:
+                        self.status = st
                         return
                 except OSError:
                     return
                 select.select([], [], [], 0.025)
 
 
-class Result:
-    """One shell's capture for one case."""
+def exit_note(status):
+    """`waitpid` status rendered as text, or None when the child was killed by
+    the harness's own teardown (which says nothing about the shell)."""
+    if status is None:
+        return None
+    if os.WIFSIGNALED(status):
+        sig = os.WTERMSIG(status)
+        if sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGKILL):
+            return None                    # our own teardown
+        try:
+            name = signal.Signals(sig).name
+        except ValueError:
+            name = "?"
+        return "killed by signal %d (%s)" % (sig, name)
+    if os.WIFEXITED(status) and os.WEXITSTATUS(status) not in (0, 1):
+        return "exited %d" % os.WEXITSTATUS(status)
+    return None
 
-    def __init__(self, grid=None, reason=None, crash=None):
+
+# ── one shell's capture for one case ─────────────────────────────────────────
+
+class Capture:
+    def __init__(self, grid=None, reason=None, crash=None, attrs=None,
+                 cursor=None, raw=b"", diags=None, events=(), status=None):
         self.grid = grid
         self.reason = reason      # None on success
         self.crash = crash or []
+        self.attrs = attrs or []
+        self.cursor = cursor
+        self.raw = raw            # the case interaction only, not the boot
+        self.diags = diags or set()
+        self.events = list(events)
+        self.status = status
+
+    def warnings(self):
+        """Reasons this capture is worth less than a clean one."""
+        out = []
+        for phase, outcome in self.events:
+            if outcome == CAPPED:
+                out.append("settle capped after %s — screen may be mid-render"
+                           % phase)
+            elif outcome == NO_OUTPUT and phase.startswith("key "):
+                out.append("no output at all after %s" % phase)
+        note = exit_note(self.status)
+        if note:
+            out.append("child %s" % note)
+        return out
 
 
 def capture(argv, env, args, init_file, buf, keys):
     sess = Session(argv, env, args.rows, args.cols, args.settle)
+    # Pre-seeded so an exception anywhere below still yields a Capture that
+    # says what happened, instead of propagating and losing the whole cell.
+    result = Capture(reason="capture aborted before any screen was taken")
     try:
-        sess.settle_out(max_wait=4.0, first_wait=3.0)
+        sess.settle_out(max_wait=4.0, first_wait=3.0, phase="boot")
         sess.send(("source %s\n" % shlex.quote(init_file)).encode())
         if not sess.wait_prompt(timeout=args.boot_timeout):
-            return Result(reason="never reached a prompt (boot/compinit hang or crash)",
-                          crash=sess.crashed())
-        sess.clear()
-        if buf:
-            sess.send(buf.encode())
-            sess.settle_out(max_wait=3.0, first_wait=1.0)
-        for k in keys:
-            sess.send(KEYS.get(k, k.encode()))
-            sess.settle_out(max_wait=15.0, first_wait=10.0)
-        sess.settle_out(max_wait=3.0, first_wait=0.6)
-        crash = sess.crashed()
-        if crash:
-            return Result(grid=sess.grid(), reason="crashed: " + ", ".join(crash),
-                          crash=crash)
-        if sess.dead:
-            return Result(grid=sess.grid(), reason="shell exited mid-case")
-        return Result(grid=sess.grid())
+            result = Capture(
+                reason="never reached a prompt (boot/compinit hang or crash)",
+                crash=sess.crashed())
+        else:
+            sess.clear()
+            sess.mark = len(sess.raw)
+            if buf:
+                sess.send(buf.encode())
+                sess.settle_out(max_wait=3.0, first_wait=1.0, phase="buffer")
+            for k in keys:
+                sess.send(key_bytes(k))
+                sess.settle_out(max_wait=15.0, first_wait=10.0, phase="key %r" % k)
+            sess.settle_out(max_wait=3.0, first_wait=0.6, phase="final")
+            rows = sess.grid()
+            result = Capture(
+                grid=rows,
+                attrs=sess.attrs(len(rows)),
+                cursor=sess.cursor(),
+                raw=bytes(sess.raw[sess.mark:]),
+                diags=diagnostics(sess.raw[sess.mark:], sess.pid),
+            )
+            crash = sess.crashed()
+            if crash:
+                result.reason = "crashed: " + ", ".join(crash)
+                result.crash = crash
+            elif sess.dead:
+                result.reason = "shell exited mid-case"
+    except Exception as exc:
+        result = Capture(reason="harness error during capture: %r" % (exc,))
     finally:
         sess.close()
+        # The settle history and the child's exit status are only complete
+        # after the reap, so both are attached here rather than lost with the
+        # session.
+        result.events = list(sess.events)
+        result.status = sess.status
+    return result
 
+
+# ── comparison ───────────────────────────────────────────────────────────────
 
 def diff_grids(ref, test):
     n = max(len(ref), len(test))
@@ -376,41 +688,245 @@ def diff_grids(ref, test):
     return out
 
 
+def first_diff_cell(a, b):
+    """Column of the first differing character in two rows."""
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            return i
+    return min(len(a), len(b))
+
+
+def attr_diff_rows(ref, test):
+    """Row indices whose cells differ in SGR attributes.
+
+    Text-identical rows only — a row that already differs as text is reported
+    by the text diff and adding it here would just be noise. Caveat: this is a
+    column-aligned comparison, so a row where the `<PID>` mask replaced pids of
+    different lengths shifts every later cell; that is why the signal is
+    reported rather than scored by default.
+    """
+    out = []
+    for i in range(min(len(ref), len(test))):
+        if ref[i] != test[i]:
+            out.append(i)
+    return out
+
+
+class Verdict:
+    """One cell's outcome."""
+
+    def __init__(self, case, seq, keys, status, detail, ref, test, diffs):
+        self.case, self.seq, self.keys = case, seq, keys
+        self.status, self.detail = status, detail
+        self.ref, self.test, self.diffs = ref, test, diffs or []
+        self.attr_rows = []
+        self.cursor_differs = False
+        self.ref_only_diags = set()
+        self.test_only_diags = set()
+        self.duration = 0.0
+        if ref and test and ref.grid is not None and test.grid is not None:
+            text_diff = {i for i, _a, _b in self.diffs}
+            self.attr_rows = [r for r in attr_diff_rows(ref.attrs, test.attrs)
+                              if r not in text_diff]
+            self.cursor_differs = ref.cursor != test.cursor
+            self.ref_only_diags = ref.diags - test.diags
+            self.test_only_diags = test.diags - ref.diags
+
+    @property
+    def id(self):
+        return "%s.%s" % (self.case.name, self.seq)
+
+    def side_signals(self):
+        return bool(self.attr_rows) or self.cursor_differs or \
+            bool(self.ref_only_diags) or bool(self.test_only_diags)
+
+
 def render(rows):
     return "\n".join("  %2d| %s" % (i, r) for i, r in enumerate(rows)) or "  <empty>"
 
 
-def run_case(args, env, init_file, buf, keys):
-    """Returns (status, detail) where status is PASS / FAIL / FLAKY.
+def repro_cmd(args, buf, keys):
+    """A command line that replays exactly this cell.
+
+    The old version printed only `--case` and `--keys`, which silently dropped
+    the geometry, the zstyle fixture, the dump and the mode — so pasting it
+    reproduced a DIFFERENT cell whenever the run was not using every default.
+    """
+    cmd = [SELF]
+    if args.mode != "native":
+        cmd += ["--mode", args.mode]
+    if args.zshrs != os.path.join(REPO, "target", "debug", "zshrs"):
+        cmd += ["--zshrs", shlex.quote(args.zshrs)]
+    if args.zsh != "zsh":
+        cmd += ["--zsh", shlex.quote(args.zsh)]
+    if args.no_dump:
+        cmd += ["--no-dump"]
+    elif args.dump:
+        cmd += ["--dump", shlex.quote(args.dump)]
+    if args.zstyle:
+        cmd += ["--zstyle", shlex.quote(args.zstyle)]
+    cmd += ["--case", shlex.quote(buf), "--keys", ",".join(keys)]
+    cmd += ["--rows", str(args.rows), "--cols", str(args.cols)]
+    if args.settle != 300:
+        cmd += ["--settle", str(args.settle)]
+    return " ".join(cmd)
+
+
+def print_failure(v, args):
+    """Everything needed to act on a FAIL without re-running it."""
+    ref, test = v.ref, v.test
+    print("  --- zsh (ref) ---")
+    print(render(ref.grid or []))
+    print("  --- zshrs ---")
+    print(render(test.grid or []))
+
+    if v.diffs:
+        row, a, b = v.diffs[0]
+        col = first_diff_cell(a, b)
+        print("  --- first divergence: row %d, col %d ---" % (row, col))
+        print("  zsh  : %s" % a)
+        print("  zshrs: %s" % b)
+        print("  %s^" % ("-" * (col + 7)))
+        print("  --- row diffs (%d) ---" % len(v.diffs))
+        for i, x, y in v.diffs[:args.max_diff_rows]:
+            print("  row %2d: zsh  = %r" % (i, x))
+            print("          zshrs= %r" % (y,))
+        if len(v.diffs) > args.max_diff_rows:
+            print("  ... %d more row(s)" % (len(v.diffs) - args.max_diff_rows))
+
+    if ref.cursor and test.cursor and ref.cursor != test.cursor:
+        print("  --- cursor ---")
+        print("  zsh  : row %d col %d      zshrs: row %d col %d"
+              % (ref.cursor[0], ref.cursor[1], test.cursor[0], test.cursor[1]))
+    if v.attr_rows:
+        print("  --- style-only rows (identical text, different SGR) ---")
+        print("  rows: %s" % ", ".join(str(r) for r in v.attr_rows[:20]))
+    if v.ref_only_diags or v.test_only_diags:
+        print("  --- one-sided diagnostics ---")
+        for m in sorted(v.ref_only_diags)[:10]:
+            print("  only zsh  : %s" % m)
+        for m in sorted(v.test_only_diags)[:10]:
+            print("  only zshrs: %s" % m)
+    warn = [("zsh", w) for w in ref.warnings()] + [("zshrs", w) for w in test.warnings()]
+    if warn:
+        print("  --- capture warnings ---")
+        for who, w in warn:
+            print("  %-5s: %s" % (who, w))
+    if args.raw_diff and ref.raw and test.raw:
+        lines = stream_diff(ref.raw, test.raw, args.raw_diff_lines)
+        if lines:
+            print("  --- raw stream diff (case interaction only) ---")
+            for line in lines:
+                print("  " + line)
+    print("  --- repro ---")
+    print("  " + repro_cmd(args, v.case.buffer, v.keys))
+    print()
+
+
+def to_json(v):
+    ref, test = v.ref, v.test
+    def side(c):
+        if c is None:
+            return None
+        return {
+            "reason": c.reason,
+            "crash": c.crash,
+            "cursor": list(c.cursor) if c.cursor else None,
+            "rows": len(c.grid) if c.grid is not None else None,
+            "warnings": c.warnings(),
+            "diagnostics": sorted(c.diags),
+        }
+    first = None
+    if v.diffs:
+        row, a, b = v.diffs[0]
+        first = {"row": row, "col": first_diff_cell(a, b), "ref": a, "test": b}
+    return {
+        "id": v.id,
+        "case": v.case.name,
+        "buffer": v.case.buffer,
+        "tags": list(v.case.tags),
+        "sequence": v.seq,
+        "keys": v.keys,
+        "status": v.status,
+        "detail": v.detail,
+        "rows_differ": len(v.diffs),
+        "first_diff": first,
+        "diff_rows": [{"row": i, "ref": a, "test": b} for i, a, b in v.diffs[:50]],
+        "attr_only_rows": v.attr_rows,
+        "cursor_differs": v.cursor_differs,
+        "diagnostics_only_ref": sorted(v.ref_only_diags),
+        "diagnostics_only_test": sorted(v.test_only_diags),
+        "ref": side(ref),
+        "test": side(test),
+        # Volatile — excluded from a `jq 'del(.results[].timing)'` comparison
+        # between two commits' runs.
+        "timing": {"seconds": round(v.duration, 2)},
+    }
+
+
+# ── running one cell ─────────────────────────────────────────────────────────
+
+def run_case(args, env, init_file, case, seq_name, keys):
+    """Returns a Verdict whose status is PASS / FAIL / FLAKY.
 
     FLAKY is a FAIL that did not reproduce on the confirm run — reported as a
     failure with the nondeterminism called out, never scored as a pass.
     """
+    t0 = time.monotonic()
+    buf = case.buffer
     ref = capture([args.zsh, "-f", "-i"], env, args, init_file, buf, keys)
     test = capture(args.test_argv, env, args, init_file, buf, keys)
 
+    def strict_extra(r, t):
+        """Signals that are reported always and fail only when asked for.
+
+        Applied inside `judge` so the confirm re-run is judged by exactly the
+        same rule as the first attempt — otherwise a cell failed on, say, a
+        cursor divergence would be re-judged on text alone, pass, and get
+        mislabelled FLAKY.
+        """
+        if r.grid is None or t.grid is None:
+            return []
+        out = []
+        if args.compare_attrs:
+            text_diff = {i for i, _a, _b in diff_grids(r.grid, t.grid)}
+            rows = [i for i in attr_diff_rows(r.attrs, t.attrs) if i not in text_diff]
+            if rows:
+                out.append("%d row(s) differ in SGR attributes only" % len(rows))
+        if args.strict_cursor and r.cursor != t.cursor:
+            out.append("cursor %s vs %s" % (r.cursor, t.cursor))
+        if args.strict_stream and (r.diags ^ t.diags):
+            out.append("one-sided diagnostics")
+        return out
+
     def judge(r, t):
         if r.reason:
-            return "FAIL", "reference zsh: %s" % r.reason, r, t, None
+            return "FAIL", "reference zsh: %s" % r.reason, None
         if t.reason:
-            return "FAIL", "zshrs: %s" % t.reason, r, t, None
+            return "FAIL", "zshrs: %s" % t.reason, None
         d = diff_grids(r.grid, t.grid)
         if d:
-            return "FAIL", "%d row(s) differ" % len(d), r, t, d
-        return "PASS", "", r, t, []
+            return "FAIL", "%d row(s) differ" % len(d), d
+        extra = strict_extra(r, t)
+        if extra:
+            return "FAIL", "; ".join(extra), []
+        return "PASS", "", []
 
-    status, detail, r, t, diffs = judge(ref, test)
-    if status == "PASS" or args.confirm == 0:
-        return status, detail, r, t, diffs
-    # Confirm ONLY to label nondeterminism. A pass on re-run means the case is
-    # flaky, which is still a failure.
-    for _ in range(args.confirm):
-        r2 = capture([args.zsh, "-f", "-i"], env, args, init_file, buf, keys)
-        t2 = capture(args.test_argv, env, args, init_file, buf, keys)
-        s2, d2, rr, tt, dd = judge(r2, t2)
-        if s2 == "PASS":
-            return "FLAKY", detail + " (passed on re-run — nondeterministic)", r, t, diffs
-    return status, detail, r, t, diffs
+    status, detail, diffs = judge(ref, test)
+    v = Verdict(case, seq_name, keys, status, detail, ref, test, diffs)
+
+    if v.status != "PASS" and args.confirm > 0:
+        # Confirm ONLY to label nondeterminism. A pass on re-run means the case
+        # is flaky, which is still a failure.
+        for _ in range(args.confirm):
+            r2 = capture([args.zsh, "-f", "-i"], env, args, init_file, buf, keys)
+            t2 = capture(args.test_argv, env, args, init_file, buf, keys)
+            if judge(r2, t2)[0] == "PASS":
+                v.status = "FLAKY"
+                v.detail += " (passed on re-run — nondeterministic)"
+                break
+    v.duration = time.monotonic() - t0
+    return v
 
 
 def run_random_combos(args, env, dump, fpath_dirs):
@@ -455,8 +971,7 @@ def run_random_combos(args, env, dump, fpath_dirs):
         """True when ANY case (or just `only`) diverges under this subset."""
         init = init_for(subset)
         for case in (only or cases):
-            status, _detail, _r, _t, _d = run_case(args, env, init, case.buffer, keys)
-            if status != "PASS":
+            if run_case(args, env, init, case, seq, keys).status != "PASS":
                 return case
         return None
 
@@ -526,6 +1041,15 @@ def main():
                          "(cmd, path, opt, sub, param, builtin, glob, ...)")
     ap.add_argument("--skip-optional", action="store_true",
                     help="drop cases tagged `optional` (need a binary that may be absent)")
+    ap.add_argument("--discover", type=int, default=0, metavar="N",
+                    help="ADD N cases discovered on this host: installed commands "
+                         "that ship a `_name` completer in the live fpath. Sorted, "
+                         "so the same N is the same set on the same machine.")
+    ap.add_argument("--discover-all", action="store_true",
+                    help="include commands whose completer may execute them "
+                         "(reboot, shutdown, dd, ...) — see parity_corpus.DISCOVER_UNSAFE")
+    ap.add_argument("--discover-only", action="store_true",
+                    help="run ONLY the discovered cases, not the shared corpus too")
     ap.add_argument("--random-combos", type=int, default=0, metavar="N",
                     help="fuzz N random SUBSETS of --zstyle instead of running the "
                          "fixture as-is. Any subset is a valid config, and the bar "
@@ -549,6 +1073,33 @@ def main():
     ap.add_argument("--boot-timeout", type=float, default=40.0)
     ap.add_argument("--confirm", type=int, default=1,
                     help="re-runs used to LABEL a failure flaky (never to pass it)")
+    ap.add_argument("--jobs", type=int, default=1, metavar="N",
+                    help="run N cells concurrently. Every cell is an independent "
+                         "pty pair, so the comparison is unaffected, but load "
+                         "slows a redraw and a marginal cell flips: two "
+                         "back-to-back 113-cell sweeps at --jobs 4 --confirm 0 "
+                         "disagreed on 3 cells. Keep --confirm on when running "
+                         "in parallel so those get LABELLED flaky instead of "
+                         "landing on whichever verdict the load produced.")
+    ap.add_argument("--compare-attrs", action="store_true",
+                    help="FAIL a cell whose rows match as text but differ in SGR "
+                         "attributes (colour/bold). Reported either way.")
+    ap.add_argument("--strict-cursor", action="store_true",
+                    help="FAIL a cell whose final cursor position differs. Reported "
+                         "either way.")
+    ap.add_argument("--strict-stream", action="store_true",
+                    help="FAIL a cell where one shell emitted a diagnostic the other "
+                         "did not, even if the screens match. Reported either way.")
+    ap.add_argument("--raw-diff", action="store_true", default=True,
+                    help="on FAIL, diff the two raw escape-sequence streams")
+    ap.add_argument("--no-raw-diff", dest="raw_diff", action="store_false")
+    ap.add_argument("--raw-diff-lines", type=int, default=40)
+    ap.add_argument("--max-diff-rows", type=int, default=12)
+    ap.add_argument("--json", default=None, metavar="PATH",
+                    help="write the full result document here ('-' for stdout)")
+    ap.add_argument("--jsonl", default=None, metavar="PATH",
+                    help="append one JSON object per cell as it finishes; survives "
+                         "a killed run and can be tailed live")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -589,64 +1140,179 @@ def main():
                 sys.exit("unknown sequence(s): %s" % ", ".join(unknown))
         seq_keys = {n: KEY_SEQUENCES[n] for n in seq_names}
 
-    # Case buffers: ad-hoc, a corpus file, or the shared corpus.
+    # A key name that is not in KEYS and is not a single literal character is a
+    # typo, and the old fallback transmitted the NAME as text. Reject it before
+    # two shells spend a minute agreeing about nonsense.
+    for name, keys in seq_keys.items():
+        for k in keys:
+            try:
+                key_bytes(k)
+            except UnknownKey:
+                sys.exit("sequence %r names undefined key %r "
+                         "(add it to parity_corpus.KEYS)" % (name, k))
+
+    # Case set: ad-hoc, a corpus file, the shared corpus, host discovery, or
+    # the shared corpus plus discovery.
     if args.case is not None:
-        cases = [args.case]
+        cases = [adhoc_case(args.case)]
     elif args.corpus:
         with open(args.corpus) as f:
-            cases = [l.rstrip("\n") for l in f
+            cases = [adhoc_case(l.rstrip("\n")) for l in f
                      if l.strip() and not l.lstrip().startswith("#")]
     else:
         shared = cases_by_tag(args.tag)
         if args.skip_optional:
             shared = [c for c in shared if "optional" not in c.tags]
-        cases = [c.buffer for c in shared]
+        cases = [] if args.discover_only else list(shared)
+    if args.discover:
+        found = discover_cases(args.discover, args.discover_all)
+        have = {c.buffer for c in cases}
+        cases += [c for c in found if c.buffer not in have]
 
-    cells = [(buf, name) for buf in cases for name in seq_names]
+    cells = [(c, name) for c in cases for name in seq_names]
 
     print("# mode   : %s (%s)" % (args.mode, " ".join(args.test_argv)))
     print("# dump   : %s" % (dump or "<none>"))
     print("# init   : %s" % init_file)
     print("# zstyle : %s" % (args.zstyle or "<none>"))
     print("# geom   : %dx%d  settle=%dms" % (args.rows, args.cols, args.settle))
+    print("# jobs   : %d" % max(1, args.jobs))
+    print("# strict : attrs=%s cursor=%s stream=%s"
+          % (args.compare_attrs, args.strict_cursor, args.strict_stream))
     print("# cases  : %d x %d sequence(s) = %d cell(s)"
           % (len(cases), len(seq_names), len(cells)))
     print("# seqs   : %s" % ", ".join(seq_names))
     print()
 
-    passed = 0
-    failures = []
-    for buf, seq_name in cells:
-        keys = seq_keys[seq_name]
-        status, detail, ref, test, diffs = run_case(args, env, init_file, buf, keys)
-        label = "%-6s %-18s %r" % (status, seq_name, buf)
-        print(label + (("  (%s)" % detail) if detail else ""))
-        sys.stdout.flush()
-        if status == "PASS":
-            passed += 1
-            if args.verbose:
-                print(render(test.grid))
-            continue
-        failures.append((buf, seq_name, status, detail, ref, test, diffs))
-        print("  --- zsh (ref) ---")
-        print(render(ref.grid or []))
-        print("  --- zshrs ---")
-        print(render(test.grid or []))
-        if diffs:
-            print("  --- row diffs ---")
-            for i, a, b in diffs[:12]:
-                print("  row %2d: zsh  = %r" % (i, a))
-                print("          zshrs= %r" % (b,))
-        print()
+    jsonl = open(args.jsonl, "w") if args.jsonl else None
+    jsonl_lock = threading.Lock()
+    started = time.monotonic()
 
+    def work(cell):
+        case, seq_name = cell
+        v = run_case(args, env, init_file, case, seq_name, seq_keys[seq_name])
+        if jsonl:
+            with jsonl_lock:
+                jsonl.write(json.dumps(to_json(v)) + "\n")
+                jsonl.flush()
+        return v
+
+    if args.jobs > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(max_workers=args.jobs)
+        # `map` yields in submission order, so the log stays deterministic no
+        # matter which cell finishes first.
+        stream = pool.map(work, cells)
+    else:
+        pool = None
+        stream = (work(c) for c in cells)
+
+    passed = 0
+    results = []
+    failures = []
+    warned = attr_only = cursor_only = stream_only = 0
+    try:
+        for v in stream:
+            results.append(v)
+            # This exact line shape is parsed by scripts/gen_compsys_parity_report.py
+            # (status, sequence, repr(buffer), optional "  (detail)") — keep it.
+            label = "%-6s %-18s %r" % (v.status, v.seq, v.case.buffer)
+            print(label + (("  (%s)" % v.detail) if v.detail else ""))
+            warnings = ([("zsh", w) for w in (v.ref.warnings() if v.ref else [])]
+                        + [("zshrs", w) for w in (v.test.warnings() if v.test else [])])
+            if v.status == "PASS":
+                passed += 1
+                if warnings:
+                    warned += 1
+                    for who, w in warnings:
+                        print("  ~ %s: %s" % (who, w))
+                if v.attr_rows:
+                    attr_only += 1
+                    print("  ~ %d row(s) identical as text but differ in SGR attributes: %s"
+                          % (len(v.attr_rows), ", ".join(map(str, v.attr_rows[:8]))))
+                if v.cursor_differs:
+                    cursor_only += 1
+                    print("  ~ cursor differs: zsh %s vs zshrs %s"
+                          % (v.ref.cursor, v.test.cursor))
+                if v.ref_only_diags or v.test_only_diags:
+                    stream_only += 1
+                    for m in sorted(v.ref_only_diags)[:5]:
+                        print("  ~ only zsh emitted: %s" % m)
+                    for m in sorted(v.test_only_diags)[:5]:
+                        print("  ~ only zshrs emitted: %s" % m)
+                if args.verbose:
+                    print(render(v.test.grid or []))
+                sys.stdout.flush()
+                continue
+            failures.append(v)
+            print_failure(v, args)
+            sys.stdout.flush()
+    finally:
+        if pool:
+            pool.shutdown(wait=True)
+        if jsonl:
+            jsonl.close()
+
+    elapsed = time.monotonic() - started
+    # Consumed by gen_compsys_parity_report.py and parity_matrix.py — keep the
+    # wording.
     print("\n# %d passed, %d failed, %d cell(s)" % (passed, len(failures), len(cells)))
+    print("# elapsed: %.1fs (%.1fs/cell)" % (elapsed, elapsed / max(1, len(cells))))
+    if warned:
+        print("# %d pass(es) captured under a truncated or empty settle window "
+              "— the screens agreed, but the capture is worth less than a clean one"
+              % warned)
+    if attr_only:
+        print("# %d pass(es) differ in SGR attributes only (--compare-attrs to fail them)"
+              % attr_only)
+    if cursor_only:
+        print("# %d pass(es) differ in final cursor position (--strict-cursor to fail them)"
+              % cursor_only)
+    if stream_only:
+        print("# %d pass(es) where one shell emitted a diagnostic the other did not "
+              "(--strict-stream to fail them)" % stream_only)
     if failures:
-        # (sequence, buffer) so a failure is replayable verbatim:
-        #     comptab_parity.py --case '<buffer>' --keys <keys>
+        # (sequence, buffer) so a failure is replayable verbatim. The bare
+        # `--case/--keys` line is what parity_matrix.py scrapes; the full
+        # command underneath it is what a human should paste.
         print("# failing cells:")
-        for buf, seq_name, _st, _dt, _r, _t, _d in failures:
+        for v in failures:
             print("#   --case %s --keys %s"
-                  % (shlex.quote(buf), ",".join(seq_keys[seq_name])))
+                  % (shlex.quote(v.case.buffer), ",".join(v.keys)))
+        print("# failing cell ids: %s" % ", ".join(v.id for v in failures))
+
+    if args.json:
+        doc = {
+            "schema": "comptab-parity/1",
+            "mode": args.mode,
+            "argv": sys.argv[1:],
+            "zshrs": args.zshrs,
+            "zsh": args.zsh,
+            "dump": dump,
+            "zstyle": args.zstyle,
+            "geom": {"rows": args.rows, "cols": args.cols, "settle_ms": args.settle},
+            "strict": {"attrs": args.compare_attrs, "cursor": args.strict_cursor,
+                       "stream": args.strict_stream},
+            "sequences": seq_names,
+            "summary": {
+                "passed": passed,
+                "failed": len(failures),
+                "cells": len(cells),
+                "warned": warned,
+                "attr_only": attr_only,
+                "cursor_only": cursor_only,
+                "stream_only": stream_only,
+                "elapsed_seconds": round(elapsed, 1),
+            },
+            "results": [to_json(v) for v in results],
+        }
+        text = json.dumps(doc, indent=2, sort_keys=False)
+        if args.json == "-":
+            print(text)
+        else:
+            with open(args.json, "w") as f:
+                f.write(text + "\n")
+            print("# json: %s" % args.json)
     return 1 if failures else 0
 
 
