@@ -2744,3 +2744,80 @@ fn dash_family_reports_two_for_a_fatal_shell_error() {
         "127\n"
     );
 }
+
+#[test]
+fn prefix_assignment_persists_for_posix_special_builtins() {
+    // POSIX.1-2017 XCU 2.9.1 Simple Commands: "If the command name is a
+    // special built-in utility, variable assignments shall affect the
+    // current execution environment." c:Src/exec.c:4114-4126 is zsh's
+    // implementation — under POSIX_BUILTINS the save/restore is skipped
+    // for a shell function or a BINF_PSPECIAL / BINF_ASSIGN builtin unless
+    // `command` prefixed it. zshrs pushed the save frame unconditionally,
+    // so `v=0; v=1 :` left `v` at 0 in every POSIX-family drop-in.
+    //
+    // Reference matrix, measured (`v=0; v=1 X; printf '[%s]\n' "$v"`):
+    //             `:` (special)  `export` (assign)  `true` (regular)  fn
+    //   dash / ash      1               1                  0           0
+    //   ksh93           1               1                  0           4
+    //   mksh            1               1                  0           0
+    //   /bin/sh         1               1                  0           4
+    //   bash            0               0                  0           0
+    let probe = r#"v=0; v=1 :; printf '[%s]' "$v"; v=2 true; printf '[%s]' "$v"; v=3 export xx; printf '[%s]' "$v"; v=9 command :; printf '[%s]\n' "$v""#;
+    for flags in [
+        &["--dash"][..],
+        &["--ash"][..],
+        &["--ksh"][..],
+        &["--mksh"][..],
+        &["--sh"][..],
+    ] {
+        assert_eq!(
+            run_zshrs(flags, probe).0,
+            "[1][1][3][3]\n",
+            "{flags:?}: special/assign builtins persist, `true` and `command :` do not"
+        );
+    }
+    // bash only does this under `set -o posix` (bash(1), POSIX Mode:
+    // "Assignment statements preceding POSIX special builtins persist in
+    // the shell environment after the builtin completes.").
+    assert_eq!(
+        run_zshrs(&["--bash"], probe).0,
+        "[0][0][0][0]\n",
+        "--bash without `set -o posix` keeps the save/restore"
+    );
+    assert_eq!(
+        run_zshrs(&["--bash"], &format!("set -o posix; {probe}")).0,
+        "[1][1][3][3]\n",
+        "--bash with `set -o posix` persists"
+    );
+    // --zsh has POSIX_BUILTINS off, so nothing persists.
+    assert_eq!(
+        run_zshrs(&["--zsh"], r#"v=0; v=1 true; printf '[%s]\n' "$v""#).0,
+        "[0]\n"
+    );
+
+    // The shell-function leg splits: C has one, the Almquist family does not.
+    let fn_probe = r#"f() { :; }; v=0; v=4 f; printf '[%s]\n' "$v""#;
+    for flags in [&["--ksh"][..], &["--sh"][..]] {
+        assert_eq!(
+            run_zshrs(flags, fn_probe).0,
+            "[4]\n",
+            "{flags:?}: ksh93 and bash-as-sh persist across a function call"
+        );
+    }
+    for flags in [&["--dash"][..], &["--ash"][..], &["--bash"][..]] {
+        assert_eq!(
+            run_zshrs(flags, fn_probe).0,
+            "[0]\n",
+            "{flags:?}: dash/ash/bash restore across a function call"
+        );
+    }
+
+    // The assignment must still reach the command's ENVIRONMENT either way.
+    for flags in [&["--dash"][..], &["--bash"][..], &["--zsh"][..]] {
+        let (stdout, _) = run_zshrs(flags, r#"zzq=1 env"#);
+        assert!(
+            stdout.lines().any(|l| l == "zzq=1"),
+            "{flags:?}: prefix assignment must be exported to the child"
+        );
+    }
+}

@@ -6622,10 +6622,67 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // command runs; END pops the frame and restores both shell-var
     // and process-env state. Direct port of zsh's addvars() →
     // execute_simple → restore-after-exec contract.
-    vm.register_builtin(BUILTIN_BEGIN_INLINE_ENV, |_vm, _argc| {
+    vm.register_builtin(BUILTIN_BEGIN_INLINE_ENV, |vm, argc| {
+        // c:Src/exec.c:4114-4126 — whether the frame RECORDS anything is
+        // `do_save`:
+        //     if (isset(POSIXBUILTINS)) {
+        //         if (is_shfunc || (hn->flags & (BINF_PSPECIAL|BINF_ASSIGN)))
+        //             do_save = (orig_cflags & BINF_COMMAND);
+        //         else
+        //             do_save = 1;
+        //     } else { ... }
+        //     if (do_save && varspc) save_params(...);
+        // A frame is pushed either way so BEGIN/END stay balanced; an
+        // empty save list simply restores nothing, which IS the
+        // assignment persisting. POSIX.1-2017 XCU 2.9.1: "If the command
+        // name is a special built-in utility, variable assignments shall
+        // affect the current execution environment." Verified:
+        // `dash|ksh|mksh -c 'v=0; v=1 :; printf "[%s]\n" "$v"'` → `[1]`,
+        // and `v=2 true` → `[1]` because `true` is NOT special.
+        //
+        // The name arrives as a compile-time constant (empty when the
+        // command word is an expansion, which takes the save arm).
+        let name = if argc >= 1 {
+            vm.pop().to_str()
+        } else {
+            String::new()
+        };
+        let mut frame = crate::vm_helper::InlineEnvFrame::new();
+        // !!! bash EXCEPTION — bash(1), "POSIX Mode": "Assignment
+        // statements preceding POSIX special builtins persist in the shell
+        // environment after the builtin completes." bash does this ONLY in
+        // posix mode, so default `--bash` keeps zsh's save/restore
+        // (`bash -c 'v=0; v=1 :; printf "[%s]\n" "$v"'` → `[0]`, while
+        // dash / ksh93 / mksh / bash-as-sh all print `[1]`). zshrs tracks
+        // bash's `set -o posix` in dash_mode::BASH_ONLY_OPTS, so honor it.
+        let bash_suppresses = crate::dash_mode::bash_mode()
+            && !crate::dash_mode::bash_set_o_get("posix");
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
+            && !name.is_empty()
+            && !bash_suppresses
+        {
+            // c:4123 `do_save = (orig_cflags & BINF_COMMAND)` — the
+            // `command` prefix is BINF_COMMAND (c:Src/builtin.c:44
+            // `BIN_PREFIX("command", BINF_COMMAND)`) and resets the
+            // behavior, so it keeps the save.
+            let is_command_prefix = name == "command";
+            // !!! dash EXCEPTION — C's `is_shfunc` leg has no counterpart
+            // in the Almquist family: `f(){ :; }; v=0; v=4 f` leaves `v`
+            // at 0 in dash and ash, while ksh93 and bash-as-sh (the `--sh`
+            // reference) leave it at 4. Only the builtin legs are shared.
+            let is_shfunc = !crate::dash_mode::dash_strict()
+                && crate::ported::hashtable::shfunctab_lock()
+                    .read()
+                    .map(|t| t.get(&name).is_some())
+                    .unwrap_or(false);
+            if !is_command_prefix
+                && (is_shfunc || builtin_is_pspecial(&name) || builtin_is_assign_family(&name))
+            {
+                frame.recording = false; // c:4122-4123 do_save = 0
+            }
+        }
         with_executor(|exec| {
-            exec.inline_env_stack
-                .push(crate::vm_helper::InlineEnvFrame::new());
+            exec.inline_env_stack.push(frame);
         });
         Value::Status(0)
     });
