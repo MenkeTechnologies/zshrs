@@ -18725,6 +18725,18 @@ pub fn paramsubst(
         // IFS chars from the executor; default IFS is " \t\n".
         let in_ssub = pf_flags & PREFORK_SINGLE != 0;
         if force_split && !in_ssub && split_parts.is_none() {
+            // Same signal the (s)/(f) arm raises above: this paramsubst is a
+            // SPLIT, so a nesting reader must apply C's prefork empty-node
+            // deletion (c:Src/subst.c:184 `else if (!keep) uremnode`) to the
+            // pieces. spacesplit marks a field lost to IFS-WHITESPACE as a
+            // genuine "" (c:Src/utils.c:3734-3735 `*ptr++ = dup("")`) and one
+            // lost to an IFS-NON-whitespace separator as `nulstring`
+            // (c:3733), so only the former is dropped — which is exactly why
+            // `s='  a  b  '; "${(@)${=s}}"` is `a b` in zsh while
+            // `IFS=:; s=':a::b:'; "${(@)${=s}}"` keeps its empties. Without
+            // the signal the `${=…}` inner kept the leading "" that the
+            // `(s:X:)` inner already dropped.
+            SUBEXP_NONAT_SPLIT.with(|c| c.set(nojoin != 2)); // c:184
             // c:Src/subst.c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
             // Call the ported sepsplit (→ spacesplit for the IFS case)
             // rather than splitting inline: the prior inline did
@@ -19289,7 +19301,15 @@ pub fn paramsubst(
             // it no longer always carries the split's verdict — split-derived
             // empties were still being marked, and the nested reader then could
             // not tell them from a sentinel the INNER expansion produced.
-            let split_isarr_2 = spsep.is_some() && nojoin != 2; // c:3938
+            // c:3938 sits inside `if (force_split && !isarr)`, and
+            // c:3902 `force_split = !ssub && (spbreak || spsep)` — the `=`
+            // flag / SH_WORD_SPLIT (spbreak) reaches it exactly like `(s)`/
+            // `(f)` (spsep) does. Testing only `spsep` marked a `${=name}`
+            // split's whitespace-derived empties with the sentinel, so the
+            // nested reader could not delete them the way prefork does:
+            // `s='  a  b  '; print -rl -- "${(@)${=s}}"` kept a leading
+            // empty word where zsh prints just `a` and `b`.
+            let split_isarr_2 = (spsep.is_some() || force_split) && nojoin != 2; // c:3938
             // c:Src/subst.c:4354 `if (qt && !*y && isarr != 2)`. The isarr != 2
             // half only takes effect for a NESTED inner here: a directly quoted
             // expansion reaches this port without C's surrounding Dnull markers
