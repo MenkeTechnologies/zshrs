@@ -3434,6 +3434,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         map.insert(k, nv);
                     }
                 } else {
+                    // c:Src/params.c:4076-4085 arrhashsetfn — the SAME odd-count
+                    // gate the non-augment form uses runs before ASSPM_AUGMENT
+                    // merges anything:
+                    //     for (aptr = val; *aptr; ++aptr)
+                    //         if (**aptr != Marker) ++alen;
+                    //     if (alen % 2) { freearray(val);
+                    //         zerr("bad set of key/value pairs for associative
+                    //              array"); return; }
+                    // c:4086 `if (flags & ASSPM_AUGMENT)` is reached only AFTER
+                    // it, so `h+=(k2)` with a lone key is refused and the hash is
+                    // left alone. The walk below just dropped the unpaired key
+                    // (`if let Some(v) = it.next()`), so the append silently
+                    // no-opped at status 0 where zsh errors and exits 1.
+                    if values.len() % 2 != 0 {
+                        crate::ported::utils::zerr(
+                            "bad set of key/value pairs for associative array",
+                        ); // c:4083
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        // c:Src/exec.c:2632-2633 — a failed assignment sets
+                        // lastval 1, the same tail the triad form above uses.
+                        exec.set_last_status(1);
+                        return true;
+                    }
                     let mut it = values.iter().cloned();
                     while let Some(k) = it.next() {
                         if let Some(v) = it.next() {

@@ -3939,3 +3939,70 @@ mod expansion_error_containment {
         assert_parity(r#"[[ -o extendedglob ]]; print -r -- "rc=$?""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Associative-array key/value pairing, and the empty-value subscript search
+//
+// c:Src/params.c:4076-4085 `arrhashsetfn` counts the non-Marker elements and
+// refuses an ODD total outright, BEFORE the c:4086 `ASSPM_AUGMENT` branch:
+//     for (aptr = val; *aptr; ++aptr) if (**aptr != Marker) ++alen;
+//     if (alen % 2) { freearray(val);
+//         zerr("bad set of key/value pairs for associative array"); return; }
+// Both the create form (`typeset -A a=(k)`) and the augment form (`h+=(k2)`)
+// go through it; zshrs invented an empty value for the create form and
+// silently dropped the unpaired key for the augment form.
+//
+// c:Src/params.c:1834 `if (beg >= 0 && beg < len)` gates the whole scalar
+// character search, so an EMPTY value never runs it — the implicit trailing
+// Star from c:1698 must not be allowed to match at position 0.
+// ─────────────────────────────────────────────────────────────────────
+mod assoc_pairs_and_empty_subscript_search {
+    use super::*;
+
+    /// An odd element count is refused and the parameter is NOT created.
+    #[test]
+    fn odd_assoc_initialiser_is_refused() {
+        assert_parity(r#"typeset -A a=(k); print -r -- ${(ok)a}; print -r -- after"#);
+        assert_parity(r#"typeset -A a=(k v x); print -r -- ${(ok)a}; print -r -- after"#);
+    }
+
+    /// c:4081 runs before c:4086, so the augment form is refused too and the
+    /// existing hash is left untouched.
+    #[test]
+    fn odd_assoc_augment_is_refused() {
+        assert_parity(r#"typeset -A h=(k v); h+=(k2); print -rl -- ${(ok)h}; print -r -- after"#);
+    }
+
+    /// Even counts, the `[k]=v` form, empty literals and plain arrays are all
+    /// unaffected — the gate is scoped to an odd flat element list.
+    #[test]
+    fn well_formed_assoc_assignments_still_work() {
+        assert_parity(r#"typeset -A a=(k v); print -rl -- ${(ok)a}"#);
+        assert_parity(r#"typeset -A h=(k v); h+=(k2 v2); print -rl -- ${(ok)h}"#);
+        assert_parity(r#"typeset -A m=([a]=1 [b]=2); print -rl -- ${(ok)m}"#);
+        assert_parity(r#"typeset -A h=(k v); h+=([x]=1); print -rl -- ${(ok)h}"#);
+        assert_parity(r#"typeset -A e=(); print -r -- "n=${#e}""#);
+        assert_parity(r#"typeset -a arr=(1 2 3); print -r -- $arr"#);
+        assert_parity(r#"a=(1 2); a+=(3); print -r -- $a"#);
+    }
+
+    /// An empty value skips the c:1834 search entirely, so an empty pattern
+    /// is a MISS: unset yields nothing, set-but-empty yields 0.
+    #[test]
+    fn empty_value_subscript_search_finds_nothing() {
+        assert_parity(r#"print -r -- "[${nosuch[(I)]}]""#);
+        assert_parity(r#"print -r -- "[${nosuch[(i)]}]""#);
+        assert_parity(r#"e=""; print -r -- "[${e[(I)]}][${e[(i)]}]""#);
+    }
+
+    /// A non-empty value still searches, including the empty-pattern case
+    /// (forward hits position 1, reverse hits len+1).
+    #[test]
+    fn non_empty_value_subscript_search_unchanged() {
+        assert_parity(r#"s=abc; print -r -- "[${s[(i)]}][${s[(I)]}]""#);
+        assert_parity(r#"s=barfooxyz; print -r -- "[${s[(i)foo]}][${s[(r)foo]}]""#);
+        assert_parity(r#"a=(x y); print -r -- "[${a[(I)]}][${a[(i)]}]""#);
+        assert_parity(r#"a=(x y); print -r -- "[${a[(I)y]}]""#);
+        assert_parity(r#"e=(); print -r -- "[${e[(I)]}][${e[(i)]}]""#);
+    }
+}

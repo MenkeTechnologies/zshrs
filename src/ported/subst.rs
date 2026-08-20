@@ -9395,7 +9395,20 @@ pub fn paramsubst(
                         // `${s[(Rb:2:)l]}` finds no "l" in the first two chars →
                         // empty. Without an explicit begin, reverse spans the
                         // whole string (c:1925 `if (!hasbeg) beg = len`).
-                        let starts: Box<dyn Iterator<Item = usize>> = if want_last {
+                        // c:Src/params.c:1834 — `if (beg >= 0 && beg < len)`
+                        // gates the ENTIRE character search. For an empty value
+                        // `len` is 0, so `0 < len` is false and the search never
+                        // runs at all. zshrs's window walk still probed position
+                        // 0, where the implicit trailing Star appended at c:1698
+                        // matches the empty suffix, so an EMPTY pattern reported a
+                        // match at index 1: `${nosuch[(I)]}` printed 1 where zsh
+                        // prints nothing, and `e=""; ${e[(I)]}` printed 1 where
+                        // zsh prints 0. Skipping the walk drops both into the
+                        // no-match arm below, which already carries C's answers
+                        // (unset → empty, set-but-empty → 0).
+                        let starts: Box<dyn Iterator<Item = usize>> = if n == 0 {
+                            Box::new(std::iter::empty()) // c:1834
+                        } else if want_last {
                             let hi = if hasbeg { beg0 } else { n as i64 }.min(n as i64);
                             if hi < 0 {
                                 Box::new(std::iter::empty())
