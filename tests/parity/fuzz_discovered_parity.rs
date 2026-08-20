@@ -3733,3 +3733,111 @@ mod printf_percent_f_upper {
         assert_parity(r#"printf '%f|%e|%E|%g|%G\n' 1 1 1 1.5 1.5"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// (q)-family / (l:)(r:) padding staging order
+//
+// c:Src/subst.c stages every `${(flags)name}` transformation in ONE fixed
+// order.  The three that the fuzzer's `flagorder` mode exercises are:
+//
+//   c:3917  `val = sepjoin(aval, sep, 1); isarr = 0;`   — (j:X:) / (F)
+//   c:3932  `aval = sepsplit(val, spsep, 0, 1);`        — (s:X:) / (f)
+//   c:4041  `if (quotemod) { … }`                       — (q qq qqq qqqq q- q+ Q)
+//   c:4155  `if (mods) { … }`                           — (D) / (V)
+//   c:4301  `if (sortit != SORTIT_ANYOLDHOW) …`         — (o) (O) (n) (i) (a) (u)
+//   c:4339/4387/4406/4426/4465  `dopadding(…)`          — (l:N:) / (r:N:)
+//
+// zshrs ran padding (and the (e) eval that C keeps glued to it at c:4346)
+// BEFORE quoting, and ran the sort BEFORE the split/join — both inversions.
+// It also re-fetched the source array by name inside the quote/Q/V/g arms
+// after a (j:X:) join had already collapsed it to a scalar at c:3907.
+// ─────────────────────────────────────────────────────────────────────
+mod flag_staging_order {
+    use super::*;
+
+    /// (j:X:) joins at c:3917, THEN (q) quotes the joined scalar at c:4041 —
+    /// so the separator itself gets quoted. zshrs quoted each element and
+    /// lost the separator: `p$'\t'q r` instead of `p$'\t'q$'\t'r`.
+    #[test]
+    fn join_happens_before_quote() {
+        assert_parity(r#"a=($'p\tq' r); print -rl -- ${(pj:\t:q)a}"#);
+        assert_parity(r#"a=(a b); print -rl -- ${(j:-:q)a}"#);
+        assert_parity(r#"a=(a b); print -rl -- ${(pj:\t:q-)a}"#);
+        assert_parity(r#"a=('  ' x); print -rl -- ${(pj:\n:qqqq)a}"#);
+    }
+
+    /// Same collapse for the negative arm (Q) and for (V)/(D) at c:4155.
+    #[test]
+    fn join_happens_before_unquote_and_visible() {
+        assert_parity(r#"a=('a,b' c); print -rl -- ${(pj:\t:Q)a}"#);
+        assert_parity(r#"a=('  ' x); print -rl -- ${(j::Q)a}"#);
+        assert_parity(r#"a=($'p\tq' r); print -rl -- "${(@FQ)a}""#);
+    }
+
+    /// An explicit separator forces the join even under `(@)` (c:3916
+    /// `nojoin == 0 || sep`), so `"${(@j:,:q)a}"` is ONE quoted word.
+    #[test]
+    fn at_flag_does_not_defeat_explicit_separator() {
+        assert_parity(r#"a=('a,b' c); print -rl -- "${(@j:,:q)a}""#);
+        assert_parity(r#"a=('a b' c); print -rl -- "${(@j:,:q-)a}""#);
+    }
+
+    /// (s:X:) re-establishes array shape at c:3932 and c:3328's qt-sepjoin is
+    /// gated on `!spsep`, so inside `"…"` the (q) arm still quotes each split
+    /// word. zshrs quoted the re-joined scalar (`p$'\t'q\ r`).
+    #[test]
+    fn split_keeps_array_shape_for_quoting_inside_dquotes() {
+        assert_parity(r#"a=($'p\tq' r); print -r -- "[${(s: :q)a}]""#);
+        assert_parity(r#"a=(bb a ccc); print -r -- "[${(s: :q+)a}]""#);
+        assert_parity(r#"a=('a b'); print -r -- "n=${#${(q+s: :)a}}""#);
+    }
+
+    /// c:4041 quoting precedes c:4339 padding: the pad width applies to the
+    /// QUOTED form, and an over-long quoted form is TRUNCATED by (r:N:)/(l:N:).
+    #[test]
+    fn quote_happens_before_padding() {
+        assert_parity(r#"a=($'p\tq' r); print -r -- "[${(r:6:qq)a}]""#);
+        assert_parity(r#"a=('a b'); print -rl -- "${(@r:6:qq)a}""#);
+        assert_parity(r#"a=(3 20 100); print -rn -- "${(qqqql:6:)a}" | od -An -tx1 | tr -s ' '"#);
+        assert_parity(r#"a=(a b); print -rl -- "${(@l:6::.:qqqq)a}""#);
+        assert_parity(r#"a=("it's" ok); r=("${(q+r:6:)a}"); print -r -- "n=${#r} [${r[1]}]""#);
+        assert_parity(r#"a=('  ' x); print -rl -- ${(r:6:qqqq)a}"#);
+        assert_parity(r#"a=(bb a ccc); print -r -- "[${(l:6:qqqq)a}]""#);
+    }
+
+    /// c:4155 (V) precedes c:4339 padding too — pad the nicified string,
+    /// not the raw one.
+    #[test]
+    fn visible_happens_before_padding() {
+        assert_parity(r#"a=($'p\tq' r); r=("${(Vl:6::.:)a}"); print -r -- "n=${#r} [${r[1]}]""#);
+    }
+
+    /// c:3912-3932 split/join runs before the c:4301 sort, and c:3922-3927
+    /// leaves `isarr == 0` for a 0/1-element split — so `if (isarr)` at c:4301
+    /// skips the sort entirely. zshrs sorted the pre-split array.
+    #[test]
+    fn split_runs_before_sort() {
+        assert_parity(r#"a=('a b' c); print -rl -- ${(ps:\t:O)a}"#);
+        assert_parity(r#"a=("it's" ok); print -rl -- ${(ps:\t:O)a}"#);
+        assert_parity(r#"a=(bb a ccc); print -r -- "[${(ps:\t:on)a}]""#);
+        assert_parity(r#"a=(a-b c); r=("${(Ops:\t:)a}"); print -r -- "n=${#r} [${r[1]}]""#);
+        assert_parity(r#"a=('  ' x); print -rl -- ${(s:,:Ou)a}"#);
+        assert_parity(r#"a=($'p\tq' r); print -r -- "[${(s:,:Ou)a}]""#);
+    }
+
+    /// A (j:X:) join still collapses shape so the sort is a no-op (c:3907
+    /// clears isarr before c:4301) — pin the pre-existing behaviour.
+    #[test]
+    fn join_still_defeats_sort() {
+        assert_parity(r#"a=(charlie alpha bravo); print -r -- ${(oj:-:)a}"#);
+    }
+
+    /// (e) eval stays glued AFTER padding (c:4339 dopadding, then c:4346
+    /// `if (eval && subst_parse_str(...))`), so the pad width applies to the
+    /// UN-evaluated text.
+    #[test]
+    fn padding_happens_before_eval() {
+        assert_parity(r#"y=ab; x='${y}'; print -r -- "[${(el:8:)x}]""#);
+        assert_parity(r#"y=ab; x='${y}'; print -r -- "[${(er:8:)x}]""#);
+    }
+}
