@@ -1311,7 +1311,35 @@ fn gettok() -> lextok {
         LX1_SEMI => {
             let d = hgetc();
             match d {
-                Some(';') => DSEMI,
+                Some(';') => {
+                    // !!! BASH DROP-IN GATE — no zsh C counterpart !!!
+                    // c:Src/lex.c:738 returns DSEMI unconditionally; zsh
+                    // has no `;;&` and rejects it ("parse error near `&'").
+                    // bash(1), Compound Commands: "Using ;;& in place of ;;
+                    // causes the shell to test the next pattern list in the
+                    // statement, if any, and execute any associated list on
+                    // a successful match." That is exactly zsh's `;|`
+                    // (SEMIBAR), so `;;&` lexes to SEMIBAR and every
+                    // downstream case-list path is unchanged.
+                    //
+                    // Gated on `bash_mode()` (raised only by a bare
+                    // `--bash`): ksh93 and dash BOTH reject `;;&`
+                    // (`ksh: syntax error at line 1: '&' unexpected`,
+                    // `dash: 1: Syntax error: "&" unexpected`), so the
+                    // POSIX/ksh drop-ins must keep rejecting it, and
+                    // `--zsh` keeps zsh's parse error verbatim.
+                    if crate::extensions::dash_mode::bash_mode() {
+                        match hgetc() {
+                            Some('&') => return SEMIBAR,
+                            Some(d2) => {
+                                hungetc(d2);
+                                LEX_LEXSTOP.set(false);
+                            }
+                            None => LEX_LEXSTOP.set(false),
+                        }
+                    }
+                    DSEMI
+                }
                 Some('&') => SEMIAMP,
                 Some('|') => SEMIBAR,
                 _ => {

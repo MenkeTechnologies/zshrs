@@ -3096,7 +3096,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // Bash sparse: a full `a=(...)` reassign resets the array to dense
         // (drops any prior holes from subscript-assign / unset).
-        if crate::dash_mode::bash_mode() {
+        if crate::dash_mode::sparse_arrays() {
             crate::bash_arrays::clear(&name);
         }
         let blocked = with_executor(|exec| {
@@ -3307,7 +3307,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // to a PURE indexed literal (every element a `[idx]=val` triple) —
             // a mixed positional/indexed literal (`a=(x [3]=y z)`) needs the
             // positional-counter replay we don't model, so it stays dense.
-            if crate::dash_mode::bash_mode() && has_kv {
+            if crate::dash_mode::sparse_arrays() && has_kv {
                 let marker = crate::ported::zsh_h::Marker;
                 let pure_indexed = !values.is_empty()
                     && values.len() % 3 == 0
@@ -4100,7 +4100,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // for INDEXED arrays (assoc keys are strings), bash mode, numeric key.
         // Captured before the assign; applied after (on the array path).
         let sparse_track: Option<(String, usize, usize)> =
-            if crate::dash_mode::bash_mode() && !key.contains(',') {
+            if crate::dash_mode::sparse_arrays() && !key.contains(',') {
                 key.trim().parse::<usize>().ok().and_then(|i| {
                     with_executor(|exec| {
                         if !exec.has_assoc(&name) {
@@ -4408,6 +4408,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::array(filtered)
             }
             Value::Str(s) if s.is_empty() => Value::array(Vec::new()),
+            other => other,
+        }
+    });
+
+    // c:Src/subst.c:3032 `val = sepjoin(aval, sep, 1)` — see the
+    // BUILTIN_QUOTED_STAR_ONE_WORD doc comment.
+    vm.register_builtin(BUILTIN_QUOTED_STAR_ONE_WORD, |vm, _argc| {
+        match vm.pop() {
+            Value::Array(items) if items.is_empty() => Value::str(String::new()),
             other => other,
         }
     });
@@ -6855,16 +6864,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             },
         };
         if args.len() < min || args.len() > max {
-            // NOT arming the c:154/c:181 status-2 carrier here, deliberately.
-            // C's arity check is gated on `ctype == COND_MOD`, and par_cond
-            // only builds a COND_MOD when the `-word` is FOLLOWED by operands;
-            // a lone `[[ -prefix ]]` is an ordinary one-word string test that
-            // zsh answers 0. zshrs's parser turns the zero-operand form into a
-            // ModCond too, so arming the carrier here made `[[ -prefix ]]` exit
-            // 2 where zsh exits 0. The real fix is in the parser (a zero-operand
-            // `-word` must not become a ModCond); until then this arm keeps its
-            // pre-existing status rather than trading one divergence for
-            // another. The genuine module-not-found arm above is unaffected.
+            // c:Src/cond.c:177-181 — `if (l < cd->min || (cd->max >= 0 &&
+            // l > cd->max)) { zwarnnam(fromtest, "unknown condition: %s",
+            // errname); return 2; }`. Status 2, same as the module-not-found
+            // arm above.
+            //
+            // This arm previously refused to arm the carrier because the
+            // PARSER turned a zero-operand `-word` into a ModCond, so
+            // `[[ -prefix ]]` would have exited 2 where zsh exits 0. That
+            // parser bug is fixed (src/ported/parse.rs par_cond_2: a
+            // multi-char `-word` with no operand now takes c:2590's
+            // `par_cond_double("-n", s1)` string-test arm, and a two-char
+            // one takes c:2592's `par_cond_multi(s1, newlinklist())`), so
+            // the only way to reach here is a genuine arity violation —
+            // `[[ -between a ]]`, which zsh answers 2.
+            COND_BAD_PATTERN.with(|c| c.set(true)); // c:180
             crate::ported::utils::zerr(&format!(
                 "unknown condition: {}",
                 op.replace('\u{9b}', "-")
@@ -7071,7 +7085,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // in bash mode, only for a plain non-append single index (0-based
         // under ksharrays). Captured before the assign; applied after.
         let sparse_track: Option<(String, usize, usize)> =
-            if crate::dash_mode::bash_mode() && !append && !key.contains(',') {
+            if crate::dash_mode::sparse_arrays() && !append && !key.contains(',') {
                 key.trim().parse::<usize>().ok().map(|i| {
                     let old_len =
                         with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));
@@ -12587,6 +12601,26 @@ pub const BUILTIN_ASSOC_HAS_KEY: u16 = 531;
 /// an Array on the stack. Used by `for x in $@` / `for x in $*`
 /// unquoted forms. Bug #166.
 pub const BUILTIN_ARRAY_DROP_EMPTY: u16 = 532;
+/// `BUILTIN_QUOTED_STAR_ONE_WORD` — normalize the result of a QUOTED
+/// `"$*"` / `"${*}"` expansion to EXACTLY ONE word.
+///
+/// c:Src/subst.c:3032 — the quoted (`qt`) branch of paramsubst ends in
+/// `val = sepjoin(aval, sep, 1)`, a plain string join. Joining the
+/// EMPTY positional list yields `""`, so `"$*"` with no positionals is
+/// one empty word, exactly like `"$empty"` — which is why
+/// `set --; printf '%d|%s|%d\n' $# "$*" 7` prints `0||7` in zsh, bash,
+/// dash and ksh alike.
+///
+/// zshrs routes `"$*"` through `BUILTIN_EXPAND_TEXT` mode 1, whose
+/// `multsub` returns a ZERO-node list for the empty case (correct for
+/// `"$@"`, which really does vanish) and the bridge turns that into
+/// `Value::Array(vec![])` — so the word was elided and printf saw one
+/// argument fewer. This op restores the join's single-word shape at the
+/// one call site that knows the splat was `*` and not `@`.
+///
+/// Stack: pops the expansion result, pushes `Value::str("")` when it
+/// was an empty Array, and the value unchanged otherwise. argc = 1.
+pub const BUILTIN_QUOTED_STAR_ONE_WORD: u16 = 663;
 /// `BUILTIN_QUOTEDZPUTS` constant — run top-of-stack value through
 /// `crate::ported::utils::quotedzputs` and push the quoted result.
 /// Used by the cond xtrace path so non-printable bytes (e.g.
