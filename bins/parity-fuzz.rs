@@ -9840,6 +9840,503 @@ fn gen_rcexpand(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// flagorder generator
+//
+// Parameter-expansion flag STACKS, where the ORDER the evaluator applies the
+// stages in is the whole question. `paramsubst` does NOT run the flags in the
+// order their letters were written — the letters are a set, and the pipeline
+// that consumes them is fixed:
+//
+//   c:Src/subst.c:3912-3930  JOIN   `(j:sep:)`/`(F)`/`(p…)` set `sep`, and
+//                                   `if (nojoin == 0 || sep)` then runs
+//                                   `val = sepjoin(aval, sep, 1); isarr = 0`.
+//   c:Src/subst.c:3931-3939  SPLIT  `(s:sep:)`/`(=)` re-split THAT value.
+//   c:Src/subst.c:4041-4155  QUOTE  `(q…)`/`(Q)`; the `if (isarr)` test at
+//                                   c:4065 picks the per-element arm (c:4072)
+//                                   over the whole-string arm (c:4115) — and
+//                                   by this point the join has already
+//                                   collapsed the array, so a joined value
+//                                   takes the SCALAR arm.
+//
+// So `"${(qj:,:)a}"` on `('x y' 'z w')` is join-then-quote: the join makes
+// `x y,z w`, then c:4115's backslash quoting escapes the SPACES and leaves the
+// comma alone — `x\ y,z\ w`. Quoting each element FIRST and joining after
+// would give the same characters in a different arrangement, which is exactly
+// what this mode is built to tell apart. Writing the letters the other way
+// round, `(j:,:q)`, must not change the answer.
+//
+// Every case emits BOTH letter orders, so an order-sensitive implementation
+// disagrees with itself as well as with zsh.
+//
+// Determinism: fixed array literals, no filesystem, no assoc iteration; the
+// sort flags (o/O/n/i/u) are themselves the ordering.
+// ---------------------------------------------------------------------------
+
+/// Array values whose elements carry the characters each stage can claim: the
+/// default join separator (space), an explicit `(j:…:)` separator (comma,
+/// dash), the control characters `(V)`/`(q+)` render, and quote characters.
+const FLAGORDER_ARRAYS: &[&str] = &[
+    "('x y' 'z w')",
+    "('a b' c)",
+    "(a b)",
+    "('a,b' c)",
+    "($'p\\tq' r)",
+    "($'p\\nq' r)",
+    "('' x)",
+    "(bb a ccc)",
+    "(3 20 100)",
+    "(\"it's\" ok)",
+    "('a b')",
+    "(x)",
+    "(a-b c)",
+    "('  ' x)",
+];
+
+/// Stages that act on EVERY element while the value is still an array
+/// (c:4065 `if (isarr)`), so whether they ran before or after the join shows
+/// up directly in the result.
+const FLAGORDER_PER_ELEM: &[&str] = &[
+    "q", "qq", "qqq", "qqqq", "q-", "q+", "Q", "V", "L", "U", "C", "o", "O", "u", "n", "i", "oi",
+    "Ou", "on", "ou",
+];
+
+/// Stages that collapse the array into one string (join) or re-split it.
+/// `(F)` is `(pj:\n:)` (c:Doc/Zsh/expn.yo:1081-1084), so it is a join too.
+const FLAGORDER_WHOLE: &[&str] = &[
+    "j:,:",
+    "j:-:",
+    "j::",
+    "j: :",
+    "F",
+    "pj:\\n:",
+    "pj:\\t:",
+    "s:,:",
+    "s: :",
+    "ps:\\t:",
+    "l:6:",
+    "r:6:",
+    "l:6::.:",
+];
+
+fn gen_flagorder(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let arr = pick(&mut rng, FLAGORDER_ARRAYS);
+    let pe = *pick(&mut rng, FLAGORDER_PER_ELEM);
+    let wh = *pick(&mut rng, FLAGORDER_WHOLE);
+    // The two spellings of the same flag SET.
+    let a = format!("{pe}{wh}");
+    let b = format!("{wh}{pe}");
+
+    match rng.gen_range(0..7) {
+        // Double-quoted: the array is one word, so the join result is visible
+        // verbatim and the quote stage takes the scalar arm (c:4115).
+        0 | 1 => vec![
+            format!("a={arr}; print -r -- \"[${{({a})a}}]\""),
+            format!("a={arr}; print -r -- \"[${{({b})a}}]\""),
+        ],
+        // Unquoted with `print -rl`: makes the WORD COUNT visible, which is
+        // how a join that did not happen (or happened twice) shows up.
+        2 => vec![
+            format!("a={arr}; print -rl -- ${{({a})a}}; print -r -- END"),
+            format!("a={arr}; print -rl -- ${{({b})a}}; print -r -- END"),
+        ],
+        // `(@)` forces the array to stay an array through the double quotes
+        // (c:2167 `nojoin = 2` "force"), so an explicit `(j:…:)` still has to
+        // win over it — c:3916 `nojoin == 0 || sep`.
+        3 => vec![
+            format!("a={arr}; print -rl -- \"${{(@{a})a}}\"; print -r -- END"),
+            format!("a={arr}; print -rl -- \"${{(@{b})a}}\"; print -r -- END"),
+        ],
+        // Capture into an array: pins the element count and the first two
+        // elements rather than the rendered text.
+        4 => vec![format!(
+            "a={arr}; r=(\"${{({a})a}}\"); print -r -- \"n=${{#r}} [${{r[1]}}][${{r[2]}}]\""
+        )],
+        // Byte-exact: control characters produced by `(V)`, `(q+)` and a
+        // `(pj:\n:)` join are invisible on a terminal and would compare equal
+        // by eye. `od` makes the separator itself part of the comparison.
+        5 => vec![format!(
+            "a={arr}; print -rn -- \"${{({a})a}}\" | od -An -tx1 | tr -s ' '"
+        )],
+        // Feed the stacked result into a SECOND expansion: a wrong
+        // intermediate (joined when it should be an array) changes the
+        // element count the outer flag sees.
+        _ => vec![
+            format!("a={arr}; print -r -- \"[${{(j:|:)${{({a})a}}}}]\""),
+            format!("a={arr}; print -r -- \"n=${{#${{({a})a}}}}\""),
+        ],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// qjoin generator
+//
+// Pattern operations applied to an ARRAY inside double quotes. The quotes are
+// not decoration: they decide which of two different code paths in paramsubst
+// runs the match.
+//
+//   c:Src/subst.c:3433-3444  isarr → `getmatcharr()`, the pattern is applied
+//                            to each element independently
+//   c:Src/subst.c:3446-3463  else  → `getmatch()` on the single joined string
+//
+// and the join that clears `isarr` happens at c:3912-3930 using `$IFS`'s first
+// character. So `"${a#a-}"` with `IFS=-` on `(a b)` matches `a-` against the
+// JOINED `a-b` and yields `b`; applied per element it matches nothing.
+//
+// `:/` (SUB_ALL, c:Src/subst.c:3169-3171 / zsh.h:1988 "match complete string")
+// is the sharpest instrument here — it only replaces when the pattern covers
+// the WHOLE value, so joined-vs-elementwise gives visibly different answers
+// even for patterns that contain no separator at all.
+//
+// Determinism: `$IFS` is pinned per case (never inherited), fixed arrays, no
+// filesystem.
+// ---------------------------------------------------------------------------
+
+const QJOIN_ARRAYS: &[&str] = &[
+    "(a b)",
+    "(a b c)",
+    "(aa bb)",
+    "(x)",
+    "('a b' c)",
+    "(one two three)",
+    "(ab cb)",
+    "('' a)",
+    "(a '' b)",
+    "(1 2 3)",
+    "(a-b c)",
+    "(ax bx)",
+];
+
+/// The join separator is `$IFS`'s FIRST character (c:3917 `sepjoin(aval, sep,
+/// 1)` falls back to `ifs`), so pinning IFS pins the joined text. `IFS=''`
+/// joins with nothing at all, which is its own case.
+const QJOIN_IFS: &[&str] = &[
+    "",
+    "",
+    "IFS=-; ",
+    "IFS=:; ",
+    "IFS=,; ",
+    "IFS=''; ",
+    "IFS=$'\\n'; ",
+    "IFS=' :'; ",
+];
+
+/// Pattern operations. Several patterns deliberately SPAN the separator
+/// (`a b`, `a-b`, `* *`), which can only match the joined form.
+const QJOIN_OPS: &[&str] = &[
+    "#a",
+    "#a-",
+    "#a ",
+    "#a:",
+    "##a*",
+    "##*b",
+    "%b",
+    "%%b*",
+    "% b",
+    "%-b",
+    "/a b/X",
+    "/a-b/X",
+    "//a/X",
+    "//b/X",
+    ":/a/X",
+    ":/a b/X",
+    ":/a-b/X",
+    ":/*/X",
+    ":/x/X",
+    ":s/a b/X/",
+    ":s/a/X/",
+    ":gs/a/X/",
+    ":#a",
+    ":#a*",
+    ":#*b*",
+    "#*b",
+    ":u",
+    ":t",
+];
+
+fn gen_qjoin(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let arr = pick(&mut rng, QJOIN_ARRAYS);
+    let ifs = pick(&mut rng, QJOIN_IFS);
+    let op = pick(&mut rng, QJOIN_OPS);
+
+    match rng.gen_range(0..6) {
+        // The collapsed case: double quotes join first (c:3916), so the match
+        // runs once over the whole joined string (c:3462).
+        0 | 1 => vec![format!(
+            "{ifs}a={arr}; print -rl -- \"${{a{op}}}\"; print -r -- END"
+        )],
+        // The un-collapsed counterpart: still an array, so the match runs per
+        // element (c:3444). Emitting both spellings in one corpus is what
+        // makes "which path did it take" answerable.
+        2 => vec![format!(
+            "{ifs}a={arr}; print -rl -- ${{a{op}}}; print -r -- END"
+        )],
+        // `[*]` joins unconditionally; `[@]` keeps the array even in quotes.
+        // The same op over both pins the pair.
+        3 => vec![format!(
+            "{ifs}a={arr}; print -rl -- \"${{a[*]{op}}}\"; print -r -- MID; print -rl -- \"${{a[@]{op}}}\"; print -r -- END"
+        )],
+        // An explicit `(j:…:)` forces the join with a separator that is NOT
+        // $IFS, so a match that depends on the separator changes answer.
+        4 => vec![format!(
+            "{ifs}a={arr}; print -rl -- \"${{(j:-:)a{op}}}\"; print -r -- END"
+        )],
+        // `(M)` inverts `:#`, and `${#…}` counts what survived — the count is
+        // 1 for a joined value and N for an array, which is the distinction
+        // this mode exists to catch.
+        _ => vec![format!(
+            "{ifs}a={arr}; print -r -- \"n=${{#${{a{op}}}}}\"; print -rl -- \"${{(M)a:#*a*}}\"; print -r -- END"
+        )],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wordsplit generator
+//
+// Word splitting as it behaves INSIDE another expansion. The top-level form
+// (`print -rl -- ${=s}`) is already covered by rcexpand mode, and it hides the
+// interesting half: the command-argument path drops empty words on its own, so
+// a splitter that wrongly produced leading/trailing empty fields still prints
+// the right thing. Nesting the split inside `${(j:|:)…}` / `${#…}` / `${…[1]}`
+// makes every field it produced — including the empty ones — visible.
+//
+// The rule being probed is the IFS-whitespace one: a run of IFS WHITESPACE
+// delimits without producing empty fields, and leading/trailing whitespace
+// produces none either, whereas a non-whitespace IFS character delimits
+// exactly once per occurrence. c:Src/utils.c spacesplit()/sepsplit() —
+// sepsplit is what c:Src/subst.c:3932 calls for `(s:…:)`/`(=)`.
+//
+// Determinism: `$IFS` is pinned per case, values are literals, no filesystem.
+// ---------------------------------------------------------------------------
+
+/// Values chosen so the whitespace-elision rule is decidable from the output:
+/// leading and trailing separators, repeated separators, all-separator, empty.
+const WORDSPLIT_VALUES: &[&str] = &[
+    "'  a  b  '",
+    "'a  b'",
+    "$'\\ta\\tb\\t'",
+    "$'\\na\\nb\\n'",
+    "'   '",
+    "''",
+    "':a::b:'",
+    "'a::b'",
+    "' a : b '",
+    "'a b'",
+    "'a'",
+    "' '",
+    "'a b  c '",
+    "',a,,b,'",
+    "'a,b'",
+    "'-a--b-'",
+];
+
+/// The splitting expansions, written as complete inner expansions so the outer
+/// wrapper can be built around them by string composition.
+const WORDSPLIT_INNER: &[&str] = &[
+    "${=s}",
+    "${==s}",
+    "${(s: :)s}",
+    "${(ps: :)s}",
+    "${(s.:.)s}",
+    "${(ps.:.)s}",
+    "${(s:,:)s}",
+    "${(ps:,:)s}",
+    "${(s:-:)s}",
+    "${(f)s}",
+    "${(z)s}",
+    "${(Z::)s}",
+];
+
+/// `$IFS` decides which characters split and which of them are "whitespace"
+/// for the elision rule, so it is pinned rather than inherited.
+const WORDSPLIT_IFS: &[&str] = &[
+    "",
+    "",
+    "IFS=' '; ",
+    "IFS=:; ",
+    "IFS=,; ",
+    "IFS=' :'; ",
+    "IFS=$' \\t\\n'; ",
+    "IFS=''; ",
+];
+
+fn gen_wordsplit(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let val = pick(&mut rng, WORDSPLIT_VALUES);
+    let inner = *pick(&mut rng, WORDSPLIT_INNER);
+    let ifs = pick(&mut rng, WORDSPLIT_IFS);
+    let sw = pick(
+        &mut rng,
+        &["", "", "setopt shwordsplit; ", "unsetopt shwordsplit; "],
+    );
+    let pre = format!("{sw}{ifs}s={val}; ");
+
+    match rng.gen_range(0..6) {
+        // Join the fields with a character that appears in none of them: every
+        // field, empty ones included, is then one visible `|`-delimited slot.
+        0 | 1 => vec![format!("{pre}print -r -- \"[${{(j:|:){inner}}}]\"")],
+        // The field COUNT, taken through the nested `${#…}` rather than by
+        // assigning to an array (which would go back through the
+        // command-argument path that elides empties on its own).
+        2 => vec![format!("{pre}print -r -- \"n=${{#{inner}}}\"")],
+        // Index individual fields: field 1 being empty is the signature of a
+        // leading separator that should have been elided.
+        3 => vec![format!(
+            "{pre}print -r -- \"[${{{inner}[1]}}][${{{inner}[2]}}][${{{inner}[-1]}}]\""
+        )],
+        // `(@)` around the split keeps it an array through double quotes, so
+        // `print -rl` prints one line per field — an empty field is a blank
+        // line, which `print -rl` on the unquoted form would have dropped.
+        4 => vec![format!(
+            "{pre}print -rl -- \"${{(@){inner}}}\"; print -r -- END"
+        )],
+        // The `(w)`/`(W)` word-count flags answer the same question a
+        // different way: `(W)` counts empty fields between repeated
+        // delimiters, `(w)` does not (c:Doc/Zsh/expn.yo:1265-1268).
+        _ => {
+            let sep = pick(&mut rng, &[" ", ":", ",", "-"]);
+            vec![format!(
+                "{pre}print -r -- \"w=${{(w)#s}} W=${{(W)#s}} ws=${{(ws:{sep}:)#s}} Ws=${{(Ws:{sep}:)#s}}\""
+            )]
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// reject generator
+//
+// Constructs real zsh REFUSES. Every other mode asks "does zshrs compute the
+// same answer"; this one asks "does zshrs refuse the same inputs", which is a
+// separate and equally load-bearing half of compatibility — a shell that
+// quietly accepts what zsh rejects will run a script zsh would have stopped,
+// and the divergence only surfaces later as wrong data.
+//
+// Each case appends `print -r -- after`, so the ACCEPTANCE decision is carried
+// on stdout: zsh aborts the `-c` program at the error and prints nothing, a
+// shell that accepted the construct prints `after`. That makes the difference
+// visible without needing --stderr (whose wording is not a parity contract).
+//
+// Sources for "zsh rejects this":
+//   - printf directive table, c:Src/builtin.c:5394-5421 — `d i e E f g G o u
+//     x X c s b q n` and nothing else; anything else hits the `default:` arm
+//     and `zwarnnam(name, "%s: invalid directive", start)`. Note there is no
+//     `%F`.
+//   - assoc subscripts: a search/slice subscript on an associative array is
+//     "attempt to set slice of associative array".
+//   - `[[ … ]]` with a missing operand is a parse error from the condition
+//     parser, not a false test.
+//
+// Determinism: no filesystem writes, no timing, no `$RANDOM`; every statement
+// is a fixed literal.
+// ---------------------------------------------------------------------------
+
+/// Statements whose ACCEPTANCE is the parity question. Grouped by the rule
+/// each one is aimed at; the C citation for each group is in the header above.
+const REJECT_STMTS: &[&str] = &[
+    // printf directives outside c:Src/builtin.c:5394-5410's table. `%F` is
+    // the interesting one: it is a valid C printf conversion, so a Rust port
+    // that forwards the spec to a formatting library accepts it while zsh's
+    // explicit table does not.
+    "printf '%F\\n' 1.5",
+    "printf '%y\\n' 1",
+    "printf '%Z\\n' 1",
+    "printf '%v\\n' 1",
+    "printf '%h\\n' 1",
+    "printf '%j\\n' 1",
+    "printf '%l\\n' 1",
+    "printf '%t\\n' 1",
+    "printf '%w\\n' 1",
+    "printf '%a\\n' 1",
+    "printf '%p\\n' 1",
+    "printf '%m\\n'",
+    "printf '%\\n'",
+    "printf '%5\\n'",
+    "printf '%-\\n'",
+    "printf '%.\\n' 1",
+    "printf '%1$s\\n' a",
+    "printf '%s%\\n' a",
+    // Search/slice subscripts on an ASSOCIATIVE array: a slice cannot be
+    // assigned to, and a `(r)`/`(R)` search subscript is a slice.
+    "typeset -A h=(k v); h[(r)v]=Z; print -rl -- ${(ok)h}",
+    "typeset -A h=(k v); h[(R)v]=Z; print -rl -- ${(ok)h}",
+    "typeset -A h=(k v); h[(i)k]=Z; print -rl -- ${(ok)h}",
+    "typeset -A h=(k v); h[(I)k]=Z; print -rl -- ${(ok)h}",
+    "typeset -A h=(k v); h[(K)k]=Z; print -rl -- ${(ok)h}",
+    "typeset -A h=(k v); h[1,2]=Z; print -rl -- ${(ok)h}",
+    "typeset -A h=(k v); h+=(k2); print -rl -- ${(ok)h}",
+    // Condition syntax with a missing operand — a PARSE error, not a test
+    // that happens to be false.
+    "[[ -n ]]",
+    "[[ -z ]]",
+    "[[ = a ]]",
+    "[[ a = ]]",
+    "[[ -o ]]",
+    "[[ a -eq ]]",
+    "[[ ( a ]]",
+    "[[ a && ]]",
+    "[[ -nt a ]]",
+    // Parameter-expansion flags applied to something that is not a name, and
+    // flag letters with no delimiter argument.
+    "print -r -- ${(e)'$(print hi)'}",
+    "print -r -- ${(P)'$(print hi)'}",
+    "s=x; print -r -- ${(ZZ)s}",
+    "s=x; print -r -- ${(j)s}",
+    "s=x; print -r -- ${(s)s}",
+    "s=x; print -r -- ${(l)s}",
+    "s=x; print -r -- ${(qqqqq)s}",
+    "s=x; print -r -- ${(g)s}",
+    // The same bad flag NESTED inside a second expansion. zsh reports the
+    // flag error and carries on with an empty value for the inner expansion,
+    // so the enclosing `print` still runs; aborting the whole command instead
+    // is a different recovery, visible on stdout without reading stderr.
+    "s=a:b; print -r -- \"[${${(s:::)s}[1]}]\"",
+    "s=a:b; print -r -- \"[${${(ps:::)s}[1]}]\"",
+    "s=a:b; print -r -- \"[${${(ZZ)s}[1]}]\"",
+    "a=(1 2); print -r -- \"[${${(l)a}[1]}]\"",
+    "a=(1); print -r -- ${a[(x)1]}",
+    "a=(1); print -r -- ${a[(rr)1]}",
+    "s=abc; print -r -- ${s#(#c)}",
+    "print -r -- ${(#)abc}",
+    // Declaration and scope rules.
+    "readonly r=1; r=2",
+    "typeset -i -F x=1; print -r -- $x",
+    "typeset -a -A x; print -r -- ${(t)x}",
+    "typeset -A a=(k); print -r -- ${(ok)a}",
+    "integer -A i; print -r -- ${(t)i}",
+    // Builtin argument validation.
+    "shift 5",
+    "shift -- -1",
+    "let 'x ='; print -r -- $x",
+    "let; print -r -- ok",
+    "getopts; print -r -- ok",
+    "unset -f -v x; print -r -- ok",
+    "typeset -p nosuchparam",
+    "print -r -- ${nosuch[(I)]}",
+];
+
+fn gen_reject(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let stmt = pick(&mut rng, REJECT_STMTS);
+
+    match rng.gen_range(0..4) {
+        // The bare decision: `after` on stdout means the shell accepted it.
+        0 | 1 => vec![format!("{stmt}; print -r -- after")],
+        // Inside a function: the error has to propagate out of the call the
+        // same way (a shell that only aborts the enclosing function still
+        // reaches `after`).
+        2 => vec![format!(
+            "f() {{ {stmt}; print -r -- inner }}; f; print -r -- \"after=$?\""
+        )],
+        // Inside a subshell: the abort is scoped to the subshell, so the
+        // PARENT must survive and the exit status must cross the boundary.
+        _ => vec![format!(
+            "( {stmt} ); print -r -- \"rc=$?\"; print -r -- after"
+        )],
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -9915,6 +10412,10 @@ enum Mode {
     Mbident,
     Jobs,
     Extglob,
+    Flagorder,
+    Qjoin,
+    Wordsplit,
+    Reject,
 }
 
 struct Args {
@@ -10406,6 +10907,10 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Mbident => gen_mbident(seed),
         Mode::Jobs => gen_jobs(seed),
         Mode::Extglob => gen_extglob(seed),
+        Mode::Flagorder => gen_flagorder(seed),
+        Mode::Qjoin => gen_qjoin(seed),
+        Mode::Wordsplit => gen_wordsplit(seed),
+        Mode::Reject => gen_reject(seed),
     }
 }
 
@@ -10482,6 +10987,10 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Mbident => "mbident",
         Mode::Jobs => "jobs",
         Mode::Extglob => "extglob",
+        Mode::Flagorder => "flagorder",
+        Mode::Qjoin => "qjoin",
+        Mode::Wordsplit => "wordsplit",
+        Mode::Reject => "reject",
     }
 }
 
@@ -10558,6 +11067,10 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Mbident,
         Mode::Jobs,
         Mode::Extglob,
+        Mode::Flagorder,
+        Mode::Qjoin,
+        Mode::Wordsplit,
+        Mode::Reject,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -10699,7 +11212,8 @@ fn parse_args() -> Args {
                      casesel, default, anonfn, printv, globanchor,\n\
                      whence, zstyle, atflag, subexp, replace, assign,\n\
                      gflag, select, bindkey, zmv, zcalc, rcexpand,\n\
-                     cond, funclist, shinstdin\n\
+                     cond, funclist, shinstdin, mbident, jobs, extglob,\n\
+                     flagorder, qjoin, wordsplit, reject\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --shell TARGET   zsh (default) | pdksh. pdksh differentials a\n\
                                       real pdksh/mksh/oksh vs `zshrs --pdksh` using\n\
