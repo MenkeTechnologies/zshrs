@@ -1243,8 +1243,13 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                     } else if action.starts_with("((") && action.ends_with("))") {
                         // sh:421 — ((literal:desc …)) → _describe.
                         let body = &action[2..action.len() - 2];
-                        let ws: Vec<String> =
-                            body.split_whitespace().map(|s| s.to_string()).collect();
+                        // sh:425 — `eval ws\=\( "${action[3,-3]}" \)`. The body is
+                        // parsed by the SHELL, so `\:`/`\ `/quotes group words:
+                        // `a\:"add files to archive"` is ONE element whose
+                        // description contains spaces. `split_whitespace` made it
+                        // four, so every space in a description became a new match
+                        // (`7z <TAB>` listed the shrapnel and took >25s).
+                        let ws: Vec<String> = crate::compsys::ported::eval_action_words(body);
                         setaparam("ws", ws);
                         let mut dv = vec![
                             "-t".to_string(),
@@ -1264,8 +1269,10 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                     } else if action.starts_with('(') && action.ends_with(')') {
                         // sh:431 — (literal list) → _all_labels + compadd.
                         let body = &action[1..action.len() - 1];
-                        let ws: Vec<String> =
-                            body.split_whitespace().map(|s| s.to_string()).collect();
+                        // sh:435 — `eval ws\=\( "${action[2,-2]}" \)`, same
+                        // shell-parsed splitting as sh:425 above: `(alpha "beta
+                        // gamma")` is two values, not three.
+                        let ws: Vec<String> = crate::compsys::ported::eval_action_words(body);
                         setaparam("ws", ws);
                         let mut av = vec![
                             subc.clone(),
