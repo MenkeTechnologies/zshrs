@@ -424,9 +424,7 @@ fn values_impl(args: &[String]) -> i32 {
     } else if action.starts_with("((") && action.ends_with("))") {
         // sh:111-118 — ((val:descr …)) literal set with descriptions.
         let body = &action[2..action.len() - 2];
-        // sh:116 — `eval ws\=\( "${action[3,-3]}" \)`: the SHELL splits the
-        // body, so a quoted or `\ `-escaped space keeps one value together.
-        let ws: Vec<String> = crate::compsys::ported::eval_action_words(body);
+        let ws: Vec<String> = body.split_whitespace().map(|s| s.to_string()).collect();
         let _ = setaparam("ws", ws);
         let mut d = vec![
             descr.clone(),
@@ -441,8 +439,7 @@ fn values_impl(args: &[String]) -> i32 {
     } else if action.starts_with('(') && action.ends_with(')') {
         // sh:120-126 — (val …) added directly.
         let body = &action[1..action.len() - 1];
-        // sh:124 — `eval ws\=\( "${action[2,-2]}" \)`, same as sh:116.
-        let ws: Vec<String> = crate::compsys::ported::eval_action_words(body);
+        let ws: Vec<String> = body.split_whitespace().map(|s| s.to_string()).collect();
         let _ = setaparam("ws", ws);
         let mut a = vec![
             "arguments".to_string(),
