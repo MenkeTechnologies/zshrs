@@ -3012,3 +3012,111 @@ fn pdksh_line_has_pipestatus_but_ksh93_does_not() {
     assert_eq!(run_zshrs(&["--mksh"], fn_probe).0, "[0]\n");
     assert_eq!(run_zshrs(&["--ksh"], fn_probe).0, "[4]\n");
 }
+
+#[test]
+fn korn_funsub_and_valsub_run_in_the_current_shell() {
+    // ksh(1), Command Substitution: "${ command;} … the command is executed
+    // in the current shell environment", and the value is its standard
+    // output with trailing newlines removed. mksh(1) names the two forms
+    // funsub `${ … ;}` and valsub `${| … ;}`; a valsub's value is the value
+    // of REPLY and its stdout is NOT captured.
+    //
+    // zsh has neither: `${` followed by a blank or `|` reaches paramsubst
+    // as a malformed name and errors "bad substitution", which is what
+    // zshrs did in every mode.
+    //
+    // Reference outputs measured against ksh 93u+m and mksh R59.
+    for flags in [&["--ksh"][..], &["--mksh"][..], &["--pdksh"][..]] {
+        // Value is the captured stdout.
+        assert_eq!(
+            run_zshrs(flags, r#"print -r -- "${ printf inner; }""#).0,
+            "inner\n",
+            "{flags:?}: funsub value is the body's stdout"
+        );
+        assert_eq!(
+            run_zshrs(flags, r#"print -r -- "${ print -n a; print -n b; }""#).0,
+            "ab\n",
+            "{flags:?}: a multi-command body"
+        );
+        // Trailing newlines are stripped, like `$( … )`.
+        assert_eq!(
+            run_zshrs(flags, "v=${ printf 'a\\n\\n\\n'; }; print -r -- \"[$v]\"").0,
+            "[a]\n",
+            "{flags:?}: trailing newlines removed"
+        );
+        // THE distinguishing property: state survives, where `$( … )`
+        // would discard it.
+        assert_eq!(
+            run_zshrs(flags, r#"x=0; y=${ x=5; print -n out; }; print -r -- "x=$x y=$y""#).0,
+            "x=5 y=out\n",
+            "{flags:?}: a funsub shares the current shell environment"
+        );
+        assert_eq!(
+            run_zshrs(flags, r#"x=0; y=$(x=5; print -n out); print -r -- "x=$x y=$y""#).0,
+            "x=0 y=out\n",
+            "{flags:?}: `$( … )` must still isolate"
+        );
+        // It is a command substitution, so it publishes the body's exit.
+        assert_eq!(
+            run_zshrs(flags, r#"v=${ false; }; print -r -- "rc=$?""#).0,
+            "rc=1\n",
+            "{flags:?}: funsub exit status"
+        );
+        // Quoting inside the body survives — the body is a fresh command
+        // line, not a quoted expansion.
+        assert_eq!(
+            run_zshrs(flags, r#"q=qq; print -r -- "${ print -n "$q"; }""#).0,
+            "qq\n",
+            "{flags:?}: an expansion inside the body"
+        );
+        assert_eq!(
+            run_zshrs(flags, r#"v=${ print -n "x  y"; }; print -r -- "[$v]""#).0,
+            "[x  y]\n",
+            "{flags:?}: quoted spaces in the body"
+        );
+    }
+
+    // The valsub is the pdksh line's; ksh93 has no `${| … }`.
+    for flags in [&["--mksh"][..], &["--pdksh"][..]] {
+        assert_eq!(run_zshrs(flags, r#"print -r -- "${|REPLY=x;}""#).0, "x\n");
+        assert_eq!(
+            run_zshrs(flags, r#"print -r -- "${|REPLY=a; REPLY=$REPLY-b;}""#).0,
+            "a-b\n"
+        );
+        assert_eq!(
+            run_zshrs(flags, r#"print -r -- "${|REPLY=$((1+1));}""#).0,
+            "2\n"
+        );
+        // Shares state like the funsub …
+        assert_eq!(
+            run_zshrs(flags, r#"x=0; y=${|x=5; REPLY=v;}; print -r -- "x=$x y=$y""#).0,
+            "x=5 y=v\n"
+        );
+        // … but REPLY itself is local to it: the outer value is neither
+        // visible inside nor clobbered after.
+        assert_eq!(
+            run_zshrs(flags, r#"REPLY=outer; y=${|:;}; print -r -- "[$y][$REPLY]""#).0,
+            "[][outer]\n"
+        );
+        // stdout is NOT captured — it goes straight through.
+        assert_eq!(
+            run_zshrs(flags, r#"y=${|print hi; REPLY=v;}; print -r -- "y=$y""#).0,
+            "hi\ny=v\n"
+        );
+    }
+
+    // Every other personality keeps zsh's "bad substitution" rejection.
+    for flags in [&["--zsh"][..], &["--bash"][..], &["--dash"][..], &["--sh"][..]] {
+        let (stdout, code) = run_zshrs(flags, r#"print -r -- "${ printf inner; }""#);
+        assert_eq!(stdout, "", "{flags:?}: `${{ … }}` must not expand");
+        assert_ne!(code, 0, "{flags:?}: `${{ … }}` must be an error");
+    }
+    // And an ordinary `${name}` / `${name-word}` is untouched everywhere.
+    for flags in [&["--ksh"][..], &["--mksh"][..], &["--zsh"][..]] {
+        assert_eq!(
+            run_zshrs(flags, r#"x=abc; print -r -- "${x}|${y-def}|${#x}""#).0,
+            "abc|def|3\n",
+            "{flags:?}: ordinary braced expansions"
+        );
+    }
+}
