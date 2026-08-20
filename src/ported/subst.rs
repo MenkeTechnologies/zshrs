@@ -5161,6 +5161,17 @@ pub fn paramsubst(
         let mut suppress_split = false;
         let mut length_op = false;
         let mut chkset = false;
+        // c:Src/subst.c:2623 — `else if (inbrace && inull(*s) && *s != Bnull) s++;`
+        // skips the quote markers the lexer left at the start of the body. C
+        // does not need to remember WHICH marker it skipped because the
+        // c:2650 subexp test reads the TOKENS themselves (`isstring(*s)` is
+        // String/Qstring only, c:Src/zsh.h:167, and `s[1]` must be Inbrace /
+        // Inpar / Inparmath). zshrs walks a body that may arrive untokenized
+        // through the bridge, so its subexp test also accepts a plain ASCII
+        // `$`; that is only safe outside `'…'`, where the lexer really does
+        // tokenize. Record the Snull (single-quote) skip so the subexp arm can
+        // reproduce C's answer for a single-quoted body.
+        let mut snull_quoted_body = false; // c:2623 / c:2650
         loop {
             let c = match body_chars.get(idx).copied() {
                 Some(ch) => ch,
@@ -5309,6 +5320,21 @@ pub fn paramsubst(
             // `${${...}}` / `${$(...)}` shapes. Previously this loop
             // ate Qstring as preamble, masking the subexp detection.
             if matches!(c, Snull | Dnull) {
+                // c:Src/lex.c — inside `'…'` the lexer performs NO
+                // tokenization, so a `$` there stays plain ASCII and a `(`
+                // stays plain `(`. C's subexp test at c:2650 is
+                // `isstring(*s) && (s[1] == Inbrace || s[1] == Inpar ||
+                // s[1] == Inparmath)` and `isstring` (c:Src/zsh.h:167) matches
+                // only the String/Qstring TOKENS — never a literal `$`. So a
+                // single-quoted body can never open a subexpression and falls
+                // through to the c:2994-3004 "bad substitution" check:
+                // `${(e)'$(print hi)'}` and `${(P)'$(print hi)'}` are errors,
+                // not expansions. Dnull (`"…"`) is different — the lexer DOES
+                // tokenize inside double quotes — so only the Snull marker
+                // suppresses the subexp arm.
+                if c == Snull {
+                    snull_quoted_body = true; // c:Src/zsh.h:167 (isstring)
+                }
                 idx += 1;
                 continue;
             }
@@ -5387,6 +5413,7 @@ pub fn paramsubst(
         let mut subexp_value: Option<String> = if idx < body_chars.len()
             && (body_chars[idx] == '$' || body_chars[idx] == Qstring || body_chars[idx] == Stringg)
             && !is_bare_special_dollar
+            && !snull_quoted_body // c:2650 (`isstring(*s)` — see the Snull skip above)
         // c:2649
         {
             // Walk just the nested $-form (depth-tracked over its
@@ -6153,6 +6180,32 @@ pub fn paramsubst(
                 return (String::new(), new_pos, vec![]);
             }
             idx += 1; // c:2867
+            // c:Src/params.c:2029 — `getindex` hands the subscript text to
+            // `parse_subscript` (c:Src/lex.c:1743), which brackets the whole
+            // parse with `zcontext_save()` / `zcontext_restore()` (c:1750,
+            // c:1786).  `zcontext_restore` ends in `parse_context_restore`,
+            // whose last statement is `errflag &= ~ERRFLAG_ERROR;`
+            // (c:Src/parse.c:354) — so parsing ANY subscript wipes a pending
+            // error, and that is observable: an inner expansion that already
+            // failed (`s=a:b; "${${(ZZ)s}[1]}"`) reports its diagnostic, the
+            // outer subscript parse clears the flag, the expansion yields the
+            // empty string and the enclosing command still runs at status 0.
+            // Without the subscript zsh aborts (`"${${(ZZ)s}}"` exits 1), and
+            // an error raised while EVALUATING the subscript text
+            // (`"${z[${(ZZ)s}]}"`) still aborts because the clear happens at
+            // parse time, before `getarg` substitutes.
+            //
+            // c:Src/lex.c:1748 `if (!*s || *s == endchar) return 0;` — an
+            // EMPTY subscript returns before `zcontext_save`, so no clear.
+            let sub_body_empty = idx >= body_chars.len()
+                || body_chars[idx] == ']'
+                || body_chars[idx] == Outbrack; // c:Src/lex.c:1748
+            if !sub_body_empty {
+                crate::ported::utils::errflag.fetch_and(
+                    !crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                ); // c:Src/parse.c:354
+            }
             let sub_start = idx;
             let mut depth = 1_i32;
             // c:Src/lex.c:1748 — `if (!*s || *s == endchar) return 0;` inside

@@ -6809,6 +6809,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "after" => (1, 1),             // c:1698
                 "between" => (2, 2),           // c:1699
                 _ => {
+                    // c:Src/cond.c:186-193 — no conddef matched, so C falls out
+                    // of both `getconddef` arms to `zwarnnam(fromtest, "unknown
+                    // condition: %s", errname)` and then `return 2;` (the
+                    // "module not found, error" exit). Status 2 — not 1 — is
+                    // what `evalcond` hands back, and c:Src/exec.c:5216-5221
+                    // turns a 2 into a shell error. Arm the same carrier
+                    // BUILTIN_COND_UNKNOWN uses so the shared
+                    // BUILTIN_COND_STATUS_FROM_BOOL tail emits 2 and aborts;
+                    // returning a bare Bool(false) collapsed it to 1, so
+                    // `[[ -zz a ]]` exited 1 where zsh exits 2.
+                    COND_BAD_PATTERN.with(|c| c.set(true)); // c:193
                     crate::ported::utils::zerr(&format!(
                         "unknown condition: {}",
                         op.replace('\u{9b}', "-")
@@ -6818,6 +6829,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             },
         };
         if args.len() < min || args.len() > max {
+            // NOT arming the c:154/c:181 status-2 carrier here, deliberately.
+            // C's arity check is gated on `ctype == COND_MOD`, and par_cond
+            // only builds a COND_MOD when the `-word` is FOLLOWED by operands;
+            // a lone `[[ -prefix ]]` is an ordinary one-word string test that
+            // zsh answers 0. zshrs's parser turns the zero-operand form into a
+            // ModCond too, so arming the carrier here made `[[ -prefix ]]` exit
+            // 2 where zsh exits 0. The real fix is in the parser (a zero-operand
+            // `-word` must not become a ModCond); until then this arm keeps its
+            // pre-existing status rather than trading one divergence for
+            // another. The genuine module-not-found arm above is unaffected.
             crate::ported::utils::zerr(&format!(
                 "unknown condition: {}",
                 op.replace('\u{9b}', "-")
