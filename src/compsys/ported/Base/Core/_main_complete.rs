@@ -881,6 +881,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
             // returns NULL for both and falls through to PATH). The port
             // folded `None` into a silent non-zero, so a typo in the
             // `completer` style produced no diagnostic whatsoever.
+            // sh:218 — publish the calling line so the completer's frame
+            // records `_main_complete:218`, matching zsh's `$functrace`. The
+            // diagnostic below already cites this line; the frame has to agree.
+            crate::compsys::ported::shared::set_sh_lineno(218);
             match dispatch_function_call(&bare, &[]) {
                 Some(0) => {
                     ret = 0;

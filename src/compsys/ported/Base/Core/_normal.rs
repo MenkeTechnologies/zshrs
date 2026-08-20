@@ -214,6 +214,13 @@ pub fn _normal_impl(args: &[String]) -> i32 {
     dispatch_argv.push(getsparam("_comp_command1").unwrap_or_default());
     dispatch_argv.push(getsparam("_comp_command2").unwrap_or_default());
     dispatch_argv.push("-default-".to_string());
+    // sh:39 — publish the line `_dispatch` is called FROM, so the frame
+    // `_dispatch` pushes records `_normal:39` the way zsh's `$functrace` does.
+    // `FnScope::enter` (compsys/ported/shared.rs:624-631) zeroes `lineno` for
+    // every port body, and a port only republishes it before a builtin that
+    // can warn — so a port calling another port left the callee's frame with
+    // no caller line at all, and `$functrace` read `_normal:0`.
+    crate::compsys::ported::shared::set_sh_lineno(39);
     dispatch_function_call("_dispatch", &dispatch_argv).unwrap_or(1)
 }
 

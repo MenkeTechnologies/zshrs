@@ -242,6 +242,10 @@ pub fn _complete_impl() -> i32 {
         // `has_fpath_override` gate only runs on the shell-function
         // dispatch path. Same bug class as the `_command_names`
         // override fix; tracked separately from Divergence C.
+        // sh:117 — `_normal -s && ret=0`. Publish the calling line before
+        // entering `_normal`, so the frame it pushes records `_complete:117`
+        // instead of the `0` `FnScope::enter` leaves behind.
+        crate::compsys::ported::shared::set_sh_lineno(117);
         if _normal(&["-s".to_string()]) == 0 {
             ret = 0;
         }
