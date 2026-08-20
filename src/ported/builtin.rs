@@ -1204,6 +1204,26 @@ pub fn bin_set(
                     }
                     argv[idx].clone()
                 };
+                // !!! BASH-MODE GATE (no C counterpart) !!! bash accepts a
+                // FIXED set of `set -o` names, six of which zsh has no option
+                // for at all (`errtrace`, `functrace`, `history`, `keyword`,
+                // `nolog`, `posix`) and two of which zsh's `dosetopt` refuses
+                // to change after startup (`monitor`, `onecmd`; c:746). All
+                // eight reached C's `no such option` / `can't change option`
+                // here, so `bash -c 'set -o posix'` failed where real bash
+                // returns 0. `bash_set_o` owns exactly those names in --bash
+                // and returns None everywhere else, leaving the faithful C
+                // path below untouched for --zsh and the other emulations.
+                if let Some(st) = crate::dash_mode::bash_set_o(&optname, action) {
+                    if st != 0 {
+                        unqueue_signals();
+                        return st;
+                    }
+                    // c:645 — same `break` the successful C path takes, so a
+                    // trailing operand list (`set -o posix a b`) still becomes
+                    // the positional parameters.
+                    break;
+                }
                 let optno = optlookup(&optname); // c:642
                 if optno == 0 {
                     // c:642 — C: `zerrnam(nam, "no such option: %s", *args)`.
@@ -11106,7 +11126,22 @@ pub fn bin_print(
     // by default, matching `/bin/dash`. (Note: dash's echo also does not
     // consume -e/-E as flags; that flag-parsing nuance is not handled here
     // — only the default escape behavior is aligned.)
-    let bsd_echo_active = echo_mode && isset(BSDECHO) && !crate::dash_mode::dash_strict();
+    // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! The same divergence one
+    // level up: `zshrs --sh` must match the REAL `/bin/sh`, not zsh's
+    // approximation of it. Every POSIX `sh` this parity matrix references
+    // interprets the escapes — macOS `/bin/sh` (bash built with
+    // xpg_echo-by-default) and Linux `/bin/sh` (dash) both print a TAB for
+    // `echo "a\tb"` — while zsh's `emulate sh` sets BSDECHO and prints the
+    // two characters literally. `--bash` is excluded: bash's own `echo`
+    // requires `-e`, which is what BSDECHO already gives it. The `--X --zsh`
+    // zsh-STYLE legs clear posix_faithful, so they keep zsh's BSDECHO
+    // behavior and stay byte-identical to `zsh -c 'emulate sh; …'`.
+    let posix_faithful_echo =
+        crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode();
+    let bsd_echo_active = echo_mode
+        && isset(BSDECHO)
+        && !crate::dash_mode::dash_strict()
+        && !posix_faithful_echo;
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
         || (echo_mode && OPT_ISSET(ops, b'E'))

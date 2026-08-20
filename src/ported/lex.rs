@@ -1444,11 +1444,29 @@ fn gettok() -> lextok {
                     // SHGLOB (ksh/bash emulation) — otherwise `[[ x =~ (a)(b)
                     // ]]` splits the regex into INPAR tokens and par_cond's
                     // single-STRING RHS read fails with "condition expected".
-                    // Verified against zsh: `emulate ksh; [[ abc =~ (a)(b) ]]`
-                    // works. Native zsh (no SHGLOB) already reached this via
-                    // the `incond == 1` miss; the explicit `> 1` guard makes
-                    // it hold under SHGLOB too.
-                    if LEX_INCOND.get() > 1 {
+                    // Native zsh (no SHGLOB) already reached this via the
+                    // `incond == 1` miss; the explicit `> 1` guard makes it
+                    // hold under SHGLOB too.
+                    //
+                    // !!! RUST-ONLY EXCEPTION — REAL-SHELL DROP-IN ONLY !!! C
+                    // has no incond test at c:821, so real zsh returns INPAR
+                    // for ANY word-initial `(` once SHGLOB is on and a
+                    // parenthesised cond RHS is a parse error in both Bourne
+                    // emulations (`zsh -f -c 'emulate ksh -c "[[ ab =~ (a)(b)
+                    // ]]"'` → "parse error: condition expected: ab"; same under
+                    // `emulate sh`). Earlier verification used the
+                    // `emulate ksh<newline>script` form, which parses the
+                    // script under PLAIN zsh before the emulation takes
+                    // effect — a flawed oracle. Keep the exception for the
+                    // drop-in modes, whose reference is a real bash/ksh that
+                    // does accept `=~ (a)(b)`, and let the zsh-STYLE legs
+                    // (`--sh --zsh` / `--ksh --zsh`, posix_faithful cleared)
+                    // take C's INPAR. Found by parity-fuzz:
+                    // `[[ hello == (hel*|wor*) ]]` returned 1 in `--ksh --zsh`
+                    // where the zsh oracle errored.
+                    if LEX_INCOND.get() > 1
+                        && (unset(SHGLOB) || crate::dash_mode::posix_faithful())
+                    {
                         gettokstr('(', false)
                     } else if isset(SHGLOB) || LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() {
                         INPAR_TOK
@@ -1978,12 +1996,25 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     // in the `[[ ]]` cond-RHS PATTERN context (par_cond bumps
                     // incond >1 so "parentheses do globbing"), adjacent groups
                     // like `[[ x =~ (a)(b) ]]` must stay ONE regex word — the
-                    // second `(` is a literal, not a word break. Verified vs
-                    // zsh: `emulate sh; [[ ab =~ (a)(b) ]]` works. Without this
+                    // second `(` is a literal, not a word break. Without this
                     // exception, `--bash` (KSHGLOB off) split the regex and
-                    // par_cond failed with "condition expected".
+                    // par_cond failed with "condition expected", where real
+                    // bash matches (`bash -c '[[ ab =~ (a)(b) ]]'` → 0).
+                    //
+                    // !!! RUST-ONLY EXCEPTION — REAL-SHELL DROP-IN ONLY !!! C
+                    // has no incond test at c:1084, and real zsh takes the
+                    // `goto brk`: under parse-time `emulate sh` EVERY
+                    // parenthesised cond RHS is a parse error, `=~` included
+                    // (`zsh -f -c 'emulate sh -c "[[ ab =~ (a)(b) ]]"'` →
+                    // "parse error: condition expected: ab", status 1). So the
+                    // exception is gated on posix_faithful — the drop-in modes
+                    // whose reference IS a real bash-family shell — and the
+                    // zsh-STYLE legs (`--sh --zsh` / `--ksh --zsh`, which clear
+                    // the flag) get C's faithful break and zsh's parse error.
+                    // Found by parity-fuzz: `[[ file.txt == *.(txt|md) ]]`
+                    // returned 1 in `--sh --zsh` where the zsh oracle errored.
                     else if unset(KSHGLOB)
-                        && LEX_INCOND.get() <= 1
+                        && !(crate::dash_mode::posix_faithful() && LEX_INCOND.get() > 1)
                         && LEX_LEXBUF.with_borrow(|b| b.len) > 0
                     {
                         break;

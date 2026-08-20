@@ -14234,6 +14234,20 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     if crate::dash_mode::bash_mode() {
         match name {
             "BASH_VERSION" => return Some(crate::dash_mode::bash_version()),
+            // bash(1) "Shell Variables": SHELLOPTS is the colon-separated
+            // list of the `set -o` options currently enabled. Built from the
+            // same table `set -o` lists and `set -o NAME` writes.
+            "SHELLOPTS" => return Some(crate::dash_mode::bash_shellopts()),
+            // bash BASH_SUBSHELL ≈ zsh ZSH_SUBSHELL — the subshell nesting
+            // depth, 0 in the top-level shell. bash(1): "Incremented by one
+            // within each subshell or subshell environment when the shell
+            // begins executing in that environment."
+            "BASH_SUBSHELL" => {
+                return Some(
+                    crate::ported::params::getsparam("ZSH_SUBSHELL")
+                        .unwrap_or_else(|| "0".to_string()),
+                )
+            }
             "PIPESTATUS" | "FUNCNAME" | "BASH_VERSINFO" => {
                 // bare read = element 0 of the aliased array (empty if none).
                 return Some(
