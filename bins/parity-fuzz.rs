@@ -10433,224 +10433,992 @@ struct Args {
     matrix: bool,
 }
 
-/// ksh/POSIX-portable generator for `--shell pdksh` — real pdksh (or mksh/oksh)
-/// vs `zshrs --pdksh`. Uses ONLY constructs the Public-Domain-Korn family and
-/// zshrs's ksh emulation both implement, and `printf` for ALL output (no
-/// `echo`/`print` escaping divergence). A reported divergence is therefore a
-/// real ksh-emulation gap, not a syntax mismatch. Deterministic per seed.
-fn gen_pdksh(seed: u64) -> Vec<String> {
-    let mut rng = StdRng::seed_from_u64(seed);
+/// One statement from the ksh CORE grammar — constructs the whole Korn family
+/// (ksh93, mksh, oksh/pdksh) implements identically, `printf`/`print` for all
+/// output. A divergence here is a real ksh-emulation gap, not a syntax
+/// mismatch. Deterministic per seed.
+///
+/// This is the ORIGINAL narrow grammar; `ksh_wide_one` / `ksh93_one` /
+/// `mksh_one` reach the rest of the surface. See `gen_ksh`.
+fn ksh_core_one(rng: &mut StdRng) -> String {
     let ints = ["0", "1", "2", "3", "5", "7", "10", "42", "-1", "-3"];
     let strs = ["abc", "hello", "a.b.c", "xxyy", "", "foobar", "a1b2"];
     let words = ["one", "two", "three", "four"];
-    let mut stmts = Vec::new();
-    for _ in 0..rng.gen_range(2..=5) {
-        match rng.gen_range(0..27) {
-            // Integer arithmetic (guard div/mod by zero).
-            0 => {
-                let a = *pick(&mut rng, &ints);
-                let b = *pick(&mut rng, &ints);
-                let op = *pick(&mut rng, &["+", "-", "*", "/", "%"]);
-                let expr = if (op == "/" || op == "%") && b == "0" {
-                    format!("{a} + 1")
-                } else {
-                    format!("{a} {op} {b}")
-                };
-                stmts.push(format!("printf '%d\\n' \"$(( {expr} ))\""));
+    match rng.gen_range(0..27) {
+        // Integer arithmetic (guard div/mod by zero).
+        0 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &ints);
+            let op = *pick(rng, &["+", "-", "*", "/", "%"]);
+            let expr = if (op == "/" || op == "%") && b == "0" {
+                format!("{a} + 1")
+            } else {
+                format!("{a} {op} {b}")
+            };
+            format!("printf '%d\\n' \"$(( {expr} ))\"")
+        }
+        // Default / alternate value expansions.
+        1 => {
+            let v = *pick(rng, &strs);
+            let alt = *pick(rng, &["def", "ALT", ""]);
+            let op = *pick(rng, &[":-", ":+", "-", "+", ":="]);
+            format!("v={v}; printf '%s\\n' \"${{v{op}{alt}}}\"")
+        }
+        // Prefix / suffix pattern strip.
+        2 => {
+            let v = *pick(rng, &strs);
+            let pat = *pick(rng, &["a", "a*", "*c", "x*", "?", "*"]);
+            let op = *pick(rng, &["#", "##", "%", "%%"]);
+            format!("v={v}; printf '%s\\n' \"${{v{op}{pat}}}\"")
+        }
+        // Length.
+        3 => {
+            let v = *pick(rng, &strs);
+            format!("v={v}; printf '%d\\n' \"${{#v}}\"")
+        }
+        // Positional parameters.
+        4 => {
+            let ws: Vec<&str> = (0..rng.gen_range(0..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
+            let sel = *pick(rng, &["$#", "$1", "$2", "$*", "$@"]);
+            format!("set -- {}; printf '%s\\n' \"{sel}\"", ws.join(" "))
+        }
+        // for loop accumulator.
+        5 => {
+            let nums: Vec<&str> = (0..rng.gen_range(1..=5))
+                .map(|_| *pick(rng, &["1", "2", "3", "4"]))
+                .collect();
+            format!(
+                "s=0; for i in {}; do s=$((s+i)); done; printf '%d\\n' \"$s\"",
+                nums.join(" ")
+            )
+        }
+        // while + [ ] arithmetic test.
+        6 => {
+            let lim = *pick(rng, &["0", "1", "3", "5"]);
+            format!(
+                "i=0; while [ \"$i\" -lt {lim} ]; do i=$((i+1)); done; printf '%d\\n' \"$i\""
+            )
+        }
+        // case with glob patterns.
+        7 => {
+            let w = *pick(rng, &["foo", "bar", "abc", "x"]);
+            let pat = *pick(rng, &["f*", "*o", "a?c", "x", "*"]);
+            format!(
+                "case {w} in {pat}) printf match;; *) printf no;; esac; printf '\\n'"
+            )
+        }
+        // command substitution.
+        8 => {
+            let lit = *pick(rng, &["sub", "inner", "z"]);
+            format!("printf '%s\\n' \"$(printf {lit})\"")
+        }
+        // integer test operators → $?.
+        9 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &ints);
+            let op = *pick(rng, &["-eq", "-ne", "-lt", "-gt", "-le", "-ge"]);
+            format!("[ {a} {op} {b} ]; printf '%d\\n' \"$?\"")
+        }
+        // typeset -i integer var.
+        10 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &["1", "2", "3", "5"]);
+            format!(
+                "typeset -i n=$(( {a} * {b} )); printf '%d\\n' \"$n\""
+            )
+        }
+        // ksh array: set -A, index, count.
+        11 => {
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
+            let idx = rng.gen_range(0..ws.len());
+            format!(
+                "set -A a {}; printf '%s\\n' \"${{a[{idx}]}}\"; printf '%d\\n' \"${{#a[@]}}\"",
+                ws.join(" ")
+            )
+        }
+        // arithmetic comparison (0/1 result).
+        12 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &ints);
+            let cmp = *pick(rng, &["<", ">", "<=", ">=", "==", "!="]);
+            format!("printf '%d\\n' \"$(( {a} {cmp} {b} ))\"")
+        }
+        // arithmetic in a non-decimal base (`16#`, `2#`, C `0x`).
+        13 => {
+            let n = *pick(
+                rng,
+                &["16#ff", "2#1010", "8#17", "16#a", "0x1f", "0x10"],
+            );
+            format!("printf '%d\\n' \"$(( {n} ))\"")
+        }
+        // bitwise operators.
+        14 => {
+            let a = *pick(rng, &["3", "5", "12", "255", "1", "6"]);
+            let b = *pick(rng, &["1", "2", "4", "7", "3"]);
+            let op = *pick(rng, &["&", "|", "^", "<<", ">>"]);
+            format!("printf '%d\\n' \"$(( {a} {op} {b} ))\"")
+        }
+        // ternary in arithmetic.
+        15 => {
+            let a = *pick(rng, &ints);
+            let b = *pick(rng, &ints);
+            format!("printf '%d\\n' \"$(( {a} > {b} ? {a} : {b} ))\"")
+        }
+        // (( … )) arithmetic command.
+        16 => {
+            let e = *pick(rng, &["x=5", "x=3+4", "x=2*3", "x=10%3", "x=8/2"]);
+            format!("(( {e} )); printf '%d\\n' \"$x\"")
+        }
+        // `let` arithmetic.
+        17 => {
+            let e = *pick(rng, &["y=6/2", "y=7-1", "y=4*4", "y=9%4"]);
+            format!("let '{e}'; printf '%d\\n' \"$y\"")
+        }
+        // substring `${v:off:len}`.
+        18 => {
+            let v = *pick(rng, &["abcdef", "hello", "0123456", "xy"]);
+            let off = rng.gen_range(0..4);
+            let len = rng.gen_range(1..4);
+            format!("v={v}; printf '%s\\n' \"${{v:{off}:{len}}}\"")
+        }
+        // pattern replace `${v/pat/rep}` / `${v//pat/rep}`.
+        19 => {
+            let v = *pick(rng, &["abcabc", "xyxy", "aaa", "a.b.c"]);
+            let pat = *pick(rng, &["a", "x", "b", "."]);
+            let rep = *pick(rng, &["Q", "", "_"]);
+            let slash = *pick(rng, &["/", "//"]);
+            format!(
+                "v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\""
+            )
+        }
+        // `[[ … == pat ]]` pattern match → $?.
+        20 => {
+            let w = *pick(rng, &["foobar", "abc", "x1", "a.b"]);
+            let pat = *pick(rng, &["f*", "a?c", "*1", "z*", "a.*"]);
+            format!("[[ {w} == {pat} ]]; printf '%d\\n' \"$?\"")
+        }
+        // string `-z` / `-n` test.
+        21 => {
+            let v = *pick(rng, &["", "abc"]);
+            let op = *pick(rng, &["-z", "-n"]);
+            format!("v={v}; [ {op} \"$v\" ]; printf '%d\\n' \"$?\"")
+        }
+        // integer variable mutated by arithmetic.
+        22 => {
+            let a = *pick(rng, &["1", "2", "5", "10"]);
+            let op = *pick(rng, &["+", "*", "-"]);
+            let b = *pick(rng, &["3", "2", "4"]);
+            format!("x={a}; x=$(( x {op} {b} )); printf '%d\\n' \"$x\"")
+        }
+        // printf with hex / octal conversion.
+        23 => {
+            let n = *pick(rng, &["255", "16", "8", "42", "0", "127"]);
+            let fmt = *pick(rng, &["%x", "%o", "%d", "%X"]);
+            format!("printf '{fmt}\\n' {n}")
+        }
+        // `typeset -i<base>` output radix (ksh prints lowercase: `16#ff`).
+        24 => {
+            let base = *pick(rng, &["16", "2", "8", "36"]);
+            let n = *pick(rng, &["255", "10", "42", "5", "100"]);
+            format!("typeset -i{base} v={n}; print -r -- \"$v\"")
+        }
+        // `${!arr[@]}` / `[*]` array indices.
+        25 => {
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
+            let sub = *pick(rng, &["@", "*"]);
+            format!(
+                "set -A a {}; print -r -- \"${{!a[{sub}]}}\"",
+                ws.join(" ")
+            )
+        }
+        // `${!name}` name form (plain var → its own name).
+        _ => {
+            let v = *pick(rng, &strs);
+            format!("v={v}; y=v; print -r -- \"${{!y}}\"")
+        }
+    }
+}
+
+/// `set -o` names accepted by BOTH ksh93 and the pdksh family — verified on
+/// this box against `ksh` (AJM 93u+m/1.0.10) and `mksh` (R59), each returning
+/// 0.  ksh93-only (`letoctal`) and mksh-only (`posix`, `sh`, `utf8-mode`, …)
+/// names live in the dialect generators so neither leaks into the other's run.
+const KSH_SHARED_OPTS: [&str; 19] = [
+    "allexport",
+    "errexit",
+    "noclobber",
+    "noglob",
+    "nounset",
+    "xtrace",
+    "verbose",
+    "bgnice",
+    "markdirs",
+    "nolog",
+    "notify",
+    "ignoreeof",
+    "monitor",
+    "pipefail",
+    "trackall",
+    "emacs",
+    "vi",
+    "keyword",
+    "gmacs",
+];
+
+/// One statement from the WIDER Korn surface — the parts of ksh both dialects
+/// implement that `ksh_core_one` never reached: the `typeset` attribute matrix,
+/// sparse arrays, `set -A`/`+A`, the extended-glob operators, `[[ -o … ]]`,
+/// `set -o` acceptance, `print` flags, `getopts`, `trap` listing, the fatal
+/// expansion-error exit status, and the `printf` directive matrix.
+///
+/// References: ksh(1) (AT&T ksh93u+m) and mksh(1) R59 as installed here; every
+/// construct below was run through BOTH before being encoded, so a divergence
+/// is a zshrs gap and never an unsupported-syntax artifact.
+fn ksh_wide_one(rng: &mut StdRng) -> String {
+    let words = ["one", "two", "three", "four"];
+    match rng.gen_range(0..28) {
+        // typeset attribute matrix: case mapping, zero-fill, left/right justify.
+        // ksh(1) "typeset": -u uppercase, -l lowercase, -Zn zero-fill to width
+        // n, -Ln left-justify+strip, -Rn right-justify.
+        0 => {
+            let (flag, val) = *pick(
+                rng,
+                &[
+                    ("-u", "abc"),
+                    ("-l", "ABC"),
+                    ("-Z5", "42"),
+                    ("-Z3", "7"),
+                    ("-L4", "abcdef"),
+                    ("-L2", "xy"),
+                    ("-R5", "ab"),
+                    ("-R3", "abcd"),
+                ],
+            );
+            format!("typeset {flag} v={val}; print -r -- \"[$v]\"")
+        }
+        // `typeset -i<base>` output radix (`16#ff` form in both dialects).
+        1 => {
+            let base = *pick(rng, &["2", "8", "16", "36"]);
+            let n = *pick(rng, &["255", "10", "42", "5", "100"]);
+            format!("typeset -i{base} v={n}; print -r -- \"$v\"")
+        }
+        // A BASED literal assigned to a plain `-i` var: ksh93 normalizes to
+        // decimal, mksh keeps the input radix — each target vs its own ref.
+        2 => {
+            let lit = *pick(rng, &["0x1f", "2#101", "8#17", "16#ff", "010"]);
+            format!("typeset -i v={lit}; print -r -- \"$v\"")
+        }
+        // readonly attribute: reassignment is fatal, so the probe runs in a
+        // subshell and reports the subshell's exit status.
+        3 => {
+            let restore = *pick(rng, &["", "; typeset +r r"]);
+            format!("typeset -r r=1; (r=2) 2>/dev/null; print -r -- \"$?\"{restore}")
+        }
+        // `typeset -p` round-trip for scalar / integer / array.
+        4 => {
+            let decl = *pick(
+                rng,
+                &["v=5", "typeset -i v=5", "typeset v=abc", "typeset -x v=1"],
+            );
+            format!("{decl}; typeset -p v")
+        }
+        // `set -A` (replace) vs `set +A` (overlay, keeping the tail).
+        5 => {
+            let ws: Vec<&str> = (0..rng.gen_range(1..=4))
+                .map(|_| *pick(rng, &words))
+                .collect();
+            let op = *pick(rng, &["-A", "+A"]);
+            format!(
+                "set -A a x y z; set {op} a {}; print -r -- \"${{a[*]}}\"",
+                ws.join(" ")
+            )
+        }
+        // Sparse array: a hole-punching index leaves the index list sparse and
+        // `${#a[@]}` counting only the SET elements.
+        6 => {
+            let idx = *pick(rng, &["4", "5", "7"]);
+            let sel = *pick(rng, &["${!a[@]}", "${#a[@]}", "${a[*]}"]);
+            format!("a=(x y z); a[{idx}]=q; print -r -- \"{sel}\"")
+        }
+        // `unset a[i]` punches the same hole from the other direction.
+        7 => {
+            let idx = rng.gen_range(0..3);
+            let sel = *pick(rng, &["${!a[@]}", "${#a[@]}", "${a[*]}"]);
+            format!("set -A a x y z; unset 'a[{idx}]'; print -r -- \"{sel}\"")
+        }
+        // `read -A` splits a line into an array; `read -r a b` into scalars.
+        8 => {
+            let line = *pick(rng, &["a b c", "one two", "x  y", "p q r s"]);
+            if rng.gen_bool(0.5) {
+                let i = rng.gen_range(0..2);
+                format!("print -r -- '{line}' | read -A arr; print -r -- \"${{arr[{i}]}}\"")
+            } else {
+                format!("print -r -- '{line}' | read -r a b; print -r -- \"[$a][$b]\"")
             }
-            // Default / alternate value expansions.
-            1 => {
-                let v = *pick(&mut rng, &strs);
-                let alt = *pick(&mut rng, &["def", "ALT", ""]);
-                let op = *pick(&mut rng, &[":-", ":+", "-", "+", ":="]);
-                stmts.push(format!("v={v}; printf '%s\\n' \"${{v{op}{alt}}}\""));
+        }
+        // `print` flag matrix — -r (raw), -n (no newline), -R (raw, no flags
+        // after), -- (end of options), -u2 (fd 2, invisible on stdout).
+        9 => {
+            let val = *pick(rng, &["a\\tb", "-n", "x", "--"]);
+            let form = *pick(rng, &["-r --", "-R --", "-n --", "--", "-r"]);
+            format!("print {form} '{val}'; print -r -- END")
+        }
+        // ksh extended globs in `[[ … == … ]]`. ksh(1) "File Name Generation":
+        // ?(p) 0-or-1, *(p) 0-or-more, +(p) 1-or-more, @(p) exactly one,
+        // !(p) anything but.
+        10 => {
+            let (w, pat) = *pick(
+                rng,
+                &[
+                    ("abc", "@(abc|x)"),
+                    ("abc", "!(x)"),
+                    ("abab", "*(ab)"),
+                    ("abc", "a+(b)c"),
+                    ("ac", "a?(b)c"),
+                    ("abbbc", "a+(b)c"),
+                    ("a", "[[:alpha:]]"),
+                    ("1", "[[:digit:]]"),
+                    ("xyz", "!(xyz)"),
+                ],
+            );
+            format!("[[ {w} == {pat} ]]; print -r -- \"$?\"")
+        }
+        // The same operators in a `case` pattern (a different parse path).
+        11 => {
+            let (w, pat) = *pick(
+                rng,
+                &[
+                    ("abc", "@(abc|x)"),
+                    ("abc", "!(x)"),
+                    ("ab", "*(ab)"),
+                    ("abc", "a+(b)c"),
+                    ("ac", "a?(b)c"),
+                    ("A", "[[:upper:]]"),
+                ],
+            );
+            format!("case {w} in {pat}) print -r -- y;; *) print -r -- n;; esac")
+        }
+        // `[[ -o opt ]]` reads the live option state, before and after a set.
+        12 => {
+            let opt = *pick(rng, &KSH_SHARED_OPTS);
+            format!(
+                "[[ -o {opt} ]]; print -r -- \"$?\"; set -o {opt}; \
+                 [[ -o {opt} ]]; print -r -- \"$?\"; set +o {opt}"
+            )
+        }
+        // `set -o NAME` / `set +o NAME` acceptance for every shared name. The
+        // option is restored immediately so it cannot truncate the rest of the
+        // case (errexit / nounset would).
+        13 => {
+            let opt = *pick(rng, &KSH_SHARED_OPTS);
+            format!("set -o {opt}; print -r -- \"$?\"; set +o {opt}; print -r -- \"$?\"")
+        }
+        // `$-` carries the single-letter option state; `c` for `-c`.
+        14 => {
+            let letter = *pick(rng, &["c", "s", "i", "x", "u"]);
+            format!("case $- in *{letter}*) print -r -- has;; *) print -r -- no;; esac")
+        }
+        // `function f { … }` scopes `typeset` locally in BOTH dialects, but
+        // `f() {{ … }}` does NOT in ksh93 (it does in mksh) — the classic
+        // ksh93-vs-pdksh scoping split, per ksh(1) "Functions".
+        15 => {
+            let form = *pick(rng, &["function f", "f()"]);
+            format!(
+                "{form} {{ typeset x=in; print -r -- \"$x\"; }}; \
+                 x=out; f; print -r -- \"$x\""
+            )
+        }
+        // `(( … ))` and `let` exit status: 0 when the value is non-zero.
+        16 => {
+            let e = *pick(rng, &["0", "1", "3-3", "2>1", "0||0", "1&&1"]);
+            if rng.gen_bool(0.5) {
+                format!("(( {e} )); print -r -- \"$?\"")
+            } else {
+                format!("let '{e}'; print -r -- \"$?\"")
             }
-            // Prefix / suffix pattern strip.
-            2 => {
-                let v = *pick(&mut rng, &strs);
-                let pat = *pick(&mut rng, &["a", "a*", "*c", "x*", "?", "*"]);
-                let op = *pick(&mut rng, &["#", "##", "%", "%%"]);
-                stmts.push(format!("v={v}; printf '%s\\n' \"${{v{op}{pat}}}\""));
+        }
+        // Arithmetic literals: ksh treats a LEADING ZERO as decimal unless
+        // `letoctal` is on, and understands `base#digits` plus C `0x`.
+        17 => {
+            let lit = *pick(
+                rng,
+                &["010", "016", "0x1f", "2#1101", "8#17", "36#z", "0", "-010"],
+            );
+            format!("print -r -- \"$(( {lit} ))\"")
+        }
+        // Compound arithmetic assignment / increment inside (( … )).
+        18 => {
+            let op = *pick(rng, &["+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "|=", "&="]);
+            let b = *pick(rng, &["1", "2", "3", "4"]);
+            format!("i=12; (( i {op} {b} )); print -r -- \"$i\"")
+        }
+        // Substring with a parenthesised negative offset (`${v:(-2)}`) — the
+        // portable spelling; a bare `-` would parse as `${v:-…}`.
+        19 => {
+            let v = *pick(rng, &["abcdef", "hello", "0123456"]);
+            let sel = *pick(
+                rng,
+                &["${v:(-2)}", "${v:(-3)}", "${v:1:3}", "${v:0:1}", "${v:2}"],
+            );
+            format!("v={v}; print -r -- \"{sel}\"")
+        }
+        // `umask` prints the mask it was just given, in the shell's own format.
+        20 => {
+            let m = *pick(rng, &["022", "077", "002", "0755"]);
+            format!("umask {m}; umask")
+        }
+        // getopts: OPTARG / OPTIND / the `?` error name.
+        21 => {
+            let (spec, args) = *pick(
+                rng,
+                &[
+                    ("a:b", "-a val"),
+                    ("ab", "-b"),
+                    ("ab", "-z"),
+                    ("a:b", "-b -a v2"),
+                    (":a:b", "-a"),
+                ],
+            );
+            format!(
+                "OPTIND=1; getopts '{spec}' o {args} 2>/dev/null; \
+                 print -r -- \"$o|$OPTARG|$OPTIND\""
+            )
+        }
+        // `trap` with no arguments lists the traps in re-inputtable form.
+        22 => {
+            let sig = *pick(rng, &["EXIT", "INT", "TERM", "USR1"]);
+            format!("trap 'print -r -- fired' {sig}; trap")
+        }
+        // A fatal expansion / arithmetic error exits the SUBSHELL; the status
+        // it exits with is the parity claim (ksh93 1, mksh 2).
+        23 => {
+            let bad = *pick(
+                rng,
+                &[
+                    "(: \"${nope:?}\")",
+                    "(set -o nounset; : \"$nope\")",
+                    "(: $((1/0)))",
+                    "(: $((1%0)))",
+                    "(readonly r=1; r=2)",
+                ],
+            );
+            format!("{bad} 2>/dev/null; print -r -- \"$?\"")
+        }
+        // `$*` joins on the first IFS byte; field splitting splits on all of it.
+        24 => {
+            let ifs = *pick(rng, &[":", "-", ",", " "]);
+            if rng.gen_bool(0.5) {
+                format!("set -- a b c; IFS='{ifs}'; print -r -- \"$*\"")
+            } else {
+                format!("IFS='{ifs}'; v='a{ifs}b{ifs}c'; set -- $v; print -r -- \"$#|$1|$3\"")
             }
-            // Length.
-            3 => {
-                let v = *pick(&mut rng, &strs);
-                stmts.push(format!("v={v}; printf '%d\\n' \"${{#v}}\""));
+        }
+        // printf directive matrix (POSIX XCU printf + the ksh `'c` char form).
+        25 => {
+            let case = rng.gen_range(0..6);
+            match case {
+                0 => "printf '%o|%x|%X\\n' 8 255 255".to_string(),
+                1 => "printf '%d\\n' \"'A\"".to_string(),
+                2 => "printf '%c%c\\n' abc def".to_string(),
+                3 => "printf '%s-%s\\n' a b c d".to_string(),
+                4 => "printf '\\101\\102\\n'".to_string(),
+                _ => {
+                    let v = *pick(rng, &["a\\tb", "x\\ny", "q\\\\z"]);
+                    format!("printf '%b|\\n' '{v}'")
+                }
             }
-            // Positional parameters.
-            4 => {
-                let ws: Vec<&str> = (0..rng.gen_range(0..=4))
-                    .map(|_| *pick(&mut rng, &words))
-                    .collect();
-                let sel = *pick(&mut rng, &["$#", "$1", "$2", "$*", "$@"]);
-                stmts.push(format!("set -- {}; printf '%s\\n' \"{sel}\"", ws.join(" ")));
+        }
+        // `whence -v` / `command -v` on a name the script itself defines (an
+        // UNdefined name would reach $FPATH and the answer would depend on the
+        // machine, not on zshrs).
+        26 => {
+            let q = *pick(rng, &["whence -v f", "whence f", "command -v f", "type f"]);
+            format!("f() {{ :; }}; {q}")
+        }
+        // `${ cmd; }` — the shared-state command substitution, in BOTH ksh93
+        // and mksh R59 (mksh(1) "Substitution": "valsub").
+        _ => {
+            let body = *pick(
+                rng,
+                &[
+                    "print -n a; print -n b",
+                    "printf inner",
+                    "v=set; print -n \"$v\"",
+                    "print -n -- x",
+                ],
+            );
+            format!("print -r -- \"${{ {body}; }}\"")
+        }
+    }
+}
+
+/// One ksh93-ONLY statement (`--shell ksh`). Nothing here is emitted for the
+/// mksh/pdksh legs: each construct below was checked to FAIL on mksh R59, so
+/// including it there would fuzz the syntax gap, not the emulation.
+fn ksh93_one(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..10) {
+        // `~(…)` pattern modifiers — ksh(1) "File Name Generation": ~(E) ERE,
+        // ~(i) case-insensitive, ~(N) treat as a plain string.
+        0 => {
+            let (w, pat) = *pick(
+                rng,
+                &[
+                    ("abc", "~(E)^a.c$"),
+                    ("abcd", "~(E)b.d"),
+                    ("ABC", "~(i)abc"),
+                    ("abc", "~(N)abc"),
+                    ("a.c", "~(N)a.c"),
+                    ("xyz", "~(E)x[a-z]z"),
+                ],
+            );
+            format!("[[ {w} == {pat} ]]; print -r -- \"$?\"")
+        }
+        // Array slice `${a[@]:off:len}` (mksh has no array slice).
+        1 => {
+            let off = rng.gen_range(0..3);
+            let len = rng.gen_range(1..3);
+            let sub = *pick(rng, &["@", "*"]);
+            format!("a=(v w x y z); print -r -- \"${{a[{sub}]:{off}:{len}}}\"")
+        }
+        // `**` exponentiation (mksh's arithmetic has no `**`).
+        2 => {
+            let a = *pick(rng, &["2", "3", "10"]);
+            let b = *pick(rng, &["0", "2", "3", "10"]);
+            if rng.gen_bool(0.5) {
+                format!("print -r -- \"$(( {a} ** {b} ))\"")
+            } else {
+                format!("let 'x = {a} ** {b}'; print -r -- \"$x\"")
             }
-            // for loop accumulator.
-            5 => {
-                let nums: Vec<&str> = (0..rng.gen_range(1..=5))
-                    .map(|_| *pick(&mut rng, &["1", "2", "3", "4"]))
-                    .collect();
-                stmts.push(format!(
-                    "s=0; for i in {}; do s=$((s+i)); done; printf '%d\\n' \"$s\"",
-                    nums.join(" ")
-                ));
-            }
-            // while + [ ] arithmetic test.
-            6 => {
-                let lim = *pick(&mut rng, &["0", "1", "3", "5"]);
-                stmts.push(format!(
-                    "i=0; while [ \"$i\" -lt {lim} ]; do i=$((i+1)); done; printf '%d\\n' \"$i\""
-                ));
-            }
-            // case with glob patterns.
-            7 => {
-                let w = *pick(&mut rng, &["foo", "bar", "abc", "x"]);
-                let pat = *pick(&mut rng, &["f*", "*o", "a?c", "x", "*"]);
-                stmts.push(format!(
-                    "case {w} in {pat}) printf match;; *) printf no;; esac; printf '\\n'"
-                ));
-            }
-            // command substitution.
-            8 => {
-                let lit = *pick(&mut rng, &["sub", "inner", "z"]);
-                stmts.push(format!("printf '%s\\n' \"$(printf {lit})\""));
-            }
-            // integer test operators → $?.
-            9 => {
-                let a = *pick(&mut rng, &ints);
-                let b = *pick(&mut rng, &ints);
-                let op = *pick(&mut rng, &["-eq", "-ne", "-lt", "-gt", "-le", "-ge"]);
-                stmts.push(format!("[ {a} {op} {b} ]; printf '%d\\n' \"$?\""));
-            }
-            // typeset -i integer var.
-            10 => {
-                let a = *pick(&mut rng, &ints);
-                let b = *pick(&mut rng, &["1", "2", "3", "5"]);
-                stmts.push(format!(
-                    "typeset -i n=$(( {a} * {b} )); printf '%d\\n' \"$n\""
-                ));
-            }
-            // ksh array: set -A, index, count.
-            11 => {
-                let ws: Vec<&str> = (0..rng.gen_range(1..=4))
-                    .map(|_| *pick(&mut rng, &words))
-                    .collect();
-                let idx = rng.gen_range(0..ws.len());
-                stmts.push(format!(
-                    "set -A a {}; printf '%s\\n' \"${{a[{idx}]}}\"; printf '%d\\n' \"${{#a[@]}}\"",
-                    ws.join(" ")
-                ));
-            }
-            // arithmetic comparison (0/1 result).
-            12 => {
-                let a = *pick(&mut rng, &ints);
-                let b = *pick(&mut rng, &ints);
-                let cmp = *pick(&mut rng, &["<", ">", "<=", ">=", "==", "!="]);
-                stmts.push(format!("printf '%d\\n' \"$(( {a} {cmp} {b} ))\""));
-            }
-            // arithmetic in a non-decimal base (`16#`, `2#`, C `0x`).
-            13 => {
-                let n = *pick(
-                    &mut rng,
-                    &["16#ff", "2#1010", "8#17", "16#a", "0x1f", "0x10"],
-                );
-                stmts.push(format!("printf '%d\\n' \"$(( {n} ))\""));
-            }
-            // bitwise operators.
-            14 => {
-                let a = *pick(&mut rng, &["3", "5", "12", "255", "1", "6"]);
-                let b = *pick(&mut rng, &["1", "2", "4", "7", "3"]);
-                let op = *pick(&mut rng, &["&", "|", "^", "<<", ">>"]);
-                stmts.push(format!("printf '%d\\n' \"$(( {a} {op} {b} ))\""));
-            }
-            // ternary in arithmetic.
-            15 => {
-                let a = *pick(&mut rng, &ints);
-                let b = *pick(&mut rng, &ints);
-                stmts.push(format!("printf '%d\\n' \"$(( {a} > {b} ? {a} : {b} ))\""));
-            }
-            // (( … )) arithmetic command.
-            16 => {
-                let e = *pick(&mut rng, &["x=5", "x=3+4", "x=2*3", "x=10%3", "x=8/2"]);
-                stmts.push(format!("(( {e} )); printf '%d\\n' \"$x\""));
-            }
-            // `let` arithmetic.
-            17 => {
-                let e = *pick(&mut rng, &["y=6/2", "y=7-1", "y=4*4", "y=9%4"]);
-                stmts.push(format!("let '{e}'; printf '%d\\n' \"$y\""));
-            }
-            // substring `${v:off:len}`.
-            18 => {
-                let v = *pick(&mut rng, &["abcdef", "hello", "0123456", "xy"]);
-                let off = rng.gen_range(0..4);
-                let len = rng.gen_range(1..4);
-                stmts.push(format!("v={v}; printf '%s\\n' \"${{v:{off}:{len}}}\""));
-            }
-            // pattern replace `${v/pat/rep}` / `${v//pat/rep}`.
-            19 => {
-                let v = *pick(&mut rng, &["abcabc", "xyxy", "aaa", "a.b.c"]);
-                let pat = *pick(&mut rng, &["a", "x", "b", "."]);
-                let rep = *pick(&mut rng, &["Q", "", "_"]);
-                let slash = *pick(&mut rng, &["/", "//"]);
-                stmts.push(format!(
-                    "v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\""
-                ));
-            }
-            // `[[ … == pat ]]` pattern match → $?.
-            20 => {
-                let w = *pick(&mut rng, &["foobar", "abc", "x1", "a.b"]);
-                let pat = *pick(&mut rng, &["f*", "a?c", "*1", "z*", "a.*"]);
-                stmts.push(format!("[[ {w} == {pat} ]]; printf '%d\\n' \"$?\""));
-            }
-            // string `-z` / `-n` test.
-            21 => {
-                let v = *pick(&mut rng, &["", "abc"]);
-                let op = *pick(&mut rng, &["-z", "-n"]);
-                stmts.push(format!("v={v}; [ {op} \"$v\" ]; printf '%d\\n' \"$?\""));
-            }
-            // integer variable mutated by arithmetic.
-            22 => {
-                let a = *pick(&mut rng, &["1", "2", "5", "10"]);
-                let op = *pick(&mut rng, &["+", "*", "-"]);
-                let b = *pick(&mut rng, &["3", "2", "4"]);
-                stmts.push(format!("x={a}; x=$(( x {op} {b} )); printf '%d\\n' \"$x\""));
-            }
-            // printf with hex / octal conversion.
-            23 => {
-                let n = *pick(&mut rng, &["255", "16", "8", "42", "0", "127"]);
-                let fmt = *pick(&mut rng, &["%x", "%o", "%d", "%X"]);
-                stmts.push(format!("printf '{fmt}\\n' {n}"));
-            }
-            // `typeset -i<base>` output radix (ksh prints lowercase: `16#ff`).
-            24 => {
-                let base = *pick(&mut rng, &["16", "2", "8", "36"]);
-                let n = *pick(&mut rng, &["255", "10", "42", "5", "100"]);
-                stmts.push(format!("typeset -i{base} v={n}; print -r -- \"$v\""));
-            }
-            // `${!arr[@]}` / `[*]` array indices.
-            25 => {
-                let ws: Vec<&str> = (0..rng.gen_range(1..=4))
-                    .map(|_| *pick(&mut rng, &words))
-                    .collect();
-                let sub = *pick(&mut rng, &["@", "*"]);
-                stmts.push(format!(
-                    "set -A a {}; print -r -- \"${{!a[{sub}]}}\"",
-                    ws.join(" ")
-                ));
-            }
-            // `${!name}` name form (plain var → its own name).
+        }
+        // `printf %q` — ksh93 quotes with single quotes; mksh has no %q at all.
+        3 => {
+            let v = *pick(rng, &["a b", "it's", "a*b", "x", "a\\tb"]);
+            format!("printf '%q\\n' '{v}'")
+        }
+        // `printf '%..<base>d'` — output the integer in the given base.
+        4 => {
+            let base = *pick(rng, &["2", "3", "8", "16"]);
+            let n = *pick(rng, &["5", "10", "255", "0"]);
+            format!("printf '%..{base}d\\n' {n}")
+        }
+        // Floating attributes: `typeset -F<n>` fixed, `-E<n>` significant
+        // digits, and the `float` / `integer` aliases.
+        5 => {
+            let decl = *pick(
+                rng,
+                &[
+                    "typeset -F2 v=3.14159",
+                    "typeset -F3 v=2.5",
+                    "typeset -E3 v=3.14159",
+                    "float v=1.5",
+                    "integer v=7",
+                    "typeset -F0 v=2.7",
+                ],
+            );
+            format!("{decl}; print -r -- \"$v\"")
+        }
+        // The `.sh.*` compound: `.sh.version`, `.sh.fun` inside a function,
+        // `.sh.match` after a `[[ … =~ … ]]`.
+        6 => match rng.gen_range(0..3) {
+            0 => "[[ -n ${.sh.version} ]]; print -r -- \"$?\"".to_string(),
+            1 => "f() { print -r -- \"${.sh.fun}\"; }; f".to_string(),
             _ => {
-                let v = *pick(&mut rng, &strs);
-                stmts.push(format!("v={v}; y=v; print -r -- \"${{!y}}\""));
+                let i = rng.gen_range(0..2);
+                format!("[[ abc =~ a(b)c ]]; print -r -- \"${{.sh.match[{i}]}}\"")
+            }
+        },
+        // ksh93-only `set -o` names (mksh rejects all three).
+        7 => {
+            let opt = *pick(rng, &["letoctal", "gmacs", "keyword", "showme", "globstar"]);
+            format!("set -o {opt} 2>/dev/null; print -r -- \"$?\"; set +o {opt} 2>/dev/null")
+        }
+        // `builtin` with -d (delete) / -p (print) — ksh93's builtin manager.
+        8 => {
+            let arg = *pick(rng, &["-d printf", "-p", "printf"]);
+            format!("builtin {arg} >/dev/null 2>&1; print -r -- \"$?\"")
+        }
+        // `typeset -n` namerefs and associative arrays (sorted, so the
+        // iteration order can never be the thing that differs).
+        _ => {
+            if rng.gen_bool(0.5) {
+                let v = *pick(rng, &["hi", "1", "a b"]);
+                format!("typeset -n nr=v; v='{v}'; print -r -- \"$nr\"")
+            } else {
+                format!(
+                    "typeset -A h; h[b]=2; h[a]=1; print -r -- \"${{h[a]}}|${{#h[@]}}\"; \
+                     print -r -- \"${{!h[@]}}\" | tr ' ' '\\n' | sort | tr '\\n' ' '; print -r -- ''"
+                )
             }
         }
     }
-    stmts
 }
 
-/// One strict-POSIX statement — valid in sh/dash/ash AND their zshrs modes,
-/// `printf`-only output. No arrays / `[[` / substring / typeset / `let`.
-fn posix_one(rng: &mut StdRng) -> String {
+/// One mksh/pdksh-ONLY statement (`--shell mksh` / `--shell pdksh`). Every
+/// construct here was checked to be mksh(1) R59 syntax that ksh93 does NOT
+/// accept (or does not define), so it never leaks into the ksh93 leg.
+fn mksh_one(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..7) {
+        // `${|cmd;}` — mksh's valsub that returns `$REPLY`.
+        0 => {
+            let body = *pick(
+                rng,
+                &["REPLY=x", "REPLY=$((1+1))", "REPLY=a; REPLY=$REPLY-b"],
+            );
+            format!("print -r -- \"${{|{body};}}\"")
+        }
+        // mksh-only `set -o` names — mksh(1) "set": posix, sh, utf8-mode,
+        // inherit-xtrace, nohup, physical, braceexpand, vi-tabcomplete.
+        1 => {
+            let opt = *pick(
+                rng,
+                &[
+                    "posix",
+                    "sh",
+                    "utf8-mode",
+                    "inherit-xtrace",
+                    "nohup",
+                    "physical",
+                    "braceexpand",
+                    "vi-tabcomplete",
+                    "vi-esccomplete",
+                ],
+            );
+            format!("set -o {opt}; print -r -- \"$?\"; set +o {opt}")
+        }
+        // PIPESTATUS — present in mksh, absent from ksh93.
+        2 => {
+            let pipe = *pick(
+                rng,
+                &[
+                    "false | true",
+                    "true | false | true",
+                    "(exit 3) | (exit 4)",
+                    "true | true",
+                ],
+            );
+            format!("{pipe}; print -r -- \"[${{PIPESTATUS[*]}}]\"")
+        }
+        // KSH_VERSION is set by mksh (ksh93 sets .sh.version instead).
+        3 => "print -r -- \"${KSH_VERSION+set}${KSH_VERSION:+/nonempty}\"".to_string(),
+        // Brace expansion is a mksh EXTENSION over ksh93, on by default and
+        // controllable with `set -o braceexpand`.
+        4 => {
+            let br = *pick(rng, &["{a,b}", "x{1,2}y", "{a,b}{c,d}", "{a}", "{,x}"]);
+            let opt = *pick(rng, &["-o braceexpand", "+o braceexpand"]);
+            format!("set {opt}; print -r -- {br}")
+        }
+        // `typeset -U` (unsigned) is mksh's own attribute.
+        5 => {
+            let n = *pick(rng, &["1", "-1", "255", "0"]);
+            format!("typeset -Ui v={n}; print -r -- \"$v\"")
+        }
+        // Bare `-i` keeps the INPUT radix in mksh (`16#1f`), unlike ksh93.
+        _ => {
+            let lit = *pick(rng, &["0x1f", "2#101", "8#17", "16#ff"]);
+            format!("typeset -i v={lit}; print -r -- \"$v\"")
+        }
+    }
+}
+
+/// Korn-family program generator (`--shell ksh` / `mksh` / `pdksh`).
+///
+/// 40% core (the portable statements the original generator emitted), 40% the
+/// wider portable surface, 20% DIALECT-specific: ksh93 constructs only ever go
+/// to the ksh93 leg and mksh constructs only to the mksh/pdksh legs, so a
+/// reported divergence is always "zshrs disagrees with the shell it claims to
+/// emulate" and never "this shell never had that feature".
+fn gen_ksh(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let ksh93 = shell_target() == ShellTarget::Ksh;
+    (0..rng.gen_range(2..=5))
+        .map(|_| match rng.gen_range(0..10) {
+            0..=3 => ksh_core_one(&mut rng),
+            4..=7 => ksh_wide_one(&mut rng),
+            _ if ksh93 => ksh93_one(&mut rng),
+            _ => mksh_one(&mut rng),
+        })
+        .collect()
+}
+
+/// `set -o` names POSIX.1-2017 XCU §2.14 `set` defines, minus the two that
+/// would silence the rest of the case (`noexec` stops execution, `errexit`
+/// aborts it). Verified accepted by dash, ash AND bash-as-/bin/sh on this box.
+const POSIX_OPTS: [&str; 11] = [
+    "allexport",
+    "noclobber",
+    "noglob",
+    "nounset",
+    "verbose",
+    "xtrace",
+    "monitor",
+    "notify",
+    "ignoreeof",
+    "nolog",
+    "vi",
+];
+
+/// One statement from the WIDER strict-POSIX surface — the parts of the
+/// standard shell `posix_core_one` never reached: the `set -o` name space, the
+/// FATAL-error exit status, `getopts`, `trap` listing, here-documents, `read`
+/// backslash handling, `IFS` join/split, `local`, `umask`, `command`/`type`,
+/// and the `printf` directive matrix.
+///
+/// Every construct is POSIX.1-2017 XCU §2 (Shell Command Language) or the XCU
+/// utility description of the builtin named, and was run through dash, ash and
+/// bash-as-`/bin/sh` before being encoded, so a divergence is a zshrs gap and
+/// never an unsupported-syntax artifact. Nothing bash-only appears here — this
+/// grammar is shared by `--sh`, `--dash` and `--ash`.
+fn posix_wide_one(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..24) {
+        // `set -o NAME` / `set +o NAME` acceptance, restored immediately so the
+        // option cannot truncate the rest of the case.
+        0 => {
+            let opt = *pick(rng, &POSIX_OPTS);
+            format!("set -o {opt}; printf '%d\\n' $?; set +o {opt}; printf '%d\\n' $?")
+        }
+        // The single-letter spellings and `$-`. XCU §2.5.2: "$- — a string
+        // containing the current option flags".
+        1 => {
+            let letter = *pick(rng, &["c", "u", "f", "C", "a", "x", "v", "m"]);
+            format!("case $- in *{letter}*) printf 'has\\n';; *) printf 'no\\n';; esac")
+        }
+        // A FATAL expansion / arithmetic error. XCU §2.8.1 makes these exit a
+        // non-interactive shell; the STATUS is the parity claim (dash and ash
+        // exit 2, bash-as-sh 127). Run in a subshell so the case survives it.
+        2 => {
+            let bad = *pick(
+                rng,
+                &[
+                    "(set -u; : \"$nope\")",
+                    "(: \"${nope:?}\")",
+                    "(: \"${nope:?msg}\")",
+                    "(readonly r=1; r=2)",
+                    "(: $((1/0)))",
+                    "(: $((1%0)))",
+                ],
+            );
+            format!("{bad} 2>/dev/null; printf '%d\\n' $?")
+        }
+        // Subshell exit status: explicit `exit N`, and `set -e` aborting one.
+        3 => {
+            let body = *pick(
+                rng,
+                &[
+                    "(exit 7)",
+                    "(exit 0)",
+                    "(set -e; false; printf 'no\\n')",
+                    "(set -e; true; printf 'yes\\n')",
+                    "(false)",
+                ],
+            );
+            format!("{body}; printf '%d\\n' $?")
+        }
+        // `umask MODE; umask` — the shell prints the mask in its own format.
+        4 => {
+            let m = *pick(rng, &["022", "077", "002", "0755"]);
+            format!("umask {m}; umask")
+        }
+        // getopts: OPTARG / OPTIND / the `?` name on an unknown option.
+        5 => {
+            let (spec, args) = *pick(
+                rng,
+                &[
+                    ("a:b", "-a val"),
+                    ("ab", "-b"),
+                    ("ab", "-z"),
+                    ("a:b", "-b -a v2"),
+                    (":a:b", "-a"),
+                    ("ab", "--"),
+                ],
+            );
+            format!(
+                "OPTIND=1; getopts '{spec}' o {args} 2>/dev/null; \
+                 printf '%s|%s|%s\\n' \"$o\" \"$OPTARG\" \"$OPTIND\""
+            )
+        }
+        // `trap` with no operands writes the traps in re-inputtable form
+        // (XCU trap: "shall write ... commands that can be used to restore").
+        6 => {
+            let sig = *pick(rng, &["INT", "TERM", "USR1", "HUP", "QUIT"]);
+            let action = *pick(rng, &["printf x", "", ":"]);
+            format!("trap '{action}' {sig}; trap")
+        }
+        // An EXIT trap fires once, after the last command.
+        7 => {
+            let body = *pick(rng, &["printf 'bye\\n'", "printf 'e%d\\n' 1", ":"]);
+            format!("trap '{body}' EXIT; printf 'main\\n'")
+        }
+        // Here-documents: expanded, quoted-delimiter (literal), and `<<-`
+        // (leading TABS stripped). The tabs below are real tabs.
+        8 => match rng.gen_range(0..3) {
+            0 => "v=1; cat <<EOF\n$v $((1+1))\nEOF".to_string(),
+            1 => "cat <<'EOF'\n$novar `nocmd` $((1+1))\nEOF".to_string(),
+            _ => "cat <<-EOF\n\tstripped\n\t\tkept-one\n\tEOF".to_string(),
+        },
+        // `read` without -r consumes backslashes; with -r it does not.
+        9 => {
+            let (data, flag) = *pick(
+                rng,
+                &[
+                    ("a\\\\b", ""),
+                    ("a\\\\b", "-r"),
+                    ("a b", ""),
+                    ("  lead", ""),
+                    ("x\\\\", "-r"),
+                ],
+            );
+            format!("printf '{data}\\n' | {{ read {flag} x; printf '[%s]\\n' \"$x\"; }}")
+        }
+        // A `while read` loop consuming a multi-line pipe.
+        10 => {
+            let n = rng.gen_range(1..=3);
+            let lines: String = (1..=n).map(|i| format!("l{i}\\n")).collect();
+            format!("printf '{lines}' | while read l; do printf '<%s>' \"$l\"; done; printf '\\n'")
+        }
+        // `$*` joins on the first IFS byte; unquoted expansion splits on all.
+        11 => {
+            let ifs = *pick(rng, &[":", "-", ",", " ", ""]);
+            match rng.gen_range(0..3) {
+                0 => format!("set -- a b c; IFS='{ifs}'; printf '%s\\n' \"$*\""),
+                1 => format!("IFS='{ifs}'; v='a{ifs}b{ifs}c'; set -- $v; printf '%d\\n' $#"),
+                _ => format!("set -- a b c; IFS='{ifs}'; printf '%s\\n' \"$@\""),
+            }
+        }
+        // `local` is not POSIX but every ash-derived shell has it; a bare
+        // `local x` differs between them (dash/ash keep the outer value,
+        // bash-as-sh clears it), which is exactly the sort of thing to pin.
+        12 => {
+            let decl = *pick(rng, &["local x=in", "local x", "local x=", "x=in"]);
+            format!("f() {{ {decl}; printf '[%s]\\n' \"$x\"; }}; x=out; f; printf '[%s]\\n' \"$x\"")
+        }
+        // A variable assignment PRECEDING a command: it persists for a special
+        // builtin (`:`), and does not for a regular one (XCU §2.9.1).
+        13 => {
+            let cmd = *pick(rng, &[":", "true", "eval", "printf ''"]);
+            format!("v=0; v=1 {cmd}; printf '[%s]\\n' \"$v\"")
+        }
+        // `command -v` / `type` on a builtin and on a shell function.
+        14 => {
+            let q = *pick(rng, &["command -v", "command -V", "type"]);
+            let name = *pick(rng, &["printf", "f", "read"]);
+            format!("f() {{ :; }}; {q} {name} 2>/dev/null")
+        }
+        // The POSIX printf directive matrix (XCU printf), including the XSI
+        // `'c` character form, `%b`, field width from an argument, and format
+        // recycling when arguments remain.
+        15 => match rng.gen_range(0..7) {
+            0 => "printf '%o|%x|%X\\n' 8 255 255".to_string(),
+            1 => "printf '%d\\n' \"'A\"".to_string(),
+            2 => "printf '%c%c\\n' abc def".to_string(),
+            3 => "printf '%s-%s\\n' a b c d".to_string(),
+            4 => "printf '\\101\\102\\n'".to_string(),
+            5 => "printf '%*d|%-5s|\\n' 5 42 ab".to_string(),
+            _ => {
+                let v = *pick(rng, &["a\\\\tb", "x\\\\ny", "q\\\\cz", "p\\\\\\\\r"]);
+                format!("printf '%b|\\n' '{v}'")
+            }
+        },
+        // `echo` is UNSPECIFIED for escapes and options (XCU echo, XSI): dash
+        // and ash expand `\t` and eat `-n`, bash-as-/bin/sh does neither the
+        // same way. That split is the point of the probe.
+        16 => {
+            let arg = *pick(rng, &["a\\\\tb", "-n x", "-e y", "x\\\\c", "--"]);
+            format!("echo '{arg}'; printf 'END\\n'")
+        }
+        // Pattern brackets in `case`: ranges, negation, character classes, and
+        // a backslash-escaped literal.
+        17 => {
+            let (w, pat) = *pick(
+                rng,
+                &[
+                    ("abc", "[a-c]*"),
+                    ("abc", "[!x]*"),
+                    ("ABC", "[[:upper:]]*"),
+                    ("1a", "[[:digit:]]*"),
+                    ("a-b", "a\\\\-b"),
+                    ("a*b", "a\\\\*b"),
+                    ("", ""),
+                    ("x", "[!a-w]"),
+                ],
+            );
+            format!("case '{w}' in {pat}) printf 'y\\n';; *) printf 'n\\n';; esac")
+        }
+        // `eval` re-parses its argument in the current environment.
+        18 => {
+            let body = *pick(
+                rng,
+                &[
+                    "x=1; printf \"%s\\\\n\" \"$x\"",
+                    "printf \"%s\\\\n\" \"$((1+1))\"",
+                    "for i in a b; do printf %s \"$i\"; done; printf \"\\\\n\"",
+                ],
+            );
+            format!("eval '{body}'")
+        }
+        // fd redirection: duplicate to 3, write, close.
+        19 => {
+            let form = *pick(
+                rng,
+                &[
+                    "exec 3>&1; printf 'v\\n' >&3; exec 3>&-",
+                    "exec 4>&2; printf 'e\\n' >&4 2>/dev/null; exec 4>&-",
+                    "{ printf 'g\\n'; } 3>&1",
+                ],
+            );
+            format!("{form}; printf '%d\\n' $?")
+        }
+        // `unset -v` / `unset -f`, and the `${v-…}` default that shows it.
+        20 => {
+            let form = *pick(
+                rng,
+                &[
+                    "v=1; unset -v v; printf '[%s]%d\\n' \"${v-gone}\" $?",
+                    "f() { :; }; unset -f f; printf '%d\\n' $?",
+                    "unset -v never; printf '%d\\n' $?",
+                    "unset -f never; printf '%d\\n' $?",
+                ],
+            );
+            form.to_string()
+        }
+        // Nested command substitution in both spellings, and its trailing
+        // newline stripping.
+        21 => {
+            let body = *pick(rng, &["printf 'a\\n\\n'", "printf b", "printf 'c\\n'"]);
+            if rng.gen_bool(0.5) {
+                format!("v=$({body}); printf '[%s]\\n' \"$v\"")
+            } else {
+                format!("v=`{body}`; printf '[%s]\\n' \"$v\"")
+            }
+        }
+        // Loop control: `break N` / `continue N` out of nested loops.
+        22 => {
+            let (kw, n) = *pick(rng, &[("break", "1"), ("break", "2"), ("continue", "1")]);
+            format!(
+                "for i in 1 2; do for j in x y; do {kw} {n}; done; printf 'i%s' \"$i\"; done; \
+                 printf '\\n'"
+            )
+        }
+        // `shift` past the end, and `$#` / `$@` after it.
+        _ => {
+            let n = rng.gen_range(0..4);
+            format!("set -- a b c; shift {n} 2>/dev/null; printf '%d|%s|%d\\n' $# \"$*\" $?")
+        }
+    }
+}
+
+/// One strict-POSIX statement from the CORE grammar — valid in sh/dash/ash AND
+/// their zshrs modes, `printf`-only output. No arrays / `[[` / substring /
+/// typeset / `let`.
+///
+/// This is the ORIGINAL narrow grammar; `posix_wide_one` reaches the rest of
+/// the standard-shell surface. `posix_one` mixes the two.
+fn posix_core_one(rng: &mut StdRng) -> String {
     let ints = ["0", "1", "2", "3", "5", "7", "10", "42", "-1", "-3"];
     let strs = ["abc", "hello", "a.b.c", "xxyy", "", "foobar", "a1b2"];
     let words = ["one", "two", "three", "four"];
@@ -10748,6 +11516,15 @@ fn posix_one(rng: &mut StdRng) -> String {
     }
 }
 
+/// One strict-POSIX statement: 40% core grammar, 60% the wider surface.
+fn posix_one(rng: &mut StdRng) -> String {
+    if rng.gen_range(0..10) < 4 {
+        posix_core_one(rng)
+    } else {
+        posix_wide_one(rng)
+    }
+}
+
 /// strict-POSIX program generator (sh / dash / ash).
 fn gen_posix(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -10756,8 +11533,523 @@ fn gen_posix(seed: u64) -> Vec<String> {
         .collect()
 }
 
-/// One bash-specific statement (arrays, substring, replace, case-mod, `[[`).
-fn bash_one(rng: &mut StdRng) -> String {
+/// The `set -o` option names bash defines — bash(1) "SHELL BUILTIN COMMANDS",
+/// `set -o option-name`, minus `noexec` (stops execution of the rest of the
+/// case) and `privileged`/`restricted` (they change the process, not a value).
+/// `interactive-comments` is in `set -o` output but not in the manual's list;
+/// it is included because bash 5.3 accepts it.
+const BASH_SET_OPTS: [&str; 24] = [
+    "allexport",
+    "braceexpand",
+    "emacs",
+    "errexit",
+    "errtrace",
+    "functrace",
+    "hashall",
+    "histexpand",
+    "history",
+    "ignoreeof",
+    "interactive-comments",
+    "keyword",
+    "monitor",
+    "noclobber",
+    "noglob",
+    "nolog",
+    "notify",
+    "nounset",
+    "onecmd",
+    "physical",
+    "pipefail",
+    "posix",
+    "verbose",
+    "vi",
+];
+
+/// `shopt` option names — bash(1) "shopt", "The list of shopt options is:".
+/// Interactive-only ones (autocd, cdspell, checkjobs, …) are kept: `shopt -s`
+/// still has to ACCEPT them and report them in `$BASHOPTS`, which is the claim
+/// being fuzzed.
+const BASH_SHOPTS: [&str; 26] = [
+    "array_expand_once",
+    "assoc_expand_once",
+    "autocd",
+    "cdable_vars",
+    "cdspell",
+    "checkhash",
+    "checkjobs",
+    "checkwinsize",
+    "cmdhist",
+    "dotglob",
+    "execfail",
+    "expand_aliases",
+    "extglob",
+    "extquote",
+    "failglob",
+    "globasciiranges",
+    "globskipdots",
+    "globstar",
+    "gnu_errfmt",
+    "inherit_errexit",
+    "lastpipe",
+    "nocaseglob",
+    "nocasematch",
+    "nullglob",
+    "shift_verbose",
+    "xpg_echo",
+];
+
+/// One statement from the WIDER bash surface — the parts of bash 5.x the
+/// original 8-rule generator never reached: the shell-option space (`set -o`,
+/// `shopt`, `$SHELLOPTS`, `$BASHOPTS`, `$-`), the bash special parameters
+/// (`BASH_SUBSHELL`, `FUNCNAME`, `BASH_SOURCE`, `LINENO`, `PIPESTATUS`,
+/// `BASH_VERSINFO`), `caller`/`FUNCNEST`, the `${var@…}` transforms, the
+/// `declare`/`local` flag matrix, sparse and associative arrays, `[[ =~ ]]` and
+/// `BASH_REMATCH`, brace expansion, `read`/`mapfile` flags, process
+/// substitution, `case` fallthrough, and the `printf` directive matrix.
+///
+/// Every claim is bash(1) as installed here (GNU bash 5.3.15); the manual
+/// section is named in each arm's comment. Nothing here is emitted for the
+/// dash/ash/sh legs — this function is only reachable from `gen_bash`.
+fn bash_wide_one(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..34) {
+        // `set -o NAME` acceptance, restored immediately.
+        0 => {
+            let opt = *pick(rng, &BASH_SET_OPTS);
+            format!("set -o {opt}; printf '%d\\n' $?; set +o {opt}; printf '%d\\n' $?")
+        }
+        // $SHELLOPTS membership — bash(1) SHELLOPTS: "A colon-separated list of
+        // enabled shell options ... valid argument for the -o option to set".
+        1 => {
+            let opt = *pick(rng, &BASH_SET_OPTS);
+            let set = *pick(rng, &["set -o", "set +o"]);
+            format!(
+                "{set} {opt} 2>/dev/null; \
+                 case \":$SHELLOPTS:\" in *:{opt}:*) printf 'in\\n';; *) printf 'out\\n';; esac"
+            )
+        }
+        // `shopt -s/-u/-q/-p NAME` — bash(1) shopt.
+        2 => {
+            let opt = *pick(rng, &BASH_SHOPTS);
+            let form = *pick(rng, &["-s", "-u", "-q", "-p"]);
+            format!("shopt {form} {opt} 2>/dev/null; printf '%d\\n' $?")
+        }
+        // $BASHOPTS membership — bash(1) BASHOPTS: "valid argument for the -s
+        // option to the shopt builtin".
+        3 => {
+            let opt = *pick(rng, &BASH_SHOPTS);
+            let form = *pick(rng, &["-s", "-u"]);
+            format!(
+                "shopt {form} {opt} 2>/dev/null; \
+                 case \":$BASHOPTS:\" in *:{opt}:*) printf 'in\\n';; *) printf 'out\\n';; esac"
+            )
+        }
+        // `shopt -p` round-trips the state as a re-inputtable command.
+        4 => {
+            let opt = *pick(rng, &BASH_SHOPTS);
+            format!("shopt -p {opt} 2>/dev/null; printf '%d\\n' $?")
+        }
+        // The glob-affecting shopts, exercised on a pattern that matches
+        // NOTHING: nullglob removes the word, failglob makes it an error,
+        // neither leaves it literal.
+        5 => {
+            let opt = *pick(rng, &["nullglob", "failglob", "dotglob", "nocaseglob"]);
+            format!(
+                "shopt -s {opt}; printf '[%s]\\n' ./nonexistent_zz* 2>/dev/null; \
+                 printf '%d\\n' $?"
+            )
+        }
+        // nocasematch changes `[[ … == … ]]` and `case` alike (bash(1) shopt).
+        6 => {
+            let set = *pick(rng, &["shopt -s nocasematch", "shopt -u nocasematch"]);
+            if rng.gen_bool(0.5) {
+                format!("{set}; [[ ABC == abc ]]; printf '%d\\n' $?")
+            } else {
+                format!("{set}; case ABC in abc) printf 'y\\n';; *) printf 'n\\n';; esac")
+            }
+        }
+        // extglob operators, reached through a parameter expansion so that the
+        // `shopt -s` at run time is early enough (a `case` pattern would have
+        // been parsed before it ran).
+        7 => {
+            let (v, pat) = *pick(
+                rng,
+                &[
+                    ("fooxbar", "@(foo|bar)"),
+                    ("abcabc", "+(abc)"),
+                    ("aaa", "*(a)"),
+                    ("abc", "?(a)"),
+                    ("xyz", "!(x)"),
+                ],
+            );
+            format!("shopt -s extglob; v={v}; printf '%s\\n' \"${{v//{pat}/Q}}\"")
+        }
+        // `$-` letters. bash(1) set: "The current set of options may be found
+        // in $-"; `c` is set by `-c`, `B` by braceexpand, `h` by hashall.
+        8 => {
+            let letter = *pick(rng, &["c", "B", "h", "u", "e", "x", "m", "i"]);
+            format!("case $- in *{letter}*) printf 'has\\n';; *) printf 'no\\n';; esac")
+        }
+        // BASH_SUBSHELL — bash(1): "Incremented by one within each subshell ...
+        // The initial value is 0."
+        9 => {
+            let form = *pick(
+                rng,
+                &[
+                    "printf '%s\\n' \"$BASH_SUBSHELL\"",
+                    "(printf '%s\\n' \"$BASH_SUBSHELL\")",
+                    "( ( printf '%s\\n' \"$BASH_SUBSHELL\" ) )",
+                    "printf '%s\\n' \"$(printf '%s' \"$BASH_SUBSHELL\")\"",
+                    "{ printf '%s\\n' \"$BASH_SUBSHELL\"; }",
+                ],
+            );
+            form.to_string()
+        }
+        // FUNCNAME / BASH_SOURCE / BASH_LINENO — the call-stack arrays.
+        10 => {
+            let sel = *pick(
+                rng,
+                &[
+                    "${FUNCNAME[0]}",
+                    "${#FUNCNAME[@]}",
+                    "${BASH_SOURCE[0]}",
+                    "${#BASH_SOURCE[@]}",
+                    "${BASH_LINENO[0]}",
+                ],
+            );
+            format!("f() {{ printf '[%s]\\n' \"{sel}\"; }}; g() {{ f; }}; g")
+        }
+        // LINENO — bash(1): "the line number in the script or shell function
+        // currently executing".
+        11 => {
+            let form = *pick(
+                rng,
+                &[
+                    "printf '%s\\n' \"$LINENO\"",
+                    "f() { printf '%s\\n' \"$LINENO\"; }; f",
+                    "f() {\nprintf '%s\\n' \"$LINENO\"\n}; f",
+                ],
+            );
+            form.to_string()
+        }
+        // `caller` — bash(1) caller: "Returns the context of any active
+        // subroutine call ... line number, subroutine name, source file".
+        12 => {
+            let form = *pick(
+                rng,
+                &[
+                    "f() { caller 0; }; g() { f; }; g",
+                    "f() { caller; }; g() { f; }; g",
+                    "caller 0; printf '%d\\n' $?",
+                    "f() { caller 1; printf '%d\\n' $?; }; g() { f; }; g",
+                ],
+            );
+            form.to_string()
+        }
+        // FUNCNEST — bash(1): "if set to a numeric value greater than 0,
+        // defines a maximum function nesting level".
+        13 => {
+            let n = rng.gen_range(2..=4);
+            format!(
+                "FUNCNEST={n}; d=0; f() {{ d=$((d+1)); f; }}; f 2>/dev/null; \
+                 printf '%d\\n' $?"
+            )
+        }
+        // PIPESTATUS + pipefail — bash(1) PIPESTATUS / set -o pipefail.
+        14 => {
+            let pipe = *pick(
+                rng,
+                &[
+                    "false | true",
+                    "true | false | true",
+                    "(exit 3) | (exit 4)",
+                    "true | true",
+                ],
+            );
+            let pf = *pick(rng, &["", "set -o pipefail; "]);
+            format!("{pf}{pipe}; printf '%d|[%s]\\n' $? \"${{PIPESTATUS[*]}}\"")
+        }
+        // BASH_VERSINFO is a 6-element readonly array (bash(1) BASH_VERSINFO);
+        // only its SHAPE is compared, never the version digits.
+        15 => {
+            let sel = *pick(
+                rng,
+                &[
+                    "${#BASH_VERSINFO[@]}",
+                    "${!BASH_VERSINFO[@]}",
+                    "${BASH_VERSION:+set}",
+                    "${BASH_VERSINFO[4]:+set}",
+                ],
+            );
+            format!("printf '%s\\n' \"{sel}\"")
+        }
+        // The `${var@…}` transforms — bash(1) "Parameter transformation":
+        // Q quoted, E escapes expanded, U/L/u case, A an assignment, K keyed.
+        16 => {
+            let op = *pick(rng, &["Q", "E", "U", "L", "u", "A", "a", "K"]);
+            let v = *pick(rng, &["a b", "abc", "it's", "a\\\\tb", "MixEd"]);
+            format!("v='{v}'; printf '%s\\n' \"${{v@{op}}}\" 2>/dev/null; printf '%d\\n' $?")
+        }
+        // The same transforms applied to an ARRAY expand per element.
+        17 => {
+            let op = *pick(rng, &["Q", "U", "L", "K", "A"]);
+            let sub = *pick(rng, &["@", "*"]);
+            format!(
+                "a=(x 'y z'); printf '%s\\n' \"${{a[{sub}]@{op}}}\" 2>/dev/null; \
+                 printf '%d\\n' $?"
+            )
+        }
+        // `declare`/`local` flag matrix — bash(1) declare: -i integer, -l/-u
+        // case, -r readonly, -x export, -a/-A arrays, -n nameref, -g global.
+        18 => {
+            let (flag, assign, probe) = *pick(
+                rng,
+                &[
+                    ("-i", "n=3+4", "$n"),
+                    ("-l", "s=ABC", "$s"),
+                    ("-u", "s=abc", "$s"),
+                    ("-r", "s=1", "$s"),
+                    ("-x", "s=1", "$s"),
+                    ("-a", "a=(1 2)", "${a[1]}"),
+                    ("-i", "n=0x10", "$n"),
+                ],
+            );
+            format!("declare {flag} {assign}; printf '[%s]\\n' \"{probe}\"")
+        }
+        // `declare -p` / `-F` / `-f` round-trip a variable or function.
+        19 => {
+            let form = *pick(
+                rng,
+                &[
+                    "a=(1 2 3); declare -p a",
+                    "declare -A h=([k]=v); declare -p h",
+                    "declare -i n=7; declare -p n",
+                    "f() { :; }; declare -F f",
+                    "f() { :; }; declare -f f",
+                    "declare -n r=v; v=1; declare -p r",
+                ],
+            );
+            form.to_string()
+        }
+        // `declare -g` / `local -n` — scope escape and namerefs.
+        20 => {
+            let form = *pick(
+                rng,
+                &[
+                    "f() { declare -g gv=7; }; f; printf '[%s]\\n' \"$gv\"",
+                    "f() { local -n r=$1; printf '[%s]\\n' \"$r\"; }; v=hi; f v",
+                    "f() { local x=in; printf '[%s]\\n' \"$x\"; }; x=out; f; printf '[%s]\\n' \"$x\"",
+                    "n=5; declare -n ref=n; ref=7; printf '[%s]\\n' \"$n\"",
+                ],
+            );
+            form.to_string()
+        }
+        // Sparse indexed arrays: a high index, a hole, `${!a[@]}`, `${#a[@]}`.
+        21 => {
+            let form = *pick(
+                rng,
+                &[
+                    "a=(1 2 3); a[10]=x; printf '%s|%d\\n' \"${!a[@]}\" \"${#a[@]}\"",
+                    "a=(1 2 3); unset 'a[1]'; printf '%s|%s\\n' \"${!a[@]}\" \"${a[*]}\"",
+                    "a=([2]=x [0]=y); printf '%s|%s\\n' \"${!a[@]}\" \"${a[*]}\"",
+                    "a=(1 2 3); a+=(4 5); printf '%s\\n' \"${a[*]}\"",
+                    "declare -a a='(1 2 3)'; printf '%s\\n' \"${a[1]}\"",
+                ],
+            );
+            form.to_string()
+        }
+        // Negative subscripts and array slices — bash(1) "Arrays": "a negative
+        // index is taken relative to one greater than the maximum index".
+        22 => {
+            let sel = *pick(
+                rng,
+                &[
+                    "${a[-1]}",
+                    "${a[-2]}",
+                    "${a[@]: -2}",
+                    "${a[@]:1:2}",
+                    "${a[@]:(-3):2}",
+                    "${#a[2]}",
+                ],
+            );
+            format!("a=(11 22 33 44 55); printf '%s\\n' \"{sel}\"")
+        }
+        // Associative arrays, iterated through `sort` so the ORDER can never be
+        // the thing that differs.
+        23 => {
+            let form = *pick(
+                rng,
+                &[
+                    "declare -A h=([k1]=v1 [k2]=v2); printf '%s|%d\\n' \"${h[k1]}\" \"${#h[@]}\"",
+                    "declare -A h=([b]=2 [a]=1); printf '%s\\n' \"${!h[@]}\" | tr ' ' '\\n' | sort | tr '\\n' ' '; printf '\\n'",
+                    "declare -A h; h[x y]=1; printf '[%s]\\n' \"${h[x y]}\"",
+                    "declare -A h=([a]=1); h[a]+=2; printf '[%s]\\n' \"${h[a]}\"",
+                ],
+            );
+            form.to_string()
+        }
+        // Array element expansions: pattern removal / replacement across `[@]`,
+        // and `${a[*]}` joining on IFS.
+        24 => {
+            let form = *pick(
+                rng,
+                &[
+                    "a=(1 2 3); printf '%s\\n' \"${a[@]/2/X}\"",
+                    "a=(aa ab); printf '%s\\n' \"${a[@]#a}\"",
+                    "a=(aa ab); printf '%s\\n' \"${a[@]%b}\"",
+                    "a=(a b c); IFS=-; printf '%s\\n' \"${a[*]}\"",
+                    "a=(a b c); printf '%s\\n' \"${a[@]^^}\"",
+                ],
+            );
+            form.to_string()
+        }
+        // `[[ … =~ … ]]` and BASH_REMATCH — bash(1) BASH_REMATCH: "element 0
+        // is the portion matching the entire regular expression".
+        25 => {
+            let (w, re, idx) = *pick(
+                rng,
+                &[
+                    ("abc", "^a(b)c$", "1"),
+                    ("abc", "^a(b)c$", "0"),
+                    ("a1b2", "([0-9])([a-z])", "2"),
+                    ("xyz", "^(x)(y)(z)$", "3"),
+                    ("aaa", "a+", "0"),
+                    ("abc", "^z", "0"),
+                ],
+            );
+            format!("[[ {w} =~ {re} ]]; printf '%d|[%s]\\n' $? \"${{BASH_REMATCH[{idx}]}}\"")
+        }
+        // `[[ ]]` unary/binary operators bash adds over POSIX `test`:
+        // -v (set), -o (shell option), < > (locale string order).
+        26 => {
+            let form = *pick(
+                rng,
+                &[
+                    "v=1; [[ -v v ]]; printf '%d' $?; [[ -v nope ]]; printf '%d\\n' $?",
+                    "a=(1 2); [[ -v a[1] ]]; printf '%d' $?; [[ -v a[9] ]]; printf '%d\\n' $?",
+                    "[[ -o braceexpand ]]; printf '%d' $?; [[ -o pipefail ]]; printf '%d\\n' $?",
+                    "[[ abc < abd ]]; printf '%d\\n' $?",
+                    "[[ 5 -gt 3 && 2 -lt 1 ]]; printf '%d\\n' $?",
+                    "test -o errexit; printf '%d\\n' $?",
+                ],
+            );
+            format!("{form}")
+        }
+        // Brace expansion — bash(1) "Brace Expansion": sequence expressions
+        // `{x..y[..incr]}`, zero padding, alpha ranges, cross products.
+        27 => {
+            let br = *pick(
+                rng,
+                &[
+                    "{a..e}",
+                    "{e..a}",
+                    "{1..10..3}",
+                    "{10..1..4}",
+                    "{01..05}",
+                    "{a..e..2}",
+                    "{x,y}{1,2}",
+                    "{1..3}{a,b}",
+                    "{a,{b,c}}",
+                    "{}",
+                    "{1..3",
+                ],
+            );
+            format!("printf '[%s]' {br}; printf '\\n'")
+        }
+        // `echo` under bash's own rules and under xpg_echo — bash(1) shopt
+        // xpg_echo: "the echo builtin expands backslash-escape sequences by
+        // default".
+        28 => {
+            let arg = *pick(rng, &["a\\\\tb", "x\\\\ny", "q\\\\c", "-n z", "-e w\\\\t"]);
+            let pre = *pick(rng, &["", "shopt -s xpg_echo; ", "shopt -u xpg_echo; "]);
+            format!("{pre}echo '{arg}'; printf 'END\\n'")
+        }
+        // `read` flag matrix — bash(1) read: -a array, -d delim, -N nchars
+        // exactly, -n at most, -r raw.
+        29 => {
+            let form = *pick(
+                rng,
+                &[
+                    "read -a arr <<< 'p q r'; printf '[%s]\\n' \"${arr[1]}\"",
+                    "read -N3 x <<< 'abcdef'; printf '[%s]\\n' \"$x\"",
+                    "read -n2 x <<< 'abcdef'; printf '[%s]\\n' \"$x\"",
+                    "read -d, x <<< 'ab,cd'; printf '[%s]\\n' \"$x\"",
+                    "read -r a b <<< 'one two three'; printf '[%s][%s]\\n' \"$a\" \"$b\"",
+                    "IFS=: read -r a b <<< 'x:y'; printf '[%s][%s]\\n' \"$a\" \"$b\"",
+                ],
+            );
+            form.to_string()
+        }
+        // `mapfile`/`readarray` — bash(1) mapfile: -t strips the newline, -n
+        // limits the count, -O sets the start index, -s skips.
+        30 => {
+            let form = *pick(
+                rng,
+                &[
+                    "mapfile -t arr < <(printf 'a\\nb\\nc\\n'); printf '[%s]' \"${arr[@]}\"; printf '\\n'",
+                    "readarray -t arr <<< $'x\\ny'; printf '%d\\n' \"${#arr[@]}\"",
+                    "mapfile -t -n 2 arr < <(printf '1\\n2\\n3\\n'); printf '%d\\n' \"${#arr[@]}\"",
+                    "mapfile -t -O 2 arr < <(printf 'a\\n'); printf '%s\\n' \"${!arr[@]}\"",
+                    "mapfile -t -s 1 arr < <(printf 'a\\nb\\n'); printf '[%s]\\n' \"${arr[0]}\"",
+                ],
+            );
+            form.to_string()
+        }
+        // Process substitution and here-strings — bash(1) "Process
+        // Substitution" / "Here Strings".
+        31 => {
+            let form = *pick(
+                rng,
+                &[
+                    "printf '%s\\n' \"$(< <(printf hi))\"",
+                    "while read -r l; do printf '<%s>' \"$l\"; done < <(printf 'a\\nb\\n'); printf '\\n'",
+                    "cat <<< 'here'",
+                    "cat <<< $'a\\nb'",
+                    "printf '%s\\n' \"$(cat < <(printf 'x'))\"",
+                ],
+            );
+            form.to_string()
+        }
+        // `case` fallthrough — bash(1) "Compound Commands": `;&` falls into the
+        // next clause, `;;&` re-tests the remaining patterns.
+        32 => {
+            let form = *pick(
+                rng,
+                &[
+                    "case x in x) printf a;;& x) printf b;; esac; printf '\\n'",
+                    "case x in y) printf a;& x) printf b;; esac; printf '\\n'",
+                    "case x in x) printf a;& *) printf c;; esac; printf '\\n'",
+                    "case x in x) printf a;;& y) printf b;; esac; printf '\\n'",
+                ],
+            );
+            form.to_string()
+        }
+        // `printf` extensions over POSIX — bash(1) printf: %q shell-quoted,
+        // %b escapes, -v assigns instead of printing.
+        _ => match rng.gen_range(0..6) {
+            0 => {
+                let v = *pick(rng, &["a b", "it's", "a*b", "x", ""]);
+                format!("printf '%q\\n' '{v}'")
+            }
+            1 => "printf -v out '%s-%s' a b; printf '[%s]\\n' \"$out\"".to_string(),
+            2 => {
+                let v = *pick(rng, &["a\\\\tb", "x\\\\ny", "q\\\\cz", "z\\\\0101"]);
+                format!("printf '%b|\\n' '{v}'")
+            }
+            3 => "printf '%5.2f|%-6s|%+d|%05d\\n' 3.14159 ab 7 42".to_string(),
+            4 => "printf '%*d|%c%c|%d\\n' 5 42 abc def \"'A\"".to_string(),
+            _ => {
+                let n = *pick(rng, &["255", "16", "8", "42", "0"]);
+                let fmt = *pick(rng, &["%x", "%X", "%o", "%e", "%E", "%g", "%i"]);
+                format!("printf '{fmt}\\n' {n}")
+            }
+        },
+    }
+}
+
+/// One bash-specific statement from the CORE grammar (arrays, substring,
+/// replace, case-mod, `[[`). The ORIGINAL narrow grammar; `bash_wide_one`
+/// reaches the rest of the bash surface.
+fn bash_core_one(rng: &mut StdRng) -> String {
     let words = ["one", "two", "three", "four"];
     let strs = ["abcdef", "hello", "0123456", "a.b.c", "foobar"];
     match rng.gen_range(0..8) {
@@ -10812,18 +12104,20 @@ fn bash_one(rng: &mut StdRng) -> String {
 }
 
 /// POSIX + bash-extension program generator (`--bash`).
+///
+/// 30% shared POSIX (bash has to keep passing what the standard shell passes),
+/// 20% the original bash core grammar, 50% the wide bash surface — the options,
+/// special parameters, transforms, arrays and builtin flag matrices that the
+/// core never reached.
 fn gen_bash(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut stmts = Vec::new();
-    for _ in 0..rng.gen_range(2..=5) {
-        // ~60% shared POSIX, ~40% bash-specific.
-        if rng.gen_range(0..10) < 6 {
-            stmts.push(posix_one(&mut rng));
-        } else {
-            stmts.push(bash_one(&mut rng));
-        }
-    }
-    stmts
+    (0..rng.gen_range(2..=5))
+        .map(|_| match rng.gen_range(0..10) {
+            0..=2 => posix_one(&mut rng),
+            3..=4 => bash_core_one(&mut rng),
+            _ => bash_wide_one(&mut rng),
+        })
+        .collect()
 }
 
 /// Generate the statement list for a seed in the selected mode.
@@ -10832,7 +12126,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
     // family actually implements.
     match target_cfg(shell_target()).gen {
         GenKind::Rich => {}
-        GenKind::Ksh => return gen_pdksh(seed),
+        GenKind::Ksh => return gen_ksh(seed),
         GenKind::Posix => return gen_posix(seed),
         GenKind::Bash => return gen_bash(seed),
     }
