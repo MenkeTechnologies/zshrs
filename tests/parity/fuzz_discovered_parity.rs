@@ -3611,3 +3611,52 @@ mod quoted_array_collapse {
         assert_parity(r#"IFS=-; a=(a a); print -r -- "${a/a/X}"; print -r -- "${a//a/X}""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Nested `${=…}` split: IFS-whitespace empties are deleted, IFS-non-
+// whitespace empties are kept
+//
+// c:Src/utils.c:3729-3757 spacesplit marks a field lost to IFS
+// WHITESPACE as a genuine "" (c:3734-3735 `*ptr++ = dup("")`) and one
+// lost to an IFS NON-whitespace separator as `nulstring` (c:3733).
+// prefork then deletes the empty nodes (c:Src/subst.c:184) and keeps
+// the marked ones. The marking guard is c:4354 `if (qt && !*y && isarr
+// != 2)` with c:3938 `isarr = nojoin ? 1 : 2` — and c:3902
+// `force_split = !ssub && (spbreak || spsep)` covers `${=name}` as well
+// as `(s)`/`(f)`, which the port's guard did not.
+// ─────────────────────────────────────────────────────────────────────
+mod nested_split_empty_fields {
+    use super::*;
+
+    /// zsh: `a` then `b`. zshrs kept a leading empty word.
+    #[test]
+    fn whitespace_ifs_empties_dropped_in_nested_split() {
+        assert_parity(r#"s="  a  b  "; print -rl -- "${(@)${=s}}""#);
+    }
+
+    /// All-whitespace input collapses to nothing. zsh: `[]`.
+    #[test]
+    fn all_whitespace_nested_split_is_empty() {
+        assert_parity(r#"s="   "; print -r -- "[${(j:|:)${=s}}]""#);
+    }
+
+    /// A NON-whitespace IFS keeps its empty fields (nulstring), so this
+    /// must NOT be filtered. zsh: empty, `a`, empty, `b`.
+    #[test]
+    fn non_whitespace_ifs_empties_kept_in_nested_split() {
+        assert_parity(r#"IFS=:; s=":a::b:"; print -rl -- "${(@)${=s}}""#);
+    }
+
+    /// The `(s:X:)` spelling already behaved; pin it against the
+    /// `${=…}` fix.
+    #[test]
+    fn explicit_split_flag_matches_equals_flag() {
+        assert_parity(r#"s="  a  b  "; print -rl -- "${(@)${(s: :)s}}""#);
+    }
+
+    /// Top-level (un-nested) split is unchanged.
+    #[test]
+    fn top_level_split_unchanged() {
+        assert_parity(r#"s="  a  b  "; print -rl -- ${=s}; print -r -- ${#${=s}}"#);
+    }
+}
