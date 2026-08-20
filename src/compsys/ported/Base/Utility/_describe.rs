@@ -139,17 +139,29 @@ fn extract_match_parts(arr: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// sh:80 `eval local "_a_$_try$_i;_a_$_try$_i"'='$1` — for the literal
+/// form the WHOLE `( … )` text is spliced into the eval'd command line,
+/// so the shell PARSER sees it: `\ ` joins two fields into one element,
+/// quotes group, `$…` expands. Run the same eval instead of guessing at
+/// its result.
+///
+/// The previous `split_whitespace` approximation broke every caller that
+/// writes a description with a space in it — `_condition`'s
+/// `'( -a:existing\ file … )'` (sh:18) came back as `-a:existing\` +
+/// `file`, one element per word.
+fn eval_array_literal(literal: &str) -> Vec<String> {
+    let _ = crate::ported::exec::execute_script(&format!("_cs_lit_dst={}", literal));
+    let out = getaparam("_cs_lit_dst").unwrap_or_default();
+    let _ = crate::ported::params::unsetparam("_cs_lit_dst");
+    out
+}
+
 /// Resolve one grouped-pre-pass argument to array values: either a
-/// literal `(a b c)` list or the contents of the named array param.
-/// Literal splitting is a simplified approximation of zsh word-
-/// splitting (whitespace only, no quote handling) — grouped `_describe`
-/// callers pass array *names* in practice, not inline literals.
+/// literal `(a b c)` list (sh:79-80) or the contents of the named array
+/// param (sh:81-82).
 fn resolve_array_arg(arg: &str) -> Vec<String> {
     if arg.starts_with('(') && arg.ends_with(')') && arg.len() >= 2 {
-        arg[1..arg.len() - 1]
-            .split_whitespace()
-            .map(str::to_string)
-            .collect()
+        eval_array_literal(arg)
     } else {
         getaparam(arg).unwrap_or_default()
     }
@@ -593,12 +605,29 @@ mod tests {
         assert!(!style_is_true(&[]));
     }
 
+    /// sh:79-80 splices the `( … )` literal into `eval local _a_…=$1`, so
+    /// the shell parser — not a whitespace split — decides where elements
+    /// end. `_condition` sh:18 relies on exactly that: every description
+    /// carries backslash-escaped spaces, and losing them turned one
+    /// `value:description` element into several bare words (which
+    /// `_describe` then handed to `compadd` as options: `bad option: -b`).
+    ///
+    /// Needs a live executor because the resolution IS an eval.
     #[test]
     fn resolve_array_arg_parses_inline_literal() {
         let _g = crate::test_util::global_state_lock();
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
         assert_eq!(
             resolve_array_arg("(a b c)"),
             vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(
+            resolve_array_arg("( -a:existing\\ file -b:block\\ special\\ file )"),
+            vec![
+                "-a:existing file".to_string(),
+                "-b:block special file".to_string()
+            ]
         );
     }
 }

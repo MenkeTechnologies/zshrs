@@ -137,10 +137,27 @@ pub fn _condition() -> i32 {
         } else {
             BINARY_TESTS.iter().map(|s| s.to_string()).collect()
         };
-        let mut describe_argv: Vec<String> = vec!["-o".to_string(), "condition code".to_string()];
-        for c in catalog {
-            describe_argv.push(c);
-        }
+        // sh:18 / sh:52 — the catalog reaches `_describe` as ONE argument:
+        // a parenthesised array literal whose descriptions carry
+        // backslash-escaped spaces (`-a:existing\ file`), which
+        // `_describe` sh:79-80 splices into `eval local _a_…=$1` so the
+        // shell parser rebuilds each `value:description` element.
+        //
+        // Pushing the entries as N separate argv words instead made
+        // `_describe` read entry 1 as the array NAME and treat entries
+        // 2..N as compadd OPTIONS: `[[ -<TAB>` printed
+        // `_describe:compadd:114: bad option: -b` twice and listed
+        // nothing, where zsh lists all 25 condition codes.
+        let literal = format!(
+            "( {} )",
+            catalog
+                .iter()
+                .map(|c| c.replace('\\', "\\\\").replace(' ', "\\ "))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let describe_argv: Vec<String> =
+            vec!["-o".to_string(), "condition code".to_string(), literal];
         if dispatch_function_call("_describe", &describe_argv).unwrap_or(1) == 0 {
             ret = 0;
         }
