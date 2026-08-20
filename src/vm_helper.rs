@@ -4477,13 +4477,40 @@ impl ShellExecutor {
         let saved_dq = std::mem::replace(&mut self.in_dq_context, 0);
         let saved_subexp =
             crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.replace(0));
-        let out = self.run_command_substitution_inner(cmd_str);
+        let out = self.run_command_substitution_inner(cmd_str, false);
         crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.set(saved_subexp));
         self.in_dq_context = saved_dq;
         out
     }
 
-    fn run_command_substitution_inner(&mut self, cmd_str: &str) -> String {
+    /// ksh93 funsub `${ list; }` / mksh valsub `${| list; }` — capture the
+    /// output of `cmd_str` WITHOUT the subshell isolation `$( … )` applies.
+    ///
+    /// ksh(1), Command Substitution: "${ command;} … the command is
+    /// executed in the current shell environment", so an assignment or a
+    /// `cd` inside survives:
+    ///   `ksh -c 'x=0; y=${ x=5; print -n out; }; print "x=$x y=$y"'`
+    ///   → `x=5 y=out`, where the same body in `$( … )` leaves `x` at 0.
+    /// mksh behaves identically for both of its forms.
+    ///
+    /// Same capture machinery as `$( … )` — only the parent-state
+    /// snapshot/restore is skipped, which is exactly the difference the
+    /// two references document.
+    ///
+    /// !!! RUST-ONLY ENTRY POINT — zsh has no funsub/valsub !!!
+    pub fn run_shared_state_substitution(&mut self, cmd_str: &str) -> String {
+        let saved_dq = std::mem::replace(&mut self.in_dq_context, 0);
+        let saved_subexp = crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.replace(0));
+        let out = self.run_command_substitution_inner(cmd_str, true);
+        crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.set(saved_subexp));
+        self.in_dq_context = saved_dq;
+        out
+    }
+
+    /// `shared_state`: skip the parent-state snapshot/restore that makes
+    /// `$( … )` a subshell. Only the ksh/mksh funsub-valsub entry point
+    /// passes true.
+    fn run_command_substitution_inner(&mut self, cmd_str: &str, shared_state: bool) -> String {
         // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
         // than spawning `cat`. The leading `<` (after stripping
         // whitespace) means "read this file". Trailing newline is
@@ -4654,7 +4681,14 @@ impl ShellExecutor {
         // c:Src/exec.c:1161 — forked cmdsub child runs entersubsh()
         // which does `zsh_subshell++`; in-process equivalent (RAII,
         // restored on every return path below).
-        let _subshell_bump = crate::fusevm_bridge::CmdSubstSubshellBump::enter();
+        // A funsub/valsub is NOT a subshell — ksh(1) says the command runs
+        // "in the current shell environment" — so it must not bump the
+        // nesting counter `$ZSH_SUBSHELL` / `$BASH_SUBSHELL` reads.
+        let _subshell_bump = if shared_state {
+            None
+        } else {
+            Some(crate::fusevm_bridge::CmdSubstSubshellBump::enter())
+        };
 
         // c:Src/exec.c:1208-1209 — the same forked child clears
         // `opts[USEZLE]` and `zleactive`. Without it a substitution run
@@ -4951,6 +4985,10 @@ impl ShellExecutor {
                 // Restore parent state. The inner cmd-subst's stdout
                 // (the captured pipe contents) is the only thing
                 // that leaks out.
+                //
+                // A funsub/valsub skips ALL of it: that is the entire
+                // difference between `${ list; }` and `$(list)`.
+                if !shared_state {
                 if let Ok(mut t) = crate::ported::params::paramtab().write() {
                     *t = paramtab_snap;
                 }
@@ -5017,6 +5055,7 @@ impl ShellExecutor {
                         *g = pj;
                     }
                 }
+                } // if !shared_state
             }
         }
         // Restore LINENO so outer xtrace sees the outer line. LINENO

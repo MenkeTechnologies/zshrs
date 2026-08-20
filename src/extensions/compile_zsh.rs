@@ -5344,6 +5344,69 @@ impl ZshCompiler {
         // paramsubst entry just consumes the braces). Bug #588
         // extends the fast path to recognize the braced forms so
         // `"${*}"` honors IFS first-char joining matching `"$*"`.
+        // Fast path: ksh93 funsub `${ list; }` and mksh valsub
+        // `${| list; }` — a command substitution that runs in the CURRENT
+        // shell environment instead of a subshell.
+        //
+        //   ksh(1), Command Substitution: "${ command;} … the command is
+        //   executed in the current shell environment … the value is the
+        //   standard output with trailing newlines removed."
+        //   mksh(1) calls the two forms funsub and valsub; for a valsub
+        //   "the value of the expansion is the value of REPLY" and stdout
+        //   is NOT captured.
+        //
+        // Measured — ksh93 and mksh alike:
+        //   ksh  -c 'x=0; y=${ x=5; print -n out; }; print "x=$x y=$y"' → x=5 y=out
+        //   mksh -c 'x=0; y=${|x=5; REPLY=v;};  print "x=$x y=$y"'      → x=5 y=v
+        //   mksh -c 'REPLY=outer; y=${|:;}; print "[$y][$REPLY]"'       → [][outer]
+        //
+        // zsh has neither form: `${` followed by a space or `|` reaches
+        // paramsubst as a malformed name and errors "bad substitution",
+        // which is what zshrs did in every mode.
+        //
+        // SCOPE: only a word that is ENTIRELY the substitution, bare or
+        // double-quoted (`${ … }` / `"${ … }"`). Embedded in a larger word
+        // (`x${ f; }y`, which both references accept) still takes the
+        // generic paramsubst route and still errors — the segment splitter
+        // below would have to learn the form, which is a separate change.
+        if !has_bnull && crate::dash_mode::korn_mode() {
+            let dq = word_is_single_dq_span(s);
+            // The BODY is a fresh command line, so it must keep its own
+            // quoting: `untokenize` folds the lexer's escape markers away
+            // and turned `${ printf "a\n"; }` into `printf "an"`.
+            // `untokenize_preserve_quotes` is the variant that keeps them.
+            // `untokenize_preserve_quotes` deliberately KEEPS the
+            // DQ-context `$` marker (Qstring, lex.rs:4988) so downstream
+            // paramsubst can see it was quoted. A funsub body is a fresh
+            // command line, not a quoted expansion, so the marker has to
+            // become a plain `$` before it is lexed again.
+            let preserved = crate::lex::untokenize_preserve_quotes(s)
+                .replace(crate::ported::zsh_h::Qstring, "$");
+            let body_src: &str = {
+                let t = preserved.as_str();
+                t.strip_prefix('"')
+                    .and_then(|t| t.strip_suffix('"'))
+                    .unwrap_or(t)
+            };
+            if let Some((body, is_valsub)) = ksh_funsub_body(body_src) {
+                let body_idx = self.builder.add_constant(Value::str(body));
+                self.builder.emit(Op::LoadConst(body_idx), 0);
+                self.builder.emit(Op::LoadInt(if is_valsub { 1 } else { 0 }), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_KSH_FUNSUB, 2), 0);
+                // Unquoted, the result is an ordinary expansion and is
+                // IFS-word-split: `IFS=-; set -- ${ print -n "a-b"; }` gives
+                // 2 positionals in both references. Quoted, it is one word.
+                if !dq {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 1),
+                        0,
+                    );
+                }
+                return;
+            }
+        }
+
         let bare_target = if !has_bnull {
             if untoked == "$@" || untoked == "$*" {
                 Some(&untoked[1..])
@@ -11407,6 +11470,49 @@ impl ZshCompiler {
     }
 }
 
+/// Split a ksh93 funsub / mksh valsub word into its command BODY.
+///
+/// Returns `(body, is_valsub)` when `t` is exactly `${ … }` (funsub) or
+/// `${| … }` (valsub), and `None` for anything else — including an ordinary
+/// `${name}`, which must keep going to paramsubst.
+///
+/// The discriminator is the character right after `${`, and it is the same
+/// one both references use: a BLANK opens a funsub (ksh(1): "${ command;}
+/// … the space is required"), a `|` opens a valsub. `${x}` has neither.
+/// The closing `}` must be the word's last character and brace-balanced
+/// with everything between, so `${ f; }` and `${ if x; then y; fi; }` are
+/// bodies while `${ f; }x` is not a whole-word substitution.
+fn ksh_funsub_body(t: &str) -> Option<(String, bool)> {
+    let rest = t.strip_prefix("${")?;
+    let rest = rest.strip_suffix('}')?;
+    let mut it = rest.chars();
+    let first = it.next()?;
+    let is_valsub = first == '|';
+    if !is_valsub && !first.is_whitespace() {
+        return None;
+    }
+    let body = if is_valsub { &rest[1..] } else { rest };
+    // Reject a `}` that closes early — the final `}` we stripped has to be
+    // the one that matches the opening `${`.
+    let mut depth = 0i32;
+    for c in body.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    Some((body.to_string(), is_valsub))
+}
+
 fn word_is_single_dq_span(s: &str) -> bool {
     use crate::ported::zsh_h::{
         Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Outbrack, Outpar, Outparmath,
@@ -12151,6 +12257,22 @@ fn scalar_rhs_has_cmd_subst(s: &str) -> bool {
         }
         if c == '`' || c == Tick || c == Qtick {
             return true;
+        }
+        // ksh93 funsub `${ list; }` / mksh valsub `${| list; }` — also a
+        // command substitution, so `v=${ false; }` must leave `$?` at 1
+        // exactly as `v=$(false)` does (`ksh -c 'v=${ false; }; print
+        // "rc=$?"'` → `rc=1`). Without this the assignment-only status
+        // reset (c:Src/exec.c:3396 `lastval = cmdoutval`) clobbered it
+        // back to 0. `${name…}` never matches: the character after the
+        // brace must be a blank or `|`, which is what opens the two forms.
+        if (c == Stringg || c == Qstring || c == '$') && i + 2 < chars.len() {
+            let brace = chars[i + 1];
+            if brace == '{' || brace == crate::ported::zsh_h::Inbrace {
+                let after = chars[i + 2];
+                if after == '|' || after == crate::ported::zsh_h::Bar || after.is_whitespace() {
+                    return true;
+                }
+            }
         }
         i += 1;
     }

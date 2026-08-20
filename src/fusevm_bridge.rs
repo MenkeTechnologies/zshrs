@@ -4412,6 +4412,52 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // ksh93 funsub / mksh valsub — see the BUILTIN_KSH_FUNSUB doc comment.
+    vm.register_builtin(BUILTIN_KSH_FUNSUB, |vm, _argc| {
+        let is_valsub = vm.pop().to_int() != 0;
+        let body = vm.pop().to_str();
+        let live_status = vm.last_status;
+        let out = with_executor(|exec| {
+            exec.set_last_status(live_status);
+            if is_valsub {
+                // mksh(1): the valsub's value is `$REPLY`, and stdout is
+                // NOT captured — `mksh -c 'y=${|print hi; REPLY=v;}'`
+                // prints `hi` and sets y=v. REPLY is LOCAL to the
+                // substitution: an outer `REPLY=outer` is neither visible
+                // inside nor clobbered after
+                // (`mksh -c 'REPLY=outer; y=${|:;}; print "[$y][$REPLY]"'`
+                // → `[][outer]`), so save/clear/restore around the run.
+                let saved = crate::ported::params::getsparam("REPLY");
+                crate::ported::params::unsetparam("REPLY");
+                let st = exec.execute_script(&body).unwrap_or(0);
+                exec.set_last_status(st);
+                let reply = crate::ported::params::getsparam("REPLY").unwrap_or_default();
+                match saved {
+                    Some(v) => {
+                        crate::ported::params::setsparam("REPLY", &v);
+                    }
+                    None => {
+                        crate::ported::params::unsetparam("REPLY");
+                    }
+                }
+                reply
+            } else {
+                // ksh(1): "the value is the standard output with trailing
+                // newlines removed" — the same trim `$( … )` applies.
+                let captured = exec.run_shared_state_substitution(&body);
+                captured.trim_end_matches('\n').to_string()
+            }
+        });
+        // A funsub/valsub IS a command substitution, so it publishes the
+        // body's exit the way `$( … )` does: `ksh -c 'v=${ false; }; print
+        // "rc=$?"'` → `rc=1`. `run_shared_state_substitution` /
+        // `execute_script` leave it in the executor; the VM's own counter
+        // is what BUILTIN_SET_VAR hands back as the assignment's status
+        // (c:Src/exec.c:3396 `lastval = cmdoutval`), so mirror it here.
+        vm.last_status = with_executor(|exec| exec.last_status());
+        Value::str(out)
+    });
+
     // c:Src/subst.c:3032 `val = sepjoin(aval, sep, 1)` — see the
     // BUILTIN_QUOTED_STAR_ONE_WORD doc comment.
     vm.register_builtin(BUILTIN_QUOTED_STAR_ONE_WORD, |vm, _argc| {
@@ -12679,6 +12725,23 @@ pub const BUILTIN_ARRAY_DROP_EMPTY: u16 = 532;
 /// Stack: pops the expansion result, pushes `Value::str("")` when it
 /// was an empty Array, and the value unchanged otherwise. argc = 1.
 pub const BUILTIN_QUOTED_STAR_ONE_WORD: u16 = 663;
+/// `BUILTIN_KSH_FUNSUB` — ksh93 funsub `${ list; }` and mksh valsub
+/// `${| list; }`: a command substitution that runs in the CURRENT shell
+/// environment rather than a subshell.
+///
+/// ksh(1), Command Substitution: "${ command;} … the command is executed
+/// in the current shell environment", and the value is the standard output
+/// with trailing newlines removed. mksh(1) adds the valsub, whose value is
+/// "the value of REPLY" — its stdout is NOT captured, and `REPLY` itself is
+/// local to the substitution.
+///
+/// Stack (bottom→top): body, kind — where kind is 0 for a funsub and 1 for
+/// a valsub. argc = 2. Pushes the resulting string.
+///
+/// !!! RUST-ONLY OPCODE — zsh has neither form; `${` followed by a blank
+/// or `|` reaches paramsubst as a malformed name and errors "bad
+/// substitution". Emitted only under `dash_mode::korn_mode()`.
+pub const BUILTIN_KSH_FUNSUB: u16 = 664;
 /// `BUILTIN_QUOTEDZPUTS` constant — run top-of-stack value through
 /// `crate::ported::utils::quotedzputs` and push the quoted result.
 /// Used by the cond xtrace path so non-printable bytes (e.g.
