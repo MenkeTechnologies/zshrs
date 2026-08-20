@@ -372,6 +372,15 @@ impl ShellExecutor {
         // is funcstack[0] for us. With no args, just LINE FUNC; we
         // don't track per-frame line numbers yet so emit `0` as
         // line number until the VM pipes that through.
+        if stack.is_empty() {
+            // bash(1), `caller`: "The return value is 0 unless the shell is
+            // not executing a subroutine call". At the top level bash prints
+            // NOTHING and returns 1; the previous code printed the synthetic
+            // frame `0 main` and returned 0, so the common
+            // `caller || echo "not in a function"` idiom took the wrong
+            // branch and a stack-trace loop never terminated.
+            return 1;
+        }
         if depth == 0 {
             let func = stack.first().cloned().unwrap_or_else(|| "main".to_string());
             println!("0 {}", func);

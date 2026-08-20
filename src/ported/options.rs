@@ -1063,41 +1063,12 @@ pub fn printoptionstates(hadplus: bool) {
     // option state; a few bash-only names with no zsh option resolve to off.
     // --zsh keeps the full zsh listing below.
     if crate::dash_mode::bash_mode() {
-        // (bash option name, zshrs option name to query). Order = bash's
-        // (already alphabetical), so no re-sort.
-        const BASH_SET_O: &[(&str, &str)] = &[
-            ("allexport", "allexport"),
-            ("braceexpand", "braceexpand"),
-            ("emacs", "emacs"),
-            ("errexit", "errexit"),
-            ("errtrace", "errtrace"),
-            ("functrace", "functrace"),
-            ("hashall", "hashall"),
-            ("histexpand", "histexpand"),
-            ("history", "history"),
-            ("ignoreeof", "ignoreeof"),
-            ("interactive-comments", "interactivecomments"),
-            ("keyword", "keyword"),
-            ("monitor", "monitor"),
-            ("noclobber", "noclobber"),
-            ("noexec", "noexec"),
-            ("noglob", "noglob"),
-            ("nolog", "nolog"),
-            ("notify", "notify"),
-            ("nounset", "nounset"),
-            ("onecmd", "singlecommand"),
-            ("physical", "physical"),
-            ("pipefail", "pipefail"),
-            // bash's user-facing `set -o posix` toggle (off by default); NOT
-            // zshrs's internal `posixbuiltins`, which is on in --bash.
-            ("posix", "posix"),
-            ("privileged", "privileged"),
-            ("verbose", "verbose"),
-            ("vi", "vi"),
-            ("xtrace", "xtrace"),
-        ];
-        for (bname, zname) in BASH_SET_O {
-            let on = opt_state_get(zname).unwrap_or(false);
+        // The (bash name, zshrs option name) table lives in
+        // `extensions::dash_mode` so `set -o NAME`, this listing and
+        // `$SHELLOPTS` share one definition and one state — including the
+        // six bash-only names that have no zsh option behind them.
+        for (bname, _zname) in crate::dash_mode::BASH_SET_O {
+            let on = crate::dash_mode::bash_set_o_get(bname);
             if hadplus {
                 println!("set {}o {}", if on { "-" } else { "+" }, bname);
             } else {

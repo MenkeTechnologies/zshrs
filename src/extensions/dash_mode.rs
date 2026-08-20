@@ -214,3 +214,128 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
         _ => None,
     }
 }
+
+/// bash's `set -o` option table — the FIXED ~27 names bash accepts for
+/// `set -o NAME` / `set +o NAME`, lists for `set -o` / `set +o`, and joins
+/// into `$SHELLOPTS`. Each entry is `(bash name, zshrs option name)`; the
+/// order is bash's own (already alphabetical), so no caller re-sorts.
+///
+/// Six bash names have NO zsh option behind them — `errtrace`, `functrace`,
+/// `history`, `keyword`, `nolog`, `posix`. zsh's option table is a faithful
+/// port and must not grow non-zsh entries (they would leak into `setopt`,
+/// `${#options}` and `$options[…]` in `--zsh`), so their state lives in
+/// [`BASH_ONLY_OPTS`] instead, keyed by the bash name. Both halves are read
+/// back through [`bash_set_o_get`] so the listing, the query and `$SHELLOPTS`
+/// all see one state.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!! zsh has no bash
+/// personality; `emulate sh` only approximates it and rejects every bash-only
+/// option name outright (`Src/options.c:640` `no such option`).
+pub const BASH_SET_O: &[(&str, &str)] = &[
+    ("allexport", "allexport"),
+    ("braceexpand", "braceexpand"),
+    ("emacs", "emacs"),
+    ("errexit", "errexit"),
+    ("errtrace", "errtrace"),
+    ("functrace", "functrace"),
+    ("hashall", "hashall"),
+    ("histexpand", "histexpand"),
+    ("history", "history"),
+    ("ignoreeof", "ignoreeof"),
+    ("interactive-comments", "interactivecomments"),
+    ("keyword", "keyword"),
+    ("monitor", "monitor"),
+    ("noclobber", "noclobber"),
+    ("noexec", "noexec"),
+    ("noglob", "noglob"),
+    ("nolog", "nolog"),
+    ("notify", "notify"),
+    ("nounset", "nounset"),
+    ("onecmd", "singlecommand"),
+    ("physical", "physical"),
+    ("pipefail", "pipefail"),
+    // bash's user-facing `set -o posix` toggle (off by default); NOT
+    // zshrs's internal `posixbuiltins`, which is on in --bash.
+    ("posix", "posix"),
+    ("privileged", "privileged"),
+    ("verbose", "verbose"),
+    ("vi", "vi"),
+    ("xtrace", "xtrace"),
+];
+
+/// The bash `set -o` names with no zsh option behind them. State-only: zshrs
+/// records the flag so `set -o NAME`, the `set -o` listing and `$SHELLOPTS`
+/// agree, but no behavior hangs off them yet. Kept OUT of zsh's option table
+/// on purpose — see [`BASH_SET_O`].
+///
+/// Each defaults OFF, which is also bash's default for all six in a
+/// non-interactive `bash -c` (verified: `bash -c 'set -o'`).
+const BASH_ONLY_OPTS: &[(&str, &AtomicBool)] = &[
+    ("errtrace", &BO_ERRTRACE),
+    ("functrace", &BO_FUNCTRACE),
+    ("history", &BO_HISTORY),
+    ("keyword", &BO_KEYWORD),
+    ("nolog", &BO_NOLOG),
+    ("posix", &BO_POSIX),
+];
+
+static BO_ERRTRACE: AtomicBool = AtomicBool::new(false);
+static BO_FUNCTRACE: AtomicBool = AtomicBool::new(false);
+static BO_HISTORY: AtomicBool = AtomicBool::new(false);
+static BO_KEYWORD: AtomicBool = AtomicBool::new(false);
+static BO_NOLOG: AtomicBool = AtomicBool::new(false);
+static BO_POSIX: AtomicBool = AtomicBool::new(false);
+
+/// Read one bash `set -o` option's state by its BASH name: the bash-only
+/// side-table first, else the zsh option it maps to.
+pub fn bash_set_o_get(bash_name: &str) -> bool {
+    if let Some((_, cell)) = BASH_ONLY_OPTS.iter().find(|(n, _)| *n == bash_name) {
+        return cell.load(Ordering::Relaxed);
+    }
+    match BASH_SET_O.iter().find(|(b, _)| *b == bash_name) {
+        Some((_, zname)) => crate::ported::options::opt_state_get(zname).unwrap_or(false),
+        None => false,
+    }
+}
+
+/// `set -o NAME` / `set +o NAME` in `--bash` mode.
+///
+/// Returns `None` when bash mode does not own the name, so the caller falls
+/// through to zsh's faithful `optlookup` + `dosetopt` path (`Src/builtin.c:642`);
+/// `Some(0)` when the assignment was applied.
+///
+/// Two of the names — `monitor` and `onecmd` — map to zsh options that
+/// `dosetopt` refuses to change after startup (`Src/options.c:746`, the
+/// INTERACTIVE / SHINSTDIN / SINGLECOMMAND gate). bash accepts both at any
+/// time (`bash -c 'set -o monitor'` → status 0), so they are written straight
+/// to the option state, which is what `dosetopt(…, force=1)` would do.
+pub fn bash_set_o(bash_name: &str, on: bool) -> Option<i32> {
+    if !bash_mode() {
+        return None;
+    }
+    if let Some((_, cell)) = BASH_ONLY_OPTS.iter().find(|(n, _)| *n == bash_name) {
+        cell.store(on, Ordering::Relaxed);
+        return Some(0);
+    }
+    let (_, zname) = BASH_SET_O.iter().find(|(b, _)| *b == bash_name)?;
+    // Via the alias resolver, not a raw write: several of these names are zsh
+    // NEGATION aliases (`braceexpand` → NO_IGNORE_BRACES, `noglob` → NO_GLOB,
+    // `nounset` → NO_UNSET, c:Src/options.c:269-280), so a raw
+    // `opt_state_set("braceexpand", false)` would leave the canonical
+    // `ignorebraces` slot untouched and the change would not take effect.
+    crate::ported::options::opt_state_set_via_alias(zname, on);
+    Some(0)
+}
+
+/// `$SHELLOPTS` in `--bash` mode: the colon-joined, alphabetically-ordered
+/// list of `set -o` options currently ON (bash(1), "Shell Variables":
+/// "SHELLOPTS — A colon-separated list of enabled shell options").
+/// [`BASH_SET_O`] is already in bash's alphabetical order.
+pub fn bash_shellopts() -> String {
+    BASH_SET_O
+        .iter()
+        .filter(|(b, _)| bash_set_o_get(b))
+        .map(|(b, _)| *b)
+        .collect::<Vec<_>>()
+        .join(":")
+}

@@ -2143,3 +2143,284 @@ fn emulation_parity_matrix() {
         "no reference shells available at all — cannot verify parity"
     );
 }
+
+#[test]
+fn bash_set_o_accepts_bash_only_option_names() {
+    // `set -o NAME` for bash's own option names. Eight of them reached zsh's
+    // faithful `optlookup`/`dosetopt` and failed there — six because zsh has no
+    // such option at all (`errtrace`, `functrace`, `history`, `keyword`,
+    // `nolog`, `posix` → "no such option"), two because zsh refuses to change a
+    // startup-only option after startup (`monitor`, `onecmd` →
+    // "can't change option", Src/options.c:746). Real bash returns 0 for every
+    // one of them, and the state must round-trip through the `set -o` listing
+    // and `$SHELLOPTS`.
+    let bash = |script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
+    };
+    for opt in [
+        "posix",
+        "errtrace",
+        "functrace",
+        "history",
+        "keyword",
+        "nolog",
+        "monitor",
+        "onecmd",
+        "interactive-comments",
+    ] {
+        let (_, ok) = bash(&format!("set -o {opt}"));
+        assert!(ok, "bash `set -o {opt}` must succeed");
+        let (_, ok) = bash(&format!("set +o {opt}"));
+        assert!(ok, "bash `set +o {opt}` must succeed");
+    }
+    // `set -o onecmd` must NOT truncate the script: real bash runs both
+    // commands (`bash -c 'set -o onecmd; echo a; echo b'` prints a and b).
+    assert_eq!(bash("set -o onecmd; echo a; echo b").0, "a\nb\n");
+    // State round-trips through the listing…
+    let state_of = |listing: &str, opt: &str| -> Option<String> {
+        listing.lines().find_map(|l| {
+            let (n, v) = l.split_once('\t')?;
+            (n.trim() == opt).then(|| v.trim().to_string())
+        })
+    };
+    assert_eq!(state_of(&bash("set -o").0, "posix").as_deref(), Some("off"));
+    assert_eq!(
+        state_of(&bash("set -o posix; set -o").0, "posix").as_deref(),
+        Some("on")
+    );
+    assert_eq!(
+        state_of(&bash("set -o posix; set +o posix; set -o").0, "posix").as_deref(),
+        Some("off")
+    );
+    // …and through the reusable `set +o` form.
+    assert!(bash("set -o errtrace; set +o").0.contains("set -o errtrace"));
+
+    // $SHELLOPTS is the colon-joined list of the enabled `set -o` options in
+    // bash's (alphabetical) table order; it was empty before. These three are
+    // on by default in a non-interactive `bash -c`. (Membership, not an exact
+    // string: this harness passes `-f`, which in a Bourne-letters mode is
+    // NO_GLOB — c:Src/options.c:424 — so `noglob` legitimately joins the list.)
+    let opts = bash("echo $SHELLOPTS").0;
+    let names: Vec<&str> = opts.trim().split(':').collect();
+    for want in ["braceexpand", "hashall", "interactive-comments"] {
+        assert!(names.contains(&want), "$SHELLOPTS missing {want}: {opts:?}");
+    }
+    assert!(!names.contains(&"posix"), "posix is off by default: {opts:?}");
+    assert!(
+        names.windows(2).all(|w| w[0] < w[1]),
+        "$SHELLOPTS must keep bash's alphabetical order: {opts:?}"
+    );
+    // Toggling a name adds / removes it.
+    assert!(bash("set -o posix; echo $SHELLOPTS")
+        .0
+        .split(':')
+        .any(|n| n.trim() == "posix"));
+    assert!(!bash("set +o braceexpand; echo $SHELLOPTS")
+        .0
+        .split(':')
+        .any(|n| n.trim() == "braceexpand"));
+
+    // --zsh is untouched: these are not zsh options and must still be rejected.
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "set -o posix"])
+        .output()
+        .expect("spawn");
+    assert!(
+        !out.status.success(),
+        "--zsh must still reject `set -o posix` (no such zsh option)"
+    );
+}
+
+#[test]
+fn bash_subshell_depth_parameter() {
+    // bash BASH_SUBSHELL: 0 at the top level, incremented per subshell.
+    // zshrs aliases it to the zsh-native ZSH_SUBSHELL in --bash mode; before
+    // that it expanded to the empty string at every depth.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(
+        // NB: the inner nesting needs a space between the parens — `((` would
+        // start an arithmetic command, not a second subshell.
+        bash(r#"echo "$BASH_SUBSHELL"; (echo "$BASH_SUBSHELL"); ( ( echo "$BASH_SUBSHELL" ) )"#),
+        "0\n1\n2\n"
+    );
+}
+
+#[test]
+fn caller_outside_a_subroutine_fails() {
+    // bash(1) `caller`: "The return value is 0 unless the shell is not
+    // executing a subroutine call". At the top level bash prints NOTHING and
+    // returns non-zero; zshrs printed a synthetic `0 main` frame and returned
+    // 0, so the standard `caller || …` guard took the wrong branch.
+    let run = |script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
+    };
+    assert_eq!(run("caller").1, false, "top-level `caller` must fail");
+    assert_eq!(run("caller").0, "", "top-level `caller` prints nothing");
+    // Inside a function it still reports the frame and succeeds.
+    let (out, ok) = run("f() { caller; }; f");
+    assert!(ok, "`caller` in a function must succeed");
+    assert!(out.contains('f'), "frame names the function: {out:?}");
+}
+
+#[test]
+fn posix_faithful_echo_interprets_escapes() {
+    // zsh's `emulate sh` sets BSD_ECHO, so `echo "a\tb"` prints the two
+    // characters literally. Every real POSIX `sh` this matrix references does
+    // the opposite — macOS `/bin/sh` (xpg_echo-by-default bash) and Linux
+    // `/bin/sh` (dash) both emit a TAB — so the posix-faithful drop-in modes
+    // must interpret. `--bash` is excluded (bash's own `echo` needs `-e`), and
+    // the zsh-STYLE leg keeps zsh's behavior because its reference IS zsh.
+    let run = |flags: &[&str], script: &str| -> String {
+        let mut args: Vec<&str> = flags.to_vec();
+        args.extend(["-f", "-c", script]);
+        let out = Command::new(zshrs_bin()).args(&args).output().expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for mode in [["--sh"], ["--dash"], ["--ash"], ["--ksh"]] {
+        assert_eq!(
+            run(&mode, r#"echo "a\tb""#),
+            "a\tb\n",
+            "{mode:?} echo must interpret escapes like the real shell"
+        );
+    }
+    // bash keeps escapes literal without -e, and honours -e.
+    assert_eq!(run(&["--bash"], r#"echo "a\tb""#), "a\\tb\n");
+    assert_eq!(run(&["--bash"], r#"echo -e "a\tb""#), "a\tb\n");
+    // zsh-STYLE sh: zsh's BSD_ECHO wins (reference is `zsh -c 'emulate sh'`).
+    assert_eq!(run(&["--sh", "--zsh"], r#"echo "a\tb""#), "a\\tb\n");
+}
+
+#[test]
+fn zsh_style_legs_install_a_non_fully_emulation() {
+    // `--sh --zsh` / `--ksh --zsh` mean "a zsh that ran `emulate X`", which is
+    // exactly how the parity matrix references them. zshrs installed that
+    // emulation the way a DROP-IN shell does — early (before the option letters
+    // were read) and FULLY (c:Src/init.c:361 `emulate(nam, 1, …)`). The
+    // `emulate` builtin passes `fully` only for `-R`, so a plain `emulate X`
+    // resets only the OPT_EMULATE options (c:Src/options.c:516). Two
+    // consequences, both fixed by deferring the call to the end of startup and
+    // dropping `fully`:
+    //   * options outside OPT_EMULATE kept zsh's defaults in the reference but
+    //     were reset here — `$options[banghist]` off vs zsh's on,
+    //     `$options[promptsubst]` on vs zsh's off, `setopt` listing 2 lines
+    //     against zsh's 8.
+    //   * `-f` was resolved against `kshletters` (`-f` ↔ NO_GLOB,
+    //     c:Src/options.c:424) because the emulation had already switched the
+    //     letter table, where zsh resolves it against `zshletters` (`-f` ↔
+    //     NO_RCS, c:Src/options.c:346) — the leg ran with globbing off.
+    let Some(zsh) = find_shell(ZSH) else {
+        eprintln!("skip: no zsh reference");
+        return;
+    };
+    for (flag, emu) in [("--sh", "sh"), ("--ksh", "ksh")] {
+        for probe in [
+            "setopt",
+            r#"echo "$- ${options[glob]} ${options[rcs]} ${options[banghist]} ${options[promptsubst]}""#,
+        ] {
+            let zout = Command::new(&zsh)
+                .args(["-f", "-c", &format!("emulate {emu}\n{probe}")])
+                .output()
+                .expect("spawn zsh");
+            let rout = Command::new(zshrs_bin())
+                .args([flag, "--zsh", "-f", "-c", probe])
+                .output()
+                .expect("spawn zshrs");
+            assert_eq!(
+                String::from_utf8_lossy(&rout.stdout),
+                String::from_utf8_lossy(&zout.stdout),
+                "{flag} --zsh vs `emulate {emu}` diverged on {probe:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn zsh_style_legs_reject_parenthesised_cond_patterns() {
+    // Under SH_GLOB — set by both `emulate sh` and `emulate ksh` — a `(` in a
+    // `[[ ]]` operand is NOT a pattern group: word-initial it lexes as INPAR
+    // (c:Src/lex.c:821) and mid-word it ends the token (c:Src/lex.c:1084), so
+    // real zsh reports a parse error. zshrs carried two Rust-only `incond > 1`
+    // exceptions that made these parse, so `[[ file.txt == *.(txt|md) ]]`
+    // printed 1 where the oracle exited 1 with no output. The exceptions now
+    // survive only for the REAL-SHELL drop-in modes, whose reference (bash /
+    // ksh93) really does accept `[[ ab =~ (a)(b) ]]`.
+    //
+    // The oracle must parse the script UNDER the emulation, so it uses the
+    // `emulate X -c "$src"` one-shot form: a plain `emulate X\nscript` -c
+    // string is parsed by zsh in full BEFORE the `emulate` line runs, so
+    // parse-time deltas like SH_GLOB never reach it.
+    let Some(zsh) = find_shell(ZSH) else {
+        eprintln!("skip: no zsh reference");
+        return;
+    };
+    let oracle = |emu: &str, script: &str| -> (String, bool) {
+        let out = Command::new(&zsh)
+            .args([
+                "-f",
+                "-c",
+                &format!("__oracle_src=$1; set --; emulate {emu} -c \"$__oracle_src\""),
+                "zsh",
+                script,
+            ])
+            .output()
+            .expect("spawn zsh");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
+    };
+    let zshrs = |flag: &str, script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "--zsh", "-f", "-c", script])
+            .output()
+            .expect("spawn zshrs");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.success(),
+        )
+    };
+    for (flag, emu) in [("--sh", "sh"), ("--ksh", "ksh")] {
+        for script in [
+            "[[ hello == (hel*|wor*) ]]; print -r -- $?", // word-initial `(`
+            "[[ ab =~ (a)(b) ]]; print -r -- $?",         // adjacent groups
+        ] {
+            assert_eq!(
+                zshrs(flag, script),
+                oracle(emu, script),
+                "{flag} --zsh vs `emulate {emu} -c` on {script:?}"
+            );
+        }
+    }
+    // The drop-in modes keep the exception: real bash and ksh93 both match.
+    for flag in ["--bash", "--ksh"] {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "-f", "-c", "[[ ab =~ (a)(b) ]]; echo $?"])
+            .output()
+            .expect("spawn");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "0\n",
+            "{flag} must still match `=~ (a)(b)` like the real shell"
+        );
+    }
+}

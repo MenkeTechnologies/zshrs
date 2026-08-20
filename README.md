@@ -605,6 +605,7 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
 - Per-shell emulation drop-ins: `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash`. `--mksh` (MirBSD ksh) and `--pdksh` (Public Domain ksh) share the `--ksh` base; `--ash` (Almquist shell) is an alias of `--dash`. `--dash` is a strict Debian Almquist Shell mode — it applies the `sh` option presets and additionally rejects the zsh-only syntax dash has never had (`$'...'` ANSI-C quoting, `<<<` here-strings, `+=` compound assignment, `name=(...)` arrays, the `[[ ]]` reserved word, arith `**`/`,`, and `printf %q`) while using XSI `echo` — verified byte-for-byte against `/bin/dash`
+- Drop-in fidelity beyond zsh's own `emulate`: the bare POSIX-family modes match the REAL shell, not zsh's approximation of it. `--sh`/`--dash`/`--ash` use XSI `echo` (backslash escapes interpreted without `-e`, as both `/bin/sh` flavours and `dash` do) where zsh's `emulate sh` sets `BSD_ECHO`, and `--bash` accepts bash's own `set -o` names — including the six zsh has no option for (`posix`, `errtrace`, `functrace`, `history`, `keyword`, `nolog`) — reporting them through `set -o`, `set +o` and `$SHELLOPTS`. Adding `--zsh` (`--sh --zsh`, `--ksh --zsh`) selects zsh-STYLE emulation instead: the option deltas a real zsh installs for `emulate sh` / `emulate ksh`, referenced against zsh itself.
 
 ### Test corpus parity
 

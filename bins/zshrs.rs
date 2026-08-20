@@ -1480,9 +1480,32 @@ pub fn zshrs_main() {
     };
     if argv0_basename == "csh" || args.iter().any(|a| a == "--csh") {
         zsh::ported::options::emulate("csh", true);
-    } else {
+    } else if zsh_style_emu.is_none() {
+        // Drop-in mode (`--sh`, `--ksh`, …): the shell IS that shell, so the
+        // emulation is installed before the option words are read and it is a
+        // FULL one — c:Src/init.c:361 `emulate(nam, 1, &emulation, opts)` from
+        // `parseopts_setemulate`, whose second argument (`fully`) is 1.
         zsh::ported::options::emulate(emu_name, true);
     }
+    // The zsh-STYLE legs (`--sh --zsh`, `--ksh --zsh`) mean "a zsh that ran
+    // `emulate X`", and that is exactly how they are referenced by the parity
+    // matrix (`zsh -f -c 'emulate sh; …'`). Two things distinguish it from the
+    // drop-in path above, and BOTH were wrong here:
+    //   * depth — the `emulate` BUILTIN passes `fully` only for `emulate -R`
+    //     (c:Src/builtin.c bin_emulate → `emulate(*args, OPT_ISSET(ops,'R'),
+    //     …)`), so a plain `emulate sh` resets only the OPT_EMULATE options
+    //     (c:Src/options.c:516). Installing it FULLY also reset the OPT_ZSH /
+    //     OPT_NONBOURNE ones, so `$options[banghist]` read off (zsh: on),
+    //     `$options[promptsubst]` on (zsh: off) and `setopt` listed 2 lines
+    //     where zsh lists 8.
+    //   * timing — zsh parses `-f` BEFORE `emulate sh` runs, i.e. with
+    //     `zshletters` (`-f` ↔ NO_RCS, c:Src/options.c:346). Installing the
+    //     emulation first turned SHOPTIONLETTERS on, so `optlookupc('f')` hit
+    //     `kshletters` instead (`-f` ↔ NO_GLOB, c:Src/options.c:424) and the
+    //     leg ran with globbing off and rcs on — the exact inverse of zsh.
+    // Deferring to the end of `apply_cli_flags` fixes both: the flags are read
+    // as zsh's, then the emulation lands on top, as the reference does.
+    let deferred_zsh_style_emu = zsh_style_emu;
 
     // Real-shell-faithful toggle: a bare POSIX-family drop-in
     // (`--sh`/`--ksh`/`--dash`) makes zshrs match the ACTUAL shell rather
@@ -2155,6 +2178,7 @@ pub fn zshrs_main() {
         verbose: bool,
         no_rcs: bool,
         opt_actions: &[(i32, bool)],
+        zsh_style_emu: Option<&str>,
     ) {
         // Apply shell mode
         executor.zsh_compat = is_zsh_mode();
@@ -2255,6 +2279,15 @@ pub fn zshrs_main() {
         if !has_shtty {
             zsh::ported::options::opt_state_set("monitor", false); // c:718
         }
+        // zsh-STYLE leg (`--sh --zsh` / `--ksh --zsh`): install the emulation
+        // HERE, last, and NOT fully — the reference is a zsh that finished
+        // startup and then ran `emulate X` as its first command, so the option
+        // words above were resolved with `zshletters` and only the OPT_EMULATE
+        // options get reset (c:Src/options.c:516). See the deferral note at the
+        // mode-selection site.
+        if let Some(sub) = zsh_style_emu {
+            zsh::ported::options::emulate(sub, false);
+        }
     }
 
     // c:Src/init.c:548-553 (`doneoptions:`) — `-c` takes the NEXT word
@@ -2276,6 +2309,7 @@ pub fn zshrs_main() {
             enable_verbose,
             no_rcs_flag,
             &option_actions,
+            deferred_zsh_style_emu,
         );
         // c:Src/init.c:1340 — `if (cmd)
         //                       setsparam("ZSH_EXECUTION_STRING",
@@ -2515,6 +2549,7 @@ pub fn zshrs_main() {
             enable_verbose,
             no_rcs_flag,
             &option_actions,
+            deferred_zsh_style_emu,
         );
         // Port from Src/init.c:295-306 + Src/init.c:1368-1370.
         // In script mode the parsed argv is split as:
