@@ -20711,6 +20711,33 @@ pub fn paramsubst(
                     // c:1625
                     let prefix: String = chars[..start_pos].iter().collect(); // c:1625
                     let suffix: String = chars[after_pos..].iter().collect(); // c:1625
+                    // c:Src/subst.c:4272-4298 — "Empty array or single
+                    // element": with ZERO or ONE value C never runs the
+                    // first/last sticking loop below. It assembles ONE node
+                    //     y = hcalloc((aptr - ostr) + vallen + strlen(fstr) + 1);
+                    //     strcpy(y, ostr);        // c:4290
+                    //     *str = y + (aptr - ostr);   // c:4291
+                    //     if (vallen) { strcpy(*str, aval[0]); *str += vallen; } // c:4292-4296
+                    //     strcpy(*str, fstr);     // c:4297
+                    //     setdata(n, y); return n;
+                    // i.e. prefix + aval[0] + suffix, with the resume cursor
+                    // left at the START of the suffix. The port ran the
+                    // sticking loop for every length, and with exactly one
+                    // value `i == 0` matched FIRST, so the element took the
+                    // prefix and the suffix was DROPPED: `set -- hi;
+                    // print \"$*\"x` printed `"hi` instead of `"hi"x` (only
+                    // words that reach this runtime path — one carrying a
+                    // Bnull escape marker — were affected; the compiler's
+                    // segment fast path handles the rest).
+                    if values.len() <= 1 {
+                        let value = values.first().map(String::as_str).unwrap_or(""); // c:4287
+                        result_nodes.push(format!("{prefix}{value}{suffix}")); // c:4289-4297
+                        return (
+                            result_nodes[0].clone(),
+                            start_pos + value.chars().count(), // c:4291-4295 `*str += vallen`
+                            result_nodes,
+                        ); // c:4298
+                    }
                     for (i, v) in values.iter().enumerate() {
                         // c:1625
                         if i == 0 {
@@ -20723,10 +20750,6 @@ pub fn paramsubst(
                             // c:1625
                             result_nodes.push(v.clone()); // c:1625
                         } // c:1625
-                    } // c:1625
-                    if result_nodes.is_empty() {
-                        // c:1625
-                        result_nodes.push(format!("{}{}", prefix, suffix)); // c:1625
                     } // c:1625
                     return (result_nodes[0].clone(), start_pos, result_nodes); // c:1625
                 } // c:1625
