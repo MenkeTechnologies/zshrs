@@ -10,7 +10,7 @@ Companion docs: [`ROADMAP.md`](./ROADMAP.md) for phase-by-phase execution plan; 
 
 zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 39,566 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
 
-**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 24 in-process coreutils builtins + **first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** (a crates.io SDK crate + `cdylib`s via `zmodload -R`, version-gated — bash `enable -f` and zsh `zmodload` load native code too, but only against the shell's private build-tree headers with no stable ABI). These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
+**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 24 in-process coreutils builtins + **first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** (a crates.io SDK crate + `cdylib`s via `zmodload -R`, version-gated — bash `enable -f` and zsh `zmodload` load native code too, but only against the shell's private build-tree headers with no stable ABI) + — through the [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native) companion build — **the first shell with a version control system compiled into it as a builtin** (`git`, served natively, no fork/exec; see [§0x07b]). These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
 
 ---
 
@@ -223,6 +223,44 @@ To prevent scope drift, here's the explicit anti-list:
 - **Not zsh's competitor.** It's zsh's replacement for the workload zsh can't handle. Other zsh users may keep zsh; that's fine.
 - **Not bash-compatible by default.** POSIX-compatible via `--posix` mode; bash-compatible via emulation; native is zsh-superset.
 - **Not slow.** Ever. Anywhere. See [§0x02] hard performance targets.
+
+---
+
+## [0x07b] Companion build: `zshrs-native` — a VCS compiled into the shell
+
+[`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native) is a separate
+package that links this shell together with three sibling runtimes — zvcs
+(`git`), arblang (`arb`), and strykelang (`stryke`) — and dispatches them as
+shell builtins. They execute in the shell's own process: no `fork`, no `exec`,
+no `PATH` lookup, no dynamic loader.
+
+**`git` as a shell builtin is the world's first.** Since the Bourne shell in
+1970, every Unix shell has run git the same way — fork, exec, wait — treating
+it as a foreign binary known only by its exit status. The prior art that comes
+closest, and why none of it is the same thing:
+
+- **BusyBox / toybox** put a shell and its utilities in one binary with no fork
+  between them, but the applet set is coreutils-class; there is no git applet.
+- **Nushell's `nu_plugin_gstat`** reports git *status* only, and Nushell plugins
+  are separate child processes — Nu "launches them as needed and communicates
+  with them over stdin and stdout or local sockets."
+- **`git-shell`** is a restricted login shell for SSH git access. It permits
+  only server-side verbs and execs real git to serve them: the confusable name,
+  the opposite architecture.
+- **`enable -f` (bash) and `zmodload` (zsh)** can load native code into a shell,
+  but nobody has shipped a git through either, and both bind to the shell's
+  private build-tree headers with no stable ABI (see [§0x00]).
+- **magit, posh-git, and every shell git plugin** shell out to the git binary.
+
+It lives in its own package rather than behind a feature flag here for a
+mechanical reason: zvcs depends on its own vendored gitoxide fork by path, and a
+path dependency — even an optional one behind a feature — makes a crate
+unpublishable. This crate stays on crates.io; the fat build does not.
+
+Why this clears both legs of [§0x01]: leg 1 is the capability above. Leg 2 is
+the same argument as every other builtin here — a git invocation that costs no
+`fork`, no `exec`, no `ld.so`, and no libc init cannot be matched by any shell
+that spawns a process to do it.
 
 ---
 
