@@ -1778,8 +1778,29 @@ impl ZshCompiler {
         // the command consumes the (pre-expanded) args from the
         // stack with the assigns visible in env.
         if has_inline_env_scope {
+            // c:Src/exec.c:4116-4126 — under POSIX_BUILTINS the save/restore
+            // that undoes `X=y cmd`'s prefix assignments is SKIPPED when the
+            // command is a shell function or a BINF_PSPECIAL / BINF_ASSIGN
+            // builtin and there was no `command` prefix:
+            //     if (is_shfunc || (hn->flags & (BINF_PSPECIAL|BINF_ASSIGN)))
+            //         do_save = (orig_cflags & BINF_COMMAND);
+            //     else
+            //         do_save = 1;
+            // so `v=0; v=1 :` leaves `v` at 1 in dash/ksh/mksh — POSIX.1-2017
+            // XCU 2.9.1: "If the command name is a special built-in utility,
+            // variable assignments shall affect the current execution
+            // environment."
+            //
+            // C resolves `hn` at RUNTIME, so the name travels to the bridge
+            // as a constant and BEGIN_INLINE_ENV performs the shfunctab /
+            // builtintab lookup there. An expanded command word (`$cmd`) has
+            // no compile-time literal; the empty name makes the bridge take
+            // the save arm, which is the pre-existing behavior.
+            let cmd_name = crate::lex::untokenize(&simple.words[0]);
+            let name_const = self.builder.add_constant(Value::str(cmd_name));
+            self.builder.emit(Op::LoadConst(name_const), 0);
             self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_BEGIN_INLINE_ENV, 0),
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_BEGIN_INLINE_ENV, 1),
                 0,
             );
             self.builder.emit(Op::Pop, 0);
