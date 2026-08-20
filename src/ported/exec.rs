@@ -776,16 +776,39 @@ pub fn loadautofn(
         // any `.zwc`-loaded function drift from zsh (measured: 29 vs 32 for
         // `_parameters` loaded out of a `comp_utils.zwc` digest).
         //
-        // `try_dump_file` (parse.rs, c:Src/parse.c:3746) only accepts a dump
-        // whose mtime is >= the source's, so when `<dir>/<name>` still exists
-        // it IS the text the wordcode was compiled from — the one text that
-        // re-parses to the same wordcode INCLUDING its line numbers. Prefer
-        // it, and keep the lossy `getpermtext` render for digest-only
-        // installs where no source file remains.
-        Some((prog, _ksh)) => match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(_) => crate::ported::text::getpermtext(Box::new(prog), None, 0),
-        },
+        // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
+        // C has no choice to make here: `shf->funcdef = stripkshdef(prog, …)`
+        // (c:Src/exec.c:5753-5755) runs the DUMP's wordcode and never looks at
+        // the source file again. zshrs executes function bodies as TEXT, so it
+        // has to render the wordcode back — and that render is what loses the
+        // line numbers. The source file is preferred ONLY when it still renders
+        // to the same program as the dump; then it is provably the text the
+        // wordcode was compiled from and keeps the original line numbering.
+        //
+        // The previous version skipped that test and took the source file
+        // whenever it existed, on the theory that try_dump_file's mtime gate
+        // (parse.rs, c:Src/parse.c:3762-3784) already proved they agree. It
+        // does not: the gate is `stc.st_mtime >= stn.st_mtime` at SECOND
+        // granularity, so a source rewritten within the same second as the
+        // dump — or back-dated — passes it while holding completely different
+        // code. `zcompile f; print 'print FRESH' > f; touch f; autoload f; f`
+        // ran FRESH where zsh runs the compiled body.
+        Some((prog, _ksh)) => {
+            let dump_text = crate::ported::text::getpermtext(Box::new(prog), None, 0); // c:5753
+            match std::fs::read_to_string(&path) {
+                // Both sides go through the SAME renderer, so a `.zwc` written
+                // by C zsh (metafied string pool) still compares equal to a
+                // locally parsed source.
+                Ok(t)
+                    if crate::ported::exec::parse_string(&t, 1).is_some_and(|p| {
+                        crate::ported::text::getpermtext(Box::new(p), None, 0) == dump_text
+                    }) =>
+                {
+                    t
+                }
+                _ => dump_text,
+            }
+        }
         None => match std::fs::read_to_string(&path) {
             Ok(t) => t,
             Err(_) => return 1,
