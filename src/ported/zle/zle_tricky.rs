@@ -914,6 +914,7 @@ pub fn docomplete(lst: i32) -> i32 {
     // `echo $(gr<TAB>` offered 47315 matches where zsh offers none.
     let s = get_comp_string(); // c:664
     let s_word: String = s.clone().unwrap_or_default();
+    tracing::debug!(target: "compsys_args", ?s, wb = WB.load(Ordering::SeqCst), we = WE.load(Ordering::SeqCst), lincmd = LINCMD.load(Ordering::SeqCst), inwhat = crate::ported::zle::compcore::INWHAT.load(Ordering::SeqCst), "get_comp_string result");
     // c:701-702 — `if (inwhat == IN_ENV) lincmd = 0;`. Missing from the port:
     // completing the VALUE of an environment assignment (`FOO=<TAB>`) still
     // reported command position, so `_main_complete` dispatched the
@@ -1131,6 +1132,7 @@ pub fn docomplete(lst: i32) -> i32 {
         }
     }
 
+    tracing::debug!(target: "compsys_args", lst, olst, s_null = s.is_none(), "docomplete dispatch");
     // c:817-870 — dispatch on `lst`.
     let ret;
     if s.is_none() {
@@ -1152,7 +1154,12 @@ pub fn docomplete(lst: i32) -> i32 {
         // real characters.
         // `inull(X)` is `zistype(X, INULL)` (ztype.h:62) — the null-token
         // class, inlined here because compctl.rs's copy is module-private.
-        let w: String = s_word
+        let origword: String = ORIGWORD
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let w: String = origword
             .chars()
             .map(|c| {
                 use crate::ported::zsh_h::{Bnull, Dnull, Nularg, Qstring, Snull, Stringg};
@@ -1228,7 +1235,24 @@ pub fn docomplete(lst: i32) -> i32 {
         let ocs = ZLEMETACS.load(Ordering::SeqCst); // c:823
         let ne = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:839
         *crate::ported::utils::noerrs_lock().lock().unwrap() = 1; // c:840
-        let mut ret_local = doexpansion(&s_word, lst, olst, lincmd); // c:841
+        // c:826 — `ret = doexpansion(origword, lst, olst, lincmd);`. C passes
+        // `origword`, the TOKENIZED word, NOT the `s` it passes to
+        // `docompletion` below. The port passed the untokenized `s_word`, so
+        // the quote tokens `prefork` needs were already gone: `echo "$PA<TAB>`
+        // arrived as `$PA` (an unquoted unset parameter, which expands to NO
+        // WORD and leaves the line alone) instead of `<Dnull>$PA` (an unset
+        // parameter INSIDE double quotes, which expands to an empty-but-present
+        // word — so zsh deletes `"$PA` and inserts nothing).
+        let mut ret_local = doexpansion(
+            &ORIGWORD
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default(),
+            lst,
+            olst,
+            lincmd,
+        ); // c:826
         LASTAMBIG.store(0, Ordering::SeqCst); // c:842
         *crate::ported::utils::noerrs_lock().lock().unwrap() = ne; // c:843
 
@@ -2830,6 +2854,15 @@ pub fn get_comp_string() -> Option<String> {
         {
             *g = s.clone();
         }
+        // c:1928-1929 — `zsfree(origword); origword = ztrdup(s);`. C saves
+        // the word here, still tokenized, and `docomplete` hands THIS to
+        // `doexpansion` (c:826) / `spckword` (c:802). The port returns the
+        // untokenized form, so the tokenized one has to be saved separately.
+        // (C saves it before the c:1931-2218 brace tail, which is not ported;
+        // at this point `s` is therefore the same string C would save.)
+        if let Ok(mut g) = ORIGWORD.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = s.clone(); // c:1929
+        }
         zcontext_restore();
         return Some(untokenize(&s));
     }
@@ -3033,9 +3066,32 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
             return ret;
         }
         let first_item = vl.front().cloned().unwrap_or_default();
-        if first_item.is_empty() {
-            return ret;
-        }
+        // c:2292-2293 — `if (empty(vl) || !*(char *)peekfirst(vl)) goto end;`
+        //
+        // !!! WARNING: the second half of that test CANNOT be transcribed
+        // literally, because this port's `prefork` uses a different string
+        // convention than C's !!!
+        //
+        // In C the two halves separate two different outcomes:
+        //   * the word EXPANDED TO NOTHING (unquoted empty / unset) — prefork
+        //     `uremnode`s it, the list goes empty, and the line is left alone;
+        //   * the word expanded to an EMPTY-BUT-PRESENT string (`"$unset"`) —
+        //     prefork keeps the node, whose data is the one-byte `Nularg`
+        //     sentinel (Src/glob.c:3683-3686 re-inserts it when stripping the
+        //     quote markers leaves nothing). `*peekfirst` is that byte, NOT
+        //     '\0', so C falls through and replaces the word with the empty
+        //     expansion — which is why zsh DELETES `"$PA` off the line.
+        // C's `!*peekfirst` therefore catches neither of those; it is a
+        // belt-and-braces guard for a node C's prefork does not produce.
+        //
+        // This port's `prefork` collapses the sentinel to a true empty string
+        // (src/ported/subst.rs:346-351, standing in for the `untokenize` C
+        // does later) AFTER the keep-test that deletes genuinely empty nodes
+        // (src/ported/subst.rs:408-415). So here an empty first element means
+        // exactly what C's `Nularg` means — the case that must FALL THROUGH —
+        // and testing `is_empty()` returned early on it, leaving `echo "$PA`
+        // on the line where zsh leaves `echo `.
+        let _ = &first_item; // c:2292 (see above: the byte test has no faithful form here)
         // c:2294-2299 — no-change check. If the first item still
         // equals `ss` (no real expansion happened), OR the only
         // change was tilde-expansion that `filesubstr` would do
@@ -3050,7 +3106,25 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
             }
             n
         };
-        let no_change = first_item == ss;
+        // c:2294 — `peekfirst(vl) == (void *) ss`, a POINTER identity test:
+        // "prefork/globlist did not REPLACE the node". C's prefork edits the
+        // word IN PLACE for quote removal (`remnulargs`, Src/subst.c:170,
+        // which `chuck`s the null tokens out of the same buffer), so identity
+        // survives that edit even though the CONTENT changed: for `ls "/us`
+        // the node is still `ss` but now reads `/us`.
+        //
+        // This port has no pointer identity to test (prefork hands back owned
+        // Strings), so the equivalent is "`ss` with exactly the in-place edit
+        // C's prefork would have made", i.e. `ss` with its null tokens
+        // removed. Comparing against the RAW `ss` instead reported "changed"
+        // for every quoted word — `ls "/us` then took the replace-the-word
+        // path with an empty NULLGLOB result and wedged the completion
+        // instead of falling through to `docompletion`.
+        let no_change = {
+            let mut ss_unnulled = ss.clone(); // c:2294
+            crate::ported::glob::remnulargs(&mut ss_unnulled); // c:Src/subst.c:170
+            first_item == ss_unnulled
+        };
         let tilde_only = olst == COMP_EXPAND_COMPLETE
             && len_vl == 1
             && s.starts_with(crate::ported::zsh_h::Tilde)
@@ -3946,6 +4020,19 @@ pub static VARNAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::Once
 /// expand-vs-complete decision unable to distinguish a glob `*` (`Star`)
 /// from a quoted `\*` (a plain `*`). The tokenized string is stashed here
 /// on the way out so that decision reads exactly what C reads.
+/// `static char *origword;` from `Src/Zle/zle_tricky.c:131`.
+///
+/// The word `get_comp_string` extracted, in its TOKENIZED form, saved at
+/// c:1928-1929 (`zsfree(origword); origword = ztrdup(s);`) before the
+/// brace-expansion tail may replace `s`. `docomplete` passes it — not the
+/// untokenized return value — to `doexpansion` (c:826) and to the
+/// spell-check path (c:802), because both hand the word to the expansion
+/// machinery, which reads the quote tokens: `echo "$PA<TAB>` is
+/// `<Dnull>$PA`, an unset parameter inside double quotes, and only the
+/// Dnull tells `prefork` to produce the empty-but-present word that makes
+/// zsh delete `"$PA` from the line.
+pub static ORIGWORD: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new();
+
 pub static COMP_STRING_TOK: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new();
 
 /// Port of `mod_export int instring` from `Src/Zle/zle_tricky.c:419`.
