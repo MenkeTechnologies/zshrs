@@ -1535,6 +1535,26 @@ pub fn apply_keybindings(result: &CompInitResult) {
 /// functions and silently no-ops for builtins (see
 /// install_standard_complete_widgets).
 fn install_comp_keybinding(widget: &str, style: &str, key: &str, func: &str) {
+    // `zle -C` needs the thingy table populated: bin_zle_complete looks the
+    // base comp-widget up by its dotted name (`.complete-word`,
+    // c:Src/Zle/zle_thingy.c:609-614 `rthingy`) and returns 1 when it is
+    // absent. In C that table is filled by `init_thingies()` at zsh/zle
+    // module boot (c:zle_thingy.c:1022, reached from zle_main.c:2252), so
+    // every `zle -C` compdef runs sees it. zshrs fills it LAZILY — from
+    // `bin_zle` (zle_thingy.rs:673) and from a `$widgets` read
+    // (zleparameter.rs:63) — and this call site bypasses both by invoking
+    // `bin_zle_complete` directly, so on a fresh shell the table was still
+    // empty and EVERY `#compdef -k`/`-K` widget silently failed to bind:
+    // `_complete_debug`, `_complete_help`, `_complete_tag`,
+    // `_correct_word`, `_correct_filename`, `_expand_word`,
+    // `_expand_alias`, `_list_expansions`, `_next_tags`, `_read_comp`,
+    // `_most_recent_file`, `_history-complete-{older,newer}`,
+    // `_bash_{complete-word,list-choices}` — 15 widgets zsh has and zshrs
+    // did not (401 vs 386 `${(k)widgets}` after the same `compinit -C -d`).
+    // The `bindkey` half below DID run, so `^X?` was bound to a widget that
+    // did not exist. Trigger the same lazy init `bin_zle` would; it is
+    // idempotent (per-name `contains_key` guard inside init_thingies).
+    crate::ported::zle::zle_thingy::init_thingies();
     let empty_ops = crate::ported::zsh_h::options {
         ind: [0u8; crate::ported::zsh_h::MAX_OPS],
         args: Vec::new(),
