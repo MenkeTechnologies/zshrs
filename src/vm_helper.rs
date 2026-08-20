@@ -4742,6 +4742,17 @@ impl ShellExecutor {
                 // mutates and restore them below. freejob (c:1457) is
                 // struct-local — no waitpid/kill — so the restore is
                 // exact.
+                // c:Src/exec.c:4782 — same fork, one more thing it copies:
+                // the completion-match arena (c:Src/Zle/compcore.c:124-259).
+                // A `compadd` run inside `$(…)` lands in the CHILD's
+                // `matches`/`amatches`/`mgroup`, which die with it, so the
+                // completing parent never sees those matches. zshrs's
+                // in-process cmd-subst shares the arena, so `_tmux`'s
+                // `desc="$(_tmux-backup)"` description probe leaked five
+                // whole completion groups into `tmux <TAB>` (551 matches vs
+                // zsh's 450). Snapshot/restore it by hand, exactly as the
+                // param/opts/trap/job snaps above do.
+                let comp_arena_snap = crate::comp_match_handles::comp_arena_save();
                 let jobtab_snap = crate::ported::jobs::JOBTAB
                     .get()
                     .and_then(|t| t.lock().ok().map(|g| g.clone()));
@@ -4946,6 +4957,10 @@ impl ShellExecutor {
                 }
                 self.functions_compiled = functions_compiled_snap;
                 self.function_source = function_source_snap;
+                // Discard anything the substitution added to the completion
+                // arena — the in-process stand-in for the forked child's
+                // address space going away (see comp_arena_save above).
+                crate::comp_match_handles::comp_arena_restore(comp_arena_snap);
                 // Undo the clearjobtab above — in C the cleared table
                 // belongs to the forked child and dies with it, so the
                 // parent's table must come back untouched.
