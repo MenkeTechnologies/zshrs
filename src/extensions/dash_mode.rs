@@ -24,6 +24,8 @@
 //! This lives in `src/extensions/` (not `src/ported/`) because it has no
 //! line in zsh's C source; `src/ported/` is a faithful port only.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Process-global strict-dash flag. Raised by `emulate dash` (via
@@ -289,6 +291,180 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
         "BASH_VERSINFO" => Some(bash_versinfo()),
         _ => None,
     }
+}
+
+/// bash's `shopt` option table: `(bash name, zshrs option key, bash default)`.
+///
+/// The name list and the defaults are bash 5.3's own — `bash -c shopt`
+/// prints exactly these 59 rows in this order, and `shopt` lists them
+/// alphabetically, so no caller re-sorts. bash rejects anything outside the
+/// list: `bash -c 'shopt -p zznope'` → "shopt: zznope: invalid shell option
+/// name", status 1.
+///
+/// The middle field is where the state LIVES:
+///   * `Some(opt)` — a real zsh option carries the behavior, so the flag is
+///     read and written through `opt_state`. Twelve names zsh already has
+///     under the same spelling (`optlookup` is underscore- and case-blind),
+///     plus two renames whose behavior zsh implements under a different
+///     name: bash `extglob` is zsh `kshglob` (identical `@()`/`*()`/`+()`/
+///     `?()`/`!()` ksh patterns), and bash `failglob` — "if a pattern fails
+///     to match, an error message is printed and the command is not
+///     executed" (bash(1) The Shopt Builtin) — is zsh `nomatch`.
+///   * `None` — bash-only, no zsh option behind it. zsh's option table is a
+///     faithful port and must not grow non-zsh rows (they would leak into
+///     `setopt` / `${#options}` under `--zsh`), so the state lives in
+///     [`BASH_ONLY_SHOPTS`] keyed by the bash name, seeded from the default
+///     in this table.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub const BASH_SHOPTS: &[(&str, Option<&str>, bool)] = &[
+    ("array_expand_once", None, false),
+    ("assoc_expand_once", None, false),
+    ("autocd", Some("autocd"), false),
+    ("bash_source_fullpath", None, false),
+    ("cdable_vars", Some("cdable_vars"), false),
+    ("cdspell", None, false),
+    ("checkhash", None, false),
+    ("checkjobs", Some("checkjobs"), false),
+    ("checkwinsize", None, true),
+    ("cmdhist", None, true),
+    ("compat31", None, false),
+    ("compat32", None, false),
+    ("compat40", None, false),
+    ("compat41", None, false),
+    ("compat42", None, false),
+    ("compat43", None, false),
+    ("compat44", None, false),
+    ("complete_fullquote", None, true),
+    ("direxpand", None, false),
+    ("dirspell", None, false),
+    ("dotglob", Some("dotglob"), false),
+    ("execfail", None, false),
+    ("expand_aliases", None, false),
+    ("extdebug", None, false),
+    ("extglob", Some("kshglob"), false),
+    ("extquote", None, true),
+    ("failglob", Some("nomatch"), false),
+    ("force_fignore", None, true),
+    ("globasciiranges", None, true),
+    ("globskipdots", None, true),
+    ("globstar", None, false),
+    ("gnu_errfmt", None, false),
+    ("histappend", Some("histappend"), false),
+    ("histreedit", None, false),
+    ("histverify", Some("histverify"), false),
+    ("hostcomplete", None, true),
+    ("huponexit", None, false),
+    ("inherit_errexit", None, false),
+    ("interactive_comments", Some("interactive_comments"), true),
+    ("lastpipe", None, false),
+    ("lithist", None, false),
+    ("localvar_inherit", None, false),
+    ("localvar_unset", None, false),
+    ("login_shell", None, false),
+    ("mailwarn", Some("mailwarn"), false),
+    ("no_empty_cmd_completion", None, false),
+    ("nocaseglob", Some("nocaseglob"), false),
+    ("nocasematch", Some("nocasematch"), false),
+    ("noexpand_translation", None, false),
+    ("nullglob", Some("nullglob"), false),
+    ("patsub_replacement", None, true),
+    ("progcomp", None, true),
+    ("progcomp_alias", None, false),
+    ("promptvars", Some("promptvars"), true),
+    ("restricted_shell", None, false),
+    ("shift_verbose", None, false),
+    ("sourcepath", None, true),
+    ("varredir_close", None, false),
+    ("xpg_echo", None, false),
+];
+
+thread_local! {
+    /// Live state for the `BASH_SHOPTS` rows with no zsh option behind them
+    /// (`None` in the middle column). Absent key ⇒ the table's default.
+    static BASH_ONLY_SHOPTS: RefCell<HashMap<&'static str, bool>> =
+        RefCell::new(HashMap::new());
+}
+
+/// The `BASH_SHOPTS` row for `name`, or `None` when bash would reject the
+/// name outright ("invalid shell option name", status 1).
+pub fn bash_shopt_row(name: &str) -> Option<(&'static str, Option<&'static str>, bool)> {
+    BASH_SHOPTS.iter().copied().find(|(n, _, _)| *n == name)
+}
+
+/// Read one bash `shopt` flag. `None` when the name is not a bash shopt.
+pub fn bash_shopt_get(name: &str) -> Option<bool> {
+    let (canon, zsh_opt, default_on) = bash_shopt_row(name)?;
+    // `nocasematch` is not an option at all in zsh — `opt_state` cannot
+    // store it — so it keeps its own flag (see NOCASEMATCH).
+    if canon == "nocasematch" {
+        return Some(nocasematch());
+    }
+    Some(match zsh_opt {
+        Some(opt) => crate::ported::options::opt_state_get(opt).unwrap_or(default_on),
+        None => BASH_ONLY_SHOPTS
+            .with(|m| m.borrow().get(canon).copied())
+            .unwrap_or(default_on),
+    })
+}
+
+/// Write one bash `shopt` flag. Returns false when the name is not a bash
+/// shopt (caller emits bash's "invalid shell option name" and exits 1).
+pub fn bash_shopt_set(name: &str, on: bool) -> bool {
+    let Some((canon, zsh_opt, _)) = bash_shopt_row(name) else {
+        return false;
+    };
+    if canon == "nocasematch" {
+        set_nocasematch(on);
+        return true;
+    }
+    match zsh_opt {
+        // Through the alias-aware setter: `opt_state_get` canonicalises via
+        // `optlookup`, so a raw write under the bash spelling
+        // (`cdable_vars`) would land in a slot the read never consults
+        // (`cdablevars`) — `shopt -s cdable_vars; shopt -p cdable_vars`
+        // reported `-u`.
+        Some(opt) => {
+            crate::ported::options::opt_state_set_via_alias(opt, on);
+        }
+        None => BASH_ONLY_SHOPTS.with(|m| {
+            m.borrow_mut().insert(canon, on);
+        }),
+    }
+    true
+}
+
+/// Install bash's `shopt` defaults for every row whose state lives in a
+/// REAL zsh option.
+///
+/// The bash-only rows default correctly on their own (`BASH_ONLY_SHOPTS`
+/// falls back to the table), but the twelve zsh-backed ones inherit zsh's
+/// default, which is not always bash's: zsh's `histappend`
+/// (`APPEND_HISTORY`) is ON where bash's is OFF, so `shopt -p histappend`
+/// reported `shopt -s histappend` / status 0 against bash's
+/// `shopt -u histappend` / status 1 — and the shell really did append where
+/// bash truncates.
+///
+/// Called once from the binary's `--bash` mode application, BEFORE any user
+/// code runs, so a script's own `setopt`/`shopt` still wins.
+pub fn bash_shopt_apply_defaults() {
+    for (name, zsh_opt, default_on) in BASH_SHOPTS {
+        if zsh_opt.is_some() {
+            bash_shopt_set(name, *default_on);
+        }
+    }
+}
+
+/// `$BASHOPTS` — bash(1): the shopt options "valid as an argument for the
+/// -s option to shopt", colon-separated, in the table's (alphabetical)
+/// order. Only the ENABLED ones appear.
+pub fn bash_shoptsopts() -> String {
+    BASH_SHOPTS
+        .iter()
+        .filter(|(n, _, _)| bash_shopt_get(n).unwrap_or(false))
+        .map(|(n, _, _)| *n)
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 /// bash's `set -o` option table — the FIXED ~27 names bash accepts for

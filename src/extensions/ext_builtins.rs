@@ -8918,24 +8918,24 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
 }
 
 pub(crate) fn shopt(args: &[String]) -> i32 {
-    if args.is_empty() {
-        // List all shell options. Sorted by name so output is
-        // deterministic across runs (was HashMap-iteration-order
-        // → flickered between runs and broke `shopt | diff`).
-        let opts_snapshot: Vec<(String, bool)> = crate::ported::options::opt_state_snapshot()
-            .into_iter()
-            .collect();
-        let mut sorted = opts_snapshot;
-        sorted.sort_by(|a, b| a.0.cmp(&b.0));
-        for (opt, val) in &sorted {
-            println!("shopt {} {}", if *val { "-s" } else { "-u" }, opt);
-        }
-        return 0;
-    }
+    use crate::dash_mode::{bash_shopt_get, bash_shopt_row, bash_shopt_set, BASH_SHOPTS};
 
-    let mut set = None;
+    // bash(1), The Shopt Builtin. The name list, the defaults and the
+    // storage location of each flag live in `dash_mode::BASH_SHOPTS`;
+    // this fn is the argument parsing and the output formats.
+    //
+    // Two output shapes:
+    //   plain    `NAME<TAB>on|off`         (columns, bash's `shopt` listing)
+    //   `-p`     `shopt -s|-u NAME`        (re-inputtable)
+    // and one status rule, quoted from bash(1): "The return status when
+    // listing options is zero if all optnames are enabled, non-zero
+    // otherwise." It applies to `-q` AND to the printing forms —
+    // `bash -c 'shopt -p cdable_vars'` prints `shopt -u cdable_vars` and
+    // exits 1.
+    let mut set: Option<bool> = None;
     let mut print_p = false;
-    let mut quiet = false; // `-q`: suppress output, report via exit status
+    let mut quiet = false;
+    let mut set_o = false; // `-o`: restrict names to the `set -o` table
     let mut opts: Vec<String> = Vec::new();
 
     for arg in args {
@@ -8944,60 +8944,132 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
             "-u" => set = Some(false),
             "-p" => print_p = true,
             "-q" => quiet = true,
-            // `-o` restricts to `set -o` option names; zshrs shares one option
-            // table, so accept it and treat the names normally.
-            "-o" => {}
+            "-o" => set_o = true,
             _ => opts.push(arg.clone()),
         }
     }
 
-    // Some bash shopts have no direct zsh option and would be silently dropped
-    // by opt_state. Map them: `nocasematch` → a dedicated flag; `extglob` →
-    // zsh's `kshglob` (which enables the identical `@()`/`*()/+()/?()/!()`
-    // ksh-style patterns). Others fall through to opt_state.
-    let shopt_get = |name: &str| -> bool {
-        match name {
-            "nocasematch" => crate::dash_mode::nocasematch(),
-            "extglob" => crate::ported::options::opt_state_get("kshglob").unwrap_or(false),
-            _ => crate::ported::options::opt_state_get(name).unwrap_or(false),
-        }
-    };
+    // `-o` names come from bash's `set -o` table, not the shopt table.
+    // bash(1): "Restricts the values of optname to be those defined for
+    // the -o option to the set builtin."
+    if set_o {
+        return shopt_o(set, print_p, quiet, &opts);
+    }
 
-    if let Some(enable) = set {
-        // Set / unset. `-q` suppresses the (already silent) output; the exit
-        // status is 0 on success.
-        crate::fusevm_bridge::with_executor(|exec| {
-            let _ = exec;
-            for opt in &opts {
-                match opt.as_str() {
-                    "nocasematch" => crate::dash_mode::set_nocasematch(enable),
-                    // bash `extglob` ≡ zsh `kshglob`.
-                    "extglob" => crate::ported::options::opt_state_set("kshglob", enable),
-                    _ => crate::ported::options::opt_state_set(opt, enable),
+    // No names: list every option. bash prints the whole table in its
+    // (alphabetical) order, in whichever of the two shapes was asked for,
+    // and returns 0.
+    if opts.is_empty() {
+        if set.is_none() {
+            for (name, _, _) in BASH_SHOPTS {
+                let on = bash_shopt_get(name).unwrap_or(false);
+                if print_p {
+                    println!("shopt {} {}", if on { "-s" } else { "-u" }, name);
+                } else {
+                    println!("{:<20}\t{}", name, if on { "on" } else { "off" });
                 }
             }
-        });
+        }
         return 0;
     }
 
-    // Query mode (no -s/-u). `-q` (quiet): print nothing, return 0 only when
-    // EVERY queried option is set, else 1 (bash shopt -q semantics). Otherwise
-    // print each option's state in the reusable `shopt -s/-u NAME` form.
-    let mut all_set = true;
-    crate::fusevm_bridge::with_executor(|exec| {
-        let _ = exec;
+    // bash rejects an unknown name before doing anything:
+    //   bash -c 'shopt -p zznope'
+    //   bash: line 1: shopt: zznope: invalid shell option name
+    // status 1. zshrs previously accepted any string and reported it `-u`.
+    let mut bad = false;
+    for opt in &opts {
+        if bash_shopt_row(opt).is_none() {
+            eprintln!("zshrs: shopt: {}: invalid shell option name", opt);
+            bad = true;
+        }
+    }
+
+    if let Some(enable) = set {
         for opt in &opts {
-            let val = shopt_get(opt);
-            if !val {
-                all_set = false;
-            }
-            if !quiet {
-                let _ = print_p;
-                println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
+            bash_shopt_set(opt, enable);
+        }
+        return if bad { 1 } else { 0 };
+    }
+
+    // Query. Status is 0 only when EVERY named option is enabled.
+    let mut all_set = true;
+    for opt in &opts {
+        let Some(on) = bash_shopt_get(opt) else {
+            all_set = false;
+            continue;
+        };
+        if !on {
+            all_set = false;
+        }
+        if !quiet {
+            if print_p {
+                println!("shopt {} {}", if on { "-s" } else { "-u" }, opt);
+            } else {
+                println!("{:<20}\t{}", opt, if on { "on" } else { "off" });
             }
         }
-    });
-    if quiet && !opts.is_empty() && !all_set {
+    }
+    if bad || !all_set {
+        1
+    } else {
+        0
+    }
+}
+
+/// `shopt -o` — the same three shapes over bash's `set -o` name table
+/// (bash(1): "Restricts the values of optname to be those defined for the
+/// -o option to the set builtin"). State is shared with `set -o` through
+/// `dash_mode::bash_set_o*`, so `shopt -so errexit` and `set -o errexit`
+/// are one flag.
+fn shopt_o(set: Option<bool>, print_p: bool, quiet: bool, opts: &[String]) -> i32 {
+    use crate::dash_mode::{bash_set_o, bash_set_o_get, BASH_SET_O};
+    let known = |n: &str| BASH_SET_O.iter().any(|(b, _)| *b == n);
+    if opts.is_empty() {
+        if set.is_none() {
+            for (name, _) in BASH_SET_O {
+                let on = bash_set_o_get(name);
+                if print_p {
+                    println!("shopt -{}o {}", if on { 's' } else { 'u' }, name);
+                } else {
+                    println!("{:<20}\t{}", name, if on { "on" } else { "off" });
+                }
+            }
+        }
+        return 0;
+    }
+    let mut bad = false;
+    for opt in opts {
+        if !known(opt) {
+            eprintln!("zshrs: shopt: {}: invalid option name", opt);
+            bad = true;
+        }
+    }
+    if let Some(enable) = set {
+        for opt in opts {
+            let _ = bash_set_o(opt, enable);
+        }
+        return if bad { 1 } else { 0 };
+    }
+    let mut all_set = true;
+    for opt in opts {
+        if !known(opt) {
+            all_set = false;
+            continue;
+        }
+        let on = bash_set_o_get(opt);
+        if !on {
+            all_set = false;
+        }
+        if !quiet {
+            if print_p {
+                println!("shopt -{}o {}", if on { 's' } else { 'u' }, opt);
+            } else {
+                println!("{:<20}\t{}", opt, if on { "on" } else { "off" });
+            }
+        }
+    }
+    if bad || !all_set {
         1
     } else {
         0

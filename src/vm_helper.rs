@@ -3855,10 +3855,38 @@ impl ShellExecutor {
             .unwrap_or(500);
         let funcnest_limit = funcnest_user.min(FUNCNEST_RUST_CEILING);
         if self.local_scope_depth >= funcnest_limit {
+            // c:Src/exec.c:6060-6063 —
+            //     zerr("maximum nested function level reached; increase FUNCNEST?");
+            //     lastval = 1;
+            //     goto undoshfunc;
+            // `zerr` is what makes this FATAL: it raises errflag, so the
+            // enclosing list stops and a non-interactive shell exits.
+            // zsh 5.9:
+            //     zsh -fc 'FUNCNEST=2; f() { f; }; f; printf after'
+            // prints only the diagnostic and exits 1 — no `after`. bash
+            // agrees ("Function invocations that exceed this nesting level
+            // cause the current command to abort", bash(1) FUNCNEST), and
+            // its own message is likewise followed by exit 1.
+            //
+            // This guard printed with a bare `eprintln!` and returned 1
+            // WITHOUT raising errflag, so the runaway recursion stopped but
+            // the script kept running — `printf after` ran and the shell
+            // exited 0. The ported check in exec.rs::doshfunc already does
+            // the C trio, but this one fires first (it is the zshrs-only
+            // stack backstop, evaluated before dispatch reaches doshfunc),
+            // so it has to carry the same side effects.
+            //
+            // The message is written here rather than through `zerr`
+            // because C's prefix is the *function* name — `scriptname` is
+            // the running function inside doshfunc — and this guard runs
+            // before that switch; going through zerr would print the outer
+            // script name instead. Byte-compared against zsh 5.9.
             eprintln!(
                 "{}: maximum nested function level reached; increase FUNCNEST?",
                 name
             );
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:6061 (zerr)
+            crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:6062
             return Some(1);
         }
         let display_name = if name.starts_with("_zshrs_anon_") {
