@@ -2959,3 +2959,56 @@ fn bash_shopt_table_matches_bash() {
         .lines()
         .all(|l| l.starts_with("shopt -s ") || l.starts_with("shopt -u ")));
 }
+
+#[test]
+fn pdksh_line_has_pipestatus_but_ksh93_does_not() {
+    // mksh(1): "PIPESTATUS: An array variable holding the exit statuses of
+    // the last pipeline." ksh93 has no such parameter. Measured:
+    //   mksh -c 'true|false|true; print -r -- "[${PIPESTATUS[*]}]"' → [0 1 0]
+    //   ksh  -c  (same)                                             → []
+    // `--mksh`/`--pdksh` and `--ksh` install the same emulate-ksh preset, so
+    // this needs dash_mode::PDKSH_FAMILY to tell the two lines apart.
+    for flags in [&["--mksh"][..], &["--pdksh"][..]] {
+        assert_eq!(
+            run_zshrs(flags, r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#).0,
+            "[0 1 0]\n",
+            "{flags:?}: PIPESTATUS must carry every stage"
+        );
+        assert_eq!(
+            run_zshrs(flags, r#"(exit 3) | (exit 4); print -r -- "[${PIPESTATUS[*]}]""#).0,
+            "[3 4]\n"
+        );
+        assert_eq!(
+            run_zshrs(
+                flags,
+                r#"true | false; print -r -- "${PIPESTATUS[0]}|${PIPESTATUS[1]}|${#PIPESTATUS[@]}""#
+            )
+            .0,
+            "0|1|2\n",
+            "{flags:?}: element and count reads"
+        );
+    }
+    // ksh93 must stay empty.
+    assert_eq!(
+        run_zshrs(&["--ksh"], r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#).0,
+        "[]\n",
+        "--ksh (ksh93) has no PIPESTATUS"
+    );
+    // bash keeps it; zsh's own name is `$pipestatus`, and PIPESTATUS is an
+    // ordinary (unset) parameter there.
+    assert_eq!(
+        run_zshrs(&["--bash"], r#"true | false | true; printf '[%s]\n' "${PIPESTATUS[*]}""#).0,
+        "[0 1 0]\n"
+    );
+    assert_eq!(
+        run_zshrs(&["--zsh"], r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#).0,
+        "[]\n"
+    );
+
+    // The pdksh line also restores a prefix assignment across a shell-
+    // function call where ksh93 keeps it (see
+    // prefix_assignment_persists_for_posix_special_builtins).
+    let fn_probe = r#"f() { :; }; v=0; v=4 f; print -r -- "[$v]""#;
+    assert_eq!(run_zshrs(&["--mksh"], fn_probe).0, "[0]\n");
+    assert_eq!(run_zshrs(&["--ksh"], fn_probe).0, "[4]\n");
+}
