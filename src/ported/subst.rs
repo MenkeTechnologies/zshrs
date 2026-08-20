@@ -11406,6 +11406,19 @@ pub fn paramsubst(
                                      // discriminates on `isarr`.
             }
         }
+        // c:3446-3462 — the scalar leg of every pattern operator runs
+        // `getmatch(&val, …)`, and `val` is what the DQ collapse just
+        // replaced with `sepjoin(aval, sep, 1)`. `raw_value` still holds the
+        // PRE-collapse scalar, which getstrvalue built with `$IFS[1]` and no
+        // knowledge of a `(j:X:)` separator, so a quoted operator matched the
+        // wrong string: `a=(aa bb); print -r -- "${(j:-:)a%b}"` stripped from
+        // `aa bb` (no match) instead of zsh's `aa-bb` → `aa-b`. Shadow it so
+        // the operator arms below see C's `val`.
+        let raw_value = if dq_collapsed {
+            value.clone() // c:3032
+        } else {
+            raw_value
+        };
         // `split_parts` (c:3950) moved to function-scope declaration
         // earlier so subscript/flag arms above can write to it.
         // c:Src/Modules/parameter.c — magic-assoc (k)/(v) reads
@@ -12353,7 +12366,20 @@ pub fn paramsubst(
                     SKIP_FILESUB.with(|c| c.set(saved));
                     s
                 };
-                if let Some(arr) = arrays_get(&var_name) {
+                // c:3433 — `if (!vunset && isarr) getmatcharr(…) else
+                // getmatch(&val, …)`. The DQ collapse at c:3032-3034 has
+                // already cleared isarr and joined the array with
+                // `sep`/`$IFS[1]`, so a quoted `"${a:/PAT/REPL}"` matches
+                // PAT against the WHOLE joined string, once. Same gate the
+                // `//` arm below uses: `[@]` / bare `@` / the `(@)` flag /
+                // an unquoted read all keep per-element shape.
+                // `a=(a b); print -r -- "${a:/a b/X}"` is `X` in zsh; the
+                // ungated per-element walk left it `a b`.
+                let per_element_all = matches!(subscript.as_deref(), Some("@"))
+                    || var_name == "@"
+                    || nojoin == 2
+                    || !qt;
+                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_all) {
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
@@ -12366,6 +12392,19 @@ pub fn paramsubst(
                         .collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
+                } else if let Some(arr) = arrays_get(&var_name) {
+                    // c:3032 — quoted: sepjoin first, then ONE whole-string
+                    // match against the joined scalar (c:3462 getmatch).
+                    let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
+                    value = if prog_opt.as_ref().map_or(false, |__p| pattry(__p, &joined)) {
+                        eval_repl(pat_needs_per_match) // c:3870
+                    } else {
+                        joined
+                    };
+                    // c:3034 — isarr is 0 from here on, so the downstream
+                    // auto-splat must not re-fetch the source array.
+                    split_parts = Some(vec![value.clone()]);
+                    isarr = 0;
                 } else if prog_opt
                     .as_ref()
                     .map_or(false, |__p| pattry(__p, &raw_value))
@@ -13153,7 +13192,7 @@ pub fn paramsubst(
                         // $IFS first char; default is space.
                         // c:Src/utils.c:3936-3945 — set-but-empty IFS
                         // joins with "" (not " ").
-                        let joined = crate::ported::utils::sepjoin(&arr, None);
+                        let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032 `sepjoin(aval, sep, 1)` — honour (j:X:)
                         value = replace_global(&joined);
                         // c:Src/subst.c:3034 — DQ `[*]` sepjoins to scalar
                         // BEFORE the operator runs; suppress downstream
@@ -13847,7 +13886,7 @@ pub fn paramsubst(
                         // for the array-collapsed-to-scalar case.
                         // c:Src/utils.c:3936-3945 — set-but-empty IFS
                         // joins with "" (not " ").
-                        let joined = crate::ported::utils::sepjoin(&arr, None);
+                        let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032 `sepjoin(aval, sep, 1)` — honour (j:X:)
                         value = replace_one(&joined);
                         // c:Src/subst.c:3034 — DQ `[*]` sepjoins to scalar
                         // BEFORE the operator runs; suppress downstream
@@ -15242,13 +15281,14 @@ pub fn paramsubst(
                     // "txt md" instead of "md". Parity bug #28.
                     let sepjoined_for_qt = || -> String {
                         if let Some(arr) = arrays_get(&var_name) {
-                            // c:3030 sepjoin — when (j:STR:) was given,
-                            // join with STR; else join with " " (IFS
-                            // default). Bug #91 in docs/BUGS.md:
-                            // `"${(j: :)paths:t}"` joined with " " but
-                            // then ran :t on the wrong joined form.
-                            let sep_str = sep.as_deref().unwrap_or(" ");
-                            arr.join(sep_str)
+                            // c:3032 — `val = sepjoin(aval, sep, 1)`: when
+                            // (j:STR:) was given, join with STR; otherwise
+                            // sepjoin's NULL sep means `$IFS[1]`
+                            // (c:Src/utils.c:3928-3945), NOT a hardcoded
+                            // space. `IFS=-; a=(ab cd);
+                            // print -r -- "${a:t}"` joined with " " and ran
+                            // the modifier on the wrong string.
+                            crate::ported::utils::sepjoin(&arr, sep.as_deref())
                         } else {
                             value.clone()
                         }
@@ -16830,7 +16870,16 @@ pub fn paramsubst(
             let has_non_splat_subscript =
                 subscript.as_deref().map_or(false, |s| s != "@" && s != "*");
             let is_subexp_temp = var_name.starts_with("__subexp_arr_");
-            if let Some(parts) = split_parts.clone() {
+            if dq_collapsed {
+                // c:3947-3960 — `if (isarr) { per element } else { val =
+                // casemodify(val, casmod); }`. The DQ collapse (c:3032-3034)
+                // has already set `isarr = 0` and joined `aval` into `val`
+                // with `sep`/`$IFS[1]`, so the fold runs ONCE on that scalar.
+                // Per-element folding here re-joined with a hardcoded space:
+                // `IFS=-; a=(a b); print -r -- "${(U)a}"` gave `A B` where
+                // zsh gives `A-B`.
+                value = transform(&value); // c:3959
+            } else if let Some(parts) = split_parts.clone() {
                 // c:3937
                 let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
                 value = new_parts.join(" "); // c:3937
@@ -17022,6 +17071,14 @@ pub fn paramsubst(
         // split_parts hoisted to top of operand-handling so the
         // :# filter arm (which runs much earlier) can populate it
         // for the auto-splat block. No-op if not set later.
+        //
+        // c:Src/subst.c:3916 — `if (nojoin == 0 || sep)`: an EXPLICIT
+        // separator ((j:X:) / (F)) forces the join even when `(@)` set
+        // nojoin = 2, and the join clears isarr so the c:3950 splat is
+        // skipped. zshrs's splat test below is `(nojoin == 2) || auto_splat`,
+        // which ignored that, so `a=(a b); print -rl -- "${(@j:-:)a}"`
+        // splatted `a` and `b` where zsh prints the single word `a-b`.
+        let mut sep_forced_join = false; // c:3916
         if let Some(ref sp) = spsep {
             // c:3950
             // Signal to the nested sub-expression reader (subst.rs:5041)
@@ -17361,6 +17418,7 @@ pub fn paramsubst(
             // produce "a,b,c" instead of zsh's "a b c".
             if joined {
                 isarr = 0; // c:3907
+                sep_forced_join = true; // c:3916 (`nojoin == 0 || sep`)
             }
         }
 
@@ -18154,7 +18212,15 @@ pub fn paramsubst(
         };
         if quotemod < 0 {
             // c:4030 if (quotemod) — negative arm (Q)
-            if let Some(parts) = split_parts.clone() {
+            if dq_collapsed {
+                // c:4065 `if (isarr) { per element } else { … }` — the DQ
+                // collapse (c:3032-3034) already joined with `sep`/`$IFS[1]`
+                // and cleared isarr, so the dequote runs ONCE on that scalar.
+                // Per-element dequoting re-joined with a hardcoded space:
+                // `a=(a b); print -r -- "${(Qj:-:)a}"` gave `a b` instead of
+                // zsh's `a-b`.
+                value = unquote_one(&value); // c:4115
+            } else if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| unquote_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
@@ -18240,7 +18306,14 @@ pub fn paramsubst(
         // bare `(V)` (quotemod == 0) still get V.
         if (mods & 2) != 0 && quotemod <= 0 {
             // c:4157 if (mods & 2)
-            if let Some(parts) = split_parts.clone() {
+            if dq_collapsed {
+                // c:4158-4170 — same `if (isarr)` gate as every other
+                // per-element flag: after the DQ collapse (c:3032-3034) the
+                // value is a single sepjoin'd scalar, so `(V)` renders it
+                // once instead of rendering each element and re-joining
+                // with a space that the collapse never used.
+                value = visible_one(&value); // c:4166
+            } else if let Some(parts) = split_parts.clone() {
                 // c:4157
                 let new_parts: Vec<String> = parts.iter().map(|s| visible_one(s)).collect();
                 value = new_parts.join(" ");
@@ -18422,14 +18495,29 @@ pub fn paramsubst(
             let want_per_element =
                 !dq_collapsed && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
             // c:2237
-            if let Some(parts) = split_parts.clone() {
+            if dq_collapsed {
+                // c:4065 `if (isarr) … else` — after the DQ collapse
+                // (c:3032-3034) `val` IS the sepjoin'd scalar, so quote it
+                // once. Re-deriving the join from the element list here
+                // ignored `sep`: `a=(a b); print -r -- "${(qj:-:)a}"` quoted
+                // the space-joined `a b` into `a\ b` where zsh quotes `a-b`.
+                let quoted = quote_one(&value); // c:4118
+                value = quoted.clone();
+                split_parts = Some(vec![quoted]);
+            } else if let Some(parts) = split_parts.clone() {
                 if want_per_element {
                     let new_parts: Vec<String> = parts.iter().map(|s| quote_one(s)).collect();
                     value = new_parts.join(" ");
                     split_parts = Some(new_parts);
                 } else {
-                    // Join then quote the joined scalar.
-                    let joined = parts.join(" ");
+                    // Join then quote the joined scalar. c:3032
+                    // `val = sepjoin(aval, sep, 1)` — the join that already
+                    // happened for the quoting arm to see a scalar used
+                    // `sep`/`$IFS[1]`, so re-deriving it with a hardcoded
+                    // space contradicted it: `a=(a b);
+                    // print -r -- "${(qj:-:)a}"` quoted `a b` into `a\ b`
+                    // where zsh quotes the `-`-joined `a-b` into `a-b`.
+                    let joined = crate::ported::utils::sepjoin(&parts, sep.as_deref()); // c:3032
                     let quoted = quote_one(&joined);
                     value = quoted.clone();
                     split_parts = Some(vec![quoted]);
@@ -18609,7 +18697,14 @@ pub fn paramsubst(
                 let s1 = render_d(s);
                 render_v(&s1)
             };
-            if let Some(parts) = split_parts.clone() {
+            if dq_collapsed {
+                // c:4155-4170 `if (isarr) { per element } else { … }` — the DQ
+                // collapse (c:3032-3034) already joined with `sep`/`$IFS[1]`,
+                // so (D)/(V) render that scalar once. The per-element walk
+                // re-joined with a space: `a=(a b);
+                // print -r -- "${(Vj:-:)a}"` gave `a b`, not zsh's `a-b`.
+                value = pipeline(&value); // c:4166
+            } else if let Some(parts) = split_parts.clone() {
                 // c:4155
                 let new_parts: Vec<String> = parts.iter().map(|s| pipeline(s)).collect();
                 value = new_parts.join(" ");
@@ -18870,7 +18965,7 @@ pub fn paramsubst(
         // rides on SUBEXP_SCALAR_CTX (set at subst.rs:5522, the same carrier
         // the c:3032 collapse reads at subst.rs:10930).
         let subexp_dq = SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0; // c:2653
-        if (nojoin == 2) || auto_splat {
+        if (nojoin == 2 && !sep_forced_join) || auto_splat {
             // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
                 // (s::) split → splat the post-split parts

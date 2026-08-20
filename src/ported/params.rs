@@ -5652,7 +5652,14 @@ pub fn getsparam(name: &str) -> Option<String> {
             } else {
                 match pm.u_arr.as_ref() {
                     // c:2354 — stdarray gsu → arrgetfn (c:4054).
-                    Some(arr) => Some(arr.join(" ")),
+                    // c:2353 — `s = sepjoin(ss, NULL, 1)`: the scalar view of
+                    // an array joins with `$IFS[1]`, not with a hardcoded
+                    // space (sepjoin's NULL sep, c:Src/utils.c:3928-3945).
+                    // This value is what every DQ pattern operator matches
+                    // against, so `IFS=-; a=(a b); print -r -- "${a#a}"` was
+                    // stripping from "a b" and printing " b" where zsh joins
+                    // to "a-b" first and prints "-b".
+                    Some(arr) => Some(crate::ported::utils::sepjoin(arr, None)),
                     None => {
                         // Same module-getfn dispatch as above for a stub that
                         // carries neither string nor array storage.

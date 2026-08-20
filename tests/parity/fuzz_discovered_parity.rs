@@ -3478,3 +3478,136 @@ mod ztst_mined {
         assert_parity(r#"typeset -A A; A[\[k\]]=v; print -r ${(k)A}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Quoted-array collapse: the DQ join runs BEFORE the operators
+//
+// c:Src/subst.c:3030-3037 — `if (qt && !getlen && isarr > 0) { val =
+// sepjoin(aval, sep, 1); isarr = 0; }`. Every operator and per-element
+// flag downstream then takes its SCALAR leg (c:3433 `if (!vunset &&
+// isarr) getmatcharr(…) else getmatch(&val, …)`, c:3947 casmod,
+// c:4065 quotemod, c:4157 mods). zshrs matched per element and
+// re-joined the results with a hardcoded space, which both applied the
+// operator to the wrong strings and lost `$IFS[1]` / the `(j:X:)`
+// separator.
+//
+// Found by `parity-fuzz --mode qjoin` (28% divergence rate before,
+// 0/800 after) and `--mode flagorder`.
+// ─────────────────────────────────────────────────────────────────────
+mod quoted_array_collapse {
+    use super::*;
+
+    /// The scalar view of an array joins with `$IFS[1]`
+    /// (c:Src/params.c:2353 `sepjoin(ss, NULL, 1)`), so the strip
+    /// operator matches against `a-b`. zsh: `-b`.
+    #[test]
+    fn strip_prefix_sees_ifs_joined_scalar() {
+        assert_parity(r#"IFS=-; a=(a b); print -r -- "${a#a}""#);
+    }
+
+    #[test]
+    fn strip_longest_prefix_over_ifs_separator() {
+        assert_parity(r#"IFS=-; a=(a b); print -r -- "${a##*-}""#);
+    }
+
+    #[test]
+    fn strip_longest_suffix_over_ifs_separator() {
+        assert_parity(r#"IFS=-; a=(a b); print -r -- "${a%%-*}""#);
+    }
+
+    /// `(j:X:)` separator feeds the pre-operator join, not `$IFS[1]`.
+    /// zsh: `aa-b`.
+    #[test]
+    fn strip_suffix_sees_j_flag_joined_scalar() {
+        assert_parity(r#"a=(aa bb); print -rl -- "${(j:-:)a%b}""#);
+    }
+
+    /// `[*]` in DQ joins with IFS before the strip; `[@]` stays
+    /// per-element. Both in one case so the pair can't drift.
+    #[test]
+    fn star_subscript_joins_at_subscript_does_not() {
+        assert_parity(
+            r#"IFS=:; a=('a b' c); print -rl -- "${a[*]%b}"; print -r -- MID; print -rl -- "${a[@]%b}""#,
+        );
+    }
+
+    /// `:/` replaces the WHOLE joined string when quoted (SUB_ALL on
+    /// the collapsed scalar). zsh: `X`.
+    #[test]
+    fn whole_string_replace_matches_joined_value() {
+        assert_parity(r#"a=(a b); print -r -- "${a:/a b/X}""#);
+    }
+
+    /// …and still runs per element unquoted / under `(@)`.
+    #[test]
+    fn whole_string_replace_per_element_unquoted() {
+        assert_parity(r#"a=(a b); print -r -- ${a:/a/X}; print -r -- "${(@)a:/a/X}""#);
+    }
+
+    /// A history-style modifier chain applies once to the joined
+    /// scalar in DQ. zsh: `Q`.
+    #[test]
+    fn history_modifier_applies_to_joined_scalar() {
+        assert_parity(r#"IFS=-; a=(a b); print -r -- "${a:s/a-b/Q/}""#);
+    }
+
+    /// `:t` joins with `$IFS[1]` first (c:3032), so the separator
+    /// survives into the result. zsh: `ab-cd`.
+    #[test]
+    fn tail_modifier_join_uses_ifs() {
+        assert_parity(r#"IFS=-; a=(ab cd); print -r -- "${a:t}""#);
+    }
+
+    /// Case flags fold the collapsed scalar (c:3959), keeping the
+    /// IFS separator. zsh: `A-B`.
+    #[test]
+    fn case_flag_folds_joined_scalar() {
+        assert_parity(r#"IFS=-; a=(a b); print -r -- "${(U)a}""#);
+    }
+
+    /// `(q)` quotes the `(j:X:)`-joined scalar, so the separator is
+    /// not escaped as if it were a join space. zsh: `a-b`.
+    #[test]
+    fn q_flag_quotes_joined_scalar() {
+        assert_parity(r#"a=(a b); print -r -- "${(qj:-:)a}""#);
+    }
+
+    /// Same for `(Q)` and `(V)`.
+    #[test]
+    fn q_upper_and_v_flags_use_joined_scalar() {
+        assert_parity(r#"a=(a b); print -r -- "${(Qj:-:)a}"; print -r -- "${(Vj:-:)a}""#);
+    }
+
+    /// `(q)` with no explicit separator still joins on `$IFS[1]`.
+    #[test]
+    fn q_flag_join_uses_ifs() {
+        assert_parity(r#"IFS=-; a=(a b); print -r -- "${(q)a}""#);
+    }
+
+    /// c:3916 `if (nojoin == 0 || sep)` — an explicit separator forces
+    /// the join even under `(@)`'s nojoin, and the join clears isarr so
+    /// the c:3950 splat is skipped. zsh: one word `a-b`.
+    #[test]
+    fn explicit_separator_outranks_at_flag() {
+        assert_parity(r#"a=(a b); print -rl -- ${(@j:-:)a}; print -rl -- "${(@j:-:)a}""#);
+    }
+
+    /// `(@)` with no separator still splats — pin the boundary.
+    #[test]
+    fn at_flag_without_separator_still_splats() {
+        assert_parity(r#"a=(a b); print -rl -- "${(@)a}"; print -rl -- ${(@s:x:)a}"#);
+    }
+
+    /// Unquoted reads keep per-element semantics throughout.
+    #[test]
+    fn unquoted_reads_stay_per_element() {
+        assert_parity(r#"IFS=-; a=(a b); print -rl -- ${a#a}; print -rl -- ${a:t}"#);
+    }
+
+    /// Replacement operators already collapsed correctly; pin them so
+    /// the separator work can't regress them.
+    #[test]
+    fn replace_operators_keep_first_match_semantics() {
+        assert_parity(r#"IFS=-; a=(a a); print -r -- "${a/a/X}"; print -r -- "${a//a/X}""#);
+    }
+}
