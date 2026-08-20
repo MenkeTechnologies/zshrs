@@ -103,6 +103,39 @@ pub fn bash_mode() -> bool {
     BASH_MODE.load(Ordering::Relaxed)
 }
 
+/// True in a bare Korn drop-in — `zshrs --ksh`, `--mksh` or `--pdksh`.
+///
+/// Composed rather than stored: [`posix_faithful`] is raised only by a
+/// BARE POSIX-family drop-in flag (cleared by `--zsh` and never set by the
+/// runtime `emulate` builtin), and `EMULATION(EMULATE_KSH)` picks the Korn
+/// leg out of that family. So this is false in `--zsh`, in native zshrs,
+/// under `emulate ksh` typed at a zsh prompt, and in `--sh`/`--dash`/
+/// `--bash`. Using the option/emulation bit ALONE would be wrong: a zsh
+/// user who runs `emulate ksh` must keep zsh's behavior.
+#[inline]
+pub fn korn_mode() -> bool {
+    posix_faithful() && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH)
+}
+
+/// True when the shell being emulated has SPARSE indexed arrays — bash and
+/// the whole Korn family.
+///
+/// bash(1), Arrays: "Arrays are assigned to using compound assignments …
+/// Indexed array assignments do not require anything but *subscript*=*value*
+/// … arrays are sparse, i.e. you do not have to define all the indices."
+/// mksh(1) and ksh(1) match: `mksh -c 'a=(x y z); a[5]=q; print -r --
+/// "${!a[@]}"'` → `0 1 2 5` and `${#a[@]}` → 4, exactly like bash.
+///
+/// zsh arrays are DENSE, so `a[5]=q` pads indices 3 and 4 — hence the hole
+/// side-table in [`crate::bash_arrays`]. This predicate is the write-side
+/// gate for that table; the read side keys off whether holes exist at all,
+/// so widening this automatically widens `${#a[@]}` / `${!a[@]}` /
+/// `"${a[*]}"` / `typeset -p` with no further change.
+#[inline]
+pub fn sparse_arrays() -> bool {
+    bash_mode() || korn_mode()
+}
+
 /// True when `printf` in bash mode should treat this operand to a numeric
 /// conversion (`%d %i %o %u %x %X`) as an error (still prints 0, but exit
 /// status 1). bash — unlike zsh/ksh/dash/sh — errors on an explicitly-supplied

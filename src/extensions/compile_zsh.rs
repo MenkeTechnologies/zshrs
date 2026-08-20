@@ -5390,6 +5390,17 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadInt(1), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+                // c:Src/subst.c:3032 — the quoted branch ends in
+                // `sepjoin(aval, sep, 1)`, so `"$*"` is ALWAYS one
+                // word, empty positional list included. multsub
+                // returns zero nodes there (right for `"$@"`, wrong
+                // for `"$*"`), which elided the argument entirely:
+                // `set --; printf '%d|%s|%d\n' $# "$*" 7` printed
+                // `0|7|0` instead of zsh/bash/dash/ksh's `0||7`.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTED_STAR_ONE_WORD, 1),
+                    0,
+                );
             }
             return;
         }

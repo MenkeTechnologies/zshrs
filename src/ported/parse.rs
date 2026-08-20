@@ -9869,9 +9869,23 @@ fn parse_cond_not() -> Option<ZshCond> {
         // current — no separate diagnostic needed here. Bug #538.
         let inner = parse_cond_expr()?;
         skip_cond_separators();
-        if tok() == OUTPAR_TOK {
-            zshlex();
+        // c:2543-2544 — `if (tok != OUTPAR) YYERROR(ecused);`. A group
+        // opened with `(` MUST close with `)`; `[[ ( a ]]` is a parse
+        // error in zsh ("parse error near `]]'", status 1), not a
+        // silently-accepted group. The port dropped the YYERROR and
+        // accepted the unterminated group, so `[[ ( a ]]` evaluated as
+        // `[[ a ]]` and exited 0.
+        if tok() != OUTPAR_TOK {
+            // c:2544 `YYERROR(ecused)` — the macro sets `tok = LEXERR`
+            // before returning, and that is what par_dinbrack's
+            // `if (tok != DOUTBRACK) YYERRORV(oecused)` (c:1818) tests.
+            // Returning None alone is not enough here: the offending
+            // token IS `]]`, so without the retype par_dinbrack took
+            // its success arm and `[[ ( a ]]` silently exited 0.
+            set_tok(LEXERR); // c:2544
+            return None;
         }
+        zshlex(); // c:2545 condlex()
         return Some(inner);
     }
 
@@ -9940,23 +9954,22 @@ fn parse_cond_primary() -> Option<ZshCond> {
                 s
             }
             _ => {
-                // c:Src/parse.c par_cond_2 — when the leading `-X`
-                // is a 2-char dash form, zsh ALWAYS treats it as a
-                // unary test op (the operand-missing case errors
-                // immediately with `unknown condition: -X`). Don't
-                // fall back to `Unary("-n", "-X")` — that path
-                // silently let `[[ -z ]]` evaluate as
-                // `[[ -n "-z" ]]` → true. Bug #480/#481.
+                // c:2586-2593 — the operand-missing case for a
+                // two-char `-X`. `dble` (c:2549) is true here because
+                // `n_testargs == 0` short-circuits the strspn and the
+                // word is exactly two chars, so c:2591-2592 takes the
+                // `par_cond_multi(s1, newlinklist())` arm: a COND_MOD
+                // carrying the operator and ZERO operands. Evaluation —
+                // not parsing — is what rejects it: c:Src/cond.c:186-193
+                // warns "unknown condition: %s" and `return 2`.
                 //
-                // Convert Dash (\u{9b}) back to ASCII `-` for the
-                // user-visible diagnostic so it reads "unknown
-                // condition: -z" not "unknown condition: <Dash>z".
-                let display: String = s1
-                    .chars()
-                    .map(|c| if IS_DASH(c) { '-' } else { c })
-                    .collect();
-                crate::ported::utils::zerr(&format!("unknown condition: {}", display));
-                return None;
+                // The previous port emitted the diagnostic here and
+                // returned None, which made `[[ -n ]]` a PARSE failure
+                // (status 1) where zsh exits 2. Handing the empty
+                // COND_MOD to the evaluator restores both the message
+                // and the status, and keeps the diagnostic in the one
+                // place C emits it.
+                return Some(ZshCond::ModCond(s1, Vec::new())); // c:2592
             }
         };
         return Some(ZshCond::Unary(s1, s2));
@@ -9973,6 +9986,15 @@ fn parse_cond_primary() -> Option<ZshCond> {
     // died. Validity of `-X` is checked at EVAL time (unknown → error), never
     // at parse — mirror that leniency here.
     if s1_chars.len() > 2 && IS_DASH(s1_chars[0]) && !is_negative_number {
+        // c:2586-2591 — `dble` (c:2549) requires `!s1[2]`, so a
+        // MULTI-char `-word` never sets it. With no operand following,
+        // c:2590 therefore takes `par_cond_double(dupstring("-n"), s1)`
+        // — an ordinary non-empty-string test on the literal word, not
+        // a COND_MOD. `[[ -prefix ]]` is `[[ -n "-prefix" ]]` → true.
+        // Emitting a zero-operand ModCond here instead made it exit 1.
+        if tok() != STRING_LEX {
+            return Some(ZshCond::Unary("-n".to_string(), s1)); // c:2590
+        }
         let mut margs: Vec<String> = Vec::new();
         while tok() == STRING_LEX {
             margs.push(tokstr().unwrap_or_default());

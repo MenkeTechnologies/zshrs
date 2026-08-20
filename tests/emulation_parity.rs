@@ -2424,3 +2424,247 @@ fn zsh_style_legs_reject_parenthesised_cond_patterns() {
         );
     }
 }
+
+/// Run `script` under `flags` and return `(stdout, exit_code)`.
+fn run_zshrs(flags: &[&str], script: &str) -> (String, i32) {
+    let mut args: Vec<&str> = flags.to_vec();
+    args.push("-f");
+    args.push("-c");
+    args.push(script);
+    let out = Command::new(zshrs_bin())
+        .args(&args)
+        .output()
+        .expect("spawn zshrs");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+fn quoted_star_with_no_positionals_is_one_empty_word() {
+    // c:Src/subst.c:3032 — the QUOTED branch of paramsubst ends in
+    // `val = sepjoin(aval, sep, 1)`. Joining an EMPTY list is `""`, so
+    // `"$*"` always contributes exactly one word, even with no positional
+    // parameters — unlike `"$@"`, which contributes none. Verified against
+    // zsh 5.9, bash 5.3, dash and ksh93: all four print `0||7`.
+    //
+    // zshrs routed `"$*"` through EXPAND_TEXT, whose multsub returns zero
+    // nodes for the empty case, so the argument was ELIDED and printf's
+    // format recycled one operand early: `0|7|0`.
+    for flags in [
+        &["--zsh"][..],
+        &["--bash"][..],
+        &["--ksh"][..],
+        &["--dash"][..],
+        &["--sh"][..],
+    ] {
+        assert_eq!(
+            run_zshrs(flags, r#"set --; printf '%d|%s|%d\n' $# "$*" 7"#).0,
+            "0||7\n",
+            "{flags:?}: quoted \"$*\" must stay one (empty) word"
+        );
+        // `shift` down to zero is the shape the fuzzer found.
+        assert_eq!(
+            run_zshrs(
+                flags,
+                r#"set -- a b c; shift 3; printf '%d|%s|%d\n' $# "$*" $?"#
+            )
+            .0,
+            "0||0\n",
+            "{flags:?}: \"$*\" after shifting everything off"
+        );
+        // "$@" genuinely vanishes — the two must NOT be conflated.
+        assert_eq!(
+            run_zshrs(flags, r#"set --; printf '%d|%s|%d\n' 1 "$@" 7"#).0,
+            "1|7|0\n",
+            "{flags:?}: quoted \"$@\" must still elide"
+        );
+        // Non-empty joins keep honoring IFS[0].
+        assert_eq!(
+            run_zshrs(flags, r#"set -- a b; IFS=-; printf '[%s]' "$*""#).0,
+            "[a-b]",
+            "{flags:?}: \"$*\" IFS join"
+        );
+        // Braced `"${*}"` is the same expansion.
+        assert_eq!(
+            run_zshrs(flags, r#"set --; printf '%d|%s|%d\n' $# "${*}" 7"#).0,
+            "0||7\n",
+            "{flags:?}: quoted \"${{*}}\" must stay one (empty) word"
+        );
+    }
+}
+
+#[test]
+fn set_o_monitor_succeeds_in_posix_family_drop_ins() {
+    // bash(1) `set -m`: "Monitor mode. Job control is enabled." POSIX.1-2017
+    // XCU `set -m` likewise specifies no error for a script. Measured:
+    // `bash|dash|ksh|mksh -c 'set -o monitor; printf "%d\n" $?'` → `0`.
+    //
+    // zsh refuses when it has no controlling terminal (c:Src/options.c:854
+    // `if (SHTTY == -1) return -1;`), which under POSIX_BUILTINS also KILLS
+    // the script — so a `set -m` anywhere in a sourced rc file aborted it.
+    for flags in [
+        &["--bash"][..],
+        &["--ksh"][..],
+        &["--mksh"][..],
+        &["--pdksh"][..],
+        &["--dash"][..],
+        &["--ash"][..],
+        &["--sh"][..],
+    ] {
+        assert_eq!(
+            run_zshrs(
+                flags,
+                r#"set -o monitor; printf '%d\n' $?; set +o monitor; printf '%d\n' $?"#
+            ),
+            ("0\n0\n".to_string(), 0),
+            "{flags:?}: `set -o monitor` must succeed and not abort"
+        );
+        // Short form too, and the option must actually READ back as set.
+        assert_eq!(
+            run_zshrs(flags, r#"set -m; printf '%d\n' $?; set +m; printf '%d\n' $?"#),
+            ("0\n0\n".to_string(), 0),
+            "{flags:?}: `set -m` must succeed"
+        );
+    }
+
+    // --zsh keeps zsh's refusal verbatim: `zsh -fc 'set -o monitor'` warns
+    // "can't change option: monitor" and exits 1.
+    let (stdout, code) = run_zshrs(&["--zsh"], r#"set -o monitor; printf '%d\n' $?"#);
+    assert_eq!(stdout, "", "--zsh must not reach the printf");
+    assert_eq!(code, 1, "--zsh must keep zsh's exit 1");
+}
+
+#[test]
+fn korn_drop_ins_have_sparse_arrays() {
+    // mksh(1) / ksh(1) arrays are sparse exactly like bash's. Measured:
+    // `mksh -c 'a=(x y z); a[5]=q; print -r -- "${!a[@]}"'` → `0 1 2 5`
+    // and `${#a[@]}` → `4`. zshrs tracked holes only under --bash, so the
+    // Korn drop-ins reported the dense `0 1 2 3 4 5` / `6`.
+    for flags in [&["--ksh"][..], &["--mksh"][..], &["--pdksh"][..]] {
+        assert_eq!(
+            run_zshrs(flags, r#"a=(x y z); a[5]=q; print -r -- "${#a[@]}""#).0,
+            "4\n",
+            "{flags:?}: sparse ${{#a[@]}}"
+        );
+        assert_eq!(
+            run_zshrs(flags, r#"a=(x y z); a[5]=q; print -r -- "${!a[@]}""#).0,
+            "0 1 2 5\n",
+            "{flags:?}: sparse ${{!a[@]}}"
+        );
+        assert_eq!(
+            run_zshrs(flags, r#"a=(x y z); a[5]=q; print -r -- "${a[*]}""#).0,
+            "x y z q\n",
+            "{flags:?}: sparse joined splat skips the holes"
+        );
+        // A full reassign clears the holes again.
+        assert_eq!(
+            run_zshrs(flags, r#"a=(x y z); a[5]=q; a=(m n); print -r -- "${#a[@]}""#).0,
+            "2\n",
+            "{flags:?}: reassign resets to dense"
+        );
+    }
+
+    // --zsh stays DENSE: zsh arrays are 1-based and pad.
+    assert_eq!(
+        run_zshrs(&["--zsh"], r#"a=(x y z); a[6]=q; print -r -- "${#a[@]}""#).0,
+        "6\n",
+        "--zsh must keep dense padding"
+    );
+}
+
+#[test]
+fn bash_case_double_semi_amp_continues_matching() {
+    // bash(1), Compound Commands: "Using ;;& in place of ;; causes the shell
+    // to test the next pattern list in the statement, if any, and execute any
+    // associated list on a successful match." That is zsh's `;|`.
+    assert_eq!(
+        run_zshrs(&["--bash"], r#"case x in x) printf a;;& x) printf b;; esac"#).0,
+        "ab",
+        "--bash `;;&` must fall through to the next pattern test"
+    );
+    // A non-matching second pattern still stops the output at `a`.
+    assert_eq!(
+        run_zshrs(&["--bash"], r#"case x in x) printf a;;& y) printf b;; esac"#).0,
+        "a",
+        "--bash `;;&` re-tests but only runs matching arms"
+    );
+    // Plain `;;` is unchanged.
+    assert_eq!(
+        run_zshrs(&["--bash"], r#"case x in x) printf a;; x) printf b;; esac"#).0,
+        "a",
+        "--bash `;;` must still terminate the case"
+    );
+    // `;&` (unconditional fall-through) is bash's and zsh's alike.
+    assert_eq!(
+        run_zshrs(&["--bash"], r#"case x in x) printf a;& y) printf b;; esac"#).0,
+        "ab",
+        "--bash `;&` falls through unconditionally"
+    );
+
+    // ksh93 and dash both REJECT `;;&`; so must the drop-ins for them.
+    // (`ksh: syntax error at line 1: '&' unexpected`,
+    //  `dash: 1: Syntax error: "&" unexpected (expecting word)`.)
+    for flags in [&["--ksh"][..], &["--dash"][..], &["--zsh"][..]] {
+        let (stdout, code) = run_zshrs(flags, r#"case x in x) printf a;;& x) printf b;; esac"#);
+        assert_eq!(stdout, "", "{flags:?}: `;;&` must not run anything");
+        assert_ne!(code, 0, "{flags:?}: `;;&` must be a syntax error");
+    }
+}
+
+#[test]
+fn zero_operand_dash_conditions_match_zsh_status() {
+    // c:Src/parse.c:2549 — `dble` needs `!s1[2]`, so it is true for ANY
+    // two-char `-X` inside `[[ ]]` (n_testargs == 0 short-circuits the
+    // strspn) and false for a longer word. c:2586-2592 then splits:
+    //   two-char, no operand  → par_cond_multi(s1, newlinklist())
+    //                           → COND_MOD with ZERO operands
+    //                           → c:Src/cond.c:186-193 warns and `return 2`
+    //   longer,   no operand  → par_cond_double(dupstring("-n"), s1)
+    //                           → an ordinary non-empty-string test → 0
+    // Verified against zsh 5.9: `[[ -n ]]` / `[[ -z ]]` / `[[ -o ]]` exit 2,
+    // `[[ -prefix ]]` exits 0.
+    for op in ["-n", "-z", "-o", "-f", "-d"] {
+        let script = format!("[[ {op} ]]");
+        assert_eq!(
+            run_zshrs(&["--zsh"], &script).1,
+            2,
+            "`[[ {op} ]]` must exit 2 (zero-operand COND_MOD)"
+        );
+    }
+    for op in ["-prefix", "-between", "-nonesuch"] {
+        let script = format!("[[ {op} ]]");
+        assert_eq!(
+            run_zshrs(&["--zsh"], &script).1,
+            0,
+            "`[[ {op} ]]` is `[[ -n \"{op}\" ]]` → true"
+        );
+    }
+    // c:Src/cond.c:177-181 — an ARITY violation on a real conddef is also
+    // status 2. `-between` takes exactly 2 operands.
+    assert_eq!(
+        run_zshrs(&["--zsh"], "[[ -between a ]]").1,
+        2,
+        "`[[ -between a ]]` must exit 2 (min/max arity check)"
+    );
+    // Unchanged: the ordinary unary tests with an operand.
+    assert_eq!(run_zshrs(&["--zsh"], "[[ -n a ]]").1, 0);
+    assert_eq!(run_zshrs(&["--zsh"], "[[ -z a ]]").1, 1);
+    assert_eq!(run_zshrs(&["--zsh"], "[[ -5 -lt -3 ]]").1, 0);
+}
+
+#[test]
+fn unterminated_cond_group_is_a_parse_error() {
+    // c:Src/parse.c:2543-2544 — `if (tok != OUTPAR) YYERROR(ecused);`. The
+    // macro sets `tok = LEXERR`, which is what par_dinbrack's c:1818
+    // `if (tok != DOUTBRACK) YYERRORV(oecused)` then trips on. zsh 5.9:
+    // `zsh -fc '[[ ( a ]]'` → "parse error near `]]'", exit 1.
+    let (stdout, code) = run_zshrs(&["--zsh"], "[[ ( a ]]");
+    assert_eq!(stdout, "", "an unterminated cond group must not evaluate");
+    assert_eq!(code, 1, "`[[ ( a ]]` must be a parse error");
+    // The balanced form is unaffected.
+    assert_eq!(run_zshrs(&["--zsh"], "[[ ( a ) ]]").1, 0);
+    assert_eq!(run_zshrs(&["--zsh"], "[[ ( -n a && -n b ) ]]").1, 0);
+    assert_eq!(run_zshrs(&["--zsh"], "[[ ( -z a ) ]]").1, 1);
+}

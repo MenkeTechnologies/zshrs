@@ -902,22 +902,48 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
                 }
             }
             // c:854 — `if (SHTTY == -1) return -1;`
+            //
+            // !!! POSIX-FAMILY DROP-IN GATE — no zsh C counterpart !!!
+            // zsh refuses `set -o monitor` when it has no controlling
+            // tty, so `zsh -fc 'set -o monitor'` warns "can't change
+            // option: monitor" and (under POSIX_BUILTINS) aborts the
+            // script. Every shell zshrs is a drop-in for accepts it in
+            // a non-interactive script and returns 0:
+            //   bash(1) `set -m`   — "Monitor mode. Job control is
+            //                        enabled." (no tty precondition)
+            //   POSIX.1-2017 XCU `set` -m — "all jobs shall be run in
+            //                        their own process groups"; no
+            //                        error is specified for a script.
+            // Measured: `bash|dash|ksh|mksh -c 'set -o monitor;
+            // printf "%d\n" $?'` → `0` on all four.
+            //
+            // Gate = `posix_faithful()`, raised only by a BARE
+            // `--sh`/`--ksh`/`--dash`/`--bash` (cleared by `--zsh` and
+            // never set by the runtime `emulate` builtin), so `--zsh`
+            // and native zshrs keep zsh's refusal verbatim. The pgrp
+            // acquisition below is skipped along with the check: with
+            // SHTTY == -1 there is no terminal to take, so the option
+            // flag flips and job control stays inert — which is what
+            // the reference shells do in a pipeline-less script.
             let shtty = SHTTY.load(std::sync::atomic::Ordering::SeqCst);
-            if shtty == -1 {
+            let no_tty = shtty == -1;
+            if no_tty && !crate::extensions::dash_mode::posix_faithful() {
                 // c:854
                 return -1;
             }
-            // c:855-859 — `if (!origpgrp) { origpgrp = GETPGRP();
-            //               acquire_pgrp(); }`. Capture the parent's
-            // pgrp once so SIGTSTP-restore (bin_suspend) can later
-            // killpg back to it.
-            let origpgrp = ORIGPGRP.get_or_init(|| std::sync::Mutex::new(0));
-            let mut og = origpgrp.lock().expect("origpgrp poisoned");
-            if *og == 0 {
-                // c:855
-                *og = unsafe { libc::getpgrp() }; // c:856 GETPGRP()
-                drop(og);
-                let _ = acquire_pgrp(); // c:857
+            if !no_tty {
+                // c:855-859 — `if (!origpgrp) { origpgrp = GETPGRP();
+                //               acquire_pgrp(); }`. Capture the parent's
+                // pgrp once so SIGTSTP-restore (bin_suspend) can later
+                // killpg back to it.
+                let origpgrp = ORIGPGRP.get_or_init(|| std::sync::Mutex::new(0));
+                let mut og = origpgrp.lock().expect("origpgrp poisoned");
+                if *og == 0 {
+                    // c:855
+                    *og = unsafe { libc::getpgrp() }; // c:856 GETPGRP()
+                    drop(og);
+                    let _ = acquire_pgrp(); // c:857
+                }
             }
         }
     }
