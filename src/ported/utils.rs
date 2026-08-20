@@ -5287,55 +5287,91 @@ pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {
         }
         r
     } else {
-        // IFS branch (sep == NULL). C source uses itype_end(s, ISEP, 1)
-        // to skip ISEP chars (default $IFS = " \t\n"). We use iwsep.
-        let mut s_pos = 0usize;
-        let t_orig = s_pos;
-        let mut r: i32 = 0;
-        // C: if (mul <= 0) skipwsep(&s);
-        if mul <= 0 {
-            while s_pos < bytes.len() && iwsep(bytes[s_pos]) {
-                s_pos += 1;
-            }
-        }
-        // C: if ((*s && itype_end(s,ISEP,1)!=s) || (mul<0 && t!=s)) r++;
-        let has_word_now = s_pos < bytes.len() && !iwsep(bytes[s_pos]);
-        if has_word_now || (mul < 0 && t_orig != s_pos) {
-            r += 1;
-        }
-        // C: for (; *s; r++) { advance over word + maybe-skipwsep + findsep + maybe-skipwsep }
-        while s_pos < bytes.len() {
-            // Advance past the current word (non-ISEP chars).
-            let word_start = s_pos;
-            while s_pos < bytes.len() && !iwsep(bytes[s_pos]) {
-                s_pos += 1;
-            }
-            if s_pos > word_start && mul <= 0 {
-                while s_pos < bytes.len() && iwsep(bytes[s_pos]) {
-                    s_pos += 1;
-                }
-            }
-            // C: (void)findsep(&s, NULL, 0) — advance past one sep run.
-            // Already handled above when mul<=0; for mul>0 we still need
-            // to consume one separator byte to make progress.
-            if s_pos < bytes.len() && iwsep(bytes[s_pos]) {
-                s_pos += 1;
-            }
-            let t_after = s_pos;
-            if mul <= 0 {
-                while s_pos < bytes.len() && iwsep(bytes[s_pos]) {
-                    s_pos += 1;
-                }
-            }
-            if s_pos < bytes.len() {
-                r += 1;
+        // c:3888-3905 — the `sep == NULL` (IFS) branch, ported statement by
+        // statement. The previous rewrite inverted C's leading test — it
+        // counted a leading WORD where C counts a leading SEPARATOR — and
+        // used `iwsep` (IFS-whitespace) for a test C makes on `ISEP` (any
+        // IFS char), so an all-separator string came out short:
+        // `s='   '; ${(W)#s}` gave 2 against zsh's 4, and `'a b  c '` gave
+        // 4 against 5.
+        //
+        // Meta-aware char reads mirror spacesplit's local closures
+        // (c:Src/utils.c:3711): a Meta byte prefixes the escaped char.
+        use crate::ported::ztype_h::zistype;
+        let char_at = |i: usize| -> (u8, usize) {
+            if bytes[i] == Meta && i + 1 < bytes.len() {
+                (bytes[i + 1] ^ 32, 2)
             } else {
-                // C: if (mul < 0 && t != s) r++;
-                if mul < 0 && t_after != s_pos {
-                    r += 1;
-                }
-                break;
+                (bytes[i], 1)
             }
+        };
+        // skipwsep(&s) — c:Src/utils.c:3730.
+        let skipwsep_at = |mut i: usize| -> usize {
+            while i < bytes.len() {
+                let (c, l) = char_at(i);
+                if !iwsep(c) {
+                    break;
+                }
+                i += l;
+            }
+            i
+        };
+        // itype_end(s, ISEP, 1) — consumes exactly ONE ISEP char
+        // (c:Src/utils.c:4462 `if (once) break`).
+        let isep_one = |i: usize| -> usize {
+            if i < bytes.len() {
+                let (c, l) = char_at(i);
+                if zistype(c, ISEP as u32) {
+                    return i + l;
+                }
+            }
+            i
+        };
+        // findsep(&s, NULL, 0) — advance to the next ISEP char (c:3784).
+        let findsep_at = |mut i: usize| -> usize {
+            while i < bytes.len() {
+                let (c, l) = char_at(i);
+                if zistype(c, ISEP as u32) {
+                    break;
+                }
+                i += l;
+            }
+            i
+        };
+        let mut s_pos = 0usize; // c:3888 `char *t = s;`
+        let mut t = s_pos; // c:3888
+        let mut r: i32 = 0; // c:3889
+        if mul <= 0 {
+            // c:3890
+            s_pos = skipwsep_at(s_pos); // c:3891
+        }
+        // c:3892-3894 — `if ((*s && itype_end(s, ISEP, 1) != s) ||
+        //                    (mul < 0 && t != s)) r++;`
+        if (s_pos < bytes.len() && isep_one(s_pos) != s_pos) || (mul < 0 && t != s_pos) {
+            r += 1; // c:3894
+        }
+        // c:3895-3903 — `for (; *s; r++) { … }`.
+        while s_pos < bytes.len() {
+            let ie = isep_one(s_pos); // c:3896
+            if ie != s_pos {
+                // c:3897
+                s_pos = ie; // c:3898
+                if mul <= 0 {
+                    // c:3899
+                    s_pos = skipwsep_at(s_pos);
+                }
+            }
+            s_pos = findsep_at(s_pos); // c:3901 `(void)findsep(&s, NULL, 0);`
+            t = s_pos; // c:3902
+            if mul <= 0 {
+                // c:3903
+                s_pos = skipwsep_at(s_pos);
+            }
+            r += 1; // c:3895 (loop increment)
+        }
+        if mul < 0 && t != s_pos {
+            // c:3904
+            r += 1; // c:3905
         }
         r
     }

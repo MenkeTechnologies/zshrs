@@ -3660,3 +3660,53 @@ mod nested_split_empty_fields {
         assert_parity(r#"s="  a  b  "; print -rl -- ${=s}; print -r -- ${#${=s}}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// `${(w)#…}` / `${(W)#…}` word counting
+//
+// c:Src/subst.c:3869 `len = wordcount(val, spsep, getlen > 3)` with the
+// IFS branch at c:Src/utils.c:3888-3905. The port's leading test was
+// inverted (it counted a leading WORD where C counts a leading
+// SEPARATOR) and used IFS-whitespace where C tests any IFS char, so the
+// `(W)` count — which is defined to include empty fields
+// (Doc/Zsh/expn.yo) — came out short.
+// ─────────────────────────────────────────────────────────────────────
+mod word_count_flags {
+    use super::*;
+
+    /// An all-separator string is 4 fields for `(W)`. zshrs said 2.
+    #[test]
+    fn big_w_counts_empty_fields_of_all_space_string() {
+        assert_parity(r#"s="   "; print -r -- ${(W)#s}"#);
+    }
+
+    /// Interior and trailing empties count too. zsh: 5.
+    #[test]
+    fn big_w_counts_interior_and_trailing_empties() {
+        assert_parity(r#"s="a b  c "; print -r -- ${(W)#s}"#);
+    }
+
+    /// Lower-case `(w)` skips them: 3 for the same string.
+    #[test]
+    fn small_w_skips_empty_fields() {
+        assert_parity(r#"s="a b  c "; print -r -- ${(w)#s}; s2="  a  b  "; print -r -- ${(w)#s2}"#);
+    }
+
+    /// A non-whitespace IFS makes every separator significant for both.
+    #[test]
+    fn non_whitespace_ifs_word_counts() {
+        assert_parity(r#"IFS=:; s="a::b"; print -r -- ${(W)#s}; print -r -- ${(w)#s}"#);
+    }
+
+    /// Empty value and array element counts are unchanged.
+    #[test]
+    fn empty_and_array_counts() {
+        assert_parity(r#"s=""; print -r -- ${(w)#s}${(W)#s}; a=(x y); print -r -- ${(w)#a}"#);
+    }
+
+    /// The `(w)` word SUBSCRIPT shares the same walker.
+    #[test]
+    fn word_subscript_still_indexes() {
+        assert_parity(r#"s="a b c"; print -r -- ${s[(w)2]}"#);
+    }
+}
