@@ -10,7 +10,7 @@ Companion docs: [`ROADMAP.md`](./ROADMAP.md) for phase-by-phase execution plan; 
 
 zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 39,566 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
 
-**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 24 in-process coreutils builtins + **first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** (a crates.io SDK crate + `cdylib`s via `zmodload -R`, version-gated — bash `enable -f` and zsh `zmodload` load native code too, but only against the shell's private build-tree headers with no stable ABI) + — through the [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native) companion build — **the first shell with a version control system compiled into it as a builtin** (`git`, served natively, no fork/exec; see [§0x07b]). These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
+**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 24 in-process coreutils builtins + **first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** (a crates.io SDK crate + `cdylib`s via `zmodload -R`, version-gated — bash `enable -f` and zsh `zmodload` load native code too, but only against the shell's private build-tree headers with no stable ABI) + — through the [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native) companion build — **the first shell with a version control system compiled into it as a builtin** (`git`, served natively, no fork/exec) and **the first with an fzf-compatible finder compiled in** (every other shell's fzf integration spawns the binary; see [§0x07b] for both). These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
 
 ---
 
@@ -226,7 +226,7 @@ To prevent scope drift, here's the explicit anti-list:
 
 ---
 
-## [0x07b] Companion build: `zshrs-native` — a VCS compiled into the shell
+## [0x07b] Companion build: `zshrs-native` — a VCS and a finder compiled into the shell
 
 [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native) is a separate
 package that links this shell together with three sibling runtimes — zvcs
@@ -251,6 +251,25 @@ closest, and why none of it is the same thing:
   but nobody has shipped a git through either, and both bind to the shell's
   private build-tree headers with no stable ABI (see [§0x00]).
 - **magit, posh-git, and every shell git plugin** shell out to the git binary.
+
+**An fzf-compatible finder compiled into the shell is the second world's
+first.** Every fzf integration any shell has ever shipped spawns the fzf
+binary — zsh's `CTRL-T`/`CTRL-R` bindings, fzf-tab, fish's fzf.fish, PSFzf.
+arb's finder is linked in instead, and it is a drop-in for the binary: it
+honors `FZF_DEFAULT_OPTS`, `FZF_DEFAULT_OPTS_FILE`, and fzf's flag surface
+(`--preview`/`--preview-window`, `--bind`, `--expect`, `--nth`/`--with-nth`/
+`--delimiter`, `--ansi`, `--tac`, `--tiebreak`, `--height`, `--layout`,
+`--border`, `--color`, `--header-lines`, `--print-query`, `--exact`,
+`--no-sort`, `--filter`), so an existing config drops in unchanged.
+
+The nearest prior art by a distance is **Elvish**, which has genuine in-process
+fuzzy filtering for command history (histlist) and directory jumping (location
+mode) — "a mini-fzf". Those are shell-internal UI modes, not a finder: they
+cannot filter an arbitrary pipeline and they honor none of fzf's CLI or env
+surface. Nushell's `explore` is a TUI pager over structured data, not a line
+filter. **skim** is the one fuzzy finder published as an embeddable Rust
+library rather than binary-only, so the capability has been available to any
+Rust shell for years; none ships it in-process.
 
 It lives in its own package rather than behind a feature flag here for a
 mechanical reason: zvcs depends on its own vendored gitoxide fork by path, and a
