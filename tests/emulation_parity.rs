@@ -2821,3 +2821,141 @@ fn prefix_assignment_persists_for_posix_special_builtins() {
         );
     }
 }
+
+#[test]
+fn funcnest_overflow_aborts_the_script() {
+    // c:Src/exec.c:6060-6063 —
+    //     zerr("maximum nested function level reached; increase FUNCNEST?");
+    //     lastval = 1;
+    //     goto undoshfunc;
+    // `zerr` raises errflag, which is what makes the overflow FATAL. zsh 5.9:
+    //     zsh -fc 'FUNCNEST=2; f() { f; }; f; printf after'
+    // prints the diagnostic and exits 1 with no `after`. bash(1) FUNCNEST
+    // agrees: "Function invocations that exceed this nesting level cause the
+    // current command to abort."
+    //
+    // The zshrs stack backstop printed the same message but returned 1
+    // WITHOUT the flag, so the script ran on and exited 0.
+    for flags in [&["--zsh"][..], &["--bash"][..], &["--ksh"][..]] {
+        let (stdout, code) = run_zshrs(
+            flags,
+            r#"FUNCNEST=2; f() { f; }; f 2>/dev/null; printf 'after\n'"#,
+        );
+        assert_eq!(stdout, "", "{flags:?}: nothing after the overflow may run");
+        assert_eq!(code, 1, "{flags:?}: the shell must exit 1");
+    }
+    // A finite recursion well inside FUNCNEST is untouched.
+    assert_eq!(
+        run_zshrs(
+            &["--zsh"],
+            r#"f() { [ "$1" -le 0 ] && return; f $(( $1 - 1 )); }; f 50; printf 'ok\n'"#
+        ),
+        ("ok\n".to_string(), 0)
+    );
+}
+
+#[test]
+fn bash_shopt_table_matches_bash() {
+    // bash(1), The Shopt Builtin. Three things were wrong:
+    //   * the status — "The return status when listing options is zero if
+    //     all optnames are enabled, non-zero otherwise"; zshrs always
+    //     returned 0, so `shopt -p cdable_vars` said 0 where bash says 1.
+    //   * unknown names were accepted and reported `-u`; bash prints
+    //     "shopt: NAME: invalid shell option name" and exits 1.
+    //   * the plain listing shape is `NAME` padded to 20 then TAB then
+    //     on/off, not the `-p` re-inputtable form.
+    // The name list, defaults and per-name storage live in
+    // dash_mode::BASH_SHOPTS; the twelve rows backed by a real zsh option
+    // are seeded with bash's default at --bash startup (zsh's `histappend`
+    // is ON, bash's is OFF).
+    let sh = |script: &str| run_zshrs(&["--bash"], script);
+
+    // Status rule, both query shapes.
+    assert_eq!(sh("shopt -p cdable_vars").1, 1, "unset option → status 1");
+    assert_eq!(sh("shopt cdable_vars").1, 1);
+    assert_eq!(sh("shopt -q cdable_vars"), (String::new(), 1));
+    assert_eq!(sh("shopt -s cdable_vars; shopt -p cdable_vars").1, 0);
+    assert_eq!(sh("shopt -p checkwinsize").1, 0, "on-by-default → status 0");
+    // All-or-nothing across several names.
+    assert_eq!(sh("shopt -q checkwinsize cmdhist").1, 0);
+    assert_eq!(sh("shopt -q checkwinsize cdable_vars").1, 1);
+
+    // Output shapes.
+    assert_eq!(sh("shopt -p cdable_vars").0, "shopt -u cdable_vars\n");
+    assert_eq!(sh("shopt cdable_vars").0, "cdable_vars         \toff\n");
+    assert_eq!(sh("shopt checkwinsize").0, "checkwinsize        \ton\n");
+    // A name at or past the pad width gets no padding.
+    assert_eq!(
+        sh("shopt no_empty_cmd_completion").0,
+        "no_empty_cmd_completion\toff\n"
+    );
+
+    // Unknown name.
+    let (stdout, code) = sh("shopt -p zznope");
+    assert_eq!(stdout, "", "no state is printed for an unknown name");
+    assert_eq!(code, 1);
+    assert_eq!(sh("shopt -s zznope").1, 1);
+
+    // Set / unset round-trips, including the three names whose state does
+    // not live in a same-named zsh option.
+    for name in [
+        "extglob",      // → zsh kshglob
+        "failglob",     // → zsh nomatch
+        "nocasematch",  // → its own flag
+        "histappend",   // → zsh histappend, bash default OFF
+        "cdable_vars",  // → zsh cdablevars (alias-canonicalised)
+        "globskipdots", // → bash-only side table, default ON
+    ] {
+        assert_eq!(
+            sh(&format!("shopt -s {name}; shopt -p {name}")).0,
+            format!("shopt -s {name}\n"),
+            "{name}: -s must read back as set"
+        );
+        assert_eq!(
+            sh(&format!("shopt -u {name}; shopt -p {name}")).0,
+            format!("shopt -u {name}\n"),
+            "{name}: -u must read back as unset"
+        );
+    }
+
+    // failglob is the behavior, not just the flag: bash(1), "failglob: If
+    // set, patterns which fail to match filenames during filename expansion
+    // result in an expansion error." Measured:
+    // `bash -c 'shopt -s failglob; printf "[%s]\n" ./nonexistent_zz*'`
+    // prints nothing and exits 1.
+    //
+    // NOT through `sh` — that helper passes `-f`, which in bash is `set -f`
+    // (globbing off), so no expansion happens and the pattern stays literal
+    // in bash too (verified: `bash -f -c` prints the literal, exit 0).
+    let glob = |script: &str| -> (String, i32) {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-c", script])
+            .output()
+            .expect("spawn zshrs");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    };
+    let (stdout, code) = glob(r#"shopt -s failglob; printf '[%s]\n' ./nonexistent_zz_qq*"#);
+    assert_eq!(stdout, "", "failglob must not emit the literal pattern");
+    assert_eq!(code, 1);
+    // Without it, bash leaves the pattern literal and exits 0.
+    assert_eq!(
+        glob(r#"printf '[%s]\n' ./nonexistent_zz_qq*"#),
+        ("[./nonexistent_zz_qq*]\n".to_string(), 0)
+    );
+    // nullglob still deletes the word instead.
+    assert_eq!(
+        glob(r#"shopt -s nullglob; printf '[%s]\n' ./nonexistent_zz_qq*"#),
+        ("[]\n".to_string(), 0)
+    );
+
+    // `shopt` / `shopt -p` with no names lists all 59 rows.
+    assert_eq!(sh("shopt").0.lines().count(), 59);
+    assert_eq!(sh("shopt -p").0.lines().count(), 59);
+    assert!(sh("shopt -p")
+        .0
+        .lines()
+        .all(|l| l.starts_with("shopt -s ") || l.starts_with("shopt -u ")));
+}

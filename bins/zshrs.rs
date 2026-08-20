@@ -1533,6 +1533,12 @@ pub fn zshrs_main() {
         // Enable bash-only param expansion syntax (`${!var}` indirect,
         // `${v^^}` case-mod) in the subst layer.
         zsh::extensions::dash_mode::set_bash_mode(true);
+        // bash's `shopt` defaults for the rows backed by a real zsh option.
+        // zsh's default differs for some of them (`histappend` is ON in zsh,
+        // OFF in bash), so `shopt -p` misreported them and the behavior
+        // followed zsh's. Runs before any user code, so a script's own
+        // `shopt`/`setopt` still wins.
+        zsh::extensions::dash_mode::bash_shopt_apply_defaults();
     }
 
     if parity_mode_selected {
