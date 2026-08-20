@@ -10998,8 +10998,9 @@ fn ksh93_one(rng: &mut StdRng) -> String {
         }
         // `printf %q` — ksh93 quotes with single quotes; mksh has no %q at all.
         3 => {
+            // Double-quoted: one value is an apostrophe test, which cannot
             let v = *pick(rng, &["a b", "it's", "a*b", "x", "a\\tb"]);
-            format!("printf '%q\\n' '{v}'")
+            format!("printf '%q\\n' \"{v}\"")
         }
         // `printf '%..<base>d'` — output the integer in the given base.
         4 => {
@@ -11185,7 +11186,9 @@ fn posix_wide_one(rng: &mut StdRng) -> String {
         // The single-letter spellings and `$-`. XCU §2.5.2: "$- — a string
         // containing the current option flags".
         1 => {
-            let letter = *pick(rng, &["c", "u", "f", "C", "a", "x", "v", "m"]);
+            // `f` is deliberately absent: the harness passes `-f` to zshrs
+            // (no-rc), so `$-` carrying it is an invocation artifact.
+            let letter = *pick(rng, &["c", "u", "C", "a", "x", "v", "m"]);
             format!("case $- in *{letter}*) printf 'has\\n';; *) printf 'no\\n';; esac")
         }
         // A FATAL expansion / arithmetic error. XCU §2.8.1 makes these exit a
@@ -11343,7 +11346,7 @@ fn posix_wide_one(rng: &mut StdRng) -> String {
                     ("1a", "[[:digit:]]*"),
                     ("a-b", "a\\\\-b"),
                     ("a*b", "a\\\\*b"),
-                    ("", ""),
+                    ("", "*"),
                     ("x", "[!a-w]"),
                 ],
             );
@@ -11786,8 +11789,10 @@ fn bash_wide_one(rng: &mut StdRng) -> String {
         // Q quoted, E escapes expanded, U/L/u case, A an assignment, K keyed.
         16 => {
             let op = *pick(rng, &["Q", "E", "U", "L", "u", "A", "a", "K"]);
+            // Double-quoted: one value is an apostrophe test, which cannot ride
+            // inside a single-quoted shell word.
             let v = *pick(rng, &["a b", "abc", "it's", "a\\\\tb", "MixEd"]);
-            format!("v='{v}'; printf '%s\\n' \"${{v@{op}}}\" 2>/dev/null; printf '%d\\n' $?")
+            format!("v=\"{v}\"; printf '%s\\n' \"${{v@{op}}}\" 2>/dev/null; printf '%d\\n' $?")
         }
         // The same transforms applied to an ARRAY expand per element.
         17 => {
@@ -12027,8 +12032,9 @@ fn bash_wide_one(rng: &mut StdRng) -> String {
         // %b escapes, -v assigns instead of printing.
         _ => match rng.gen_range(0..6) {
             0 => {
+                // Double-quoted: one value is an apostrophe test.
                 let v = *pick(rng, &["a b", "it's", "a*b", "x", ""]);
-                format!("printf '%q\\n' '{v}'")
+                format!("printf '%q\\n' \"{v}\"")
             }
             1 => "printf -v out '%s-%s' a b; printf '[%s]\\n' \"$out\"".to_string(),
             2 => {
