@@ -2707,8 +2707,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // the parent's `trap '...' EXIT` doesn't fire when
                     // the child exits. Mirror by dropping EXIT from
                     // the inherited traps_table inside the child.
-                    if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
-                        t.remove("EXIT");
+                    // c:Src/exec.c:2917-2918 — a forked PIPELINE stage enters
+                    // the subshell with ESUB_KEEPTRAP:
+                    //     if ((type != WC_SUBSH) && !(how & Z_ASYNC))
+                    //         flags |= ESUB_KEEPTRAP;
+                    // so entersubsh's c:1127 reset loop is SKIPPED and the
+                    // stage keeps the parent's traps. Only the EXIT trap goes,
+                    // so the parent's `trap '…' EXIT` does not fire when the
+                    // stage exits. Applying the full reset here instead was
+                    // wrong: it wiped the inherited-SIGQUIT record and the
+                    // parent's other trap flags inside every pipeline stage.
+                    //
+                    // Drop it from BOTH stores, since a body-less entry lives
+                    // only in sigtrapped and the `trap` listing now reads it
+                    // (c:Src/builtin.c:7358-7361); clearing just the body left
+                    // `trap | grep -c EXIT` reporting the stale flag.
+                    if let Ok(mut tt) = crate::ported::builtin::traps_table().lock() {
+                        tt.remove("EXIT");
+                    }
+                    if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
+                        if let Some(slot) = st.get_mut(crate::ported::signals_h::SIGEXIT as usize)
+                        {
+                            *slot = 0;
+                        }
                     }
                     // c:Src/exec.c:2862 → 1219 — pipeline children run
                     // entersubsh with ESUB_PGRP, which clears the job
@@ -11702,6 +11723,59 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// and routed to the job table. This is the same queue_signals /
 /// unqueue_signals fencing zsh uses around its own foreground waits
 /// (Src/exec.c). Panic-safe via `Drop`.
+/// Apply `entersubsh`'s trap reset to the CURRENT process state.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C does this inline inside `entersubsh` (c:Src/exec.c:1088-1092), which
+/// every subshell — `( … )` AND each forked pipeline stage — funnels
+/// through. zshrs has two separate places that enter a subshell context
+/// (the in-process `subshell_begin` and the pipeline stage fork), so the
+/// reset lives here to keep them from drifting apart.
+///
+/// ```c
+/// if (!(flags & ESUB_KEEPTRAP))
+///     for (sig = 0; sig <= SIGCOUNT; sig++)
+///         if (!(sigtrapped[sig] & ZSIG_FUNC) &&
+///             !(isset(POSIXTRAPS) && (sigtrapped[sig] & ZSIG_IGNORED)))
+///             unsettrap(sig);
+/// ```
+///
+/// `unsettrap` clears BOTH the body and the sigtrapped flags, so both
+/// stores are reset here. Function-form traps (ZSIG_FUNC, kept in
+/// shfunctab as TRAPxxx) survive by construction; under POSIX_TRAPS an
+/// IGNORED trap survives too. The loop bound stops below the pseudo
+/// signals (c:Src/signals.h:34-35), so ERR/ZERR and DEBUG survive while
+/// SIGEXIT (sig 0) is cleared.
+fn entersubsh_reset_traps() {
+    let posixtraps = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXTRAPS);
+    if let Ok(mut tbl) = crate::ported::builtin::traps_table().lock() {
+        tbl.retain(|name, body| {
+            // Above SIGCOUNT — outside c:1088's loop entirely.
+            if name == "ERR" || name == "ZERR" || name == "DEBUG" {
+                return true;
+            }
+            // c:1090-1092 — otherwise keep ONLY (POSIXTRAPS && ignored).
+            posixtraps && body.is_empty()
+        });
+    }
+    if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
+        let count = crate::ported::signals_h::SIGCOUNT as usize;
+        for sig in 0..st.len().min(count + 1) {
+            let state = st[sig];
+            if state == 0 {
+                continue;
+            }
+            if (state & crate::ported::zsh_h::ZSIG_FUNC) != 0 {
+                continue; // c:1090
+            }
+            if posixtraps && (state & crate::ported::zsh_h::ZSIG_IGNORED) != 0 {
+                continue; // c:1091
+            }
+            st[sig] = 0; // c:1092 unsettrap(sig)
+        }
+    }
+}
+
 /// `waitpid(pid, &status, 0)` that retries on `EINTR`.
 ///
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -13675,41 +13749,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // subshell_end, which is what makes clearing safe for zshrs's
             // in-process subshell.
             {
-                let posixtraps = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXTRAPS);
-                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
-                    t.retain(|name, body| {
-                        // Above SIGCOUNT — outside c:1088's loop entirely.
-                        if name == "ERR" || name == "ZERR" || name == "DEBUG" {
-                            return true;
-                        }
-                        // c:1090-1092 — otherwise keep ONLY (POSIXTRAPS && ignored).
-                        posixtraps && body.is_empty()
-                    });
-                }
-                // c:1088-1092 `unsettrap(sig)` clears the sigtrapped FLAGS as
-                // well as the body. Applying the same predicate to the flag
-                // vector keeps the two stores in step; without it a subshell
-                // dropped the body but left the signal marked trapped, so a
-                // listing that consults sigtrapped reported a phantom
-                // `trap -- '' SIG` inside `( … )`.
-                if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
-                    let count = crate::ported::signals_h::SIGCOUNT as usize;
-                    for sig in 0..st.len().min(count + 1) {
-                        let state = st[sig];
-                        if state == 0 {
-                            continue;
-                        }
-                        // c:1090 — function-form traps survive.
-                        if (state & crate::ported::zsh_h::ZSIG_FUNC) != 0 {
-                            continue;
-                        }
-                        // c:1091 — under POSIX_TRAPS an IGNORED trap survives.
-                        if posixtraps && (state & crate::ported::zsh_h::ZSIG_IGNORED) != 0 {
-                            continue;
-                        }
-                        st[sig] = 0; // c:1092 unsettrap(sig)
-                    }
-                }
+                entersubsh_reset_traps();
             }
             // c:Src/exec.c:2862 — subshell fork flags carry ESUB_PGRP,
             // so entersubsh runs `clearjobtab(monitor)` (c:1219): the

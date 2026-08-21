@@ -1410,7 +1410,7 @@ pub fn init_signals() {
     intr(); // c:1409
 
     #[cfg(unix)]
-    unsafe {
+    {
         // c:1444-1445 — detect a parent-installed SIG_IGN on SIGQUIT and
         // record it as an ignored trap. The body lives in
         // `extensions::startup_signals` because `bins/zshrs.rs`'s `-c` and

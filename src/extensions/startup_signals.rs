@@ -61,3 +61,41 @@ pub fn record_inherited_sigquit_ignore() {
 /// Non-unix stub: there is no SIGQUIT to inherit.
 #[cfg(not(unix))]
 pub fn record_inherited_sigquit_ignore() {}
+
+/// Clear the `HUP` option when SIGHUP is INHERITED as `SIG_IGN`.
+///
+/// Port of `Src/init.c:1451-1452`:
+/// ```c
+/// if (signal_ignore(SIGHUP) == SIG_IGN)
+///     opts[HUP] = 0;
+/// else
+///     install_handler(SIGHUP);
+/// ```
+///
+/// Same bypass as `record_inherited_sigquit_ignore`: `-c` and script-file
+/// dispatch never reach `init_signals`, so a shell started under `nohup`
+/// (or `cargo test`) reported `set +o nohup` where zsh reports
+/// `set -o nohup`.
+///
+/// Only the SIG_IGN LEG is ported here. C's else-branch installs a SIGHUP
+/// handler, which is deliberately not done on these paths — see the module
+/// docs on why installing C's handlers here breaks pipeline reaping. This
+/// reads the disposition with `sigaction` rather than C's `signal_ignore`
+/// so it does not also SET the signal to ignored; for the inherited case
+/// the signal is already ignored, so the observable result is the same.
+#[cfg(unix)]
+pub fn record_inherited_sighup_ignore() {
+    let is_ignored = unsafe {
+        let mut act: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(libc::SIGHUP, std::ptr::null(), &mut act) == 0
+            && act.sa_sigaction == libc::SIG_IGN
+    };
+    if is_ignored {
+        // c:1452 — `opts[HUP] = 0;`
+        crate::ported::options::dosetopt(crate::ported::zsh_h::HUP, 0, 0);
+    }
+}
+
+/// Non-unix stub: there is no SIGHUP to inherit.
+#[cfg(not(unix))]
+pub fn record_inherited_sighup_ignore() {}
