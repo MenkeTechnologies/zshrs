@@ -7185,19 +7185,24 @@ pub fn mb_niceformat(
     // takes C's `MB_INVALID` arm instead, which charges `nicechar_sel`'s
     // `\M-b` (4) for the lead byte rather than 1.
     //
-    // Scope: the branch applies to the WIDTH-ONLY call shape — no stream,
-    // no `outstrp` — which is the one C names separately as
+    // Scope: the branch applies to the WIDTH-ONLY shape — C names it
     // `ZMB_nicewidth(s)` = `mb_niceformat(s, NULL, NULL, 0)`
-    // (Src/Zle/zle.h:57) and reaches through `niceztrlen`. In that shape
-    // the only result is the integer width, which the port can reproduce
-    // exactly. In the output shapes C emits the RAW byte for a printable
-    // high byte (`wcrtomb` in a single-byte locale writes one byte, and
-    // `zputs` un-metafies `wcs_nicechar_sel`'s buffer on the way out); a
-    // Rust `String`/`write_all` of that scalar would emit its two UTF-8
-    // bytes instead, so byte-wise decoding there would trade one
-    // divergence for another. Those shapes keep the character-oriented
-    // walk until the output side is byte-oriented too.
-    let mb_single_byte = stream.is_none() && outstrp.is_none() && unsafe {
+    // (Src/Zle/zle.h:57), reached through `niceztrlen` — AND to the STREAM
+    // shape, which is how `printmatch` (compresult.c:2260) writes a match's
+    // display string to the terminal. The stream shape was excluded because C
+    // emits the RAW byte for a printable high byte (`wcrtomb` in a
+    // single-byte locale writes one byte, and `zputs` un-metafies
+    // `wcs_nicechar_sel`'s buffer on the way out) while a Rust
+    // `String`/`write_all` of that scalar writes its two UTF-8 bytes; the
+    // emission below now converts back to bytes, so the objection is gone.
+    // Until then `gifdiff -` printed `don’t` where zsh prints
+    // `don<e2>\M-^@\M-^Yt`, and the same for every description carrying a
+    // curly apostrophe, an en dash or a typographic minus.
+    //
+    // The `outstrp` shape (`nicedup`) is still excluded: its result is a Rust
+    // `String` handed back to shell-visible code, which has no way to carry a
+    // lone 0xe2 byte.
+    let mb_single_byte = outstrp.is_none() && unsafe {
         // Rust never calls `setlocale` on its own, so run it once from
         // the environment before asking `nl_langinfo` — otherwise the
         // startup default ("C") would shadow the process's LC_CTYPE.
@@ -7342,8 +7347,26 @@ pub fn mb_niceformat(
 
         if let Some(ref mut w) = stream {
             // c:5431 if (stream)
-            // c:5432 — `zputs(fmt, stream);`
-            let _ = w.write_all(fmt.as_bytes());
+            // c:5432 — `zputs(fmt, stream);`. In a single-byte locale
+            // `wcs_nicechar_sel`'s printable arm is C's `wcrtomb`, which
+            // writes exactly ONE byte; this port holds that byte as a `char`
+            // in U+0080..U+00FF whose UTF-8 form is two bytes, so it has to be
+            // narrowed back on the way out. Escapes (`\M-^@`) are ASCII and
+            // pass through either way.
+            if mb_single_byte {
+                let mut out: Vec<u8> = Vec::with_capacity(fmt.len());
+                let mut b4 = [0u8; 4];
+                for ch in fmt.chars() {
+                    if (ch as u32) < 0x100 {
+                        out.push(ch as u8);
+                    } else {
+                        out.extend_from_slice(ch.encode_utf8(&mut b4).as_bytes());
+                    }
+                }
+                let _ = w.write_all(&out);
+            } else {
+                let _ = w.write_all(fmt.as_bytes());
+            }
         }
         if let Some(ref mut buf) = outstr {
             // c:5433 if (outstr)
