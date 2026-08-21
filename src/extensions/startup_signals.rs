@@ -22,6 +22,25 @@
 //! inherited-SIGQUIT half is shared here until those dispatch paths are
 //! converged onto `zsh_main`.
 
+/// Whether the inherited-signal bookkeeping below applies at all.
+///
+/// This is ZSH behaviour, not shared POSIX behaviour, so it must not
+/// leak into the drop-in emulation modes. Measured with SIGQUIT and
+/// SIGHUP both inherited as SIG_IGN, `<shell> -c trap` prints:
+///   zsh   `trap -- '' QUIT`            (QUIT only, bare name)
+///   bash  `trap -- '' SIGHUP` + `SIGQUIT`  (both, SIG-prefixed)
+///   dash  nothing
+///   ksh   nothing
+///   sh    nothing
+/// so recording it unconditionally made every POSIX-family drop-in
+/// print a QUIT line the real shell never prints. bash's variant is a
+/// different shape (both signals, SIG names) and is not implemented
+/// here — it would need its own port rather than reusing zsh's.
+#[cfg(unix)]
+fn zsh_mode_only() -> bool {
+    !crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode()
+}
+
 /// Record an INHERITED `SIG_IGN` disposition for `SIGQUIT`.
 ///
 /// Port of `Src/init.c:1444-1445`:
@@ -41,6 +60,9 @@
 /// already-ignored signal anyway.
 #[cfg(unix)]
 pub fn record_inherited_sigquit_ignore() {
+    if !zsh_mode_only() {
+        return;
+    }
     // c:1444 — `if (!sigaction(SIGQUIT, NULL, &act) && act.sa_handler == SIG_IGN)`
     let is_ignored = unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
@@ -85,6 +107,9 @@ pub fn record_inherited_sigquit_ignore() {}
 /// the signal is already ignored, so the observable result is the same.
 #[cfg(unix)]
 pub fn record_inherited_sighup_ignore() {
+    if !zsh_mode_only() {
+        return;
+    }
     let is_ignored = unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
         libc::sigaction(libc::SIGHUP, std::ptr::null(), &mut act) == 0
