@@ -4006,3 +4006,169 @@ mod assoc_pairs_and_empty_subscript_search {
         assert_parity(r#"e=(); print -r -- "[${e[(I)]}][${e[(i)]}]""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Z. A SEARCH subscript on the LHS of an associative-array assignment
+//
+// `--mode reject` reported 51 divergences, every one of them this
+// cluster. `h[(r)v]=Z` errors in zsh and zshrs invented a key literally
+// named `(r)v`; `h[1,2]=Z` is a legal key in zsh and zshrs rejected it.
+//
+// Root cause was one missing chain, not one missing check. C reaches
+// `assignstrvalue` (c:Src/params.c:2692) through
+// `getvalue`→`getindex`→`getarg`, which is where a subscript acquires
+// its scanflags, and the guard at c:2701-2706 only fires because
+// `getarg` set SCANPM_MATCHMANY / left SCANPM_ARRONLY standing. zshrs's
+// element-assign path stored the subscript verbatim and never built a
+// Value at all, so both that guard and the c:2831-2839 "associative
+// array to scalar" arm were unreachable. Which of the two fires depends
+// on whether the search MATCHED — no hand-written guard reproduces that.
+//
+// The comma half is c:Src/params.c:1515:
+//     (c != Outbrack && (ishash || c != ','))
+// a comma does not separate subscripts when the parameter is a hash, so
+// `1,2` is an ordinary key. zshrs decided range-vs-element at COMPILE
+// time, where the type is not yet known.
+// ─────────────────────────────────────────────────────────────────────
+mod assoc_search_subscript_assignment {
+    use super::assert_parity;
+
+    /// Every search flag — `(r)`/`(R)` over values, `(i)`/`(I)` over keys,
+    /// `(k)`/`(K)` with the stored key as the pattern — leaves the Value on
+    /// the whole association, so c:2701-2706 rejects the write.
+    #[test]
+    fn search_subscript_on_hash_lhs_is_a_slice_assignment() {
+        for f in ["(r)v", "(R)v", "(i)k", "(I)k", "(k)k", "(K)k"] {
+            assert_parity(&format!(
+                r#"typeset -A h=(k v); h[{f}]=Z; print -rl -- ${{(ok)h}}; print -r -- after"#
+            ));
+        }
+    }
+
+    /// The diagnostic is NOT constant. A search that finds nothing and is not
+    /// `down` has its scanflags cleared by c:2179, so it reaches
+    /// `assignstrvalue`'s PM_HASHED arm with `foundparam == NULL` and reports
+    /// c:2835 instead. `(R)` keeps SCANPM_MATCHMANY through c:1747 and still
+    /// reports the slice error even on a miss.
+    #[test]
+    fn missed_search_reports_assoc_to_scalar_not_slice() {
+        assert_parity(
+            r#"typeset -A h=(k v); h[(r)nomatch]=Z; print -rl -- ${(ok)h}; print -r -- after"#,
+        );
+        assert_parity(
+            r#"typeset -A h=(k v); h[(i)nomatch]=Z; print -rl -- ${(ok)h}; print -r -- after"#,
+        );
+        assert_parity(
+            r#"typeset -A h=(k v); h[(R)nomatch]=Z; print -rl -- ${(ok)h}; print -r -- after"#,
+        );
+        // A pattern that spans a comma is still ONE subscript for a hash
+        // (c:1515), so this is a miss, not a range.
+        assert_parity(
+            r#"typeset -A h=(k v); h[(r)v,x]=Z; print -rl -- ${(ok)h}; print -r -- after"#,
+        );
+    }
+
+    /// A NON-search flag group is consumed and the key is what follows
+    /// (c:1596-1616), and an unrecognised group takes c:1498 `flagerr`, which
+    /// rewinds so the whole text — parentheses included — is the key.
+    #[test]
+    fn non_search_flag_groups_are_consumed_not_rejected() {
+        for f in ["(e)k", "(w)k", "(n:1:)k", "(p)k"] {
+            assert_parity(&format!(
+                r#"typeset -A h=(k v); h[{f}]=Z; print -rl -- ${{(ok)h}}; print -r -- after"#
+            ));
+        }
+        assert_parity(r#"typeset -A h=(k v); h[(Q)k]=Z; print -rl -- ${(ok)h}"#);
+    }
+
+    /// c:1515 — a comma is not a subscript separator for a hash, so these are
+    /// ordinary keys. zshrs used to reject them as slices because the
+    /// range-vs-element split was decided at compile time.
+    #[test]
+    fn comma_subscript_on_hash_is_an_ordinary_key() {
+        for k in ["1,2", "1,2,3", "a,b"] {
+            assert_parity(&format!(
+                r#"typeset -A h=(k v); h[{k}]=Z; print -rl -- ${{(ok)h}}; print -r -- after"#
+            ));
+        }
+    }
+
+    /// Flags are read off the SOURCE subscript at c:1409, BEFORE the
+    /// `parsestr`/`singsub` round at c:1585-1592 — so flag characters that
+    /// arrive by expansion are ordinary key text, while a literal group in
+    /// front of an expanded pattern is a real search.
+    #[test]
+    fn flag_group_must_be_literal_in_the_source() {
+        assert_parity(r#"typeset -A h=(k v); x="(r)v"; h[$x]=Z; print -rl -- ${(ok)h}"#);
+        assert_parity(r#"typeset -A h=(k v); x="1,2"; h[$x]=Z; print -rl -- ${(ok)h}"#);
+        assert_parity(
+            r#"typeset -A h=(k v); x=v; h[(r)$x]=Z; print -rl -- ${(ok)h}; print -r -- after"#,
+        );
+    }
+
+    /// The key never gets re-derived by flattening `name[key]` and splitting
+    /// it again: an expanded `]` has to survive, and an escaped bracket or
+    /// paren still resolves to the bare character (c:1538-1551 + c:1583).
+    #[test]
+    fn expanded_and_escaped_brackets_survive_as_key_text() {
+        assert_parity(r#"typeset -A h=(a 1); k="x]y"; h[$k]=5; print -rl -- ${(ok)h}"#);
+        assert_parity(r#"typeset -A A; A[\[k\]]=v; print -rl -- ${(k)A}"#);
+        assert_parity(r#"typeset -A A; A[\(x\)]=v; print -rl -- ${(k)A}"#);
+        assert_parity(r#"typeset -A h; h[\$x,y]=Z; print -rl -- ${(k)h}"#);
+    }
+
+    /// A PM_SPECIAL association (`zsh/parameter`'s magic rows) takes a
+    /// different write path and was missing the same guard.
+    #[test]
+    fn special_association_search_subscript_is_rejected_too() {
+        assert_parity(
+            r#"zmodload zsh/parameter; alias foo=bar; aliases[(r)bar]=Z; print -r -- rc=$?"#,
+        );
+        assert_parity(
+            r#"zmodload zsh/parameter; alias foo=bar; aliases[(i)foo]=Z; print -r -- rc=$?"#,
+        );
+        // Plain and non-search-flag keys still write the real alias table.
+        assert_parity(r#"zmodload zsh/parameter; aliases[zz]=qq; alias zz"#);
+        assert_parity(r#"zmodload zsh/parameter; aliases[(e)yy]=ww; alias yy"#);
+    }
+
+    /// Ranges on non-hash targets are untouched, and the bounds are MATH
+    /// expressions that C substitutes first (c:1585-1592 `singsub`) — the
+    /// scalar-RHS comma path handed `mathevali` the raw `$n` and silently
+    /// evaluated it to 0, overwriting the whole string.
+    #[test]
+    fn non_hash_ranges_and_computed_bounds_are_unaffected() {
+        assert_parity(r#"a=hello; a[2,3]=X; print -r -- $a"#);
+        assert_parity(r#"a=hello; a[2,3]+=X; print -r -- $a"#);
+        assert_parity(r#"a=(1 2 3 4); a[2,3]=(X); print -rl -- $a"#);
+        assert_parity(r#"a=(1 2 3); a[2,3]+=(X); print -rl -- $a"#);
+        assert_parity(r#"a=abcdef; n=3; a[$n,-1]=X; print -r -- $a"#);
+        assert_parity(r#"a=abcdef; M=abcd; a[${#M},-1]=X; print -r -- $a"#);
+        assert_parity(r#"a=abcdef; M=abcd; a[$#M/2+1,-1]=""; print -r -- $a"#);
+        assert_parity(r#"a=(x y z); a[(r)y]=Q; print -rl -- $a"#);
+        assert_parity(r#"a=hello; a[(I)l]=X; print -r -- $a"#);
+    }
+
+    /// An ARRAY-valued RHS is rejected for ANY subscript on a hash
+    /// (c:3382-3389) — that arm was already faithful and must stay that way.
+    #[test]
+    fn array_rhs_on_hash_subscript_still_rejected() {
+        assert_parity(r#"typeset -A h=(k v); h[k]=(x); print -r -- rc=$?"#);
+        assert_parity(r#"typeset -A h=(k v); h[1,2]=(x); print -r -- rc=$?"#);
+    }
+
+    /// Ordinary element writes, appends, reads through the same search
+    /// subscripts, and the readonly / empty-subscript diagnostics.
+    #[test]
+    fn plain_hash_element_writes_and_reads_unchanged() {
+        assert_parity(r#"typeset -A h; h[a]=1; h[b]=2; print -rl -- ${(kv)h}"#);
+        assert_parity(r#"typeset -A h=(a 1); h[a]+=X; print -r -- $h[a]"#);
+        assert_parity(r#"typeset -A h; k=(p q); h[${k[2]}]=v; print -rl -- ${(k)h}"#);
+        assert_parity(
+            r#"typeset -A h=(a 1 b 2); print -r -- ${h[(r)2]} ${(k)h[(R)*]} ${h[(i)b]}"#,
+        );
+        assert_parity(r#"typeset -rA h=(k v); h[x]=1; print -r -- rc=$?"#);
+        assert_parity(r#"typeset -A h; h[]=z; print -r -- rc=$?"#);
+        assert_parity(r#"typeset -A h; k=; h[$k]=z; print -rl -- ${(k)h}"#);
+    }
+}
