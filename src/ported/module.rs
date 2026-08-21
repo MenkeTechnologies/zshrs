@@ -4918,7 +4918,19 @@ pub fn bin_zmodload(
     //   zmodload -R  <path>...    load each plugin cdylib
     //   zmodload -R               list loaded plugins
     //   zmodload -uR <name>...    unload each plugin by name
-    if OPT_ISSET(ops, b'R') && !OPT_ISSET(ops, b'A') {
+    // …but only when no operand names a REAL zsh module. `zmodload -R
+    // zsh/complete` is C's alias-removal form applied to a known module
+    // and must keep C's diagnostic (`module is not an alias: zsh/complete`,
+    // c:2561), while a native plugin is a cdylib path or an arbitrary
+    // plugin name that is never in `linkedmodules`. Discriminating on the
+    // operand lets BOTH behaviours coexist instead of the extension
+    // shadowing the ported one: previously every `-R` operand went to the
+    // plugin host, so a zsh module name came back as a dlopen error.
+    // No operands (`zmodload -R` = list loaded plugins) still routes here.
+    if OPT_ISSET(ops, b'R')
+        && !OPT_ISSET(ops, b'A')
+        && !args.iter().any(|a| table.module_linked(a))
+    {
         // Placed before the c:2490 queue_signals, so nothing to unqueue.
         // Handler lives in the extensions tree (not a port) —
         // src/extensions/plugin_host.rs.

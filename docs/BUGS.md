@@ -55859,3 +55859,70 @@ five hundred and sixty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369,
 370, 371, 372), and four were zsh-correct behavior misframed by
 demos (1, 2, 3, 6).
+
+## #1087 — a sourced FILE is compiled whole, so lexer-time state set by one line never reaches the next
+
+**Status:** `port-bug` — diagnosed 2026-08-21, fix NOT applied (needs a
+design decision, see below).
+
+C parses and executes a sourced file ONE COMMAND AT A TIME
+(`c:Src/init.c:1658-1660` — `/* loop through the file to be sourced */
+switch (loop(0, 0))`). zshrs reads the whole file and compiles it in one
+pass (`bin_dot` → `exec::execute_script`), so every line is lexed with the
+state the file STARTED with. Anything that changes LEXER-time state
+mid-file is therefore invisible to the rest of that file.
+
+Two observable consequences, both real:
+
+```
+$ cat al.zsh
+alias greet='print -r -- hello'
+greet
+
+$ zsh   -f al.zsh   →  hello
+$ zshrs -f al.zsh   →  al.zsh:2: command not found: greet
+```
+
+```
+$ cat rq.zsh
+setopt rcquotes
+alias a1='x=''y'' z'
+alias a1
+
+$ zsh   -f rq.zsh   →  a1='x=''y'' z'      (RC_QUOTES applied: literal quote)
+$ zshrs -f rq.zsh   →  a1='x=y z'          (concatenation)
+```
+
+Scope, measured:
+
+| entry point | zsh | zshrs |
+| ----------- | --- | ----- |
+| `zsh file` / `source file` | per-command | whole-file — **diverges** |
+| stdin (`zsh < file`) | per-command | per-command — matches |
+| `-c 'alias g=…\ng'` | whole string | whole string — matches (BOTH fail) |
+
+Only options consulted by the LEXER are affected. `extendedglob` and
+`shwordsplit` are read at expansion time and behave correctly in-file;
+`rcquotes` (`c:Src/lex.c:1328`) and alias expansion do not.
+
+This is the root cause of the four openshift-alias divergences in
+`config_state_parity::real_all_installed_plugins_final_state`: the zpwr
+plugin chain has `zsh-learn.plugin.zsh:11 setopt rcquotes`, and a later
+plugin's alias body contains `''`.
+
+**Why it is not fixed yet.** The faithful fix is C's: run a plain sourced
+file through the per-command loop, keeping the whole-program path only for
+input that was already compiled — which is exactly what C's `.zwc`
+`execode(prog)` arm at `c:1651-1654` is. zshrs already HAS a working
+per-command loop (`ported::init::r#loop`, which is what makes the stdin
+column above match). An attempt to route `bin_dot`'s plain-file arm
+through it via `inpush` + `r#loop(0, 0)` compiled but executed nothing:
+the loop needs the shell's input machinery pointed at the file (C sets
+`SHIN`), not just an `inpush` frame. That plumbing is the actual work.
+
+It also carries a decision, because zshrs's automatic script bytecode
+cache is the analogue of `.zwc`: taking the per-command path for plain
+files means sourced files stop being cached as one chunk. C only takes its
+whole-program path when the user explicitly `zcompile`d. Correctness-first
+argues for matching C and keeping the cache for genuinely precompiled
+input; that is a call to make deliberately rather than in passing.
