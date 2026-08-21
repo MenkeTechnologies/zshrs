@@ -55926,3 +55926,49 @@ files means sourced files stop being cached as one chunk. C only takes its
 whole-program path when the user explicitly `zcompile`d. Correctness-first
 argues for matching C and keeping the cache for genuinely precompiled
 input; that is a call to make deliberately rather than in passing.
+
+**Attempted fix, 2026-08-21 — works for top-level `source`, blocked on
+command substitution. Reverted; details so it can be picked up.**
+
+Three things are needed to make `bin_dot`'s plain-file arm run the
+per-command loop, and the first is why a naive attempt looks like a
+silent no-op:
+
+1. `SESSION_EXECUTOR` is registered ONLY on the `zsh_main` path
+   (`bins/zshrs.rs`, one `install_session_executor` call). `execode`
+   (`src/ported/exec.rs`) dispatches through it and returns 0 when it is
+   `None`, so on the `-c` / script paths the loop parsed its input and
+   executed NOTHING — input drained, `loop` returned 0, no output.
+   Registering the executor that already drives those paths fixes it.
+2. The loop needs the lexer window parked the way `parsestrnoerr` does
+   it: save + clear `LEX_INPUT` / `LEX_POS`, `inpush(body)`,
+   `strinbeg(0)` … `strinend()` / `inpop()`, then restore.
+3. BOTH `lexstop` copies must be cleared — zshrs splits C's single
+   `lexstop` into a `lex.rs` and an `input.rs` global (same split as
+   `strin`), and `ingetc` checks the input.rs one (c:Src/input.c:322).
+   Missing it makes every read return EOF immediately.
+
+With all three, top-level sourcing matched zsh on all eight shapes tried:
+the `alias greet=…` / `greet` case above, the rcquotes case, in-file
+`extendedglob` and `shwordsplit`, `source /dev/null` status, status
+propagation from `source =(echo false)`, positional args, and a nested
+`source`.
+
+What blocks it:
+
+- **`$(source f)` and `` `source f` `` capture NOTHING** (`print -r --
+  $(source f)` printed an empty line where zsh prints the file's output).
+  Pipes and `( … )` subshells were fine, so it is specifically command
+  substitution's output capture that the loop-driven path bypasses.
+  `parity-fuzz --mode cmdsub` went 0 -> 11 on this alone.
+- The eval context gains a level: `eval "source f"` reported
+  `cmdarg:eval:file:file` against zsh's `cmdarg:eval:file`, because the
+  loop pushes its own `"file"` context on top of the one `bin_dot`
+  already established.
+
+Breaking `$(source …)` is worse than the gap being fixed, so this is
+reverted until the capture path is understood. Perf was NOT a factor
+either way — an A/B on a 2000-line file was dominated by machine load
+(the same command measured 0.41s and 5.32s in different runs), so the
+earlier worry that per-command sourcing would cost startup time is
+unmeasured, not confirmed.
