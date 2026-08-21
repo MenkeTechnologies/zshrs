@@ -1204,6 +1204,35 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
     }
     // c:749 — `mb_charinit();` — no-op in Rust (native UTF-8).
 
+    // c:751 — `mbrtowc(&cc, uptr, umleft, &mbs)` is LOCALE-driven, and this
+    // port decoded UTF-8 unconditionally. Under `LC_ALL=C` (`MB_CUR_MAX == 1`)
+    // `mbrtowc` consumes exactly ONE byte per call and hands back that byte's
+    // value as the wide character, so each byte of a UTF-8 sequence is
+    // prettified on its own: `’` (U+2019 = e2 80 99) prints as the raw byte
+    // `\xe2` — U+00E2 is printable Latin-1 — followed by `\M-^@` and `\M-^Y`
+    // for the two C1 bytes. zshrs wrote all three bytes through, so every
+    // completion description containing a curly apostrophe, an en dash or a
+    // typographic minus diverged (`gifdiff -`, `avconvert -`,
+    // `gi-compile-repository -`). Same CODESET test `mb_niceformat`
+    // (utils.rs) already uses for the WIDTH side of the identical branch,
+    // which is why the widths already agreed while the bytes did not.
+    let mb_single_byte = unsafe {
+        // Rust never calls `setlocale` on its own, so run it once from the
+        // environment before asking `nl_langinfo`.
+        static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
+        SETLOCALE_DONE.call_once(|| {
+            let empty = std::ffi::CString::new("").unwrap();
+            libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
+        });
+        let cs_ptr = libc::nl_langinfo(libc::CODESET);
+        if cs_ptr.is_null() {
+            false
+        } else {
+            let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
+            !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
+        }
+    };
+
     // c:750 — `while (umleft > 0)`.
     let mut idx = 0usize;
     while idx < ubytes.len() {
@@ -1223,7 +1252,12 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
         } else {
             0 // invalid lead byte
         };
-        let (rep, cnt): (String, usize) = if seq_len >= 1 && idx + seq_len <= ubytes.len() {
+        let (rep, cnt): (String, usize) = if mb_single_byte {
+            // c:751/773-775 — single-byte locale: `mbrtowc` returns 1 and the
+            // wide character IS the byte, so it always takes the `default:`
+            // (wcs_nicechar) arm, never MB_INVALID.
+            (wcs_nicechar(char::from(b0), None, None), 1)
+        } else if seq_len >= 1 && idx + seq_len <= ubytes.len() {
             match std::str::from_utf8(&ubytes[idx..idx + seq_len]) {
                 Ok(cs) => {
                     // c:768-775 — valid wide char (case 0 for '\0' also
@@ -1258,8 +1292,18 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
                 MLPRINTED.store(ml - oml, Ordering::SeqCst);
                 return 0;
             }
-            // c:806/811 — `putc(nc, shout);`.
-            crate::shout::write(ch.encode_utf8(&mut buf).as_bytes());
+            // c:797/806/811 — `nc = (*t == Meta) ? (*++t ^ 32) : *t;
+            //                  putc(nc, shout);`: C walks the METAFIED nice
+            // representation and emits exactly ONE byte per step. In a
+            // single-byte locale `wcs_nicechar` hands back the printable high
+            // byte itself (0xe2 above), which this port holds as a `char` in
+            // U+0080..U+00FF whose UTF-8 encoding is TWO bytes — so it has to
+            // go out as the raw byte, not as `encode_utf8`.
+            if mb_single_byte && (ch as u32) < 0x100 {
+                crate::shout::write(&[ch as u8]);
+            } else {
+                crate::shout::write(ch.encode_utf8(&mut buf).as_bytes());
+            }
             // c:807-816 — ASCII characters are single-width; the single
             //             wide character contributes its display width.
             col += if (ch as u32) < 0x80 {
