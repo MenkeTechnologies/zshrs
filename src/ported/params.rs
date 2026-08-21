@@ -4004,6 +4004,58 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
             let _ = getvaluearr(Some(&mut *v)); // c:1726
             *scanprog_lock().lock().unwrap() = None; // c:1732
             *scanstr_lock().lock().unwrap() = None;
+
+            // ---------------------------------------------------------
+            // c:2128-2160 — getindex's non-inverse tail. C runs it on
+            // every subscript; this port used to return straight out of
+            // the hash scan and skip it, so `v->scanflags` was never
+            // cleared and `assignstrvalue`'s c:2701 guard could not tell
+            // "the search matched, this is a slice" from "the search
+            // matched nothing".
+            //
+            // The two numbers C feeds it come from `getarg`:
+            //   `start` is getarg's return — 1 on both hash exits, the
+            //   `return 1` at c:1754 (scan produced a result) and the
+            //   `return !down` at c:1760 (it did not, and !down is 1
+            //   whenever that line is reachable: a `down` scan always
+            //   satisfies c:1747 through SCANPM_MATCHMANY and leaves by
+            //   c:1754).
+            //   `we` is `*w`, assigned ONLY on the c:1754 exit as
+            //   `v->end`, which `getvaluearr` has just set to
+            //   `numparamvals + 1` (c:717). On the c:1760 exit it keeps
+            //   the caller's 0.
+            // ---------------------------------------------------------
+            let sf = v.scanflags as u32; // c:2175
+            let start: i32 = 1; // c:2036 (getarg → c:1754 / c:1760)
+            // c:1747-1750 — `if ((ta = getvaluearr(v)) && (*ta ||
+            // ((v->scanflags & SCANPM_MATCHMANY) && (v->scanflags &
+            // (SCANPM_MATCHKEY|SCANPM_MATCHVAL|SCANPM_KEYMATCH)))))`.
+            let we: i32 = if !v.arr.is_empty()
+                || ((sf & SCANPM_MATCHMANY) != 0
+                    && (sf & (SCANPM_MATCHKEY | SCANPM_MATCHVAL | SCANPM_KEYMATCH)) != 0)
+            {
+                v.end // c:1752 `*w = v->end;`
+            } else {
+                0
+            };
+            // c:2131 — `com = (*s == ',')`. Never true for a hash: the
+            // c:1515 walk does not stop at a comma when `ishash`.
+            let mut com = false; // c:2131
+            let end: i32 = if we != 0 { we } else { start }; // c:2135
+            if start != end {
+                com = true; // c:2137-2138
+            }
+            if v.scanflags != 0
+                && !com
+                && ((v.scanflags as u32 & SCANPM_MATCHMANY) == 0
+                    || (v.scanflags as u32
+                        & (SCANPM_MATCHKEY | SCANPM_MATCHVAL | SCANPM_KEYMATCH))
+                        == 0)
+            {
+                v.scanflags = 0; // c:2179
+            }
+            v.start = start; // c:2180
+            v.end = end; // c:2181
             *pptr = past_bracket; // c:2164
             return 0; // c:2166
         }
@@ -5127,12 +5179,44 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
             }
         }
         t if t == PM_HASHED => {
-            // Element-assignment path: the C source does
-            // `setstrvalue(&((Param)foundparam)->u, val)` to update the
-            // member found by an earlier `scanparamvals` lookup.
-            if let Some(nam) = foundparam() {
-                if let Some(ref h) = pm.u_hash {
-                    let _ = (nam, h);
+            // c:2831-2843 — the value still refers to the WHOLE hash, so
+            // the only writable target is the member `scanparamvals`
+            // stashed in `foundparam` (c:663). With no such member the
+            // assignment is an attempt to overwrite the association
+            // itself with a scalar:
+            //
+            //     if (foundparam == NULL) {
+            //         zerr("%s: attempt to set associative array to scalar",
+            //              v->pm->node.nam);
+            //         zsfree(val);
+            //         return;
+            //     } else
+            //         foundparam->gsu.s->setfn(foundparam, val);
+            //
+            // This arm used to be inert, so a reverse subscript whose
+            // search found nothing (`h[(r)nomatch]=Z`) silently created a
+            // literal key instead of reporting the error.
+            match foundparam() {
+                None => {
+                    // c:2835-2836
+                    zerr(&format!(
+                        "{}: attempt to set associative array to scalar",
+                        pm.node.nam
+                    ));
+                    return; // c:2838
+                }
+                Some(nam) => {
+                    // c:2841 — `foundparam->gsu.s->setfn(foundparam, val)`.
+                    // This port keeps assoc members as plain strings in
+                    // `paramtab_hashed_storage` rather than as Params with
+                    // their own `strsetfn` (see the same substitution at
+                    // c:4113 `arrhashsetfn`), so the member write is a
+                    // store into that map.
+                    let mut store = paramtab_hashed_storage().lock().unwrap();
+                    store
+                        .entry(pm.node.nam.clone())
+                        .or_default()
+                        .insert(nam, val.take().unwrap_or_default()); // c:2841
                 }
             }
             set_foundparam(None);
@@ -6767,6 +6851,57 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
     }
     if let Some(key) = subscript.filter(|_| !magic_unbound(name)) {
+        // c:1410 + c:3251 + c:3343 — a subscript FLAG GROUP has to be
+        // resolved before any of the magic per-name writes below, which
+        // treat the subscript as a plain key. C never gets there: the
+        // `getvalue(&vbuf, &t, 1)` at c:3251 runs `getindex`/`getarg`
+        // first, so `aliases[(r)bar]=Z` is a search over the association
+        // and `assignstrvalue` rejects it (c:2701-2706 / c:2831-2839)
+        // instead of inventing an alias literally named `(r)bar`.
+        // Non-search groups ((e)/(w)/(n:N:)/(p)) resolve to the key with
+        // the group consumed (c:1596-1616) and carry on below.
+        let key_owned: String;
+        let key: &str = if (key.starts_with('(') || key.starts_with(crate::ported::zsh_h::Inpar))
+            && paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(name).map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED))
+                .unwrap_or(false)
+        {
+            let pm = paramtab().read().ok().and_then(|t| t.get(name).cloned());
+            let mut vv = value {
+                pm,
+                arr: Vec::new(),
+                scanflags: SCANPM_ARRONLY as i32, // c:2274-2280
+                valflags: 0,
+                start: 0,
+                end: -1, // c:2279
+            };
+            let bracketed = format!("[{}]", key); // c:2281
+            let mut sp: &str = &bracketed;
+            if getindex(&mut sp, &mut vv, 0) != 0 {
+                unqueue_signals(); // c:3220
+                return None;
+            }
+            if vv
+                .pm
+                .as_ref()
+                .map_or(false, |p| PM_TYPE(p.node.flags as u32) == PM_HASHED)
+            {
+                // c:3343 — the search left the value on the whole
+                // association; assignstrvalue raises the diagnostic.
+                assignstrvalue(Some(&mut vv), Some(val.to_string()), flags);
+                unqueue_signals();
+                return None;
+            }
+            key_owned = vv
+                .pm
+                .as_ref()
+                .map_or_else(|| key.to_string(), |p| p.node.nam.clone()); // c:1596-1616
+            &key_owned
+        } else {
+            key
+        };
         // c:Src/params.c:3153-3155 — the subscripted branch of
         // `assignsparam` NUL-terminates at the `[` and calls
         // `getvalue(&vbuf, &s, 1)` on the bare NAME. That resolves the
@@ -7418,6 +7553,62 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             pm.node.flags |= PM_DONTIMPORT as i32;
         }
         if (pm.node.flags as u32 & PM_HASHED) != 0 {
+            // c:3251 + c:3343 — `getvalue(&vbuf, &t, 1)` re-reads the
+            // FULL `name[subscript]` text so `getindex` can resolve the
+            // subscript, then `assignstrvalue` performs the write and
+            // raises the association-specific diagnostics. This arm used
+            // to skip both and store the subscript text verbatim, so
+            // `aliases[(r)bar]=Z` silently invented a key named `(r)bar`
+            // where zsh reports a slice assignment.
+            //
+            // c:1410 — `if (v->pm && (*s == '(' || *s == Inpar))` is the
+            // only thing that needs the SOURCE spelling, and on this path
+            // `key` still is it (callers hand assignsparam the unexpanded
+            // subscript). Without a flag group there is nothing for
+            // `getindex` to do beyond the c:1596-1616 exact-key rebind,
+            // so the key goes straight to the member store.
+            if key.starts_with('(') || key.starts_with(crate::ported::zsh_h::Inpar) {
+                let mut vv = value {
+                    pm: Some(pm.clone()),
+                    arr: Vec::new(),
+                    // c:2274-2280 — no caller flags → SCANPM_ARRONLY.
+                    scanflags: SCANPM_ARRONLY as i32,
+                    valflags: 0,
+                    start: 0,
+                    end: -1, // c:2279
+                };
+                drop(tab);
+                let bracketed = format!("[{}]", key); // c:2281
+                let mut sp: &str = &bracketed;
+                if getindex(&mut sp, &mut vv, 0) != 0 {
+                    unqueue_signals(); // c:3220
+                    return None;
+                }
+                let elem_is_hash = vv
+                    .pm
+                    .as_ref()
+                    .map_or(false, |p| PM_TYPE(p.node.flags as u32) == PM_HASHED);
+                if elem_is_hash {
+                    // c:3343 — the search left the value on the whole
+                    // association; assignstrvalue raises c:2701 / c:2831.
+                    assignstrvalue(Some(&mut vv), Some(val.to_string()), flags);
+                    unqueue_signals();
+                    return None;
+                }
+                // c:1596-1616 — non-search group: the rebound element's
+                // name is the key with the group consumed.
+                let ekey = vv
+                    .pm
+                    .as_ref()
+                    .map_or_else(|| key.to_string(), |p| p.node.nam.clone());
+                let mut store = paramtab_hashed_storage().lock().unwrap();
+                store
+                    .entry(name.to_string())
+                    .or_default()
+                    .insert(ekey, val.to_string()); // c:2841
+                unqueue_signals();
+                return paramtab().read().ok().and_then(|t| t.get(name).cloned());
+            }
             // PM_HASHED element store. `param.u_hash` is typed
             // `Option<HashTable>` per Src/zsh.h:1841 but the
             // HashTable runtime backing isn't wired; the assoc-array
@@ -7427,7 +7618,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             store
                 .entry(name.to_string())
                 .or_default()
-                .insert(key.to_string(), val.to_string());
+                .insert(key.to_string(), val.to_string()); // c:2841
         } else {
             // Non-hashed param: subscript already arithmetic-resolved above
             // (c:params.c:1601). zsh never auto-creates an assoc here, so

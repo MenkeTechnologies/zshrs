@@ -4049,6 +4049,118 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // already does the indexed-array vs assoc decision, PM_HASHED
     // auto-vivification, numeric-subscript bounds handling, and
     // PM_READONLY rejection.
+/// Assign `val` to one element of the PM_HASHED parameter `name`.
+///
+/// This is the tail of C's `assignsparam` for a subscripted target:
+/// c:Src/params.c:3251 `getvalue(&vbuf, &t, 1)` (→ `fetchvalue` →
+/// `getindex`) followed by c:3343 `assignstrvalue(v, val, flags)`.
+///
+/// C hands `getindex` the FLAT `"name[subscript]"` text, and that is
+/// safe there because its subscript is still the SOURCE spelling: the
+/// bracket walk at c:2008 `parse_subscript` runs BEFORE the
+/// `parsestr`/`singsub` round at c:1585-1592, so a `]` that arrives by
+/// expansion can never terminate it. zshrs expands a subscript before
+/// this builtin runs, so re-flattening to `name[key]` and re-splitting
+/// corrupts any key containing `]` (`k='x]y'; h[$k]=5` stored `x`). The
+/// two halves therefore stay separate the whole way down:
+///
+///   * `sub` is the EXPANDED subscript — the key text.
+///   * `sub_src` is the SOURCE subscript, used for ONE decision, the
+///     one C makes at c:1410: `if (v->pm && (*s == '(' || *s == Inpar))`
+///     — is there a flag block? Flags can only be literal (they are read
+///     at c:1409, before any expansion), so `x='(r)v'; h[$x]=Z` has no
+///     flag block and stores the literal key `(r)v`, while `h[(r)$x]=Z`
+///     does have one and is a search.
+///
+/// With no flag block there is nothing for `getindex` to resolve beyond
+/// the exact-key rebind at c:1596-1616, so the key goes straight to the
+/// element store and never meets a parser. With one, `getindex` runs on
+/// the EXPANDED text: its flag block is byte-identical to the source's
+/// (flags are literal) and its pattern is already substituted, which is
+/// what c:1585-1592 would have produced anyway.
+fn assign_hash_element(name: &str, sub: &str, sub_src: &str, val: &str) -> i32 {
+    use crate::ported::zsh_h::{Inpar, PM_HASHED, PM_READONLY, SCANPM_ARRONLY};
+    let pm = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).cloned());
+    // c:3216-3221 — `if (v->pm->node.flags & PM_READONLY)`.
+    if pm
+        .as_ref()
+        .is_some_and(|p| (p.node.flags as u32 & PM_READONLY) != 0)
+    {
+        crate::ported::utils::zerr(&format!("read-only variable: {}", name)); // c:3217
+        return 1; // c:3221
+    }
+    // c:1410 — `if (v->pm && (*s == '(' || *s == Inpar))`, read off the
+    // SOURCE spelling.
+    let has_flags = sub_src.starts_with('(') || sub_src.starts_with(Inpar);
+    if has_flags {
+        let mut v = crate::ported::zsh_h::value {
+            pm,
+            arr: Vec::new(),
+            // c:2274-2280 — fetchvalue promotes a PM_ARRAY/PM_HASHED
+            // value with no caller flags to SCANPM_ARRONLY; assignsparam
+            // arrives through `getvalue`, i.e. flags 0.
+            scanflags: SCANPM_ARRONLY as i32,
+            valflags: 0,
+            start: 0,
+            end: -1, // c:2279
+        };
+        let bracketed = format!("[{}]", sub); // c:2281 `*s == '['`
+        let mut sp: &str = &bracketed;
+        if crate::ported::params::getindex(&mut sp, &mut v, 0) != 0 {
+            // c:2020-2022 — `zerr("invalid subscript")` already reported.
+            return 1;
+        }
+        let elem_is_hash = v
+            .pm
+            .as_ref()
+            .is_some_and(|p| crate::ported::zsh_h::PM_TYPE(p.node.flags as u32) == PM_HASHED);
+        if elem_is_hash {
+            // A search subscript: the c:1596 exact-key rebind did not
+            // happen, so the value still refers to the whole association
+            // and c:3343 `assignstrvalue` reports it — either "attempt to
+            // set slice of associative array" (c:2701-2706, the scanflags
+            // survived the c:2179 clear) or "attempt to set associative
+            // array to scalar" (c:2831-2839, they did not and no member
+            // was found).
+            let pre = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+            crate::ported::params::assignstrvalue(
+                Some(&mut v),
+                Some(val.to_string()),
+                crate::ported::zsh_h::ASSPM_WARN,
+            ); // c:3343
+            let post = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+            return if post != pre { 1 } else { 0 };
+        }
+        // c:1596-1616 — a non-search flag group (`(e)`, `(w)`, `(n:N:)`,
+        // `(p)`, or an unrecognised one, c:1498 `flagerr`): `v->pm` is now
+        // the ELEMENT and its name is the subscript with the group already
+        // consumed. That name IS the key.
+        let key = v.pm.as_ref().map_or(sub, |p| p.node.nam.as_str()).to_string();
+        return store_hash_element(name, &key, val);
+    }
+    // c:1596-1616 with no flag group at all — the subscript is the key
+    // verbatim. Nothing to parse, so an expanded `]` stays intact.
+    store_hash_element(name, sub, val)
+}
+
+/// c:Src/params.c:2841 — `foundparam->gsu.s->setfn(foundparam, val)`,
+/// the write to one member of an association. This port keeps assoc
+/// members as plain strings in `paramtab_hashed_storage` rather than as
+/// Params carrying their own `strsetfn` (the same substitution
+/// `arrhashsetfn` makes at c:4113), so the member write is a map insert.
+fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
+    if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+        store
+            .entry(name.to_string())
+            .or_default()
+            .insert(key.to_string(), val.to_string()); // c:2841
+    }
+    0
+}
+
     vm.register_builtin(BUILTIN_SET_ASSOC, |vm, _argc| {
         // `${~spec}` carrier: an assignment statement is a word-
         // pipeline boundary too — restore the user's GLOB_SUBST
@@ -4061,14 +4173,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // empty key stores at getindex time — zinit's
         // ZINIT_SICE[$1…$2] relies on it). argc 3 = source-literal
         // key; `H[]` stays the "not an identifier" error.
-        let key_is_dynamic = if _argc == 4 {
+        // Stack shapes (compile_zsh::compile_assign):
+        //   argc 4 = [name, key, value, key_src]            — literal key
+        //   argc 5 = [name, key, value, key_src, dynamic]   — expanded key
+        // `key_src` is the SOURCE spelling of the subscript, kept beside
+        // the expanded one so nothing downstream has to re-flatten
+        // `name[key]` and re-split it (c:Src/params.c:2008 parses the
+        // subscript BEFORE expansion; see `assign_hash_element`).
+        let key_is_dynamic = if _argc >= 5 {
             vm.pop().to_int() != 0
         } else {
             false
         };
+        let key_src = if _argc >= 4 {
+            Some(vm.pop().to_str())
+        } else {
+            None
+        };
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        let key_src = key_src.unwrap_or_else(|| key.clone());
         // c:Src/params.c:3203-3207 — `if (!isident(s)) { zerr("not an
         // identifier: %s", s); errflag |= ERRFLAG_ERROR; return NULL; }`.
         // Every subscripted assignment passes through that gate, and isident
@@ -4367,17 +4492,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if (target_flags as u32 & crate::ported::zsh_h::PM_HASHED) != 0
             && (target_flags as u32 & crate::ported::zsh_h::PM_SPECIAL) == 0
         {
-            if (target_flags as u32 & crate::ported::zsh_h::PM_READONLY) != 0 {
-                crate::ported::utils::zerr(&format!("read-only variable: {}", name));
-                return Value::Status(1);
-            }
-            if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
-                store
-                    .entry(name.clone())
-                    .or_default()
-                    .insert(resolved_key.clone(), value.clone());
-            }
-            return Value::Status(0);
+            // c:3251 + c:3343 — run the real chain (getindex →
+            // assignstrvalue) instead of storing the subscript verbatim.
+            // Storing it verbatim is what made `h[(r)v]=Z` invent a key
+            // named `(r)v` where zsh reports a slice assignment, and it
+            // also skipped the c:2701 / c:2831 guards entirely.
+            let _ = &resolved_key;
+            return Value::Status(assign_hash_element(&name, &key, &key_src, &value));
         }
         let subscripted = format!("{}[{}]", name, resolved_key);
         crate::ported::params::assignsparam(&subscripted, &value, crate::ported::zsh_h::ASSPM_WARN);
@@ -7169,9 +7290,50 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // after the slice end and inserts ONLY the new value. The scalar
         // path pre-concats the old slice (ARRAY_INDEX+Concat) and passes
         // 0, so it keeps plain-replace semantics.
-        let append = popped.pop().map_or(false, |v| v.to_str() == "1");
+        // The trailing marker is 0/1 for the ARRAY-RHS emitter and 2 for
+        // the SCALAR-RHS comma emitter (compile_zsh::compile_assign),
+        // which also pushes the SOURCE subscript just below it. The
+        // scalar form is the one C does NOT necessarily treat as a
+        // range: c:Src/params.c:1515 `(c != Outbrack && (ishash || c !=
+        // ','))` stops the comma from separating subscripts when the
+        // parameter is a hash, so `h[1,2]=Z` is the ordinary key `1,2`.
+        // The compile-time split cannot know the type, so it defers here.
+        let marker = popped.pop().map_or(String::new(), |v| v.to_str());
+        let scalar_rhs = marker == "2"; // c:1515 deferral
+        let key_src = if scalar_rhs {
+            popped.pop().map(|v| v.to_str())
+        } else {
+            None
+        };
+        let append = marker == "1";
         let key = popped.pop().unwrap().to_str();
         let name = popped.pop().unwrap().to_str();
+        // c:Src/params.c:1585-1592 — `if (needtok) { parsestr(&s);
+        // singsub(&s); }`: the subscript body is parameter-substituted
+        // BEFORE it is read, whether it goes on to `mathevalarg`
+        // (c:1601, the array/scalar range bounds) or straight into the
+        // hash as a key (c:1596-1616). The ARRAY-RHS emitter pre-expands
+        // its subscript at word-compile time, but the SCALAR-RHS comma
+        // emitter hands over the raw source, so this round has to happen
+        // here: `mathevali("$n")` is 0, which silently turned
+        // `a=abcdef; n=3; a[$n,-1]=X` into a whole-string overwrite
+        // (`X` instead of `abX`), and it is why the fzf-tab
+        // `t[$#MATCH/2+1,-1]=""` form still lost its bound.
+        //
+        // Only for a source-level LIVE expansion: an escaped `\$`
+        // reached `parsestr` as the Bnull marker and `singsub` leaves it
+        // alone, so `h[\$x,y]` keys on the literal `$x,y`.
+        let key = if scalar_rhs
+            && key_src.as_deref().is_some_and(|src| {
+                let b = src.as_bytes();
+                (0..b.len()).any(|i| {
+                    (b[i] == b'$' || b[i] == b'`') && (i == 0 || b[i - 1] != b'\\')
+                })
+            }) {
+            crate::ported::subst::singsub(&key) // c:1592
+        } else {
+            key
+        };
         let mut values: Vec<String> = Vec::new();
         for v in popped {
             match v {
@@ -7230,6 +7392,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 })
                 .unwrap_or(false);
             if is_hashed {
+                if scalar_rhs {
+                    // c:1515 — for a hash the comma is not a subscript
+                    // separator, so this was never a range: hand the
+                    // WHOLE subscript to the element path. `h[1,2]=Z`
+                    // keys on `1,2` in zsh; rejecting it here was the
+                    // compile-time range split leaking through.
+                    let src = key_src.unwrap_or_else(|| key.clone());
+                    let val = values.first().cloned().unwrap_or_default();
+                    return Value::Status(assign_hash_element(&name, &key, &src, &val));
+                }
                 crate::ported::utils::zerr(&format!(
                     "{name}: attempt to set slice of associative array" // c:3385
                 ));

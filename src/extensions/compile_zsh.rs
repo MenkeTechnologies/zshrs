@@ -3806,12 +3806,20 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     let key_const = self.builder.add_constant(Value::str(key));
                     self.builder.emit(Op::LoadConst(key_const), 0);
+                    // c:Src/params.c:1515 — a comma only separates
+                    // subscripts when the parameter is NOT a hash, and
+                    // the type is unknown here. Push the SOURCE subscript
+                    // and a marker of 2 ("scalar RHS") so the handler can
+                    // fall back to the element path for a PM_HASHED
+                    // target (`h[1,2]=Z` keys on `1,2`).
+                    let src_const = self.builder.add_constant(Value::str(trace_key.as_str()));
+                    self.builder.emit(Op::LoadConst(src_const), 0);
                     // Scalar splice pre-concats the old slice above (when
                     // appending), so the handler keeps plain-replace
-                    // semantics — pass append=0.
-                    self.builder.emit(Op::LoadInt(0), 0);
+                    // semantics — pass append=0 (marker 2 = scalar RHS).
+                    self.builder.emit(Op::LoadInt(2), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, 4),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, 5),
                         0,
                     );
                     self.builder.emit(Op::Pop, 0);
@@ -3926,13 +3934,24 @@ impl ZshCompiler {
                                                // before the bridge, so the handler needs the
                                                // compile-time literal/dynamic bit to reproduce the
                                                // split (argc 4 = dynamic).
+                // c:Src/params.c:2008/1409 — `getindex` parses the
+                // subscript, and its flag block, off the SOURCE spelling
+                // BEFORE the c:1585-1592 expansion round. zshrs expands
+                // the key here at compile/word time, so the source text
+                // has to travel alongside it or the runtime cannot tell
+                // `h[(r)$x]=Z` (a search) from `x='(r)v'; h[$x]=Z` (the
+                // literal key `(r)v`) — and it must never be recovered by
+                // re-splitting a flattened `name[key]`, which breaks on a
+                // key containing `]`.
+                let src_const = self.builder.add_constant(Value::str(trace_key.as_str()));
+                self.builder.emit(Op::LoadConst(src_const), 0);
                 if key_has_expansion {
                     self.builder.emit(Op::LoadInt(1), 0);
                     self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 4), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 5), 0);
                 } else {
                     self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 3), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 4), 0);
                 }
                 self.builder.emit(Op::Pop, 0);
                 return;
