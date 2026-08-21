@@ -1073,7 +1073,9 @@ fn stringsubst(
                     zerr("closing bracket missing"); // c:237
                     return None; // c:237
                 } // c:237
-            } else if next_c == Some(Snull) {
+            } else if next_c == Some(Snull)
+                || (next_c == Some('\'') && !qt && !ANSI_C_SNULL_STRICT.with(|c| c.get()))
+            {
                 // c:237
                 // $'...' ANSI-C quoting. Accept either the lexer-
                 // tokenized Snull marker OR the raw `'` — recursive
@@ -2912,6 +2914,25 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
 ///   3. If !single, walk buffer: outside Dnull (`"`) regions convert
 ///      `Qstring` → `String` and `Qtick` → `Tick`. Dnull toggles qt.
 /// Port of `subst_parse_str(char **sp, int single, int err)` from `Src/subst.c:1460`.
+thread_local! {
+    /// True while the (e) flag's re-lex + singsub is running.
+    ///
+    /// !!! WARNING: RUST-ONLY HELPER !!!
+    /// C needs no such flag: its stringsubst triggers ANSI-C decoding on
+    /// the `Snull` TOKEN only (c:Src/subst.c:301). zshrs additionally
+    /// accepts a RAW `'` there, because operator-operand paths (a `:=`
+    /// default, a `//` pattern or replacement) hand stringsubst literal
+    /// text that was never tokenized — `${lst//$'\n'/…}` relies on it.
+    ///
+    /// That concession must NOT apply to the (e) path. subst_parse_str
+    /// re-lexes AS IN DOUBLE QUOTES (c:Src/lex.c:1680-1681), where `$'` is
+    /// a literal `$` followed by a quote, then rewrites Qstring -> String
+    /// (c:1469-1476) — which makes the raw-quote arm fire and decode what
+    /// zsh leaves alone. Scope the C-strict rule to just that call.
+    static ANSI_C_SNULL_STRICT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+
 pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> {
     // c:1460
     // c:1465-1466 — `*sp = s = dupstring(*sp); if (!(err ? parsestr(&s) :
@@ -18827,14 +18848,20 @@ pub fn paramsubst(
                 // must survive: parsestr re-lexes and treats NUL as a string
                 // terminator, dropping it. NUL-bearing input has no quotes to
                 // remove, so skip the re-lex and singsub the raw value.
-                let out = if bare.contains('\u{0}') {
-                    singsub(&bare)
-                } else {
-                    match subst_parse_str(&bare, single_e, quoteerr) {
-                        Some(parsed) => singsub(&parsed),
-                        None => singsub(&bare),
-                    }
-                };
+                let out = ANSI_C_SNULL_STRICT.with(|flag| {
+                    let prev = flag.get();
+                    flag.set(true);
+                    let r = if bare.contains('\u{0}') {
+                        singsub(&bare)
+                    } else {
+                        match subst_parse_str(&bare, single_e, quoteerr) {
+                            Some(parsed) => singsub(&parsed),
+                            None => singsub(&bare),
+                        }
+                    };
+                    flag.set(prev);
+                    r
+                });
                 if had_snull {
                     format!("{}{}{}", Snull, out, Snull)
                 } else {
