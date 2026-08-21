@@ -1416,8 +1416,19 @@ pub fn init_signals() {
         if libc::sigaction(libc::SIGQUIT, std::ptr::null(), &mut act) == 0
             && act.sa_sigaction == libc::SIG_IGN
         {
-            // sigtrapped[SIGQUIT] = ZSIG_IGNORED; (trap-table global
-            // not modeled — see above).
+            // c:1445 `sigtrapped[SIGQUIT] = ZSIG_IGNORED;` — a shell that
+            // INHERITS SIGQUIT as SIG_IGN (nohup, a `trap '' QUIT` parent,
+            // most daemon supervisors) records it as an ignored trap, so
+            // `trap` lists `trap -- '' QUIT` and `entersubsh` keeps it
+            // ignored in children (c:Src/exec.c:1231). The trap table IS
+            // modeled now (`signals::sigtrapped`), so record it instead of
+            // dropping it: without this, `nohup zsh -fc trap` printed the
+            // QUIT line and zshrs printed nothing.
+            if let Ok(mut guard) = crate::ported::signals::sigtrapped.lock() {
+                if let Some(slot) = guard.get_mut(libc::SIGQUIT as usize) {
+                    *slot = crate::ported::zsh_h::ZSIG_IGNORED;
+                }
+            }
         }
         // c:1414-1416 — `#ifndef QDEBUG signal_ignore(SIGQUIT)`.
         signal_ignore(libc::SIGQUIT);

@@ -4114,7 +4114,28 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
             !crate::ported::zsh_h::ERRFLAG_ERROR,
             std::sync::atomic::Ordering::SeqCst,
         );
-        zerr(&format!("bad pattern: {}", pattern));
+        // c:1852 `zerr("bad pattern: %s", ostr)` — `ostr` is still
+        // TOKENIZED here (Inbrack/Outbrack/Star/… ), and C renders the
+        // `%s` through `nicezputs` (c:Src/utils.c:316), whose
+        // sb_niceformat maps a token byte back through `ztokens`
+        // (c:Src/utils.c niceztrlen: `if (itok(c)) c = ztokens[c - Pound]`).
+        // Formatting `pattern` with Rust's `{}` skipped that step, so
+        // `echo [[` reported `bad pattern: \u{91}\u{91}` (printed as two
+        // invisible C1 bytes) where zsh prints `bad pattern: [[`.
+        zerr(&format!(
+            "bad pattern: {}",
+            crate::ported::utils::nicedup(pattern, 0)
+        ));
+        // c:Src/exec.c:3760-3763 — every command runs its args through
+        // `globlist(args, 0)` and then `if (errflag) { lastval = 1; goto
+        // err; }`, so a bad pattern anywhere in argv leaves the shell's
+        // status at 1 no matter which command kind was being built.
+        // zshrs's builtin dispatcher reaches that via the per-command
+        // glob-failed cell, but the `command` / `builtin` prefixes and
+        // the external path do not, so those aborted with the PREVIOUS
+        // status: `zsh -fc 'command -v [[' ` exited 0 where zsh exits 1.
+        // LASTVAL is the same storage `set_last_status` writes.
+        crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
         return Vec::new();
     }
 
