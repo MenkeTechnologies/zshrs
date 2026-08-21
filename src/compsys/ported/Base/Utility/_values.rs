@@ -58,7 +58,16 @@ fn make_ops() -> options {
 /// Call `compvalues <sub> <params…>`. Returns the builtin exit status
 /// (0 = success). The named params are read back by the caller via
 /// `getsparam`/`getaparam`/`gethparam`.
-fn compvalues(argv: &[&str]) -> i32 {
+///
+/// `sh_line` is the line of `Completion/Base/Utility/_values` this call
+/// stands for, published through [`set_sh_lineno`] the way C's wordcode line
+/// marker publishes it ahead of every statement (`Src/exec.c:2057`). Without
+/// it `zerrmsg` (`Src/utils.c:301-305`) has `lineno == 0` and drops the field:
+/// `gtk-launch <TAB>` printed `_values:compvalues: not enough arguments` where
+/// zsh prints `_values:compvalues:11: not enough arguments`. Every line below
+/// is read off the upstream file (`grep -n compvalues`), never estimated.
+fn compvalues(sh_line: u64, argv: &[&str]) -> i32 {
+    crate::compsys::ported::shared::set_sh_lineno(sh_line);
     let v: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     bin_compvalues("compvalues", &v, &make_ops(), 0)
 }
@@ -187,6 +196,7 @@ fn values_impl(args: &[String]) -> i32 {
     let mut cvi: Vec<String> = vec!["-i".to_string()];
     cvi.extend(keep.iter().cloned());
     cvi.extend(args[idx..].iter().cloned());
+    crate::compsys::ported::shared::set_sh_lineno(11);
     if bin_compvalues("compvalues", &cvi, &make_ops(), 0) != 0 {
         // sh:156-159 — `oldcontext` is declared at sh:14 inside the
         // taken branch only; on this path it is unset, so zsh expands
@@ -199,11 +209,11 @@ fn values_impl(args: &[String]) -> i32 {
     let oldcontext = getsparam("curcontext").unwrap_or_default();
 
     // sh:16 — value/argument separator (default '=').
-    compvalues(&["-S", "argsep"]);
+    compvalues(16, &["-S", "argsep"]);
     let argsep = getsparam("argsep").unwrap_or_default();
 
     // sh:17 — list separator; `test="[^sep]#"` when a non-empty sep exists.
-    let has_sep = compvalues(&["-s", "sep"]) == 0;
+    let has_sep = compvalues(17, &["-s", "sep"]) == 0;
     let sep_char = if has_sep {
         getsparam("sep").unwrap_or_default()
     } else {
@@ -212,7 +222,7 @@ fn values_impl(args: &[String]) -> i32 {
     let test_restricted = has_sep && !sep_char.is_empty();
 
     // sh:19 — `if ! compvalues -D descr action` → completing value NAMES.
-    if compvalues(&["-D", "descr", "action"]) != 0 {
+    if compvalues(19, &["-D", "descr", "action"]) != 0 {
         // sh:21
         if _tags(&["values".to_string()]) != 0 {
             return 1;
@@ -220,7 +230,7 @@ fn values_impl(args: &[String]) -> i32 {
         // sh:23
         let _ = setsparam("curcontext", &replace_last_field(&oldcontext, "values"));
         // sh:25 — active value sets by argument type.
-        compvalues(&["-V", "noargs", "args", "opts"]);
+        compvalues(25, &["-V", "noargs", "args", "opts"]);
 
         let prefix = getsparam("PREFIX").unwrap_or_default();
         // sh:27 — `[[ -n "$argsep" && "$PREFIX" = *${argsep}${~test} ]]`.
@@ -229,7 +239,7 @@ fn values_impl(args: &[String]) -> i32 {
             // sh:30 — name = text before the first argsep.
             let name = before_first(&prefix, &argsep).to_string();
             // sh:31 — try the value directly.
-            if compvalues(&["-L", name.as_str(), "descr", "action"]) == 0 {
+            if compvalues(31, &["-L", name.as_str(), "descr", "action"]) == 0 {
                 // sh:32-33 — shift the `name=` prefix out of PREFIX.
                 let ipref = getsparam("IPREFIX").unwrap_or_default();
                 let _ = setsparam("IPREFIX", &format!("{}{}{}", ipref, name, argsep));
@@ -282,7 +292,7 @@ fn values_impl(args: &[String]) -> i32 {
                 let ipref = getsparam("IPREFIX").unwrap_or_default();
                 let _ = setsparam("IPREFIX", &format!("{}{}{}", ipref, matched, argsep));
                 // sh:49 — fetch descr/action/subc for the resolved value.
-                compvalues(&["-L", matched.as_str(), "descr", "action", "subc"]);
+                compvalues(49, &["-L", matched.as_str(), "descr", "action", "subc"]);
                 let subc = getsparam("subc").unwrap_or_default();
                 // sh:50
                 let _ = setsparam("curcontext", &replace_last_field(&oldcontext, &subc));
@@ -290,10 +300,10 @@ fn values_impl(args: &[String]) -> i32 {
             // Falls through to the arguments dispatch (sh:74).
         } else {
             // sh:52-67 — list the value NAMES via `_describe` and return.
-            compvalues(&["-d", "descr"]); // sh:53
+            compvalues(53, &["-d", "descr"]); // sh:53
             let descr_v = getsparam("descr").unwrap_or_default();
             // sh:54-58 — sep=( -qS <char> ) or ().
-            let sep_group: Vec<String> = if compvalues(&["-s", "sep"]) == 0 {
+            let sep_group: Vec<String> = if compvalues(54, &["-s", "sep"]) == 0 {
                 vec!["-qS".to_string(), getsparam("sep").unwrap_or_default()]
             } else {
                 Vec::new()
@@ -360,7 +370,7 @@ fn values_impl(args: &[String]) -> i32 {
         }
     } else {
         // sh:69-72 — completing the ARGUMENT of an already-recognized value.
-        compvalues(&["-C", "subc"]); // sh:70
+        compvalues(70, &["-C", "subc"]); // sh:70
         let subc = getsparam("subc").unwrap_or_default();
         let _ = setsparam("curcontext", &replace_last_field(&oldcontext, &subc));
         // sh:71
@@ -384,7 +394,7 @@ fn values_impl(args: &[String]) -> i32 {
     let cnt = getaparam("snames").map(|v| v.len()).unwrap_or(0)
         + getaparam("names").map(|v| v.len()).unwrap_or(0)
         + getaparam("onames").map(|v| v.len()).unwrap_or(0);
-    if cnt != 1 && compvalues(&["-s", "sep"]) == 0 {
+    if cnt != 1 && compvalues(85, &["-s", "sep"]) == 0 {
         let s = getsparam("sep").unwrap_or_default();
         let flag = format!("-qS{}", s);
         let mut expl = getaparam("expl").unwrap_or_default();
@@ -397,7 +407,7 @@ fn values_impl(args: &[String]) -> i32 {
 
     // sh:88 — `->state` form.
     if action.starts_with("->") {
-        compvalues(&["-v", "val_args"]); // sh:89
+        compvalues(89, &["-v", "val_args"]); // sh:89
                                          // sh:90 — state = action minus `->`, whitespace-trimmed.
         let state = action[2..].trim().to_string();
         let _ = setsparam("state", &state);
@@ -415,7 +425,7 @@ fn values_impl(args: &[String]) -> i32 {
     }
 
     // sh:100-102 — `typeset -A val_args; compvalues -v val_args`.
-    compvalues(&["-v", "val_args"]);
+    compvalues(102, &["-v", "val_args"]);
 
     if action.trim().is_empty() {
         // sh:104-109 — empty action: just show the description.
