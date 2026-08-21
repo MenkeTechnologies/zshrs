@@ -656,14 +656,20 @@ Two further notes on reading this table:
 - `prompt` shows 0 divergences but a reproducible ~10-12% timeout rate at a
   20 s limit; the harness reports timeouts separately and does not attribute
   a side.
-- `trap` is 0 for a normally-launched shell, but reports ~114/300 when the
-  shell INHERITS `SIGQUIT` as `SIG_IGN` (`nohup`, most supervisors). zsh
-  records that as an ignored trap and lists `trap -- '' QUIT`
-  (`c:Src/init.c:1444-1445`); zshrs does not, because its `-c` and
-  script-file dispatch bypass `init_signals` entirely. Wiring that call in
-  fixes the listing but regresses pipeline/job reaping badly (measured:
-  `pipeline` 0 -> 139), so the correct fix is to converge those dispatch
-  paths on `zsh_main` rather than to call `init_signals` from them.
+- Run the sweep DETACHED (`nohup`, CI, a supervisor) and the shell inherits
+  `SIGQUIT` as `SIG_IGN`. zsh records that as an ignored trap and lists
+  `trap -- '' QUIT` (`c:Src/init.c:1444-1445`), and an inherited `SIGHUP`
+  ignore clears the `HUP` option (`c:1451-1452`). zshrs reached neither,
+  because its `-c` and script-file dispatch bypass `init_signals`; the
+  `trap` mode reported ~114/300 in that context and 0 in a foreground
+  shell. Fixed by porting just those two records onto the bypass paths
+  (`src/extensions/startup_signals.rs`) — NOT by calling `init_signals`
+  there, which also installs C's SIGCHLD handler and regresses pipeline
+  and job reaping badly (measured: `pipeline` 0 -> 139). Converging those
+  dispatch paths onto `zsh_main` is still the structurally correct fix.
+  The recording is ZSH-only and gated off in the drop-in modes: with both
+  signals inherited-ignored, `trap` prints the QUIT line in zsh, both
+  signals SIG-prefixed in bash, and nothing at all in dash/ksh/sh.
 
 Per emulation target, out of 300 each: `ksh` 163, `mksh` 130, `pdksh` 130,
 `bash` 112, `sh` 80, `dash` 47, `ash` 47. The emulation modes are held to a
