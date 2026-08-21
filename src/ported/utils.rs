@@ -8244,7 +8244,50 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // to the literal-emit path (c:6418-6434).
         let mut result = String::with_capacity(s.len() * 2);
         let mut prev: char = '\0'; // would-be u[-1]
-        let mcs = meta_chars(s);
+        // c:6392 — `if (itok(*u) || instring != QT_BACKSLASH)`: a parser TOKEN
+        // byte "needs to be passed straight through" — never backslashed and
+        // never printability-tested. That half of the test was missing from
+        // this arm, and `meta_chars` cannot express it: it demetafies, and a
+        // token is NOT a metafied pair (this port stores C's token bytes as
+        // the chars U+0080..U+00A2), so `unmetafy_str` re-encodes one as its
+        // two UTF-8 bytes. `Inbrace` therefore fell through to the c:6435
+        // not-printable arm and `quotename(Inbrace)` produced `$'\302\217'`
+        // where C produces the raw byte that `untokenize` then maps back to
+        // `{` — which is what the c:1931-2218 brace tail in zle_tricky.c
+        // stores in `brbeg` (`ls /usr/{b<TAB>`).
+        // Split the input at token chars, hand only the runs BETWEEN them to
+        // `meta_chars`, and remember which units were tokens. A `Meta` byte is
+        // deliberately NOT a split point (C gives it IMETA but not ITOK,
+        // utils.c:4196-4201), and its partner byte is skipped so a metafied
+        // pair whose second byte lands in the token range stays intact.
+        let (mcs, tokmask): (Vec<MetaChar>, Vec<bool>) = {
+            let mut v: Vec<MetaChar> = Vec::with_capacity(s.len());
+            let mut m: Vec<bool> = Vec::with_capacity(s.len());
+            let mut run = String::new();
+            let mut prev_meta = false;
+            for c in s.chars() {
+                let cu = c as u32;
+                if !prev_meta && cu < 0x100 && crate::ported::ztype_h::itok(cu as u8) {
+                    if !run.is_empty() {
+                        let seg = meta_chars(&run);
+                        m.resize(m.len() + seg.len(), false);
+                        v.extend(seg);
+                        run.clear();
+                    }
+                    v.push(MetaChar::Raw(cu as u8));
+                    m.push(true);
+                } else {
+                    prev_meta = !prev_meta && c == char::from(Meta);
+                    run.push(c);
+                }
+            }
+            if !run.is_empty() {
+                let seg = meta_chars(&run);
+                m.resize(m.len() + seg.len(), false);
+                v.extend(seg);
+            }
+            (v, m)
+        };
         for i in 0..mcs.len() {
             let mc = mcs[i];
             let c = match mc {
@@ -8273,6 +8316,11 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             {
                 // c:6385-6395 — printable special → `\<char>`.
                 result.push('\\');
+                result.push(c);
+            } else if tokmask[i] {
+                // c:6392-6395/6414 — token byte: pass straight through. C's
+                // `dobackslash` can never be set for one (`ispecial` is an
+                // ASCII-only table), so no `\\` is emitted here.
                 result.push(c);
             } else if !mc_printable(mc) {
                 // c:6412-6422 — anything not printable (a control char, a
