@@ -1073,7 +1073,7 @@ fn stringsubst(
                     zerr("closing bracket missing"); // c:237
                     return None; // c:237
                 } // c:237
-            } else if next_c == Some(Snull) || (next_c == Some('\'') && !qt) {
+            } else if next_c == Some(Snull) {
                 // c:237
                 // $'...' ANSI-C quoting. Accept either the lexer-
                 // tokenized Snull marker OR the raw `'` — recursive
@@ -18809,16 +18809,36 @@ pub fn paramsubst(
             // quotes intact (`${(e)'${x:-"ab"}'}` → `"ab"`; p10k → `""""""`).
             let single_e = qt && nojoin == 0;
             let esub = |s: &str| -> String {
+                // The (q) arm wraps its result in Snull markers (see wrap_snull
+                // above) so stringsubst does not re-read the literal `'` chars it
+                // emitted. Those markers are internal bookkeeping, not value
+                // bytes, and C has no equivalent — c:4472's subst_parse_str sees
+                // the bare quoted string. Feeding them to the re-lex untokenized
+                // them back into REAL quotes, so `${(eq#)s}` came out as
+                // `'$'\0''` where zsh prints `$'\0'`. Strip before, re-wrap
+                // after — the same treatment pad_one gives them below.
+                let had_snull = s.contains(Snull);
+                let bare = if had_snull {
+                    s.replace(Snull, "")
+                } else {
+                    s.to_string()
+                };
                 // A NUL byte (e.g. from a preceding `(#)` char-eval, `${(e#)x}`)
                 // must survive: parsestr re-lexes and treats NUL as a string
                 // terminator, dropping it. NUL-bearing input has no quotes to
                 // remove, so skip the re-lex and singsub the raw value.
-                if s.contains('\u{0}') {
-                    return singsub(s);
-                }
-                match subst_parse_str(s, single_e, quoteerr) {
-                    Some(parsed) => singsub(&parsed),
-                    None => singsub(s),
+                let out = if bare.contains('\u{0}') {
+                    singsub(&bare)
+                } else {
+                    match subst_parse_str(&bare, single_e, quoteerr) {
+                        Some(parsed) => singsub(&parsed),
+                        None => singsub(&bare),
+                    }
+                };
+                if had_snull {
+                    format!("{}{}{}", Snull, out, Snull)
+                } else {
+                    out
                 }
             };
             if let Some(parts) = split_parts.clone() {
