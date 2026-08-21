@@ -599,20 +599,13 @@ fn assert_real_config_parity(rel_path: &str, known_open: &[&str]) {
 fn real_zinit_core() {
     assert_real_config_parity(
         ".zinit/bin/zinit.zsh",
-        &[
-            // zsh/system + zsh/datetime module-param typeset -p flags:
-            // zshrs emits PM_HIDE (`h`) and mis-handles PM_READONLY (`r`).
-            "[PARAMETERS] only in zsh  : typeset -g -Ar sysparams",
-            "[PARAMETERS] only in zshrs: typeset -g -Ah sysparams",
-            "[PARAMETERS] only in zsh  : typeset -g -ar epochtime",
-            "[PARAMETERS] only in zshrs: typeset -g -ahr epochtime",
-            "[PARAMETERS] only in zsh  : typeset -g -ar errnos",
-            "[PARAMETERS] only in zshrs: typeset -g -ah errnos",
-            // zinit `for %$ZINIT[BIN_DIR]` self-load not executed.
-            "[PARAMETERS] only in zsh  : typeset -g -a zsh_loaded_plugins=( %$HOME/.zinit/bin )",
-            "[PARAMETERS] only in zshrs: typeset -g -a zsh_loaded_plugins=(  )",
-            "[FUNCTIONS] only in zsh  : zi-browse-symbol",
-        ],
+        // Baseline CLOSED 2026-08-21: all nine entries below were verified
+        // gone (test reported "9 known-open, 0 actual"), so the list is now
+        // empty and ANY divergence on this config fails. The closed items
+        // were the zsh/system + zsh/datetime module-param `typeset -p` flags
+        // (`-h` hidden vs `-r` readonly) and zinit's `for %$ZINIT[BIN_DIR]`
+        // self-load (empty `zsh_loaded_plugins`, missing `zi-browse-symbol`).
+        &[],
     );
 }
 
@@ -828,21 +821,11 @@ fn real_plugin_chain_on_zinit() {
                 rel_path: ".zinit/plugins/hlissner---zsh-autopair/autopair.plugin.zsh",
             },
         ],
-        // zinit's own known-open divergences (see real_zinit_core) carry
-        // through every later stage's cumulative dump, so each stage from
-        // zinit onward inherits the same baseline.
+        // zinit's own known-open divergences carried through every later
+        // stage's cumulative dump. Baseline CLOSED 2026-08-21 alongside
+        // real_zinit_core — every stage now demands exact parity.
         &{
-            const ZINIT_OPEN: &[&str] = &[
-                "[PARAMETERS] only in zsh  : typeset -g -Ar sysparams",
-                "[PARAMETERS] only in zshrs: typeset -g -Ah sysparams",
-                "[PARAMETERS] only in zsh  : typeset -g -ar epochtime",
-                "[PARAMETERS] only in zshrs: typeset -g -ahr epochtime",
-                "[PARAMETERS] only in zsh  : typeset -g -ar errnos",
-                "[PARAMETERS] only in zshrs: typeset -g -ah errnos",
-                "[PARAMETERS] only in zsh  : typeset -g -a zsh_loaded_plugins=( %$HOME/.zinit/bin )",
-                "[PARAMETERS] only in zshrs: typeset -g -a zsh_loaded_plugins=(  )",
-                "[FUNCTIONS] only in zsh  : zi-browse-symbol",
-            ];
+            const ZINIT_OPEN: &[&str] = &[];
             [
                 ("zinit", ZINIT_OPEN),
                 ("kubectl-aliases", ZINIT_OPEN),
@@ -951,22 +934,12 @@ fn real_all_installed_plugins_final_state() {
         .iter()
         .map(|l| normalize_for_baseline(l, &home))
         .collect();
-    // Known-open, all deep plugin-internal conditionals (see docs/BUGS.md):
-    //   zi-browse-symbol — zinit's `for %…` self-load (not executed).
-    //   -fast-highlight-string-process — fsh conditional definition.
-    //   -zui_std_* — zui defines a different std-fn set (branch divergence).
-    let known: BTreeSet<String> = [
-        "[FUNCTIONS] only in zsh  : zi-browse-symbol",
-        "[FUNCTIONS] only in zsh  : -fast-highlight-string-process",
-        "[FUNCTIONS] only in zsh  : -zui_std_cleanup",
-        "[FUNCTIONS] only in zsh  : -zui_std_init",
-        "[FUNCTIONS] only in zshrs: -zui_std_fly_array_refresh",
-        "[FUNCTIONS] only in zshrs: -zui_std_fly_mod_regen",
-        "[FUNCTIONS] only in zshrs: -zui_std_fly_mod_regen_ext",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
+    // Known-open baseline. The seven FUNCTION entries that used to live
+    // here (zi-browse-symbol, -fast-highlight-string-process, and the
+    // five -zui_std_* branch divergences) were verified GONE on
+    // 2026-08-21 and removed, so those wins are locked in and any
+    // recurrence fails this test.
+    let known: BTreeSet<String> = BTreeSet::new();
     let regressions: Vec<&String> = actual.difference(&known).collect();
     let fixed: Vec<&String> = known.difference(&actual).collect();
     if !regressions.is_empty() || !fixed.is_empty() {
