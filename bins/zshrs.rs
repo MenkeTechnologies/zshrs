@@ -2325,6 +2325,13 @@ pub fn zshrs_main() {
             &option_actions,
             deferred_zsh_style_emu,
         );
+        // c:Src/init.c:1444-1445 — C reaches this through `init_signals`
+        // on EVERY invocation; this dispatch path never calls that
+        // function (see extensions/startup_signals.rs for why calling all
+        // of `init_signals` here is not safe). Without it, a shell started
+        // with SIGQUIT already ignored — nohup, a supervisor, or `cargo
+        // test`'s own spawn — listed no `trap -- '' QUIT` where zsh does.
+        zsh::startup_signals::record_inherited_sigquit_ignore();
         // c:Src/init.c:1340 — `if (cmd)
         //                       setsparam("ZSH_EXECUTION_STRING",
         //                                 ztrdup_metafy(cmd));`
@@ -2581,6 +2588,13 @@ pub fn zshrs_main() {
             &option_actions,
             deferred_zsh_style_emu,
         );
+        // c:Src/init.c:1444-1445 — C reaches this through `init_signals`
+        // on EVERY invocation; this dispatch path never calls that
+        // function (see extensions/startup_signals.rs for why calling all
+        // of `init_signals` here is not safe). Without it, a shell started
+        // with SIGQUIT already ignored — nohup, a supervisor, or `cargo
+        // test`'s own spawn — listed no `trap -- '' QUIT` where zsh does.
+        zsh::startup_signals::record_inherited_sigquit_ignore();
         // Port from Src/init.c:295-306 + Src/init.c:1368-1370.
         // In script mode the parsed argv is split as:
         //   argv[0] = shell binary       (from init.c:271)

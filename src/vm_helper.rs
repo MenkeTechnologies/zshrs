@@ -485,6 +485,15 @@ pub struct SubshellSnapshot {
     /// pointing at t.log and `cat` looped forever copying the file
     /// into itself.
     pub saved_fds: Vec<(i32, i32)>,
+    /// `sigtrapped[]` at subshell entry (Src/signals.c:39). C's
+    /// `entersubsh` clears per-signal trap STATE via `unsettrap(sig)`
+    /// (c:Src/exec.c:1088-1092), which zeroes both the body and the
+    /// sigtrapped flags. zshrs cleared only the body table, so the flags
+    /// desynced: a subshell that dropped a trap body still reported the
+    /// signal as trapped. Snapshot the whole vector so subshell_end can
+    /// restore the parent's exact state (including an inherited
+    /// ZSIG_IGNORED on SIGQUIT).
+    pub sigtrapped: Vec<i32>,
     /// `subsh` at subshell entry (Src/exec.c:160 global). C's
     /// `entersubsh` sets `subsh = 1` for a real (non-ESUB_FAKE)
     /// subshell at c:Src/exec.c:1192-1193, and the forked child

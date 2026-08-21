@@ -81,6 +81,9 @@ pub use ported::*;
 /// `aot` submodule.
 #[path = "extensions/aot.rs"]
 pub mod aot;
+/// `startup_signals` submodule.
+#[path = "extensions/startup_signals.rs"]
+pub mod startup_signals;
 /// `arith_compiler` submodule.
 #[path = "extensions/arith_compiler.rs"]
 pub mod arith_compiler;

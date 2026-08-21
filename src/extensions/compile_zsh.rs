@@ -8887,12 +8887,17 @@ impl ZshCompiler {
         let word_slot = self.next_slot;
         self.next_slot += 1;
         self.builder.emit(Op::SetSlot(word_slot), 0);
-        // c:Src/loop.c:705 — `case … esac` with no matching arm OR an
-        // empty matched arm body (`x) ;;`) exits with status 0. The early
-        // reset (before the word) wrongly made `case $?` see 0; reset
-        // AFTER the word is captured instead.
+        // c:Src/loop.c:613 `anypatok = 0;` — C resets lastval ONLY at the
+        // very end and ONLY when nothing matched (c:705 `if (!anypatok)
+        // lastval = 0;`). Resetting here instead made a MATCHED arm's body
+        // see 0: `(exit 37); case x in x) echo $?;; esac` printed 0 where
+        // zsh prints 37. Track anypatok in a slot and do the reset at the
+        // end, exactly like C. (An empty matched body still yields 0, but
+        // via the empty-list rule at c:Src/exec.c:1439-1441, not this.)
+        let anypatok_slot = self.next_slot;
+        self.next_slot += 1;
         self.builder.emit(Op::LoadInt(0), 0);
-        self.builder.emit(Op::SetStatus, 0);
+        self.builder.emit(Op::SetSlot(anypatok_slot), 0);
 
         let mut end_jumps = Vec::new();
         // Pending fall-through from the previous arm's `;&` terminator.
@@ -9079,6 +9084,17 @@ impl ZshCompiler {
                 self.builder.patch_jump(prev, body_start);
             }
 
+            // c:Src/loop.c:672 `patok = anypatok = 1;`
+            self.builder.emit(Op::LoadInt(1), 0);
+            self.builder.emit(Op::SetSlot(anypatok_slot), 0);
+            if arm.body.lists.is_empty() {
+                // c:Src/exec.c:1439-1441 — `if (wc_code(code) != WC_LIST) {
+                //   /* Empty list; this returns status zero. */ lastval = 0; }`
+                // `case x in x) ;; esac` is a matched arm with an empty body,
+                // so execlist zeroes the status even though anypatok is set.
+                self.builder.emit(Op::LoadInt(0), 0);
+                self.builder.emit(Op::SetStatus, 0);
+            }
             self.compile_program(&arm.body);
 
             match arm.terminator {
@@ -9102,6 +9118,11 @@ impl ZshCompiler {
             self.builder.patch_jump(skip_body, after_body);
         }
 
+        // c:Src/loop.c:705-706 — `if (!anypatok) lastval = 0;`. Runs for
+        // every exit route out of the case (a `;;` break, a `;|` that ran
+        // out of arms, or no match at all), which is why the check lands
+        // HERE and reads the slot rather than being emitted per-path: an
+        // arm that matched leaves anypatok set and keeps its body's status.
         let end = self.builder.current_pos();
         for ej in end_jumps {
             self.builder.patch_jump(ej, end);
@@ -9111,6 +9132,12 @@ impl ZshCompiler {
         if let Some(prev) = pending_fall {
             self.builder.patch_jump(prev, end);
         }
+        self.builder.emit(Op::GetSlot(anypatok_slot), 0);
+        let skip_reset = self.builder.emit(Op::JumpIfTrue(0), 0);
+        self.builder.emit(Op::LoadInt(0), 0); // c:706 `lastval = 0;`
+        self.builder.emit(Op::SetStatus, 0);
+        self.builder
+            .patch_jump(skip_reset, self.builder.current_pos());
         self.emit_cmd_pop();
     }
 
