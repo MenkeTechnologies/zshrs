@@ -485,6 +485,15 @@ pub struct SubshellSnapshot {
     /// pointing at t.log and `cat` looped forever copying the file
     /// into itself.
     pub saved_fds: Vec<(i32, i32)>,
+    /// `subsh` at subshell entry (Src/exec.c:160 global). C's
+    /// `entersubsh` sets `subsh = 1` for a real (non-ESUB_FAKE)
+    /// subshell at c:Src/exec.c:1192-1193, and the forked child
+    /// carries it for the whole body. PRINT_EXIT_VALUE reads it
+    /// (c:4309 `&& !subsh`), which is why zsh prints nothing for
+    /// `setopt printexitvalue; (false)` while still reporting a
+    /// bare `false`. zshrs runs `( … )` in-process, so the flag has
+    /// to be set on entry and restored by hand on End.
+    pub subsh: i32,
 }
 
 #[allow(unused_imports)]

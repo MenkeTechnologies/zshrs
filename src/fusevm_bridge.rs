@@ -2848,14 +2848,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     unsafe { libc::_exit(st) };
                 }
                 pid => {
-                    let mut status: i32 = 0;
-                    unsafe { libc::waitpid(pid, &mut status, 0) };
-                    if libc::WIFEXITED(status) {
-                        libc::WEXITSTATUS(status)
-                    } else if libc::WIFSIGNALED(status) {
-                        128 + libc::WTERMSIG(status)
-                    } else {
-                        1
+                    // Same EINTR retry as the stage reap loop below.
+                    match waitpid_eintr(pid) {
+                        Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
+                        Some(status) if libc::WIFSIGNALED(status) => {
+                            128 + libc::WTERMSIG(status)
+                        }
+                        Some(_) => 1,
+                        None => 0,
                     }
                 }
             }
@@ -2893,16 +2893,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Wait for all forked stages, capture per-stage statuses for PIPESTATUS.
         let mut pipestatus: Vec<i32> = Vec::with_capacity(n);
         for pid in child_pids {
-            let mut status: i32 = 0;
-            unsafe {
-                libc::waitpid(pid, &mut status, 0);
-            }
-            let s = if libc::WIFEXITED(status) {
-                libc::WEXITSTATUS(status)
-            } else if libc::WIFSIGNALED(status) {
-                128 + libc::WTERMSIG(status)
-            } else {
-                1
+            // EINTR retry: the SIGCHLD handler interrupts this wait and
+            // leaves `status` untouched, which used to read back as a
+            // clean exit 0 for every forked stage. See waitpid_eintr.
+            let s = match waitpid_eintr(pid) {
+                Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
+                Some(status) if libc::WIFSIGNALED(status) => 128 + libc::WTERMSIG(status),
+                Some(_) => 1,
+                // Unreapable (ECHILD — the handler got there first).
+                // Nothing better to report than success; the stage's
+                // real status is gone.
+                None => 0,
             };
             pipestatus.push(s);
         }
@@ -11701,6 +11702,40 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// and routed to the job table. This is the same queue_signals /
 /// unqueue_signals fencing zsh uses around its own foreground waits
 /// (Src/exec.c). Panic-safe via `Drop`.
+/// `waitpid(pid, &status, 0)` that retries on `EINTR`.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// No C counterpart — C zsh reaches the same place by blocking signals
+/// around its foreground waits (`queue_signals` / `unqueue_signals`
+/// fencing in `Src/exec.c`), so its `waitpid` is never interrupted in
+/// the first place.
+///
+/// zshrs installs a process-wide SIGCHLD handler (`zhandler` →
+/// `wait_for_processes`). When it fires while the shell is blocked in
+/// this wait, `waitpid` returns -1/`EINTR` WITHOUT touching `status`.
+/// The pipeline reap loop ignored the return value and read the
+/// still-zero `status`, so `WIFEXITED(0)` was true and every FORKED
+/// stage reported exit 0: `false | true` published `$pipestatus` as
+/// `0 0` instead of zsh's `1 0`, and `setopt pipefail` had no non-zero
+/// entry left to promote (c:Src/jobs.c:434-435 `if (jpipestats[i])
+/// pipefail = jpipestats[i];`, applied at c:451-454).
+///
+/// Returns the raw wait status, or `None` if the child could not be
+/// reaped at all (e.g. `ECHILD` because the handler won the race).
+fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
+    loop {
+        let mut status: i32 = 0;
+        let rc = unsafe { libc::waitpid(pid, &mut status, 0) };
+        if rc >= 0 {
+            return Some(status);
+        }
+        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if err != libc::EINTR {
+            return None;
+        }
+    }
+}
+
 pub(crate) struct ForegroundWaitGuard;
 
 impl ForegroundWaitGuard {
@@ -13582,7 +13617,17 @@ impl fusevm::ShellHost for ZshrsHost {
                         (fd, dup)
                     })
                     .collect(),
+                // c:Src/exec.c:160 `int subsh;` — saved so End can put the
+                // parent's value back (subshells nest).
+                subsh: crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed),
             });
+            // c:Src/exec.c:1192-1193 — `if (!(flags & ESUB_FAKE)) subsh = 1;`
+            // A `( … )` is a real subshell, so the body runs with subsh set.
+            // The forked child carries it in C; the in-process body needs it
+            // set explicitly or per-command checks that read it — notably
+            // PRINT_EXIT_VALUE (c:4309 `&& !subsh`) — behave as if the
+            // command ran in the parent.
+            crate::ported::exec::subsh.store(1, std::sync::atomic::Ordering::Relaxed);
             // C forks for `(...)` — count the fork-equivalent so
             // `time (builtin)` reports like zsh (see FORK_EVENTS).
             crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -13735,6 +13780,10 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::builtin::BREAKS.store(breaks, SeqCst);
                     crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);
                 }
+                // c:Src/exec.c:160 / :1192-1193 — the child's `subsh = 1`
+                // dies with the fork in C; restore the parent's value here.
+                crate::ported::exec::subsh
+                    .store(snap.subsh, std::sync::atomic::Ordering::Relaxed);
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.
