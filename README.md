@@ -20,7 +20,7 @@
 
 ## `[PATENT PENDING]`
 
-The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **870k lines, 829 source files** across a 3-crate workspace (`zshrs` runtime + `zshrs-daemon` + `znative`, the published plugin-ABI SDK; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 93 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search, autopair — opt-in via `[zle]` in `~/.zshrs/zshrs.toml`, so bare `zshrs -f` stays byte-identical to `zsh -f`), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add znative`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md). And through its companion build [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native), **the first shell with a version control system compiled into it** — `git` served natively as a builtin in the shell's own process, no fork, no exec, no PATH lookup. Since the Bourne shell in 1970 every Unix shell has run git as a foreign binary; BusyBox has no git applet, Nushell's `gstat` plugin is status-only and runs as a separate child process, and `git-shell` execs real git. The same build is also **the first shell with an fzf-compatible finder compiled in** — `arb --fzf` honors `FZF_DEFAULT_OPTS`, `FZF_DEFAULT_OPTS_FILE` and fzf's flag surface in-process, where zsh's key bindings, fzf-tab, fzf.fish and PSFzf all spawn the fzf binary. Elvish is the nearest miss: its histlist and location modes are real in-process fuzzy filtering, but they are shell-internal UI, not a finder that can filter a pipeline.
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **880k lines, 832 source files** across a 3-crate workspace (`zshrs` runtime + `zshrs-daemon` + `znative`, the published plugin-ABI SDK; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 94 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search, autopair — opt-in via `[zle]` in `~/.zshrs/zshrs.toml`, so bare `zshrs -f` stays byte-identical to `zsh -f`), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add znative`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md). And through its companion build [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native), **the first shell with a version control system compiled into it** — `git` served natively as a builtin in the shell's own process, no fork, no exec, no PATH lookup. Since the Bourne shell in 1970 every Unix shell has run git as a foreign binary; BusyBox has no git applet, Nushell's `gstat` plugin is status-only and runs as a separate child process, and `git-shell` execs real git. The same build is also **the first shell with an fzf-compatible finder compiled in** — `arb --fzf` honors `FZF_DEFAULT_OPTS`, `FZF_DEFAULT_OPTS_FILE` and fzf's flag surface in-process, where zsh's key bindings, fzf-tab, fzf.fish and PSFzf all spawn the fzf binary. Elvish is the nearest miss: its histlist and location modes are real in-process fuzzy filtering, but they are shell-internal UI, not a finder that can filter a pipeline.
 
 ### [`Read the Docs`](https://menketechnologies.github.io/zshrs/index.html) &middot; [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](src/compsys/)
 
@@ -619,8 +619,83 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 | `compile_zsh_smoke` | 28 | Per-construct bytecode-level smoke |
 | `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
 | `zsh_parser_probe` | 87 | AST-shape probes for every construct |
-| `ztst_runner` | 70 | Real `.ztst` files from upstream zsh |
+| `ztst_runner` | 70 | Real `.ztst` files from upstream zsh (0 failing; 1,292 individual cases pinned `#[ignore]` as known gaps — see [Compatibility measurement](#compatibility-measurement)) |
 | **Total** | **883** | All green on the new (default) pipeline |
+
+### Compatibility measurement
+
+Two independent measurements, both re-runnable. Numbers below were taken on
+macOS aarch64 against `zsh-5.9.2` as the oracle.
+
+**Differential fuzz** — [`bins/parity-fuzz.rs`](bins/parity-fuzz.rs) generates
+seed-replayable snippets per grammar mode, runs them through both shells, and
+flags any stdout/exit divergence. Every case is re-confirmed 3x (`--verify 3`)
+so a single load-induced flake cannot register as a divergence.
+
+```
+parity-fuzz --mode <mode> --count 300 --verify 3 --timeout-ms 20000
+```
+
+| | zsh oracle | emulation targets |
+|---|---|---|
+| Cases | 22,200 (74 modes) | 2,100 (7 shells) |
+| Divergences | **27 (0.12%)** | 709 (33.8%) |
+| Modes/targets at zero | **71 of 74** | -- |
+
+All residual zsh-mode divergence is in three modes, and each has a single
+identified root cause:
+
+| Mode | Count | Root cause |
+|---|---|---|
+| `unicode` | 18 | `unsetopt multibyte` is not honoured. zsh drops to BYTE semantics (so `[[:alpha:]]` matches one byte of a multibyte character); zshrs stays in character mode. All 18 cases set the option. |
+| `quote` | 8 | zsh's token bytes `0x84`-`0xA1` (`Src/lex.c:38` `ztokens`) are stored as Rust `char`s, so a real codepoint in U+0084-U+00A1 is indistinguishable from a token. Verified boundary: U+009F/A0/A1 mangle under `(V)`/`(q)`/`(qqqq)`, U+00A2 and above are clean. C avoids this by Meta-escaping bytes. |
+| `zmv` | 1 | `zmv -W` no-match error reports the unconverted pattern and the shell's own name (`zsh:1: no matches found: *.*`) instead of zsh's converted pattern and function context (`zmv:239: no matches found: (*).(*)`). |
+
+Two further notes on reading this table:
+
+- `prompt` shows 0 divergences but a reproducible ~10-12% timeout rate at a
+  20 s limit; the harness reports timeouts separately and does not attribute
+  a side.
+- `trap` is 0 for a normally-launched shell, but reports ~114/300 when the
+  shell INHERITS `SIGQUIT` as `SIG_IGN` (`nohup`, most supervisors). zsh
+  records that as an ignored trap and lists `trap -- '' QUIT`
+  (`c:Src/init.c:1444-1445`); zshrs does not, because its `-c` and
+  script-file dispatch bypass `init_signals` entirely. Wiring that call in
+  fixes the listing but regresses pipeline/job reaping badly (measured:
+  `pipeline` 0 -> 139), so the correct fix is to converge those dispatch
+  paths on `zsh_main` rather than to call `init_signals` from them.
+
+Per emulation target, out of 300 each: `ksh` 163, `mksh` 130, `pdksh` 130,
+`bash` 112, `sh` 80, `dash` 47, `ash` 47. The emulation modes are held to a
+weaker contract than zsh mode -- exit-status *sign* rather than exact code --
+because the reference shells disagree with each other on exact codes.
+
+**Upstream ztst corpus** -- the `.ztst` files shipped with zsh, run by
+[`tests/ztst_runner.rs`](tests/ztst_runner.rs):
+
+```
+cargo test --test ztst_runner
+```
+
+70 passing, **0 failing**, 1,292 individual cases pinned `#[ignore]` with an
+explicit per-case gap reason. Those pins are the honest measure of remaining
+compatibility debt, concentrated in:
+
+| Source | Gaps | Area |
+|---|---|---|
+| `Y03arguments.ztst` | 97 | `_arguments` completion spec |
+| `X05zleincarg.ztst` | 95 | ZLE incremental argument |
+| `X02zlevi.ztst` | 95 | ZLE vi mode |
+| `D04parameter.ztst` | 89 | Parameter expansion |
+| `B02typeset.ztst` | 74 | `typeset` semantics |
+| `Y02compmatch.ztst` | 58 | Completion matching |
+| `D10nofork.ztst` | 51 | No-fork command substitution |
+| `D07multibyte.ztst` | 45 | Multibyte handling |
+
+The gap between the fuzz figure and the ztst figure is intentional and worth
+reading carefully: the fuzzer samples the grammar it knows how to generate,
+while ztst samples what zsh's own authors thought worth testing. The ztst
+number is the one that predicts daily-driver trust.
 
 ---
 
@@ -631,9 +706,9 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 ```
                   ┌────────────────────────────────────────────────────────────────┐
                   │                        zshrs workspace                         │
-                  │             3 crates · 829 .rs files · 870k lines              │
+                  │             3 crates · 832 .rs files · 880k lines              │
                   ├──────────────────────────────────────────┬─────────────────────┤
-                  │      src/ (462 .rs — runtime crate)      │  vendor/fish/ (157) │
+                  │      src/ (466 .rs — runtime crate)      │  vendor/fish/ (157) │
                   │  ┌────────────────────────────────────┐  │  reader / line edit │
                   │  │  src/ported/  (106 — STRICT PORT)  │  │  syntax highlight   │
                   │  │  every .rs ↔ a real Src/<x>.c file │  │  autosuggest        │
@@ -645,7 +720,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │  │  prompt · utils · init · …         │  ├─────────────────────┤
                   │  └────────────────────────────────────┘  │  parse + lex now    │
                   │  ┌────────────────────────────────────┐  │  live IN-RUNTIME    │
-                  │  │  src/extensions/  (91 — NON-PORT)  │  │  (folded from the   │
+                  │  │  src/extensions/  (94 — NON-PORT)  │  │  (folded from the   │
                   │  │  features zsh C does NOT have:     │  │  old parse crate)   │
                   │  │  AOT · plugin/script/autoload      │  ├─────────────────────┤
                   │  │  cache · fish_features · worker    │  │  daemon/ (41 .rs)   │

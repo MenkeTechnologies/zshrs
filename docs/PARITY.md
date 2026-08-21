@@ -2,92 +2,57 @@
 
 Snapshot of `cargo test --test '*parity*' --no-fail-fast` results.
 
-**Last run:** 2026-06-12 (full zsh_compat sweep + every
-previously-failing binary re-run individually on the macOS aarch64
-dev box).
+**Last run:** 2026-08-20 (full sweep on the macOS aarch64 dev box, with
+`cargo build -p zshrs-daemon` done first — see the note on
+`binary_parity` below).
 
 ## Summary
 
 | Metric              | Count  |
 | ------------------- | ------ |
-| Total tests         | 43,904 |
-| Passing             | 43,901 |
-| **Failing**         | **0**  |
-| Ignored             | 8      |
-| Pass rate           | 100%   |
-| Test binaries       | 82     |
-| Binaries with fails | 0      |
+| Total tests         | 46,724 |
+| Passing             | 46,666 |
+| **Failing**         | **24** |
+| Ignored             | 34     |
+| Pass rate           | 99.95% |
+| Test binaries       | 2      |
 
-Delta vs the earlier 2026-06-11 full-sweep snapshot: 28 → 9 stable
-failures (19 closed), 9 → 4 binaries — then 8 after merging the
-parallel branch: its zle commit (7a3c00cf53, every iwidgets.list
-thingy binds a widget per Src/Zle/zle_thingy.c:1022) closed
-bulk_i_hash_num_widgets. Closed this pass:
+Failures by binary:
 
-- **cd_options_parity ×9** — validated PWD/OLDPWD override after env
-  import per Src/init.c:1241-1257 + set_pwd_env (Src/params.c:955);
-  stale inherited `$PWD` no longer survives into paramtab.
-- **prompt_escapes_parity ×4** — C-exact `init_term` via
-  tgetent/tgetstr over `tccapnams` (Src/init.c:766-890); `%S`/`%s`
-  emit the real `so`/`se` caps for the live `$TERM` (screen/tmux →
-  `\e[3m`/`\e[23m`), wired via term_reinit_from_pm (params.c:5170)
-  and the promptexpand lazy load (prompt.c:189-190).
-- **glob_numeric_parity ×1** — absorbed `sort -n` now strtod-style
-  leading-numeric-prefix.
-- **xtrace_corpus_parity ×1** — fixed by the PWD + terminfo work
-  (PS4 path).
-- **discovered_parity_failures ×2** — `${"abc"}` / `${(Q)"abc"}` now
-  "bad substitution" per Src/subst.c:2993-3004 (raw Dnull at the
-  operator position); quoted-brace-body words route to the bridge so
-  paramsubst's gate actually runs.
-- **zsh_compat bulk_ah_fc_row_089** — reclassified flaky (below).
-- **2026-06-12: fzf-tab NUL-delimiter swap** (zinit_p10k 192/192) —
-  DQ `$'` stays literal in `/`-replacements per Src/subst.c:301
-  (Snull-token-only ANSI-C trigger; dquote_parse emits Qstring + raw
-  `'`, Src/lex.c:1519-1556), BUILTIN_PARAM_REPLACE honors its dq
-  flag, and stringsubst advances to the LAST spliced node per
-  Src/subst.c:339 so prefork never re-scans (= double-expands)
-  splat-inserted values.
-- **2026-06-12: zsh_compat zcompile rows ×3** — `.zwc` wordcode dump
-  emission (Src/parse.c:3334-3482 port); zsh_compat now 40924/1
-  (the -N flake).
-- **2026-06-12: invariant gates green** — no_tree_walker_dispatch
-  160/160 (dynamic-name AOP intercept gate added; two stale pins
-  repaired in fcda59d530), tree_walker_absent 8/8.
-- **corpus_parity (10 rows → 0, now 128/128)** — (a) the parity
-  decoder's strings now stay tokenized (byte→char widened) so BOTH
-  harness sides canonicalize through the one ported untokenize
-  (Src/exec.c:2077 + Src/lex.c:38 ztokens) in `ast_sexp::emit_str`;
-  the byte-level `zwc::untokenize` it previously used had no
-  Qstring/Qtick/OutangProc arms and dropped Bnull, so `"$(...)"`,
-  ``"`...`"``, `>(...)`, dq-escapes and `$'...'` rows falsely
-  diverged. (b) `[[ x =~ pat ]]` now builds the Regex cond node for
-  the lexer's token forms (Equals `\u{8d}`/Tilde `\u{98}`) per
-  par_cond_triple Src/parse.c:2685-2691 — the old check only matched
-  ASCII `=~`, so every real regex cond decoded as Binary.
+| Binary | Failing | Area |
+| ------ | ------- | ---- |
+| `config_state_parity` | 15 | Whole-config final-state diffs (zpwr / zinit / p10k real-world loads, `typeset -p` roundtrip, hook arrays) |
+| `zsh_compat_parity_gaps` | 4 | `trap -` handler listing, `-o hup`, `times` summary, `set +o` full dump |
+| `fuzz_discovered_parity` | 2 | NUL quoting format; string-form `TRAPINT` replacing a function trap |
+| `modules_parity` | 1 | `zmodload` nonexistent-module diagnostic prefix |
+| `case_parity` | 1 | `case` branch body seeing inherited status |
 
-Flaky (pass solo / under low load; not counted):
-- `read_parity::count_chars::read_k_reads_n_chars` — read -k timing
-  on non-tty stdin.
-- `parity_harness::zpwr_real_world_parity` — fails under full-sweep
-  load only.
-- `zsh_compat::bulk_ah_fc_row_089` — `[[ -N /dev/null ]]`:
-  atime/mtime race on the shared device node while the suite hammers
-  /dev/null in parallel.
+`binary_parity`'s three daemon-RPC tests (`zcompdump_byte_identical_roundtrip`,
+`zcompdump_synthesize_format`, `zstyle_canonical_roundtrip`) pass once
+`cargo build -p zshrs-daemon` has run. Cargo does not hand
+`CARGO_BIN_EXE_zshrs-daemon` to the root crate's integration tests, so the
+fallback path expects the binary pre-built; without it they fail for a
+harness reason, not a code gap. Build the daemon before reading this suite.
 
-## Per-binary failures
+`fuzz_discovered_parity::quote_flag_formatting::nul_quoting_format` shares a
+root cause with the `quote` fuzz mode: zshrs represents zsh's token bytes
+(`0x84`–`0xA1`, `Src/lex.c:38` `ztokens`) as Rust `char`s, so a genuine
+codepoint in U+0084–U+00A1 is indistinguishable from a token. C avoids the
+collision by Meta-escaping bytes. Verified boundary: U+009F/A0/A1 mangle,
+U+00A2 and above round-trip cleanly. Fixing it needs a representation
+change, not a call-site patch.
 
-None. The final three (`binary_parity`:
-`zcompdump_byte_identical_roundtrip`, `zcompdump_synthesize_format`,
-`zstyle_canonical_roundtrip`) exercise the daemon RPC and need
-`cargo build -p zshrs-daemon` first — cargo does not provide
-`CARGO_BIN_EXE_zshrs-daemon` to the root crate's integration tests,
-so the fallback path expects the binary pre-built. With the daemon
-built they pass (4/4, verified 2026-06-12); there was no code gap.
+## Relationship to the other two measurements
 
-Also landed 2026-06-12: the `.zwc` LOAD side — `getfpfunc` tries
-`try_dump_file` per fpath dir before the plain file
-(Src/exec.c:6238), `check_dump_file` loads the real body
-(Src/parse.c:3833), `source`/`.` try the dump (Src/init.c:1566).
-Cross-verified live in both directions: a zshrs-compiled `.zwc`
-autoloads in real zsh 5.9.1 and vice versa, source deleted.
+This suite is zshrs's own hand-written parity corpus. Two other numbers
+measure compatibility from different angles, and all three should be read
+together (see the Compatibility measurement section in `README.md`):
+
+- **Differential fuzz** (`bins/parity-fuzz.rs`) — 22,200 generated cases
+  against real zsh, 27 divergences across 70-of-74 clean modes.
+- **Upstream ztst corpus** (`tests/ztst_runner.rs`) — 70 passing, 0
+  failing, 1,292 cases pinned `#[ignore]` with per-case gap reasons.
+
+The ztst pins are the largest honest measure of remaining debt; this
+suite's 24 and the fuzzer's 27 are both much smaller because each samples
+a narrower slice of the language.
