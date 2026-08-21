@@ -2838,9 +2838,486 @@ pub fn get_comp_string() -> Option<String> {
             }
         }
 
+        // c:1928-1929 — `zsfree(origword); origword = ztrdup(s);`. C saves
+        // the word here, still tokenized, and `docomplete` hands THIS to
+        // `doexpansion` (c:826) / `spckword` (c:802). The port returns the
+        // untokenized form, so the tokenized one has to be saved separately.
+        // C saves it BEFORE the c:1931-2218 brace tail rewrites `s`, so this
+        // must stay above that block: `doexpansion` needs the word with its
+        // braces still in it, while the value returned to `docompletion` is
+        // the brace-stripped one.
+        if let Ok(mut g) = ORIGWORD.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = s.clone(); // c:1929
+        }
+
+        // c:1931-2218 — the brace-expansion tail. When the word being
+        // completed sits inside an UNFINISHED brace expansion (`ls /usr/{b`)
+        // the `{`, and everything from it up to the last comma before the
+        // cursor, is not part of the string to complete: zsh strips it out of
+        // `s`, records it in the `brbeg` chain, completes the remainder
+        // (`/usr/b` -> `/usr/bin`), and `instmatch` (compresult.c:170-210)
+        // re-inserts the recorded text at its recorded position. Without this
+        // the completer saw the literal `/usr/{b`, matched nothing, and the
+        // word was left untouched.
+        //
+        // REPRESENTATION NOTE (Rust-only, no C counterpart): C walks `s` as
+        // BYTES and every parser token (`Inbrace`, `Comma`, …) is exactly one
+        // byte, so C's `i` / `dp` / `boffs` / `pos` are byte offsets that also
+        // count one unit per token. In this port `s` is a metafied Rust
+        // `String` whose token chars live at U+0080..U+009F and therefore
+        // occupy TWO UTF-8 bytes each, so `String::len()` is NOT C's
+        // `strlen()`. The one-unit-per-C-byte quantity here is the CHAR count
+        // (a metafied string holds no char above U+00FF), so the whole scan
+        // runs over `Vec<char>` with char indices, and every `strlen()` in the
+        // C below becomes `.chars().count()`. That also keeps `boffs`
+        // commensurate with `offs`, which indexes the untokenized return
+        // value where each token is back to one ASCII char.
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::IGNOREBRACES) {
+            // c:1931
+            use crate::ported::lex::untokenize_ztokens;
+            use crate::ported::utils::{itype_end, makecommaspecial, skipparens};
+            use crate::ported::zle::comp_h::Brinfo;
+            use crate::ported::zsh_h::{
+                Comma, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound,
+                Qstring, Quest, Star, Stringg, Tilde, COMPLETEINWORD,
+            };
+            use crate::ported::ztype_h::{idigit, IIDENT};
+
+            let instring = INSTRING.load(Ordering::SeqCst); // for quotename()
+            let sv: Vec<char> = s.chars().collect();
+            let slen = sv.len();
+            let offs0 = OFFS.load(Ordering::SeqCst);
+
+            // c:1934 — `char *curs = s + (isset(COMPLETEINWORD) ? offs :
+            //                             (int)strlen(s));`
+            let curs: usize = if crate::ported::zsh_h::isset(COMPLETEINWORD) {
+                (offs0.max(0) as usize).min(slen)
+            } else {
+                slen
+            };
+            // c:1935 — `char *predup = dupstring(s), *dp = predup;`
+            let mut predup: Vec<char> = sv.clone();
+            let mut dp: usize = 0;
+            // c:1936-1937 — `char *bbeg = NULL, *bend = NULL, *dbeg = NULL;
+            //                char *lastp = NULL, *firsts = NULL;`
+            let mut bbeg: Option<usize> = None;
+            let mut bend: usize = 0;
+            let mut dbeg: usize = 0;
+            let mut lastp: Option<usize> = None;
+            let mut firsts: Option<usize> = None;
+            // c:1938 — `int cant = 0, begi = 0, boffs = offs, hascom = 0;`
+            let mut cant = 0i32;
+            let mut begi = 0i32;
+            let mut boffs = offs0;
+            let mut hascom = 0i32;
+
+            // The two chains. C threads `Brinfo` nodes through `next` while
+            // keeping `lastbrbeg` / `lastbrend` tail handles; the port builds
+            // flat vectors and links them once at the end, because
+            // `Option<Box<Brinfo>>` cannot be appended to in place without
+            // re-walking. `brbeg_v` is in discovery order (C appends via
+            // `lastbrbeg`), `brend_v` is in REVERSE discovery order (C
+            // prepends at c:2147-2148), which is exactly the order the
+            // c:2189-2201 fix-up and `instmatch` (compresult.c:183-198) walk.
+            let mut brbeg_v: Vec<Brinfo> = Vec::new();
+            let mut brend_v: Vec<Brinfo> = Vec::new();
+
+            // c:1940 — `for (i = 0, p = s; *p; p++, dp++, i++)`. The three
+            // increments run on every normal iteration AND on `continue`.
+            let mut i: i32 = 0;
+            let mut p: usize = 0;
+            while p < slen {
+                // c:1941-1945 — careful, ${... is not a brace expansion...
+                // we try to get braces after a parameter expansion right,
+                // but this may fail sometimes. sorry.
+                let c = sv[p];
+                if c == Stringg || c == Qstring {
+                    // c:1946
+                    let n1 = sv.get(p + 1).copied();
+                    if n1 == Some(Inbrace) || n1 == Some(Inpar) || n1 == Some(Inbrack) {
+                        // c:1947-1958 — a `${…}` / `$(…)` / `$[…]`: skip the
+                        // whole balanced group, it is not a brace expansion.
+                        let open = n1.unwrap(); // c:1948 `char *tp = p + 1;`
+                        let close = if open == Inbrace {
+                            Outbrace // c:1950
+                        } else if open == Inpar {
+                            Outpar // c:1951
+                        } else {
+                            Outbrack // c:1951
+                        };
+                        let tail: String = sv[p + 1..].iter().collect();
+                        let mut rest: &str = &tail;
+                        let unbalanced = skipparens(open, close, &mut rest); // c:1950-1952
+                        let adv = tail.chars().count() - rest.chars().count();
+                        if unbalanced != 0 {
+                            // c:1953-1954 — `tt = NULL; break;`
+                            tt = None;
+                            break;
+                        }
+                        let tp = p + 1 + adv;
+                        i += (tp - p) as i32; // c:1956
+                        dp += tp - p; // c:1957
+                        p = tp; // c:1958
+                    } else if n1 != Some(snull) {
+                        // c:1959 — paranoia: should be gone now
+                        let mut tp = p + 1; // c:1960
+                        // c:1962-1966
+                        while let Some(&tc) = sv.get(tp) {
+                            if tc == '^'
+                                || tc == Hat
+                                || tc == '='
+                                || tc == Equals
+                                || tc == '~'
+                                || tc == Tilde
+                                || tc == '#'
+                                || tc == Pound
+                                || tc == '+'
+                            {
+                                tp += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let tc = sv.get(tp).copied();
+                        // c:1967-1970
+                        if tc == Some(Quest)
+                            || tc == Some(Star)
+                            || tc == Some(Stringg)
+                            || tc == Some(Qstring)
+                            || tc == Some('?')
+                            || tc == Some('*')
+                            || tc == Some('$')
+                            || tc == Some('-')
+                            || tc == Some('!')
+                            || tc == Some('@')
+                        {
+                            // c:1971 — `p++, i++;` (C advances neither `dp`
+                            // nor the predup cursor here; transcribed as-is).
+                            p += 1;
+                            i += 1;
+                        } else {
+                            // c:1974-1976 — `if (idigit(*tp)) while (idigit(*tp)) tp++;`
+                            if sv
+                                .get(tp)
+                                .is_some_and(|&x| (x as u32) < 128 && idigit(x as u8))
+                            {
+                                while sv
+                                    .get(tp)
+                                    .is_some_and(|&x| (x as u32) < 128 && idigit(x as u8))
+                                {
+                                    tp += 1;
+                                }
+                            } else {
+                                // c:1977-1978 — `else if ((ie = itype_end(tp,
+                                // IIDENT, 0)) != tp) tp = ie;`. `itype_end`
+                                // returns a BYTE offset into the tail it was
+                                // handed, so convert it back to the char
+                                // count this scan works in.
+                                let tail: String = sv[tp..].iter().collect();
+                                let ie_bytes = itype_end(&tail, IIDENT as u32, false);
+                                let ie = tail[..ie_bytes].chars().count();
+                                if ie != 0 {
+                                    tp += ie;
+                                } else {
+                                    // c:1980-1981 — `tt = NULL; break;`
+                                    tt = None;
+                                    break;
+                                }
+                            }
+                            if sv.get(tp).copied() == Some(Inbrace) {
+                                // c:1983-1985
+                                cant = 1;
+                                break;
+                            }
+                            tp -= 1; // c:1987
+                            i += (tp - p) as i32; // c:1988
+                            dp += tp - p; // c:1989
+                            p = tp; // c:1990
+                        }
+                    }
+                } else if p < curs {
+                    // c:1993
+                    if c == Outbrace {
+                        // c:1994-2000 — HERE: strip and remember code from
+                        // last comma to here.
+                        cant = 1;
+                        break;
+                    }
+                    if c == Inbrace {
+                        // c:2002
+                        let tail: String = sv[p..].iter().collect(); // c:2003 `char *tp = p;`
+                        let mut rest: &str = &tail;
+                        let unbalanced = skipparens(Inbrace, Outbrace, &mut rest); // c:2005
+                        if unbalanced == 0 {
+                            // c:2006-2019 — Balanced brace: skip. We only deal
+                            // with unfinished braces, so
+                            //  something{foo<x>bar,morestuff}else
+                            // doesn't work.
+                            let tp = p + (tail.chars().count() - rest.chars().count());
+                            i += (tp - p) as i32 - 1; // c:2016
+                            dp += tp - p - 1; // c:2017
+                            p = tp - 1; // c:2018
+                            // c:2019 `continue;` — the for-increments still run.
+                            p += 1;
+                            dp += 1;
+                            i += 1;
+                            continue;
+                        }
+                        makecommaspecial(true); // c:2021
+                        if let Some(bb) = bbeg {
+                            // c:2022-2048
+                            let len = bend - bb; // c:2024
+                            NBRBEG.fetch_add(1, Ordering::SeqCst); // c:2027
+                            // c:2037-2039 — `new->str = dupstrpfx(bbeg, len);
+                            //   new->str = ztrdup(quotename(new->str));
+                            //   untokenize(new->str);`
+                            let raw: String = sv[bb..bb + len].iter().collect();
+                            let bstr = untokenize_ztokens(&quotename(&raw, instring));
+                            // c:2041-2043 — `*dbeg = '\0';
+                            //   new->qpos = strlen(quotename(predup));
+                            //   *dbeg = '{';` — quote only the part of predup
+                            //   BEFORE the brace run. (C's restore writes a
+                            //   literal `{` back over the token byte; the
+                            //   memmove at c:2046 overwrites that position
+                            //   immediately, so the port just slices.)
+                            let pre: String = predup[..dbeg].iter().collect();
+                            let qpos = quotename(&pre, instring).chars().count() as i32;
+                            brbeg_v.push(Brinfo {
+                                next: None,   // c:2029
+                                prev: None,   // see the prev note at c:2194
+                                str: Some(bstr),
+                                pos: begi,    // c:2040
+                                qpos,         // c:2042
+                                curpos: 0,
+                            });
+                            i -= len as i32; // c:2044
+                            boffs -= len as i32; // c:2045
+                            predup.drain(dbeg..dbeg + len); // c:2046
+                            dp -= len; // c:2047
+                        }
+                        bbeg = Some(p); // c:2049
+                        lastp = Some(p); // c:2049
+                        dbeg = dp; // c:2050
+                        bend = p + 1; // c:2051
+                        begi = i; // c:2052
+                    } else if c == Comma && bbeg.is_some() {
+                        // c:2053-2056
+                        bend = p + 1;
+                        hascom = 1;
+                    }
+                } else {
+                    // c:2057-2058 — On or after the cursor position
+                    if c == Inbrace {
+                        // c:2059
+                        let tail: String = sv[p..].iter().collect(); // c:2060
+                        let mut rest: &str = &tail;
+                        let unbalanced = skipparens(Inbrace, Outbrace, &mut rest); // c:2062
+                        if unbalanced == 0 {
+                            // c:2063-2067 — Balanced braces after the cursor.
+                            let tp = p + (tail.chars().count() - rest.chars().count());
+                            i += (tp - p) as i32 - 1; // c:2068
+                            dp += tp - p - 1; // c:2069
+                            p = tp - 1; // c:2070
+                            p += 1; // c:2071 `continue;`
+                            dp += 1;
+                            i += 1;
+                            continue;
+                        }
+                        cant = 1; // c:2073
+                        makecommaspecial(true); // c:2074
+                        break; // c:2075
+                    }
+                    if p == curs {
+                        // c:2077-2085 — We've reached the cursor position.
+                        // If there's a pending open brace at this point we
+                        // need to stack the text. We've marked the bit we
+                        // don't want from bbeg to bend, which might be a
+                        // comma between the opening brace and us.
+                        if let Some(bb) = bbeg {
+                            // c:2086-2111 — identical body to c:2022-2048.
+                            let len = bend - bb; // c:2088
+                            NBRBEG.fetch_add(1, Ordering::SeqCst); // c:2091
+                            let raw: String = sv[bb..bb + len].iter().collect();
+                            let bstr = untokenize_ztokens(&quotename(&raw, instring)); // c:2100-2102
+                            let pre: String = predup[..dbeg].iter().collect();
+                            let qpos = quotename(&pre, instring).chars().count() as i32; // c:2105
+                            brbeg_v.push(Brinfo {
+                                next: None, // c:2093
+                                prev: None,
+                                str: Some(bstr),
+                                pos: begi, // c:2103
+                                qpos,
+                                curpos: 0,
+                            });
+                            i -= len as i32; // c:2107
+                            boffs -= len as i32; // c:2108
+                            predup.drain(dbeg..dbeg + len); // c:2109
+                            dp -= len; // c:2110
+                        }
+                        bbeg = None; // c:2112
+                    }
+                    if c == Comma {
+                        // c:2114-2123 — Comma on or after cursor. We set bbeg
+                        // to NULL at the cursor; here it's being used to find
+                        // the first comma afterwards.
+                        if bbeg.is_none() {
+                            bbeg = Some(p);
+                        }
+                        hascom = 2;
+                    } else if c == Outbrace {
+                        // c:2124-2131 — Closing brace on or after the cursor.
+                        if bbeg.is_none() {
+                            bbeg = Some(p); // c:2135-2136
+                        }
+                        let bb = bbeg.unwrap();
+                        let len = p + 1 - bb; // c:2137
+                        if firsts.is_none() {
+                            firsts = Some(p + 1); // c:2138-2139
+                        }
+                        NBREND.fetch_add(1, Ordering::SeqCst); // c:2142
+                        let raw: String = sv[bb..bb + len].iter().collect();
+                        let bstr = untokenize_ztokens(&quotename(&raw, instring)); // c:2150-2152
+                        // c:2147-2148 — `new->next = brend; brend = new;`
+                        brend_v.insert(
+                            0,
+                            Brinfo {
+                                next: None,
+                                prev: None,
+                                str: Some(bstr),
+                                pos: dp as i32 - len as i32 + 1, // c:2153
+                                qpos: len as i32,                // c:2154
+                                curpos: 0,
+                            },
+                        );
+                        bbeg = None; // c:2155
+                    }
+                }
+                p += 1; // c:1940 for-increments
+                dp += 1;
+                i += 1;
+            }
+            if cant != 0 {
+                // c:2159-2163 — `freebrinfo(brbeg); freebrinfo(brend);
+                //   brbeg = lastbrbeg = brend = lastbrend = NULL;
+                //   nbrbeg = nbrend = 0;`
+                brbeg_v.clear();
+                brend_v.clear();
+                if let Some(b) = BRBEG.get() {
+                    *b.lock().unwrap() = None;
+                }
+                if let Some(b) = BREND.get() {
+                    *b.lock().unwrap() = None;
+                }
+                NBRBEG.store(0, Ordering::SeqCst);
+                NBREND.store(0, Ordering::SeqCst);
+            } else {
+                // c:2165 — `if (p == curs && bbeg)`. Reached when the cursor
+                // sits at the very END of the word (the common
+                // `ls /usr/{b<TAB>` shape): the loop ran off the end with an
+                // open brace still pending, so the run from `{` to the last
+                // comma has to be stacked now.
+                if p == curs {
+                    if let Some(bb) = bbeg {
+                        let len = bend - bb; // c:2167
+                        NBRBEG.fetch_add(1, Ordering::SeqCst); // c:2170
+                        let raw: String = sv[bb..bb + len].iter().collect();
+                        let bstr = untokenize_ztokens(&quotename(&raw, instring)); // c:2179-2181
+                        let pre: String = predup[..dbeg].iter().collect();
+                        let qpos = quotename(&pre, instring).chars().count() as i32; // c:2184
+                        brbeg_v.push(Brinfo {
+                            next: None, // c:2172
+                            prev: None,
+                            str: Some(bstr),
+                            pos: begi, // c:2182
+                            qpos,
+                            curpos: 0,
+                        });
+                        boffs -= len as i32; // c:2186
+                        predup.drain(dbeg..dbeg + len); // c:2187
+                    }
+                }
+                if !brend_v.is_empty() {
+                    // c:2189-2201 — rewrite every closing-brace node from a
+                    // position-in-predup pair into the (tail length, quoted
+                    // tail length) pair `instmatch` wants, stripping the run
+                    // out of predup as it goes. The walk is head-to-tail,
+                    // i.e. LAST-discovered first, so the earlier nodes'
+                    // recorded positions stay valid while predup shrinks.
+                    //
+                    // RUST-ONLY: C also threads `bp->prev` here (c:2194) to
+                    // give `instmatch` a doubly-linked chain to walk
+                    // backwards from `lastbrend`. `Option<Box<Brinfo>>` owns
+                    // its successor, so a real back-pointer is impossible;
+                    // compresult.rs:362-372 flattens both chains into `Vec`s
+                    // and walks `brend` by descending index instead, which is
+                    // the same traversal.
+                    for bp in brend_v.iter_mut() {
+                        let pos = bp.pos.max(0) as usize; // c:2196
+                        let l = bp.qpos.max(0) as usize; // c:2197
+                        let cut = (pos + l).min(predup.len());
+                        let tail: String = predup[cut..].iter().collect();
+                        bp.pos = tail.chars().count() as i32; // c:2198
+                        bp.qpos = quotename(&tail, instring).chars().count() as i32; // c:2199
+                        predup.drain(pos.min(predup.len())..cut); // c:2200
+                    }
+                }
+                if hascom != 0 {
+                    // c:2203-2213
+                    if let Some(lp) = lastp {
+                        // c:2204-2210 — `*lastp = '\0';
+                        //   untokenize(lastprebr = ztrdup(quotename(s)));`
+                        let pre: String = sv[..lp].iter().collect();
+                        let v = untokenize_ztokens(&quotename(&pre, instring));
+                        if let Ok(mut g) =
+                            LASTPREBR.get_or_init(|| Mutex::new(String::new())).lock()
+                        {
+                            *g = v;
+                        }
+                    }
+                    // c:2211-2212 — `if ((lastpostbr = ztrdup(firsts)))
+                    //                    untokenize(lastpostbr);`
+                    if let Some(f) = firsts {
+                        let post: String = sv[f.min(slen)..].iter().collect();
+                        if let Ok(mut g) =
+                            LASTPOSTBR.get_or_init(|| Mutex::new(String::new())).lock()
+                        {
+                            *g = untokenize_ztokens(&post);
+                        }
+                    }
+                }
+                // c:2214-2216 — `zsfree(s); s = ztrdup(predup); offs = boffs;`
+                s = predup.iter().collect();
+                OFFS.store(boffs, Ordering::SeqCst);
+
+                // Publish the two chains. C built them in place through the
+                // `brbeg`/`brend` globals as the scan ran.
+                let link = |mut v: Vec<Brinfo>| -> Option<Box<Brinfo>> {
+                    let mut head: Option<Box<Brinfo>> = None;
+                    while let Some(mut node) = v.pop() {
+                        node.next = head;
+                        head = Some(Box::new(node));
+                    }
+                    head
+                };
+                if let Ok(mut g) = BRBEG.get_or_init(|| Mutex::new(None)).lock() {
+                    *g = link(brbeg_v);
+                }
+                if let Ok(mut g) = BREND.get_or_init(|| Mutex::new(None)).lock() {
+                    *g = link(brend_v);
+                }
+                tracing::debug!(
+                    target: "compsys_args",
+                    s = %s, offs = boffs,
+                    nbrbeg = NBRBEG.load(Ordering::SeqCst),
+                    nbrend = NBREND.load(Ordering::SeqCst),
+                    "get_comp_string brace tail"
+                );
+            }
+        }
+
         // c:2219 — zcontext_restore(); return s.
-        // NOTE: quote-form cleanup (c:1709-1926) + brace-expansion
-        // (c:1931-2218) not ported; return the lexer word untokenized.
+        // NOTE: quote-form cleanup (c:1709-1926) not fully ported; return the
+        // lexer word untokenized.
         //
         // C returns `s` TOKENIZED, and `docomplete`'s expand-vs-complete
         // decision (c:704-793) is written entirely in parser tokens —
@@ -2853,15 +3330,6 @@ pub fn get_comp_string() -> Option<String> {
             .lock()
         {
             *g = s.clone();
-        }
-        // c:1928-1929 — `zsfree(origword); origword = ztrdup(s);`. C saves
-        // the word here, still tokenized, and `docomplete` hands THIS to
-        // `doexpansion` (c:826) / `spckword` (c:802). The port returns the
-        // untokenized form, so the tokenized one has to be saved separately.
-        // (C saves it before the c:1931-2218 brace tail, which is not ported;
-        // at this point `s` is therefore the same string C would save.)
-        if let Ok(mut g) = ORIGWORD.get_or_init(|| Mutex::new(String::new())).lock() {
-            *g = s.clone(); // c:1929
         }
         zcontext_restore();
         return Some(untokenize(&s));
