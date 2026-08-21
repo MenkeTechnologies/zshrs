@@ -55972,3 +55972,35 @@ either way — an A/B on a 2000-line file was dominated by machine load
 (the same command measured 0.41s and 5.32s in different runs), so the
 earlier worry that per-command sourcing would cost startup time is
 unmeasured, not confirmed.
+
+**Second attempt, 2026-08-21 — the command-substitution blocker is
+re-entrancy, not output capture.**
+
+The first attempt's guess was that `$(source f)` lost output because
+`execode` dispatched to the SESSION executor while the capture sink lived
+on a nested one. That is wrong. Making `execode` prefer the innermost
+active executor (`try_with_executor`, falling back to the session one)
+changed nothing, and instrumenting the dispatch showed why: inside
+`$( … )` execode is already reached with `current=true` — the right
+executor — and still produced no output.
+
+Capture is not the mechanism either. It is done at the FD level
+(`vm_helper.rs`: "A shell cannot capture its output into an in-process
+buffer … The capture is therefore at fd" level), so any write to fd 1
+would be picked up. And it is not buffering: a 2000-line sourced file
+inside `$( … )` produced NOTHING, where the same file at top level works
+and zsh returns 16892 characters.
+
+What it actually is: re-entering the executor from inside a nested
+command substitution. `with_session_context`'s doc block already names
+this hazard from the other direction — it is deliberately not a global
+fallback in `execute_script_zsh_pipeline` because that "would re-enter
+the executor on nested command substitution and block on input". Driving
+`loop()` from `bin_dot` walks into the same re-entrancy from the other
+side.
+
+So the remaining work is a re-entrant execution path for nested contexts,
+not a patch to the source path. Until that exists, the whole-file compile
+stays: it is wrong for lexer-time state (the bug above) but correct
+everywhere else, whereas the loop-driven version silently breaks every
+`$(source …)`.
