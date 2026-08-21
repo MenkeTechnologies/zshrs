@@ -3499,8 +3499,14 @@ pub fn do_load_module(table: &mut modulestab, name: &str, silent: i32) -> i32 {
     let ret = try_load_module(table, name);
     if ret == 0 && silent == 0 {
         // c:1615
-        // c:1618-1621 — zwarn("failed to load module ...")
-        zwarn(&format!("failed to load module: {}", name));
+        // c:1622 `zwarn("failed to load module `%s': %s", name, dlerror())`.
+        // The dlerror TAIL is deliberately omitted: zshrs's modules are
+        // statically linked, so nothing was dlopened and there is no real
+        // diagnostic to report — synthesising one would be a fabricated
+        // message, not a port. Prefix + rc are the pinned contract
+        // (docs/BUGS.md #376, `zmodload_nonexistent_diagnostic` in
+        // tests/parity/modules_parity.rs). Both emit sites must agree.
+        zwarn(&format!("failed to load module `{}'", name));
     }
     ret // c:1624
 }
@@ -4715,20 +4721,15 @@ pub fn require_module(
         // the canonical zwarn (gated by silent).
         if try_load_module(table, &mname) == 0 {
             if silent == 0 {
-                // c:1639 — `zwarn("failed to load module: %s", name);`. That is
-                // the text of the DUMMY loader C compiles when no dynamic
-                // loading is available (c:1634-1642), which is exactly zshrs's
-                // configuration: every module is statically linked and
-                // `try_load_module` (module.rs:3458) is a `module_linked`
-                // lookup, so there is no dlopen and no dlerror string to
-                // append. C's dynamic branch (c:1618) prints ``failed to load
-                // module `%s': %s`` with the linker diagnostic — unreachable
-                // here, and unmatchable byte-for-byte in any case because its
-                // text embeds the reference binary's own MODULE_DIR. This site
-                // used the backquoted dynamic wording without the diagnostic,
-                // so the same event was reported two different ways depending
-                // on which path reached it (the other is module.rs:3503).
-                crate::ported::utils::zwarn(&format!("failed to load module: {}", mname));
+                // c:1622 — same message and same reasoning as do_load_module
+                // (module.rs, `failed to load module `%s'` with the dlerror tail
+                // omitted). docs/BUGS.md #376 records the backquoted prefix as
+                // the FINAL intended state and the parity test pins it, so this
+                // site must not diverge from the other one.
+                crate::ported::utils::zwarn(&format!(
+                    "failed to load module `{}'",
+                    mname
+                ));
             }
             crate::ported::signals::unqueue_signals();
             return 1;

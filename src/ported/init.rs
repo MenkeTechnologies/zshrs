@@ -1411,25 +1411,13 @@ pub fn init_signals() {
 
     #[cfg(unix)]
     unsafe {
-        // c:1411-1412 — detect parent-installed SIG_IGN on SIGQUIT.
-        let mut act: libc::sigaction = std::mem::zeroed();
-        if libc::sigaction(libc::SIGQUIT, std::ptr::null(), &mut act) == 0
-            && act.sa_sigaction == libc::SIG_IGN
-        {
-            // c:1445 `sigtrapped[SIGQUIT] = ZSIG_IGNORED;` — a shell that
-            // INHERITS SIGQUIT as SIG_IGN (nohup, a `trap '' QUIT` parent,
-            // most daemon supervisors) records it as an ignored trap, so
-            // `trap` lists `trap -- '' QUIT` and `entersubsh` keeps it
-            // ignored in children (c:Src/exec.c:1231). The trap table IS
-            // modeled now (`signals::sigtrapped`), so record it instead of
-            // dropping it: without this, `nohup zsh -fc trap` printed the
-            // QUIT line and zshrs printed nothing.
-            if let Ok(mut guard) = crate::ported::signals::sigtrapped.lock() {
-                if let Some(slot) = guard.get_mut(libc::SIGQUIT as usize) {
-                    *slot = crate::ported::zsh_h::ZSIG_IGNORED;
-                }
-            }
-        }
+        // c:1444-1445 — detect a parent-installed SIG_IGN on SIGQUIT and
+        // record it as an ignored trap. The body lives in
+        // `extensions::startup_signals` because `bins/zshrs.rs`'s `-c` and
+        // script-file dispatch bypass this function entirely and need the
+        // same two lines; keeping ONE implementation avoids the two paths
+        // drifting apart.
+        crate::startup_signals::record_inherited_sigquit_ignore();
         // c:1414-1416 — `#ifndef QDEBUG signal_ignore(SIGQUIT)`.
         signal_ignore(libc::SIGQUIT);
 

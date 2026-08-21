@@ -13617,6 +13617,12 @@ impl fusevm::ShellHost for ZshrsHost {
                         (fd, dup)
                     })
                     .collect(),
+                // c:Src/signals.c:39 `sigtrapped` — saved so End restores the
+                // parent's per-signal trap flags (see the field docs).
+                sigtrapped: crate::ported::signals::sigtrapped
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default(),
                 // c:Src/exec.c:160 `int subsh;` — saved so End can put the
                 // parent's value back (subshells nest).
                 subsh: crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed),
@@ -13679,6 +13685,30 @@ impl fusevm::ShellHost for ZshrsHost {
                         // c:1090-1092 — otherwise keep ONLY (POSIXTRAPS && ignored).
                         posixtraps && body.is_empty()
                     });
+                }
+                // c:1088-1092 `unsettrap(sig)` clears the sigtrapped FLAGS as
+                // well as the body. Applying the same predicate to the flag
+                // vector keeps the two stores in step; without it a subshell
+                // dropped the body but left the signal marked trapped, so a
+                // listing that consults sigtrapped reported a phantom
+                // `trap -- '' SIG` inside `( … )`.
+                if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
+                    let count = crate::ported::signals_h::SIGCOUNT as usize;
+                    for sig in 0..st.len().min(count + 1) {
+                        let state = st[sig];
+                        if state == 0 {
+                            continue;
+                        }
+                        // c:1090 — function-form traps survive.
+                        if (state & crate::ported::zsh_h::ZSIG_FUNC) != 0 {
+                            continue;
+                        }
+                        // c:1091 — under POSIX_TRAPS an IGNORED trap survives.
+                        if posixtraps && (state & crate::ported::zsh_h::ZSIG_IGNORED) != 0 {
+                            continue;
+                        }
+                        st[sig] = 0; // c:1092 unsettrap(sig)
+                    }
                 }
             }
             // c:Src/exec.c:2862 — subshell fork flags carry ESUB_PGRP,
@@ -13784,6 +13814,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 // dies with the fork in C; restore the parent's value here.
                 crate::ported::exec::subsh
                     .store(snap.subsh, std::sync::atomic::Ordering::Relaxed);
+                // c:Src/signals.c:39 — same fork-copy reasoning for the
+                // per-signal trap flags cleared at subshell entry.
+                if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
+                    *st = snap.sigtrapped.clone();
+                }
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.

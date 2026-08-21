@@ -15008,6 +15008,43 @@ pub fn bin_trap(
                 TrapEntry::Str(sig.clone(), body.clone()),
             ));
         }
+        // c:7358-7361 — `} else if (sigtrapped[sig]) { if (!siglists[sig])
+        //   printf("trap -- '' %s\n", name); ... }`
+        // C walks the sigtrapped[] ARRAY, so a signal whose trap state is
+        // set but which has NO body still lists, as `trap -- '' SIG`. The
+        // canonical case is an INHERITED SIG_IGN recorded at startup
+        // (c:Src/init.c:1444-1445 sets sigtrapped[SIGQUIT] = ZSIG_IGNORED
+        // under nohup / a `trap '' QUIT` parent). zshrs builds this listing
+        // from the name->body table plus shfunctab, neither of which holds a
+        // body-less entry, so those signals were invisible: `nohup zshrs -fc
+        // trap` printed nothing where zsh printed `trap -- '' QUIT`.
+        {
+            let states: Vec<(usize, i32)> =
+                match crate::ported::signals::sigtrapped.lock() {
+                    Ok(g) => g.iter().copied().enumerate().collect(),
+                    Err(_) => Vec::new(),
+                };
+            for (sig, state) in states {
+                // c:7358 `else if (sigtrapped[sig])`
+                if state == 0 || (state & crate::ported::zsh_h::ZSIG_FUNC) != 0 {
+                    continue;
+                }
+                let idx = sig as i32;
+                // Already covered by a function-form or a stored body.
+                if combined.iter().any(|(i, _)| *i == idx) {
+                    continue;
+                }
+                let name = crate::ported::jobs::getsigname(idx); // c:7359
+                if name.is_empty() {
+                    continue;
+                }
+                if traps.contains_key(&name) {
+                    continue;
+                }
+                // c:7360-7361 — no siglists[sig] body → empty-body entry.
+                combined.push((idx, TrapEntry::Str(name, String::new())));
+            }
+        }
         combined.sort_by_key(|(idx, _)| *idx);
         for (_idx, entry) in &combined {
             match entry {

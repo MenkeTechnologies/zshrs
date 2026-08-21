@@ -13,6 +13,7 @@ use super::zle_h::{
     widget, WidgetImpl, TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, ZLE_ISCOMP,
     ZLE_KEEPSUFFIX, ZLE_MENUCMP,
 };
+use crate::ported::utils::quotedzputs;
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{options, DISABLED, OPT_ISSET};
 
@@ -963,7 +964,17 @@ pub fn scanlistwidgets(list: i32) -> i32 {
         }
         return 0;
     }
-    let mut entries: Vec<(String, String)> = Vec::new();
+    // c:521-525 / c:532-536 — a `zle -C` widget carries WIDGET_NCOMP and
+    // prints its completion triple (`wid`, `func`), not a function name.
+    // The previous collection flattened every non-UserFunc impl to the
+    // bare widget name, so `zle -C w .expand-or-complete _main_complete`
+    // listed as `zle -N w` under -L and as a bare `w` under -l, losing
+    // both the `-C` marker and the two operands.
+    enum Listed {
+        Fn(String),
+        Comp(String, String),
+    }
+    let mut entries: Vec<(String, Listed)> = Vec::new();
     for (name, t) in tab.iter() {
         let w = match t.widget.as_ref() {
             Some(w) => w,
@@ -973,14 +984,16 @@ pub fn scanlistwidgets(list: i32) -> i32 {
         if (w.flags & WIDGET_INT) != 0 {
             continue;
         }
-        let fn_name = match &w.u {
-            WidgetImpl::UserFunc(s) => s.clone(),
-            // c:516-517 — non-user widgets (`zle -C`/`zle -A` linked)
-            // print with the same `zle -N name [body]` shape; treat
-            // internal-impl variants as bare-name entries.
-            _ => name.clone(),
+        let listed = match &w.u {
+            // c:521 `if (w->flags & WIDGET_NCOMP)`
+            WidgetImpl::Comp { wid, func, .. } => Listed::Comp(wid.clone(), func.clone()),
+            WidgetImpl::UserFunc(s) => Listed::Fn(s.clone()),
+            // An internal-impl variant with no NCOMP flag has no separate
+            // function name; C's `strcmp(t->nam, w->u.fnnam)` then compares
+            // equal and prints the bare name.
+            _ => Listed::Fn(name.clone()),
         };
-        entries.push((name.clone(), fn_name));
+        entries.push((name.clone(), listed));
     }
     drop(tab);
     // c:533-541 — emit. Sort by name for stable output (C iterates the
@@ -988,7 +1001,7 @@ pub fn scanlistwidgets(list: i32) -> i32 {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
-    for (name, fn_name) in &entries {
+    for (name, listed) in &entries {
         // c:Src/Zle/zle_thingy.c:533 — `if (list)`: a NON-zero list mode
         // (`-L`, list==1) prints the re-definable `zle -N name [fn]` form;
         // the abbreviated `name (fn)` form is the `else` (plain `-l`,
@@ -996,18 +1009,58 @@ pub fn scanlistwidgets(list: i32) -> i32 {
         // emitted the abbreviated form and plain `zle -l` emitted the
         // `zle -N` form — the exact inverse of zsh.
         if list != 0 {
-            // c:534 — re-definable `zle -N name [fn]` form.
-            if &fn_name != &name {
-                let _ = writeln!(handle, "zle -N {} {}", name, fn_name);
-            } else {
-                let _ = writeln!(handle, "zle -N {}", name);
+            // c:517 — `printf("zle -%c ", (w->flags & WIDGET_NCOMP) ? 'C' : 'N');`
+            let kind = match listed {
+                Listed::Comp(..) => 'C',
+                Listed::Fn(_) => 'N',
+            };
+            // c:518-519 — `if (t->nam[0] == '-') fputs("-- ", stdout);` so a
+            // leading-dash widget name is not read back as an option.
+            let dashdash = if name.starts_with('-') { "-- " } else { "" };
+            match listed {
+                // c:521-525 — ` wid func`, both quoted.
+                Listed::Comp(wid, func) => {
+                    let _ = writeln!(
+                        handle,
+                        "zle -{} {}{} {} {}",
+                        kind,
+                        dashdash,
+                        quotedzputs(name),
+                        quotedzputs(wid),
+                        quotedzputs(func)
+                    );
+                }
+                // c:526-529 — ` fnnam` only when it differs from the name.
+                Listed::Fn(fn_name) => {
+                    if fn_name != name {
+                        let _ = writeln!(
+                            handle,
+                            "zle -{} {}{} {}",
+                            kind,
+                            dashdash,
+                            quotedzputs(name),
+                            quotedzputs(fn_name)
+                        );
+                    } else {
+                        let _ =
+                            writeln!(handle, "zle -{} {}{}", kind, dashdash, quotedzputs(name));
+                    }
+                }
             }
         } else {
-            // c:539 — abbreviated `name (fn)` when distinct.
-            if &fn_name != &name {
-                let _ = writeln!(handle, "{} ({})", name, fn_name);
-            } else {
-                let _ = writeln!(handle, "{}", name);
+            match listed {
+                // c:532-536 — `name -C wid func`.
+                Listed::Comp(wid, func) => {
+                    let _ = writeln!(handle, "{} -C {} {}", name, wid, func);
+                }
+                // c:537-540 — abbreviated `name (fn)` when distinct.
+                Listed::Fn(fn_name) => {
+                    if fn_name != name {
+                        let _ = writeln!(handle, "{} ({})", name, fn_name);
+                    } else {
+                        let _ = writeln!(handle, "{}", name);
+                    }
+                }
             }
         }
     }
