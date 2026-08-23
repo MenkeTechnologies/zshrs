@@ -760,7 +760,7 @@ impl PersistentShell {
             }
         }
         if let Some(zsh_src) = ztst_zsh_source() {
-            for name in ["Functions", "Completion"] {
+            for name in ["Functions", "Completion", "Misc"] {
                 let real = zsh_src.join(name);
                 if real.is_dir() {
                     let _ = std::os::unix::fs::symlink(&real, sandbox.join(name));
