@@ -160,7 +160,15 @@ fn get_highlight_style_key(role: HighlightRole) -> &'static str {
 /// path underline; zsh-autosuggestions default: fg=8).
 fn get_default_style(role: HighlightRole) -> &'static str {
     match role {
-        HighlightRole::error => "fg=red",
+        // f-sy-h's default is `unknown-token = fg=red,bold`
+        // (fast-highlight:58), and it is what this engine replaces on a
+        // daily-driver rc. Measured over a pty against real zsh + f-sy-h,
+        // an incomplete command word emits `\e[1m\e[31m` (bold red) and
+        // this engine emitted a plain `\e[31m`, so the two diverged on
+        // every partially-typed command. z-sy-h's plain `fg=red` is the
+        // odd one out here; $ZSH_HIGHLIGHT_STYLES[unknown-token] still
+        // overrides for anyone who wants it back.
+        HighlightRole::error => "fg=red,bold",
         HighlightRole::command | HighlightRole::keyword => match role {
             HighlightRole::keyword => "fg=yellow",
             _ => "fg=green",
@@ -1408,7 +1416,32 @@ impl<'s> Highlighter<'s> {
                 }
                 tokv if (CASE..=TYPESET).contains(&tokv) => {
                     // fish:887-911 — visit_keyword: reserved words.
-                    self.color_span(t.start, t.end, HighlightRole::keyword);
+                    //
+                    // EXCEPT the typeset family. `declare`, `export`,
+                    // `float`, `integer`, `local`, `readonly` and
+                    // `typeset` all lex to the single TYPESET token
+                    // (hashtable.rs RESWDS), and while zsh does list
+                    // them in `$reswords`, they are reserved only so the
+                    // parser can treat their arguments as assignments —
+                    // as hashtable.rs:862-864 already puts it, they
+                    // "really live as builtins, so a reserved word
+                    // inventory should exclude them".
+                    //
+                    // fast-syntax-highlighting agrees and paints them as
+                    // commands. Measured against f-sy-h in real zsh over
+                    // a pty, final colour of the completed word:
+                    //   declare/typeset/local/export/readonly/integer
+                    //                              -> SGR 32 (green)
+                    //   if/while                   -> SGR 33 (yellow)
+                    // This engine painted the whole range yellow, so
+                    // every declaration command came out the colour of
+                    // a control-flow keyword.
+                    let role = if tokv == TYPESET {
+                        HighlightRole::command
+                    } else {
+                        HighlightRole::keyword
+                    };
+                    self.color_span(t.start, t.end, role);
                     if tokv == TYPESET {
                         is_typeset = true;
                     }
