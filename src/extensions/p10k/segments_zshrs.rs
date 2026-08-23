@@ -25,7 +25,7 @@
 //!   exported by fusevm (VM keeps its JIT state private) — the segment
 //!   shows the DISK-cache state only; counters are a fusevm follow-up.
 //! - zshrs_cache: rkyv shard files under `$ZSHRS_HOME` (default
-//!   `~/.zshrs`) — `autoloads.rkyv` (autoload_cache.rs:424-433),
+//!   `~/.zshrs`) — `autoloads.rkyv` (autoload_cache.rs:491-500),
 //!   `scripts.rkyv` (script_cache.rs:3), plus the daemon's
 //!   `images/*.rkyv` (daemon/paths.rs:141-145). Stat-only, TTL-cached.
 //! - zshrs_history: sqlite store at `$ZSHRS_HOME/zshrs_history.db`
@@ -309,7 +309,7 @@ fn jit_content(count: usize, bytes: u64) -> String {
 }
 
 /// `$ZSHRS_HOME` else `~/.zshrs` — the single directory every zshrs
-/// artifact lives under. Mirrors autoload_cache.rs:424-433 /
+/// artifact lives under. Mirrors autoload_cache.rs:491-500 /
 /// history.rs:137-145 / daemon CachePaths::resolve
 /// (daemon/paths.rs:190-200); duplicated because those roots are
 /// module-private and this module may not edit other files.
@@ -477,7 +477,7 @@ fn zshrs_jit_segments() -> Vec<Segment> {
 // ---------------------------------------------------------------------
 
 /// rkyv cache-shard census under `$ZSHRS_HOME`: top-level `*.rkyv`
-/// (autoloads.rkyv — autoload_cache.rs:3/424-433; scripts.rkyv —
+/// (autoloads.rkyv — autoload_cache.rs:3/491-500; scripts.rkyv —
 /// script_cache.rs:3) plus the daemon's sharded `images/*.rkyv`
 /// (daemon/paths.rs:141-145). Shows shard count + total bytes (humanized). Hidden when the
 /// root is missing or holds zero shards, and in parity/compat modes
@@ -596,7 +596,7 @@ fn stryke_segments() -> Vec<Segment> {
 // ---------------------------------------------------------------------
 
 /// The five authoritative rkyv stores under `$ZSHRS_HOME`:
-/// - Autoloads: `autoloads.rkyv` (autoload_cache.rs:424-433)
+/// - Autoloads: `autoloads.rkyv` (autoload_cache.rs:491-500)
 /// - Scripts:   `scripts.rkyv`   (script_cache.rs:3)
 /// - Plugins:   `images/*.rkyv`  zinit plugin/snippet images
 ///              (daemon/paths.rs:141-145, daemon/shard.rs:265)

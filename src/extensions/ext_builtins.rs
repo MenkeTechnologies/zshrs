@@ -2732,8 +2732,9 @@ impl ShellExecutor {
 
             // No bytecode pre-warm here. Autoload chunks are cached
             // write-through by the loader itself (`vm_helper`'s autoload
-            // arm → `autoload_cache::try_save_one`), stamped with the
-            // definition file's mtime + length. A speculative pre-warm on
+            // arm → `autoload_cache::try_save_one`), keyed on the resolved
+            // fpath directory plus a digest of the exact definition text.
+            // A speculative pre-warm on
             // this worker thread cannot produce those chunks: it would have
             // to parse 46k bodies against process-global lexer state that
             // the interactive main thread is using concurrently — which is

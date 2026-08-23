@@ -547,25 +547,35 @@ Correctness comes from what is cached and what is stamped:
   wrong-shaped chunk shows up first. Verified against `zsh -f`:
   `lineno=2`, `trace=<file>:0` for a body whose first statement is on
   line 2, cold and cached alike (`tests/autoload_chunk_cache.rs`).
-- Each entry carries the definition file's mtime AND byte length. The
-  binary mtime alone (the pre-existing check) only catches a zshrs
-  rebuild; editing `~/.zsh/functions/_foo` leaves it untouched, and the
-  length catches a same-second edit on a coarse-mtime filesystem.
+- Each entry carries the resolved fpath directory and a SHA-256 of the
+  exact definition text. Not a `stat` of `<dir>/<name>`: `getfpfunc`
+  prefers a newer `<dir>.zwc` digest over the plain file, so the body
+  installed may have nothing to do with the bytes of the file that path
+  names, and the same function name lives in several `$fpath`
+  directories at once.
+- Each entry also carries the `(mtime, len)` of the `zshrs` binary that
+  emitted the chunk, matched for EQUALITY. Bytecode is not portable
+  between builds — the builtin index table moves — and `zshrs_version`
+  cannot discriminate, because a debug build and the installed release
+  build share it.
+- A cached chunk that runs without defining the function is treated as a
+  corrupt entry: it is dropped and the source recompiled, rather than
+  surfacing as `function not defined by file`.
 - Caching is declined when the compiled program is not a function of the
   file's bytes alone: `ksh_autoload` style (the file runs at top level
   instead of being wrapped, so a runtime option changes the program) and
   `autoload` without `-U` (the body is parsed WITH alias expansion, so
   the chunk depends on the alias table).
 
-Shard format v2. v1 stored the bare file body compiled as a top-level
+Shard format v3. v1 stored the bare file body compiled as a top-level
 script, which nothing ever read — the only caller of
 `autoload_cache::try_load` was `dbview` — and which would have installed
-a different program than the loader does. The version bump discards those
-entries, and the two speculative pre-warm paths that produced them (one
-fed from the SQLite mirror, one an opt-in loop inside the compinit
-background scan) are gone: the write-through cache fills exactly the
-functions a session actually calls, with chunks that are correct by
-construction.
+a different program than the loader does. v2 replaced it with the
+definition program but stamped `(mtime, len)` of `<dir>/<name>` and
+accepted any chunk not strictly OLDER than the running binary, so a chunk
+written by a newer build was served to an older one: on a real `$fpath`
+that made `_megacomplete` fail four times per `<TAB>` and completion
+return zero matches. Each bump discards the previous entries.
 
 ## Remaining work
 
