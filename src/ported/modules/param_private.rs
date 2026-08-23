@@ -967,7 +967,31 @@ pub fn wrap_private(
     runshfunc: impl FnOnce(),
 ) -> i32 {
     // c:550
-    let local = locallevel.load(Ordering::Relaxed);
+    // !!! WARNING: RUST-ONLY ADJUSTMENT — NO C COUNTERPART !!!
+    // C reaches this handler from `runshfunc` (c:Src/exec.c:6229-6252),
+    // which runs the whole wrapper chain BEFORE its own
+    // `startparamscope()` at c:6254 — so every `locallevel` this
+    // function reads is the CALLER's scope, one below the body's.
+    // zshrs's `doshfunc` hoists that `startparamscope()` up to
+    // `inc_locallevel()` in its prologue (deliberately, and load-
+    // bearing: see src/ported/exec.rs:6288-6293 and the endparamscope
+    // ordering note at exec.rs:6501-6516), so by the time the chain is
+    // walked at exec.rs:6489 the counter is already bumped. Subtract
+    // the hoisted bump here so the guard, the `private_wraplevel`
+    // store and the two `scopeprivate` scans all see exactly the value
+    // C sees.
+    //
+    // Without this the wrapper armed one level too eagerly: a function
+    // called from the TOP level (C: `0 < 0` → no wrap) armed and set
+    // `private_wraplevel = 1`, which broke `getprivatenode`'s
+    // "variable is in the current function scope" break at c:582
+    // (`pm->level == private_wraplevel + 1`). A `${| … }` nofork —
+    // which runs its own `startparamscope()` (c:Src/subst.c:2016) —
+    // then walked straight past the enclosing function's privates, so
+    // `() { private z=outer; print ${| print $z } }` printed nothing
+    // where zsh prints `outer` (V10private.ztst:37-42).
+    let hoisted = locallevel.load(Ordering::Relaxed);
+    let local = hoisted - 1; // c:550 — C's locallevel at wrapper-chain time
     let pwl = private_wraplevel.load(Ordering::Relaxed);
     if pwl < local {
         // c:552
@@ -975,19 +999,25 @@ pub fn wrap_private(
         private_wraplevel.store(local, Ordering::Relaxed); // c:554
                                                            // c:555 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, PM_UNSET);`
                                                            // Hide every private param from the function we're about to run.
+                                                           // `scopeprivate` reads `locallevel` itself (c:515), so park the
+                                                           // counter at C's value across the scan (see the WARNING above).
+        locallevel.store(local, Ordering::Relaxed);
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
                 scopeprivate(&mut **pm as *mut param, PM_UNSET as i32); // c:555
             }
         }
+        locallevel.store(hoisted, Ordering::Relaxed);
         runshfunc(); // c:556 — runshfunc(prog, w, name);
                      // c:557 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, 0);`
                      // Restore each param's saved PM_UNSET/PM_READONLY state.
+        locallevel.store(local, Ordering::Relaxed);
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
                 scopeprivate(&mut **pm as *mut param, 0); // c:557
             }
         }
+        locallevel.store(hoisted, Ordering::Relaxed);
         private_wraplevel.store(owl, Ordering::Relaxed); // c:558
         return 0; // c:559
     }

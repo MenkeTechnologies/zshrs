@@ -1214,16 +1214,33 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         let _ = crate::ported::params::setiparam("CURRENT", cur as i64);
     }
 
-    // c:721-727 — `$compstate[last_prompt]` etc. fed in from
-    // do_completion via dolastprompt; we forward the current values.
-    set_compstate_str(
-        "last_prompt",
-        if dolastprompt.load(Ordering::Relaxed) != 0 {
-            "yes"
-        } else {
-            ""
-        },
-    );
+    // c:571-572 —
+    // ```c
+    //     if (!*complastprompt)
+    //         kset &= ~CP_LASTPROMPT;
+    // ```
+    // C only READS `complastprompt` here (to drop CP_LASTPROMPT from the
+    // "keys the completion function may set" mask); it never writes it.
+    // The single writer is do_completion at c:325,
+    // `complastprompt = ztrdup(isset(ALWAYSLASTPROMPT) ? "yes" : "")`,
+    // ported at compcore.rs:200-208.
+    //
+    // This site used to WRITE `$compstate[last_prompt]` back from
+    // `dolastprompt` (which do_completion has just set to 1 at c:326),
+    // which stomped the "" that NO_ALWAYS_LAST_PROMPT had just stored.
+    // addmatch's `if (!complastprompt || !*complastprompt) dolastprompt = 0`
+    // (c:3014-3015) then never fired, so `dolastprompt` stayed 1,
+    // `clearflag` came out 1 in asklist (c:1925) / compprintlist (c:2061),
+    // and zrefresh's reset frame took the `if (clearflag)` branch at
+    // c:1168-1172 (`\r` + `moveto(0, lpromptw)`) instead of the
+    // `!clearflag` branch at c:1146-1167 (TCCLEAREOD + `zputs(lpromptbuf)`)
+    // — so after a completion listing the prompt was never repainted.
+    // `kset` is not materialised in this port (it is only used
+    // descriptively, see c:561-563 above), so the C statement has no
+    // representable effect beyond the read.
+    let _complastprompt_isset = !get_compstate_str("last_prompt")
+        .unwrap_or_default()
+        .is_empty(); // c:571
 
     // c:753-765 — `$compstate[list]` is REBUILT here from `uselist`, it is
     // not the value do_completion left in `complist` at c:327-330:
@@ -1477,6 +1494,7 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         redir: None,
         sticky: None,
         body: None,
+        redir_text: None,
     };
     // c:816-817 — `startparamscope(); makecompparams();`.
     //

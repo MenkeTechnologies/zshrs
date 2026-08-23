@@ -523,6 +523,23 @@ pub struct SubshellSnapshot {
     /// bare `false`. zshrs runs `( … )` in-process, so the flag has
     /// to be set on entry and restored by hand on End.
     pub subsh: i32,
+    /// Names of builtins carrying `DISABLED` in `builtintab` at
+    /// subshell entry (c:Src/builtin.c:541-547 `enable`/`disable`
+    /// flip `node.flags & DISABLED`; c:Src/hashtable.c:1097
+    /// `builtintab`). C forks for `(...)`, so a `(disable typeset)`
+    /// marks the flag only in the child's copy of `builtintab` and
+    /// the parent still sees the builtin. zshrs runs subshells
+    /// in-process against the process-global `BUILTINS_DISABLED`
+    /// set, so `( disable typeset ); typeset x=1` reported
+    /// `command not found: typeset` in the PARENT.
+    pub builtins_disabled: std::collections::HashSet<String>,
+    /// Names of reserved words carrying `DISABLED` in `reswdtab` at
+    /// subshell entry (c:Src/builtin.c:541-547 `disable -r`;
+    /// c:Src/hashtable.c:1124 `reswdtab = newhashtable(23,
+    /// "reswdtab", NULL)`). Same fork-copy reasoning as
+    /// `builtins_disabled` — `(disable -r typeset)` must not change
+    /// how the parent PARSES `typeset foo=`cmd``.
+    pub reswds_disabled: std::collections::HashSet<String>,
 }
 
 #[allow(unused_imports)]
@@ -926,6 +943,205 @@ pub fn autoload_def_file(name: &str) -> Option<String> {
             .map(|(_, f)| f.clone())
     })
 }
+
+
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+///
+/// C's `zexecve` (Src/exec.c:504-643) performs the whole `#!` recovery
+/// in place: it is only ever reached in the already-forked child that is
+/// about to BECOME the command, so at c:566/571/581/585/627 it simply
+/// calls `execve()` a second time and never returns. zshrs reaches the
+/// same decision from a second call site — the `std::process::Command`
+/// spawn in `vm_helper::execute_external_bg` — which hands argv to the
+/// kernel from the PARENT process and therefore cannot "re-exec in
+/// place". This helper is c:534-634 verbatim with each of those five
+/// `execve(prog, argv)` calls replaced by `Ok((prog, argv))`, so both
+/// call sites share one implementation of the shebang rules.
+///
+/// `Err(eno)` is what C's `return eno` (c:643) would hand back — either
+/// the original `eno` or the `errno` from a failed open/read (c:632/634).
+#[allow(non_snake_case)]
+pub fn zexecve_recover(
+    pth: &str,
+    argv: &[String],
+    eno: i32,
+) -> Result<(String, Vec<String>), i32> {
+    if eno == libc::ENOEXEC || eno == libc::ENOENT {
+        // c:534
+        let cpth = match std::ffi::CString::new(pth) {
+            Ok(c) => c,
+            Err(_) => return Err(libc::ENOENT),
+        };
+        let fd = unsafe { libc::open(cpth.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) }; // c:538
+        if fd < 0 {
+            // c:633-634 — `} else eno = errno;` then fall through to `return eno`.
+            return Err(std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::ENOENT));
+        }
+        let mut buf = vec![0u8; crate::ported::exec::POUNDBANGLIMIT + 1]; // c:541
+        let ct = unsafe {
+            libc::read(
+                fd,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                crate::ported::exec::POUNDBANGLIMIT as libc::size_t,
+            )
+        }; // c:542
+        unsafe {
+            libc::close(fd);
+        } // c:543
+        if ct >= 0 {
+            // c:544
+            let ct = ct as usize;
+            if ct >= 2 && buf[0] == b'#' && buf[1] == b'!' {
+                // c:545
+                let mut t0 = 0;
+                while t0 < ct && buf[t0] != b'\n' {
+                    t0 += 1;
+                } // c:546-548
+                if t0 == ct {
+                    // c:549
+                    // c:550 `zerr(...)`. C is inside the forked child that is
+                    // about to `_exit`, so the errflag `zerr` raises is
+                    // irrelevant there. This runs in the PARENT, where a raised
+                    // errflag aborts the enclosing script — `( if
+                    // bad-interp-cmd; then exit 0; else exit 1; fi )` returned
+                    // 127 instead of running its else branch. `zwarn`
+                    // (utils.rs:260) emits the identical text without the flag.
+                    crate::ported::utils::zwarn(&format!(
+                        // c:550
+                        "{}: bad interpreter: {}: {}",
+                        pth,
+                        String::from_utf8_lossy(&buf[2..t0.min(ct)]),
+                        std::io::Error::from_raw_os_error(eno)
+                    ));
+                } else {
+                    // c:552
+                    while t0 > 0 && (buf[t0] == b' ' || buf[t0] == b'\t' || buf[t0] == b'\n') {
+                        buf[t0] = 0;
+                        t0 -= 1;
+                    } // c:553-554
+                    let mut ptr_lo: usize = 2;
+                    while ptr_lo < buf.len() && buf[ptr_lo] == b' ' {
+                        ptr_lo += 1;
+                    } // c:555
+                    let ptr2_lo = ptr_lo;
+                    let mut ptr_hi = ptr2_lo;
+                    while ptr_hi < buf.len() && buf[ptr_hi] != 0 && buf[ptr_hi] != b' ' {
+                        ptr_hi += 1;
+                    } // c:556
+                    let interp_str = String::from_utf8_lossy(&buf[ptr2_lo..ptr_hi]).into_owned();
+                    if eno == libc::ENOENT {
+                        // c:557 — pathprog rewrite path.
+                        let pprog = if !interp_str.starts_with('/') {
+                            // c:561
+                            crate::ported::utils::pathprog(&interp_str).map(|p| p.display().to_string())
+                        } else {
+                            None
+                        };
+                        if let Some(pprog) = pprog {
+                            // c:562
+                            let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
+                            argv_new.push(interp_str.clone()); // c:564
+                            if ptr_hi >= buf.len() || buf[ptr_hi] == 0 {
+                                argv_new.push(pth.to_string());
+                            } else {
+                                // c:567
+                                let mut rest_lo = ptr_hi + 1;
+                                while rest_lo < buf.len() && buf[rest_lo] == b' ' {
+                                    rest_lo += 1;
+                                }
+                                let mut rest_hi = rest_lo;
+                                while rest_hi < buf.len() && buf[rest_hi] != 0 {
+                                    rest_hi += 1;
+                                }
+                                let arg_str =
+                                    String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
+                                argv_new.push(arg_str);
+                                argv_new.push(pth.to_string());
+                            }
+                            for orig in argv.iter().skip(1) {
+                                argv_new.push(orig.clone());
+                            }
+                            crate::ported::signals_h::winch_unblock(); // c:565/c:570
+                            return Ok((pprog, argv_new)); // c:566/c:571
+                        }
+                        crate::ported::utils::zwarn(&format!(
+                            // c:574 — `zerr`; see the c:550 note above for why
+                            // this is `zwarn` in the parent-side port.
+                            "{}: bad interpreter: {}: {}",
+                            pth,
+                            interp_str,
+                            std::io::Error::from_raw_os_error(eno)
+                        ));
+                    } else if ptr_hi < buf.len() && buf[ptr_hi] != 0 {
+                        // c:576
+                        let mut rest_lo = ptr_hi + 1;
+                        while rest_lo < buf.len() && buf[rest_lo] == b' ' {
+                            rest_lo += 1;
+                        }
+                        let mut rest_hi = rest_lo;
+                        while rest_hi < buf.len() && buf[rest_hi] != 0 {
+                            rest_hi += 1;
+                        }
+                        let arg_str = String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
+                        let mut argv_new: Vec<String> =
+                            vec![interp_str.clone(), arg_str, pth.to_string()];
+                        for orig in argv.iter().skip(1) {
+                            argv_new.push(orig.clone());
+                        }
+                        crate::ported::signals_h::winch_unblock(); // c:580
+                        return Ok((interp_str, argv_new)); // c:581
+                    } else {
+                        // c:582
+                        let mut argv_new: Vec<String> = vec![interp_str.clone(), pth.to_string()];
+                        for orig in argv.iter().skip(1) {
+                            argv_new.push(orig.clone());
+                        }
+                        crate::ported::signals_h::winch_unblock(); // c:584
+                        return Ok((interp_str, argv_new)); // c:585
+                    }
+                }
+            } else if eno == libc::ENOEXEC {
+                // c:588 — binary-safety + /bin/sh fallback.
+                let nul_pos = buf[..ct].iter().position(|&b| b == 0); // c:597
+                let isbinary = match nul_pos {
+                    None => false, // c:598
+                    Some(npos) => {
+                        let mut has_letter = false;
+                        let mut binary = true;
+                        for &b in &buf[..npos] {
+                            // c:602-609
+                            if (b as char).is_ascii_lowercase() || b == b'$' || b == b'`' {
+                                has_letter = true;
+                            }
+                            if has_letter && b == b'\n' {
+                                binary = false; // c:606
+                                break;
+                            }
+                        }
+                        binary
+                    }
+                };
+                if !isbinary {
+                    // c:611
+                    let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
+                    argv_new.push("sh".to_string()); // c:625
+                    if !argv.is_empty() && (argv[0].starts_with('-') || argv[0].starts_with('+')) {
+                        argv_new.push("-".to_string()); // c:623
+                    }
+                    for orig in argv.iter() {
+                        argv_new.push(orig.clone());
+                    }
+                    crate::ported::signals_h::winch_unblock(); // c:626
+                    return Ok(("/bin/sh".to_string(), argv_new)); // c:627
+                }
+            }
+        }
+    }
+    Err(eno) // c:643
+}
+
 
 impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
@@ -3377,9 +3593,25 @@ impl ShellExecutor {
                     did_autoload = true; // c:5626 — body runs as "loadautofunc"
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
-                    let _ = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
+                    let load_rc = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
                     unsafe {
                         let _ = Box::from_raw(ptr);
+                    }
+                    // c:Src/exec.c:5713-5719 — `if (prog == &dummy_eprog) {
+                    //     zwarn("%s: function definition file not found",
+                    //           shf->node.nam); … return NULL; }`, and
+                    // c:5635-5644 execautofn: `if (!loadautofn(...)) return 1;`
+                    // A failed load is TERMINAL: C has already replaced
+                    // shf->funcdef with the mkautofn trampoline (c:3180), so
+                    // nothing of the old stub body survives to be re-run.
+                    // zshrs keeps the stub's TEXT on the shfunc node, and the
+                    // `if let Some(body)` arm below would hand that text back
+                    // to run_autoload_definition — re-executing the very
+                    // `autoload -X` that triggered this load. `cod() {
+                    // autoload -XUz }; cod` recursed until FUNCNEST and
+                    // printed the diagnostic 500 times (C04funcdef:38,39,40).
+                    if load_rc != 0 {
+                        return Some(1); // c:5719 NULL → c:5644 `return 1`
                     }
                     // c:5657 — preserve the fpath dir + PM_LOADDIR across the
                     // funcdef re-register (which stamps filename="zsh"), so
@@ -3658,6 +3890,21 @@ impl ShellExecutor {
                     let load_rc = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
                     unsafe {
                         let _ = Box::from_raw(ptr);
+                    }
+                    // c:Src/exec.c:5713-5719 / 5635-5644 — a failed load is
+                    // TERMINAL: `loadautofn` already emitted "function
+                    // definition file not found" and C's `execautofn` returns
+                    // 1 without ever touching a body (C replaced shf->funcdef
+                    // with the mkautofn trampoline at c:3180). zshrs still has
+                    // the stub's TEXT on the shfunc node, and the `if let
+                    // Some(body)` arm below would re-run it — for an
+                    // `autoload -X` stub that means re-entering the autoload
+                    // path, which recursed to FUNCNEST and printed the
+                    // diagnostic 500 times (C04funcdef:38,39,40). The
+                    // `else if load_rc != 0` arm below stays as the (now
+                    // unreachable) faithful mirror of the same C line.
+                    if load_rc != 0 {
+                        return Some(1); // c:5719 NULL → c:5644 `return 1`
                     }
                     // c:Src/exec.c:5657 loadautofnsetfile — capture the fpath
                     // directory loadautofn wrote so it can be restored (as an
@@ -3956,9 +4203,17 @@ impl ShellExecutor {
             // the running function inside doshfunc — and this guard runs
             // before that switch; going through zerr would print the outer
             // script name instead. Byte-compared against zsh 5.9.
+            // c:Src/utils.c zerr → zerrmsg prints `scriptname:lineno: msg`
+            // whenever `scriptname` is set (which it is here: c:5963
+            // `scriptname = dupstring(name)` runs BEFORE the c:6060 check).
+            // The `:lineno` half was missing, so
+            //   ( FUNCNEST=0; fn() { true; }; fn )
+            // printed `fn: maximum …` where zsh prints `fn:4: maximum …`
+            // (C04funcdef:46).
             eprintln!(
-                "{}: maximum nested function level reached; increase FUNCNEST?",
-                name
+                "{}:{}: maximum nested function level reached; increase FUNCNEST?",
+                name,
+                crate::ported::lex::lineno()
             );
             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:6061 (zerr)
             crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:6062
@@ -4035,10 +4290,21 @@ impl ShellExecutor {
         // to doshfunc always claimed "no attributes", so `functions -t f; f`
         // ran silently while `setopt xtrace` (a global option, not routed
         // through this struct) traced normally. Bug #1058.
+        // The shfunctab key is the REGISTRATION name, which for an
+        // anonymous function is the generated `_zshrs_anon_*` (only the
+        // DISPLAY name is `(anon)` — c:Src/exec.c:5492 sets
+        // `shf->node.nam = ANONYMOUS_FUNCTION_NAME` on the same struct
+        // that already carries `tracing_flags` from c:5437). Looking the
+        // flags up under the display name missed every anonymous
+        // function, so `function -T { … }` ran untraced (E02xtrace:7,9).
         let synth_flags = crate::ported::hashtable::shfunctab_lock()
             .read()
             .ok()
-            .and_then(|t| t.get(display_name.as_str()).map(|s| s.node.flags))
+            .and_then(|t| {
+                t.get(name)
+                    .or_else(|| t.get(display_name.as_str()))
+                    .map(|s| s.node.flags)
+            })
             .unwrap_or(0);
         // c:Src/exec.c:5978 — `if (sticky_emulation_differs(shfunc->sticky))`
         // reads the STORED per-function sticky snapshot that
@@ -4051,7 +4317,8 @@ impl ShellExecutor {
             .read()
             .ok()
             .and_then(|t| {
-                t.get(display_name.as_str())
+                t.get(name)
+                    .or_else(|| t.get(display_name.as_str()))
                     .and_then(|s| s.sticky.as_deref().map(|b| {
                         crate::ported::exec::sticky_emulation_dup(b, 0)
                     }))
@@ -4068,6 +4335,7 @@ impl ShellExecutor {
             redir: None,
             sticky: synth_sticky,
             body: None,
+            redir_text: None,
         };
         // doshargs: C convention — argv[0] = function name (for
         // FUNCTIONARGZERO `$0`), argv[1..] = real positional args.
@@ -4265,14 +4533,38 @@ impl ShellExecutor {
                 ));
             }
         }
-        let mut command = Command::new(cmd);
+        // c:Src/exec.c:531-534 — `execve(pth, argv, newenvp); if ((eno =
+        // errno) == ENOEXEC || eno == ENOENT) { … }`. The kernel is the only
+        // thing that understands `#!`, and when it REFUSES the file — ENOEXEC
+        // (no valid magic and no shebang) or ENOENT (a `#!` line naming an
+        // interpreter that does not exist as spelled, e.g. `#!sh`) — zsh reads
+        // the shebang itself and re-execs with the interpreter it names,
+        // falling back to `/bin/sh` for a shebang-less script. These three
+        // hold what C's second `execve` would receive: `spawn_prog` is c:566's
+        // `pprog` (the RESOLVED program), `spawn_arg0` is c:564's `ptr2` (the
+        // interpreter NAME as written on the `#!` line), `spawn_args` the
+        // rest. `Command::new` conflates program and argv[0], hence the
+        // explicit `arg0`. `cmd`/`args` stay untouched: every diagnostic and
+        // hook below reports the command the user actually typed, exactly as
+        // C reports `arg0` (c:797/811).
+        let mut spawn_prog: String = cmd.to_string();
+        let mut spawn_arg0: String = cmd.to_string();
+        let mut spawn_args: Vec<String> = args.to_vec();
+        // C recurses through zexecve for each rewrite; the loop is that
+        // recursion, re-driving the spawn with the rewritten argv.
+        loop {
+        let mut command = Command::new(&spawn_prog);
+        {
+            use std::os::unix::process::CommandExt as _;
+            command.arg0(&spawn_arg0);
+        }
         // c:Src/exec.c execute — C unmetafies every arg before the
         // execve (the child must see raw bytes, not the shell's
         // internal Meta encoding). Args carrying Meta-char pairs
         // (from `$'\xff'` etc., vm_helper::meta_encode_byte) are
         // decoded to raw bytes via OsStr; plain args pass through
         // unchanged. Bug #127.
-        for a in args {
+        for a in &spawn_args {
             if a.contains('\u{83}') {
                 use std::os::unix::ffi::OsStrExt as _;
                 command.arg(std::ffi::OsStr::from_bytes(&unmetafy_str(a)));
@@ -4294,7 +4586,7 @@ impl ShellExecutor {
         // subshell entry counts separately (fusevm_bridge.rs:9573).
         FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        if background {
+        return if background {
             match command.spawn() {
                 Ok(child) => {
                     let pid = child.id();
@@ -4304,6 +4596,39 @@ impl ShellExecutor {
                     Ok(0)
                 }
                 Err(e) => {
+                    // c:534-627 — the kernel refused the file; retry with
+                    // the interpreter the `#!` line names (or `/bin/sh` for a
+                    // shebang-less script). See zexecve_recover.
+                    let eno = e.raw_os_error().unwrap_or(0);
+                    if eno == libc::ENOEXEC || eno == libc::ENOENT {
+                        // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
+                        // candidate `pbuf` from its own `$path` walk, never the
+                        // bare word; and c:544 `*argv = pth;` then puts that
+                        // resolved path into argv[0] for the interpreter. Here
+                        // libc did the PATH search inside the spawn, so redo it
+                        // with `pathprog` (utils.rs:798) before probing —
+                        // otherwise a `#!` script found on `$path` was handed to
+                        // its interpreter as the bare name and `#!echo foo`
+                        // printed `foo tstcmd-arg` instead of
+                        // `foo <dir>/tstcmd-arg`.
+                        let probe_pth = if spawn_prog.contains('/') {
+                            spawn_prog.clone()
+                        } else {
+                            match crate::ported::utils::pathprog(&spawn_prog) {
+                                Some(p) => p.display().to_string(), // c:815
+                                None => spawn_prog.clone(),
+                            }
+                        };
+                        let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
+                        cargv.push(spawn_arg0.clone());
+                        cargv.extend_from_slice(&spawn_args);
+                        if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
+                            spawn_arg0 = newargv.first().cloned().unwrap_or_else(|| prog.clone());
+                            spawn_args = newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
+                            spawn_prog = prog;
+                            continue;
+                        }
+                    }
                     let sn = crate::ported::utils::scriptname_get()
                         .unwrap_or_else(|| "zshrs".to_string());
                     if e.kind() == io::ErrorKind::NotFound {
@@ -4351,6 +4676,39 @@ impl ShellExecutor {
             match status_result {
                 Ok(status) => Ok(status.code().unwrap_or(1)),
                 Err(e) => {
+                    // c:534-627 — the kernel refused the file; retry with
+                    // the interpreter the `#!` line names (or `/bin/sh` for a
+                    // shebang-less script). See zexecve_recover.
+                    let eno = e.raw_os_error().unwrap_or(0);
+                    if eno == libc::ENOEXEC || eno == libc::ENOENT {
+                        // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
+                        // candidate `pbuf` from its own `$path` walk, never the
+                        // bare word; and c:544 `*argv = pth;` then puts that
+                        // resolved path into argv[0] for the interpreter. Here
+                        // libc did the PATH search inside the spawn, so redo it
+                        // with `pathprog` (utils.rs:798) before probing —
+                        // otherwise a `#!` script found on `$path` was handed to
+                        // its interpreter as the bare name and `#!echo foo`
+                        // printed `foo tstcmd-arg` instead of
+                        // `foo <dir>/tstcmd-arg`.
+                        let probe_pth = if spawn_prog.contains('/') {
+                            spawn_prog.clone()
+                        } else {
+                            match crate::ported::utils::pathprog(&spawn_prog) {
+                                Some(p) => p.display().to_string(), // c:815
+                                None => spawn_prog.clone(),
+                            }
+                        };
+                        let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
+                        cargv.push(spawn_arg0.clone());
+                        cargv.extend_from_slice(&spawn_args);
+                        if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
+                            spawn_arg0 = newargv.first().cloned().unwrap_or_else(|| prog.clone());
+                            spawn_args = newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
+                            spawn_prog = prog;
+                            continue;
+                        }
+                    }
                     // Use scriptname (the user-visible shell identifier
                     // — "zsh" in --zsh mode, "zshrs" otherwise) instead
                     // of a hardcoded "zshrs:" prefix so --zsh-mode
@@ -4416,6 +4774,7 @@ impl ShellExecutor {
                     }
                 }
             }
+        };
         }
     }
     /// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
@@ -5163,8 +5522,14 @@ impl ShellExecutor {
             let n: crate::ported::zsh_h::zlong = ln.parse().unwrap_or(0);
             if let Ok(mut tab) = crate::ported::params::paramtab().write() {
                 if let Some(pm) = tab.get_mut("LINENO") {
-                    pm.u_val = n;
-                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                    // c:Src/utils.c:121 `zlong lineno` — the value lives in the C
+                    // GLOBAL, reached through LINENO's GSU. A `typeset -h +g LINENO`
+                    // local shadow has no PM_SPECIAL and no GSU, so C's `lineno = N`
+                    // never touches it; skip the paramtab mirror for the same reason.
+                    if (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0 {
+                        pm.u_val = n;
+                        pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                    }
                 }
             }
             crate::ported::utils::set_lineno(n as i32);

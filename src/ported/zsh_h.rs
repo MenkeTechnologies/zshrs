@@ -877,6 +877,18 @@ pub struct shfunc {
     /// then, both fields can be set: `funcdef` for compiled
     /// callers, `body` for the lazy-compile path.
     pub body: Option<String>,
+    /// **RUST-ONLY EXTENSION (no C counterpart).** Rendered text of
+    /// `redir` for the deferred-compile path, the exact twin of `body`
+    /// standing in for `funcdef`. C keeps `f() { … } > out`'s trailing
+    /// redirections as a second Eprog in `redir` (c:Src/exec.c:5453
+    /// `shf->redir = dupeprog(redir_prog, 0)`) and re-deparses it with
+    /// `getpermtext(shf->redir, NULL, 1)` whenever the function is
+    /// printed (c:Src/hashtable.c:988-994,
+    /// c:Src/Modules/parameter.c:439-443). zshrs's fusevm path builds no
+    /// Eprog, so the compiler renders the redirection list to text once
+    /// (`getredirs` format, Src/text.c) and stores it here. Retired
+    /// alongside `body` when `redir` is populated for real.
+    pub redir_text: Option<String>,
 }
 
 /// Port of `struct funcstack` from `Src/zsh.h:1348-1356`.

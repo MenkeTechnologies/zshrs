@@ -1806,7 +1806,7 @@ pub fn zleentry(cmd: i32) -> Option<String> {
                 // register_builtin_modules.
                 if !zle_modules_loaded.swap(true, Ordering::SeqCst) {
                     let mut tab = crate::ported::module::MODULESTAB.lock().unwrap();
-                    if tab.load_module("zsh/zle", None, false) {
+                    if tab.load_module("zsh/zle", None, false) != 1 {
                         tab.load_module("zsh/compctl", None, false); // c:1765
                     }
                 }

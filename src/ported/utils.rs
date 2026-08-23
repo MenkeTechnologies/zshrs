@@ -5617,8 +5617,14 @@ pub fn subst_string_by_func(
         let n: crate::ported::zsh_h::zlong = ln.parse().unwrap_or(0);
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             if let Some(pm) = tab.get_mut("LINENO") {
-                pm.u_val = n;
-                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                // c:Src/utils.c:121 `zlong lineno` — the value lives in the C
+                // GLOBAL, reached through LINENO's GSU. A `typeset -h +g LINENO`
+                // local shadow has no PM_SPECIAL and no GSU, so C's `lineno = N`
+                // never touches it; skip the paramtab mirror for the same reason.
+                if (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0 {
+                    pm.u_val = n;
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
             }
         }
         set_lineno(n as i32);
@@ -5946,25 +5952,26 @@ pub fn inittyptab() {
         // Same fallback as IFS above: paramtab first, then wordchars_lock
         // so wordcharssetfn updates that bypass paramtab still reach
         // the typtab rebuild.
-        let wc = crate::ported::params::paramtab()
+        // c:4237 — `for (s = wordchars ? wordchars : DEFAULT_WORDCHARS;
+        // *s; s++)`. C tests the POINTER, so `WORDCHARS=''` is a
+        // legitimately EMPTY word-character set and only an UNSET
+        // `wordchars` falls back to the default. Treating "" as "unset"
+        // pinned `/` as a word character forever, so
+        // `WORDCHARS="" [[ / = [[:WORD:]] ]]` wrongly matched.
+        let wc: Option<String> = crate::ported::params::paramtab()
             .read()
             .ok()
             .and_then(|t| {
                 t.get("WORDCHARS")
                     .map(|pm| crate::ported::params::wordcharsgetfn(pm))
             })
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
+            .or_else(|| {
                 crate::ported::params::wordchars_lock()
                     .lock()
+                    .ok()
                     .map(|g| g.clone())
-                    .unwrap_or_default()
             });
-        let src: String = if wc.is_empty() {
-            DEFAULT_WORDCHARS.to_string()
-        } else {
-            wc
-        };
+        let src: String = wc.unwrap_or_else(|| DEFAULT_WORDCHARS.to_string());
         let bytes = src.as_bytes();
         let mut i = 0;
         while i < bytes.len() {

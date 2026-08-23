@@ -1044,8 +1044,12 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
 ///
 /// C returns the displaced HashNode for the caller (unsettrap) to
 /// free; Rust ownership covers the free automatically when the
-/// hashtable entry drops.
-pub fn removetrap(sig: i32) {
+/// hashtable entry drops. The node itself IS returned though —
+/// `removeshfuncnode` (c:Src/hashtable.c:841-846) uses it as its own
+/// return value, and `bin_unhash` (c:4405) tests it for "no such hash
+/// table element". Returning `()` here made `unfunction TRAPZERR`
+/// report that error AND skip the localtraps save (C03traps:13,14).
+pub fn removetrap(sig: i32) -> Option<crate::ported::zsh_h::shfunc> {
     // c:772
     let trapped = sigtrapped
         .lock()
@@ -1056,11 +1060,11 @@ pub fn removetrap(sig: i32) {
     // The Rust call sites already use sig in [0, SIGCOUNT]; sig == -1 is rare,
     // but jobbing+job-control reject mirrors C exactly.
     if sig == -1 {
-        return;
+        return None; // c:778 `return NULL`
     }
     let jobbing = isset(MONITOR);
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
-        return;
+        return None; // c:778 `return NULL`
     }
     let locallevel = locallevel_fn() as i32;
     // c:769-774 — `if (!dontsavetrap && (sig == SIGEXIT ? !isset(POSIXTRAPS)
@@ -1135,6 +1139,9 @@ pub fn removetrap(sig: i32) {
     // Without this, `f() { setopt localtraps; TRAPWINCH() { … } }; f`
     // left TRAPWINCH defined after f returned (C03traps:15), and a
     // nested redefinition could never be undone.
+    // c:841 — `return node;  /* unsettrap frees it */` — the removed
+    // node is removetrap's RESULT, not a discard.
+    let mut removed_node: Option<crate::ported::zsh_h::shfunc> = None;
     if (trapped & ZSIG_FUNC) != 0 {
         // c:832
         if let Some(nam) = crate::ported::jobs::gettrapnode(sig, true) {
@@ -1142,7 +1149,7 @@ pub fn removetrap(sig: i32) {
             // c:840 — `removehashnode(shfunctab, node->nam)`, NOT
             // removeshfuncnode: that one calls back into unsettrap.
             if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
-                t.remove(&nam);
+                removed_node = t.remove(&nam);
             }
             // Rust-only companion: drop the executor-side compiled
             // chunk / source for the same name (see
@@ -1187,6 +1194,7 @@ pub fn removetrap(sig: i32) {
             signal_default(SIGNUM(sig)); // c:818
         }
     }
+    removed_node // c:841 / c:851 — the removed TRAP<SIG> node (NULL if none)
 }
 
 // Variables used by signal queueing                                       // c:74

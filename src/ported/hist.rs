@@ -3840,12 +3840,18 @@ pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {
                 None => return None,
                 Some('\n') => return Some(out),
                 Some(c) if c == stop => return Some(out),
+                // c:2597-2599 — `if (c == '\\') c = ingetc(); *ptr++ = c;`
+                // The backslash is ALWAYS dropped and only the character
+                // after it is stored — C does not care whether that
+                // character is the delimiter. The port kept the backslash
+                // for a non-delimiter follower, so every escape in the
+                // replacement survived one round too many: `:s/,/\\\\?/`
+                // stored `\\\\?` where zsh stores `\\?` (`convamps`,
+                // c:2408-2410, then halves it once more), and the recalled
+                // line globbed instead of quoting.
                 Some('\\') => {
                     if let Some(n) = ingetc() {
-                        if n != stop {
-                            out.push('\\');
-                        }
-                        out.push(n);
+                        out.push(n); // c:2599
                     }
                 }
                 Some(c) => out.push(c),

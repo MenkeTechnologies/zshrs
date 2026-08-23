@@ -977,8 +977,17 @@ fn stringsubst(
                                                                                  // here-doc inside a double-quoted `"$(...)"` (docker's
                                                                                  // `_retrieve_cache` serialized cache), emptying it → the
                                                                                  // docker completer produced 0 matches.
-                    let output = getoutput(&cmd, 1).join("");
-                    let prefix: String = chars[..pos].iter().collect(); // c:237
+                    // c:399 — `getoutput(str2 + 1, qt || (pf_flags &
+                    // PREFORK_SINGLE))`. The second argument is C's `qt`
+                    // ("give me ONE word"); when it is clear `readoutput`
+                    // c:4866 runs `spacesplit` and the substitution yields as
+                    // many words as the output has fields. The port had it
+                    // hard-wired to 1 and joined, so an UNQUOTED `$(…)` inside
+                    // a `${…}` operand never split: `${x:-$(echo a b c)}` came
+                    // back as the single word `a b c` where zsh gives three.
+                    let qt_out = qt || (pf_flags & PREFORK_SINGLE) != 0; // c:399
+                    let words = getoutput(&cmd, if qt_out { 1 } else { 0 }); // c:399
+                    let prefix: String = chars[..pos].iter().collect(); // c:404 `l1 = str2 - str3`
                     let suffix: String = if end + 1 < chars.len() {
                         // c:237
                         chars[end + 1..].iter().collect() // c:237
@@ -986,10 +995,38 @@ fn stringsubst(
                         // c:237
                         String::new() // c:237
                     }; // c:237
-                    str3 = format!("{}{}{}", prefix, output.trim_end_matches('\n'), suffix); // c:237
+                       // c:401-403 — `if (!(s = ugetnode(pl))) { str =
+                       // memmove(str2, str, strlen(str)+1); continue; }`: empty
+                       // output leaves prefix+suffix spliced together.
+                    let mut s = match words.first() {
+                        Some(w) => w.clone(), // c:401
+                        None => String::new(), // c:401-403
+                    };
+                    // c:406-415 — `if (nonempty(pl))`: the output produced MORE
+                    // than one word. The current node becomes prefix + FIRST
+                    // word, the remaining words are spliced in after it
+                    // (c:412 `insertlinklist(pl, node, list)`), and the cursor
+                    // moves to the LAST of them (c:413 `s = getdata(node = n)`)
+                    // so the trailing text is appended there, not to the first.
+                    let mut l1_prefix: &str = &prefix; // c:404
+                    if words.len() > 1 {
+                        // c:406
+                        list.setdata(node_idx, format!("{}{}", prefix, s)); // c:409-411
+                        let mut after = node_idx; // c:412
+                        for w in &words[1..] {
+                            after = list.insertlinknode(after, w.clone()); // c:412
+                        }
+                        node_idx = after; // c:413 `node = n`
+                        s = words[words.len() - 1].clone(); // c:413 `s = getdata(node)`
+                        l1_prefix = ""; // c:414 `l1 = 0`
+                    }
+                    // c:417-421 — rebuild the live node as
+                    // prefix(+first-or-last word)+suffix and leave `str`
+                    // pointing at the start of the suffix.
+                    str3 = format!("{}{}{}", l1_prefix, s, suffix); // c:417-420
                     chars = str3.chars().collect(); // c:237
-                    pos = prefix.chars().count() + output.trim_end_matches('\n').chars().count(); // c:237
-                    list.setdata(node_idx, str3.clone()); // c:237
+                    pos = l1_prefix.chars().count() + s.chars().count(); // c:420
+                    list.setdata(node_idx, str3.clone()); // c:422
                 } else {
                     // c:237
                     pos += 1; // c:237
@@ -1258,10 +1295,14 @@ fn stringsubst(
                     }
                     out
                 };
-                // c:exec.c:4712 — `getoutput(cmd, 1)`. String-
-                // splice caller (qt=1).
-                let output = getoutput(&cmd, 1).join("");
-                let prefix: String = chars[..pos].iter().collect(); // c:237
+                // c:399 — `getoutput(str2 + 1, qt || (pf_flags &
+                // PREFORK_SINGLE))`. Same rule as the `$(…)` arm above: a
+                // clear `qt` means `readoutput` (c:Src/exec.c:4866) hands back
+                // one word per output FIELD, so an unquoted `` `cmd` `` is
+                // multi-word. The port passed 1 unconditionally and joined.
+                let qt_out = qt || (pf_flags & PREFORK_SINGLE) != 0; // c:399
+                let words = getoutput(&cmd, if qt_out { 1 } else { 0 }); // c:399
+                let prefix: String = chars[..pos].iter().collect(); // c:404
                 let suffix: String = if end + 1 < chars.len() {
                     // c:237
                     chars[end + 1..].iter().collect() // c:237
@@ -1269,10 +1310,30 @@ fn stringsubst(
                     // c:237
                     String::new() // c:237
                 }; // c:237
-                str3 = format!("{}{}{}", prefix, output.trim_end_matches('\n'), suffix); // c:237
+                   // c:401-403 — empty output splices prefix+suffix.
+                let mut s_word = words.first().cloned().unwrap_or_default(); // c:401
+                let mut l1_prefix: &str = &prefix; // c:404
+                if words.len() > 1 {
+                    // c:406-415 — current node = prefix + FIRST word, the rest
+                    // spliced in after it, cursor moves to the LAST.
+                    list.setdata(node_idx, format!("{}{}", prefix, s_word)); // c:409-411
+                    let mut after = node_idx; // c:412
+                    for w in &words[1..] {
+                        after = list.insertlinknode(after, w.clone()); // c:412
+                    }
+                    node_idx = after; // c:413
+                    s_word = words[words.len() - 1].clone(); // c:413
+                    l1_prefix = ""; // c:414
+                }
+                str3 = format!(
+                    "{}{}{}",
+                    l1_prefix,
+                    s_word.trim_end_matches('\n'),
+                    suffix
+                ); // c:417-420
                 chars = str3.chars().collect(); // c:237
-                pos = prefix.chars().count() + output.trim_end_matches('\n').chars().count(); // c:237
-                list.setdata(node_idx, str3.clone()); // c:237
+                pos = l1_prefix.chars().count() + s_word.trim_end_matches('\n').chars().count(); // c:420
+                list.setdata(node_idx, str3.clone()); // c:422
             } else {
                 // c:237
                 pos += 1; // c:237
@@ -1618,6 +1679,9 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
         let mut nodes: Vec<String> = Vec::new(); // c:565
         let mut inq = false; // c:570 (bslashquote state)
         let mut inp = 0_i32; // c:570 (paren depth)
+                             // See the `match c` arm below: true only for the c:3216-3218
+                             // caller, which hands this loop RAW SOURCE rather than a value.
+        let raw_source = pf_flags & PREFORK_SHWORDSPLIT != 0;
         let mut i = 0_usize; // c:572
                              // Tokens (META range \u{80}-\u{9F}) are single-byte markers that can
                              // never be separators. c:577.
@@ -1677,10 +1741,32 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
                 }
                 // c:600-611 — quote/paren state. Snull=0x9d Dnull=0x9e
                 // Tick=0x93 Inpar=0x88 Outpar=0x8a.
+                //
+                // !!! RUST-ONLY DIVERGENCE (`raw_source` only) !!! C reaches
+                // this loop with text the LEXER produced, so `(` inside
+                // `${=:-$(echo a b)}` is always the `Inpar` TOKEN and `inp`
+                // keeps the whole command substitution in ONE field until
+                // `prefork` (c:625) runs it. zshrs feeds the c:3229 operand
+                // (the `${x-word}` / `${x:-word}` default) through as RAW
+                // SOURCE, where the paren is still ASCII — `inp` stayed 0, the
+                // field broke at the space inside `$(…)`, and prefork then saw
+                // the unterminated fragment `$(echo` and left it literal.
+                //
+                // The acceptance is gated on `PREFORK_SHWORDSPLIT`, which is
+                // exactly C's c:3216-3218 source-word caller
+                // (`PREFORK_SHWORDSPLIT | PREFORK_SPLIT`). zshrs's other two
+                // PREFORK_SPLIT callers — `${=var}` (fusevm_bridge.rs:4969)
+                // and unquoted-cmdsubst word splitting
+                // (fusevm_bridge.rs:4844) — pass PREFORK_SPLIT ALONE and hand
+                // this loop a parameter VALUE, where a `(` is ordinary data
+                // that must not suppress splitting (`x='a (b c) d'; ${=x}` is
+                // four words in zsh).
                 match c {
                     Dnull | Snull | Tick => inq = !inq,
                     Inpar => inp += 1,
                     Outpar => inp -= 1,
+                    '(' if raw_source => inp += 1,
+                    ')' if raw_source => inp -= 1,
                     _ => {}
                 }
                 // c:581 — stop at an unquoted, non-token IFS separator.
@@ -3010,14 +3096,22 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
         // c:1497
         Ok(n) => n, // c:1497
         Err(msg) => {
-            // c:1499
-            // C: `return noerrs ? dupstring("") : NULL;` —
-            // empty string when noerrs flag is set, NULL otherwise.
+            // c:1499 — `if (errflag) { errflag |= saved_errflag;`
+            // c:1500 —     `return noerrs ? dupstring(""): NULL; }`
             // The C path's zerr() inside mathevali wrote the message
             // to stderr before this return; Rust's mathevali captures
-            // it in Err — surface it via zerr().
+            // it in Err — surface it via zerr(), which itself honours
+            // `noerrs` (utils.rs:219, c:Src/utils.c:173-177) and sets
+            // errflag either way.
             zerr(&msg);
-            return Some(String::new()); // c:1500
+            // c:1500 — NULL (not "") when noerrs is clear, i.e. under the
+            // `(X)` flag (quoteerr), which is what makes `${(#X):-@}`
+            // abort the substitution with status 1 instead of expanding
+            // to the empty string.
+            if *crate::ported::utils::noerrs_lock().lock().unwrap() != 0 {
+                return Some(String::new()); // c:1500
+            }
+            return None; // c:1500
         } // c:1502
     }; // c:1502
     if ires < 0 {
@@ -3042,10 +3136,22 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
     let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
     let mut bytes: Vec<u8> = Vec::new();
     if mb && ires > 127 {
-        // c:1510 — `len = ucs4tomb(ires & 0xffffffff, ptr)`.
-        if let Some(ch) = char::from_u32(ires as u32) {
-            let mut buf = [0u8; 4];
-            bytes = ch.encode_utf8(&mut buf).as_bytes().to_vec();
+        // c:1510 — `len = ucs4tomb((unsigned int)ires & 0xffffffff, ptr);`
+        //
+        // This MUST go through the real `ucs4tomb` (utils.rs:9005 →
+        // `wctomb(3)`), not a blind UTF-8 encode: `wctomb` answers in the
+        // CURRENT LOCALE, so under `LANG=C` every value above 127 fails and
+        // C falls through to the single-byte `sprintf("%c")` arm below. A
+        // blind `char::encode_utf8` produced the two bytes `c2 80` for
+        // `${(#):-0x80}` where zsh (and the ztst harness, which exports
+        // `LANG=C`) produces the one byte `80`. The failure branch of
+        // `ucs4tomb` also raises c:Src/utils.c:6794 `zerr("character not in
+        // range")`, which is the diagnostic `${(#X):-0x80}` is required to
+        // print.
+        let mut buf = [0u8; 16];
+        let len = crate::ported::utils::ucs4tomb((ires as u64 & 0xffff_ffff) as u32, &mut buf);
+        if len > 0 {
+            bytes = buf[..len as usize].to_vec();
         }
     }
     // c:1512-1518 — `if (len <= 0) { len = 1; sprintf(ptr, "%c", (int)ires); }`.
@@ -7951,7 +8057,22 @@ pub fn paramsubst(
                     // subscript expression before pattern compilation,
                     // so `${h[(R)$x]}` expands $x first. Mirrors the
                     // array-side fix below at line ~4760.
-                    let pat = if pat.contains('$') || pat.contains('`') {
+                    // c:Src/params.c:1567-1571 — `parsestr` + `singsub` run
+                    // EXACTLY ONCE per subscript argument, inside getarg.
+                    // `expand_sub_arg` (this file, the c:1533-1571 port) already
+                    // did that round for every subscript it parsed and records
+                    // the fact in `subscript_split`. Re-running singsub here
+                    // expanded the RESULT a second time, so
+                    // `key=$'$foo'; ${a[(i)$key]}` searched for the VALUE of
+                    // `$foo` where the single C round leaves the literal text
+                    // `$foo` (D04parameter.ztst "Matching array indices with and
+                    // without quoting"). Entry points that reach paramsubst with
+                    // an UNEXPANDED subscript — `arithsubst` -> `singsub` ->
+                    // paramsubst, where the c:1533 scan never ran — leave
+                    // `subscript_split` at None and still get their one round.
+                    let pat = if subscript_split.is_none()
+                        && (pat.contains('$') || pat.contains('`'))
+                    {
                         singsub(&pat)
                     } else {
                         pat
@@ -8404,7 +8525,22 @@ pub fn paramsubst(
                     // (`(( y = ${a[(I)$x]} ))`) routes through
                     // arithsubst → singsub → paramsubst and arrives
                     // here with the literal pattern. Bug #195 sibling.
-                    let pat = if pat.contains('$') || pat.contains('`') {
+                    // c:Src/params.c:1567-1571 — `parsestr` + `singsub` run
+                    // EXACTLY ONCE per subscript argument, inside getarg.
+                    // `expand_sub_arg` (this file, the c:1533-1571 port) already
+                    // did that round for every subscript it parsed and records
+                    // the fact in `subscript_split`. Re-running singsub here
+                    // expanded the RESULT a second time, so
+                    // `key=$'$foo'; ${a[(i)$key]}` searched for the VALUE of
+                    // `$foo` where the single C round leaves the literal text
+                    // `$foo` (D04parameter.ztst "Matching array indices with and
+                    // without quoting"). Entry points that reach paramsubst with
+                    // an UNEXPANDED subscript — `arithsubst` -> `singsub` ->
+                    // paramsubst, where the c:1533 scan never ran — leave
+                    // `subscript_split` at None and still get their one round.
+                    let pat = if subscript_split.is_none()
+                        && (pat.contains('$') || pat.contains('`'))
+                    {
                         singsub(&pat)
                     } else {
                         pat
@@ -12258,8 +12394,43 @@ pub fn paramsubst(
                     // `${interactive_comments-${(z)__buf}}` tokenizer got
                     // the whole buffer as a single "word" and painted the
                     // entire line unknown-token red.
-                    let (ms_joined, ms_parts, ms_isarr, _ms) =
-                        multsub(default, PREFORK_NOSHWORDSPLIT);
+                    //
+                    // c:3208-3214 —
+                    //   /* If word-splitting is enabled, we ask multsub() to split
+                    //    * the substituted string at unquoted whitespace.  Then, we
+                    //    * turn off spbreak so that no further splitting occurs.
+                    //    * This allows a construct such as ${1+"$@"} to correctly
+                    //    * keep its array splits, and weird constructs such as
+                    //    * ${str+"one two" "3 2 1" foo "$str"} to only be split
+                    //    * at the unquoted spaces. */
+                    // c:3215-3218 —
+                    //   if (spbreak) {
+                    //       split_flags = PREFORK_SHWORDSPLIT;
+                    //       if (!aspar) split_flags |= PREFORK_SPLIT;
+                    //   }
+                    // c:3219-3227 — `else split_flags = PREFORK_NOSHWORDSPLIT;`
+                    //
+                    // The port had the `else` arm hard-wired, so the split never
+                    // reached the default word: `${=:-$(echo a b c)}` (and every
+                    // SH_WORD_SPLIT `${x-$(…)}`) came back as ONE word.
+                    // `spbreak` is c:1707 `(pf_flags & PREFORK_SHWORDSPLIT) &&
+                    // !(pf_flags & PREFORK_SINGLE) && !qt`, raised to 2 by the
+                    // `${=…}` flag (c:2567) — which is what `force_split` holds.
+                    let spbreak = force_split
+                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                            && pf_flags & PREFORK_SINGLE == 0
+                            && !qt); // c:1707 / c:2567
+                    let split_flags = if spbreak {
+                        // c:3216
+                        let mut f = PREFORK_SHWORDSPLIT; // c:3216
+                        if !aspar {
+                            f |= PREFORK_SPLIT; // c:3218
+                        }
+                        f
+                    } else {
+                        PREFORK_NOSHWORDSPLIT // c:3226
+                    };
+                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(default, split_flags);
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
@@ -12331,6 +12502,11 @@ pub fn paramsubst(
                     {
                         split_parts = Some(vec![value.clone()]);
                     }
+                    // c:3230 — `spbreak = 0;` (see the comment quoted above:
+                    // multsub has already done the splitting, so nothing
+                    // further may re-split — that is what keeps `${1+"$@"}`'s
+                    // array splits intact).
+                    force_split = false; // c:3230
                 }
             } else if let Some(default) = r.strip_prefix('-') {
                 // c:3193
@@ -12338,8 +12514,21 @@ pub fn paramsubst(
                     // c:3207-3228 — multsub, not singsub: a nested
                     // array-producing default stays an array (see the
                     // `:-` arm above; this is the f-sy-h shape).
-                    let (ms_joined, ms_parts, ms_isarr, _ms) =
-                        multsub(default, PREFORK_NOSHWORDSPLIT);
+                    // c:3215-3226 split_flags — identical to the `:-` arm.
+                    let spbreak = force_split
+                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                            && pf_flags & PREFORK_SINGLE == 0
+                            && !qt); // c:1707 / c:2567
+                    let split_flags = if spbreak {
+                        let mut f = PREFORK_SHWORDSPLIT; // c:3216
+                        if !aspar {
+                            f |= PREFORK_SPLIT; // c:3218
+                        }
+                        f
+                    } else {
+                        PREFORK_NOSHWORDSPLIT // c:3226
+                    };
+                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(default, split_flags);
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
@@ -12356,6 +12545,7 @@ pub fn paramsubst(
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }
+                    force_split = false; // c:3230
                 }
             } else if let Some(default) = r.strip_prefix("::=") {
                 // c:3245 (unconditional assign)
@@ -14614,14 +14804,31 @@ pub fn paramsubst(
                         1 => {
                             if substr_mode {
                                 // Leftmost longest substring match.
+                                // c:Src/glob.c:3055 — `if (!--n || (n <= 0 &&
+                                // (fl & SUB_GLOBAL)))`: the `(I:N:)` index
+                                // selects the Nth match, and c:Src/glob.c:3066
+                                // `umlen -= iincchar(&t, send - t); continue;`
+                                // keeps scanning from the NEXT character while
+                                // `n` is still positive. c:Src/subst.c:3095-3096
+                                // `if (!flnum) flnum++` makes the default 1.
+                                // The port ignored flnum entirely, so
+                                // `${(SI:2:)s##pat}` stripped the FIRST match.
+                                let target = flnum.max(1); // c:3095-3096
+                                let mut count: u32 = 0; // c:3055 `n`
                                 let mut found = None;
                                 'outer: for start in 0..=nn {
                                     for k in (0..=(nn - start)).rev() {
                                         let candidate: String =
                                             cv[start..start + k].iter().collect();
                                         if gms(&candidate, &p, ioff(start)) {
-                                            found = Some((start, start + k));
-                                            break 'outer;
+                                            count += 1; // c:3055 `--n`
+                                            if count >= target {
+                                                found = Some((start, start + k));
+                                                break 'outer;
+                                            }
+                                            // c:3066 — advance one character and
+                                            // keep looking for a later match.
+                                            continue 'outer;
                                         }
                                     }
                                 }
@@ -17235,8 +17442,24 @@ pub fn paramsubst(
             // flags after, keeping only a pending interrupt.
             let saved_errflag = errflag.load(Ordering::Relaxed);
             let saved_noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap();
-            *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
-            let eval_one = |s: &str| -> String { substevalchar(s.trim()).unwrap_or_default() };
+            // c:3810 — `if (!quoteerr) noerrs = 1;`. Under `(X)` (quoteerr)
+            // noerrs stays clear, so substevalchar's math failure PRINTS and
+            // returns NULL (c:1500) and the whole substitution aborts.
+            if !quoteerr {
+                *crate::ported::utils::noerrs_lock().lock().unwrap() = 1; // c:3810
+            }
+            // c:3806 — `int one = noerrs, oef = errflag, haserr = 0;`
+            let haserr = std::cell::Cell::new(false); // c:3806
+            let eval_one = |s: &str| -> String {
+                // c:3826/3837 — `if (!(*av2ptr = substevalchar(*avptr))) haserr = 1;`
+                match substevalchar(s.trim()) {
+                    Some(v) => v,
+                    None => {
+                        haserr.set(true); // c:3827
+                        String::new()
+                    }
+                }
+            };
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| eval_one(s)).collect();
                 value = new_parts.join(" ");
@@ -17266,10 +17489,21 @@ pub fn paramsubst(
                     split_parts = Some(vec![value.clone()]);
                 }
             }
-            // c:3833 — restore noerrs + errflag (keep only INT).
+            // c:3840 — `noerrs = one;`
             *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
-            let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
-            errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
+            // c:3841-3844 — `if (!quoteerr) { /* Retain user interrupt error
+            // status */ errflag = oef | (errflag & ERRFLAG_INT); }`. Under
+            // `(X)` the error flag is deliberately LEFT set so the check
+            // below fires.
+            if !quoteerr {
+                let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
+                errflag.store(saved_errflag | int_bit, Ordering::Relaxed); // c:3843
+            }
+            // c:3845-3846 — `if (haserr || errflag) return NULL;`
+            if haserr.get() || errflag.load(Ordering::Relaxed) != 0 {
+                errflag_set_error(); // c:3846
+                return (String::new(), new_pos, vec![]); // c:3846
+            }
         } // c:1673
 
         // !!! BASH-MODE GATE !!! bash case modification with an optional
@@ -19704,7 +19938,49 @@ pub fn paramsubst(
                     value = esub(&value);
                 }
             } else {
-                value = esub(&value); // c:2268
+                // c:4479-4480 — `if (eval) *str = (char *) getdata(n);`. C
+                // rewinds the stringsubst cursor to the START of the node it
+                // just wrote, so the eval'd text is RE-SCANNED by the caller.
+                // For a `$(…)`/backtick body that re-scan runs the command
+                // substitution, and c:Src/exec.c:4866 `readoutput` splits its
+                // output into words (c:283 `list->list.flags |= LF_ARRAY`), so
+                // `foo='$(print Howzat usay)'; ${(e)foo}` is TWO words. The
+                // port's `singsub` collapses that to one.
+                //
+                // zshrs cannot hand the caller a rewound cursor (re-scanning a
+                // substituted VALUE would double-expand a literal `$` in data —
+                // see the stringsubst note at c:339), so run the re-scan HERE:
+                // `multsub` is the same prefork entry point stringsubst would
+                // have reached, with PREFORK_NOSHWORDSPLIT so an ordinary
+                // multi-word VALUE (`foo='a b'`) still stays one word, exactly
+                // as C does without SH_WORD_SPLIT. Only a genuine command
+                // substitution fans out.
+                let e_multi = !single_e && !value.contains(Snull) && !value.contains('\u{0}');
+                let mut done = false;
+                if e_multi {
+                    let (ms_joined, ms_parts, ms_isarr, _ms) =
+                        ANSI_C_SNULL_STRICT.with(|flag| {
+                            let prev = flag.get();
+                            flag.set(true);
+                            let r = match subst_parse_str(&value, single_e, quoteerr) {
+                                Some(parsed) => multsub(&parsed, PREFORK_NOSHWORDSPLIT), // c:4472 + c:4480
+                                None => multsub(&value, PREFORK_NOSHWORDSPLIT),
+                            };
+                            flag.set(prev);
+                            r
+                        });
+                    if ms_isarr && ms_parts.len() > 1 {
+                        value = ms_joined;
+                        split_parts = Some(ms_parts);
+                        if isarr == 0 {
+                            isarr = 1;
+                        }
+                        done = true;
+                    }
+                }
+                if !done {
+                    value = esub(&value); // c:2268
+                }
             }
         }
 
@@ -19714,7 +19990,42 @@ pub fn paramsubst(
         // i.e. inside a scalar-assignment context). The split uses
         // IFS chars from the executor; default IFS is " \t\n".
         let in_ssub = pf_flags & PREFORK_SINGLE != 0;
-        if force_split && !in_ssub && split_parts.is_none() {
+        // c:Src/subst.c:1707 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT)
+        // && !(pf_flags & PREFORK_SINGLE) && !qt;` — and c:3913
+        // `force_split = !ssub && (spbreak || spsep)`. `force_split` alone is
+        // only C's `spbreak == 2`, i.e. the explicit `${=…}` flag (c:2567); the
+        // OPTION-driven half was missing on this braced path, so under
+        // SH_WORD_SPLIT a braced expansion never IFS-split: `setopt
+        // shwordsplit; string='another poxy boring string';
+        // print -l ${${string}/o/ }` came back as ONE word where zsh prints
+        // seven (D04parameter.ztst "Rule 9: Shell Word Splitting"). The bare
+        // `$name` path has its own c:1705 block further down; only the braced
+        // one was uncovered.
+        let spbreak = force_split
+            || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt); // c:1707
+        // c:Src/subst.c:3906-3911 — inside the same `if (ssub || spbreak || …)`
+        // block, an ARRAY-shaped value is JOINED FIRST when `nojoin == 0`:
+        //     if (isarr || quoted_array_with_offset) {
+        //         if (nojoin == 0 || sep) { val = sepjoin(aval, sep, 1);
+        //                                   isarr = 0; }
+        // and only then does c:3919 `sepsplit` re-split it. That join-then-split
+        // is what makes `setopt shwordsplit; ${${string}/o/ }` seven words: the
+        // inner split gave four elements, the replacement put a space INSIDE
+        // three of them, and the outer round re-splits on the new spaces. The
+        // port skipped the join entirely (the split below is gated on
+        // `split_parts.is_none()`), so those inner spaces survived.
+        // `(@)`/`(*)` (nojoin != 0) and an explicit `(j:…:)` sep keep their
+        // shape, exactly as the C condition says.
+        if spbreak && !in_ssub && sep.is_none() && nojoin == 0 {
+            if let Some(parts) = split_parts.clone() {
+                if parts.len() > 1 {
+                    value = crate::ported::utils::sepjoin(&parts, None); // c:3909
+                    split_parts = None; // c:3910 `isarr = 0`
+                    isarr = 0; // c:3910
+                }
+            }
+        }
+        if spbreak && !in_ssub && split_parts.is_none() {
             // Same signal the (s)/(f) arm raises above: this paramsubst is a
             // SPLIT, so a nesting reader must apply C's prefork empty-node
             // deletion (c:Src/subst.c:184 `else if (!keep) uremnode`) to the
@@ -22463,16 +22774,37 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 Some(&'F') => {
                     any_flag_consumed = true;
                     chars.next();
+                    // c:4707 — `rec = get_intarg(ptr, &dellen);`. The count is
+                    // a `get_strarg` DELIMITED argument (c:1348-1380): the very
+                    // next character is the delimiter, with `(`/`[`/`{`/`<`
+                    // paired to their closers, and the text between the pair is
+                    // math-evaluated (c:1448 `mathevali`). The port read bare
+                    // digits instead, so every documented spelling —
+                    // `:F.1.h`, `:F+2+h`, `:F(3)h`, `:F<4>h`, `:F{5}h`
+                    // (D04parameter.ztst "Modifiers with repetition") — died
+                    // with "unrecognized modifier `.'".
+                    let open = chars.next().unwrap_or('\0'); // c:1355
+                    let close = match open {
+                        '(' => ')', // c:1367
+                        '[' => ']', // c:1370
+                        '{' => '}', // c:1373
+                        '<' => '>', // c:1376
+                        other => other,
+                    };
                     let mut num = String::new();
                     while let Some(&pc) = chars.peek() {
-                        if pc.is_ascii_digit() {
-                            num.push(pc);
-                            chars.next();
-                        } else {
+                        if pc == close {
+                            chars.next(); // c:1385 (closing delimiter consumed)
                             break;
                         }
+                        num.push(pc);
+                        chars.next();
                     }
-                    max_iters = num.parse().ok();
+                    // c:1448 — `ret = mathevali(p);`
+                    max_iters = match mathevali(&num) {
+                        Ok(n) if n > 0 => Some(n as u32),
+                        _ => Some(0), // c:1437/1451 — a bad count means no repeats
+                    };
                 }
                 _ => break, // c:4531
             } // c:4531
@@ -22905,6 +23237,45 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             };
             if let Some((p, r, mode)) = last_subst {
                 // c:4531
+                // c:Src/subst.c:4675 — `case '&': c = hsubpatopt ? 'S' : 's';`
+                // and c:4863-4866 `subst(str, hsubl, hsubr, gbal, hsubpatopt)`.
+                // `hsubpatopt` is the SAME file-static the `s`/`S` arm wrote
+                // (c:4592/4859), so a replay of an `:S` runs c:Src/hist.c:2336's
+                // PATTERN path (`isset(HISTSUBSTPATTERN) || forcepat`), not the
+                // literal `strstr` path. The port replayed everything
+                // literally, so `${s:gS/[[:space:]]//}` followed by `${s:g&}`
+                // re-ran as a literal search for the 12-char text
+                // `[[:space:]]` and changed nothing (D04parameter.ztst
+                // "Different behaviour of :s and :S modifiers").
+                let replay_glob = mode != 0 || isset(HISTSUBSTPATTERN); // c:Src/hist.c:2336
+                                                                       // Sliding-window glob search — same shape as the s/S arm's
+                                                                       // `do_match` (a port of getmatch()'s SUB_SUBSTR loop).
+                let g_find = |hay: &str| -> Option<(usize, usize)> {
+                    let cv: Vec<char> = hay.chars().collect();
+                    let n = cv.len();
+                    for start in 0..=n {
+                        for end in start..=n {
+                            let span: String = cv[start..end].iter().collect();
+                            if patcompile(
+                                &{
+                                    let mut __t = p.clone();
+                                    crate::ported::glob::tokenize(&mut __t);
+                                    __t
+                                },
+                                PAT_HEAPDUP as i32,
+                                None,
+                            )
+                            .map_or(false, |__p| pattry(&__p, &span))
+                            {
+                                let bs: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
+                                let be: usize =
+                                    bs + cv[start..end].iter().map(|c| c.len_utf8()).sum::<usize>();
+                                return Some((bs, be));
+                            }
+                        }
+                    }
+                    None
+                };
                 let apply = |w: &str| -> String {
                     // c:4531
                     match mode {
@@ -22925,20 +23296,43 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                                 w.to_string()
                             }
                         }
-                        // mode 0 (`:s`) and mode 3 (`:S` no
-                        // anchor) both replay as a non-anchored
-                        // replacement. The `:s`/`:S` distinction
-                        // for inner-string matches is implemented
-                        // by glob-vs-literal in the original arm;
-                        // the replay uses the literal path until
-                        // we wire glob into modify().
+                        // mode 0 (`:s`) and mode 3 (`:S` no anchor) both
+                        // replay as a non-anchored replacement; only the
+                        // MATCHER differs (literal vs glob, per hsubpatopt).
                         _ => {
                             // c:4665 non-anchored
-                            if gbal {
-                                w.replace(p.as_str(), r.as_str())
-                            } else {
-                                w.replacen(p.as_str(), r.as_str(), 1)
+                            if !replay_glob {
+                                return if gbal {
+                                    w.replace(p.as_str(), r.as_str())
+                                } else {
+                                    w.replacen(p.as_str(), r.as_str(), 1)
+                                };
                             }
+                            let mut out = String::with_capacity(w.len());
+                            let mut rem = w;
+                            while let Some((s_, e_)) = g_find(rem) {
+                                out.push_str(&rem[..s_]);
+                                out.push_str(&r);
+                                if e_ == s_ {
+                                    // Empty match — advance one char, same
+                                    // guard the s/S arm's gbal loop uses.
+                                    let step =
+                                        rem[e_..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+                                    if step == 0 {
+                                        rem = &rem[e_..];
+                                        break;
+                                    }
+                                    out.push_str(&rem[e_..e_ + step]);
+                                    rem = &rem[e_ + step..];
+                                } else {
+                                    rem = &rem[e_..];
+                                }
+                                if !gbal {
+                                    break;
+                                }
+                            }
+                            out.push_str(rem);
+                            out
                         }
                     }
                 };
@@ -23128,15 +23522,43 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 _ => None, // c:4585 (unrecognized)
             }
         };
-        if wall {
-            // c:4531
-            // Apply modifier to each word
-            let separator = sep.as_deref().unwrap_or(" "); // c:4531
-            let words: Vec<&str> = result.split(separator).collect();
-            let mut modified: Vec<String> = Vec::with_capacity(words.len());
-            for w in &words {
-                match dispatch(w) {
-                    Some(m) => modified.push(m),
+        // c:4732 — `while (rec--) { … }` wraps the WHOLE modifier body, not
+        // just the `:s` arm: `f` (c:4705 `rec = -1`) repeats ANY modifier
+        // until it stops changing the value (c:4886-4888 `if (rec < 0) { if
+        // (!strcmp(test, *str)) break; … }`) and `F N` (c:4707) repeats it at
+        // most N times. `${p:fh}` is therefore `/`, and `${p:F.2.h}` strips
+        // two components. The port only honoured them inside the `:s` arm, so
+        // `${p:fh}` behaved as a single `:h`.
+        let rec_limit: u32 = max_iters.unwrap_or(if fixed_point { u32::MAX } else { 1 }); // c:4705/4707
+        let mut rec_iter: u32 = 0;
+        while rec_iter < rec_limit {
+            rec_iter += 1;
+            let before = result.clone(); // c:4731 `test = dupstring(*str)`
+            if wall {
+                // c:4531
+                // Apply modifier to each word
+                let separator = sep.as_deref().unwrap_or(" "); // c:4531
+                let words: Vec<&str> = result.split(separator).collect();
+                let mut modified: Vec<String> = Vec::with_capacity(words.len());
+                let mut bad = false;
+                for w in &words {
+                    match dispatch(w) {
+                        Some(m) => modified.push(m),
+                        None => {
+                            bad = true;
+                            break;
+                        }
+                    }
+                }
+                if bad {
+                    zerr(&format!("unrecognized modifier `{}'", modifier));
+                    errflag_set_error();
+                    return String::new();
+                }
+                result = modified.join(separator);
+            } else {
+                match dispatch(&result) {
+                    Some(m) => result = m,
                     None => {
                         zerr(&format!("unrecognized modifier `{}'", modifier));
                         errflag_set_error();
@@ -23144,15 +23566,9 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     }
                 }
             }
-            result = modified.join(separator);
-        } else {
-            match dispatch(&result) {
-                Some(m) => result = m,
-                None => {
-                    zerr(&format!("unrecognized modifier `{}'", modifier));
-                    errflag_set_error();
-                    return String::new();
-                }
+            // c:4886-4888 — the `f` (rec < 0) fixed-point stop.
+            if result == before {
+                break;
             }
         }
     } // c:4531
@@ -23511,9 +23927,27 @@ fn vars_contains(name: &str) -> bool {
     // branch. Add the PM_UNSET filter so the chkset path sees
     // the declared-but-not-assigned state correctly. Bug #280
     // in docs/BUGS.md.
+    // c:Src/Modules/param_private.c:678 — with zsh/param/private loaded,
+    // `realparamtab->getnode` IS `getprivatenode`, so EVERY paramtab
+    // lookup (this one included) walks past a private that belongs to an
+    // OUTER scope when read from a deeper one. Without the walk,
+    // `private -x scalar_test=whaat` in a function made `${+scalar_test}`
+    // answer 1 inside a function it called, where zsh answers 0
+    // (V10private.ztst:14,16) — even though `$scalar_test` itself already
+    // expanded empty (getsparam applies the same hook, params.rs:5805).
+    // SAFETY: getprivatenode only follows the read-only `pm->old` chain,
+    // which lives under the read guard held here.
     let in_paramtab_and_set = paramtab().read().map_or(false, |tab| {
-        tab.get(name)
-            .is_some_and(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0)
+        tab.get(name).is_some_and(|pm| {
+            let visible = crate::ported::modules::param_private::getprivatenode(
+                &**pm as *const crate::ported::zsh_h::param,
+            ); // c:678 getnode hook
+            if visible.is_null() {
+                return false; // c:609 walk exhausted — no visible node
+            }
+            let pm: &crate::ported::zsh_h::param = unsafe { &*visible };
+            (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0
+        })
     });
     // c:3193 — the env fallback stands in for zsh's eager
     // createparamtable import, so it may only speak for names that have

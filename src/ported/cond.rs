@@ -167,8 +167,14 @@ pub fn evalcond(
             }
             // Primary — c:179+ default arm. Parenthesised group,
             // unary `-X arg`, binary `l OP r`, or bare arg.
+            //
+            // prec 3 is the ordinary primary; prec 4 is the LITERAL primary
+            // used by the POSIX three-argument rule below, where the first
+            // token is an OPERAND however much it looks like syntax. Both the
+            // paren-group arm and the unary `-X arg` arm are therefore skipped
+            // at prec 4 — see the comment on the caller.
             _ => {
-                if peek(*pos) == Some("(") {
+                if prec == 3 && peek(*pos) == Some("(") {
                     *pos += 1;
                     let r = walk(toks, pos, opts, vars, posix, from_test, 0);
                     if peek(*pos) != Some(")") {
@@ -178,7 +184,7 @@ pub fn evalcond(
                     return r;
                 }
                 // Unary `-X arg`.
-                if let Some(tok) = peek(*pos) {
+                if let Some(tok) = peek(*pos).filter(|_| prec == 3) {
                     if tok.starts_with('-') && tok.len() == 2 {
                         let op = tok.chars().nth(1).unwrap();
                         if matches!(
@@ -465,7 +471,22 @@ pub fn evalcond(
                             )
                         };
                         let mut tok = pat.to_string();
-                        crate::ported::glob::tokenize(&mut tok);
+                        // c:Src/cond.c:299-303 — C hands `patcompile` the RAW
+                        // wordcode string, whose glob metacharacters were
+                        // TOKENIZED at parse time. `[[ ]]` reaches evalcond
+                        // that way, so the port has to tokenize here to get
+                        // `[[ ab = a* ]]` right. The `test`/`[` BUILTIN does
+                        // not: its operands are post-expansion argv strings
+                        // that were never tokenized, so every metacharacter in
+                        // them is LITERAL — real zsh gives
+                        //   `test aX = 'a*'`   → 1 (no match)
+                        //   `test a = '[a]'`   → 1
+                        //   `test '(' = '('`   → 0 (was `bad pattern: (`)
+                        // `from_test` is exactly C's `fromtest`, i.e. the
+                        // wordcode-vs-argv caller split, so gate on it.
+                        if from_test.is_none() {
+                            crate::ported::glob::tokenize(&mut tok);
+                        }
                         match crate::ported::pattern::patcompile(
                             &tok,
                             crate::ported::zsh_h::PAT_HEAPDUP,
@@ -625,19 +646,18 @@ pub fn evalcond(
     // three tokens and a recognised BINARY operator in the middle, it is ALWAYS
     // a binary test of the first and third — even when the first token LOOKS
     // like an operator. `[ "!" = "x" ]` compares the strings "!" and "x", not a
-    // negation. Enter the walker at the PRIMARY level (prec 3), which reads the
-    // left token literally, bypassing the NOT handler (prec 2) that would
-    // otherwise consume a leading `!`. Verified identical in real zsh for both
-    // `[ ]` and `[[ ]]`. A literal `(` or single-char `-X` as the left operand
-    // is left to the general walker (it would misfire at prec 3); those forms
-    // are a rare residual. Found by the test/[ fuzzer.
-    if toks.len() == 3
-        && crate::ported::text::is_cond_binary_op(toks[1]) != 0
-        && toks[0] != "("
-        && !(toks[0].starts_with('-') && toks[0].len() == 2)
-    {
+    // negation. Enter the walker at the LITERAL-PRIMARY level (prec 4), which
+    // reads the left token literally, bypassing the NOT handler (prec 2) that
+    // would otherwise consume a leading `!`, the paren-group arm that would
+    // consume a leading `(`, and the unary arm that would consume a leading
+    // `-X`. Verified identical in real zsh for both `[ ]` and `[[ ]]`:
+    //   `[ '(' = '(' ]`  → 0 (paren-group arm used to swallow the operands)
+    //   `[ '(' = ')' ]`  → 1
+    //   `[ -n = x ]`     → 1 (unary arm used to read `-n =` and leave `x`)
+    // Found by the test/[ fuzzer.
+    if toks.len() == 3 && crate::ported::text::is_cond_binary_op(toks[1]) != 0 {
         let mut p = 0usize;
-        let r = walk(&toks, &mut p, options, variables, posix_mode, from_test, 3);
+        let r = walk(&toks, &mut p, options, variables, posix_mode, from_test, 4);
         if p == toks.len() {
             return r;
         }
