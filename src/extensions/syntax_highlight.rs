@@ -1325,6 +1325,15 @@ impl<'s> Highlighter<'s> {
     /// assignments and redirections.
     fn visit_tokens(&mut self, toks: &[TokSpan]) {
         let mut decoration = StatementDecoration::None_;
+        // A precommand modifier (`command`, `builtin`, `exec`, `noglob`,
+        // `nocorrect`) is itself the cmdpos word, so the REAL command word
+        // that follows it is not flagged cmdpos by the lexer. fish's comment
+        // at the decoration arms says "keep looking for the real command
+        // word"; without this flag that never happened, so `command id` left
+        // `id` unvisited — neither validated nor coloured (an invalid word
+        // like `command zzqwx` was equally uncoloured, so the error case was
+        // invisible too).
+        let mut after_decoration = false;
         let mut expanded_cmd = String::new();
         let mut is_cd = false;
         let mut is_typeset = false;
@@ -1381,7 +1390,7 @@ impl<'s> Highlighter<'s> {
                     self.visit_variable_assignment(t);
                 }
                 STRING_LEX => {
-                    if t.cmdpos && expanded_cmd.is_empty() {
+                    if (t.cmdpos || after_decoration) && expanded_cmd.is_empty() {
                         // fish:1032-1073 — visit_decorated_statement (command word).
                         let clean = t.clean_text();
                         match clean.as_str() {
@@ -1389,21 +1398,41 @@ impl<'s> Highlighter<'s> {
                             // for the real command word.
                             "command" => {
                                 decoration = StatementDecoration::Command;
-                                self.color_span(t.start, t.end, HighlightRole::keyword);
+                                // f-sy-h paints every precommand modifier as
+                                // a COMMAND (measured: SGR 32 for command /
+                                // builtin / exec / noglob / nocorrect). fish
+                                // uses its keyword face here, which rendered
+                                // them the colour of a control-flow word.
+                                self.color_span(t.start, t.end, HighlightRole::command);
+                                after_decoration = true;
                             }
                             "builtin" => {
                                 decoration = StatementDecoration::Builtin;
-                                self.color_span(t.start, t.end, HighlightRole::keyword);
+                                // f-sy-h paints every precommand modifier as
+                                // a COMMAND (measured: SGR 32 for command /
+                                // builtin / exec / noglob / nocorrect). fish
+                                // uses its keyword face here, which rendered
+                                // them the colour of a control-flow word.
+                                self.color_span(t.start, t.end, HighlightRole::command);
+                                after_decoration = true;
                             }
                             "exec" => {
                                 decoration = StatementDecoration::Exec;
-                                self.color_span(t.start, t.end, HighlightRole::keyword);
+                                // f-sy-h paints every precommand modifier as
+                                // a COMMAND (measured: SGR 32 for command /
+                                // builtin / exec / noglob / nocorrect). fish
+                                // uses its keyword face here, which rendered
+                                // them the colour of a control-flow word.
+                                self.color_span(t.start, t.end, HighlightRole::command);
+                                after_decoration = true;
                             }
                             "noglob" | "nocorrect" => {
-                                self.color_span(t.start, t.end, HighlightRole::keyword);
+                                self.color_span(t.start, t.end, HighlightRole::command);
+                                after_decoration = true;
                             }
                             _ => {
                                 self.visit_command_word(t, &clean, decoration);
+                                after_decoration = false;
                                 expanded_cmd = clean;
                                 is_cd = is_veritable_cd(&expanded_cmd);
                                 is_typeset = matches!(
