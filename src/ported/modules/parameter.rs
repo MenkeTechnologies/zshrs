@@ -5064,7 +5064,19 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Modules/terminfo.c:291 SPECIALPMDEF("terminfo", PM_READONLY, ...).
     PartabHashEntry {
         name: "terminfo",
-        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // terminfo.c:291
+        // c:Src/Modules/terminfo.c:305 — `SPECIALPMDEF("terminfo", PM_READONLY, …)`.
+        // PLAIN `PM_READONLY`, NOT `PM_READONLY_SPECIAL`
+        // (= PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN, c:Src/zsh.h:1925), and
+        // `SPECIALPMDEF` (c:Src/zsh.h:2122) only ORs in
+        // `PM_SPECIAL|PM_HIDE|PM_HIDEVAL` — it never adds PM_RO_BY_DESIGN.
+        // Carrying that bit here made printparamnode's c:Src/params.c:6157-6162
+        // gate (`if (p->level != locallevel || p->level == 0) return;`)
+        // swallow the row, so `zmodload zsh/system; typeset -p sysparams`
+        // printed NOTHING where zsh prints `typeset -Ar sysparams`.
+        // Only the 7 module rows declared outside Src/Modules/parameter.c
+        // are plain PM_READONLY; the parameter.c rows that really do use
+        // PM_READONLY_SPECIAL keep the bit.
+        flags: PM_HASHED as i32 | PM_READONLY as i32,
         getfn: crate::ported::modules::terminfo::getterminfo,
         module: None,
         scanfn: crate::ported::modules::terminfo::scanterminfo,
@@ -5072,7 +5084,19 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Modules/termcap.c:299 SPECIALPMDEF("termcap", PM_READONLY, ...).
     PartabHashEntry {
         name: "termcap",
-        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // termcap.c:299
+        // c:Src/Modules/termcap.c:312 — `SPECIALPMDEF("termcap", PM_READONLY, …)`.
+        // PLAIN `PM_READONLY`, NOT `PM_READONLY_SPECIAL`
+        // (= PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN, c:Src/zsh.h:1925), and
+        // `SPECIALPMDEF` (c:Src/zsh.h:2122) only ORs in
+        // `PM_SPECIAL|PM_HIDE|PM_HIDEVAL` — it never adds PM_RO_BY_DESIGN.
+        // Carrying that bit here made printparamnode's c:Src/params.c:6157-6162
+        // gate (`if (p->level != locallevel || p->level == 0) return;`)
+        // swallow the row, so `zmodload zsh/system; typeset -p sysparams`
+        // printed NOTHING where zsh prints `typeset -Ar sysparams`.
+        // Only the 7 module rows declared outside Src/Modules/parameter.c
+        // are plain PM_READONLY; the parameter.c rows that really do use
+        // PM_READONLY_SPECIAL keep the bit.
+        flags: PM_HASHED as i32 | PM_READONLY as i32,
         getfn: crate::ported::modules::termcap::gettermcap,
         module: None,
         scanfn: crate::ported::modules::termcap::scantermcap,
@@ -5080,7 +5104,19 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Zle/zleparameter.c:133 SPECIALPMDEF("widgets", PM_READONLY, ...).
     PartabHashEntry {
         name: "widgets",
-        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // zleparameter.c:133
+        // c:Src/Zle/zleparameter.c:133 — `SPECIALPMDEF("widgets", PM_READONLY, …)`.
+        // PLAIN `PM_READONLY`, NOT `PM_READONLY_SPECIAL`
+        // (= PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN, c:Src/zsh.h:1925), and
+        // `SPECIALPMDEF` (c:Src/zsh.h:2122) only ORs in
+        // `PM_SPECIAL|PM_HIDE|PM_HIDEVAL` — it never adds PM_RO_BY_DESIGN.
+        // Carrying that bit here made printparamnode's c:Src/params.c:6157-6162
+        // gate (`if (p->level != locallevel || p->level == 0) return;`)
+        // swallow the row, so `zmodload zsh/system; typeset -p sysparams`
+        // printed NOTHING where zsh prints `typeset -Ar sysparams`.
+        // Only the 7 module rows declared outside Src/Modules/parameter.c
+        // are plain PM_READONLY; the parameter.c rows that really do use
+        // PM_READONLY_SPECIAL keep the bit.
+        flags: PM_HASHED as i32 | PM_READONLY as i32,
         getfn: crate::ported::zle::zleparameter::getpmwidgets,
         module: None,
         scanfn: crate::ported::zle::zleparameter::scanpmwidgets,
@@ -5088,7 +5124,19 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Modules/system.c:904 SPECIALPMDEF("sysparams", PM_READONLY, ...).
     PartabHashEntry {
         name: "sysparams",
-        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // system.c:904
+        // c:Src/Modules/system.c:906 — `SPECIALPMDEF("sysparams", PM_READONLY, …)`.
+        // PLAIN `PM_READONLY`, NOT `PM_READONLY_SPECIAL`
+        // (= PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN, c:Src/zsh.h:1925), and
+        // `SPECIALPMDEF` (c:Src/zsh.h:2122) only ORs in
+        // `PM_SPECIAL|PM_HIDE|PM_HIDEVAL` — it never adds PM_RO_BY_DESIGN.
+        // Carrying that bit here made printparamnode's c:Src/params.c:6157-6162
+        // gate (`if (p->level != locallevel || p->level == 0) return;`)
+        // swallow the row, so `zmodload zsh/system; typeset -p sysparams`
+        // printed NOTHING where zsh prints `typeset -Ar sysparams`.
+        // Only the 7 module rows declared outside Src/Modules/parameter.c
+        // are plain PM_READONLY; the parameter.c rows that really do use
+        // PM_READONLY_SPECIAL keep the bit.
+        flags: PM_HASHED as i32 | PM_READONLY as i32,
         getfn: crate::ported::modules::system::getpmsysparams,
         module: Some("zsh/system"),
         scanfn: crate::ported::modules::system::scanpmsysparams,
@@ -5234,7 +5282,19 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // Src/Modules/system.c:902 SPECIALPMDEF("errnos", PM_ARRAY|PM_READONLY, ...).
     PartabArrayEntry {
         name: "errnos",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // system.c:902
+        // c:Src/Modules/system.c:904 — `SPECIALPMDEF("errnos", PM_ARRAY|PM_READONLY, …)`.
+        // PLAIN `PM_READONLY`, NOT `PM_READONLY_SPECIAL`
+        // (= PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN, c:Src/zsh.h:1925), and
+        // `SPECIALPMDEF` (c:Src/zsh.h:2122) only ORs in
+        // `PM_SPECIAL|PM_HIDE|PM_HIDEVAL` — it never adds PM_RO_BY_DESIGN.
+        // Carrying that bit here made printparamnode's c:Src/params.c:6157-6162
+        // gate (`if (p->level != locallevel || p->level == 0) return;`)
+        // swallow the row, so `zmodload zsh/system; typeset -p sysparams`
+        // printed NOTHING where zsh prints `typeset -Ar sysparams`.
+        // Only the 7 module rows declared outside Src/Modules/parameter.c
+        // are plain PM_READONLY; the parameter.c rows that really do use
+        // PM_READONLY_SPECIAL keep the bit.
+        flags: PM_ARRAY as i32 | PM_READONLY as i32,
         getfn: crate::ported::modules::system::errnosgetfn,
         setfn: None,
         module: Some("zsh/system"),
@@ -5242,7 +5302,19 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // Src/Zle/zleparameter.c:132 SPECIALPMDEF("keymaps", PM_ARRAY|PM_READONLY, ...).
     PartabArrayEntry {
         name: "keymaps",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // zleparameter.c:132
+        // c:Src/Zle/zleparameter.c:132 — `SPECIALPMDEF("keymaps", PM_ARRAY|PM_READONLY, …)`.
+        // PLAIN `PM_READONLY`, NOT `PM_READONLY_SPECIAL`
+        // (= PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN, c:Src/zsh.h:1925), and
+        // `SPECIALPMDEF` (c:Src/zsh.h:2122) only ORs in
+        // `PM_SPECIAL|PM_HIDE|PM_HIDEVAL` — it never adds PM_RO_BY_DESIGN.
+        // Carrying that bit here made printparamnode's c:Src/params.c:6157-6162
+        // gate (`if (p->level != locallevel || p->level == 0) return;`)
+        // swallow the row, so `zmodload zsh/system; typeset -p sysparams`
+        // printed NOTHING where zsh prints `typeset -Ar sysparams`.
+        // Only the 7 module rows declared outside Src/Modules/parameter.c
+        // are plain PM_READONLY; the parameter.c rows that really do use
+        // PM_READONLY_SPECIAL keep the bit.
+        flags: PM_ARRAY as i32 | PM_READONLY as i32,
         getfn: crate::ported::zle::zleparameter::keymapsgetfn,
         setfn: None,
         module: None,
@@ -5256,7 +5328,19 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // emits `<time>:<flags>:<cmd>` per entry.
     PartabArrayEntry {
         name: "zsh_scheduled_events",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // sched.c:382
+        // c:Src/Builtins/sched.c:383 — `SPECIALPMDEF("zsh_scheduled_events", PM_ARRAY|PM_READONLY, …)`.
+        // PLAIN `PM_READONLY`, NOT `PM_READONLY_SPECIAL`
+        // (= PM_SPECIAL|PM_READONLY|PM_RO_BY_DESIGN, c:Src/zsh.h:1925), and
+        // `SPECIALPMDEF` (c:Src/zsh.h:2122) only ORs in
+        // `PM_SPECIAL|PM_HIDE|PM_HIDEVAL` — it never adds PM_RO_BY_DESIGN.
+        // Carrying that bit here made printparamnode's c:Src/params.c:6157-6162
+        // gate (`if (p->level != locallevel || p->level == 0) return;`)
+        // swallow the row, so `zmodload zsh/system; typeset -p sysparams`
+        // printed NOTHING where zsh prints `typeset -Ar sysparams`.
+        // Only the 7 module rows declared outside Src/Modules/parameter.c
+        // are plain PM_READONLY; the parameter.c rows that really do use
+        // PM_READONLY_SPECIAL keep the bit.
+        flags: PM_ARRAY as i32 | PM_READONLY as i32,
         getfn: crate::ported::builtins::sched::schedgetfn,
         setfn: None,
         module: None,

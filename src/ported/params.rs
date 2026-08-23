@@ -2502,7 +2502,49 @@ pub fn createparam(
                 // failed (zinit's :zinit-tmp-subst-autoload does
                 // exactly this dance). Fall back to the name-routed
                 // getsparam when the pm carries no scalar gsu.
-                if (PM_TYPE(op.node.flags as u32) & PM_ARRAY) != 0 {
+                // c:Src/builtin.c:2410 `copyparam(tpm, pm, 1)` copies the
+                // `u` UNION out of the struct it already holds — it never
+                // resolves the NAME, so it cannot run `getparamnode` →
+                // `loadparamnode` (c:Src/params.c:563-585) and cannot
+                // `ensurefeature` the owning module. C is explicit about this
+                // for the whole builtin: c:Src/builtin.c:3096-3097 comments the
+                // literal-arg lookup as "getnode2() to avoid autoloading", and
+                // the `-m` loop at c:3085-3088 hands `typeset_single` the pm
+                // POINTER it already has. zshrs's snapshot below goes through
+                // `getaparam`/`getsparam`, which DO resolve the name and boot
+                // the module — so a bare `local zsh_scheduled_events` (or the
+                // `typeset -h +g -m '*'` stress at B02typeset.ztst:37) loaded
+                // zsh/sched and zsh/zleparameter, where `zmodload -e zsh/sched`
+                // answers 1 in zsh and 0 in zshrs. It also stuck the name in
+                // MATERIALIZED_MODULE_PARAMS for the rest of the shell, so a
+                // later `readonly -p` listed `typeset -g -ar keymaps` /
+                // `typeset -g -ar zsh_scheduled_events` (B02typeset.ztst:47).
+                // An unbooted module row has no value to preserve — in C it is
+                // a PM_AUTOLOAD stub whose `u.str` is just the module name — so
+                // skip the snapshot entirely for it. Same predicate as the
+                // print-side gate in `printparamnode` below; kept inlined
+                // rather than shared because build.rs forbids Rust-only helper
+                // fns under src/ported/.
+                let unbooted_module_row = crate::vm_helper::AUTOLOAD_PARAMS
+                    .iter()
+                    .find(|(pnam, _)| *pnam == op.node.nam)
+                    .is_some_and(|(_, modname)| {
+                        crate::ported::module::MODULESTAB
+                            .lock()
+                            .ok()
+                            .map(|t| {
+                                // c:Src/module.c:218-241 — "boot ran" is
+                                // MOD_INIT_B && !MOD_UNLOAD.
+                                !t.modules.get(*modname).is_some_and(|md| {
+                                    (md.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                                        && (md.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+                                })
+                            })
+                            .unwrap_or(false)
+                    });
+                if unbooted_module_row {
+                    // c:2410 — nothing to copy; the stub carries no value.
+                } else if (PM_TYPE(op.node.flags as u32) & PM_ARRAY) != 0 {
                     // ARRAY side of a tied pair (fpath/path/cdpath):
                     // snapshot the ELEMENT VECTOR. Forcing the scalar
                     // getsparam fallback here stored Some("") and the
@@ -13703,7 +13745,46 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         // `dis_reswords`, `funcfiletrace`, `funcsourcetrace`, `funcstack`,
         // `functrace`, `historywords`, `keymaps`, `patchars`, `reswords` and
         // `zsh_scheduled_events` alongside the user's own read-only params.
-        let autoload_stub = crate::vm_helper::module_param_is_autoload_stub(&hn.node.nam)
+        //
+        // c:Src/module.c:2317 `load_module` sets MOD_INIT_B after
+        // `do_boot_module` — the same bit `zmodload -e` reads, and the one
+        // `autoload_param_stubs` (vm_helper.rs:6808-6827) keys on. Until a
+        // module boots, its `patab[]` rows are not in C's paramtab AT ALL
+        // (`add_autoparam`, c:Src/module.c:1218-1223, plants a PM_AUTOLOAD
+        // stub, and c:6150-6155 returns for it), so `readonly -p` in a bare
+        // `zsh -f` lists none of them. zshrs seeds the rows eagerly, and the
+        // `MATERIALIZED_MODULE_PARAMS` side-set that stands in for
+        // PM_AUTOLOAD is STICKY: `typeset -h +g -m '*'; unset -m '*'` reads
+        // every matched value once, which marks `keymaps` / `zsh_scheduled_events`
+        // materialized forever — where C's scan hits the function-local
+        // shadow and `endparamscope` puts the untouched stub straight back.
+        // So a later `readonly -p` printed `typeset -g -ar keymaps` /
+        // `typeset -g -ar zsh_scheduled_events` (B02typeset.ztst:47).
+        // Ask the module's BOOT STATE as well — that is C's actual
+        // precondition, and unlike the side-set it cannot go stale.
+        // Verified against the oracle: with `zmodload zsh/zleparameter;
+        // zmodload zsh/sched` loaded, zsh DOES print `typeset -ar keymaps`,
+        // `typeset -Ar widgets`, `typeset -ar zsh_scheduled_events` — so the
+        // suppression must key on boot state, not on the row's identity.
+        let owning_module_unbooted = crate::vm_helper::AUTOLOAD_PARAMS
+            .iter()
+            .find(|(pnam, _)| *pnam == hn.node.nam)
+            .is_some_and(|(_, modname)| {
+                crate::ported::module::MODULESTAB
+                    .lock()
+                    .ok()
+                    .map(|t| {
+                        // c:Src/module.c:218-241 — "boot ran" is
+                        // MOD_INIT_B && !MOD_UNLOAD (printmodulenode's test).
+                        !t.modules.get(*modname).is_some_and(|md| {
+                            (md.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                                && (md.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+                        })
+                    })
+                    .unwrap_or(false)
+            });
+        let autoload_stub = (crate::vm_helper::module_param_is_autoload_stub(&hn.node.nam)
+            || owning_module_unbooted)
             && (crate::ported::modules::parameter::PARTAB
                 .iter()
                 .any(|e| e.name == hn.node.nam)
