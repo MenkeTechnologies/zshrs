@@ -114,8 +114,13 @@ zshrs-daemon = { workspace = true, optional = true }
 # See src/extensions/plugin_host.rs and docs/PLUGINS.md.
 libloading = "0.8"
 znative = { workspace = true }
-fusevm = { version = "0.22.0", features = ["jit", "jit-disk-cache", "aot", "ffi"] }
+fusevm = { version = "0.23.0", features = ["jit", "jit-disk-cache", "aot", "ffi"] }
 regex = "1.11"
+# zsh/pcre needs PCRE features the `regex` crate cannot express — zero-width
+# lookahead/lookbehind and backreferences (Src/Modules/pcre.c wraps libpcre2,
+# which has them). fancy-regex keeps the `regex` engine for patterns it can
+# handle and falls back to a backtracking VM for the rest.
+fancy-regex = "0.18"
 glob = "0.3"
 libc = "0.2"
 indexmap = "2"

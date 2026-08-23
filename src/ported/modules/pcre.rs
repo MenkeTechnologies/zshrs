@@ -8,7 +8,13 @@ use crate::ported::zsh_h::{
     features, isset, module, options, BASHREMATCH, CASEMATCH, KSHARRAYS, MAX_OPS, MB_CHARLEN,
     OPT_ARG, OPT_HASARG, OPT_ISSET, REMATCHPCRE,
 };
-use regex::Regex;
+// c:Src/Modules/pcre.c wraps libpcre2. The `regex` crate cannot express PCRE's
+// zero-width look-around or backreferences (`foo(?=bar)` fails to COMPILE with
+// "look-around ... is not supported"), so `pcre_compile` rejected patterns real
+// zsh accepts. fancy-regex keeps the `regex` engine for the patterns it can
+// handle and falls back to its own backtracking VM for the rest, which is the
+// closest available stand-in for libpcre2's feature set.
+use fancy_regex::Regex;
 
 use crate::params::setsparam;
 use crate::ported::options::optlookup;
@@ -664,9 +670,14 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             if offset_start > 0 && (offset_start as usize) >= plaintext.len() {
                 return (None, None, Vec::new(), Vec::new());
             }
-            let caps = match re.captures_at(&plaintext, search_base_offset) {
-                Some(c) => c,
-                None => return (None, None, Vec::new(), Vec::new()),
+            // c:381-382 pcre2_match(...). fancy_regex spells `captures_at` as
+            // `captures_from_pos` and reports runtime failures (backtrack-limit
+            // exhaustion) as `Err`; C treats every negative pcre2_match return
+            // other than PCRE2_ERROR_NOMATCH the same way at c:409 (warn, no
+            // variables set), so both map to "no match" here.
+            let caps = match re.captures_from_pos(&plaintext, search_base_offset) {
+                Ok(Some(c)) => c,
+                Ok(None) | Err(_) => return (None, None, Vec::new(), Vec::new()),
             };
             let full_m = caps.get(0); // c:401 matched_portion
             let full = full_m.map(|m| m.as_str().to_string());
@@ -880,7 +891,9 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
     match Regex::new(&pcre_compile_pat) {
         Ok(re) => {
             // c:465 — `pcre2_match(pcre_pat, lhstr_plain, ...)`.
-            match re.captures(&lhs_plain) {
+            // c:465 — fancy_regex returns Result; a runtime failure is
+            // reported like PCRE2's negative returns (c:493 warn/no-match).
+            match re.captures(&lhs_plain).unwrap_or(None) {
                 Some(caps) => {
                     // c:483-487 — match succeeded; emit via the
                     // zpcre_get_substrings contract:

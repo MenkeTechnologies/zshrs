@@ -2244,11 +2244,91 @@ pub fn createparam(
     // can decide reuse-vs-shadow. PM_RO_BY_DESIGN / PM_NAMEREF
     // chase branches (c:1043-1104) elided — covered when nameref
     // / readonly-by-design Params are wired.
-    let oldpm: Option<Param> = if !name.is_empty() {
+    let mut oldpm: Option<Param> = if !name.is_empty() {
         paramtab().read().ok().and_then(|t| t.get(name).cloned())
     } else {
         None
     };
+
+    // c:1086-1125 — the PM_NAMEREF chase. Previously elided; ported
+    // here verbatim.
+    //
+    //     if (oldpm && !(flags & PM_NAMEREF) &&
+    //         (oldpm->level == locallevel ?
+    //          !(oldpm->node.flags & PM_RO_BY_DESIGN) : !(flags & PM_LOCAL)) &&
+    //         (oldpm->node.flags & PM_NAMEREF) &&
+    //         (!(oldpm->node.flags & PM_UNSET) ||
+    //          (oldpm->node.flags & PM_DECLARED))) {
+    //
+    // c:1091-1095 — "Here we only have to deal with namerefs that refer
+    // to not-yet-defined or unset variable. All other namerefs have
+    // already been taken care of by the resolve_nameref in
+    // typeset_single. It's unclear why these can't be handled there
+    // too."
+    //
+    // C rebinds the local `name` pointer (c:1105) / the local `oldpm`
+    // (c:1121) and lets the reuse arm below act on the RETARGETED node;
+    // because that arm keeps the same struct, the retargeted node stays
+    // in `paramtab` under its OWN key. zshrs's table is name-keyed and
+    // re-inserts at the end, so the rebind has to carry the key too.
+    let mut name_owned: String;
+    let mut name: &str = name;
+    if let Some(op) = oldpm.clone() {
+        let opf = op.node.flags as u32;
+        let ll = locallevel.load(Ordering::Relaxed) as i32;
+        // c:1086-1090
+        if (flags as u32 & PM_NAMEREF) == 0
+            && (if op.level == ll {
+                (opf & PM_RO_BY_DESIGN) == 0 // c:1088
+            } else {
+                (flags as u32 & PM_LOCAL) == 0 // c:1088
+            })
+            && (opf & PM_NAMEREF) != 0 // c:1089
+            && ((opf & PM_UNSET) == 0 || (opf & PM_DECLARED) != 0)
+        // c:1090
+        {
+            // c:1097 — `Param lastpm = resolve_nameref_rec(oldpm, NULL, 1);`
+            let lastpm = resolve_nameref_rec(Some(op), None, 1);
+            if let Some(lastpm) = lastpm {
+                // c:1098
+                let lf = lastpm.node.flags as u32;
+                // c:1099-1101
+                if (lf & PM_NAMEREF) != 0 && ((lf & PM_UNSET) == 0 || (lf & PM_DECLARED) != 0) {
+                    // c:1102 — `char *refname = GETREFNAME(lastpm);`
+                    let refname = lastpm.u_str.clone().unwrap_or_default();
+                    if !refname.is_empty() {
+                        // c:1103 — `if (refname && *refname)`
+                        // c:1104 — nameref pointing to a not-yet-defined variable
+                        name_owned = refname; // c:1105 `name = refname;`
+                        name = &name_owned;
+                        oldpm = None; // c:1106
+                    } else {
+                        // c:1108 — nameref pointing to an uninitialized nameref
+                        if (lf & PM_READONLY) == 0 {
+                            // c:1109
+                            if (flags & !(PM_LOCAL as i32)) != 0 {
+                                // c:1110
+                                // c:1111 — Only plain scalar assignment allowed
+                                // c:1112-1113 — Differs from ksh93u+
+                                zerr(&format!("{}: can't change type of named reference", name));
+                                return None; // c:1114
+                            }
+                        }
+                        return Some(lastpm); // c:1117
+                    }
+                } else {
+                    // c:1120 — nameref pointing to an unset local
+                    DPUTS!(
+                        (lf & PM_UNSET) == 0,                  // c:1121
+                        "BUG: local parameter is not unset"    // c:1122
+                    );
+                    name_owned = lastpm.node.nam.clone(); // Rust-only: name-keyed table
+                    name = &name_owned;
+                    oldpm = Some(lastpm); // c:1123
+                }
+            }
+        }
+    }
 
     if !name.is_empty() {
         // c:1149-1150 — `if (isset(ALLEXPORT) && !(flags & PM_HASHELEM)) flags |= PM_EXPORTED;`
@@ -2551,7 +2631,21 @@ pub fn createparam(
     // signals the answer by ORing PM_SPECIAL into `flags`; createparam only
     // sees `on`, so it cannot re-derive the `& ~off` term itself.
     let caller_keeps_special = (flags as u32 & PM_SPECIAL) != 0;
-    if (pm.node.flags as u32 & PM_SPECIAL) == 0 || caller_keeps_special {
+    // c:Src/params.c:1155-1158 — C's createparam ends with
+    //     pm->node.flags = flags & ~PM_LOCAL;
+    //     if (!(pm->node.flags & PM_SPECIAL)) assigngetset(pm);
+    // and inherits NOTHING from `oldpm`. Keeping the special's accessors and
+    // type is done by typeset_single's `newspecial` arm (c:2381-2425), which
+    // only runs when c:2083-2085 chose NS_NORMAL. So the inheritance below
+    // must fire ONLY when the caller signalled that decision by ORing
+    // PM_SPECIAL into `flags`. The old `(pm.flags & PM_SPECIAL) == 0 ||`
+    // disjunction made it fire for the NS_NONE case too, so `-h` (which is
+    // exactly the flag that suppresses NS_NORMAL, c:2083 `!(on & PM_HIDE)`)
+    // could not hide a special: `f(){ typeset -h +g LINENO }` produced
+    // `integer-local-readonly-hide-special` where zsh gives
+    // `scalar-local-hide`, and the following `unset LINENO` then failed with
+    // "read-only variable".
+    if caller_keeps_special {
         let inherited = pm.old.as_ref().and_then(|old| {
             // c:2087-2089 — a HIDDEN special (PM_HIDE, e.g. the `commands`
             // special-hash) is NOT kept special when a `local`/`typeset`
@@ -2810,113 +2904,153 @@ pub fn copyparam(
 // Return 1 if the string s is a valid identifier, else return 0.         // c:1288
 /// `isident` — see implementation.
 pub fn isident(s: &str) -> bool {
-    // c:1288
-    if s.is_empty() {
-        return false;
-    }
-    let mut chars = s.chars().peekable();
+    use crate::ported::utils::itype_end;
+    use crate::ported::ztype_h::{IIDENT, INAMESPC};
 
-    // Handle namespace prefix (e.g. "ns.var")
-    if chars.peek() == Some(&'.') {
-        chars.next();
-        if chars.peek().is_none_or(|c| c.is_ascii_digit()) {
-            return false;
+    let b = s.as_bytes();
+    // c:1313 — `if (!*s)` — empty string is definitely not valid
+    if b.is_empty() {
+        return false; // c:1314
+    }
+
+    // c:1316-1319 — This partly duplicates code in itype_end(), but we need to
+    // distinguish the leading namespace at this point to check the
+    // correctness of the identifier that follows
+    //
+    // C walks `char *s` / `char *ss` as pointers; the Rust port tracks the
+    // same two cursors as BYTE OFFSETS into `s` (`s_off` / `ss_off`).
+    let mut s_off = 0usize;
+    if b[0] == b'.' {
+        // c:1320
+        if b.get(1).is_some_and(|c| c.is_ascii_digit()) {
+            // c:1321
+            return false; // c:1322 — Namespace must not start with a digit
         }
-    }
-
-    let first = match chars.next() {
-        Some(c) => c,
-        None => return false,
-    };
-
-    if first.is_ascii_digit() {
-        // All-digit names are valid (positional params)
-        return chars.all(|c| c.is_ascii_digit());
-    }
-
-    if !first.is_alphabetic() && first != '_' {
-        return false;
-    }
-
-    for c in chars {
-        if c == '[' {
-            // c:1326
-            // c:1329-1330 — `if (*ss != '[') return 0; if (!(ss =
-            //          parse_subscript(++ss, 1, ']'))) return 0;`
-            // Subscript MUST be balanced — `foo[` (missing `]`)
-            // is NOT a valid identifier. The previous Rust port
-            // accepted `[` at the end unconditionally, missing
-            // the balanced-pair requirement.
-            //
-            // Routing through the full `parse_subscript` (which
-            // drives a nested lex context) would be overkill at
-            // this site — a simple bracket-balance walk over the
-            // remaining bytes suffices. Count `[` / `]` and require
-            // the depth to return to 0 before end-of-string.
-            let mut depth = 1i32;
-            // c:Src/params.c:1334 — `if (!(ss = parse_subscript(++ss,
-            // 1, ']'))) return 0;`. C's parse_subscript rejects empty
-            // subscripts: `h[]` returns NULL. Mirror by tracking
-            // whether ANY non-bracket char appears before the depth
-            // returns to 0. Without this, `h[]=val` was accepted as a
-            // valid assoc element write — but zsh errors
-            // `not an identifier: h[]` (bug #288 in docs/BUGS.md).
-            //
-            // c:Src/params.c parse_subscript (params.c:1480+) also
-            // recognises backslash-escaped brackets: `A[\[k\]]` is a
-            // single subscript with key `[k]`. The `\[` doesn't count
-            // toward bracket depth and `\]` doesn't close. Track a
-            // bslash flag so the depth walk matches C semantics.
-            let mut saw_content = false;
-            // Bug fix: `s.split('[').skip(1).next()` only returned
-            // the segment between the first and second `[`, dropping
-            // everything after. Use find()+slice to get the entire
-            // tail starting after the first `[`.
-            let tail_start = s
-                .char_indices()
-                .find(|(_, c)| *c == '[')
-                .map(|(i, _)| i + 1);
-            let saw_close = tail_start.map(|start| &s[start..]).is_some_and(|tail| {
-                let mut bslash = false;
-                for ch in tail.chars() {
-                    if bslash {
-                        // c:parse_subscript — escaped char is
-                        // content, doesn't affect depth.
-                        saw_content = true;
-                        bslash = false;
-                        continue;
-                    }
-                    match ch {
-                        '\\' => {
-                            bslash = true;
-                            saw_content = true;
-                        }
-                        '[' => {
-                            depth += 1;
-                            saw_content = true;
-                        }
-                        ']' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                return true;
-                            }
-                            saw_content = true;
-                        }
-                        _ => saw_content = true,
-                    }
-                }
-                false
-            });
-            if !saw_content {
-                return false; // c:1334 empty subscript rejected
+        // c:1323-1325 — Reject identifiers beginning with a digit in namespaces.
+        // Move this out below this block to also reject v.1x form.
+        // c:1326 — `if ((ss = itype_end(s + (*s == '.'), IIDENT, 0)))`
+        let ss = 1 + itype_end(&s[1..], IIDENT as u32, false);
+        if b.get(ss) == Some(&b'.') {
+            // c:1327
+            if b.get(ss + 1).is_none() {
+                // c:1328
+                return false; // c:1329
             }
-            return saw_close;
-        }
-        if !c.is_alphanumeric() && c != '_' && c != '.' {
-            return false;
+            if b[ss + 1].is_ascii_digit() {
+                // c:1330
+                s_off = ss + 1; // c:1331
+            }
         }
     }
-    true
+
+    let ss_off: usize;
+    if b[s_off].is_ascii_digit() {
+        // c:1336
+        // c:1337 — If the first character is `s' is a digit, then all must be
+        s_off += 1; // c:1338 — `++s`
+        let mut i = s_off; // c:1338 — `ss = ++s`
+        while i < b.len() {
+            // c:1338
+            if !b[i].is_ascii_digit() {
+                // c:1339
+                break; // c:1340
+            }
+            i += 1;
+        }
+        ss_off = i;
+    } else {
+        // c:1341
+        // c:1342 — Find the first character in `s' not in the iident type table
+        ss_off = s_off + itype_end(&s[s_off..], INAMESPC, false); // c:1343
+    }
+
+    // c:1346-1347 — If the next character is not [, then it is
+    // definitely not a valid identifier.
+    if ss_off >= b.len() {
+        // c:1348
+        return true; // c:1349
+    }
+    if s_off == ss_off {
+        // c:1350
+        return false; // c:1351
+    }
+    if b[ss_off] != b'[' {
+        // c:1352
+        return false; // c:1353
+    }
+
+    // c:1355 — Require balanced [ ] pairs with something between
+    // c:1356-1358 — `if (!(ss = parse_subscript(++ss, 1, ']')))
+    //          parse_subscript(++ss, 1, ']'))) return 0;`
+    // Subscript MUST be balanced — `foo[` (missing `]`)
+    // is NOT a valid identifier. The previous Rust port
+    // accepted `[` at the end unconditionally, missing
+    // the balanced-pair requirement.
+    //
+    // Routing through the full `parse_subscript` (which
+    // drives a nested lex context) would be overkill at
+    // this site — a simple bracket-balance walk over the
+    // remaining bytes suffices. Count `[` / `]` and require
+    // the depth to return to 0 before end-of-string.
+    let mut depth = 1i32;
+    // c:Src/params.c:1334 — `if (!(ss = parse_subscript(++ss,
+    // 1, ']'))) return 0;`. C's parse_subscript rejects empty
+    // subscripts: `h[]` returns NULL. Mirror by tracking
+    // whether ANY non-bracket char appears before the depth
+    // returns to 0. Without this, `h[]=val` was accepted as a
+    // valid assoc element write — but zsh errors
+    // `not an identifier: h[]` (bug #288 in docs/BUGS.md).
+    //
+    // c:Src/params.c parse_subscript (params.c:1480+) also
+    // recognises backslash-escaped brackets: `A[\[k\]]` is a
+    // single subscript with key `[k]`. The `\[` doesn't count
+    // toward bracket depth and `\]` doesn't close. Track a
+    // bslash flag so the depth walk matches C semantics.
+    let mut saw_content = false;
+    // Bug fix: `s.split('[').skip(1).next()` only returned
+    // the segment between the first and second `[`, dropping
+    // everything after. Use find()+slice to get the entire
+    // tail starting after the first `[`.
+    // c:1356 — `parse_subscript(++ss, …)`: the walk starts at the
+    // byte AFTER the `[` that the name walk stopped on (`ss_off`),
+    // not at the first `[` anywhere in `s` — with a namespace name
+    // the two can differ once `s` has been advanced at c:1331.
+    let tail_start = Some(ss_off + 1);
+    let saw_close = tail_start.map(|start| &s[start..]).is_some_and(|tail| {
+        let mut bslash = false;
+        for ch in tail.chars() {
+            if bslash {
+                // c:parse_subscript — escaped char is
+                // content, doesn't affect depth.
+                saw_content = true;
+                bslash = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    bslash = true;
+                    saw_content = true;
+                }
+                '[' => {
+                    depth += 1;
+                    saw_content = true;
+                }
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return true;
+                    }
+                    saw_content = true;
+                }
+                _ => saw_content = true,
+            }
+        }
+        false
+    });
+    if !saw_content {
+        return false; // c:1334 empty subscript rejected
+    }
+    saw_close
 }
 
 /// Subscript-argument parser.
@@ -6559,6 +6693,39 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     return None;
                 }
                 crate::ported::params::nameref_resolution::Placeholder(last) => {
+                    // c:3233 — `fetchvalue(&vbuf, &t, 1, SCANPM_ASSIGNING)`
+                    // is handed the RESOLVED endpoint by `getparamnode`
+                    // (c:570-575) and then applies c:2262-2263
+                    //     if (!pm || ((pm->node.flags & PM_UNSET) &&
+                    //                 !(pm->node.flags & PM_DECLARED)))
+                    //         return NULL;
+                    // A chain ending on a reference that `unset -n` left
+                    // `PM_UNSET` with PM_DECLARED cleared therefore reads
+                    // as ABSENT and takes c:3234 `createparam(t,
+                    // PM_SCALAR)`, whose c:1120-1123 arm retargets
+                    // `oldpm` to that endpoint — the value becomes an
+                    // ordinary scalar ON THE ENDPOINT, not a new refname.
+                    // Re-entering through the endpoint's own name is the
+                    // name-keyed equivalent of C's pointer retarget.
+                    {
+                        let endpoint_visible = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| {
+                                t.get(&last).map(|p| {
+                                    let f = p.node.flags as u32;
+                                    (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0
+                                })
+                            })
+                            .unwrap_or(true); // c:2262-2263
+                        if !endpoint_visible {
+                            let mut new_s = last.clone();
+                            if let Some(us) = s.find('[').map(|i| &s[i..]) {
+                                new_s.push_str(us);
+                            }
+                            return assignsparam(&new_s, val, flags);
+                        }
+                    }
                     // Chain ends at a placeholder/unset ref: the value
                     // becomes its new refname (assignstrvalue
                     // PM_NAMEREF arm, c:2712-2717 + c:3258).
@@ -7776,7 +7943,35 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 
     // c:3232 non-subscripted branch.
     let mut tab = paramtab().write().unwrap();
-    let existing = tab.contains_key(name);
+    // c:3233 — `if (!(v = fetchvalue(&vbuf, &t, 1, SCANPM_ASSIGNING)))
+    //             { createparam(t, PM_SCALAR); created = 1; }`.
+    // `fetchvalue` is not a plain table lookup: c:2241-2243 —
+    //     if (pm->node.flags & PM_UNSET && !(pm->node.flags & PM_DECLARED))
+    //         return NULL;
+    // — so a node left `PM_UNSET` with `PM_DECLARED` cleared reads as
+    // ABSENT here and takes the createparam arm, which reuses the same
+    // struct (c:1155 `pm = oldpm`) but OVERWRITES its flags
+    // (c:1176 `pm->node.flags = flags & ~PM_LOCAL;`). That is how
+    // `typeset -n ref; unset -n ref; ref=str` produces an ordinary
+    // scalar: `unsetparam_pm` clears PM_DECLARED (c:3798 "like ksh, not
+    // like bash") and keeps the local node (c:3851), and this lookup
+    // then drops the stale PM_NAMEREF along with the rest of the flags.
+    //
+    // NARROWED DELIBERATELY to PM_NAMEREF nodes. C can apply c:2262-2263
+    // unconditionally because `typeset_single` reaches `assignsparam`
+    // only AFTER c:2521 `createparam(pname, on & ~PM_READONLY)` has
+    // already stamped the FULL requested attribute mask (PM_INTEGER,
+    // PM_LEFT, …) and thereby cleared PM_UNSET. zshrs's `bin_typeset`
+    // hands `createparam` only the type-kind plus PM_LOCAL, so a
+    // still-PM_UNSET node arrives here carrying attributes that the
+    // c:1176 flag overwrite would silently drop (`typeset y; unset y;
+    // typeset -i y=i42` lost its `-i`). Restricting the gate to
+    // references keeps the nameref semantics exact without depending on
+    // that ordering difference.
+    let existing = tab.get(name).is_some_and(|pm| {
+        let f = pm.node.flags as u32;
+        (f & PM_NAMEREF) == 0 || (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0 // c:2241-2243
+    });
     let created_now = !existing; // c:3232 createparam path sets `created = 1`
     if !existing {
         // c:3234 `createparam(t, PM_SCALAR); created = 1;`
@@ -7835,6 +8030,24 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             }
             _ => None,
         };
+        // c:1152-1155 — createparam's REUSE arm:
+        //     if (oldpm && (oldpm->level == locallevel ||
+        //                   !(flags & PM_LOCAL))) {
+        //         ...
+        //         pm = oldpm;
+        //         pm->base = pm->width = 0;
+        // C keeps the SAME struct, so `pm->level` and the `pm->old`
+        // shadow chain survive; only base/width are zeroed and the
+        // flags are overwritten wholesale at c:1176. A node that is
+        // still in `paramtab` but read as absent by c:2241-2243
+        // (`PM_UNSET && !PM_DECLARED`) lands here, and rebuilding it at
+        // `level: 0` would silently promote a LOCAL to a global —
+        // `typeset -n ref; unset -n ref; ref=str` printed
+        // `typeset -g ref=str` instead of `typeset ref=str`.
+        let (reuse_level, reuse_old) = tab
+            .get(name)
+            .map(|old| (old.level, old.old.clone())) // c:1155
+            .unwrap_or((0, None)); // c:1157 zshcalloc — genuinely new name
         let pm: Param = Box::new(param {
             node: hashnode {
                 next: None,
@@ -7853,12 +8066,12 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             gsu_f: None,
             gsu_a: None,
             gsu_h: None,
-            base: 0,
-            width: 0,
+            base: 0,      // c:1155
+            width: 0,     // c:1155
             env: None,
             ename: None,
-            old: None,
-            level: 0,
+            old: reuse_old,     // c:1155 (same struct in C)
+            level: reuse_level, // c:1155 (same struct in C)
         });
         tab.insert(name.to_string(), pm);
     } else {
@@ -8375,7 +8588,39 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                     // see assignsparam — silent failure, status 1.
                     return None;
                 }
-                crate::ported::params::nameref_resolution::Placeholder(_) => {
+                crate::ported::params::nameref_resolution::Placeholder(last) => {
+                    // c:3334 — the reject at c:3337 only fires when
+                    // `fetchvalue` RETURNED a value. `getparamnode`
+                    // (c:570-575) hands fetchvalue the RESOLVED endpoint,
+                    // and fetchvalue then applies c:2262-2263
+                    //     if (!pm || ((pm->node.flags & PM_UNSET) &&
+                    //                 !(pm->node.flags & PM_DECLARED)))
+                    //         return NULL;
+                    // so a chain ending on a reference that `unset -n`
+                    // left `PM_UNSET` with PM_DECLARED cleared reads as
+                    // ABSENT: c:3335 `createparam(t, PM_ARRAY)` runs and
+                    // c:1120-1123 retargets `oldpm` to that endpoint, so
+                    // the array lands on it as an ordinary local array.
+                    // Reaching the same end state through the endpoint's
+                    // own name is the name-keyed equivalent of C's
+                    // pointer retarget.
+                    let endpoint_visible = paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| {
+                            t.get(&last).map(|p| {
+                                let f = p.node.flags as u32;
+                                (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0
+                            })
+                        })
+                        .unwrap_or(true); // c:2262-2263
+                    if !endpoint_visible {
+                        let mut new_s = last.clone();
+                        if let Some(us) = name.find('[').map(|i| &name[i..]) {
+                            new_s.push_str(us);
+                        }
+                        return assignaparam(&new_s, val, flags);
+                    }
                     // c:3396 — message uses the ORIGINAL assigned name
                     // (`t = s` saved at c:3361).
                     zwarn(&format!("{}: can't change type of a named reference", base));
@@ -8492,7 +8737,26 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                 } else {
                     pm.u_str.clone()
                 };
-                (true, ps, pm.node.flags)
+                // c:3334 — `fetchvalue(&vbuf, &s, 1, SCANPM_ASSIGNING)`,
+                // whose c:2241-2243 guard
+                //     if (pm->node.flags & PM_UNSET &&
+                //         !(pm->node.flags & PM_DECLARED))
+                //         return NULL;
+                // reports a node left PM_UNSET with PM_DECLARED cleared as
+                // ABSENT, so c:3335 `createparam(t, PM_ARRAY)` runs and
+                // c:1176 `pm->node.flags = flags & ~PM_LOCAL;` wipes the
+                // stale PM_NAMEREF instead of c:3337 rejecting the
+                // assignment. `typeset -n ref; unset -n ref; ref=(a b)`
+                // is the case that reaches this.
+                // Narrowed to PM_NAMEREF for the same reason as the twin
+                // gate in `assignsparam` — see the note there.
+                let visible =
+                    (f & PM_NAMEREF) == 0 || (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0; // c:2241-2243
+                if visible {
+                    (true, ps, pm.node.flags)
+                } else {
+                    (false, None, 0)
+                }
             }
             None => (false, None, 0),
         }
@@ -8896,11 +9160,16 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     if keep_dontimport {
         pm.node.flags |= PM_DONTIMPORT as i32;
     }
-    let ename_for_envsync: Option<String> = if setfn_ptr.is_some() {
-        pm.ename.clone()
-    } else {
-        None
-    };
+    // c:Src/params.c:4027-4029 — `if (pm->ename && x) arrfixenv(pm->ename, x);`
+    // arrsetfn runs this UNCONDITIONALLY; it does not consult the gsu. Gating
+    // it on a wired `gsu_a` setfn meant a USER tie — whose array half
+    // bin_typeset builds with no gsu at all (builtin.rs, `apm`) — never
+    // republished to the environment: `local -xT OUTER outer; outer=(i n n e r)`
+    // read back as `i:n:n:e:r` inside the shell while every child saw `$OUTER`
+    // empty. arrfixenv itself returns early unless the scalar half is
+    // PM_EXPORTED (c:5311-5312), so this is a no-op for unexported ties.
+    let _ = setfn_ptr;
+    let ename_for_envsync: Option<String> = pm.ename.clone();
     let cloned = pm.clone();
     drop(tab);
     // c:Src/params.c:5285 arrfixenv — deferred from inside the lock
@@ -9555,9 +9824,22 @@ pub fn unsetparam(name: &str) -> i32 {
     // pm node by default, so the standard PM_READONLY check inside
     // unsetparam_pm never fires for them. Walk the special_params
     // table directly to catch these. Bug #419.
-    let is_readonly_special = special_params
-        .iter()
-        .any(|ip| ip.name == name && (ip.pm_flags & PM_READONLY) != 0);
+    // …but ONLY when the name has no live node. C tests the FLAG ON THE NODE
+    // (`pm->node.flags & PM_READONLY`), so a shadow that hides the special —
+    // `typeset -h +g LINENO` builds a plain `scalar-local-hide` per
+    // Src/builtin.c:2083-2085 — is unsettable. The by-name table walk ignored
+    // the shadow and rejected it, which is what made B02typeset's
+    // `typeset -h +g -m [[:alpha:]_]*; unset -m [[:alpha:]_]*` abort.
+    let live_readonly: Option<bool> = paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).map(|pm| (pm.node.flags as u32 & PM_READONLY) != 0));
+    let is_readonly_special = match live_readonly {
+        Some(ro) => ro, // c:3850 — the node governs itself
+        None => special_params
+            .iter()
+            .any(|ip| ip.name == name && (ip.pm_flags & PM_READONLY) != 0),
+    };
     if is_readonly_special {
         zerr(&format!("read-only variable: {}", name));
         unqueue_signals();
@@ -9571,15 +9853,22 @@ pub fn unsetparam(name: &str) -> i32 {
     // canonical PM_SPECIAL pairs (PATH/path …). Capture the unset
     // param's ename here so the cascade below can clear the tied
     // partner for user ties too.
-    let (found, is_nameref, param_ename) = {
+    // c:3855 — `if (pm->ename && !altflag)`: the cascade is driven by the
+    // LIVE node's `ename`, which only a genuinely tied param carries. Capture
+    // PM_TIED alongside so the static `tied_alt` map below can be gated the
+    // same way: a shadow that HIDES a tied special (`typeset -h +g PATH`
+    // builds a plain `scalar-local-hide`, Src/builtin.c:2083-2085) has no tie
+    // and must not drag its partner down with it.
+    let (found, is_nameref, param_ename, param_tied) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {
             Some(pm) => (
                 true,
                 (pm.node.flags as u32 & PM_NAMEREF) != 0,
                 pm.ename.clone(),
+                (pm.node.flags as u32 & PM_TIED) != 0,
             ),
-            None => (false, false, None),
+            None => (false, false, None, false),
         }
     };
     if found && !is_nameref {
@@ -9663,7 +9952,15 @@ pub fn unsetparam(name: &str) -> i32 {
     // the inherited libc environ.
     // Static canonical pair (PATH↔path …) takes precedence; otherwise
     // fall back to the unset param's `ename` (user `typeset -T` ties).
-    let effective_alt: Option<String> = tied_alt.map(|s| s.to_string()).or(param_ename);
+    // c:3855 — gate on the LIVE tie. `found && !param_tied` is a node that
+    // exists but is not tied (typically a `-h` shadow of PATH/path), and C
+    // would leave the partner alone; only fall back to the static pair map
+    // when the name has no node at all (the pre-createparamtable `-fc` path).
+    let effective_alt: Option<String> = if found && !param_tied && param_ename.is_none() {
+        None
+    } else {
+        tied_alt.map(|s| s.to_string()).or(param_ename)
+    };
     if let Some(alt) = effective_alt.as_deref() {
         let alt_present = paramtab()
             .read()
@@ -9672,6 +9969,36 @@ pub fn unsetparam(name: &str) -> i32 {
         if alt_present {
             if let Some(mut alt_pm) = paramtab().write().ok().and_then(|mut t| t.remove(alt)) {
                 let _ = unsetparam_pm(&mut alt_pm, 1, 1);
+                // c:Src/params.c:3892-3925 — the partner obeys the same
+                // keep-the-node rules as the primary: a local that shadows an
+                // outer binding stays in the table marked PM_UNSET so
+                // endparamscope can uncover the outer. Dropping it outright
+                // took the whole `pm.old` chain with it, so unsetting a
+                // shadowed `PATH` erased the GLOBAL `path` for good.
+                // Only the SHADOW halves of c:3892-3925 are replayed here.
+                // The PM_SPECIAL keep-the-node rule (c:3911-3913) deliberately
+                // is NOT: a global tied special must leave the table so
+                // `unset MANPATH; print $+manpath` reads 0 (D04parameter
+                // "Unsetting and recreation of tied special parameters").
+                let keep = alt_pm.old.is_some()
+                    || (alt_pm.level > 0
+                        && locallevel.load(Ordering::Relaxed) as i32 >= alt_pm.level);
+                if keep {
+                    paramtab()
+                        .write()
+                        .unwrap()
+                        .insert(alt.to_string(), alt_pm);
+                } else {
+                    // c:3874 `paramtab->removenode(paramtab, pm->node.nam)` —
+                    // in C that is the only store the name lives in. zshrs
+                    // keeps a parallel executor-side array/assoc bag that
+                    // `exec::array` consults BEFORE getaparam, so dropping the
+                    // paramtab node alone left `unset PATH; print $+path`
+                    // reading 1 (a plain `array`, not the special) where zsh
+                    // reads 0.
+                    crate::ported::exec::unset_array(alt);
+                    crate::ported::exec::unset_assoc(alt);
+                }
             }
         }
         env::remove_var(alt);
@@ -11943,13 +12270,21 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {
     }
 
     // c:5314-5317 — joinchar selection.
-    let joinchar = if new_flags & PM_SPECIAL as i32 != 0 {
+    let joinchar: char = if new_flags & PM_SPECIAL as i32 != 0 {
         ':' // c:5315
     } else {
-        // c:5317 — tieddata.joinchar; not modelled in current Param —
-        // default to ':' which is correct for all currently-tied
-        // array params (PATH/CDPATH/FPATH/etc.).
-        ':'
+        // c:5317 — `joinchar = (unsigned char)
+        //     ((struct tieddata *)pm->u.data)->joinchar;`
+        // The tieddata rides the SCALAR half of the pair (builtin.c:2982-2989),
+        // which is exactly the `s` this function was handed. Hardcoding ':'
+        // exported `typeset -T MORESTUFF morestuff -` as `here:we:go` instead
+        // of `here-we-go`.
+        paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(s).and_then(|pm| pm.u_tied.as_deref().map(|td| td.joinchar)))
+            .map(|jc| jc as u8 as char)
+            .unwrap_or(':')
     };
 
     // c:5319 — `addenv(pm, t ? zjoin(t, joinchar, 1) : "")`.
@@ -12552,9 +12887,18 @@ pub fn endparamscope() {
                     // local at the same level: that half's own restore writes
                     // through the tie, so re-firing this half's saved value
                     // would clobber it with a copy that already reflects the
-                    // local state. (PM_READONLY is handled further down, where
-                    // the name-routed setter temporarily drops the flag.)
-                    let norestore = (prev.node.flags as u32 & PM_NORESTORE) != 0;
+                    // local state.
+                    // PM_READONLY belongs in the SAME gate — C skips the value
+                    // restore outright for a read-only special, because a
+                    // shadow never wrote through to it in the first place. Only
+                    // the scalar arm below compensated (by dropping the flag
+                    // around the name-routed setter); the ARRAY arm did not, so
+                    // unwinding a scope that shadowed a read-only special ARRAY
+                    // (`f(){ typeset -h +g dis_reswords }`, and every
+                    // `typeset -h +g -m 'PAT'` that matches one) reached
+                    // assignaparam and printed `read-only variable: NAME` at
+                    // function exit.
+                    let norestore = (prev.node.flags as u32 & (PM_NORESTORE | PM_READONLY)) != 0;
                     // c:Src/params.c:5924 — `pm->node.flags =
                     // (tpm->node.flags & ~PM_NORESTORE);` the bit never
                     // survives into the re-exposed outer binding.
@@ -13294,7 +13638,28 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     {
         let needs_prefix =
             (printflags & (PRINT_TYPESET | PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0;
-        if (f & PM_AUTOLOAD) != 0 && needs_prefix {
+        // c:6151-6157 — `if (p->node.flags & PM_AUTOLOAD) { /* It's not
+        // possible to restore the state of these, so don't output. */
+        // return; }`.
+        //
+        // A module parameter nothing has read yet is, in C, exactly such a
+        // PM_AUTOLOAD stub (Src/module.c:1218-1223 `add_autoparam`), and in a
+        // shell that never loaded zsh/parameter it does not exist at all.
+        // zshrs seeds the real specials eagerly (vm_helper::init_partab_params)
+        // and models the stub state as the MATERIALIZED_MODULE_PARAMS side-set,
+        // so ask that predicate here — the same one bin_unset consults. Without
+        // it `readonly -p` in a bare `zsh -f` listed `dis_patchars`,
+        // `dis_reswords`, `funcfiletrace`, `funcsourcetrace`, `funcstack`,
+        // `functrace`, `historywords`, `keymaps`, `patchars`, `reswords` and
+        // `zsh_scheduled_events` alongside the user's own read-only params.
+        let autoload_stub = crate::vm_helper::module_param_is_autoload_stub(&hn.node.nam)
+            && (crate::ported::modules::parameter::PARTAB
+                .iter()
+                .any(|e| e.name == hn.node.nam)
+                || crate::ported::modules::parameter::PARTAB_ARRAY
+                    .iter()
+                    .any(|e| e.name == hn.node.nam));
+        if ((f & PM_AUTOLOAD) != 0 || autoload_stub) && needs_prefix {
             return;
         }
         // c:6157-6162 — `if (p->node.flags & PM_RO_BY_DESIGN) {
@@ -13661,6 +14026,44 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         || (printflags & PRINT_NAMEONLY) == 0
     {
         printparamvalue(hn, printflags);
+    }
+    // c:Src/params.c:6305-6318 —
+    //     if (peer && (printflags & PRINT_TYPESET) &&
+    //         !(p->node.flags & PM_SPECIAL)) {
+    //         /* append the join char for tied parameters if different from
+    //          * colon for typeset -p output. */
+    //         unsigned char joinchar =
+    //             (unsigned char)((struct tieddata *)peer->u.data)->joinchar;
+    //         if (joinchar != ':') { … putchar(' '); quotedzputs(buf, stdout); }
+    //     }
+    // `peer` is always the SCALAR half under PRINT_TYPESET (c:6280-6285), and
+    // the scalar is where the tieddata rides — so in the swapped scalar path
+    // `hn.u_tied` still holds it (the swap above rewrites only nam/value/type),
+    // and in the array path it is reached through `hn.ename`. Missing entirely
+    // before, so `typeset -TU MORESTUFF morestuff '-'; typeset -p MORESTUFF`
+    // printed no trailing ` -` and the output was not re-parseable.
+    if (printflags & PRINT_TYPESET) != 0
+        && (f & PM_TIED) != 0
+        && (hn.node.flags as u32 & PM_SPECIAL) == 0
+    {
+        let joinchar: Option<i32> = hn
+            .u_tied
+            .as_deref()
+            .map(|td| td.joinchar)
+            .or_else(|| {
+                hn.ename.as_deref().and_then(|e| {
+                    paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(e).and_then(|p| p.u_tied.as_deref().map(|td| td.joinchar)))
+                })
+            });
+        if let Some(jc) = joinchar {
+            if jc != ':' as i32 {
+                // c:6313-6316 — one-char buf, space-separated, quoted.
+                print!(" {}", quotedzputs(&((jc as u8) as char).to_string()));
+            }
+        }
     }
     if (printflags & PRINT_KV_PAIR) == 0 {
         println!();
@@ -19007,6 +19410,33 @@ impl Drop for NamerefSuppressGuard {
 
 /// Is the visible binding of `name` a PM_NAMEREF? (Cheap pre-check
 /// so the resolver isn't invoked on every plain variable read.)
+///
+/// A node still carrying `PM_NAMEREF` does NOT necessarily behave as a
+/// reference. C gates every nameref-chase on the c:1088-1090 predicate
+/// (`Src/params.c:1086-1090`, `createparam`):
+///
+/// ```c
+/// if (oldpm && !(flags & PM_NAMEREF) &&
+///     (oldpm->level == locallevel ?
+///      !(oldpm->node.flags & PM_RO_BY_DESIGN) : !(flags & PM_LOCAL)) &&
+///     (oldpm->node.flags & PM_NAMEREF) &&
+///     (!(oldpm->node.flags & PM_UNSET) ||
+///      (oldpm->node.flags & PM_DECLARED))) {
+/// ```
+///
+/// `unset -n ref` on a LOCAL reference runs `unsetparam_pm`, which does
+/// `pm->node.flags &= ~PM_DECLARED;` (c:3798 — "like ksh, not like bash")
+/// and then stops at c:3851 `if ((pm->level && locallevel >= pm->level)
+/// ... return 0;`, i.e. it KEEPS the node in `paramtab` with
+/// `PM_NAMEREF | PM_UNSET` and PM_DECLARED cleared. C's c:1088-1090
+/// predicate is then false, so `createparam` skips the chase entirely
+/// and falls through to c:1135 (`pm = oldpm`), reusing the node with the
+/// caller's fresh flags — the reference becomes an ordinary parameter of
+/// whatever type the assignment/typeset asked for.
+///
+/// The same predicate also guards `fetchvalue` (c:2241-2243
+/// `if (pm->node.flags & PM_UNSET && !(pm->node.flags & PM_DECLARED))
+/// return NULL;`), so reads of such a node yield empty either way.
 pub fn is_nameref(name: &str) -> bool {
     // `${(!)…}` SCANPM_NONAMEREF scope active → treat nothing as a ref.
     if NAMEREF_SUPPRESS.with(|c| c.get()) > 0 {
@@ -19015,7 +19445,16 @@ pub fn is_nameref(name: &str) -> bool {
     paramtab()
         .read()
         .ok()
-        .and_then(|t| t.get(name).map(|p| (p.node.flags as u32 & PM_NAMEREF) != 0))
+        .and_then(|t| {
+            t.get(name).map(|p| {
+                let f = p.node.flags as u32;
+                // c:1089 — `(oldpm->node.flags & PM_NAMEREF)`.
+                (f & PM_NAMEREF) != 0
+                    // c:1090 — `(!(oldpm->node.flags & PM_UNSET) ||
+                    //            (oldpm->node.flags & PM_DECLARED))`.
+                    && ((f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0)
+            })
+        })
         .unwrap_or(false)
 }
 

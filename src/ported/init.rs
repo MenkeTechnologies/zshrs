@@ -1259,6 +1259,22 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     {
         let ksh_sh = crate::ported::zsh_h::EMULATION(EMULATE_KSH | EMULATE_SH);
         let set_default = |name: &str, val: &str| {
+            // C sets these defaults at c:1196-1206, i.e. BEFORE
+            // `createparamtable()` (c:1270) walks `environ` and assigns
+            // over them (c:919-924 `assignsparam(iname, ..,
+            // ASSPM_ENV_IMPORT)`), so an inherited value ALWAYS wins —
+            // including an inherited EMPTY one. zshrs runs the import
+            // first and the defaults second, so "already set" has to be
+            // decided the way C decides it: was the name in the
+            // environment? Testing `getsparam().is_empty()` conflated
+            // "unset" with "exported as empty" and re-seeded the default
+            // over an explicit `export PS1=` — the exact idiom
+            // Test/W02jobs.ztst's `zpty_start` uses to silence the prompt,
+            // which is why every zpty chunk's expected output was prefixed
+            // with a live `%m%# ` prompt.
+            if std::env::var_os(name).is_some() {
+                return;
+            }
             if getsparam(name).map_or(true, |v| v.is_empty()) {
                 crate::ported::params::setsparam(name, val);
             }
@@ -1961,7 +1977,29 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
     // Guarded by zle_load_state so it never re-runs and clobbers user
     // bindings. Gated on `interact` so non-interactive `-c` shells skip
     // ZLE entirely (they read via shingetline, not the editor).
-    if interact() && zle_load_state.load(Ordering::SeqCst) == 0 {
+    //
+    // Gated on the SAME predicate C uses to decide whether a line is read
+    // through the editor at all — `interact && isset(SHINSTDIN) && SHTTY
+    // != -1 && isset(USEZLE)` (c:Src/input.c:385). In C the zsh/zle module
+    // is dlopened lazily by that read, so a shell started with `+Z`
+    // (NO_ZLE, as Test/W02jobs.ztst and W03jobparameters.ztst launch it:
+    // `zsh -fiV +Z`) never loads it and `zle_load_state` stays 0.
+    // zshrs links ZLE in statically and initialises it eagerly, and the
+    // gate here was `interact()` alone — so `+Z` still set
+    // `zle_load_state = 1`. That flag is what arms the shell-integration
+    // markers: `init.c:227/235` fire `zleentry(ZLE_CMD_PREEXEC /
+    // POSTEXEC)` only when it is 1, and those write the OSC 133;C / 133;D
+    // "start/end of output" sequences (Src/Zle/termquery.c:759-765
+    // `mark_output`). With `+Z` honoured they are silent, as in zsh.
+    // `zle_load_state` is still set lazily on the first real ZLE read
+    // (input.rs, the `use_zle` branch), so `setopt zle` from an rc file
+    // re-arms the editor exactly like C's lazy `load_module`.
+    if interact()
+        && isset(SHINSTDIN)
+        && SHTTY.load(Ordering::SeqCst) != -1
+        && isset(crate::ported::zsh_h::USEZLE)
+        && zle_load_state.load(Ordering::SeqCst) == 0
+    {
         crate::ported::zle::zle_thingy::init_thingies();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();

@@ -28,7 +28,7 @@ use crate::ported::zsh_h::{
     hashnode, hashtable, isset, module, nameddir, opt_name, param, value, HashNode, HashTable,
     Param, ParamScanFunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, FS_EVAL, FS_SOURCE, INTERACTIVE,
     ND_USERNAME, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
-    PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z,
+    PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN,
     PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNIQUE, PM_UNSET,
     PM_UPPER, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE,
     STAT_NOPRINT, STAT_STOPPED,
@@ -4814,7 +4814,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2237 — `builtins`: read-only.
     PartabHashEntry {
         name: "builtins",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2237 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2237 PM_READONLY_SPECIAL
         getfn: getpmbuiltin,
         module: None,
         scanfn: scanpmbuiltins,
@@ -4838,7 +4838,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2243 — `dis_builtins`: read-only disabled.
     PartabHashEntry {
         name: "dis_builtins",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2243 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2243 PM_READONLY_SPECIAL
         getfn: getpmdisbuiltin,
         module: None,
         scanfn: scanpmdisbuiltins,
@@ -4886,7 +4886,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2271 — `history`: history-ring entry by event number.
     PartabHashEntry {
         name: "history",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2271 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2271 PM_READONLY_SPECIAL
         getfn: getpmhistory,
         module: None,
         scanfn: scanpmhistory,
@@ -4894,7 +4894,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2275 — `jobdirs`.
     PartabHashEntry {
         name: "jobdirs",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2275 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2275 PM_READONLY_SPECIAL
         getfn: getpmjobdir,
         module: None,
         scanfn: scanpmjobdirs,
@@ -4902,7 +4902,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2277 — `jobstates`.
     PartabHashEntry {
         name: "jobstates",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2277 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2277 PM_READONLY_SPECIAL
         getfn: getpmjobstate,
         module: None,
         scanfn: scanpmjobstates,
@@ -4910,7 +4910,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2279 — `jobtexts`.
     PartabHashEntry {
         name: "jobtexts",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2279 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2279 PM_READONLY_SPECIAL
         getfn: getpmjobtext,
         module: None,
         scanfn: scanpmjobtexts,
@@ -4918,7 +4918,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2281 — `modules`.
     PartabHashEntry {
         name: "modules",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2281 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2281 PM_READONLY_SPECIAL
         getfn: getpmmodule,
         module: None,
         scanfn: scanpmmodules,
@@ -4942,7 +4942,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2287 — `parameters`.
     PartabHashEntry {
         name: "parameters",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2287 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2287 PM_READONLY_SPECIAL
         getfn: getpmparameter,
         module: None,
         scanfn: scanpmparameters,
@@ -4958,7 +4958,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2295 — `userdirs`.
     PartabHashEntry {
         name: "userdirs",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2295 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2295 PM_READONLY_SPECIAL
         getfn: getpmuserdir,
         module: None,
         scanfn: scanpmuserdirs,
@@ -4966,7 +4966,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2297 — `usergroups`.
     PartabHashEntry {
         name: "usergroups",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2297 PM_READONLY_SPECIAL
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2297 PM_READONLY_SPECIAL
         getfn: getpmusergroups,
         module: None,
         scanfn: scanpmusergroups,
@@ -4975,7 +4975,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // value=source path. Same shape as `functions` but for disabled.
     PartabHashEntry {
         name: "dis_functions_source",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2247
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2247
         getfn: getpmdisfunction_source,
         module: None,
         scanfn: scanpmdisfunction_source,
@@ -4983,7 +4983,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // c:2265 — `functions_source`.
     PartabHashEntry {
         name: "functions_source",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2265
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2265
         getfn: getpmfunction_source,
         module: None,
         scanfn: scanpmfunction_source,
@@ -5001,7 +5001,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Modules/terminfo.c:291 SPECIALPMDEF("terminfo", PM_READONLY, ...).
     PartabHashEntry {
         name: "terminfo",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // terminfo.c:291
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // terminfo.c:291
         getfn: crate::ported::modules::terminfo::getterminfo,
         module: None,
         scanfn: crate::ported::modules::terminfo::scanterminfo,
@@ -5009,7 +5009,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Modules/termcap.c:299 SPECIALPMDEF("termcap", PM_READONLY, ...).
     PartabHashEntry {
         name: "termcap",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // termcap.c:299
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // termcap.c:299
         getfn: crate::ported::modules::termcap::gettermcap,
         module: None,
         scanfn: crate::ported::modules::termcap::scantermcap,
@@ -5017,7 +5017,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Zle/zleparameter.c:133 SPECIALPMDEF("widgets", PM_READONLY, ...).
     PartabHashEntry {
         name: "widgets",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // zleparameter.c:133
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // zleparameter.c:133
         getfn: crate::ported::zle::zleparameter::getpmwidgets,
         module: None,
         scanfn: crate::ported::zle::zleparameter::scanpmwidgets,
@@ -5025,7 +5025,7 @@ pub static PARTAB: &[PartabHashEntry] = &[
     // Src/Modules/system.c:904 SPECIALPMDEF("sysparams", PM_READONLY, ...).
     PartabHashEntry {
         name: "sysparams",
-        flags: PM_HASHED as i32 | PM_READONLY as i32, // system.c:904
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // system.c:904
         getfn: crate::ported::modules::system::getpmsysparams,
         module: Some("zsh/system"),
         scanfn: crate::ported::modules::system::scanpmsysparams,
@@ -5083,7 +5083,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // entry, newest-first, reverse-by-position within each entry.
     PartabArrayEntry {
         name: "historywords",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2273 PM_READONLY_SPECIAL
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2273 PM_READONLY_SPECIAL
         getfn: histwgetfn,
         setfn: None,
         module: None,
@@ -5099,7 +5099,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2251 — `dis_patchars`: pattern metacharacters when extendedglob off.
     PartabArrayEntry {
         name: "dis_patchars",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2251 PM_READONLY_SPECIAL
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2251 PM_READONLY_SPECIAL
         getfn: dispatcharsgetfn,
         setfn: None,
         module: None,
@@ -5107,7 +5107,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2253 — `dis_reswords`: reserved words when disabled.
     PartabArrayEntry {
         name: "dis_reswords",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2253 PM_READONLY_SPECIAL
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2253 PM_READONLY_SPECIAL
         getfn: disreswordsgetfn,
         setfn: None,
         module: None,
@@ -5115,7 +5115,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2257 — `funcfiletrace`: per-frame caller file+lineno.
     PartabArrayEntry {
         name: "funcfiletrace",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2257
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2257
         getfn: funcfiletracegetfn,
         setfn: None,
         module: None,
@@ -5123,7 +5123,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2259 — `funcsourcetrace`: per-frame def-site file+lineno.
     PartabArrayEntry {
         name: "funcsourcetrace",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2259
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2259
         getfn: funcsourcetracegetfn,
         setfn: None,
         module: None,
@@ -5131,7 +5131,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2261 — `funcstack`: function-call stack names.
     PartabArrayEntry {
         name: "funcstack",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2261
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2261
         getfn: funcstackgetfn,
         setfn: None,
         module: None,
@@ -5139,7 +5139,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2267 — `functrace`: per-frame call file+lineno.
     PartabArrayEntry {
         name: "functrace",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2267
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2267
         getfn: functracegetfn,
         setfn: None,
         module: None,
@@ -5147,7 +5147,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2289 — `patchars`: pattern metacharacters when extendedglob on.
     PartabArrayEntry {
         name: "patchars",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2289
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2289
         getfn: patcharsgetfn,
         setfn: None,
         module: None,
@@ -5155,7 +5155,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2291 — `reswords`: shell reserved words.
     PartabArrayEntry {
         name: "reswords",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2291
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2291
         getfn: reswordsgetfn,
         setfn: None,
         module: None,
@@ -5163,7 +5163,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // c:2273 — `historywords`: histwgetfn (parameter.c:1217-1252).
     PartabArrayEntry {
         name: "historywords",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2273
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // c:2273
         getfn: histwgetfn,
         setfn: None,
         module: None,
@@ -5171,7 +5171,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // Src/Modules/system.c:902 SPECIALPMDEF("errnos", PM_ARRAY|PM_READONLY, ...).
     PartabArrayEntry {
         name: "errnos",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // system.c:902
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // system.c:902
         getfn: crate::ported::modules::system::errnosgetfn,
         setfn: None,
         module: Some("zsh/system"),
@@ -5179,7 +5179,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // Src/Zle/zleparameter.c:132 SPECIALPMDEF("keymaps", PM_ARRAY|PM_READONLY, ...).
     PartabArrayEntry {
         name: "keymaps",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // zleparameter.c:132
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // zleparameter.c:132
         getfn: crate::ported::zle::zleparameter::keymapsgetfn,
         setfn: None,
         module: None,
@@ -5193,7 +5193,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
     // emits `<time>:<flags>:<cmd>` per entry.
     PartabArrayEntry {
         name: "zsh_scheduled_events",
-        flags: PM_ARRAY as i32 | PM_READONLY as i32, // sched.c:382
+        flags: PM_ARRAY as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // sched.c:382
         getfn: crate::ported::builtins::sched::schedgetfn,
         setfn: None,
         module: None,

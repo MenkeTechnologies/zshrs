@@ -119,6 +119,11 @@ pub mod cow_map;
 /// `daemon_presence` submodule.
 #[path = "extensions/daemon_presence.rs"]
 pub mod daemon_presence;
+/// `alias_input_frames` submodule — per-thread record of popped alias
+/// input-stack frames, restoring the reachability C's manually-indexed
+/// `instack` gives `input_hasalias`.
+#[path = "extensions/alias_input_frames.rs"]
+pub mod alias_input_frames;
 /// `errflag_cell` submodule — per-thread storage for `errflag`, restoring
 /// the copy-on-fork semantics C zsh gets for free.
 #[path = "extensions/errflag_cell.rs"]

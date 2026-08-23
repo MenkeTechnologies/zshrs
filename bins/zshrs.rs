@@ -1380,6 +1380,37 @@ pub fn zshrs_main() {
     // So SHELL_MODE stays Zsh (keeping the zsh parser); `zsh_style_emu` names
     // the option deltas to layer on. Only fires when `--zsh` accompanies a
     // sub-mode flag — a bare `--sh` is still the strict real-shell drop-in.
+    // c:Src/init.c:461-472 —
+    //     if (!strcmp(*argv, "emulate")) {
+    //         ++argv;
+    //         if (!*argv) {
+    //             zerr("--emulate: argument required");
+    //             exit(1);
+    //         }
+    //         if (!emulate_required) {
+    //             zerr("--emulate: must precede other options");
+    //             exit(1);
+    //         }
+    //         top_emulation = *argv;
+    //         break;
+    //     }
+    // `emulate_required` is only still set while `--emulate` is the
+    // FIRST option word (c:441 also demands `*argv == args+1`), so
+    // `zsh -f --emulate sh` is a hard error. zshrs scanned for
+    // `--emulate` anywhere in argv and, when it appeared late,
+    // silently left it unconsumed — the mode word then reached the
+    // script-file slot and died with `can't open input file: sh`
+    // (B07emulate.ztst:17).
+    if let Some(emu_idx) = args.iter().position(|a| a == "--emulate") {
+        if args.get(emu_idx + 1).is_none() {
+            zsh::ported::utils::zerr("--emulate: argument required"); // c:464
+            std::process::exit(1); // c:465
+        }
+        if emu_idx != 1 {
+            zsh::ported::utils::zerr("--emulate: must precede other options"); // c:468
+            std::process::exit(1); // c:469
+        }
+    }
     let has_zsh = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
     let zsh_style_emu: Option<&str> = if has_zsh {
         if args.iter().any(|a| a == "--dash" || a == "--ash") {
@@ -2609,6 +2640,63 @@ pub fn zshrs_main() {
         // Before running the script, init.c:1369 does
         //   `argzero = ztrdup(runscript)` — i.e. `$0` becomes the
         // verbatim script path the user passed (NOT canonicalized).
+        // c:Src/init.c:1372-1401 `setupshin(char *runscript)` — open the
+        // script BEFORE anything else so a missing file is reported the way
+        // zsh reports it and exits 127:
+        //   funmeta = unmeta(runscript);
+        //   /* Always search the current directory first. */
+        //   if (access(funmeta, F_OK) == 0 && stat(funmeta, &st) >= 0 &&
+        //       !S_ISDIR(st.st_mode))
+        //       sfname = runscript;
+        //   else if (isset(PATHSCRIPT) && !strchr(runscript, '/'))
+        //       funmeta = pathprog(runscript, &sfname);
+        //   if (!sfname || (SHIN = movefd(open(funmeta, …))) == -1) {
+        //       zerr("can't open input file: %s", runscript);
+        //       exit(127);
+        //   }
+        // The diagnostic goes out under `scriptname`, which is still
+        // argv[0] here — c:1400-1402 only swaps in the script path AFTER
+        // the open succeeds — and `lineno` is still 0 (set at c:1406), so
+        // zerrmsg emits the bare "<argv0>: " prefix with no line number.
+        let runscript = args[1].clone();
+        // c:1385-1386 — `access(F_OK) == 0 && stat(…) >= 0 && !S_ISDIR(…)`
+        let is_readable_file = |p: &str| {
+            std::fs::metadata(p)
+                .map(|m| !m.is_dir())
+                .unwrap_or(false)
+        };
+        let mut sfname: Option<String> = None; // c:1375
+        if is_readable_file(&runscript) {
+            sfname = Some(runscript.clone()); // c:1387
+        } else if zsh::ported::zsh_h::isset(zsh::ported::zsh_h::PATHSCRIPT)
+            && !runscript.contains('/')
+        {
+            // c:1388-1393 — `funmeta = pathprog(runscript, &sfname);`
+            // c:Src/utils.c:757-781 pathprog — walk $path in order, first
+            // `<dir>/<prog>` that exists and is not a directory wins.
+            let path_dirs: Vec<String> = zsh::ported::params::getaparam("path")
+                .unwrap_or_default();
+            for pp in &path_dirs {
+                let buf = format!("{}/{}", pp, runscript); // c:770
+                if is_readable_file(&buf) {
+                    // c:772-777
+                    sfname = Some(buf);
+                    break;
+                }
+            }
+        }
+        let runscript_open = match sfname {
+            // c:1394-1399 — `if (!sfname || (SHIN = … open(…)) == -1)`
+            Some(p) if std::fs::File::open(&p).is_ok() => p,
+            _ => {
+                eprintln!(
+                    "{}: can't open input file: {}", // c:1397
+                    std::env::args().next().unwrap_or_else(|| "zsh".to_string()),
+                    runscript
+                );
+                std::process::exit(127); // c:1398
+            }
+        };
         executor.set_scalar("0".to_string(), args[1].clone());
         executor.set_pparams(args.iter().skip(2).cloned().collect());
         // c:Src/init.c:1330 — `if (runscript) setsparam("ZSH_SCRIPT",
@@ -2669,7 +2757,11 @@ pub fn zshrs_main() {
             }
         }
         zsh::ported::params::setsparam("ZSH_ARGZERO", &args[1]);
-        match executor.execute_script_file(&args[1]) {
+        // c:1401 — `scriptfilename = sfname;` — the PATHSCRIPT search may
+        // have resolved the name to a $path entry; that resolved path is
+        // what SHIN was opened on, while `$0` / ZSH_SCRIPT / scriptname
+        // above keep the verbatim operand (c:1402-1403).
+        match executor.execute_script_file(&runscript_open) {
             Err(e) => {
                 if e != "__SILENCED__" {
                     eprintln!("zshrs: {}: {}", args[1], e);

@@ -163,6 +163,19 @@ pub fn builtin_owning_module(name: &str) -> Option<&'static str> {
 /// while `${+builtins[...]}` — which asks the generic question below —
 /// answered 0 for the very same names in the very same shell.
 pub fn module_builtin_available(name: &str) -> bool {
+    // c:Src/module.c:521 — `setbuiltins` DELETES the node from `builtintab`
+    // when the feature's enable bit is cleared, so a `zmodload -F MODULE
+    // -b:NAME` makes the name vanish even though the module stays loaded.
+    // zshrs's builtintab is immutable, so that half of the state lives in
+    // `DISABLED_MODULE_BUILTINS` (see its doc comment); consult it before
+    // the per-module load gate below.
+    if crate::ported::module::DISABLED_MODULE_BUILTINS
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false)
+    {
+        return false;
+    }
     match builtin_owning_module(name) {
         // A `zsh/main` core builtin (always in the table), or a
         // zshrs-original entry that belongs to no module at all.

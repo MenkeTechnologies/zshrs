@@ -1943,10 +1943,28 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
     };
 
     // Single character range
-    if left.chars().count() == 1 && end_str.chars().count() == 1 {
-        let c1 = left.chars().next()?;
-        let c2 = end_str.chars().next()?;
-        return Some((c1, c2, incr));
+    // c:2235-2236 — `MB_METACHARINIT(); pnext += MB_METACHARLENCONV(pconv,
+    // &cstart);` — the endpoint is decoded as ONE multibyte character out
+    // of the METAFIED text, not counted as a Rust `char`. zshrs stores a
+    // raw 8-bit byte as the metafied pair `Meta` + `byte ^ 32` (two
+    // `char`s), so `chars().count() == 1` rejected `{$'\x80'..$'\x81'}`
+    // outright, and a real multibyte endpoint (`{é..ê}`) was rejected by
+    // the byte-length test in `expand_range`.
+    // c:2237-2244 — `if (cstart == WEOF || pnext[0] != '.' ...) return 0;`
+    // With the MULTIBYTE option off a unit is a single BYTE, which is what
+    // makes the range over 8-bit endpoints legal only in that mode
+    // (mb_metacharlenconv, Src/utils.c:5613).
+    let lb = crate::ported::utils::unmetafy_str(left); // c:2236
+    let (l_len, cstart, _) = crate::ported::utils::mb_metacharlenconv(&lb); // c:2236
+    // c:2256-2257 — same decode for the last character of the range.
+    let rb = crate::ported::utils::unmetafy_str(end_str); // c:2257
+    let (r_len, cend, _) = crate::ported::utils::mb_metacharlenconv(&rb); // c:2257
+    // c:2239/2264 — `cstart == WEOF` / `*pnext != Outbrace`: the endpoint
+    // must decode AND consume exactly the whole endpoint text.
+    if l_len != 0 && l_len == lb.len() && r_len != 0 && r_len == rb.len() {
+        if let (Some(c1), Some(c2)) = (cstart, cend) {
+            return Some((c1, c2, incr)); // c:2266-2270
+        }
     }
 
     None
@@ -4104,8 +4122,17 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         // (The `errflag` half — a diagnostic already emitted by the
         // qualifier parser — is handled by the gate at glob.rs:3770.)
         if !isset(crate::ported::zsh_h::BADPATTERN) {
-            // c:1846-1848 — treat as an ordinary literal string.
-            return vec![pattern.to_string()];
+            // c:1846-1848 —
+            //     if (!nountok)
+            //         untokenize(ostr);
+            //     insertlinknode(list, node, ostr);
+            // `ostr` is the TOKENIZED word, so C untokenizes it before
+            // handing it back as an ordinary literal string. Returning
+            // `pattern` verbatim kept the Inbrack/Outbrack/Star token
+            // bytes in the result and they were dropped downstream:
+            // `unsetopt badpattern; print [a` printed `a`, not `[a`
+            // (E01options.ztst:5).
+            return vec![crate::ported::lex::untokenize(pattern)];
         }
         // c:1851-1852 — clear any stale error bit so zerr fires, then
         // emit. utils::zerr re-sets ERRFLAG_ERROR, which zglob's gate at
@@ -5107,6 +5134,17 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 // qualifiers too: `*(.NY99…)` reports `value too big: Y99…`
                 // exactly as spelled.
                 let s_saved: String = chars.clone().collect(); // c:1582
+                // c:1582-1583 — `shortcircuit = !(sense & 1); if
+                // (shortcircuit) { … }`. The NEGATED spelling `^Y` clears
+                // the limit and consumes NO argument, so the qgetnum call
+                // (and its "number expected" diagnostic) is skipped
+                // entirely — `*(Y1^Y)` is legal. `Some(0)` is the same
+                // "no limit" the apply sites read via their `n > 0` test,
+                // matching c:518's leading `shortcircuit &&`.
+                if negated {
+                    qs.short_circuit = Some(0); // c:1582
+                    continue;
+                }
                 let mut num_str = String::new();
                 while let Some(&pc) = chars.peek() {
                     if pc.is_ascii_digit() {
@@ -5115,6 +5153,19 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                     } else {
                         break;
                     }
+                }
+                // c:830-833 — `qgetnum` opens with `if (!idigit(**s)) {
+                // zerr("number expected"); return 0; }`. A bare `*(Y)` is
+                // therefore a hard error that aborts the glob, not a
+                // silently-ignored qualifier; the `d` arm below already
+                // spells this out the same way.
+                if num_str.is_empty() {
+                    crate::ported::utils::zerr("number expected"); // c:832
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::utils::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return qs; // c:833 (`return 0` → caller aborts on errflag)
                 }
                 // c:1586 — qgetnum is `while (idigit(**s)) v = v * 10 + …`,
                 // with no overflow check of its own; it simply wraps. Mirror
@@ -6087,11 +6138,37 @@ fn expand_range(
     // as ASCII `-`. Rust's i64::parse only accepts ASCII, so
     // untokenize the content here before splitting/parsing — matches
     // C semantics without weakening the strict-TOKEN gates above.
+    // A `Meta` (`\u{83}`) starts a METAFIED byte pair (`Meta` + `byte ^
+    // 32`), NOT a token: C's `itok` set begins at `Pound` (Src/zsh.h:164)
+    // and `Meta` sits below it, so `bracechardots` (c:2227) leaves such a
+    // pair to MB_METACHARLENCONV instead of the `ztokens` lookup. The
+    // escaped byte routinely LANDS in the token range (`$'\x80'` →
+    // `\u{83}\u{a0}`), so scanning it as a token here untokenized the
+    // pair and destroyed the range endpoint. Skip the pair when deciding
+    // whether the content needs untokenizing.
     let owned: String;
-    let content: &str = if content.chars().any(|c| {
-        let cu = c as u32;
-        (0x84..=0xa1).contains(&cu) && c != '\u{8f}' && c != '\u{90}' && c != '\u{9a}'
-    }) {
+    let content: &str = if {
+        let cs: Vec<char> = content.chars().collect();
+        let mut i = 0usize;
+        let mut found = false;
+        while i < cs.len() {
+            if cs[i] == char::from(crate::ported::zsh_h::Meta) {
+                i += 2; // metafied byte pair — not a token
+                continue;
+            }
+            let cu = cs[i] as u32;
+            if (0x84..=0xa1).contains(&cu)
+                && cs[i] != '\u{8f}'
+                && cs[i] != '\u{90}'
+                && cs[i] != '\u{9a}'
+            {
+                found = true;
+                break;
+            }
+            i += 1;
+        }
+        found
+    } {
         owned = crate::lex::untokenize(content);
         &owned
     } else {
@@ -6230,9 +6307,21 @@ fn expand_range(
     // bash ignores the step's SIGN for alpha (`{a..e..-2}` == `{a..e..2}`),
     // so use abs(step) and take direction purely from start vs end.
     let alpha_step_ok = step_text.is_empty() || crate::dash_mode::bash_mode();
-    if left.len() == 1 && right.len() == 1 && alpha_step_ok {
-        let start = left.chars().next()?;
-        let end = right.chars().next()?;
+    // c:2311 — `if (bracechardots(str, &cstart, &cend))` decides the
+    // CHARACTER range. The endpoints are METAFIED text, decoded through
+    // MB_METACHARLENCONV (c:2236/2257), so a metafied 8-bit byte
+    // (`$'\x80'` → `Meta` `\u{a0}`) and a real multibyte character both
+    // resolve to their scalar. The old byte-length test (`left.len() ==
+    // 1`) accepted only ASCII and left `{é..ê}` / `{$'\x80'..$'\x81'}`
+    // unexpanded.
+    let lb = crate::ported::utils::unmetafy_str(left); // c:2236
+    let (l_len, cstart, _) = crate::ported::utils::mb_metacharlenconv(&lb); // c:2236
+    let rb = crate::ported::utils::unmetafy_str(right); // c:2257
+    let (r_len, cend, _) = crate::ported::utils::mb_metacharlenconv(&rb); // c:2257
+    let endpoints_ok = l_len != 0 && l_len == lb.len() && r_len != 0 && r_len == rb.len();
+    if endpoints_ok && cstart.is_some() && cend.is_some() && alpha_step_ok {
+        let start = cstart?; // c:2311 cstart
+        let end = cend?; // c:2311 cend
         let step = incr_abs.max(1) as u32;
         let (lo, hi, reverse) = if start <= end {
             (start, end, false)
@@ -6254,7 +6343,16 @@ fn expand_range(
         }
 
         for c in chars {
-            results.push(format!("{}{}{}", prefix, c, suffix));
+            // c:2328-2334 — `MB_CHARINIT(); ncptr = MB_NICECHAR(cend);
+            // ... memcpy(p + strp, ncptr, nclen);` — every element of a
+            // CHARACTER range is spliced in through `MB_NICECHAR`
+            // (Src/zsh.h:3288 `wcs_nicechar(cp, NULL, NULL)`), not as the
+            // raw character. Printable characters render as themselves, so
+            // `{a..e}` is unchanged, while a non-printable 8-bit endpoint
+            // comes out as its `\M-^@`-style escape — which is exactly what
+            // `{$'\x80'..$'\x81'}` prints in zsh.
+            let ncptr = crate::ported::utils::wcs_nicechar(c, None, None); // c:2329
+            results.push(format!("{}{}{}", prefix, ncptr, suffix)); // c:2332-2334
         }
         return Some(results);
     }

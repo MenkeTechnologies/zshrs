@@ -120,6 +120,20 @@ pub use crate::ported::hashtable_h::{
     BIN_UNSET, BIN_UNSETOPT, BIN_WAIT,
 };
 
+/// Port of `mod_export int ineval;` from `Src/builtin.c:6381`.
+///
+/// `eval()` sets it at c:6155 — `ineval = !isset(EVALLINENO);` — and
+/// restores the saved value at c:6215. `Src/exec.c` reads it at three
+/// places to decide whether the wordcode's line number may overwrite
+/// the `lineno` global:
+///   c:1355  `if (!IN_EVAL_TRAP() && !ineval && code) lineno = code - 1;`
+///   c:1451  `if (!IN_EVAL_TRAP() && !ineval) { ... }`
+///   c:2056  `if (!IN_EVAL_TRAP() && !ineval && WC_PIPE_LINENO(pcode))`
+/// So under `NO_EVAL_LINENO` the eval body keeps the CALLER's
+/// `$LINENO` instead of counting lines inside the eval'd string.
+#[allow(non_upper_case_globals)]
+pub static ineval: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 /// Construct the builtin lookup table.
 /// Port of `createbuiltintable()` from `Src/builtin.c:150`. The C
 /// version installs the hashtable function pointers (hash, addnode,
@@ -1748,13 +1762,39 @@ pub fn bin_cd(
     }
     let dest_raw = dest.unwrap();
 
-    // c:Src/builtin.c:851 — `-s` safe mode: refuse to chdir into a
-    // symlink. Check via fs::symlink_metadata so we see the link
-    // itself, not its target.
+    // `-s` (C's `hard`) is threaded down to `lchdir(path, NULL, hard)`
+    // (c:Src/builtin.c:1173-1174), and it is `lchdir` that gives `-s` its
+    // meaning: with `hard` set it walks the path one component at a time
+    // and `lstat`s each one (c:Src/utils.c:7489), rejecting any component
+    // that is not a directory AS THE LINK ITSELF —
+    //   c:7493-7496 — `if(!S_ISDIR(st1.st_mode)) { err = ENOTDIR; break; }`
+    // — so a symlink (even one pointing AT a directory), a plain file and
+    // a dangling link all fail the same way, with ENOTDIR. The error is
+    // then reported by `cd_do_chdir` as `zwarnnam(cnam, "%e: %s", eno,
+    // dest)` (c:1080), i.e. `not a directory: <dest>`.
+    //
+    // The previous code invented a message with no C counterpart —
+    // `<dest>: symbolic link` — and mis-cited it as c:851 (which is just
+    // the `cd_get_dest(nam, argv, OPT_ISSET(ops,'s'), func)` call, not a
+    // symlink check). It also only tested `is_symlink`, so `cd -s
+    // <plainfile>` fell through to the generic chdir and reported ENOENT
+    // where zsh reports ENOTDIR.
+    //
+    // Ported here as the final-component check rather than inside a full
+    // `lchdir` port: this reproduces C's outcome for the single-component
+    // and absolute-path cases the `-s` option is used for. A path whose
+    // FAILING component is an interior one still reports whatever the
+    // plain chdir below reports, where C would report ENOTDIR for it too.
     if OPT_ISSET(ops, b's') {
         if let Ok(meta) = fs::symlink_metadata(&dest_raw) {
-            if meta.file_type().is_symlink() {
-                zwarnnam(nam, &format!("{}: symbolic link", dest_raw));
+            // c:7489 `lstat(buf, &st1)` + c:7493 `!S_ISDIR(st1.st_mode)`
+            if !meta.file_type().is_dir() {
+                // c:7494 — `err = ENOTDIR;`, surfaced by c:1080 `"%e: %s"`.
+                let mut msg = crate::ported::compat::strerror(libc::ENOTDIR);
+                if let Some(c) = msg.chars().next() {
+                    msg = format!("{}{}", c.to_ascii_lowercase(), &msg[c.len_utf8()..]);
+                }
+                zwarnnam(nam, &format!("{}: {}", msg, dest_raw)); // c:1080
                 unqueue_signals();
                 return 1;
             }
@@ -3778,6 +3818,17 @@ pub fn typeset_single(
     pm
 }
 
+// !!! WARNING: RUST-ONLY STATE (no C counterpart) !!!
+// C's `-m` arm (Src/builtin.c:3084-3090) calls `typeset_single` directly on
+// every matched Param. zshrs's typeset_single equivalent is bin_typeset's own
+// per-arg loop, so that arm re-enters bin_typeset with the matched names as
+// literal args; this flag makes the re-entry skip the `-m` arm instead of
+// looping forever, while leaving `ops` (and hence `on`/`off`/`roff` and the
+// c:2244 print gate) byte-identical to the outer call.
+thread_local! {
+    static TYPESET_M_APPLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Port of `bin_typeset(char *name, char **argv, LinkList assigns, Options ops, int func)` from Src/builtin.c:2655.
 /// C: `int bin_typeset(char *name, char **argv, LinkList assigns,
 ///     Options ops, int func)`.
@@ -4824,7 +4875,7 @@ pub fn bin_typeset(
     //     during zinit's plugin loader which runs `typeset -gm`
     //     against the plugin's exported-var set on every load.
     //     Bug #48 in docs/BUGS.md.
-    if OPT_ISSET(&ops, b'm') && !argv.is_empty() {
+    if OPT_ISSET(&ops, b'm') && !argv.is_empty() && !TYPESET_M_APPLY.with(|c| c.get()) {
         // c:3043-3055 — printflags for the +m direct-scan path.
         if !OPT_ISSET(&ops, b'p') {
             // c:3044-3050 — mass-changing types is fatal for namerefs.
@@ -4854,6 +4905,20 @@ pub fn bin_typeset(
         let do_minus_print = OPT_ISSET(&ops, b'p')
             || (!OPT_ISSET(&ops, b'g') && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm')));
         for pattern in argv.iter() {
+            // c:3053 + c:3057 — `while ((asg = getasg(&argv, assigns)))` splits
+            // each arg into `asg->name` / `asg->value` BEFORE the pattern is
+            // tokenized (`tokenize(asg->name)`), so `typeset -m 'x*'=val`
+            // globs `x*` and hands `val` to typeset_single for every match.
+            // The whole arg used to be glob-compiled, so the `=val` half was
+            // part of the pattern and matched nothing.
+            let (pattern, m_value): (&str, Option<&str>) = match pattern.find('=') {
+                Some(i) => (&pattern[..i], Some(&pattern[i + 1..])),
+                None => (pattern.as_str(), None),
+            };
+            // c:3064 — `OPT_PLUS(ops,'m') && !ASG_VALUEP(asg)` is the gate for
+            // the direct scanmatchtable print; everything else runs the
+            // typeset_single loop.
+            let is_plus_m = OPT_PLUS(&ops, b'm') && m_value.is_none();
             // c:3061 — `patcompile(asg->name, 0, NULL)` glob-compile.
             // Use the canonical pattern.rs port. On compile failure,
             // emit "bad pattern" and continue to the next arg.
@@ -4920,7 +4985,16 @@ pub fn bin_typeset(
                     .iter()
                     .filter(|(k, pm)| {
                         let f = pm.node.flags as u32;
-                        if (f & PM_UNSET) != 0 {
+                        // c:3078-3079 — `if (pm->node.flags & PM_UNSET)
+                        // continue;` lives ONLY in the `-m` collection loop.
+                        // The `+m` path (c:3064-3067) is a bare
+                        // `scanmatchtable(..., paramtab->printnode, ...)` with
+                        // no such test, so a DECLARED-but-unset param still
+                        // lists there: under TYPESET_TO_UNSET zsh prints
+                        // `local hide scalar_test` for `private scalar_test;
+                        // typeset +m scalar_test` (V10private "basic scope
+                        // hiding"), where zshrs printed nothing.
+                        if !is_plus_m && (f & PM_UNSET) != 0 {
                             return false;
                         }
                         // c:Src/builtin.c:3055-3094 / hashtable.c:373-440
@@ -4942,7 +5016,18 @@ pub fn bin_typeset(
                         //   hidden (bug #371). So NO PM_HIDE filter on
                         //   this PATTERN path — V10private: `private
                         //   x=5; typeset +m x` → `local x`.
-                        if on_roff != 0 && (f & on_roff) == 0 {
+                        // c:3064-3066 — the `flags1 = on|roff` argument is
+                        // scanmatchtable's, i.e. the `+m` path ONLY. C's `-m`
+                        // collection loop (c:3075-3082) tests nothing but
+                        // `pattry`: those flags are what typeset_single is
+                        // about to APPLY, not a filter on what to match.
+                        // Filtering here made every MUTATING `-m` match
+                        // nothing — `typeset -h +g -m [[:alpha:]_]*`
+                        // (B02typeset's stress test) localized no parameter at
+                        // all, so the `unset -m [[:alpha:]_]*` that follows hit
+                        // the still-global readonly LINENO and aborted the
+                        // chunk before its harness marker was printed.
+                        if is_plus_m && on_roff != 0 && (f & on_roff) == 0 {
                             return false;
                         }
                         crate::ported::pattern::pattry(&pat, k)
@@ -4954,7 +5039,7 @@ pub fn bin_typeset(
                 matched
             };
             // The table guard is dropped here, before any print.
-            if OPT_PLUS(&ops, b'm') {
+            if is_plus_m {
                 // c:3068-3070 — `+m`: direct print using the
                 // PRINT_TYPE | PRINT_NAMEONLY flags built above.
                 for mut pm in matched {
@@ -4962,14 +5047,38 @@ pub fn bin_typeset(
                 }
                 continue;
             }
-            // c:3081-3094 — `-m`: typeset_single per match. For the
-            // pure listing case (no `=` value, no attribute mutation),
-            // typeset_single reduces to the c:2240-2247 print arm.
-            // Attribute-conversion (`-im PAT`, `-rm PAT`, etc.) on
-            // matched names isn't ported here yet; the early
-            // `return returnval` below short-circuits the per-arg
-            // name loop for `-m` args, so on/roff currently acts as
-            // a listing filter only.
+            // c:3084-3090 — `-m`: run typeset_single on every match:
+            //     for (pmnode = firstnode(pmlist); pmnode; incnode(pmnode)) {
+            //         pm = (Param) getdata(pmnode);
+            //         if (!typeset_single(name, pm->node.nam, pm, func, on, off,
+            //                             roff, asg, NULL, ops, 0))
+            //             returnval = 1;
+            //     }
+            // zshrs's typeset_single equivalent is bin_typeset's OWN per-arg
+            // loop (the typeset_single port in this file is unreachable — see
+            // the note in the `already_tied` block), so the match list is fed
+            // back through bin_typeset as LITERAL names. TYPESET_M_APPLY
+            // suppresses this `-m` block on that re-entry so the very same
+            // `ops` is re-derived into the very same `on`/`off`/`roff` and the
+            // same c:2244 print gate. Only the pure-listing shape (`!on &&
+            // !roff && !ASG_VALUEP(asg)`, c:2237) stays on the print path
+            // below, which is where typeset_single returns early anyway.
+            if (on | roff) != 0 || m_value.is_some() {
+                let names: Vec<String> = matched
+                    .iter()
+                    .map(|pm| match m_value {
+                        Some(v) => format!("{}={}", pm.node.nam, v), // c:3086 asg
+                        None => pm.node.nam.clone(),                 // c:3085 pm->node.nam
+                    })
+                    .collect();
+                let prev = TYPESET_M_APPLY.with(|c| c.replace(true));
+                let rc = bin_typeset(name, &names, &ops, func); // c:3086 typeset_single
+                TYPESET_M_APPLY.with(|c| c.set(prev));
+                if rc != 0 {
+                    returnval = 1; // c:3089
+                }
+                continue;
+            }
             if do_minus_print {
                 // c:3090-3095 — walk the pre-built match list. Clones,
                 // per the lock note above; printparamnode's writes into
@@ -5556,8 +5665,38 @@ pub fn bin_typeset(
                         continue;
                     }
                     nameref_resolution::Placeholder(last) => {
-                        // c:2036-2048 — unresolved ref + type change.
-                        if type_change {
+                        // c:2033-2034 — `if ((pm = resolve_nameref(pm)))
+                        //                     pname = pm->node.nam;`
+                        // The chain endpoint becomes the name the rest of
+                        // typeset_single operates on, EVEN when that
+                        // endpoint is itself a reference.
+                        //
+                        // c:2036-2037 — the reject is additionally gated on
+                        //     (!(pm->node.flags & PM_UNSET) ||
+                        //      (pm->node.flags & PM_DECLARED))
+                        // so a chain ending on a reference that `unset -n`
+                        // left `PM_UNSET` with PM_DECLARED cleared (c:3798
+                        // in `unsetparam_pm`) does NOT error: it falls
+                        // through to createparam, whose c:1120-1123 arm
+                        // retargets `oldpm` to that endpoint and c:1176
+                        // overwrites its flags — `typeset -n ref1=ref0;
+                        // typeset -n ref0; unset -n ref0; typeset -i
+                        // ref1=42` yields an ordinary local integer.
+                        let endpoint_visible = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| {
+                                t.get(&last).map(|p| {
+                                    let f = p.node.flags as u32;
+                                    (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0
+                                })
+                            })
+                            .unwrap_or(true); // c:2037
+                        if !endpoint_visible {
+                            // c:2034 — `pname = pm->node.nam;`
+                            let tail = arg.find('=').map(|i| &arg[i..]).unwrap_or("");
+                            nameref_rewrite = Some(format!("{}{}", last, tail));
+                        } else if type_change {
                             zwarnnam(
                                 name, // c:2046
                                 &format!("{}: can't change type of a named reference", last),
@@ -5689,10 +5828,19 @@ pub fn bin_typeset(
         } else {
             true
         };
+        // c:Src/builtin.c:3085 — on the `-m` re-entry the loop is fed
+        // MATCHED PARAMETER NAMES, never option words, so the `-`/`+`
+        // prefix guard (which only exists to keep a stray flag word out
+        // of createparam on the literal path) must not fire there: `-`
+        // IS a real special parameter, and `typeset -h +g -m '*'` has
+        // to localize it like any other or the `unset -m '*'` that
+        // follows hits the still-global readonly `-` and aborts the
+        // shell (E03posix.ztst:1, `fn:2: read-only variable: -`).
+        let m_apply_names = TYPESET_M_APPLY.with(|c| c.get());
         if (on as u32 & PM_LOCAL) != 0                                       // c:2469
             && !arg_name.is_empty()
-            && !arg_name.starts_with('-')
-            && !arg_name.starts_with('+')
+            && (m_apply_names
+                || (!arg_name.starts_with('-') && !arg_name.starts_with('+')))
             && needs_new_shadow
         {
             let kind = if is_hashed {
@@ -5826,9 +5974,14 @@ pub fn bin_typeset(
                     .and_then(|t| t.get(base).map(|pm| pm.level));
                 if pm_level.is_none() || pm_level != Some(cur_locallevel) {
                     // c:2466
+                    // c:2463-2467 — C blanks the `[` only for the getnode
+                    // lookup (`*subscript = 0; … *subscript = '['`), so the
+                    // message carries the FULL `pname` INCLUDING the
+                    // subscript: `array[2]: can't create local array
+                    // elements`. Passing the bare base name dropped `[2]`.
                     zerrnam(
                         name,
-                        &format!("{}: can't create local array elements", base), // c:2466
+                        &format!("{}: can't create local array elements", arg_name), // c:2466
                     );
                     continue; // c:2467
                 }
@@ -6747,6 +6900,62 @@ pub fn bin_typeset(
                 }
             }
         } else {
+            // c:2254-2272 — `if ((on & PM_UNIQUE) && !(pm->node.flags &
+            //     PM_READONLY & ~off)) { … } else if (PM_TYPE(pm->node.flags)
+            //     == PM_SCALAR && pm->ename &&
+            //     (apm = (Param) paramtab->getnode(paramtab, pm->ename))) {
+            //         x = (*apm->gsu.a->getfn)(apm);
+            //         uniqarray(x);
+            //         if (x) arrfixenv(pm->node.nam, x);
+            //     }`
+            // The PM_ARRAY half of that block is handled in the `is_array` arm
+            // above; this is the TIED-SCALAR half. `typeset -T SCALAR=l:o:c:a:l
+            // array; typeset -U SCALAR` must dedupe the partner ARRAY in place
+            // (zsh: `SCALAR=l:o:c:a`), which zshrs never did because the flag
+            // stamp landed on the scalar and nothing touched the peer.
+            if (on as u32 & PM_UNIQUE) != 0 {
+                let peer: Option<(String, Vec<String>)> = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(arg.as_str()).cloned())
+                    .filter(|pm| {
+                        // c:2254 — `!(pm->node.flags & PM_READONLY & ~off)`
+                        (pm.node.flags as u32 & PM_READONLY & !(off as u32)) == 0
+                            // c:2263 — `PM_TYPE(pm->node.flags) == PM_SCALAR`
+                            && PM_TYPE(pm.node.flags as u32) == PM_SCALAR
+                    })
+                    .and_then(|pm| pm.ename.clone()) // c:2263 `pm->ename`
+                    .and_then(|ename| {
+                        paramtab() // c:2265 getnode(paramtab, pm->ename)
+                            .read()
+                            .ok()
+                            .and_then(|t| {
+                                t.get(&ename)
+                                    .map(|apm| (ename.clone(), apm.u_arr.clone()))
+                            })
+                            .and_then(|(n, a)| a.map(|a| (n, a))) // c:2266 getfn
+                    });
+                if let Some((ename, x)) = peer {
+                    let x = crate::ported::params::uniqarray(x); // c:2267
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(apm) = tab.get_mut(&ename) {
+                            apm.u_arr = Some(x.clone());
+                        }
+                        // The tied scalar caches the joined string in u_str;
+                        // refresh it so `$SCALAR` reads the deduped join
+                        // without waiting for the next write.
+                        if let Some(spm) = tab.get_mut(arg.as_str()) {
+                            let sep = match spm.u_tied.as_deref() {
+                                Some(td) if td.joinchar == 0 => "\0".to_string(),
+                                Some(td) => ((td.joinchar as u8) as char).to_string(),
+                                None => ":".to_string(),
+                            };
+                            spm.u_str = Some(x.join(&sep));
+                        }
+                    }
+                    crate::ported::params::arrfixenv(arg.as_str(), Some(&x)); // c:2269
+                }
+            }
             // c:2355-2378 (typeset_single tc branch) — bare `typeset -i n`
             // / `-F n` / `-E n` / `-l n` / `-u n` / `-r n` / `export N`
             // / `readonly N` converts/stamps the existing param. Split
@@ -8198,6 +8407,19 @@ pub fn bin_functions(
             if filter_mask != 0 && (f & filter_mask) != filter_mask {
                 return;
             }
+            // !!! RUST-ONLY GATE (no C counterpart) !!!
+            // C's anonymous functions (`() { … } args`) are never entered into
+            // shfunctab at all — execfuncdef runs the Eprog and frees it
+            // (Src/exec.c). zshrs desugars them into a real shfunc named
+            // `_zshrs_anon_N` (parse.rs:9528/9585) and deletes the entry after
+            // the single call (fusevm_bridge.rs:14746), so the only window in
+            // which one is visible is from INSIDE its own body — which is
+            // exactly where B02typeset's `typeset -f` runs, since the ztst
+            // harness evaluates every chunk inside `() { … }`. Skip them so
+            // the listing matches zsh.
+            if entry.node.nam.starts_with("_zshrs_anon_") {
+                return;
+            }
             printshfuncexpand(entry, pflags, expand);
         });
         unqueue_signals(); // c:3668
@@ -9628,8 +9850,15 @@ pub fn bin_whence(
             // living in BUILTINS — but they ARE builtins and whence/
             // type must classify them as such (`whence -w zd` reported
             // the external /opt/homebrew/bin/zd instead).
+            // Under `--zsh` / ZSHRS_HIDE_EXT_BUILTINS these zshrs-only
+            // names are NOT in the builtin namespace — `${(k)builtins}`
+            // omits them (Src/Modules/parameter.c:823 mirror at
+            // modules/parameter.rs:2046) — so whence must not report
+            // them either. One predicate for every consumer:
+            // `ext_builtins::hide_ext_builtins`. Dispatch is untouched.
             if builtin_node.is_none()
                 && !is_disabled_builtin
+                && !crate::ext_builtins::hide_ext_builtins()
                 && crate::daemon::builtins::is_zshrs_builtin(arg)
             {
                 let mut ext_node = hashnode {
@@ -9647,8 +9876,14 @@ pub fn bin_whence(
             // manager, ztest/zassert framework, watch) — first-class builtins
             // absent from the static BUILTINS table; classify like the daemon
             // z* family above so `whence -w zassert_eq` reports `builtin`.
+            // Same `hide_ext_builtins()` gate as the daemon arm above:
+            // `zsh -f` has no `cat`/`head`/`seq`/`tail` builtin, so
+            // `which cat` must print `/bin/cat`, not `cat: shell
+            // built-in command` (E01options.ztst:17 — the %prep line
+            // `catpath=$(which cat)` feeds the EQUALS expectation).
             if builtin_node.is_none()
                 && !is_disabled_builtin
+                && !crate::ext_builtins::hide_ext_builtins()
                 && !crate::daemon::builtins::is_zshrs_builtin(arg)
                 && crate::extensions::ext_builtins::is_extension_builtin(arg)
             {
@@ -11114,7 +11349,19 @@ pub fn bin_print(
         if OPT_ISSET(ops, b'O') {
             flags |= SORTIT_BACKWARDS as u32; // c:4806
         }
-        strmetasort(&mut processed_args, flags, None); // c:4807
+        // c:4792 — `strmetasort(args, flags, len);`. C passes the REAL
+        // per-argument length array, never NULL (contrast c:694, the
+        // `typeset` sort, which does pass NULL). That is what selects
+        // `eltpcmp`'s embedded-NUL branch (`ae->len != -1`), so arguments
+        // holding NUL bytes compare over their FULL byte extent instead of
+        // being truncated at the first NUL by `strcoll`. Passing `None`
+        // here made every `$'a\0...'` argument compare equal to plain
+        // `a`, so `print -lO $'a' $'a\0' $'a\0b' …` came back in input
+        // order instead of sorted (Test/B03print.ztst "sorting with
+        // embedded nulls"). Rust `String` stores the NULs faithfully, so
+        // the length is simply each argument's byte length.
+        let mut lens: Vec<usize> = processed_args.iter().map(|a| a.len()).collect(); // c:4792 len
+        strmetasort(&mut processed_args, flags, Some(&mut lens)); // c:4792
     }
     // c:Src/builtin.c:4866-4886 — when `-r` is NOT set, each arg goes
     // through `getkeystring` to interpret backslash escapes (`\n`,
@@ -12568,7 +12815,15 @@ pub fn bin_dot(
     // (zinit.zsh's dir) instead of the theme's plugin dir, so the
     // theme then sourced `$BIN_DIR/internal/p10k.zsh` (no such
     // file) instead of `$THEME_DIR/internal/p10k.zsh`.
-    let prev_funcstack_lineno = crate::ported::input::lineno.with(|c| c.get()) as i64;
+    // c:Src/init.c:1612 — `fstack.lineno = oldlineno;` where `oldlineno`
+    // was captured from the ONE `lineno` global (c:1608). zshrs mirrors
+    // that global in several places; the counter `BUILTIN_SET_LINENO`
+    // actually drives per statement is `lex::LEX_LINENO` — the same one
+    // `init::source` (init.rs:1614) and `doshfunc` (exec.rs:6938) read for
+    // their frames. Reading `input::lineno` here instead picked up a stale
+    // mirror, so `$functrace` inside a sourced file reported the caller as
+    // `file:1` instead of the line the `.` was on.
+    let prev_funcstack_lineno = crate::ported::lex::lineno() as i64;
     let pushed_frame = {
         let mut stack = crate::ported::modules::parameter::FUNCSTACK
             .lock()
@@ -13300,7 +13555,23 @@ pub fn bin_emulate(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) =
                 Some(Box::new(crate::ported::zsh_h::emulation_options {
-                    emulation: crate::ported::options::EMULATION.load(Relaxed), // c:6346
+                    // c:6346 — `sticky->emulation = emulation;`. C's
+                    // `emulation` global carries EMULATE_FULLY (set by
+                    // `emulate()` at Src/options.c:551 when `-R` is
+                    // given), and doshfunc feeds the whole value back
+                    // to `installemulation` (c:5993), which is what
+                    // makes `emulate -R sh -c 'f(){...}'` re-apply the
+                    // FULL emulation (banghist off) inside `f`. The
+                    // Rust port keeps that bit in the separate
+                    // FULLY_EMULATING cell, so OR it back in here —
+                    // otherwise the sticky snapshot silently degrades
+                    // `-R` to a plain `emulate sh`.
+                    emulation: crate::ported::options::EMULATION.load(Relaxed)
+                        | if crate::ported::options::FULLY_EMULATING.load(Relaxed) {
+                            crate::ported::zsh_h::EMULATE_FULLY
+                        } else {
+                            0
+                        }, // c:6346
                     n_on_opts: on_opts.len() as i32,                            // c:6351
                     n_off_opts: off_opts.len() as i32,                          // c:6353
                     on_opts,                                                    // c:6356-6358
@@ -13748,35 +14019,88 @@ pub fn bin_read(
         if nchars <= 0 {
             return 1;
         }
-        let mut got = vec![0u8; nchars as usize];
-        let mut bytes_read = 0;
-        while bytes_read < nchars as usize {
+        // c:6633-6634 — `bptr = buf = zalloc(nchars*MB_CUR_MAX+1)`: `nchars`
+        // counts CHARACTERS, so the byte budget is nchars * MB_CUR_MAX.
+        // c:6683-6705 — `mbrlen` drives the countdown: MB_INCOMPLETE keeps
+        // reading without decrementing, MB_INVALID is "treat as single
+        // byte" (c:6690-6693), and only a completed character does
+        // `nchars--`. The old port decremented per BYTE, so `read -k2`
+        // over `«»` returned the two bytes of `«` alone.
+        let mb_on = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+        let mut got = Vec::<u8>::with_capacity(nchars as usize * 4);
+        let mut nleft = nchars as usize; // c:6715 `while (nchars > 0)`
+        let mut pending = Vec::<u8>::new();
+        while nleft > 0 {
             match read_byte(ufd) {
                 Ok(Some(b)) => {
                     if bash_stop_at_nl && b == b'\n' {
                         break; // bash -n stops early at the delimiter
                     }
-                    got[bytes_read] = b;
-                    bytes_read += 1;
+                    if !mb_on {
+                        // c:6656-6659 — byte mode: one byte is one character.
+                        got.push(b);
+                        nleft -= 1;
+                        continue;
+                    }
+                    pending.push(b);
+                    match std::str::from_utf8(&pending) {
+                        // c:6701 — a complete character: `nchars--`.
+                        Ok(_) => {
+                            got.extend_from_slice(&pending);
+                            pending.clear();
+                            nleft -= 1;
+                        }
+                        // c:6686-6688 — MB_INCOMPLETE: keep reading.
+                        Err(e) if e.error_len().is_none() && pending.len() < 4 => {}
+                        // c:6690-6693 — MB_INVALID: treat as a single byte.
+                        Err(_) => {
+                            got.extend_from_slice(&pending);
+                            pending.clear();
+                            nleft -= 1;
+                        }
+                    }
                 }
                 _ => break,
             }
         }
-        buf = String::from_utf8_lossy(&got[..bytes_read]).into_owned();
+        // EOF mid-character: keep the debris, as c:6892-6898 does.
+        got.extend_from_slice(&pending);
+        buf = String::from_utf8_lossy(&got).into_owned();
     } else if OPT_HASARG(ops, b'd') {
-        // c:Src/builtin.c:6418 — `-d DELIM`: read until first byte of
-        // DELIM (zsh uses only first char of arg). EOF mid-record
-        // returns what was read so far, exit 1 like the default path.
+        // c:Src/builtin.c:6538 — `-d DELIM`: read until the first
+        // CHARACTER of DELIM. EOF mid-record returns what was read so
+        // far, exit 1 like the default path.
         let arg = OPT_ARG(ops, b'd').unwrap_or("");
-        // c:Src/builtin.c:6418 — empty `-d` arg means NUL delimiter.
-        // zsh's `STOUC(*OPT_ARG(ops, 'd'))` reads the first byte of
-        // the arg buffer; for an empty arg the buffer is a single NUL
-        // terminator, so STOUC yields 0x00. The Rust port's
-        // `.first().copied()` returns None for empty strings, which
-        // we have to map to NUL explicitly (matches `read -d '' x`
-        // reading until \0, used by `find -print0 | while read -d ''`).
-        let delim = arg.as_bytes().first().copied().unwrap_or(b'\0');
+        // c:6538-6555 — the delimiter is ONE CHARACTER, not one byte:
+        //     if (isset(MULTIBYTE)) { mb_charinit();
+        //                             (void)mb_metacharlenconv(delimstr, &wi); }
+        //     else wi = WEOF;
+        //     if (wi != WEOF) delim = (wchar_t)wi;
+        //     else { delim = (wchar_t)(unsigned char)delimstr[0]; rawbyte = 1; }
+        // The old port compared the FIRST BYTE, so `read -d £` (0xc2 0xa3)
+        // stopped at the 0xc2 of any other Latin-1 character (`¤`, `«`) and
+        // left the trailing byte in the next record.
+        let dbytes = crate::ported::utils::unmetafy_str(arg);
+        // c:6543 — the wide decode only happens under MULTIBYTE.
+        let mb_on = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+        let (delim_wc, rawbyte) = if dbytes.is_empty() {
+            // c:Src/builtin.c:6418 — empty `-d` arg means NUL delimiter.
+            // zsh's `delimstr[0]` reads the arg buffer's NUL terminator.
+            (0u32, true)
+        } else if mb_on {
+            match crate::ported::utils::mb_metacharlenconv(&dbytes) {
+                (_, Some(wc), _) => (wc as u32, false), // c:6549-6550
+                _ => (dbytes[0] as u32, true),          // c:6551-6554 (WEOF)
+            }
+        } else {
+            (dbytes[0] as u32, true) // c:6547-6548 `wi = WEOF`
+        };
         let mut buf_bytes = Vec::<u8>::new();
+        // c:6983-6998 — one byte at a time into `bptr`, then
+        // `ret = mbrtowc(&wc, bptr, 1, &mbs)`: MB_INCOMPLETE keeps reading,
+        // MB_INVALID resets the state and treats THIS byte as the character
+        // (the incomplete bytes already staged stay in the buffer).
+        let mut pending = Vec::<u8>::new();
         // c:7045 — the loop breaks on `c == EOF || (c == delim && !zbuf)`, and
         // c:7116 keys the exit status off WHICH of the two ended it. "Did any
         // byte arrive" can't tell an EOF-terminated record from a
@@ -13793,31 +14117,53 @@ pub fn bin_read(
         loop {
             match read_byte(ufd) {
                 Ok(Some(b)) => {
-                    // c:7041-7043 — a backslash-escaped DELIMITER is a line
-                    // continuation: both bytes are dropped and the record keeps
+                    // c:6984-6998 — assemble ONE character before any of the
+                    // delimiter / backslash tests run. `rawbyte` (c:6554) and
+                    // NO_MULTIBYTE both short-circuit to the byte itself.
+                    let (wc, unit): (u32, Vec<u8>) = if rawbyte || !mb_on {
+                        (b as u32, vec![b]) // c:6988-6991
+                    } else {
+                        pending.push(b);
+                        match std::str::from_utf8(&pending) {
+                            // c:6992 — `ret != MB_INCOMPLETE`, a whole character.
+                            Ok(v) => {
+                                let c = v.chars().next().unwrap_or('\0');
+                                (c as u32, std::mem::take(&mut pending))
+                            }
+                            // c:6792 — `MB_INCOMPLETE`: keep reading bytes.
+                            Err(e) if e.error_len().is_none() && pending.len() < 4 => {
+                                continue;
+                            }
+                            // c:6993-6997 — `MB_INVALID`: reset the shift state
+                            // and treat this as a single character.
+                            Err(_) => (b as u32, std::mem::take(&mut pending)),
+                        }
+                    };
+                    // c:7003-7005 — a backslash-escaped DELIMITER is a line
+                    // continuation: both are dropped and the record keeps
                     // going. `read -d t x <<< 'esc\ttab'` therefore yields `esc`
                     // (the escaped `t` vanishes; the NEXT `t` terminates).
-                    if bslash && b == delim {
-                        bslash = false; // c:7042
-                        continue; // c:7043
+                    if bslash && wc == delim_wc {
+                        bslash = false; // c:7004
+                        continue; // c:7005
                     }
-                    if b == delim {
-                        saw_delim = true; // c:7045 (`c == delim`)
+                    if wc == delim_wc {
+                        saw_delim = true; // c:7007 (`wc == delim`)
                         break;
                     }
-                    // c:7055-7057 — an unescaped backslash is consumed and
-                    // escapes the next byte (unless `-r`).
-                    let was_escaped = bslash; // this byte follows a backslash
-                    bslash = b == b'\\' && !bslash && !raw_mode; // c:7055
+                    // c:7017-7019 — an unescaped backslash is consumed and
+                    // escapes the next character (unless `-r`).
+                    let was_escaped = bslash; // this char follows a backslash
+                    bslash = wc == u32::from(b'\\') && !bslash && !raw_mode; // c:7017
                     if bslash {
-                        continue; // c:7057
+                        continue; // c:7019
                     }
                     // Mark a backslash-escaped byte literal so IFS splitting
                     // skips it (see the default-line loop above for the rule).
                     if was_escaped {
                         buf_bytes.extend_from_slice("\u{99}".as_bytes());
                     }
-                    buf_bytes.push(b);
+                    buf_bytes.extend_from_slice(&unit); // c:7021-7027
                 }
                 Ok(None) => break,
                 // c:Src/builtin.c:7162-7188 zread — a read(2) error
@@ -13827,6 +14173,9 @@ pub fn bin_read(
                 Err(_) => break,
             }
         }
+        // c:6892-6898 — "We can only get here if there is an EOF in the
+        // middle of a character... safest to keep the debris, I suppose."
+        buf_bytes.extend_from_slice(&pending);
         buf = String::from_utf8_lossy(&buf_bytes).into_owned();
         // c:Src/builtin.c:6418 — `read -d ''` (NUL delimiter) strips
         // trailing newlines from the captured content. This matches
@@ -15306,7 +15655,18 @@ pub fn bin_trap(
         // restoring the just-installed body back into traps_table
         // after the function exit, causing the script-end trap fire
         // to re-run the inner body.)
-        if sig >= 0 && sig <= crate::ported::signals_h::SIGCOUNT && sig != libc::SIGCHLD as i32 {
+        // c:7429 — C calls `settrap(sig, prog, 0)` for EVERY valid trap
+        // index, pseudo-signals included: `sig < TRAPCOUNT` is the only
+        // bound (c:7421-7448). The `sig <= SIGCOUNT` cap here excluded
+        // ZERR (SIGCOUNT+1) and DEBUG (SIGCOUNT+2), so those two never
+        // reached settrap → unsettrap → removetrap → dosavetrap and were
+        // therefore never saved/restored by the LOCAL_TRAPS scope stack:
+        // `f() { setopt localtraps; trap '…' DEBUG }; f` left the DEBUG
+        // trap armed for the rest of the shell (C05debug:1,5,6).
+        // settrap itself already gates install_handler/signal_ignore on
+        // `sig != 0 && sig <= SIGCOUNT` (c:714-736), so widening the
+        // bound here touches no libc disposition.
+        if sig >= 0 && sig < crate::ported::signals_h::TRAPCOUNT && sig != libc::SIGCHLD as i32 {
             // c:Src/signals.c:712 — `if (!(flags & ZSIG_FUNC) && empty_eprog(l))`.
             // settrap treats an `l == None` (or empty Eprog) body as
             // `trap '' SIG` — i.e. ZSIG_IGNORED + signal_ignore(sig).

@@ -963,37 +963,74 @@ pub fn printtime(
                 // c:893-894 — %P
                 Some('P') => result.push_str(&format!("{}%", percent)),
                 Some('J') => result.push_str(job_name),
-                // c:825-840 — %mE / %mU / %mS (milliseconds)
-                Some('m') => match chars.next() {
-                    Some('E') => result.push_str(&format!("{:.0}ms", elapsed_secs * 1000.0)),
-                    Some('U') => result.push_str(&format!("{:.0}ms", user_secs * 1000.0)),
-                    Some('S') => result.push_str(&format!("{:.0}ms", system_secs * 1000.0)),
-                    _ => result.push_str("%m"),
+                // c:825-840 — %mE / %mU / %mS (milliseconds).
+                // c:836-839 — `default: fprintf(stderr, "%%m"); s--;` — an
+                // unrecognised (or absent) second char prints the literal
+                // `%m` and BACKS UP so the char is re-processed by the outer
+                // loop. Consuming it here ate one char per bad directive:
+                // `%m%mm` printed `%mmm` instead of zsh's `%m%mm`.
+                Some('m') => match chars.peek() {
+                    Some('E') => {
+                        chars.next();
+                        result.push_str(&format!("{:.0}ms", elapsed_secs * 1000.0))
+                    }
+                    Some('U') => {
+                        chars.next();
+                        result.push_str(&format!("{:.0}ms", user_secs * 1000.0))
+                    }
+                    Some('S') => {
+                        chars.next();
+                        result.push_str(&format!("{:.0}ms", system_secs * 1000.0))
+                    }
+                    _ => result.push_str("%m"), // c:837-838
                 },
                 // c:842-857 — %uE / %uU / %uS (microseconds)
-                Some('u') => match chars.next() {
-                    Some('E') => result.push_str(&format!("{:.0}us", elapsed_secs * 1_000_000.0)),
-                    Some('U') => result.push_str(&format!("{:.0}us", user_secs * 1_000_000.0)),
-                    Some('S') => result.push_str(&format!("{:.0}us", system_secs * 1_000_000.0)),
-                    _ => result.push_str("%u"),
+                Some('u') => match chars.peek() {
+                    Some('E') => {
+                        chars.next();
+                        result.push_str(&format!("{:.0}us", elapsed_secs * 1_000_000.0))
+                    }
+                    Some('U') => {
+                        chars.next();
+                        result.push_str(&format!("{:.0}us", user_secs * 1_000_000.0))
+                    }
+                    Some('S') => {
+                        chars.next();
+                        result.push_str(&format!("{:.0}us", system_secs * 1_000_000.0))
+                    }
+                    _ => result.push_str("%u"), // c:854-855
                 },
                 // c:859-874 — %nE / %nU / %nS (nanoseconds)
-                Some('n') => match chars.next() {
+                Some('n') => match chars.peek() {
                     Some('E') => {
+                        chars.next();
                         result.push_str(&format!("{:.0}ns", elapsed_secs * 1_000_000_000.0))
                     }
-                    Some('U') => result.push_str(&format!("{:.0}ns", user_secs * 1_000_000_000.0)),
+                    Some('U') => {
+                        chars.next();
+                        result.push_str(&format!("{:.0}ns", user_secs * 1_000_000_000.0))
+                    }
                     Some('S') => {
+                        chars.next();
                         result.push_str(&format!("{:.0}ns", system_secs * 1_000_000_000.0))
                     }
-                    _ => result.push_str("%n"),
+                    _ => result.push_str("%n"), // c:871-872
                 },
                 // c:876-891 — %*E / %*U / %*S (HH:MM:SS form)
-                Some('*') => match chars.next() {
-                    Some('E') => result.push_str(&printhhmmss(elapsed_secs)),
-                    Some('U') => result.push_str(&printhhmmss(user_secs)),
-                    Some('S') => result.push_str(&printhhmmss(system_secs)),
-                    _ => result.push_str("%*"),
+                Some('*') => match chars.peek() {
+                    Some('E') => {
+                        chars.next();
+                        result.push_str(&printhhmmss(elapsed_secs))
+                    }
+                    Some('U') => {
+                        chars.next();
+                        result.push_str(&printhhmmss(user_secs))
+                    }
+                    Some('S') => {
+                        chars.next();
+                        result.push_str(&printhhmmss(system_secs))
+                    }
+                    _ => result.push_str("%*"), // c:888-889
                 },
                 // c:897-899 — %W: swaps
                 Some('W') => result.push_str(&format!("{}", ti.nswap)),
@@ -1021,7 +1058,10 @@ pub fn printtime(
                     result.push('%');
                     result.push(other);
                 }
-                None => result.push('%'),
+                // c:1013-1015 — `case '\0': s--; break;` — a trailing lone
+                // `%` prints NOTHING; the s-- puts the scan back on the NUL
+                // so the for-loop terminates.
+                None => {}
             }
         } else {
             result.push(c);
@@ -3620,12 +3660,19 @@ pub fn bin_kill(
                             }
                         }
                         zwarnnam(nam, &format!("kill {} failed: {}", arg, errmsg));
-                        returnval = 1;
+                        returnval += 1; // c:3050 returnval++
                     }
                 }
                 Err(_) => {
+                    // c:3038-3040 — `} else if (!isanum(*argv)) {
+                    //   zwarnnam("kill", "invalid pid: %s", *argv);
+                    //   returnval++; }`. C ACCUMULATES one failure per bad
+                    // operand and the builtin's status is that count
+                    // (c:3067 `return returnval < 126 ? returnval : 1;`), so
+                    // `kill a b c` exits 3. Assigning 1 collapsed every
+                    // multi-operand failure to 1.
                     zwarnnam(nam, &format!("illegal pid: {}", arg));
-                    returnval = 1;
+                    returnval += 1; // c:3040 returnval++
                 }
             }
         } else if arg.starts_with('%') {
@@ -3696,18 +3743,32 @@ pub fn bin_kill(
                                 );
                             }
                         }
-                        zwarnnam(nam, &format!("kill {} failed: {}", arg, errmsg)); // c:3027
-                        returnval = 1;
+                        zwarnnam(nam, &format!("kill {} failed: {}", arg, errmsg)); // c:3049
+                        returnval += 1; // c:3050 returnval++
                     }
                 }
                 Err(_) => {
+                    // c:3038-3040 — `} else if (!isanum(*argv)) {
+                    //   zwarnnam("kill", "invalid pid: %s", *argv);
+                    //   returnval++; }`. C ACCUMULATES one failure per bad
+                    // operand, and the builtin's status is that COUNT
+                    // (c:3067), so `kill a b c` exits 3 and `kill -INT a b c`
+                    // exits 3. Assigning 1 collapsed every multi-operand
+                    // failure to a single 1.
                     zwarnnam(nam, &format!("illegal pid: {}", arg));
-                    returnval = 1;
+                    returnval += 1; // c:3040 returnval++
                 }
             }
         }
     }
-    returnval // c:3045
+    // c:3067 — `return returnval < 126 ? returnval : 1;`. The accumulated
+    // failure count IS the exit status, clamped so it can never collide
+    // with the 126/127 "not executable"/"not found" range.
+    if returnval < 126 {
+        returnval // c:3067
+    } else {
+        1 // c:3067
+    }
 }
 
 /// Signal number from name (from jobs.c getsigidx)

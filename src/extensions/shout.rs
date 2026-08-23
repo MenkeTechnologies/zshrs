@@ -76,9 +76,109 @@ pub fn write(bytes: &[u8]) {
     let _ = write_loop(if fd >= 0 { fd } else { 1 }, bytes);
 }
 
+thread_local! {
+    /// Byte sink for [`tputs`]'s `int (*putc)(int)` callback. `tputs(3)`
+    /// takes a plain fn pointer with no user data, so the collector has to
+    /// be reachable from a free function; it is thread-local because the
+    /// callback always runs on the calling thread, inside the `tputs` call.
+    static TPUTS_SINK: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `tputs(3)`'s per-byte output callback — the shape of `putshout`
+/// (`Src/utils.c:434`), collecting into [`TPUTS_SINK`] instead of writing
+/// straight to the stream so the caller can route the expanded bytes
+/// through [`write`] (the buffered frame) or a raw fd.
+extern "C" fn tputs_collect(c: libc::c_int) -> libc::c_int {
+    TPUTS_SINK.with(|s| s.borrow_mut().push(c as u8));
+    0
+}
+
+/// Expand a termcap/terminfo capability string for output — the
+/// `tputs(str, 1, putshout)` that C's display code wraps around EVERY
+/// capability emission (`Src/prompt.c:1088,1092,1099` `tsetcap`,
+/// `Src/Zle/zle_refresh.c:2345` `tcout`, `:2417` `tcoutarg`,
+/// `Src/Zle/zle_keymap.c:1272`, `Src/Zle/complist.c` `tputs(buf, 1,
+/// putshout)`).
+///
+/// Rust-only infrastructure, not a port: `tputs(3)` is the termcap
+/// library routine zsh links against, and this is the binding zshrs needs
+/// because it collects into a buffer rather than a `FILE *`. It is not a
+/// reimplementation — the real ncurses `tputs` does the work (ncurses is
+/// already linked; `src/ported/init.rs:699` externs `tgetent`/`tgetstr`
+/// from it).
+///
+/// What it fixes: capability strings carry `$<n>` / `$<n*>` / `$<n/>`
+/// delay specifications. `tputs` strips those and emits the matching pad
+/// characters for the tty's baud rate. zshrs wrote `tcstr[cap]` to the
+/// terminal verbatim, so under any TERM whose entry has padding — vt100,
+/// which is what `Test/comptest`'s `comptesteval` sets for every ZLE
+/// test — the literal text `$<2>` appeared on screen where zsh emitted
+/// two NUL pad bytes:
+///
+/// ```text
+/// zsh   : \x1b[1m\x00\x00\x1b[7m\x00\x00%\x1b[m\x00\x00
+/// zshrs : \x1b[1m$<2>\x1b[7m$<2>%\x1b[m$<2>
+/// ```
+///
+/// A capability with no `$<` in it is returned unchanged without calling
+/// into ncurses, which also keeps the path safe when `init_term` bailed
+/// before `tgetent` (TERM unset / TERM_BAD) and `cur_term` is NULL.
+pub fn tputs(s: &str) -> Vec<u8> {
+    if !s.contains("$<") {
+        return s.as_bytes().to_vec();
+    }
+    extern "C" {
+        fn tputs(
+            str: *const libc::c_char,
+            affcnt: libc::c_int,
+            putc: extern "C" fn(libc::c_int) -> libc::c_int,
+        ) -> libc::c_int;
+    }
+    let Ok(c_str) = std::ffi::CString::new(s) else {
+        return s.as_bytes().to_vec();
+    };
+    TPUTS_SINK.with(|sink| sink.borrow_mut().clear());
+    // `affcnt` = 1 — the same constant every zsh call site passes.
+    unsafe { tputs(c_str.as_ptr(), 1, tputs_collect) };
+    TPUTS_SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut()))
+}
+
+/// [`tputs`] + [`write`] — the exact `tputs(cap, 1, putshout)` pair.
+pub fn tputs_write(s: &str) {
+    write(&tputs(s));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A capability with no delay spec must come back byte-identical and
+    /// must not enter ncurses (the fast path also covers `cur_term ==
+    /// NULL`, i.e. a shell that never reached `tgetent`).
+    #[test]
+    fn tputs_passes_through_unpadded_capability() {
+        assert_eq!(tputs("\x1b[1m"), b"\x1b[1m".to_vec());
+        assert_eq!(tputs(""), Vec::<u8>::new());
+    }
+
+    /// vt100's `md` is `\e[1m$<2>`: `tputs` must strip the `$<2>` delay
+    /// spec. zshrs used to write it to the terminal verbatim, so the
+    /// literal characters `$<2>` appeared in every ZLE frame under a
+    /// padded TERM.
+    #[test]
+    fn tputs_strips_delay_specification() {
+        let out = tputs("\x1b[1m$<2>");
+        assert!(
+            out.starts_with(b"\x1b[1m"),
+            "capability text must survive: {:?}",
+            out
+        );
+        assert!(
+            !out.windows(2).any(|w| w == b"$<"),
+            "delay spec must not reach the terminal: {:?}",
+            out
+        );
+    }
 
     /// A region defers its writes and emits them in order on close; the
     /// depth counter must survive nesting so an inner `end` does not flush

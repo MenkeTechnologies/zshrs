@@ -4,7 +4,6 @@
 
 use crate::ported::zsh_h::{features, module, OPT_ARG, OPT_ISSET};
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::process::Command;
@@ -266,12 +265,17 @@ pub fn newptycmd(
         return 1;
     }
 
+    // c:302 — `prog = parse_string(zjoin(args, ' ', 1), 0);`
+    //
+    // The command words are ONE shell command line, not an argv: C
+    // joins them with a space and parses the result in the PARENT so a
+    // syntax error is reported by the builtin instead of by an orphaned
+    // child. This port keeps the join here and defers the parse to
+    // `execstring` in the child (c:434), so a bad command line is
+    // diagnosed there instead.
+    let zjoined = crate::ported::utils::zjoin(args, ' ');
+
     // c:438 — `get_pty(1, &master, &slave)` — allocate master/slave fds.
-    // Approximation: full C path runs `parse_string(zjoin(args, ' ', 1))`
-    // then `execode(prog, 1, 0, "zpty")` in the child, so the args are
-    // interpreted as a shell command line (globs, redirs, builtins).
-    // This port still uses execvp(3), matching the prior inline shape
-    // — true execode integration is a separate iteration.
     #[cfg(unix)]
     {
         let (master, slave) = match get_pty() {
@@ -384,22 +388,42 @@ pub fn newptycmd(
                         break;
                     }
                 }
-                let cmd = match CString::new(args[0].as_str()) {
-                    Ok(c) => c,
-                    Err(_) => unsafe { libc::_exit(1) },
-                };
-                let c_args: Vec<CString> = args
-                    .iter()
-                    .filter_map(|s| CString::new(s.as_str()).ok())
-                    .collect();
-                let c_args_ptrs: Vec<*const libc::c_char> = c_args
-                    .iter()
-                    .map(|s| s.as_ptr())
-                    .chain(std::iter::once(std::ptr::null()))
-                    .collect();
+                // c:419 — `opts[INTERACTIVE] = 0;` — the pty child is a
+                // script-mode shell no matter what the parent was.
+                // `dosetopt(..., force=1)` is this port's spelling of a
+                // direct `opts[]` store; options.rs:851 rejects an
+                // unforced INTERACTIVE change.
+                let _ =
+                    crate::ported::options::dosetopt(crate::ported::zsh_h::INTERACTIVE, 0, 1);
+                // c:434 — `execode(prog, 1, 0, "zpty");`
+                //
+                // The prior port called `execvp(args[0], args)` here,
+                // which only works when the command is a single bare
+                // word. Every `zpty NAME "cmd with args"` form — the
+                // `zpty zsh "$comptest_zsh -f +Z"` in Test/comptest that
+                // the whole X0*zle*.ztst cluster is built on, and
+                // `zpty p "print foo; print bar"` — tried to exec a
+                // program whose literal name contained spaces, got
+                // ENOENT and `_exit(1)` AFTER the c:421-432 sync byte
+                // had already unblocked the parent. The parent therefore
+                // saw a successful spawn and then never any output.
+                //
+                // `execstring` (exec.rs:1945) is this port's
+                // `parse_string` + `execode` pair.
+                crate::ported::exec::execstring(&zjoined, 1, 0, "zpty");
+                // c:435-437 — `stopmsg = 2; mypid = 0; zexit(lastval, ZEXIT_NORMAL);`
+                // — c:436 `mypid = 0` is C's "trick to ensure we _exit()",
+                // i.e. the forked shell must never run the parent's
+                // normal-exit work; spell that as a direct `_exit`.
+                {
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                    let _ = std::io::stderr().flush();
+                }
+                let lastval = crate::ported::builtin::LASTVAL
+                    .load(std::sync::atomic::Ordering::Relaxed);
                 unsafe {
-                    libc::execvp(cmd.as_ptr(), c_args_ptrs.as_ptr());
-                    libc::_exit(1); // c:436 — `zexit(lastval, ZEXIT_NORMAL)` on failure.
+                    libc::_exit(lastval);
                 }
             }
             pid => {

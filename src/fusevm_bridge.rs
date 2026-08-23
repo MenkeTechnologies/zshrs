@@ -317,6 +317,115 @@ impl Drop for PsubFdGuard {
 /// body output to the parent's real stdout (matching zsh's forked
 /// cmdsub behaviour) instead of the cmdsub's pipe-bound fd 1.
 /// Bug #56 in docs/BUGS.md.
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// C keeps a shell function in exactly ONE place — the `Shfunc` node in
+/// `shfunctab` — so `dosavetrap` copies a `TRAP<SIG>` function by
+/// duplicating that node (`Src/signals.c:638-656`) and `endtrapscope`
+/// puts it back with a single `shfunctab->addnode` (c:929-931).
+///
+/// zshrs splits one function across FIVE stores: the `shfunc` node in
+/// `shfunctab` (metadata + body text) plus the executor's
+/// `functions_compiled` (the fusevm `Chunk` that actually runs),
+/// `function_source`, `function_line_base` and `function_def_file`.
+/// Snapshotting only the hashtable node therefore restores the outer
+/// function's *metadata* while the inner function's *bytecode* keeps
+/// running. `FuncSnapshot` captures all five so the C-level "copy the
+/// node" / "add the node back" steps are faithful in behaviour.
+#[derive(Default)]
+pub struct FuncSnapshot {
+    pub shf: Option<crate::ported::zsh_h::shfunc>,
+    pub chunk: Option<fusevm::Chunk>,
+    pub source: Option<String>,
+    pub line_base: Option<i64>,
+    pub def_file: Option<Option<String>>,
+}
+
+impl FuncSnapshot {
+    /// True when `name` had no definition at snapshot time — restoring
+    /// such a snapshot deletes the function everywhere.
+    pub fn is_empty(&self) -> bool {
+        self.shf.is_none() && self.chunk.is_none() && self.source.is_none()
+    }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+/// Capture every store that holds `name`'s definition. See
+/// [`FuncSnapshot`].
+pub fn snapshot_function(name: &str) -> FuncSnapshot {
+    let shf = crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).cloned());
+    let (chunk, source, line_base, def_file) = try_with_executor(|exec| {
+        (
+            exec.functions_compiled.get(name).cloned(),
+            exec.function_source.get(name).cloned(),
+            exec.function_line_base.get(name).copied(),
+            exec.function_def_file.get(name).cloned(),
+        )
+    })
+    .unwrap_or((None, None, None, None));
+    FuncSnapshot {
+        shf,
+        chunk,
+        source,
+        line_base,
+        def_file,
+    }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+/// Put a [`FuncSnapshot`] back under `name`. An empty snapshot (the
+/// function did not exist when it was taken) removes it from every
+/// store, mirroring C's `removehashnode(shfunctab, …)`.
+pub fn restore_function(name: &str, snap: FuncSnapshot) {
+    if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+        match snap.shf {
+            Some(shf) => {
+                t.add(shf);
+            }
+            None => {
+                t.remove(name);
+            }
+        }
+    }
+    let _ = try_with_executor(|exec| {
+        match snap.chunk {
+            Some(c) => {
+                exec.functions_compiled.insert(name.to_string(), c);
+            }
+            None => {
+                exec.functions_compiled.remove(name);
+            }
+        }
+        match snap.source {
+            Some(s) => {
+                exec.function_source.insert(name.to_string(), s);
+            }
+            None => {
+                exec.function_source.remove(name);
+            }
+        }
+        match snap.line_base {
+            Some(n) => {
+                exec.function_line_base.insert(name.to_string(), n);
+            }
+            None => {
+                exec.function_line_base.remove(name);
+            }
+        }
+        match snap.def_file {
+            Some(f) => {
+                exec.function_def_file.insert(name.to_string(), f);
+            }
+            None => {
+                exec.function_def_file.remove(name);
+            }
+        }
+    });
+}
+
 pub fn cmdsubst_outer_stdout() -> Option<i32> {
     CMDSUBST_OUTER_FDS.with(|s| s.borrow().last().map(|(o, _)| *o))
 }
@@ -1654,6 +1763,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // → `bin_*` directly. No function/alias lookup happens.
     vm.register_builtin(BUILTIN_BUILTIN, |vm, argc| {
         let args = pop_args(vm, argc);
+        // c:Src/exec.c:3483-3487 — the precommand-modifier walk checks
+        // `shfunctab` for the command word BEFORE `builtintab`, and only
+        // skips that check once a prefix has already been consumed
+        // (`cflags & (BINF_BUILTIN|BINF_COMMAND)`). So on the FIRST word a
+        // shell function literally named `builtin` shadows the builtin —
+        // `builtin() { ... }; builtin whence -va x` runs the function.
+        // zshrs resolves `builtin` at bytecode-compile time (no function
+        // table yet), so the shadow test has to happen here, at dispatch.
+        if let Some(status) = try_user_fn_override("builtin", &args) {
+            return Value::Status(status);
+        }
         let Some((name, rest)) = args.split_first() else {
             // `builtin` with no args → list builtins (zsh emits nothing,
             // exit 0). Match that behavior; the BIN_BUILTIN bin_* in C
@@ -1717,6 +1837,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // redirect, and reports the dispatch shape (is_builtin vs external).
     vm.register_builtin(BUILTIN_COMMAND, |vm, argc| {
         let args = pop_args(vm, argc);
+        // c:Src/exec.c:3483-3487 — same shfunctab-before-builtintab rule
+        // as BUILTIN_BUILTIN above: a shell function named `command`
+        // shadows the `command` precommand modifier on the first word.
+        if let Some(status) = try_user_fn_override("command", &args) {
+            return Value::Status(status);
+        }
         let mut full = Vec::with_capacity(args.len() + 1);
         full.push("command".to_string());
         full.extend(args.clone());
@@ -1923,6 +2049,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 break;
             }
             match a.as_str() {
+                // c:Src/exec.c:3268-3273 — the exec flag word is scanned
+                // CHARACTER by character (`for (cmdopt = &argdata[1];
+                // *cmdopt; ++cmdopt)`), and `case 'a'` takes the REST OF
+                // THE SAME WORD when there is one:
+                //     if (cmdopt[1]) { exec_argv0 = cmdopt+1;
+                //                      cmdopt += strlen(cmdopt+1); }
+                // Matching whole words only left `exec -a/bin/SPLOOSH
+                // /bin/sh -c '…'` (A01grammar.ztst:135) treating the flag
+                // word itself as the command name.
+                inline_a if inline_a.starts_with("-a") && inline_a.len() > 2 => {
+                    saw_flag = true;
+                    argv0_override = Some(inline_a[2..].to_string()); // c:3269
+                    args.remove(i);
+                }
                 "-a" => {
                     saw_flag = true;
                     args.remove(i);
@@ -4555,50 +4695,144 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         }
     });
 
-    // ksh93 funsub / mksh valsub — see the BUILTIN_KSH_FUNSUB doc comment.
+    // zsh nofork command substitution (c:Src/subst.c:1904-2100) — and the
+    // ksh93 funsub / mksh valsub it subsumes. See the BUILTIN_KSH_FUNSUB
+    // doc comment.
     vm.register_builtin(BUILTIN_KSH_FUNSUB, |vm, _argc| {
-        let is_valsub = vm.pop().to_int() != 0;
+        let mut qt = vm.pop().to_int() != 0;
+        let kind = vm.pop().to_int();
+        let rplyvar = vm.pop().to_str();
         let body = vm.pop().to_str();
         let live_status = vm.last_status;
+        // c:Src/subst.c:1625 — paramsubst's `qt` is "am I inside double
+        // quotes", which is a LEXICAL property of the whole word. The
+        // compiler can see it only when the substitution IS the entire
+        // word; `"${ print INNER } $?"` reaches here as a segment whose own
+        // text carries no quotes, so pick the enclosing quoting up from the
+        // executor's live DQ flag as well (D10nofork.ztst "return statement
+        // inside, part 1+": trim must NOT eat `print`'s newline there).
+        if !qt && with_executor(|exec| exec.in_dq_context) != 0 {
+            qt = true;
+        }
+        // c:Src/subst.c — the split decision is read BEFORE the body runs.
+        // D10nofork.ztst "test word splitting on result" pins that
+        // explicitly ("setting option inside is too late for that
+        // substitution"): a `setopt shwordsplit` executed by the body
+        // must not retroactively split the value it produced.
+        let split = !qt
+            && (crate::dash_mode::korn_mode()
+                || crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT));
         let out = with_executor(|exec| {
             exec.set_last_status(live_status);
-            if is_valsub {
-                // mksh(1): the valsub's value is `$REPLY`, and stdout is
-                // NOT captured — `mksh -c 'y=${|print hi; REPLY=v;}'`
-                // prints `hi` and sets y=v. REPLY is LOCAL to the
-                // substitution: an outer `REPLY=outer` is neither visible
-                // inside nor clobbered after
-                // (`mksh -c 'REPLY=outer; y=${|:;}; print "[$y][$REPLY]"'`
-                // → `[][outer]`), so save/clear/restore around the run.
-                let saved = crate::ported::params::getsparam("REPLY");
-                crate::ported::params::unsetparam("REPLY");
-                let st = exec.execute_script(&body).unwrap_or(0);
-                exec.set_last_status(st);
-                let reply = crate::ported::params::getsparam("REPLY").unwrap_or_default();
-                match saved {
-                    Some(v) => {
-                        crate::ported::params::setsparam("REPLY", &v);
+            // c:2016 — `startparamscope(); /* "local" behaves as if in a
+            // function */`, paired with c:2093 `endparamscope()`. All three
+            // forms take it (the C block is under `if (rplyvar)`), which is
+            // what makes `outer=GLOBAL; ${| local outer=LOCAL; … }` leave
+            // the outer value alone (D10nofork.ztst "local declaration
+            // inside").
+            crate::ported::utils::inc_locallevel(); // c:2016
+            let val = match kind {
+                1 => {
+                    // c:2018-2024 — `${| cmd }`: `rplypm = createparam(
+                    // "REPLY", PM_LOCAL|PM_UNSET|PM_HIDE)` inside a
+                    // `startparamscope()`, so the body sees NO outer REPLY
+                    // and the outer value is intact afterwards
+                    // (D10nofork.ztst "Basic substitution and REPLY
+                    // scoping": `REPLY=OUTER; purr ${| REPLY=INNER } $REPLY`
+                    // → `INNER OUTER`). mksh's valsub is identical
+                    // (`mksh -c 'REPLY=outer; y=${|:;}; print "[$y][$REPLY]"'`
+                    // → `[][outer]`), so one save/clear/restore serves both.
+                    let saved = crate::ported::params::getsparam(&rplyvar);
+                    crate::ported::params::unsetparam(&rplyvar);
+                    let st = exec.execute_script(&body).unwrap_or(0);
+                    exec.set_last_status(st);
+                    let reply =
+                        crate::ported::params::getsparam(&rplyvar).unwrap_or_default();
+                    match saved {
+                        Some(v) => {
+                            crate::ported::params::setsparam(&rplyvar, &v);
+                        }
+                        None => {
+                            crate::ported::params::unsetparam(&rplyvar);
+                        }
                     }
-                    None => {
-                        crate::ported::params::unsetparam("REPLY");
+                    Value::str(reply)
+                }
+                2 => {
+                    // c:2026-2033 — `${{VAR} cmd }`: VAR is the result
+                    // parameter and gets NO local scope (`rplypm` stays
+                    // NULL for the Inbrace form), so an assignment inside
+                    // is global. c:2082-2083 then re-enters the ordinary
+                    // parameter path with `s = dyncat(rplyvar, s)`, which
+                    // is why an ARRAY result stays an array
+                    // (D10nofork.ztst "Basic substitution, brace quoting,
+                    // and array result").
+                    let st = exec.execute_script(&body).unwrap_or(0);
+                    exec.set_last_status(st);
+                    match exec.array(&rplyvar) {
+                        Some(items) => {
+                            Value::array(items.into_iter().map(Value::str).collect::<Vec<_>>())
+                        }
+                        None => Value::str(
+                            crate::ported::params::getsparam(&rplyvar).unwrap_or_default(),
+                        ),
                     }
                 }
-                reply
-            } else {
-                // ksh(1): "the value is the standard output with trailing
-                // newlines removed" — the same trim `$( … )` applies.
-                let captured = exec.run_shared_state_substitution(&body);
-                captured.trim_end_matches('\n').to_string()
-            }
+                _ => {
+                    // c:2035-2075 — `${ cmd }`: C redirects the body's
+                    // stdout into a temp file (`">| %s {\n%s\n;}"`,
+                    // c:2107) and reads it back, so the body still runs in
+                    // the CURRENT shell. `run_shared_state_substitution`
+                    // is the same thing with an fd-level capture instead
+                    // of a temp file.
+                    let captured = exec.run_shared_state_substitution(&body);
+                    // c:1908 — `int trim = (!EMULATION(EMULATE_ZSH)) ? 2 : !qt;`
+                    // and c:2062-2069: trim==2 strips EVERY trailing
+                    // newline (ksh/bash behaviour), trim==1 strips exactly
+                    // one, trim==0 strips none.
+                    let trim: i32 = if crate::dash_mode::korn_mode()
+                        || !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH)
+                    {
+                        2
+                    } else if qt {
+                        0
+                    } else {
+                        1
+                    };
+                    let mut b = captured;
+                    // c:2064-2069 — `while (rplylen > 0 && cmdarg[rplylen-1]
+                    // == '\n') { rplylen--; if (trim == 1) break; }`
+                    while trim > 0 && b.ends_with('\n') {
+                        b.pop();
+                        if trim == 1 {
+                            break;
+                        }
+                    }
+                    Value::str(b)
+                }
+            };
+            crate::ported::params::endparamscope(); // c:2093
+            val
         });
-        // A funsub/valsub IS a command substitution, so it publishes the
-        // body's exit the way `$( … )` does: `ksh -c 'v=${ false; }; print
-        // "rc=$?"'` → `rc=1`. `run_shared_state_substitution` /
+        // A nofork substitution IS a command substitution, so it publishes
+        // the body's exit the way `$( … )` does: `ksh -c 'v=${ false; };
+        // print "rc=$?"'` → `rc=1`. `run_shared_state_substitution` /
         // `execute_script` leave it in the executor; the VM's own counter
         // is what BUILTIN_SET_VAR hands back as the assignment's status
         // (c:Src/exec.c:3396 `lastval = cmdoutval`), so mirror it here.
         vm.last_status = with_executor(|exec| exec.last_status());
-        Value::str(out)
+        // An UNQUOTED substitution is word-split only when the shell splits
+        // ordinary expansions: always under ksh/mksh, and under zsh only
+        // with SH_WORD_SPLIT. `split` was decided above, before the body
+        // ran — see the comment there.
+        match out {
+            Value::Str(ref s) if split => {
+                let (_joined, parts, _isarr, _flags) =
+                    crate::ported::subst::multsub(s, crate::ported::zsh_h::PREFORK_SPLIT);
+                Value::array(parts.into_iter().map(Value::str).collect::<Vec<_>>())
+            }
+            other => other,
+        }
     });
 
     // c:Src/subst.c:3032 `val = sepjoin(aval, sep, 1)` — see the
@@ -4896,7 +5130,16 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         let noglob =
             opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
         let multios = opt_state_get("multios").unwrap_or(true);
-        glob_expand_word_value(raw, noglob || !multios)
+        // c:Src/glob.c:2164-2166 — `in_expandredir = 1; globlist(&fake, 0);
+        // in_expandredir = 0;`. The flag is what lets `zglob`'s no-match
+        // dispatch (c:1888-1894) tell a redirect target apart from an
+        // ordinary word: under NULL_GLOB an ordinary word is dropped, but
+        // a redirect still needs exactly one target, so the empty result
+        // is `redirection failed (no match)` instead.
+        crate::ported::glob::IN_EXPANDREDIR.store(1, std::sync::atomic::Ordering::SeqCst); // c:2164
+        let out = glob_expand_word_value(raw, noglob || !multios); // c:2165
+        crate::ported::glob::IN_EXPANDREDIR.store(0, std::sync::atomic::Ordering::SeqCst); // c:2166
+        out
     });
     // Clear the default-word glob-pending carrier before the word's
     // expansion runs, so a flag set by a prior word never leaks in.
@@ -6411,6 +6654,18 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         } else {
             String::new()
         };
+        // c:Src/exec.c:3690 — the compiler's `is_cursh` verdict for the
+        // timed body (see compile_zsh.rs `time_cursh_hint`): 1 = current
+        // shell, 0 = forked job, 2 = decide from the command name below.
+        // argc < 4 means bytecode cached before this operand pair existed;
+        // fall back to the old fork-counter heuristic in that case.
+        let (cursh_hint, cursh_name) = if argc >= 4 {
+            let hint = vm.pop().to_int();
+            let name = vm.pop().to_str().to_string();
+            (hint, name)
+        } else {
+            (-1, String::new())
+        };
         let chunk_opt = vm.chunk.sub_chunks.get(sub_idx).cloned();
         let Some(chunk) = chunk_opt else {
             return Value::Status(0);
@@ -6431,6 +6686,14 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // Snapshot the fork-event counter; report only if the timed
         // body forked (external command or subshell).
         let forks_before = crate::vm_helper::FORK_EVENTS.load(std::sync::atomic::Ordering::Relaxed);
+        // c:Src/jobs.c:1943 — `getrusage(RUSAGE_SELF, &ti)` — shelltime's
+        // "shell" line reports the SHELL PROCESS's own CPU delta, which is
+        // where a current-shell (`is_cursh`) body's work lands.
+        let ru_self_before: libc::rusage = unsafe {
+            let mut r: libc::rusage = std::mem::zeroed();
+            libc::getrusage(libc::RUSAGE_SELF, &mut r);
+            r
+        };
         let start = Instant::now();
         crate::fusevm_disasm::maybe_print_stdout("time_sublist", &chunk);
         let mut sub_vm = fusevm::VM::new(chunk);
@@ -6438,6 +6701,11 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         let _ = sub_vm.run();
         let status = sub_vm.last_status;
         let elapsed = start.elapsed();
+        let ru_self_after: libc::rusage = unsafe {
+            let mut r: libc::rusage = std::mem::zeroed();
+            libc::getrusage(libc::RUSAGE_SELF, &mut r);
+            r
+        };
         let ru_after: libc::rusage = unsafe {
             let mut r: libc::rusage = std::mem::zeroed();
             libc::getrusage(libc::RUSAGE_CHILDREN, &mut r);
@@ -6470,10 +6738,68 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // source text (used by %J via printtime). The compiler now
         // threads the rendered source text through as the desc operand
         // (compile_zsh.rs Time arm, argc==2 form). Bug #66.
-        // c:Src/jobs.c — no job, no report (see forks_before above).
-        let forked = crate::vm_helper::FORK_EVENTS.load(std::sync::atomic::Ordering::Relaxed)
-            != forks_before;
-        if forked {
+        // c:Src/exec.c:3690 — resolve the compiler's verdict. Hint 2 means
+        // "a simple command whose head word decides it": `is_builtin ||
+        // is_shfunc`. A reserved-word / builtin / function head runs in the
+        // current shell; anything else forks and becomes a job.
+        let is_cursh = match cursh_hint {
+            1 => true,
+            0 => false,
+            2 => {
+                // c:3488-3491 — shfunctab is consulted BEFORE builtintab.
+                let is_shfunc = crate::ported::hashtable::shfunctab_lock()
+                    .read()
+                    .map(|t| t.get(&cursh_name).is_some())
+                    .unwrap_or(false);
+                is_shfunc
+                    || crate::ported::builtin::createbuiltintable()
+                        .contains_key(cursh_name.as_str())
+            }
+            // Bytecode cached before the hint operands existed: keep the
+            // historical fork-counter heuristic (report only if something
+            // forked) so a stale cache doesn't start emitting shell/children
+            // lines for every builtin.
+            _ => {
+                let forked = crate::vm_helper::FORK_EVENTS
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    != forks_before;
+                if forked {
+                    let line =
+                        crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);
+                    eprintln!("{}", line);
+                }
+                return Value::Status(status);
+            }
+        };
+        let _ = forks_before;
+        if is_cursh {
+            // c:Src/exec.c:4443-4444 — `if ((is_cursh || do_exec) && (how &
+            // Z_TIMED)) shelltime(&shti, &chti, &then, 1);`
+            //
+            // c:Src/jobs.c:1933-1993 shelltime(shell, kids, then, delta=1):
+            //   getrusage(RUSAGE_SELF, &ti);  dtime_tv(… shell delta …);
+            //   dtime_ts(&dtimespec, then, &now);
+            //   if (!delta == !shell)  printtime(&dtimespec, &ti, "shell");
+            //   getrusage(RUSAGE_CHILDREN, &ti); dtime_tv(… kids delta …);
+            //   if (!delta == !kids)   printtime(&dtimespec, &ti, "children");
+            // With delta=1 and both pointers non-NULL, BOTH lines print.
+            let mut d_self = ru_self_after;
+            d_self.ru_utime = sub(ru_self_after.ru_utime, ru_self_before.ru_utime); // c:1954
+            d_self.ru_stime = sub(ru_self_after.ru_stime, ru_self_before.ru_stime); // c:1955
+            let ti_self = crate::ported::zsh_h::timeinfo::from_rusage(&d_self);
+            // c:1972 — `printtime(&dtimespec, &ti, "shell");`
+            eprintln!(
+                "{}",
+                crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti_self, &fmt, "shell")
+            );
+            // c:1993 — `printtime(&dtimespec, &ti, "children");`
+            eprintln!(
+                "{}",
+                crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, "children")
+            );
+        } else {
+            // c:Src/jobs.c:1037 — the forked job's own printtime line, with
+            // `pn->text` (the command source) as %J.
             let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);
             eprintln!("{}", line);
         }
@@ -7187,6 +7513,25 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
     // [n], updates `$LINENO` in the variable table.
     vm.register_builtin(BUILTIN_SET_LINENO, |vm, _argc| {
         let n = vm.pop().to_int();
+        // c:Src/exec.c:1355 — `/* In evaluated traps, don't modify the
+        // line number. */  if (!IN_EVAL_TRAP() && !ineval && code)
+        // lineno = code - 1;` (same gate at c:1451 and c:2056).
+        // `ineval` is set by `eval()` to `!isset(EVALLINENO)`
+        // (Src/builtin.c:6155), so under NO_EVAL_LINENO the eval body
+        // must NOT renumber $LINENO — the caller's line stands.
+        //
+        // c:1354 — `/* In evaluated traps, don't modify the line number. */`
+        // The `IN_EVAL_TRAP()` half of the same gate was missing, so an
+        // eval-form trap body (`trap 'print $LINENO' DEBUG`) renumbered
+        // $LINENO to its own line 1 and — because nothing restores
+        // `lineno` on the way out (C does, via execlist's oldlineno
+        // save/restore at c:1429/1696) — every later statement in the
+        // trapped scope reported line 1 as well.
+        if crate::ported::zsh_h::IN_EVAL_TRAP()
+            || crate::ported::builtin::ineval.load(std::sync::atomic::Ordering::Relaxed) != 0
+        {
+            return Value::Status(0);
+        }
         // Provenance: mirror the line into the lineage ledger's own
         // counter. The param-write hooks run inside the parameter
         // table's lock, so they cannot read `$LINENO` back out of it.
@@ -7505,8 +7850,47 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
             // a silent no-op (computed-index append never landed). Parse
             // the literal fast-path first, then fall back to mathevali
             // (which handles `(( ))` grouping, var refs, and operators).
+            // c:Src/params.c:2036 + c:2118 — getindex resolves EACH range
+            // bound with `getarg`, not with mathevalarg directly, so a bound
+            // may be a `(r)`/`(R)`/`(i)`/`(I)`/`(k)`/`(K)` SEARCH rather than
+            // an arithmetic expression. On an array getarg's search arm
+            // (c:1672-1719) returns the 1-BASED INDEX `r` of the match — the
+            // value-vs-index distinction only sets `*inv`, which getindex
+            // rejects for a range START (c:2121) and otherwise ignores. So map
+            // the VALUE-returning direction letters onto their INDEX twins and
+            // read the position back. Without this both bounds evaluated to 0
+            // through mathevali and `array[(R)nomatch,(r)nomatch]=(…)` became
+            // a front INSERT instead of the whole-array replace zsh performs.
+            let cur_arr: Vec<String> = exec.array(&name).unwrap_or_default();
             let eval_bound = |s: &str| -> i64 {
                 let t = s.trim();
+                if let Some(rest) = t.strip_prefix('(') {
+                    if let Some(close) = rest.find(')') {
+                        let grp = &rest[..close];
+                        if !grp.is_empty()
+                            && grp
+                                .chars()
+                                .all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K' | 'e'))
+                        {
+                            // c:1394-1410 — r/k select the FIRST match, R/K the
+                            // LAST; i/I are the same searches returning the index.
+                            let mapped: String = grp
+                                .chars()
+                                .map(|c| match c {
+                                    'r' | 'k' => 'i',
+                                    'R' | 'K' => 'I',
+                                    other => other,
+                                })
+                                .collect();
+                            let expr = format!("({}){}", mapped, &rest[close + 1..]);
+                            if let Some(crate::ported::params::getarg_out::Value(v)) =
+                                crate::ported::params::getarg(&expr, Some(&cur_arr), None, None)
+                            {
+                                return v.to_str().trim().parse::<i64>().unwrap_or(0);
+                            }
+                        }
+                    }
+                }
                 t.parse::<i64>()
                     .ok()
                     .or_else(|| crate::ported::math::mathevali(t).ok())
@@ -8810,6 +9194,23 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 return Value::Status(1);
             }
         };
+        // c:Src/exec.c:5222 — `pp[0] = movefd(pp[0]);` in `mpipe()`.
+        // c:Src/utils.c:1990-2012 movefd — "if(fd != -1 && fd < 10)"
+        // dup into the >=10 range and zclose the low copy, then mark
+        // the result FDT_INTERNAL. Every shell-internal fd goes
+        // through this so it can never share a number with the
+        // user-visible `>&N` range that the redirect bookkeeping
+        // opens/dups/closes. This splitter kept the raw (low) pipe
+        // read end, so an unrelated close of that number shut it
+        // under the splitter thread and dropping the owned
+        // PipeReader aborted the process with std's "IO Safety
+        // violation: owned file descriptor already closed"
+        // (E01options.ztst:46 `( echo hello ) >a >b`, ~2 runs in 3).
+        let read_end = unsafe {
+            <os_pipe::PipeReader as std::os::unix::io::FromRawFd>::from_raw_fd(
+                crate::extensions::fds::movefd(read_end.into_raw_fd()),
+            )
+        };
         let pipe_write_raw = AsRawFd::as_raw_fd(&write_end);
         // Spawn the splitter thread: read pipe → write every chunk
         // to every target fd. Each write inside the thread uses
@@ -9587,10 +9988,31 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // the rendered statement text as the single arg here so the
         // shell-visible parameter reflects the command. Bug #263 in
         // docs/BUGS.md.
+        // Return value: `Int(1)` tells the emit-side JumpIfTrue to SKIP the
+        // statement this trap ran in front of — C's `donedebug == 2`
+        // (c:Src/exec.c:1499/1511/1519-1529) plus the forced-return case
+        // where C's list loop (`while (… && !retflag …)`, c:1443) never
+        // reaches the command. `Int(0)` = run it.
+        //
+        // Two call sites, distinguished by the `mode` operand:
+        //   0 — c:1476-1502, the DEBUG_BEFORE_CMD block that runs BEFORE the
+        //       sublist (only when the option is set),
+        //   1 — c:1628-1644, the `sublist_done:` block that runs AFTER it
+        //       (only when the option is NOT set).
+        // Firing the pre-sublist arm in both modes made the default
+        // (post-command) DEBUG trap observe the NEXT statement's `$LINENO`
+        // — A05execution:19 saw "Line 2 / Line 3" for a trap zsh reports as
+        // "Line 1 / Line 2".
+        let mode = vm.pop().to_int();
         let cmd_text = vm.pop().to_str();
+        let before = mode == 0;
         DEBUG_TRAP_REENTRY.with(|c| {
             if c.get() {
-                return Value::Status(0);
+                return Value::Int(0);
+            }
+            // c:1476 `isset(DEBUGBEFORECMD)` / c:1628 `!isset(DEBUGBEFORECMD)`.
+            if before != isset(crate::ported::zsh_h::DEBUGBEFORECMD) {
+                return Value::Int(0);
             }
             // c:Src/exec.c:1423 — `if (sigtrapped[SIGDEBUG] &&
             // isset(DEBUGBEFORECMD) && !intrap)`. Bug #573: without
@@ -9616,20 +10038,75 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 .map(|t| t.contains_key("DEBUG"))
                 .unwrap_or(false);
             if debug_trapped == 0 && !debug_in_table {
-                return Value::Status(0);
+                return Value::Int(0);
             }
             c.set(true);
-            // c:Src/exec.c — set ZSH_DEBUG_CMD scalar (PM_READONLY
-            // is NOT set on ZSH_DEBUG_CMD, so the canonical
-            // setsparam path is fine here — no direct paramtab
-            // mutation needed).
-            crate::ported::params::setsparam("ZSH_DEBUG_CMD", &cmd_text);
+            // c:1478-1481 — `int oerrexit_opt = opts[ERREXIT]; Param pm;
+            // opts[ERREXIT] = 0; noerrexit |= NOERREXIT_EXIT |
+            // NOERREXIT_RETURN;`. ERREXIT is forced OFF across the trap
+            // body so the option can be used as the "skip this command"
+            // signal (c:1499) without the body's own failing commands
+            // exiting the shell.
+            let oerrexit_opt = isset(crate::ported::zsh_h::ERREXIT); // c:1478
+            crate::ported::options::opt_state_set("errexit", false); // c:1480
+            let oldnoerrexit = crate::ported::exec::noerrexit.load(std::sync::atomic::Ordering::Relaxed);
+            crate::ported::exec::noerrexit.store(
+                oldnoerrexit
+                    | crate::ported::zsh_h::NOERREXIT_EXIT
+                    | crate::ported::zsh_h::NOERREXIT_RETURN,
+                std::sync::atomic::Ordering::Relaxed,
+            ); // c:1481
+               // c:Src/exec.c:1484 — set ZSH_DEBUG_CMD scalar (PM_READONLY
+               // is NOT set on ZSH_DEBUG_CMD, so the canonical
+               // setsparam path is fine here — no direct paramtab
+               // mutation needed).
+            // c:1636 — the post-sublist arm has no ZSH_DEBUG_CMD assignment;
+            // the parameter is a DEBUG_BEFORE_CMD feature only.
+            if before {
+                crate::ported::params::setsparam("ZSH_DEBUG_CMD", &cmd_text);
+            }
+            // c:1488/1636 — `exiting = donetrap;` … c:1493/1641 `donetrap = exiting;`
+            let exiting = crate::ported::exec::DONETRAP.load(std::sync::atomic::Ordering::Relaxed);
+            let ret = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed); // c:1489
             let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGDEBUG);
-            // c:Src/exec.c::trapcmd — `unsetparam("ZSH_DEBUG_CMD")`
-            // after the trap returns. Mirror that.
-            crate::ported::params::unsetparam("ZSH_DEBUG_CMD");
+            // c:1491-1492 — `if (!retflag) lastval = ret;`. A trap that
+            // ran `return N` keeps the forced status; anything else
+            // leaves the pre-trap `$?` alone.
+            let retflag = crate::ported::builtin::RETFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0;
+            if !retflag {
+                crate::ported::builtin::LASTVAL.store(ret, std::sync::atomic::Ordering::Relaxed); // c:1492
+            }
+            crate::ported::exec::noerrexit.store(oldnoerrexit, std::sync::atomic::Ordering::Relaxed); // c:1494
+                                                                                   // c:1499 — `donedebug = isset(ERREXIT) ? 2 : 1;`. The trap
+                                                                                   // setting ERREXIT is zsh's documented "skip this command"
+                                                                                   // signal (zshmisc(1), DEBUG trap).
+            let donedebug2 = before && isset(crate::ported::zsh_h::ERREXIT); // c:1499
+            crate::ported::options::opt_state_set("errexit", oerrexit_opt); // c:1500/1643
+            crate::ported::exec::DONETRAP.store(exiting, std::sync::atomic::Ordering::Relaxed); // c:1493/1641
+                                                                            // c:Src/exec.c:1501-1502 — `if (pm) unsetparam_pm(pm, 0, 1);`
+            if before {
+                crate::ported::params::unsetparam("ZSH_DEBUG_CMD");
+            }
             c.set(false);
-            Value::Status(0)
+            if retflag {
+                // c:1443 — the enclosing list loop stops on retflag, so the
+                // command never runs. Mirror the forced status into the VM's
+                // own counter (the ported LASTVAL atomic is a separate store)
+                // and report "skip" so the emit-side jump lands past the
+                // statement, where the RETFLAG escape unwinds the function.
+                let forced = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+                vm.last_status = forced;
+                with_executor(|exec| exec.set_last_status(forced));
+                return Value::Int(1);
+            }
+            if donedebug2 {
+                // c:1511 — `if (donedebug != 2) execsimple(state);` and
+                // c:1519-1529 — the compound form skips the whole sublist and
+                // sets `donetrap = 1`.
+                crate::ported::exec::DONETRAP.store(1, std::sync::atomic::Ordering::Relaxed); // c:1527
+                return Value::Int(1);
+            }
+            Value::Int(0)
         })
     });
 
@@ -9664,7 +10141,17 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         vm.last_status = with_executor(|exec| exec.last_status());
         Value::Int(1)
     });
-    vm.register_builtin(BUILTIN_PRINT_EXIT_VALUE, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PRINT_EXIT_VALUE, |vm, argc| {
+        // c:Src/exec.c:5498-5505 — the ANONYMOUS-FUNCTION report in
+        // execfuncdef:
+        //     execshfunc(shf, args);
+        //     ret = lastval;
+        //     if (isset(PRINTEXITVALUE) && isset(SHINSTDIN) && lastval) {
+        //         fprintf(stderr, "zsh: exit %lld\n", lastval);
+        // It has NO `!subsh` term, unlike execcmd_exec's site at
+        // c:4308-4309. `argc == 1` marks that call site (the compiler
+        // pushes a 1 before it); `argc == 0` is the per-command site.
+        let anon_site = argc >= 1 && vm.pop().to_int() != 0;
         // c:Src/exec.c:4308-4316 — `if (isset(PRINTEXITVALUE) &&
         // isset(SHINSTDIN) && lastval && !subsh) fprintf(stderr,
         // "zsh: exit %lld\n", lastval);`
@@ -9680,8 +10167,9 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEXITVALUE) // c:4308
             && crate::ported::zsh_h::isset(crate::ported::zsh_h::SHINSTDIN)  // c:4308
             && lastval != 0                                                  // c:4309
-            && crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed) == 0
-        // c:4309
+            && (anon_site
+                || crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed) == 0)
+        // c:4309 (`!subsh`; absent at the c:5498 anon-function site)
         {
             eprintln!("zsh: exit {lastval}"); // c:4311/4313
             let _ = std::io::Write::flush(&mut std::io::stderr()); // c:4315 fflush(stderr)
@@ -9707,7 +10195,20 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         //      Aborts the script (c:Src/init.c loop()).
         use std::sync::atomic::Ordering;
         let retflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
-        let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
+        // c:Src/exec.c:6198-6201 — "If we are in an exit trap, finish it
+        // first... we wouldn't set exit_pending if we were already in one."
+        // C's list loop (c:1443) never consults exit_pending at all;
+        // EXIT_PENDING is zshrs's own deferred-exit channel, and leaving it
+        // armed while the EXIT trap body runs made every command after the
+        // trap's FIRST one get skipped:
+        //   h(){ echo a; echo b }; trap h EXIT; f(){ exit }; f
+        //   zsh: a b      zshrs: a
+        // `in_exit_trap` is the same counter C tests at c:6201.
+        let exit_pending = if crate::ported::signals::in_exit_trap.load(Ordering::Relaxed) != 0 {
+            0
+        } else {
+            crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed)
+        };
         // c:Src/exec.c:1571-1603 — `sublist_done:` runs the ZERR trap for
         // the sublist that just failed. It is NOT gated on retflag: C only
         // consults retflag at the TOP of the list loop (c:1370 `while
@@ -9878,9 +10379,27 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
             // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR
             // trap dispatch. Fires whenever a command exits
             // non-zero.
+            let oretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
             let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
             // c:1602 — `donetrap = 1;` after firing.
             crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed);
+            // c:Src/signals.c:1201-1203 — a trap body that ran `return N`
+            // comes back with `lastval = new_trap_return` and `retflag =
+            // 1`; C's enclosing `while (wc_code(code) == WC_LIST &&
+            // !breaks && !retflag && !errflag)` (c:Src/exec.c:1443) then
+            // abandons the rest of the list and the containing function
+            // returns that status. zshrs's list loop is the VM, which
+            // reads `vm.last_status` / the executor's counter rather than
+            // the ported LASTVAL atomic — so mirror the forced status
+            // across and report "abort" to the caller. Without this
+            //     fn(){ trap 'print t; return 42' ZERR; false; print B }
+            // ran `print B` and returned 0.
+            if oretflag == 0 && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) != 0 {
+                let forced = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:1201
+                vm.last_status = forced;
+                with_executor(|exec| exec.set_last_status(forced));
+                return Value::Int(1); // c:1443 — list loop stops on retflag
+            }
         }
         // c:Src/exec.c:1605-1610 — compute errreturn / errexit.
         //   errreturn = ERRRETURN && (INTERACTIVE || locallevel || sourcelevel)
@@ -10838,6 +11357,43 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                     };
                     crate::recorder::emit_function(&name, body, ctx);
                 }
+                // c:Src/exec.c:5516-5531 — `TRAP<SIG>() { ... }` is the
+                // function-named trap install. zsh detects the `TRAP`
+                // prefix at func-def time and calls
+                // `settrap(signum, NULL, ZSIG_FUNC)` so the next
+                // dispatch of that signal routes to the named shfunc.
+                // Bug #157 in docs/BUGS.md — fusevm_bridge's funcdef
+                // opcode skipped this dispatch entirely, so TRAPEXIT /
+                // TRAPUSR1 / TRAPZERR / TRAPDEBUG never fired.
+                //
+                // ORDER MATTERS. C runs settrap at c:5518 and
+                // `shfunctab->addnode` only at c:5539, and dosavetrap
+                // says why (c:634-637): "Get the old function: this
+                // assumes we haven't added the new one yet." Running
+                // the install first made settrap→unsettrap→removetrap→
+                // dosavetrap snapshot the NEW body, so endtrapscope
+                // "restored" the inner definition and a nested
+                // `TRAPEXIT() { … }` permanently clobbered the outer one.
+                if name.len() > 4 && name.starts_with("TRAP") {
+                    if let Some(sn) = crate::ported::jobs::getsigidx(&name[4..]) {
+                        let _ = crate::ported::signals::settrap(
+                            sn,
+                            None,
+                            crate::ported::zsh_h::ZSIG_FUNC as i32,
+                        );
+                        // c:5530 — `removetrapnode(signum);` "Remove the
+                        // old node explicitly in case it has an
+                        // alternative name". NOT mirrored here: zshrs's
+                        // `jobs::removetrapnode` routes through
+                        // `hashtable::removeshfuncnode`, which calls back
+                        // into `unsettrap` (C explicitly avoids that path
+                        // — see the comment at Src/signals.c:836-838) and
+                        // would tear down the trap `settrap` just armed.
+                        // The `tab.add` below overwrites the canonical
+                        // `TRAP<SIG>` node anyway; only the alt-name case
+                        // (TRAPCLD vs TRAPCHLD) is left unhandled.
+                    }
+                }
                 // Mirror into canonical shfunctab so scanfunctions /
                 // ${(k)functions} / functions builtin see user defs.
                 // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
@@ -10877,24 +11433,32 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                     // the same max(1, line_base) clamp as the synth_shf
                     // in vm_helper::dispatch_function_call. Bug #396.
                     shf.lineno = std::cmp::max(1, line_base);
-                    tab.add(shf);
-                }
-                // c:Src/exec.c:5460-5475 — `TRAP<SIG>() { ... }` is the
-                // function-named trap install. zsh detects the `TRAP`
-                // prefix at func-def time and calls
-                // `settrap(signum, NULL, ZSIG_FUNC)` so the next
-                // dispatch of that signal routes to the named shfunc.
-                // Bug #157 in docs/BUGS.md — fusevm_bridge's funcdef
-                // opcode skipped this dispatch entirely, so TRAPEXIT /
-                // TRAPUSR1 / TRAPZERR / TRAPDEBUG never fired.
-                if name.len() > 4 && name.starts_with("TRAP") {
-                    if let Some(sn) = crate::ported::jobs::getsigidx(&name[4..]) {
-                        let _ = crate::ported::signals::settrap(
-                            sn,
-                            None,
-                            crate::ported::zsh_h::ZSIG_FUNC as i32,
-                        );
+                    // c:Src/exec.c:5402 — `shfunc_set_sticky(shf);`
+                    // stamps the definition-time `sticky` emulation
+                    // snapshot onto the function so a later call can
+                    // re-enter that emulation (doshfunc c:5978). The
+                    // ported execfuncdef does this at exec.rs:7141, but
+                    // fusevm — not that walker — is what actually
+                    // registers a `name() { … }`, so `emulate sh -c
+                    // 'f() { … }'` produced a function with no sticky
+                    // emulation at all (B07emulate.ztst:6,7,8,12,13,14).
+                    crate::ported::exec::shfunc_set_sticky(&mut shf);
+                    // zshrs re-runs this registration when a function's
+                    // chunk is (re)compiled at call time — see the
+                    // filename note above. That second pass happens with
+                    // the AMBIENT sticky (normally none), which would
+                    // erase the definition-time stamp. An unchanged body
+                    // is not a redefinition, so keep what it had.
+                    if shf.sticky.is_none() {
+                        if let Some(prev) = tab.get(&name) {
+                            if prev.body.as_deref() == Some(body_source.as_str()) {
+                                shf.sticky = prev.sticky.as_deref().map(|b| {
+                                    crate::ported::exec::sticky_emulation_dup(b, 0)
+                                });
+                            }
+                        }
                     }
+                    tab.add(shf);
                 }
                 // Lineage tap: this is where a `name() { … }` actually
                 // lands in the VM path — `execfuncdef`'s shfunctab
@@ -11853,6 +12417,29 @@ fn exec_system_command(name: &str, args: &[String]) -> i32 {
             127
         }
     }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// C has no counterpart: `fork()` gives a forked `(...)` subshell its own
+/// copy of the fd table, so the flock fds a subshell opens (`Src/utils.c:2111`
+/// `addlockfd` marks them `FDT_FLOCK` / `FDT_FLOCK_EXEC`) vanish with the
+/// child and its `fcntl(F_SETLK)` locks are released. zshrs runs `(...)`
+/// in-process, so it has to enumerate those slots at subshell entry and
+/// close the new ones at subshell exit. Walks the same `fdtable` /
+/// `max_zsh_fd` pair as `zcloselockfd` (`Src/utils.c:2155-2164`).
+fn current_flock_fds() -> Vec<i32> {
+    use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
+    let max_fd = crate::ported::utils::MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+    if max_fd < 0 {
+        return Vec::new();
+    }
+    (0..=max_fd)
+        .filter(|fd| {
+            let slot = crate::ported::utils::fdtable_get(*fd);
+            slot == FDT_FLOCK || slot == FDT_FLOCK_EXEC
+        })
+        .collect()
 }
 
 fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
@@ -13006,22 +13593,31 @@ pub const BUILTIN_ARRAY_DROP_EMPTY: u16 = 532;
 /// Stack: pops the expansion result, pushes `Value::str("")` when it
 /// was an empty Array, and the value unchanged otherwise. argc = 1.
 pub const BUILTIN_QUOTED_STAR_ONE_WORD: u16 = 663;
-/// `BUILTIN_KSH_FUNSUB` — ksh93 funsub `${ list; }` and mksh valsub
-/// `${| list; }`: a command substitution that runs in the CURRENT shell
-/// environment rather than a subshell.
+/// `BUILTIN_KSH_FUNSUB` — zsh NOFORK command substitution
+/// (`Src/subst.c:1904-2100`), which also covers the ksh93 funsub
+/// `${ list; }` and mksh valsub `${| list; }`: a command substitution that
+/// runs in the CURRENT shell environment rather than a subshell.
+///
+/// Three forms, selected by the character right after `${`
+/// (c:Src/subst.c:1924/1930):
+///   * blank → `${ cmd }`, value is the body's STDOUT. c:2026-2029 scopes
+///     it under `.zsh.cmdsubst`; c:2035-2044 captures via a temp-file
+///     redirect so the body still runs in the current shell.
+///   * `|` → `${| cmd }`, value is `$REPLY`, which is LOCAL to the body
+///     (c:2018-2024 `createparam("REPLY", PM_LOCAL|PM_UNSET|PM_HIDE)`).
+///   * `{VAR}` → `${{VAR} cmd }`, value is `$VAR`, NOT localised, and an
+///     array stays an array (c:2082-2083 re-enters the parameter path).
 ///
 /// ksh(1), Command Substitution: "${ command;} … the command is executed
 /// in the current shell environment", and the value is the standard output
-/// with trailing newlines removed. mksh(1) adds the valsub, whose value is
-/// "the value of REPLY" — its stdout is NOT captured, and `REPLY` itself is
-/// local to the substitution.
+/// with trailing newlines removed (zsh strips ONE newline unquoted and
+/// none quoted — c:1908 `trim = (!EMULATION(EMULATE_ZSH)) ? 2 : !qt`).
+/// mksh(1)'s valsub matches zsh's `${| … }` exactly.
 ///
-/// Stack (bottom→top): body, kind — where kind is 0 for a funsub and 1 for
-/// a valsub. argc = 2. Pushes the resulting string.
-///
-/// !!! RUST-ONLY OPCODE — zsh has neither form; `${` followed by a blank
-/// or `|` reaches paramsubst as a malformed name and errors "bad
-/// substitution". Emitted only under `dash_mode::korn_mode()`.
+/// Stack (bottom→top): body, rplyvar, kind, qt — kind 0 = stdout capture,
+/// 1 = REPLY form, 2 = named-variable form; qt = 1 when the word was
+/// double-quoted. argc = 4. Pushes the resulting string, or an Array when
+/// the named variable holds one / when the unquoted result is word-split.
 pub const BUILTIN_KSH_FUNSUB: u16 = 664;
 /// `BUILTIN_QUOTEDZPUTS` constant — run top-of-stack value through
 /// `crate::ported::utils::quotedzputs` and push the quoted result.
@@ -13560,6 +14156,17 @@ impl fusevm::ShellHost for ZshrsHost {
                 )
             };
             exec.subshell_snapshots.push(SubshellSnapshot {
+                // c:Src/Modules/zutil.c:106 `static HashTable zstyletab` —
+                // fork-copied for `(...)` in C. See SubshellSnapshot::zstyles.
+                zstyles: crate::ported::modules::zutil::zstyletab
+                    .lock()
+                    .map(|t| t.clone())
+                    .unwrap_or_default(),
+                // c:Src/utils.c:2111 `addlockfd` — the fds carrying
+                // `zsystem flock` locks. Recorded so subshell_end can close
+                // the ones the subshell itself opened (C's fork does it for
+                // free). See SubshellSnapshot::flock_fds.
+                flock_fds: current_flock_fds(),
                 loop_flags: loop_flags_snap,
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
@@ -13850,6 +14457,21 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::builtin::BREAKS.store(breaks, SeqCst);
                     crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);
                 }
+                // c:Src/Modules/zutil.c:106 — restore the fork-copied
+                // zstyle table. See SubshellSnapshot::zstyles.
+                if let Ok(mut t) = crate::ported::modules::zutil::zstyletab.lock() {
+                    *t = snap.zstyles;
+                }
+                // c:Src/utils.c:2155-2164 `zcloselockfd` — release the
+                // `zsystem flock` locks the subshell itself took. Under C
+                // the forked child's fds close on exit; here we close the
+                // fds that appeared while the subshell was running.
+                // See SubshellSnapshot::flock_fds.
+                for fd in current_flock_fds() {
+                    if !snap.flock_fds.contains(&fd) {
+                        crate::ported::utils::zcloselockfd(fd);
+                    }
+                }
                 // c:Src/exec.c:160 / :1192-1193 — the child's `subsh = 1`
                 // dies with the fork in C; restore the parent's value here.
                 crate::ported::exec::subsh
@@ -13859,6 +14481,65 @@ impl fusevm::ShellHost for ZshrsHost {
                 if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
                     *st = snap.sigtrapped.clone();
                 }
+                // c:Src/exec.c::entersubsh — restore parent's
+                // modulestab so a subshell `(zmodload zsh/X)` doesn't
+                // leak to the parent. Bug #210 in docs/BUGS.md.
+                // Restore via per-module flag write since the
+                // snapshot is `(name → flags)` only.
+                if let Ok(mut t) = crate::ported::module::MODULESTAB.lock() {
+                    // A `zmodload zsh/X` for a module with no modulestab
+                    // node yet takes load_module's allocate-on-miss branch
+                    // (c:Src/module.c:2223-2251) and CREATES the node. In C
+                    // that node is allocated in the forked child and dies
+                    // with it; here it survives, and the flag-only restore
+                    // below never touched it because the parent's snapshot
+                    // has no entry for that name. So `(zmodload zsh/datetime)`
+                    // left the parent with a MOD_INIT_B node and
+                    // `zmodload -e zsh/datetime` answered 0 where zsh
+                    // answers 1 (V04features.ztst %prep loads the module in
+                    // exactly that shape). Drop nodes the parent didn't have
+                    // FIRST, then restore the flags of the ones it did.
+                    // Rolling the node out is not enough on its own: a
+                    // module's feature-enable state lives in ITS OWN
+                    // statics (C: the `bintab[]` BINF_ADDED bits and
+                    // `patab[]` `d->pm` slots the load flipped —
+                    // `setfeatureenables`, c:Src/module.c:3445), which the
+                    // fork made private to the child. Run the same rollback
+                    // C runs on a real unload — `cleanup_module` (c:1918) →
+                    // `finish_module` (c:1926) — so the parent's view of
+                    // those tables matches the "module was never loaded"
+                    // state it had before the subshell.
+                    let strays: Vec<String> = t
+                        .modules
+                        .keys()
+                        .filter(|n| !snap.modules.contains_key(*n))
+                        .cloned()
+                        .collect();
+                    for name in &strays {
+                        let loaded = t
+                            .modules
+                            .get(name)
+                            .map(|m| (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0)
+                            .unwrap_or(false);
+                        if loaded {
+                            let _ = crate::ported::module::cleanup_module(&mut t, name);
+                            let _ = crate::ported::module::finish_module(&mut t, name);
+                        }
+                    }
+                    t.modules.retain(|name, _| snap.modules.contains_key(name));
+                    for (name, saved_flags) in &snap.modules {
+                        if let Some(m) = t.modules.get_mut(name) {
+                            m.node.flags = *saved_flags;
+                        }
+                    }
+                }
+                // NOTE: this runs BEFORE the paramtab restore below.
+                // `cleanup_module` -> `setfeatureenables(m, f, NULL)`
+                // (c:Src/module.c:3445) -> `deleteparamdef` (c:1128) looks
+                // its parameter up in the LIVE paramtab, so rolling the
+                // module back after the parent's paramtab was reinstated
+                // found nothing and left the module's `patab[]` slots
+                // marked enabled forever.
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.
@@ -13990,18 +14671,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 // still run the override.
                 exec.functions_compiled = snap.functions_compiled;
                 exec.function_source = snap.function_source;
-                // c:Src/exec.c::entersubsh — restore parent's
-                // modulestab so a subshell `(zmodload zsh/X)` doesn't
-                // leak to the parent. Bug #210 in docs/BUGS.md.
-                // Restore via per-module flag write since the
-                // snapshot is `(name → flags)` only.
-                if let Ok(mut t) = crate::ported::module::MODULESTAB.lock() {
-                    for (name, saved_flags) in &snap.modules {
-                        if let Some(m) = t.modules.get_mut(name) {
-                            m.node.flags = *saved_flags;
-                        }
-                    }
-                }
                 // c:Src/exec.c::entersubsh — restore parent's THINGYTAB
                 // so a subshell's `zle -N w f` / `zle -D w` doesn't
                 // affect the parent's widget registry. Bug #453.
@@ -14963,6 +15632,16 @@ impl ShellExecutor {
                 let pipe_dup = unsafe { libc::fcntl(1, libc::F_DUPFD, 10) };
                 match (pipe_dup >= 0).then(os_pipe::pipe) {
                     Some(Ok((read_end, write_end))) => {
+                        // c:Src/exec.c:5222 / Src/utils.c:1990-2012 —
+                        // `mpipe()` runs both pipe ends through
+                        // `movefd()`, which lifts any fd below 10 out
+                        // of the user-visible `>&N` range. Same abort
+                        // hazard as the BUILTIN_MULTIOS_REDIRECT arm.
+                        let read_end = unsafe {
+                            <os_pipe::PipeReader as std::os::unix::io::FromRawFd>::from_raw_fd(
+                                crate::extensions::fds::movefd(read_end.into_raw_fd()),
+                            )
+                        };
                         // Splitter: same read-loop shape as
                         // BUILTIN_MULTIOS_REDIRECT, with one ordering
                         // refinement. C's tee is a forked process
@@ -15358,8 +16037,15 @@ impl ShellExecutor {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         ));
+        // c:Src/exec.c:4719 — `unmetafy(t, &len);` runs BEFORE
+        // `write_loop(fd, t, len)`: what lands in the temp file is the RAW
+        // byte stream, never zshrs's metafied `Meta` + `byte ^ 32` pairs.
+        // Writing `content.as_bytes()` leaked the metafication onto fd 0,
+        // so `read -d $'\xa0' <<<$'first\xa0second'` saw `c2 83 c2 80`
+        // where every other writer (`print`, a pipe) emits the single `a0`.
+        let raw = crate::ported::utils::unmetafy_str(&content); // c:4719
         // c:4675 — `write_loop(fd, t, len); close(fd);`
-        if std::fs::write(&tmp, content.as_bytes()).is_err() {
+        if std::fs::write(&tmp, &raw).is_err() {
             return; // c:4674 — tempfile failure → no redirect
         }
         // c:Src/utils.c gettempfile → mkstemp creates the temp file mode

@@ -838,6 +838,12 @@ pub struct savetrap {
     /// reflects the inner scope's overwrite — so the outer EXIT
     /// trap dispatches the inner body. Bug #80 in docs/BUGS.md.
     pub body: Option<String>,
+    /// Snapshot of the `TRAP<SIG>` shell function for a `ZSIG_FUNC`
+    /// trap. C stores the duplicated `Shfunc` in the SAME `st->list`
+    /// field (c:661 `st->list = newshf;`, cast back at c:930); Rust
+    /// can't union an `Eprog` with a function snapshot, so it gets its
+    /// own field. Empty for eval-form traps.
+    pub func: Option<crate::fusevm_bridge::FuncSnapshot>,
 }
 
 /// Direct port of `void dosavetrap(int sig, int level)` from
@@ -877,6 +883,16 @@ pub fn dosavetrap(sig: i32, level: i32) {
             .ok()
             .and_then(|g| g.get(&signame).cloned())
     };
+    // c:633-661 — `if ((st->flags = sigtrapped[sig]) & ZSIG_FUNC) { … }`.
+    // "Get the old function: this assumes we haven't added the new one
+    // yet" (c:635-637). `gettrapnode(sig, 1)` resolves the canonical
+    // `TRAP<SIG>` name or one of its alt spellings (TRAPCLD/TRAPCHLD).
+    let func = if (flags & ZSIG_FUNC) != 0 {
+        crate::ported::jobs::gettrapnode(sig, true) // c:639
+            .map(|nm| crate::fusevm_bridge::snapshot_function(&nm)) // c:641-655
+    } else {
+        None
+    };
     let st = savetrap {
         sig,
         flags,
@@ -884,6 +900,7 @@ pub fn dosavetrap(sig: i32, level: i32) {
         posix,
         list,
         body,
+        func,
     };
     if let Ok(mut g) = SAVETRAPS.get_or_init(|| Mutex::new(Vec::new())).lock() {
         g.insert(0, st); // c:689 front-insert
@@ -1104,6 +1121,36 @@ pub fn removetrap(sig: i32) {
             t.remove("ZERR");
         }
     }
+    // c:832-843 — the ZSIG_FUNC half of the same "free the appropriate
+    // structs" step:
+    //     if (trapped & ZSIG_FUNC) {
+    //         HashNode node = gettrapnode(sig, 1);
+    //         /* As in dosavetrap(), don't call removeshfuncnode()
+    //          * because that calls back into unsettrap(); */
+    //         if (node) removehashnode(shfunctab, node->nam);
+    //         return node;                       /* unsettrap frees it */
+    //     }
+    // The TRAP<SIG> *function* goes away with the trap. dosavetrap
+    // (above) has already copied it when the scope needs it back.
+    // Without this, `f() { setopt localtraps; TRAPWINCH() { … } }; f`
+    // left TRAPWINCH defined after f returned (C03traps:15), and a
+    // nested redefinition could never be undone.
+    if (trapped & ZSIG_FUNC) != 0 {
+        // c:832
+        if let Some(nam) = crate::ported::jobs::gettrapnode(sig, true) {
+            // c:833
+            // c:840 — `removehashnode(shfunctab, node->nam)`, NOT
+            // removeshfuncnode: that one calls back into unsettrap.
+            if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+                t.remove(&nam);
+            }
+            // Rust-only companion: drop the executor-side compiled
+            // chunk / source for the same name (see
+            // exec::FuncSnapshot for why a function lives in more
+            // than one store here).
+            let _ = crate::ported::exec::unregister_function(&nam);
+        }
+    }
     // c:803-845 — per-signal disposition reset after clearing the
     // trap. The previous Rust port collapsed everything to a single
     // signal_default() call, omitting the SIGINT/SIGHUP/SIGPIPE
@@ -1238,11 +1285,31 @@ pub fn endtrapscope() {
     // Without this snapshot, a nested fn EXIT trap could fire the
     // wrong (outer) body when the deepest level exits.
     let mut exit_body: Option<String> = None;
+    // c:894-895 — `exitfn = removehashnode(shfunctab, "TRAPEXIT");` for a
+    // ZSIG_FUNC exit trap: the function is pulled OUT of the table before
+    // the savetraps pop loop can put an outer TRAPEXIT back in its place,
+    // and the removed node is what dotrapargs then runs (c:951). Without
+    // this, `fn1(){ TRAPEXIT(){print EXIT1}; fn2(){ TRAPEXIT(){print
+    // EXIT2} }; fn2 }` ran EXIT2 twice or lost EXIT1 entirely.
+    let mut exit_func: Option<crate::fusevm_bridge::FuncSnapshot> = None;
     if intrap.load(Ordering::Relaxed) == 0                                   // c:891 !intrap
         && !EXIT_TRAP_POSIX.load(Ordering::Relaxed)                          // c:892 !exit_trap_posix
         && exit_flags != 0
     {
         exittr = exit_flags;
+        if (exit_flags & ZSIG_FUNC) != 0 {
+            // c:894-895 — remove TRAPEXIT and keep it for the dispatch.
+            let nam = crate::ported::jobs::gettrapnode(SIGEXIT, true)
+                .unwrap_or_else(|| format!("TRAP{}", getsigname(SIGEXIT)));
+            let snap = crate::fusevm_bridge::snapshot_function(&nam);
+            if !snap.is_empty() {
+                crate::fusevm_bridge::restore_function(
+                    &nam,
+                    crate::fusevm_bridge::FuncSnapshot::default(),
+                ); // c:895 removehashnode
+                exit_func = Some(snap);
+            }
+        }
         // Snapshot the body so the dispatch at the end of this fn
         // fires THIS scope's trap, not whatever traps_table got
         // restored to.
@@ -1286,11 +1353,46 @@ pub fn endtrapscope() {
             } // c:914
             let st = traps.remove(0); // c:915
 
-            // c:919 — `if (st->flags && (st->list != NULL))`. BOTH must
-            // be truthy. The previous Rust port used `||` (either),
-            // wrongly firing the restore branch on a flags-only or
-            // list-only savetrap entry.
-            if st.flags != 0 && st.list.is_some() {
+            // c:919 — `if (st->flags && (st->list != NULL))` with
+            // `st->list` holding the duplicated Shfunc for a ZSIG_FUNC
+            // trap (c:661). Rust keeps that copy in `st.func`, so this
+            // is the FUNC half of the same condition.
+            //
+            //     dontsavetrap++;
+            //     if (st->flags & ZSIG_FUNC) settrap(sig, NULL, ZSIG_FUNC);
+            //     …
+            //     dontsavetrap--;
+            //     if ((sigtrapped[sig] = st->flags) & ZSIG_FUNC)
+            //         shfunctab->addnode(shfunctab,
+            //                            ((Shfunc)st->list)->node.nam,
+            //                            (Shfunc) st->list);
+            if st.flags != 0 && (st.flags & ZSIG_FUNC) != 0 && st.func.is_some() {
+                // c:919
+                DONTSAVETRAP.fetch_add(1, Ordering::Relaxed); // c:921
+                let _ = settrap(st.sig, None, ZSIG_FUNC); // c:923
+                if st.sig == SIGEXIT {
+                    EXIT_TRAP_POSIX.store(st.posix != 0, Ordering::Relaxed); // c:927
+                }
+                DONTSAVETRAP.fetch_sub(1, Ordering::Relaxed); // c:928
+                                                              // c:929 — `sigtrapped[sig] = st->flags` restores the
+                                                              // ORIGINAL locallevel tag, which settrap has just
+                                                              // overwritten with the current (outer) level.
+                if let Ok(mut g) = sigtrapped.lock() {
+                    if let Some(slot) = g.get_mut(st.sig as usize) {
+                        *slot = st.flags;
+                    }
+                }
+                // c:930-931 — put the saved TRAP<SIG> function back.
+                let nam = format!("TRAP{}", getsigname(st.sig));
+                if let Some(f) = st.func {
+                    let nam = f
+                        .shf
+                        .as_ref()
+                        .map(|s| s.node.nam.clone())
+                        .unwrap_or(nam); // c:930 `((Shfunc)st->list)->node.nam`
+                    crate::fusevm_bridge::restore_function(&nam, f);
+                }
+            } else if st.flags != 0 && st.list.is_some() {
                 // c:919
                 // c:921-922 — prevent settrap from saving this.
                 DONTSAVETRAP.fetch_add(1, Ordering::Relaxed);
@@ -1369,11 +1471,43 @@ pub fn endtrapscope() {
     //   - else: the eprog from siglists[SIGEXIT].
     if exittr != 0 && (exittr & ZSIG_FUNC) != 0 {
         // c:961, c:1132 FUNC branch — dispatch the TRAPEXIT shfunc.
+        // C hands `dotrapargs` the node it REMOVED at c:895, so what runs
+        // is this scope's function even though the pop loop may have put
+        // an outer TRAPEXIT back under the same name. zshrs dispatches by
+        // name, so swap the removed snapshot in for the call and put the
+        // outer definition back afterwards (c:953 frees the removed node).
         let signame = getsigname(SIGEXIT);
         let trap_fn = format!("TRAP{}", signame);
+        // c:1087/1212 — dotrapargs preserves `$?` across a trap that
+        // doesn't force a return: `int olastval = lastval;` … `lastval =
+        // olastval;`. `fn() { TRAPEXIT() { true }; return 1 }` must still
+        // report 1.
+        let olastval = LASTVAL.load(Ordering::SeqCst); // c:1087
+        let restore_to = exit_func.take().map(|inner| {
+            let outer = crate::fusevm_bridge::snapshot_function(&trap_fn);
+            crate::fusevm_bridge::restore_function(&trap_fn, inner);
+            outer
+        });
         if crate::ported::utils::getshfunc(&trap_fn).is_some() {
             let args = vec![SIGEXIT.to_string()];
+            // c:1123 `intrap++` / c:1236 `intrap--`. C reaches this dispatch
+            // through `dotrapargs` (c:951), which brackets the whole trap body
+            // with the intrap counter; endtrapscope's own guard at c:892 is
+            // `if (!intrap && …)`, so the TRAPEXIT function's own scope exit
+            // cannot fire a SECOND EXIT trap. zshrs open-codes the dispatch
+            // and lost the bracket, so restoring the saved TRAPEXIT (the
+            // c:929-931 arm) re-armed sigtrapped[SIGEXIT] and the nested
+            // endtrapscope fired it again — unbounded recursion for
+            //   f() { eval 'TRAPEXIT() { echo T; }' }; f
+            intrap.fetch_add(1, Ordering::SeqCst); // c:1123
             let _ = crate::ported::exec::dispatch_function_call(&trap_fn, &args);
+            intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
+        }
+        if let Some(outer) = restore_to {
+            crate::fusevm_bridge::restore_function(&trap_fn, outer);
+        }
+        if RETFLAG.load(Ordering::SeqCst) == 0 {
+            LASTVAL.store(olastval, Ordering::SeqCst); // c:1212
         }
     } else if exittr != 0 {
         // c:961 else branch — non-FUNC eprog. The Rust port stores
@@ -1397,7 +1531,46 @@ pub fn endtrapscope() {
                 .lock()
                 .ok()
                 .and_then(|mut t| t.remove("EXIT"));
-            let _ = crate::ported::exec::execute_script(&body); // c:961 eprog body
+            // c:951 `dotrapargs(SIGEXIT, &exittr, exitfn)` — the eval-list
+            // half of dotrapargs, inlined because zshrs keeps the body as
+            // source text rather than an Eprog. The three steps that
+            // matter for an EXIT trap's effect on the caller:
+            //
+            //   c:1086-1087 — save retflag / lastval,
+            //   c:1166-1168 — prime trap_return = -2, trap_state =
+            //                 TRAP_STATE_PRIMED, trapisfunc = 0 so a
+            //                 `return N` inside the body is recognised by
+            //                 bin_break (Src/builtin.c:5837-5846) as a
+            //                 FORCED return of the enclosing function,
+            //   c:1183-1222 — either take the forced return's status, or
+            //                 put the pre-trap `$?`/retflag back.
+            //
+            // Without the save/restore, `fn() { trap 'true' EXIT; return
+            // 1 }` reported the trap body's status (0) instead of 1.
+            let olastval = LASTVAL.load(Ordering::SeqCst); // c:1087
+            let oretflag = RETFLAG.load(Ordering::SeqCst); // c:1086
+            let saved_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1128 execsave
+            let saved_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
+            let saved_trapisfunc = trapisfunc.load(Ordering::SeqCst);
+            RETFLAG.store(0, Ordering::SeqCst); // c:1129
+            TRAP_RETURN.store(-2, Ordering::SeqCst); // c:1166
+            TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1167
+            trapisfunc.store(0, Ordering::SeqCst); // c:1168
+            let _ = crate::ported::exec::execute_script(&body); // c:1170 eprog body
+            let new_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1177
+            let new_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1178
+            TRAP_STATE.store(saved_trap_state, Ordering::SeqCst); // c:1180 execrestore
+            TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst); // c:1180 execrestore
+            trapisfunc.store(saved_trapisfunc, Ordering::SeqCst);
+            if new_trap_state == TRAP_STATE_FORCE_RETURN {
+                // c:1183
+                LASTVAL.store(new_trap_return, Ordering::SeqCst); // c:1201
+                RETFLAG.store(1, Ordering::SeqCst); // c:1203
+            } else {
+                // c:1204
+                LASTVAL.store(olastval, Ordering::SeqCst); // c:1212
+                RETFLAG.store(oretflag, Ordering::SeqCst); // c:1222
+            }
             if let Some(b) = stash {
                 if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                     t.insert("EXIT".to_string(), b);
@@ -1777,7 +1950,70 @@ pub fn dotrap(sig: i32) -> i32 {
         // `trap "false" ERR; false` re-enters on its body's failure.
         intrap.fetch_add(1, Ordering::SeqCst);
         string_form_intrap = true;
+        // c:1085-1087 / c:1129-1130 / c:1166-1168 — the REST of the
+        // dotrapargs bracket this arm was missing. Three consequences of
+        // the omission, all observable:
+        //
+        //  * `trap_state`/`trap_return` were never primed, so `return N`
+        //    inside an eval-form trap body did not reach bin_break's
+        //    `trap_state == TRAP_STATE_PRIMED && trap_return == -2` gate
+        //    (Src/builtin.c:5837) and never forced the enclosing function
+        //    to return: `fn(){ trap 'print t; return 42' ZERR; false;
+        //    print Broken }` printed `Broken` and returned 0.
+        //  * `trapisfunc`/`traplocallevel` were never set, so
+        //    `IN_EVAL_TRAP()` (zsh.h:2962) read false for the whole body
+        //    and the `!IN_EVAL_TRAP()` guards at Src/exec.c:1355/1451/2056
+        //    let the body renumber `$LINENO` to its own line 1 — which
+        //    then stuck for the rest of the trapped scope.
+        //  * `lastval` was not saved, so a trap that ran a command
+        //    clobbered the caller's `$?`.
+        let obreaks = BREAKS.load(Ordering::SeqCst); // c:1085
+        let oretflag = RETFLAG.load(Ordering::SeqCst); // c:1086
+        let olastval = LASTVAL.load(Ordering::SeqCst); // c:1087
+        let saved_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1128 execsave
+        let saved_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
+        let saved_trapisfunc = trapisfunc.load(Ordering::SeqCst);
+        let saved_traplocallevel = traplocallevel.load(Ordering::SeqCst);
+        BREAKS.store(0, Ordering::SeqCst); // c:1129
+        RETFLAG.store(0, Ordering::SeqCst); // c:1129
+        traplocallevel.store(
+            crate::ported::params::locallevel.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        ); // c:1130
+        TRAP_RETURN.store(-2, Ordering::SeqCst); // c:1166
+        TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1167
+        trapisfunc.store(0, Ordering::SeqCst); // c:1168
         let _ = crate::ported::exec::execute_script(&body); // c:1268
+        let traperr = errflag.load(Ordering::SeqCst); // c:1174
+        let new_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1177
+        let new_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1178
+        TRAP_STATE.store(saved_trap_state, Ordering::SeqCst); // c:1180 execrestore
+        TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst); // c:1180 execrestore
+        trapisfunc.store(saved_trapisfunc, Ordering::SeqCst);
+        traplocallevel.store(saved_traplocallevel, Ordering::SeqCst);
+        if new_trap_state == TRAP_STATE_FORCE_RETURN {
+            // c:1183 — eval traps are never `isfunc`, so the
+            // `!(isfunc && new_trap_return == 0)` half is always true here.
+            LASTVAL.store(new_trap_return, Ordering::SeqCst); // c:1201
+            RETFLAG.store(1, Ordering::SeqCst); // c:1203
+        } else {
+            // c:1204
+            if traperr != 0 && !EMULATION(EMULATE_SH) {
+                LASTVAL.store(1, Ordering::SeqCst); // c:1206
+            } else {
+                // c:1208-1212 — with no forced return we keep the lastval
+                // from before the trap ran.
+                LASTVAL.store(olastval, Ordering::SeqCst); // c:1212
+            }
+            BREAKS.fetch_add(obreaks, Ordering::SeqCst); // c:1220
+            RETFLAG.store(oretflag, Ordering::SeqCst); // c:1222
+            let cur_breaks = BREAKS.load(Ordering::SeqCst);
+            let cur_loops = LOOPS.load(Ordering::SeqCst);
+            if cur_breaks > cur_loops {
+                // c:1223
+                BREAKS.store(cur_loops, Ordering::SeqCst); // c:1224
+            }
+        }
         if let Some(b) = exit_stash {
             if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                 t.insert("EXIT".to_string(), b);

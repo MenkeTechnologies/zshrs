@@ -61,32 +61,84 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
     let result = if !a_has_len && !b_has_len {
         zstrcmp(&a.cmp, &b.cmp, sort_flags & !(SORTIT_BACKWARDS as u32))
     } else {
-        // Embedded-null path: compare first min(a.len, b.len)
-        // bytes; equal-prefix-but-different-length means the
-        // shorter sorts lower.
-        let la = if a_has_len {
-            a.len as usize
-        } else {
-            a.cmp.len()
-        };
-        let lb = if b_has_len {
-            b.len as usize
-        } else {
-            b.cmp.len()
-        };
-        let len = la.min(lb);
+        // c:52-118 — the recorded-length branch. NOTE what C does here:
+        // it is NOT a replacement comparison. It is a PREFIX SKIP that
+        // then FALLS THROUGH to the ordinary `strcoll` at c:134.
+        //
+        //   c:59-67 — "Since we don't know where multibyte characters
+        //   start, but do know that a null character can't occur inside
+        //   one ..., we can compare starting from after the last null
+        //   character that occurred in both strings."
+        //
+        // c:73-80 — walk while the bytes are equal and `len` remains,
+        // recording `laststarta` just past each NUL common to both; c:82-110
+        // — the one-string-ended-but-the-other-continues-past-a-NUL special
+        // case, which strcoll cannot express; c:112-113 — advance both
+        // cursors to `laststarta` and fall through.
+        //
+        // The previous port replaced the whole thing with a raw byte
+        // compare of the first `min(la, lb)` bytes, which dropped locale
+        // collation for every length-carrying caller: `print -o foo Bar
+        // BAZ` collated as ASCII (`BAZ Bar foo`) instead of zsh's `Bar BAZ
+        // foo`.
         let ab = a.cmp.as_bytes();
         let bb = b.cmp.as_bytes();
-        let take_a = ab.len().min(len);
-        let take_b = bb.len().min(len);
-        match ab[..take_a].cmp(&bb[..take_b]) {
-            Ordering::Equal => match (a_has_len, b_has_len) {
-                (true, true) => la.cmp(&lb),
-                (true, false) => Ordering::Greater,
-                (false, true) => Ordering::Less,
-                (false, false) => Ordering::Equal,
-            },
-            o => o,
+        // c:68-72 — `len` is the SHORTER recorded length, or the only one.
+        let mut len: i64 = if a_has_len {
+            if b_has_len {
+                (a.len as i64).min(b.len as i64)
+            } else {
+                a.len as i64
+            }
+        } else {
+            b.len as i64
+        };
+        let mut laststarta: usize = 0; // c:65 `laststarta = as`
+        let mut i: usize = 0;
+        // c:73 — `for (cmpa = as, cmpb = bs; *cmpa == *cmpb && len--; ...)`
+        loop {
+            let ca = ab.get(i).copied().unwrap_or(0);
+            let cb = bb.get(i).copied().unwrap_or(0);
+            if ca != cb {
+                break; // c:73 `*cmpa == *cmpb` failed
+            }
+            if len <= 0 {
+                break; // c:73 `len--` exhausted
+            }
+            len -= 1;
+            if ca == 0 {
+                // c:74-81
+                if !a_has_len || !b_has_len {
+                    break; // c:79-80
+                }
+                laststarta = i + 1; // c:81 `laststarta = cmpa + 1`
+            }
+            i += 1;
+        }
+        let ca = ab.get(i).copied().unwrap_or(0);
+        let cb = bb.get(i).copied().unwrap_or(0);
+        // c:82 — `if (*cmpa == *cmpb && ae->len != be->len)`
+        let alen = if a_has_len { a.len as i64 } else { -1 };
+        let blen = if b_has_len { b.len as i64 } else { -1 };
+        if ca == cb && alen != blen {
+            // c:91-109 — the string that has finished sorts below the one
+            // that continues past the NUL; strcoll would call them equal.
+            if a_has_len {
+                if b_has_len {
+                    // c:97-98 — `return (ae->len - be->len) * sortdir;`
+                    alen.cmp(&blen)
+                } else {
+                    Ordering::Greater // c:104 `return sortdir;`
+                }
+            } else {
+                Ordering::Less // c:109 `return - sortdir;`
+            }
+        } else {
+            // c:112-113 — `bs += (laststarta - as); as += (laststarta - as);`
+            // then fall through to the shared collation path (c:120-134).
+            let at = a.cmp.get(laststarta..).unwrap_or("");
+            let bt = b.cmp.get(laststarta..).unwrap_or("");
+            zstrcmp(at, bt, sort_flags & !(SORTIT_BACKWARDS as u32)) // c:134
         }
     };
     if reverse {

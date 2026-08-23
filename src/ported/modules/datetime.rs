@@ -22,6 +22,7 @@ use crate::ported::zsh_h::{features, module, options, MAX_OPS, OPT_ARG, OPT_ISSE
 use crate::ported::zsh_system_h::timespec;
 use chrono::format::{Parsed, StrftimeItems};
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+use once_cell::sync::Lazy;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -472,46 +473,18 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:292
-    // C body c:294-295 — `return 0` because the param registration
-    // happens via the `pd_list` feature descriptor at
-    // `Src/Modules/datetime.c:25-30`:
-    //   { "EPOCHSECONDS",  PM_INTEGER|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL, ... },
-    //   { "EPOCHREALTIME", PM_FFLOAT|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL, ... },
-    //   { "epochtime",     PM_ARRAY|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL, ... }
-    // zshrs's simplified module framework doesn't drive that
-    // feature dispatch into paramtab, so `${(t)EPOCHSECONDS}`
-    // returned `scalar` (the default for an unregistered name
-    // that resolves via lookup_special_var). Register the entries
-    // here so the canonical introspection paths see the right
-    // PM_* flag set. Bug #512.
-    use crate::ported::params::{createparam, paramtab};
-    use crate::ported::zsh_h::{
-        PM_ARRAY, PM_FFLOAT, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_READONLY, PM_SPECIAL,
-    };
-    let entries: &[(&str, u32)] = &[
-        (
-            "EPOCHSECONDS",
-            PM_INTEGER | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL,
-        ),
-        (
-            "EPOCHREALTIME",
-            PM_FFLOAT | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL,
-        ),
-        (
-            "epochtime",
-            PM_ARRAY | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL,
-        ),
-    ];
-    for (name, flags) in entries {
-        let exists = paramtab()
-            .read()
-            .ok()
-            .map(|t| t.contains_key(*name))
-            .unwrap_or(false);
-        if !exists {
-            let _ = createparam(name, *flags as i32);
-        }
-    }
+    // C body c:294-295 — `return 0`. The parameter registration happens
+    // through the `pd_list` feature descriptor (`patab`, c:251-258): the
+    // `p:` enable bits reach `setparamdefs` (c:1169) via
+    // `setfeatureenables` (c:3445), which is what `do_module_features`
+    // (c:1998) drives on every load and on every `zmodload -F`.
+    //
+    // An earlier revision registered the three params here instead,
+    // because the Rust `handlefeatures`/`setfeatureenables` shims were
+    // no-ops (Bug #512). They are real now, so doing it here as well
+    // would resurrect a disabled `p:` feature the moment boot_ ran —
+    // `zmodload -F zsh/datetime` (enable nothing) must leave
+    // `${+EPOCHSECONDS}` at 0.
     0
 }
 
@@ -539,36 +512,236 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
-    vec![
-        "b:strftime".to_string(),
-        "p:EPOCHSECONDS".to_string(),
-        "p:EPOCHREALTIME".to_string(),
-        "p:epochtime".to_string(),
-    ]
+// `static struct builtin bintab[]` — port of `Src/Modules/datetime.c:238`:
+//   BUILTIN("strftime", 0, bin_strftime, 1, 3, 0, "nqrs:", NULL)
+//
+// !!! RUST-ONLY STORAGE SHAPE !!! C declares this file-static and reaches
+// it through `module_features.bn_list` (`struct features`, Src/zsh.h:1555).
+// The Rust `features` port carries only the SIZES, so the array lives in
+// its own static. The FIELD that matters is `node.flags & BINF_ADDED`:
+// that bit IS C's record of "this feature is currently enabled"
+// (`setbuiltins`, c:Src/module.c:507-520 / `getfeatureenables`, c:3331).
+static BINTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::builtin>>> = Lazy::new(|| {
+    // c:239 — BUILTIN("strftime", 0, bin_strftime, 1, 3, 0, "nqrs:", NULL)
+    Mutex::new(vec![crate::ported::zsh_h::builtin {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: "strftime".to_string(),
+            flags: 0,
+        },
+        handlerfunc: None,
+        minargs: 1,
+        maxargs: 3,
+        funcid: 0,
+        optstr: Some("nqrs:".to_string()),
+        defopts: None,
+    }])
+}); // c:238
+
+// `static struct paramdef patab[]` — port of `Src/Modules/datetime.c:251`.
+// `SPECIALPMDEF` (Src/zsh.h) folds PM_SPECIAL|PM_HIDE|PM_HIDEVAL into the
+// declared flags. `pm != NULL` is C's per-parameter enable bit
+// (`setparamdefs`, c:Src/module.c:1169-1190 / `getfeatureenables`, c:3337).
+static PATAB: Lazy<Mutex<Vec<crate::ported::zsh_h::paramdef>>> = Lazy::new(|| {
+    use crate::ported::zsh_h::{
+        PM_ARRAY, PM_FFLOAT, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_READONLY, PM_SPECIAL,
+    };
+    // c:252-257 — SPECIALPMDEF(name, flags, gsu, getfn, scantfn); the macro
+    // ORs in PM_SPECIAL|PM_HIDE|PM_HIDEVAL.
+    let special = (PM_SPECIAL | PM_HIDE | PM_HIDEVAL) as i32;
+    Mutex::new(
+        [
+            ("EPOCHSECONDS", (PM_INTEGER | PM_READONLY) as i32), // c:252
+            ("EPOCHREALTIME", (PM_FFLOAT | PM_READONLY) as i32), // c:254
+            ("epochtime", (PM_ARRAY | PM_READONLY) as i32),      // c:256
+        ]
+        .iter()
+        .map(|(name, flags)| crate::ported::zsh_h::paramdef {
+            name: name.to_string(),
+            flags: flags | special,
+            var: 0,
+            gsu: 0,
+            getnfn: None,
+            scantfn: None,
+            pm: None,
+        })
+        .collect(),
+    )
+}); // c:251
+
+// WARNING: NOT IN DATETIME.C — the C file calls the generic
+// `featuresarray(m, &module_features)` (Src/module.c:3284) directly. This
+// thin wrapper only unpacks the Rust-side bintab/patab statics into the
+// slices that generic fn takes.
+fn featuresarray(m: *const module, _f: &Mutex<features>) -> Vec<String> {
+    let bn = BINTAB.lock().unwrap();
+    let pd = PATAB.lock().unwrap();
+    crate::ported::module::featuresarray(m, &bn, &[], &[], &pd, 0) // c:279
 }
 
-// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 4]);
+/// Port of `mod_export int handlefeatures(Module m, Features f, int **enables)`
+/// from `Src/module.c:3370`.
+///
+/// C body:
+/// ```c
+/// if (!enables || *enables)
+///     return setfeatureenables(m, f, enables ? *enables : NULL);
+/// *enables = getfeatureenables(m, f);
+/// return 0;
+/// ```
+///
+/// The Rust `enables` is `&mut Option<Vec<i32>>`, so C's `enables` (the
+/// `int **`) is never NULL here; `*enables` non-NULL maps to `Some`. That
+/// makes this the same two-way door C has: `Some` = SET the given bitmap,
+/// `None` = GET the live one.
+fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:3370
+    if let Some(e) = enables.as_ref() {
+        // c:3372-3373
+        let e = e.clone();
+        return setfeatureenables(m, f, Some(&e));
     }
-    0
+    // c:3374 — `*enables = getfeatureenables(m, f);`
+    let bn = BINTAB.lock().unwrap();
+    let pd = PATAB.lock().unwrap();
+    *enables = Some(crate::ported::module::getfeatureenables(
+        m, &bn, &[], &[], &pd, 0,
+    ));
+    0 // c:3375
 }
 
-// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
-    0
+/// Port of `mod_export int setfeatureenables(Module m, Features f, int *e)`
+/// from `Src/module.c:3445`. Walks the four per-kind tables in the fixed
+/// order `bn`, `cd`, `mf`, `pd`, advancing `e` past each block. datetime
+/// has only `bn_size`(1) and `pd_size`(3), so the `cd`/`mf` arms are
+/// absent (C skips them too — `if (f->cd_size)` is false).
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
+    // c:3445
+    let mut ret = 0; // c:3448
+    {
+        // c:3450-3455 — `if (f->bn_size) { setbuiltins(...); e += f->bn_size; }`
+        let mut bn = BINTAB.lock().unwrap();
+        if setbuiltins("zsh/datetime", &mut bn, e.map(|a| &a[..1])) != 0 {
+            ret = 1; // c:3452
+        }
+    }
+    {
+        // c:3465-3470 — `if (f->pd_size) { setparamdefs(...); }`
+        let mut pd = PATAB.lock().unwrap();
+        if setparamdefs("zsh/datetime", &mut pd, e.map(|a| &a[1..4])) != 0 {
+            ret = 1; // c:3467
+        }
+    }
+    ret // c:3472
+}
+
+/// Port of `static int setbuiltins(char const *nam, Builtin binl, int size,
+/// int *e)` from `Src/module.c:501`.
+///
+/// C body:
+/// ```c
+/// for(n = 0; n < size; n++) {
+///     Builtin b = &binl[n];
+///     if (e && *e++) {
+///         if (b->node.flags & BINF_ADDED) continue;
+///         if (addbuiltin(b)) { zwarnnam(nam, "name clash when adding builtin `%s'", …); ret = 1; }
+///         else b->node.flags |= BINF_ADDED;
+///     } else {
+///         if (!(b->node.flags & BINF_ADDED)) continue;
+///         if (deletebuiltin(b->node.nam)) { zwarnnam(nam, "builtin `%s' already deleted", …); ret = 1; }
+///         else b->node.flags &= ~BINF_ADDED;
+///     }
+/// }
+/// ```
+///
+/// !!! RUST-ONLY DEVIATION !!! C's `addbuiltin`/`deletebuiltin` insert into
+/// and remove from the live `builtintab`. zshrs's `builtintab`
+/// (`createbuiltintable()`) is an immutable statically-linked table that
+/// already holds every module builtin, so the only thing this can flip is
+/// the "is it visible right now" bit that `module_builtin_available`
+/// (`src/extensions/ext_builtins.rs`) reads — hence the
+/// `DISABLED_MODULE_BUILTINS` registry instead of a table mutation. The
+/// BINF_ADDED bookkeeping on the entry itself is unchanged from C.
+/// WARNING: param names don't match C — Rust=(nam, binl, e) vs C=(nam, binl, size, e)
+fn setbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin], e: Option<&[i32]>) -> i32 {
+    // c:501
+    use crate::ported::zsh_h::BINF_ADDED;
+    // c:503 — neither branch below can fail (see the deviation note above),
+    // so C's `ret` stays 0 here.
+    let ret = 0;
+    for (n, b) in binl.iter_mut().enumerate() {
+        // c:505
+        let on = e.map(|a| a.get(n).copied().unwrap_or(0) != 0).unwrap_or(false); // c:507
+        if on {
+            if (b.node.flags & BINF_ADDED as i32) != 0 {
+                continue; // c:508-509
+            }
+            crate::ported::module::DISABLED_MODULE_BUILTINS
+                .lock()
+                .unwrap()
+                .remove(&b.node.nam); // c:511 addbuiltin(b)
+            b.node.flags |= BINF_ADDED as i32; // c:516
+        } else {
+            if (b.node.flags & BINF_ADDED as i32) == 0 {
+                continue; // c:518-519
+            }
+            crate::ported::module::DISABLED_MODULE_BUILTINS
+                .lock()
+                .unwrap()
+                .insert(b.node.nam.clone()); // c:521 deletebuiltin(b->node.nam)
+            b.node.flags &= !(BINF_ADDED as i32); // c:526
+        }
+    }
+    let _ = nam;
+    ret // c:530
+}
+
+/// Port of `static int setparamdefs(char const *nam, Paramdef d, int size,
+/// int *e)` from `Src/module.c:1169`.
+///
+/// C body:
+/// ```c
+/// while (size--) {
+///     if (e && *e++) {
+///         if (d->pm) { d++; continue; }
+///         if (addparamdef(d)) { zwarnnam(nam, "error when adding parameter `%s'", d->name); ret = 1; }
+///     } else {
+///         if (!d->pm) { d++; continue; }
+///         if (deleteparamdef(d)) { zwarnnam(nam, "parameter `%s' already deleted", d->name); ret = 1; }
+///     }
+///     d++;
+/// }
+/// ```
+/// WARNING: param names don't match C — Rust=(nam, d, e) vs C=(nam, d, size, e)
+fn setparamdefs(nam: &str, d: &mut [crate::ported::zsh_h::paramdef], e: Option<&[i32]>) -> i32 {
+    // c:1169
+    let mut ret = 0; // c:1172
+    for (n, def) in d.iter_mut().enumerate() {
+        // c:1174 while (size--)
+        let on = e.map(|a| a.get(n).copied().unwrap_or(0) != 0).unwrap_or(false); // c:1175
+        if on {
+            if def.pm.is_some() {
+                continue; // c:1176-1179
+            }
+            if crate::ported::module::addparamdef(def) != 0 {
+                // c:1180
+                zwarnnam(nam, &format!("error when adding parameter `{}'", def.name));
+                // c:1181
+                ret = 1; // c:1182
+            }
+        } else {
+            if def.pm.is_none() {
+                continue; // c:1185-1188
+            }
+            if crate::ported::module::deleteparamdef(def) != 0 {
+                // c:1189
+                zwarnnam(nam, &format!("parameter `{}' already deleted", def.name));
+                // c:1190
+                ret = 1; // c:1191
+            }
+        }
+    }
+    ret // c:1196
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
