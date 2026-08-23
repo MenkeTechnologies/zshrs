@@ -1479,3 +1479,107 @@ fn bug1074_flagerr_message_untokenizes_the_body() {
         "flagerr body must be untokenized, got {err:?}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Function bodies defined from STDIN (`-s`) or an interactive prompt
+// printed as `name () { }`.
+//
+// C zsh never stores function source: `par_funcdef` (Src/parse.c:1672)
+// compiles the body into the `ecbuf` wordcode and `functions` rebuilds the
+// text from it via `getpermtext`/`gettext2` (Src/text.c:189/296). zshrs's
+// fusevm path builds no `Eprog`, so `printshfuncnode`
+// (src/ported/hashtable.rs:1796) prints the raw source the parser kept —
+// and that capture was a slice of the Rust-only `LEX_INPUT` window, which
+// only exists for file / `-c` / `eval` input. Interactive and `-s` stdin
+// input reaches the lexer through `hgetc` -> `ingetc` -> `inbuf`, so
+// `LEX_POS` never moved and the body came out empty. C's `chline` is no
+// substitute: `hbegin` (Src/hist.c:1119) leaves it NULL whenever the shell
+// is not interactive-on-stdin.
+//
+// Fix: src/extensions/funcdef_capture.rs — echo every character `hgetc`
+// returns into a capture buffer while a function body is being parsed.
+// ════════════════════════════════════════════════════════════════════
+
+/// Feed `script` on stdin with `--zsh -f -s` (the path with no `LEX_INPUT`).
+fn run_zshrs_stdin(script: &str) -> String {
+    use std::io::Write;
+    let bin = match zshrs_bin() {
+        Some(b) => b,
+        None => return String::new(),
+    };
+    let mut child = Command::new(&bin)
+        .args(["--zsh", "-f", "-s"])
+        .env_remove("ZSHRS_CACHE")
+        .env_remove("ZDOTDIR")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("spawn {bin:?}: {e}"));
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin piped")
+        .write_all(script.as_bytes())
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("wait");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn funcdef_body_survives_stdin_input() {
+    let out = run_zshrs_stdin("tom(){ pwd; id }\nfunctions tom\n");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // Exactly what `zsh -f -s` prints for the same input.
+    assert_eq!(out, "tom () {\n\tpwd\n\tid\n}\n", "stdin funcdef body lost");
+}
+
+#[test]
+fn funcdef_body_survives_stdin_multiline_and_heredoc() {
+    // A multi-line body with a here-document: `gethere` (Src/exec.c:4625)
+    // reads the body with `hgetc` and then RE-LEXES it through `parsestr`
+    // (c:4697), so a naive echo buffer duplicates every here-doc line. The
+    // capture reuses hgetc's `counts_lineno` gate (c:Src/input.c:330) to
+    // record only the first pass.
+    let out = run_zshrs_stdin("hd() {\n  cat <<END\nhello\nEND\n  pwd\n}\nfunctions hd\n");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(
+        out, "hd () {\n\tcat <<END\nhello\nEND\n\tpwd\n}\n",
+        "stdin here-doc body wrong"
+    );
+}
+
+#[test]
+fn funcdef_body_survives_stdin_nested_definition() {
+    // Nested funcdefs open two captures; the inner one must not swallow the
+    // outer one's text, and closing the inner must not close the outer.
+    let out = run_zshrs_stdin("outer(){ inner(){ echo deep }; inner }\nfunctions outer\n");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(
+        out, "outer () {\n\tinner () {\n\t\techo deep\n\t}\n\tinner\n}\n",
+        "stdin nested funcdef body wrong"
+    );
+}
+
+#[test]
+fn funcdef_body_stdin_matches_file_and_dash_c() {
+    // The three non-tty input paths must agree; before the fix only the
+    // file and `-c` paths carried a body.
+    let script = "q() { print \"a b\"; print 'c;d' }\nshort() print x\nfunction kw { print kw }\nfunctions q short kw\n";
+    let from_stdin = run_zshrs_stdin(script);
+    let (_ec, from_dash_c, _e) = run_zshrs(script);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(from_stdin, from_dash_c, "stdin and -c disagree on body text");
+    assert!(
+        from_stdin.contains("print \"a b\"") && from_stdin.contains("print x"),
+        "bodies missing: {from_stdin:?}"
+    );
+}

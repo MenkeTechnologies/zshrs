@@ -3458,6 +3458,13 @@ fn checkalias(lextext: &str) -> bool {
                         // including its refusal under INP_ALIAS.
                         let rewound: Vec<bool> =
                             LEX_UNGET_HPTR.with_borrow_mut(|b| b.drain(..).collect());
+                        // !!! RUST-ONLY !!! — the same handover for the
+                        // function-body echo buffer: these characters leave
+                        // the unget queue, so their re-read comes back
+                        // through the FRESH-read arm of `hgetc` (which calls
+                        // `src_capture_add` itself). Drop the stale flags or
+                        // every later unget pops the wrong one.
+                        crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.clear());
                         let restore: usize = pending
                             .chars()
                             .zip(rewound.iter())
@@ -4654,6 +4661,7 @@ pub fn lex_init(input: &str) {
     // file-static initializers in lex.c).
     LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
     LEX_UNGET_HPTR.with_borrow_mut(|b| b.clear());
+    crate::funcdef_capture::src_capture_reset();
     LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
     LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
     // P7-batch-3 fields: reset to their C-source initial values.
@@ -4753,6 +4761,15 @@ pub(crate) fn hgetc() -> Option<char> {
         // `zshlex_raw_back()` call in hungetc removed the prior
         // record, so this restores it.
         zshlex_raw_add(c);
+        // !!! RUST-ONLY (no C counterpart) !!! — same argument as the
+        // `LEX_UNGET_HPTR` block above, for the function-body echo buffer:
+        // put back exactly what `hungetc` took, decided at unget time.
+        if crate::funcdef_capture::LEX_UNGET_SRCCAP
+            .with_borrow_mut(|b| b.pop_front())
+            .unwrap_or(false)
+        {
+            crate::funcdef_capture::src_capture_add(c);
+        }
         // c:input.c:327 — re-reading the un-gotten char consumes it like
         // any other read (C's ingetc `inbufct--`). Mirror it so the
         // hungetc(+1)/reread(-1) pair stays balanced; scoped to
@@ -4792,8 +4809,25 @@ pub(crate) fn hgetc() -> Option<char> {
     // read directly. `ihgetc` returns C's `int`; it signals EOF / a bad
     // `!`-reference by setting `lexstop`, which we map back to the Option
     // API's `None`.
+    // c:Src/hist.c:1134-1155 — C does NOT decide this per character. `hbegin`
+    // installs the function pointers ONCE per input line: `hgetc = ihgetc`
+    // whenever `stophist != 2`, and the INP_ALIAS/INP_HIST distinctions are
+    // made INSIDE `ihgetc` (c:429 skips `histsubchar` under INP_ALIAS) and
+    // inside `ihwaddc` (c:365 rejects text that is INP_ALIAS but not
+    // INP_HIST). Excluding INP_ALIAS here instead skipped `ihgetc` wholesale
+    // — and `inpush` sets INP_ALIAS on a HISTORY push too (c:Src/input.c:106
+    // `flags |= INP_CONT|INP_ALIAS;` when `flags & (INP_ALIAS|INP_HIST)`), so
+    // every character of a `!`-expansion after the first bypassed `hwaddc`
+    // and the stored history line was truncated to one character:
+    // `print aa bb cc` then `print !!` recorded `print p`, and `!-3:1-$` on
+    // such an entry then yielded `m` instead of `mystery sequence`.
+    // INP_HIST frames therefore stay on the `ihgetc` path; a pure INP_ALIAS
+    // frame keeps the existing direct `ingetc` shortcut, whose observable
+    // behaviour matches C's ihgetc-with-INP_ALIAS (histsubchar skipped,
+    // ihwaddc a no-op).
     let hist_active = crate::ported::hist::stophist.load(Ordering::SeqCst) == 0
-        && (flags & crate::ported::zsh_h::INP_ALIAS) == 0;
+        && ((flags & crate::ported::zsh_h::INP_ALIAS) == 0
+            || (flags & crate::ported::zsh_h::INP_HIST) != 0);
     let read_stack = || -> Option<char> {
         if hist_active {
             let nc = crate::ported::hist::ihgetc(); // c:418
@@ -4874,6 +4908,19 @@ pub(crate) fn hgetc() -> Option<char> {
     // `ihgetc` call above, not duplicated here.)
     zshlex_raw_add(c);
 
+    // !!! RUST-ONLY (no C counterpart) !!! — echo the character into the
+    // open function-body capture, if any (see `LEX_SRC_CAPTURE`). Reuses
+    // the `counts_lineno` gate computed above for exactly the reason it
+    // exists: `gethere` (c:Src/exec.c:4625) reads a here-document body
+    // with `hgetc` and then re-lexes the SAME body through `parsestr`
+    // (c:4697), which pushes it with flags `0` under `strinbeg(0)`
+    // (c:Src/lex.c:1719-1720). Recording both passes would duplicate every
+    // here-document line inside a function body, the same way it used to
+    // double-count them in `$LINENO`.
+    if counts_lineno {
+        crate::funcdef_capture::src_capture_add(c);
+    }
+
     Some(c)
 }
 
@@ -4937,6 +4984,13 @@ fn hungetc(c: char) {
         eligible
     };
     LEX_UNGET_HPTR.with_borrow_mut(|b| b.push_front(did_rewind));
+    // !!! RUST-ONLY (no C counterpart) !!! — take the character back out
+    // of the open function-body capture and record that we did, so the
+    // re-read in `hgetc` restores it (see `LEX_UNGET_SRCCAP`). The
+    // `ends_with` test keeps the pair honest when the character was never
+    // recorded (capture closed, or the `counts_lineno` gate refused it).
+    let did_capture = crate::funcdef_capture::src_capture_back(c);
+    crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.push_front(did_capture));
     if c == '\n' {
         // c:input.c:561-562 — `if (((inbufflags & INP_LINENO) ||
         // !strin) && c == '\n') lineno--;`
