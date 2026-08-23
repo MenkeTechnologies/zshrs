@@ -927,8 +927,8 @@ impl ShellExecutor {
             }
             for name in names {
                 if funcs {
-                    let (file, line) = Self::shfunc_def_site(name);
-                    provenance::track_func(name, file.as_deref(), line);
+                    let (file, line, body) = Self::shfunc_def_site(name);
+                    provenance::track_func(name, body.as_deref(), file.as_deref(), line);
                 } else {
                     let current = crate::ported::params::getsparam(name);
                     // Follow the name to whatever it actually IS. Without this,
@@ -941,8 +941,8 @@ impl ShellExecutor {
                     // An explicit `-f` still forces the function reading, and a
                     // real parameter still wins when both exist.
                     if current.is_none() && crate::ported::utils::getshfunc(name).is_some() {
-                        let (file, line) = Self::shfunc_def_site(name);
-                        provenance::track_func(name, file.as_deref(), line);
+                        let (file, line, body) = Self::shfunc_def_site(name);
+                        provenance::track_func(name, body.as_deref(), file.as_deref(), line);
                     } else {
                         provenance::track_name(name, current.as_deref());
                     }
@@ -1016,15 +1016,19 @@ impl ShellExecutor {
     /// Defining file and line of shell function `name`, as `shfunctab`
     /// recorded them at definition time (`Src/exec.c:5383-5388`).
     /// `(None, 0)` when the function does not exist.
-    fn shfunc_def_site(name: &str) -> (Option<String>, i64) {
+    /// Definition site AND current body of a shell function. The body is
+    /// what `provenance -m` seeds the chain's origin with — arming an
+    /// already-defined function never reaches `on_func_define`, so
+    /// without it the origin can never show what the body was.
+    fn shfunc_def_site(name: &str) -> (Option<String>, i64, Option<String>) {
         crate::ported::hashtable::shfunctab_lock()
             .read()
             .ok()
             .and_then(|t| {
                 t.get_including_disabled(name)
-                    .map(|f| (f.filename.clone(), f.lineno))
+                    .map(|f| (f.filename.clone(), f.lineno, f.body.clone()))
             })
-            .unwrap_or((None, 0))
+            .unwrap_or((None, 0, None))
     }
 
     /// dbview — browse zshrs SQLite cache tables without SQL.

@@ -143,28 +143,41 @@ greet again
 provenance -f greet
 $ zshrs greet.zsh
 greet()
-  origin: function greet (greet.zsh:2, 2026-08-18 11:48:01.139)
+  origin: function greet { MSG="hi $1" } (greet.zsh:2, 2026-08-18 11:48:01.139)
   ops:
-     1. call       greet()                                  greet.zsh:3              11:48:01.139
-     2. call       greet()                                  greet.zsh:4              11:48:01.140
+     1. call       greet(world)                             greet.zsh:3              11:48:01.139
+     2. call       greet(again)                             greet.zsh:4              11:48:01.140
 ```
 
 | Op           | Recorded when                                                |
 |--------------|--------------------------------------------------------------|
-| `call`       | the function is about to run — at the *caller's* site         |
-| `redefine`   | the name is defined again, at the new body's site             |
+| `call`       | the function is about to run — at the *caller's* site, with the arguments it was called with |
+| `redefine`   | the name is defined again, at the new body's site, carrying the body it was changed TO |
 | `unfunction` | `unfunction NAME` / `unset -f NAME`                           |
 
 ```console
 $ zshrs redef.zsh
 greet()
-  origin: function greet (redef.zsh:2, 2026-08-18 11:52:50.209)
+  origin: function greet { MSG="hi $1" } (redef.zsh:2, 2026-08-18 11:52:50.209)
   ops:
      1. call       greet()                                  redef.zsh:3              11:52:50.209
-     2. redefine   greet                                    redef.zsh:4              11:52:50.210
+     2. redefine   greet { MSG="HELLO $1" }                 redef.zsh:4              11:52:50.210
      3. call       greet()                                  redef.zsh:5              11:52:50.210
      4. unfunction greet                                    redef.zsh:8              11:52:50.210
 ```
+
+The origin and every `redefine` carry the function's body, collapsed to one
+line and truncated with `…`. Without the body on the `redefine` op there is no
+way to see what the function was changed to, which is the only reason to read
+that op. Arming an already-defined function (`provenance -m greet`) seeds the
+origin from the body it has at that moment.
+
+A `call` op records the positionals the call was made with, so two calls to
+the same function are distinguishable on the chain: `greet world` records
+`greet(world)`. An argument that is empty or contains whitespace is
+single-quoted, keeping `f 'a b'` apart from `f a b`, and a long argument list
+is truncated with `…` to the width of the argument column. A call with no
+arguments still reads `greet()`.
 
 The origin is the definition site `shfunctab` recorded
 (`Src/exec.c:5383-5388`): the defining file and the line the definition

@@ -3788,11 +3788,12 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     // c:723
     let mut eno: i32 = 0;
     let mut ee: i32; // c:729
-    let mut arg0 = if args.is_empty() {
+    // c:737 — `arg0 = (char *) peekfirst(args);` — the COMMAND WORD.
+    let arg0 = if args.is_empty() {
         return;
     } else {
         args[0].clone()
-    }; // c:731
+    }; // c:737
        // c:733-748 — STTY pre-exec handling.
     {
         let mut stty = STTYval.lock().unwrap();
@@ -3808,18 +3809,26 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
             }
         }
     }
-    // c:752-763 — ARGV0 override.
+    // c:758-777 — ARGV0 override.
+    //   c:758-759 — /* If ARGV0 is in the commands environment, we use *
+    //                * that as argv[0] for this external command       */
+    // NOTE: C rewrites only `argv[0]` (the exec argv), NEVER `arg0`
+    // (`peekfirst(args)`, c:737) — `arg0` stays the COMMAND WORD and is what
+    // the slash-exec / cmdnamtab / $PATH scan below resolves. The previous
+    // Rust port assigned `arg0 = args[0].clone()` in both arms, so
+    // `ARGV0=sh $cmdvar args` looked up `sh` on $PATH instead of `$cmdvar`
+    // (E03posix:16 — `command not found: sh`), and a `-` precommand made the
+    // shell search for `-name`.
     if let Some(z) = zgetenv("ARGV0") {
-        args[0] = z.clone(); // c:753
+        args[0] = z.clone(); // c:761 `argv[0] = ztrdup(z);`
         unsafe {
             let key = std::ffi::CString::new("ARGV0").unwrap();
-            libc::unsetenv(key.as_ptr()); // c:760
+            libc::unsetenv(key.as_ptr()); // c:768
         }
-        arg0 = args[0].clone();
     } else if (flags & BINF_DASH) != 0 {
-        // c:764 — `BINF_DASH` prepends `-`.
-        args[0] = format!("-{}", arg0); // c:767-768
-        arg0 = args[0].clone();
+        // c:772-776 — /* Else if the pre-command `-' was given, we add `-' *
+        //              * to the front of argv[0] for this command.         */
+        args[0] = format!("-{}", arg0); // c:775-776
     }
     let argv = makecline(args); // c:771
     let newenvp_owned: Option<Vec<String>> = if (flags & BINF_CLEARENV) != 0 {
@@ -4052,163 +4061,11 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
         .raw_os_error()
         .unwrap_or(libc::ENOEXEC); // c:534
     if eno == libc::ENOEXEC || eno == libc::ENOENT {
-        // c:534
-        let fd = unsafe { libc::open(cpth.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) }; // c:538
-        if fd < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::ENOENT); // c:634
-        }
-        let mut buf = vec![0u8; POUNDBANGLIMIT + 1]; // c:541
-        let ct = unsafe {
-            libc::read(
-                fd,
-                buf.as_mut_ptr() as *mut libc::c_void,
-                POUNDBANGLIMIT as libc::size_t,
-            )
-        }; // c:542
-        unsafe {
-            libc::close(fd);
-        } // c:543
-        if ct >= 0 {
-            // c:544
-            let ct = ct as usize;
-            if ct >= 2 && buf[0] == b'#' && buf[1] == b'!' {
-                // c:545
-                let mut t0 = 0;
-                while t0 < ct && buf[t0] != b'\n' {
-                    t0 += 1;
-                } // c:546-548
-                if t0 == ct {
-                    // c:549
-                    zerr(&format!(
-                        // c:550
-                        "{}: bad interpreter: {}: {}",
-                        pth,
-                        String::from_utf8_lossy(&buf[2..t0.min(ct)]),
-                        std::io::Error::from_raw_os_error(eno)
-                    ));
-                } else {
-                    // c:552
-                    while t0 > 0 && (buf[t0] == b' ' || buf[t0] == b'\t' || buf[t0] == b'\n') {
-                        buf[t0] = 0;
-                        t0 -= 1;
-                    } // c:553-554
-                    let mut ptr_lo: usize = 2;
-                    while ptr_lo < buf.len() && buf[ptr_lo] == b' ' {
-                        ptr_lo += 1;
-                    } // c:555
-                    let ptr2_lo = ptr_lo;
-                    let mut ptr_hi = ptr2_lo;
-                    while ptr_hi < buf.len() && buf[ptr_hi] != 0 && buf[ptr_hi] != b' ' {
-                        ptr_hi += 1;
-                    } // c:556
-                    let interp_str = String::from_utf8_lossy(&buf[ptr2_lo..ptr_hi]).into_owned();
-                    if eno == libc::ENOENT {
-                        // c:557 — pathprog rewrite path.
-                        let pprog = if !interp_str.starts_with('/') {
-                            // c:561
-                            pathprog(&interp_str).map(|p| p.display().to_string())
-                        } else {
-                            None
-                        };
-                        if let Some(pprog) = pprog {
-                            // c:562
-                            let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
-                            argv_new.push(interp_str.clone()); // c:564
-                            if ptr_hi >= buf.len() || buf[ptr_hi] == 0 {
-                                argv_new.push(pth.to_string());
-                            } else {
-                                // c:567
-                                let mut rest_lo = ptr_hi + 1;
-                                while rest_lo < buf.len() && buf[rest_lo] == b' ' {
-                                    rest_lo += 1;
-                                }
-                                let mut rest_hi = rest_lo;
-                                while rest_hi < buf.len() && buf[rest_hi] != 0 {
-                                    rest_hi += 1;
-                                }
-                                let arg_str =
-                                    String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
-                                argv_new.push(arg_str);
-                                argv_new.push(pth.to_string());
-                            }
-                            for orig in argv.iter().skip(1) {
-                                argv_new.push(orig.clone());
-                            }
-                            winch_unblock(); // c:565/c:570
-                            return zexecve(&pprog, &argv_new, newenvp); // c:566/c:571
-                        }
-                        zerr(&format!(
-                            // c:574
-                            "{}: bad interpreter: {}: {}",
-                            pth,
-                            interp_str,
-                            std::io::Error::from_raw_os_error(eno)
-                        ));
-                    } else if ptr_hi < buf.len() && buf[ptr_hi] != 0 {
-                        // c:576
-                        let mut rest_lo = ptr_hi + 1;
-                        while rest_lo < buf.len() && buf[rest_lo] == b' ' {
-                            rest_lo += 1;
-                        }
-                        let mut rest_hi = rest_lo;
-                        while rest_hi < buf.len() && buf[rest_hi] != 0 {
-                            rest_hi += 1;
-                        }
-                        let arg_str = String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
-                        let mut argv_new: Vec<String> =
-                            vec![interp_str.clone(), arg_str, pth.to_string()];
-                        for orig in argv.iter().skip(1) {
-                            argv_new.push(orig.clone());
-                        }
-                        winch_unblock(); // c:580
-                        return zexecve(&interp_str, &argv_new, newenvp); // c:581
-                    } else {
-                        // c:582
-                        let mut argv_new: Vec<String> = vec![interp_str.clone(), pth.to_string()];
-                        for orig in argv.iter().skip(1) {
-                            argv_new.push(orig.clone());
-                        }
-                        winch_unblock(); // c:584
-                        return zexecve(&interp_str, &argv_new, newenvp); // c:585
-                    }
-                }
-            } else if eno == libc::ENOEXEC {
-                // c:588 — binary-safety + /bin/sh fallback.
-                let nul_pos = buf[..ct].iter().position(|&b| b == 0); // c:597
-                let isbinary = match nul_pos {
-                    None => false, // c:598
-                    Some(npos) => {
-                        let mut has_letter = false;
-                        let mut binary = true;
-                        for &b in &buf[..npos] {
-                            // c:602-609
-                            if (b as char).is_ascii_lowercase() || b == b'$' || b == b'`' {
-                                has_letter = true;
-                            }
-                            if has_letter && b == b'\n' {
-                                binary = false; // c:606
-                                break;
-                            }
-                        }
-                        binary
-                    }
-                };
-                if !isbinary {
-                    // c:611
-                    let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
-                    argv_new.push("sh".to_string()); // c:625
-                    if !argv.is_empty() && (argv[0].starts_with('-') || argv[0].starts_with('+')) {
-                        argv_new.push("-".to_string()); // c:623
-                    }
-                    for orig in argv.iter() {
-                        argv_new.push(orig.clone());
-                    }
-                    winch_unblock(); // c:626
-                    return zexecve("/bin/sh", &argv_new, newenvp); // c:627
-                }
-            }
+        // c:534 — the `#!` / shebang-less recovery; see zexecve_recover.
+        match crate::vm_helper::zexecve_recover(pth, argv, eno) {
+            // c:566/571/581/585/627 — `execve(<prog>, <argv>, newenvp);`
+            Ok((prog, argv_new)) => return zexecve(&prog, &argv_new, newenvp),
+            Err(e) => return e, // c:643
         }
     }
     eno // c:643
@@ -6078,7 +5935,17 @@ pub fn doshfunc(
     // Lineage tap, before the funcstack frame goes on: the op must
     // record where the *caller* stands, not the body about to run.
     if crate::provenance::active() {
-        crate::provenance::on_func_call(&name, shfunc.filename.as_deref(), shfunc.lineno);
+        // c:5978-5998 — doshargs[0] is the function name, doshargs[1..] the
+        // positionals the body will see as $1, $2, …; the chain records those,
+        // not the name again.
+        let prov_args: &[String] = if doshargs.len() > 1 { &doshargs[1..] } else { &[] };
+        crate::provenance::on_func_call(
+            &name,
+            prov_args,
+            shfunc.body.as_deref(),
+            shfunc.filename.as_deref(),
+            shfunc.lineno,
+        );
     }
     let fname = dupstring(&name); // c:5829
     let _ = fname; // c:5829 (kept for parity)
@@ -7395,7 +7262,12 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
             // Lineage tap: the definition is a function's origin, and a
             // second definition of the same name is a `redefine` op.
             if crate::provenance::active() {
-                crate::provenance::on_func_define(nm, shf.filename.as_deref(), shf.lineno);
+                crate::provenance::on_func_define(
+                    nm,
+                    shf.body.as_deref(),
+                    shf.filename.as_deref(),
+                    shf.lineno,
+                );
             }
             if let Ok(mut wr) = shfunctab_lock().write() {
                 wr.add(*shf);
