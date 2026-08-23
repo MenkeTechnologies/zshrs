@@ -10048,10 +10048,11 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         crate::ported::jobs::waitonejob(&mut synth);
         Value::Status(status)
     });
-    // c:Src/exec.c:3340-3364 — `< file` / `> file` with no command
-    // word. Resolves NULLCMD/READNULLCMD at runtime then routes
-    // through host_exec_external. Redirects are already applied by
-    // the surrounding WithRedirectsBegin scope.
+    // c:Src/exec.c:3386-3419 — `< file` / `> file` with no command
+    // word. Resolves NULLCMD/READNULLCMD at runtime, then dispatches the
+    // resulting word the way execcmd's fall-through does (shell function →
+    // builtin → external). Redirects are already applied by the surrounding
+    // WithRedirectsBegin scope.
     vm.register_builtin(BUILTIN_NULLCMD_EXEC, |vm, argc| {
         let args = pop_args(vm, argc);
         let is_single_read = args
@@ -10101,25 +10102,45 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         } else {
             nc_str.to_string() // c:3360-3363
         };
-        // c:Src/exec.c:3350/3360-3363 — C does not "run NULLCMD" as a
-        // special case: it APPENDS the word to the command's arg list
+        // c:Src/exec.c:3408/3414/3418 — C does not "run NULLCMD" as a special
+        // case: it APPENDS the word to the command's arg list
         // (`addlinknode(args, dupstring(nullcmd))`) and falls through to
-        // execcmd's ordinary dispatch, so a NULLCMD naming a BUILTIN runs the
-        // builtin. `host_exec_external` only knows how to spawn a process, so
-        // the documented `NULLCMD=:` idiom (and the SHNULLCMD `:` chosen at
-        // c:3350) reported `command not found: :`. Consult builtintab first,
-        // exactly as execcmd's `builtintab->getnode` step does (c:3056).
-        // The zshrs-original coreutils-shaped builtins (`cat`, `basename`, …
-        // — EXT_BUILTIN_NAMES) are deliberately excluded: they are NOT what
-        // execcmd's `builtintab->getnode` finds in zsh, and the documented
-        // `READNULLCMD=cat` / `NULLCMD=cat` idioms must keep reaching the
-        // real `/bin/cat` the way `zsh -f` does. (`is_extension_builtin` is
-        // the wrong test here — it also answers true for core names like `:`
-        // that fusevm happens to implement in-process.)
-        let is_core_builtin = crate::extensions::ext_builtins::builtin_in_builtintab(&cmd)
-            && !crate::extensions::ext_builtins::EXT_BUILTIN_NAMES.contains(&cmd.as_str());
-        let status = if is_core_builtin {
-            dispatch_builtin_raw(&cmd, Vec::new()) // c:3056
+        // execcmd's ORDINARY dispatch, which resolves that word in this order:
+        //   c:3484-3487 `shfunctab->getnode(shfunctab, cmdarg)` → shell function
+        //   c:3489      `builtintab->getnode(builtintab, cmdarg)` → builtin
+        //   otherwise   → external command (PATH lookup).
+        // `host_exec_external` already implements the shell-function arm and
+        // the external arm (plus the AOP intercepts and the module-builtin
+        // name arms), so only the builtintab arm has to be decided here.
+        //
+        // The builtintab question must be asked of the TABLE.
+        // `builtin_in_builtintab` alone is NOT a membership test — it is the
+        // module *gate*, and `builtin_owning_module` returns None for any name
+        // it does not know, whose `None => true` arm
+        // (src/extensions/ext_builtins.rs:179-182) then reports EVERY string as
+        // an available builtin. With that as the only predicate, the default
+        // `READNULLCMD=more` (config.h DEFAULT_READNULLCMD), a user's
+        // `READNULLCMD=less`, `NULLCMD=/bin/cat` and every other external name
+        // were classified as core builtins and handed to
+        // `dispatch_builtin_raw("more", vec![])`, which cannot work: plain
+        // `< file` printed NOTHING and returned 1, and a missing NULLCMD
+        // returned a silent 1 instead of `command not found` / 127.
+        //
+        // Membership first, gate second. The zshrs-original coreutils-shaped
+        // builtins (`cat`, `basename`, … EXT_BUILTIN_NAMES) are not entries of
+        // `createbuiltintable()` at all, so the documented `NULLCMD=cat` /
+        // `READNULLCMD=cat` idioms keep reaching the real `/bin/cat` the way
+        // `zsh -f` does without needing an explicit exclusion.
+        //
+        // `dispatch_builtin` (not `dispatch_builtin_raw`) is the correct entry:
+        // C's `builtintab->getnode` filters DISABLED nodes, so `disable :;
+        // NULLCMD=:; > f` must fall through to PATH — the raw dispatcher
+        // deliberately bypasses that set (it is what `builtin NAME` uses).
+        let is_shfunc = with_executor(|exec| exec.function_exists(&cmd)); // c:3485
+        let is_builtin = crate::ported::builtin::createbuiltintable().contains_key(&cmd)
+            && crate::extensions::ext_builtins::builtin_in_builtintab(&cmd); // c:3489
+        let status = if !is_shfunc && is_builtin {
+            dispatch_builtin(&cmd, Vec::new()) // c:3489-3504
         } else {
             with_executor(|exec| exec.host_exec_external(&[cmd]))
         };
@@ -13076,9 +13097,10 @@ pub const BUILTIN_EXEC_INLINE_ENV_DONE: u16 = 627;
 
 /// `< file` / `> file` with no command word (NULLCMD path).
 /// Resolves NULLCMD (default "cat") / READNULLCMD (default "more")
-/// at runtime per Src/exec.c:3340-3364 and exec's it through
-/// host_exec_external. Argc is 1: the int (0 or 1) on the stack
-/// indicates whether this is a single REDIR_READ redirect
+/// at runtime per Src/exec.c:3386-3419, then dispatches that word
+/// exactly as execcmd's fall-through does: shell function (c:3485)
+/// → builtin (c:3489) → external. Argc is 1: the int (0 or 1) on the
+/// stack indicates whether this is a single REDIR_READ redirect
 /// (selects READNULLCMD when set + non-empty).
 pub const BUILTIN_NULLCMD_EXEC: u16 = 607;
 /// `.` (dot) — alias of source/bin_dot but dispatches with the

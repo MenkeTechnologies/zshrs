@@ -658,3 +658,137 @@ mod anon_func_interleaved_redirs_args {
         assert_parity_in(d.path(), "() { read v; print got $v } <<<hello");
     }
 }
+
+/// A simple command consisting ONLY of redirections — `< file`, `> file`.
+///
+/// c:Src/exec.c:3386-3419 — `execcmd` does not "run NULLCMD" as a special
+/// case: it APPENDS the resolved word to the command's argument list
+/// (`addlinknode(args, dupstring(nullcmd))`, c:3418) and falls through to
+/// ordinary dispatch, so the word is resolved shell function (c:3485) →
+/// builtin (c:3489) → external, with the redirections already installed.
+/// A SINGLE input redirection picks READNULLCMD instead (c:3409-3414).
+///
+/// Regression pinned here: the runtime handler decided "is this a builtin"
+/// with `builtin_in_builtintab()`, which is a module *gate* and answers true
+/// for every unknown string, so every external word — including the default
+/// `READNULLCMD=more` — was dispatched as a nonexistent builtin. Plain
+/// `< file`, the daily-driver idiom, printed NOTHING and returned 1.
+mod nullcmd_redirect_only {
+    use super::*;
+
+    /// The bug as reported: `< file` with whatever NULLCMD/READNULLCMD the
+    /// environment supplies. Compared against real zsh in the SAME env, so
+    /// this holds whether the pager is `more`, `less`, or absent (127).
+    #[test]
+    fn input_only_default_settings() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\nbeta\n").unwrap();
+        assert_parity_in(d.path(), "< s.txt");
+    }
+
+    /// c:3409-3414 — a single REDIR_READ uses READNULLCMD. An ABSOLUTE path
+    /// can never be a builtin, so this pins the external-dispatch arm
+    /// independently of what the ambient pager does.
+    #[test]
+    fn input_only_external_readnullcmd() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\nbeta\n").unwrap();
+        assert_parity_in(d.path(), "READNULLCMD=/bin/cat; < s.txt");
+    }
+
+    /// c:3485 — a shell function of that name wins over builtin/external.
+    #[test]
+    fn readnullcmd_names_a_shell_function() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
+        assert_parity_in(d.path(), "f() { print FUNC; read v; print $v }\nREADNULLCMD=f; < s.txt");
+    }
+
+    /// c:3489 — a READNULLCMD naming a BUILTIN runs the builtin (`:` reads
+    /// nothing, so the file contents must NOT appear).
+    #[test]
+    fn readnullcmd_names_a_builtin() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
+        assert_parity_in(d.path(), "READNULLCMD=:; < s.txt; print rc=$?");
+    }
+
+    /// Neither function nor builtin nor on PATH → `command not found`, 127.
+    /// The broken predicate swallowed this into a silent exit 1.
+    #[test]
+    fn readnullcmd_not_found_is_127() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
+        assert_parity_in(d.path(), "READNULLCMD=zz_no_such_command_zz; < s.txt");
+    }
+
+    /// c:3409-3410 — READNULLCMD applies only to a LONE `<`. Two input
+    /// redirections fall back to NULLCMD (and, with MULTIOS, concatenate).
+    #[test]
+    fn two_input_redirs_use_nullcmd() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
+        assert_parity_in(d.path(), "NULLCMD=/bin/cat; < s.txt < s.txt");
+    }
+
+    /// c:3410 — `<>` is REDIR_READWRITE, not REDIR_READ, so NULLCMD applies.
+    #[test]
+    fn readwrite_redir_uses_nullcmd() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\nbeta\n").unwrap();
+        assert_parity_in(d.path(), "NULLCMD=/bin/cat; <> s.txt");
+    }
+
+    /// c:3418 — output-only redirection uses NULLCMD; `:` must still work
+    /// (it is the documented idiom for "create the file, run nothing") and
+    /// must still create the file.
+    #[test]
+    fn output_only_nullcmd_colon_creates_file() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "NULLCMD=:; > made.txt; print rc=$?; test -f made.txt && print made",
+        );
+    }
+
+    /// c:3395-3397 — CSH_NULL_CMD (and an empty/unset NULLCMD) turn the
+    /// whole form into `redirection with no command`, status 1.
+    #[test]
+    fn csh_null_cmd_is_an_error() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
+        assert_parity_in(d.path(), "setopt cshnullcmd; < s.txt");
+    }
+
+    /// c:3405-3408 — SH_NULL_CMD substitutes `:` regardless of NULLCMD.
+    #[test]
+    fn sh_null_cmd_substitutes_colon() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
+        assert_parity_in(
+            d.path(),
+            "setopt shnullcmd; NULLCMD=/bin/cat; < s.txt; print rc=$?",
+        );
+    }
+
+    /// c:3489 — `builtintab->getnode` filters DISABLED nodes, so a disabled
+    /// `:` falls through to PATH and reports `command not found` (127).
+    #[test]
+    fn disabled_builtin_nullcmd_falls_through_to_path() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
+        assert_parity_in(d.path(), "disable :; READNULLCMD=:; < s.txt; print rc=$?");
+    }
+
+    /// The idiom inside a function body and inside a subshell — both lost
+    /// their output under the regression.
+    #[test]
+    fn input_only_in_function_and_subshell() {
+        let d = tdir();
+        std::fs::write(d.path().join("s.txt"), "alpha\nbeta\n").unwrap();
+        assert_parity_in(
+            d.path(),
+            "READNULLCMD=/bin/cat; f() { < s.txt }; f; ( < s.txt )",
+        );
+    }
+}
