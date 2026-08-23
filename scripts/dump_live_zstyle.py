@@ -153,6 +153,17 @@ def main() -> int:
     with open(args.out, "w") as f:
         f.write(HEADER)
         f.write("\n".join(statements) + "\n")
+        # Several captured styles are function-VALUED and name functions that
+        # ship with zpwr/fasd, not with zsh (cache-policy zpwrMonthlyCachingPolicy,
+        # completer _megacomplete / _fasd_zsh_word_complete*). Undefined, compsys
+        # silently takes a different path — an unknown completer is skipped and a
+        # missing cache-policy means "always rebuild" — so the fixture would model
+        # a different completer chain than the one captured. The companion file
+        # defines them; emit the source line here so a regeneration cannot drop it.
+        f.write(
+            "\n# Definitions for the non-zsh functions the styles above name.\n"
+            "source ${0:A:h}/parity_zstyle_stubs.zsh\n"
+        )
     print(f"{args.out}: {len(statements)} statements")
     return 0
 
