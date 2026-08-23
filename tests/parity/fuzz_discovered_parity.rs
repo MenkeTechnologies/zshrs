@@ -673,7 +673,6 @@ mod ksh_arrays_bare_flag_collapse {
 
     /// zsh: `a` (join of the single element-1 collapse). zshrs: `a-b-c`.
     #[test]
-    #[ignore = "zshrs gap: KSH_ARRAYS bare ${(j)arr} joins full array; zsh collapses to element 1"]
     fn join_flag_collapses_to_first_element() {
         assert_parity("setopt KSH_ARRAYS; parts=(a b c); print -r -- ${(j:-:)parts}");
     }
@@ -3420,7 +3419,6 @@ mod ztst_mined {
     /// separator. zsh finds the LITERAL separator comma in the
     /// unexpanded subscript text; zshrs errors "bad substitution".
     #[test]
-    #[ignore = "zshrs gap: (r)$x,(R)$x range subscript with a comma in the expanded pattern → bad substitution"]
     fn range_subscript_comma_in_pattern() {
         assert_parity(
             r#"s='Twinkle, twinkle, little *, [how] I [wonder] what?'; x=','; print ${s[(r)$x,(R)$x]}"#,
@@ -3431,15 +3429,17 @@ mod ztst_mined {
     /// pattern is a literal `[` or `]` (escaped). zshrs returns the
     /// whole string unchanged instead of the matched range/index.
     #[test]
-    #[ignore = "zshrs gap: (r)/(R) search subscript with literal bracket pattern returns whole string"]
     fn range_subscript_bracket_pattern() {
         assert_parity(r#"s='Twinkle, [how] I [wonder]'; print $s[(r)\],(R)\[]"#);
     }
 
     /// D09brace — a brace range `{X..Y}` over non-ASCII single bytes
-    /// (metafied high bytes) doesn't expand in zshrs. Niche.
+    /// (metafied high bytes). FIXED: `bracechardots` / `expand_range`
+    /// (glob.rs) decode each endpoint through MB_METACHARLENCONV
+    /// (c:Src/glob.c:2236/2257) instead of counting Rust `char`s, and emit
+    /// each element via MB_NICECHAR (c:2329). Regression pin — no longer
+    /// ignored.
     #[test]
-    #[ignore = "zshrs gap: brace range over high/multibyte single-byte endpoints not expanded"]
     fn brace_range_high_bytes() {
         assert_parity(r#"print -r -- {$'\M-\C-@'..$'\M-\C-A'}"#);
     }
@@ -3473,7 +3473,6 @@ mod ztst_mined {
     /// above — the fix is subscript-key dequoting, used everywhere, so it
     /// needs dedicated care.
     #[test]
-    #[ignore = "zshrs gap: assoc key A[\\[k\\]] stores backslashes verbatim; zsh dequotes to [k]"]
     fn assoc_key_backslash_bracket_dequoted() {
         assert_parity(r#"typeset -A A; A[\[k\]]=v; print -r ${(k)A}"#);
     }

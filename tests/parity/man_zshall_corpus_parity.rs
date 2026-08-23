@@ -314,7 +314,6 @@ mod man_expn {
 
     /// (@) inner scalar vs inner array subscript detection.
     #[test]
-    #[ignore = "zshrs gap: \"${(@)${foo}[1]}\" — inner ${foo} should be scalar (char subscript -> b); zshrs treats it as array (-> bar baz)"]
     fn at_inner_scalar_vs_array() {
         assert_parity(
             r###"foo=(bar baz); print -- "${(@)${foo}[1]}"; print -- "${${(@)foo}[1]}""###,

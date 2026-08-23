@@ -384,7 +384,6 @@ echo"###,
 
     /// af-magic — PS1 dynamic rule ${(l.$(fn)..=.)} with $() in pad-spec under promptsubst.
     #[test]
-    #[ignore = "zshrs gap: promptsubst PS1 with ${(l.$(fn)..=.)} (command-sub inside pad-spec) renders empty under print -P"]
     fn promptsubst_dynamic_pad() {
         assert_parity(
             r###"setopt promptsubst

@@ -267,7 +267,6 @@ mod prompt {
 
     /// truncation counts visible chars only (excludes color escapes).
     #[test]
-    #[ignore = "zshrs gap: prompt %N>>  truncation does not exclude color escapes from the width count (string not truncated)"]
     fn truncate_excludes_escapes() {
         assert_parity(r###"print -P '%5>>%F{red}abcdefgh%f' | cat -v"###);
     }
@@ -348,7 +347,6 @@ mod prompt {
 
     /// %(Nl.t.f) line-position ternary.
     #[test]
-    #[ignore = "zshrs gap: prompt %(Nl.t.f) line-position ternary takes wrong branch (chars-already-printed not tracked)"]
     fn ternary_line_position() {
         assert_parity(r###"print -P 'xx%(1l.PRINTED.FRESH)' | cat -v"###);
     }
@@ -571,7 +569,6 @@ mod frameworks {
 
     /// prezto — ${(j:,:):-\$${^@}} join over rc-expand default of positionals.
     #[test]
-    #[ignore = "zshrs gap: ${(j:,:):-\\$${^@}} — rc-expand ${^@} over positionals not applied before join (no per-element distribution)"]
     fn join_default_rc_positionals() {
         assert_parity(
             r###"f() { print -r -- "${(j:,:):-\$${^@}}"; }

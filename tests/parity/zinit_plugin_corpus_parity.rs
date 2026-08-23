@@ -487,8 +487,8 @@ print exit=$? helper_left=$+functions[can_cfg_error]"##,
     }
 
     /// internal/p10k.zsh:228-232 — brace range after expansion, MATCH as index.
+    /// Regression pin — no longer ignored.
     #[test]
-    #[ignore = "zshrs gap: brace range {$#parts..1} inside ${:-...} not expanded (literal text emitted)"]
     fn brace_range_match_index() {
         assert_parity(
             r##"f() {
@@ -616,7 +616,6 @@ f"##,
 
     /// internal/p10k.zsh:602 — deferred-quoting capsule round-tripped via (e).
     #[test]
-    #[ignore = "zshrs gap: (Q) dequote leaves backslashes after (e) re-eval of (qqq)(q)-quoted capsule"]
     fn deferred_quoting_capsule() {
         assert_parity(
             r##"f() {
@@ -1231,7 +1230,6 @@ mod zsh_expand {
 
     /// zpwrExpandApi.zsh:30-38 — `(z)` reparse, last-word mutate, `(Az)` re-split.
     #[test]
-    #[ignore = "zshrs gap: (z) lexer tokenizes backtick differently and (Az) re-split count differs (zsh n2=7; zshrs n2=6)"]
     fn z_reparse_lastword_mutate() {
         assert_parity(
             r##"tmp='echo a; cat <(lister)'
@@ -1584,7 +1582,6 @@ mod zsh_sudo {
 
     /// sudo.plugin.zsh:23-26 — ERE `=~` with interpolated pattern + `$match[-1]`.
     #[test]
-    #[ignore = "zshrs gap: complex interpolated ERE with nested groups + $match[-1] fails to match (zsh n=9; zshrs no match)"]
     fn ere_interpolated_pattern_negative_match() {
         assert_parity(
             r##"ZPWR_SUDO_REGEX='sudo'
@@ -1805,7 +1802,6 @@ print -r -- "$manifest""##,
 
     /// src/_cargo:3,421 — `regexp-replace` in-place ERE deletion.
     #[test]
-    #[ignore = "zshrs gap: autoload regexp-replace with alternation `|\"` does not delete matches in-place"]
     fn regexp_replace_inplace() {
         assert_parity(
             r##"autoload -U regexp-replace
@@ -1826,7 +1822,6 @@ mod zunit {
 
     /// src/helpers.zsh:97-113 — per-word conditional quoting with (#m)/(#b).
     #[test]
-    #[ignore = "zshrs gap: nested (M)/(#b)/(j:|:)~ per-word conditional quoting expansion errors (exit 1)"]
     fn per_word_conditional_quoting() {
         assert_parity(
             r##"setopt extendedglob
