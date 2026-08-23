@@ -323,10 +323,14 @@ fn read_test_block(lines: &[&str], idx: &mut usize) -> Option<TestBlock> {
 }
 
 fn append_redir_line(buf: &mut String, content: &str) {
-    if !buf.is_empty() {
-        buf.push('\n');
-    }
+    // ztst.zsh's ZTST_getredir writes each `>`/`<` line with `print -r --`,
+    // i.e. content PLUS a newline, unconditionally. The previous
+    // `if !buf.is_empty()` separator logic silently dropped a LEADING empty
+    // line: a block starting with a bare `>` left buf == "" so the next
+    // line got no separator, and the expected side lost its opening blank
+    // line while the shell correctly emitted one (V09datetime.ztst:1).
     buf.push_str(content);
+    buf.push('\n');
 }
 
 /// Parse "NUMBER[FLAGS]:message" — returns (status, flags, message)
@@ -446,8 +450,101 @@ impl fmt::Display for TestResult {
     }
 }
 
-/// Simple glob-style pattern match (supports * as wildcard sequence)
+/// Pattern comparison, delegated to real zsh — the faithful port of
+/// `ZTST_diff`'s `diff_pat` arm (Test/ztst.zsh:380-398), which runs under
+/// `emulate -L zsh; setopt extendedglob` (ztst.zsh:330-331) and compares
+/// line-by-line with `[[ ${diff_lines2[i]} != ${~diff_lines1[i]} ]]`.
+///
+/// This USED to be a hand-rolled Rust matcher supporting only `*`, `?` and
+/// `\`. The corpus routinely uses `##`, `(#cN,M)`, `<a-b>` and `[...]`
+/// classes, so every expectation using one was compared literally and
+/// reported a FALSE FAILURE even when the shell's output was correct
+/// (A08time.ztst chunks 2-7 were six such cases). Reimplementing
+/// extendedglob here would forever lag the real thing, and using *zshrs*
+/// to match would make the shell under test its own oracle. So shell out
+/// to the same zsh that `assert_parity` uses.
 fn matchpat(pattern: &str, text: &str) -> bool {
+    match matchpat_zsh(pattern, text) {
+        Some(v) => v,
+        None => {
+            eprintln!(
+                "ztst_runner: WARNING — could not run `zsh` for pattern matching; \
+                 falling back to the legacy `*`/`?`-only matcher. Expectations using \
+                 `##`, `(#c..)`, `<a-b>` or `[...]` WILL REPORT FALSE FAILURES."
+            );
+            matchpat_legacy(pattern, text)
+        }
+    }
+}
+
+/// Run ztst.zsh's own comparison loop in a real zsh. Returns None if zsh
+/// could not be run at all (so the caller can warn and degrade loudly).
+fn matchpat_zsh(pattern: &str, text: &str) -> Option<bool> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = env::temp_dir();
+    let pf = dir.join(format!("zshrs_ztst_pat_{}_{}.txt", std::process::id(), n));
+    let tf = dir.join(format!("zshrs_ztst_txt_{}_{}.txt", std::process::id(), n));
+
+    // ztst.zsh reads these with `$(<file)`, which strips trailing newlines;
+    // write the bodies with a single trailing newline like the harness files.
+    let write = |p: &Path, body: &str| -> std::io::Result<()> {
+        let mut f = fs::File::create(p)?;
+        f.write_all(body.as_bytes())?;
+        if !body.ends_with('\n') {
+            f.write_all(b"\n")?;
+        }
+        Ok(())
+    };
+    if write(&pf, pattern).is_err() || write(&tf, text).is_err() {
+        let _ = fs::remove_file(&pf);
+        let _ = fs::remove_file(&tf);
+        return None;
+    }
+
+    // Verbatim port of ztst.zsh:381-397. `$1` is the pattern file
+    // (diff_lines1), `$2` the actual-output file (diff_lines2).
+    const SCRIPT: &str = r#"
+emulate -L zsh
+setopt extendedglob
+local -a diff_lines1 diff_lines2
+integer i
+diff_lines1=("${(f@)$(<$1)}")
+diff_lines2=("${(f@)$(<$2)}")
+if (( ${#diff_lines1} != ${#diff_lines2} )); then
+  exit 1
+fi
+for (( i = 1; i <= ${#diff_lines1}; i++ )); do
+  if [[ ${diff_lines2[i]} != ${~diff_lines1[i]} ]]; then
+    exit 1
+  fi
+done
+exit 0
+"#;
+
+    let out = Command::new("zsh")
+        .arg("-f")
+        .arg("-c")
+        .arg(SCRIPT)
+        .arg("ztst_matchpat")
+        .arg(&pf)
+        .arg(&tf)
+        .output();
+    let _ = fs::remove_file(&pf);
+    let _ = fs::remove_file(&tf);
+
+    match out {
+        Ok(o) => o.status.code().map(|c| c == 0),
+        Err(_) => None,
+    }
+}
+
+/// The former matcher, kept ONLY as the degraded fallback when zsh is
+/// absent. Supports `*`, `?` and `\` escapes and nothing else.
+fn matchpat_legacy(pattern: &str, text: &str) -> bool {
     let pat_lines: Vec<&str> = pattern.lines().collect();
     let txt_lines: Vec<&str> = text.lines().collect();
 
@@ -476,23 +573,16 @@ fn glob_match_inner(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
     if pi == pat.len() {
         return false;
     }
-    // Backslash escapes the next pattern char (zsh pattern semantics —
-    // ztst expectation lines write `\(eval\):*` to match a literal
-    // `(eval):` prefix). Without this, the matcher demanded a literal
-    // backslash in the OUTPUT and every `(eval)`-prefixed stderr
-    // pattern failed.
     if pat[pi] == '\\' && pi + 1 < pat.len() {
         return ti < txt.len()
             && pat[pi + 1] == txt[ti]
             && glob_match_inner(pat, pi + 2, txt, ti + 1);
     }
     if pat[pi] == '*' {
-        // Skip consecutive *
         let mut npi = pi;
         while npi < pat.len() && pat[npi] == '*' {
             npi += 1;
         }
-        // Try matching rest of pattern against every suffix of text
         for nti in ti..=txt.len() {
             if glob_match_inner(pat, npi, txt, nti) {
                 return true;
@@ -533,8 +623,8 @@ fn timeout_ms() -> u64 {
 /// against the zsh source tree (ZTST_ZSH_SOURCE, default
 /// $HOME/forkedRepos/zsh). If the tree is absent the list is empty —
 /// same observable result as the globs matching nothing.
-fn compute_fpath() -> Vec<PathBuf> {
-    let root = env::var("ZTST_ZSH_SOURCE")
+fn ztst_zsh_source() -> Option<PathBuf> {
+    env::var("ZTST_ZSH_SOURCE")
         .map(PathBuf::from)
         .ok()
         .or_else(|| {
@@ -542,8 +632,13 @@ fn compute_fpath() -> Vec<PathBuf> {
                 .ok()
                 .map(|h| PathBuf::from(h).join("forkedRepos/zsh"))
         })
-        .filter(|p| p.is_dir());
-    let Some(root) = root else { return Vec::new() };
+        .filter(|p| p.is_dir())
+}
+
+fn compute_fpath() -> Vec<PathBuf> {
+    let Some(root) = ztst_zsh_source() else {
+        return Vec::new();
+    };
 
     let subdirs = |dir: &Path| -> Vec<PathBuf> {
         let mut v: Vec<PathBuf> = fs::read_dir(dir)
@@ -590,6 +685,10 @@ enum ChunkOutcome {
 ///                     `$ZTST_testdir/../Src/zsh` (A01grammar,
 ///                     A04redirect.ztst:465-525, E03posix), so:
 ///   <root>/Src/zsh  — symlink to the zshrs binary
+///   <root>/srcdir   — ZTST_srcdir: symlinks to every corpus file, with
+///                     <root>/Functions and <root>/Completion siblings
+///                     pointing into ZTST_ZSH_SOURCE (Test/comptest:3-5
+///                     rebuilds $fpath from $ZTST_srcdir/../*)
 ///   <root>/home     — $HOME (keeps `~/x` writes out of the real home)
 ///   <root>/tmp      — $TMPDIR; holds the ztst.zsh:117-129 capture files
 ///   <root>/cmd.fifo — chunk transport (sourced in a loop by driver.zsh)
@@ -629,6 +728,45 @@ impl PersistentShell {
             fs::create_dir_all(d)?;
         }
         std::os::unix::fs::symlink(zshrs, srcdir.join("zsh"))?;
+
+        // ZTST_srcdir stand-in. ztst.zsh:104-109 points $ZTST_srcdir at the
+        // zsh source tree's Test/ directory, and the .ztst files rely on
+        // BOTH of its properties: the helper files that live in it
+        // (`. $ZTST_srcdir/comptest` — Y01/Y02/Y03, X02/X03/X05 — and
+        // `$ZTST_srcdir/B02typeset.ztst` — V10private) AND its SIBLINGS
+        // (Test/comptest:3-5 rebuilds $fpath from
+        // `$ZTST_srcdir/../Functions/*~*/CVS(/)` and
+        // `$ZTST_srcdir/../Completion`).
+        //
+        // Pointing $ZTST_srcdir straight at the corpus directory gave the
+        // first property and not the second: `<repo>/Functions` and
+        // `<repo>/Completion` do not exist, so comptest's array assignment
+        // died with "no matches found" and `comptestinit` returned 1 —
+        // which is why every comptest-driven file reported a failed %prep
+        // and zero passing chunks.
+        //
+        // So build a per-file stand-in that has both: a directory of
+        // symlinks to the corpus files, with Functions/Completion siblings
+        // pointing into the zsh source tree already used for $fpath
+        // (ZTST_ZSH_SOURCE). Symlinks, not copies, so a corpus edit is
+        // picked up and nothing is duplicated on disk. It is a sibling of
+        // Test/ rather than Test/ itself so the cwd every chunk globs stays
+        // empty.
+        let srcdir_stub = sandbox.join("srcdir");
+        fs::create_dir_all(&srcdir_stub)?;
+        if let Ok(rd) = fs::read_dir(corpus) {
+            for entry in rd.filter_map(|e| e.ok()) {
+                let _ = std::os::unix::fs::symlink(entry.path(), srcdir_stub.join(entry.file_name()));
+            }
+        }
+        if let Some(zsh_src) = ztst_zsh_source() {
+            for name in ["Functions", "Completion"] {
+                let real = zsh_src.join(name);
+                if real.is_dir() {
+                    let _ = std::os::unix::fs::symlink(&real, sandbox.join(name));
+                }
+            }
+        }
 
         let fifo = sandbox.join("cmd.fifo");
         let cpath = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
@@ -698,6 +836,15 @@ tail() {{
   command tail "$argv[@]"
 }}
 ZTST_srcdir={srcdir}                    # ztst.zsh:104-109 ($0's directory)
+# ZTST_exe is set by Test/Makefile.in:56 (ZTST_exe=$(dir_top)/Src/zsh), NOT by
+# ztst.zsh, so the runner must supply it or every chunk spawning a fresh shell
+# dies with `command not found: -fc` (C03traps.ztst:6,29,30,31,32). An ABSOLUTE
+# path is used because the corpus invokes it in incompatible ways: bare from
+# $ZTST_testdir, from `(cd ..; $ZTST_exe …)` (C03traps.ztst:460,477,497,514),
+# and via `${{${{ZTST_exe##[^/]*}}:-$ZTST_testdir/$ZTST_exe}}` (C03traps.ztst:245).
+# Only an absolute path satisfies all three; the Makefile's relative spelling is
+# the wart C03traps.ztst:60-61 calls out ("We ought to fix this in ztst.zsh...").
+ZTST_exe={ztst_exe}
 fpath=( {fpath} )                       # ztst.zsh:112-114 (resolved by runner)
 ZTST_tmp={ztmp}                         # ztst.zsh:116-117 (fixed path; see runner)
 ZTST_in=${{ZTST_tmp}}/ztst.in           # ztst.zsh:123
@@ -735,7 +882,8 @@ while true; do
   . {fifo}
 done
 "#,
-            srcdir = sq(&corpus.to_string_lossy()),
+            srcdir = sq(&srcdir_stub.to_string_lossy()),
+            ztst_exe = sq(&srcdir.join("zsh").to_string_lossy()),
             fpath = fpath,
             ztmp = sq(&ztmp.to_string_lossy()),
             fifo = sq(&fifo.to_string_lossy()),
@@ -1212,7 +1360,12 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
     }
 
     // Check stdout (unless 'd' flag)
-    if !test.flags.contains('d') && !expected_stdout_trim.is_empty() {
+    // NOTE: no `!expected_stdout_trim.is_empty()` guard. ztst.zsh compares
+    // with `command diff -u` (ZTST_do_diff, ztst.zsh:351-358), which fails
+    // when the expected file is empty and the actual output is not. Skipping
+    // the comparison in that case scored such chunks as PASSING — a false
+    // pass (E03posix.ztst 11/12/18 were XPASSing this way).
+    if !test.flags.contains('d') {
         let matches = if test.stdout_pattern {
             matchpat(expected_stdout_trim, actual_stdout)
         } else {
@@ -1232,7 +1385,9 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
     }
 
     // Check stderr (unless 'D' flag)
-    if !test.flags.contains('D') && !expected_stderr_trim.is_empty() {
+    // Same as stdout above: an empty expected stderr is still a real
+    // expectation, not a licence to skip the check.
+    if !test.flags.contains('D') {
         let matches = if test.stderr_pattern {
             matchpat(expected_stderr_trim, actual_stderr)
         } else {
