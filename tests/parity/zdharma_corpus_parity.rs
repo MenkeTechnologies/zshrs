@@ -202,7 +202,6 @@ done"###,
 
     /// NUL-split coordinate pairs via (S)//(#b).../${mbegin};${mend}${nul}.
     #[test]
-    #[ignore = "zshrs gap: (S)//(#b).../${mbegin};${mend}NUL global substitution emits no coordinates ((ps:NUL:) split returns the whole buffer)"]
     fn nul_coord_pairs() {
         assert_parity(
             r###"emulate -L zsh
@@ -235,7 +234,6 @@ done"###,
 
     /// math-string variable classifier walk (mathnum/mathvar/matherr).
     #[test]
-    #[ignore = "zshrs gap: (#b)[^class]#(token)(*) consumed-buffer walk mis-tokenizes (yields [42],[f] instead of total/42/undef/count)"]
     fn math_string_classifier() {
         assert_parity(
             r###"emulate -L zsh
@@ -298,7 +296,6 @@ done"###,
 
     /// case state machine with bit-flag states + (\(*\)|\)|\() arms.
     #[test]
-    #[ignore = "zshrs gap: (z) leaks backslash on $x and the (( this & BIT )) bit-flag state machine never advances (all states stuck at case-condition)"]
     fn case_state_machine() {
         assert_parity(
             r###"emulate -L zsh
@@ -341,7 +338,6 @@ print -r -- "last-paren (I)=${str[(I)\)]}  first (i)=${str[(i)\)]}""###,
 
     /// hex/rgb color recognition with (l:2::0:) zero-pad reconstruction.
     #[test]
-    #[ignore = "zshrs gap: ${(l:2::0:)match[N]} zero-pad over a (#b)-alternation backref produces garbage repeated output"]
     fn hex_rgb_color() {
         assert_parity(
             r###"emulate -L zsh
@@ -371,7 +367,6 @@ print -r -- "Z+c+:"; print -rl -- ${(zZ+c+)buf}"###,
 
     /// FPATH= rewrite: (s,:,) split + (j: :) rejoin + (z@) re-tokenize.
     #[test]
-    #[ignore = "zshrs gap: (#b)(FPATH+(#c0,1)=)* match + ${x#FPATH+(#c0,1)=} strip is a no-op (the +(#c0,1) count pattern not honored)"]
     fn fpath_rewrite() {
         assert_parity(
             r###"emulate -L zsh

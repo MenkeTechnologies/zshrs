@@ -1171,7 +1171,6 @@ mod zmod_pcre_regex {
 
     /// lookahead success/failure.
     #[test]
-    #[ignore = "zshrs gap: PCRE zero-width lookahead (?=...) does not match (foo(?=bar) on foobar returns no match)"]
     fn pcre_lookahead() {
         assert_parity(
             r###"zmodload zsh/pcre; pcre_compile "foo(?=bar)"; pcre_match "foobar"; print "rc=$? [$MATCH]"; pcre_match "foobaz"; print rc=$?"###,
@@ -1337,7 +1336,6 @@ mod contrib {
 
     /// zmv -W wildcard shorthand.
     #[test]
-    #[ignore = "zshrs gap: zmv -W wildcard shorthand does not perform the rename (files unchanged)"]
     fn zmv_W() {
         assert_parity(
             r###"autoload -U zmv; t=$(mktemp -d); cd $t; : > one.txt; : > two.txt; zmv -W "*.txt" "*.bak"; print -l *(N:t) | sort; cd /; rm -rf $t"###,
@@ -1370,7 +1368,6 @@ mod contrib {
 
     /// zmv (#m) MATCH with modifier.
     #[test]
-    #[ignore = "zshrs gap: zmv with (#m)/$MATCH + history modifier in the replacement produces no mv action"]
     fn zmv_match_modifier() {
         assert_parity(
             r###"autoload -U zmv; t=$(mktemp -d); cd $t; : > abc.log; zmv -n "(#m)*.log" "${MATCH:r}.txt"; cd /; rm -rf $t"###,
@@ -1379,7 +1376,6 @@ mod contrib {
 
     /// zmv case flag on capture.
     #[test]
-    #[ignore = "zshrs gap: zmv with (#b) + (L) case-flag in the replacement produces no mv action"]
     fn zmv_case_flag() {
         assert_parity(
             r###"autoload -U zmv; t=$(mktemp -d); cd $t; : > FOO.txt; zmv -n "(#b)(*).txt" "${(L)1}.txt"; cd /; rm -rf $t"###,
@@ -1396,7 +1392,6 @@ mod contrib {
 
     /// zmv collision aborts.
     #[test]
-    #[ignore = "zshrs gap: zmv collision error message format differs from zsh's 'zmv: error(s) in substitution:'"]
     fn zmv_collision() {
         assert_parity(
             r###"autoload -U zmv; t=$(mktemp -d); cd $t; : > a.txt; : > b.txt; zmv -n "(?).txt" "x.txt" 2>&1; cd /; rm -rf $t"###,
