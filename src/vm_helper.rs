@@ -4477,6 +4477,38 @@ impl ShellExecutor {
                 return Ok(status);
             }
         }
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // Host-registered native commands (`extensions/native_cmds.rs`) — the
+        // sibling runtimes a fat binary links into the shell's address space:
+        // `git` (zvcs), `arb` (arblang) and `stryke` (strykelang) in the
+        // zshrs-native build. Same slot and same reason as the plugin-builtin
+        // dispatch directly above: the compiler has never heard of these names,
+        // so it lowered them to external execution and they arrive here — this
+        // is where they must be caught, BEFORE the PATH guard and before the
+        // spawn, because an in-process builtin needs no PATH and no process.
+        //
+        // Two escape hatches to the binary on disk stay open, and both are
+        // checked here. A `/`-qualified token (`/usr/bin/git`) is a filesystem
+        // path the user named, never a registry key. And `command git`
+        // explicitly asks past the in-process one — the `command` handler
+        // raises `native_cmds::force_external` around this call, exactly as
+        // `command cat` already escapes the coreutils shadow.
+        //
+        // The registry's contract is full argv (argv[0] = the name as
+        // invoked), which zvcs reads for its `git-<verb>` dashed form.
+        //
+        // Empty in the thin shell: one map lookup that always misses.
+        if !cmd.contains('/')
+            && !crate::native_cmds::is_forced_external()
+            && crate::native_cmds::is_enabled(cmd)
+        {
+            let full: Vec<String> = std::iter::once(cmd.to_string())
+                .chain(args.iter().cloned())
+                .collect();
+            if let Some(status) = crate::native_cmds::dispatch(cmd, &full) {
+                return Ok(status);
+            }
+        }
         // c:Src/exec.c:824-876 — when arg0 has no `/`, C zsh requires
         // a PATH search. With PATH unset, the search yields no hit
         // and C emits `command not found: <cmd>`. Rust's
