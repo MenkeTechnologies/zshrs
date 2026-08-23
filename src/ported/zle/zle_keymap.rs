@@ -1153,6 +1153,31 @@ pub fn bin_bindkey(
     // shared emptiness gate makes whichever path runs first do the one-time
     // init and every later caller skip it. (Lock released before the call —
     // default_bindings() re-locks keymapnamtab.)
+    //
+    // Reaching `bindkey` at all means zsh/zle is loaded: in C the builtin
+    // IS part of that module, so the autoload runs `setup_` — which sets
+    // `zle_load_state = 1` (c:Src/Zle/zle_main.c:2250) and registers the
+    // widgets (`init_thingies()`, c:2253) — BEFORE the user's binding is
+    // added. zshrs links ZLE in statically and uses this lazy init as the
+    // stand-in for that load, so it has to record the same state.
+    //
+    // It did not, and the second "load" then wiped the user's work: a
+    // shell started `+Z` leaves `zle_load_state` at 0 (init.rs:2001), so
+    // the lazy ZLE-load block in `inputline` (input.rs, the `use_zle`
+    // branch) still saw 0 at the first editor read and ran the
+    // DESTRUCTIVE `default_bindings()` again, throwing away every binding
+    // made since. Test/comptest is exactly that shape — `comptesteval`
+    // sources `setopt zle; ...; bindkey "^X" zle-finish` into a `-f +Z`
+    // shell — so by the time a test pressed `^X` it was back to the stock
+    // emacs prefix, the harness's finish widget never ran, and
+    // `zpty -r -m zsh log "*<WIDGET><finish>*<PROMPT>*"` blocked forever:
+    // X02zlevi, X03zlebindkey and X05zleincarg each hung on chunk 1 and
+    // took the rest of the file down with the harness shell.
+    if crate::ported::init::zle_load_state.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        crate::ported::zle::zle_thingy::init_thingies(); // c:zle_main.c:2253
+        crate::ported::init::zle_load_state
+            .store(1, std::sync::atomic::Ordering::SeqCst); // c:zle_main.c:2250
+    }
     if keymapnamtab()
         .lock()
         .map(|t| !t.contains_key("main"))
@@ -1467,7 +1492,8 @@ pub fn bin_bindkey_delall(
     // The previous Rust port mis-used `name` (the builtin name
     // "bindkey", not a keymap name) as a `openkeymap` lookup key and
     // returned 1 on the inevitable miss. C always succeeds.
-    default_bindings();
+    emptykeymapnamtab(); // c:898 `keymapnamtab->emptytable(keymapnamtab)`
+    default_bindings(); // c:899
     0
 }
 
