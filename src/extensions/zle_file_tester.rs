@@ -707,6 +707,17 @@ pub fn expand_one_no_cmdsubst(param: &mut String) -> bool {
     true
 }
 
+/// Public wrapper over `expand_tilde` for callers outside this module (the
+/// syntax highlighter's path check).
+///
+/// The QuietErrs wrapping is the WHOLE point: `filesubstr` reaches zsh's
+/// `zerr` for `~nosuchuser` (Src/subst.c:803), and an errflag raised while
+/// ZLE is repainting aborts the read loop — typing `ls ~root` left the line
+/// frozen at `ls ~` with no way to recover.
+pub fn expand_tilde_quiet(input: &mut String) {
+    expand_tilde(input)
+}
+
 /// fish:expand.rs `expand_tilde` — zsh analog `filesubstr` (subst.rs:1921, zsh Src/subst.c
 /// filesub): expands a leading tokenized `~`-prefix. A plain leading '~' (already-clean
 /// caller input, e.g. tests) is promoted to the Tilde token first, matching what the lexer

@@ -43,18 +43,17 @@ extern "C" {
     fn tigetnum(capname: *const libc::c_char) -> libc::c_int;
     fn tigetflag(capname: *const libc::c_char) -> libc::c_int;
     fn putp(s: *const libc::c_char) -> libc::c_int;
-    fn tparm(
-        s: *const libc::c_char,
-        p1: libc::c_long,
-        p2: libc::c_long,
-        p3: libc::c_long,
-        p4: libc::c_long,
-        p5: libc::c_long,
-        p6: libc::c_long,
-        p7: libc::c_long,
-        p8: libc::c_long,
-        p9: libc::c_long,
-    ) -> *const libc::c_char;
+    // c:Src/Modules/terminfo.c:125 — `tparm(t, pars[0], ..., pars[8])`.
+    // ncurses declares this VARIADIC: `<term.h>:753-754`
+    //   #if 1 /* NCURSES_TPARM_VARARGS */
+    //   extern NCURSES_EXPORT(char *) tparm (NCURSES_CONST char *, ...);
+    // Declaring it here with nine fixed `long` parameters made Rust emit
+    // a NON-variadic call. On aarch64-apple-darwin the two ABIs differ —
+    // fixed args go in x1..x8, variadic args go on the stack — so ncurses
+    // read garbage/zero for %p1 and `echoti setaf 2` emitted \e[30m
+    // instead of \e[32m (D01prompt.ztst tests 15/16). Match the C
+    // prototype exactly so rustc uses the variadic ABI.
+    fn tparm(s: *const libc::c_char, ...) -> *const libc::c_char;
 }
 
 /// Direct port of `bin_echoti(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/terminfo.c:64`.
