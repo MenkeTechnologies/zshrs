@@ -273,8 +273,14 @@ fn read_test_block(lines: &[&str], idx: &mut usize) -> Option<TestBlock> {
             stdout_pattern = true;
             append_redir_line(&mut expected_stdout, rest);
             *idx += 1;
-            // Continue reading > lines as part of same stdout block
+            // Continue reading > lines as part of same stdout block.
+            // A `#` comment between them is invisible to ztst.zsh (see the
+            // outer loop's comment arm), so skip it and keep reading.
             while *idx < lines.len() {
+                if lines[*idx].starts_with('#') {
+                    *idx += 1;
+                    continue;
+                }
                 let Some(rest) = lines[*idx].strip_prefix('>') else {
                     break;
                 };
@@ -289,6 +295,10 @@ fn read_test_block(lines: &[&str], idx: &mut usize) -> Option<TestBlock> {
             append_redir_line(&mut expected_stderr, rest);
             *idx += 1;
             while *idx < lines.len() {
+                if lines[*idx].starts_with('#') {
+                    *idx += 1;
+                    continue;
+                }
                 let Some(rest) = lines[*idx].strip_prefix('?') else {
                     break;
                 };
@@ -303,6 +313,17 @@ fn read_test_block(lines: &[&str], idx: &mut usize) -> Option<TestBlock> {
             *idx += 1;
         } else if line.starts_with("F:") {
             // Failure hint — skip
+            *idx += 1;
+        } else if line.starts_with('#') {
+            // ztst.zsh:211-216 — ZTST_getline skips comment lines at the
+            // READ level (`[[ $ZTST_curline == \#* ]] || return 0`), so a
+            // comment is invisible to the block parser no matter where it
+            // sits. This loop had no comment arm and broke out instead, so
+            // a `#` between the status line and its `>`/`?` lines truncated
+            // the expected output and the chunk failed with a mismatch even
+            // though the shell's output was correct (C01arith.ztst:57 and
+            // :74, Z02zmathfunc.ztst:6 — all three verified byte-identical
+            // to `zsh -f`).
             *idx += 1;
         } else {
             break;
