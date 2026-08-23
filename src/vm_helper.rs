@@ -358,6 +358,26 @@ pub struct SubshellSnapshot {
     /// in the parent silently used it. Same fork-copy reasoning as `opts` /
     /// `umask` / `aliases` above.
     pub special_globals: Vec<(String, String)>,
+    /// Parent's `zstyletab` at subshell entry (Src/Modules/zutil.c:106
+    /// `static HashTable zstyletab`). C forks for `(...)`, so a
+    /// `zstyle` set inside the subshell dies with the child. zshrs runs
+    /// subshells in-process, so a subshell-scoped `zstyle` leaked into
+    /// the parent AND — because `setstypat` (c:388-396) inserts a
+    /// same-weight pattern AFTER the already-present ones — a second
+    /// subshell re-defining the same (context, style) pair only
+    /// REPLACED the leaked entry instead of establishing a fresh
+    /// definition order. Same fork-copy reasoning as `aliases` /
+    /// `shfuncs` / `modules`.
+    pub zstyles: crate::ported::modules::zutil::style_table,
+    /// Flock fds (`Src/utils.c:2111` `addlockfd`) live at subshell
+    /// entry. `zsystem flock FILE` keeps the fd open for the life of
+    /// the shell; under C's forked `(...)` the child's fd — and hence
+    /// the lock — dies when the subshell exits. zshrs runs subshells
+    /// in-process, so the lock outlived the subshell and every later
+    /// `zsystem flock` on that file (from a real forked background job)
+    /// blocked forever. Recorded here so `subshell_end` can close the
+    /// fds the subshell itself opened.
+    pub flock_fds: Vec<i32>,
     /// `loops` / `breaks` / `contflag` at subshell entry
     /// (c:Src/loop.c, c:Src/builtin.c bin_break). C forks for `(...)`,
     /// so a `break` executed inside dies with the child and the parent's
@@ -1648,6 +1668,13 @@ impl ShellExecutor {
                 }
             }
         };
+        // c:Src/init.c:1277 — `inittyptab();  /* initialize the ztypes table */`
+        // runs inside setupvals BEFORE `createparamtable()` (c:Src/init.c:1286).
+        // This executor is the fusevm runtime's createparamtable entry point,
+        // and the seeding below reaches `isident()` (WORDCHARS, …), which is
+        // typtab-driven — with a zeroed typtab every name fails IIDENT and the
+        // seed aborts with "not an identifier: WORDCHARS".
+        crate::ported::utils::inittyptab(); // c:1277
         stamp_special_params(); // c:838-847 — create in C's order
         // Standard zsh scalar param defaults — direct port of
         // `createparamtable` (Src/params.c:817-988) + the `setupvals`
@@ -1853,12 +1880,15 @@ impl ShellExecutor {
                 return;
             }
             // Probe primary name first, then the C-side alias.
+            // An EMPTY exported value counts: C's env import (c:893-924)
+            // assigns whatever `environ` holds, empty string included, and
+            // it runs before the c:1196 defaults, so `export PS1=` yields
+            // an empty prompt rather than `%m%# `. Testing only for a
+            // NON-empty value skipped that case and re-seeded the default.
             for candidate in std::iter::once(name).chain(alias.into_iter()) {
                 if let Ok(env_val) = std::env::var(candidate) {
-                    if !env_val.is_empty() {
-                        setsparam(name, &env_val);
-                        return;
-                    }
+                    setsparam(name, &env_val);
+                    return;
                 }
             }
             setsparam(name, default);
@@ -2935,11 +2965,38 @@ impl ShellExecutor {
             .ok()
             .and_then(|g| g.get(crate::signals_h::SIGEXIT as usize).copied())
             .unwrap_or(0);
-        if (trapped & crate::ported::zsh_h::ZSIG_FUNC as i32) != 0 {
+        // c:Src/signals.c:1112-1119 — `if (intrap) { switch (sig) { case
+        // SIGEXIT: … return; } }`, and c:Src/signals.c:892 `if (!intrap &&
+        // …)` in endtrapscope. An EXIT trap never fires from inside another
+        // trap body. This site is a Rust-only end-of-pipeline hook (every
+        // `eval` / `source` / trap body runs its own pipeline and reaches
+        // here), and it dispatches TRAPEXIT by NAME without going through
+        // dotrap — so nothing consulted `intrap` and nothing cleared
+        // sigtrapped. Once `endtrapscope` started restoring a saved
+        // ZSIG_FUNC EXIT trap (the c:929-931 arm), the TRAPEXIT body's own
+        // nested pipeline re-entered this hook with the flag still set and
+        // recursed without bound:
+        //   f() { eval 'TRAPEXIT() { echo T; }' }; f
+        // The `intrap++ … intrap--` bracket is the same one the string-form
+        // branch above already carries (c:1123 / c:1236).
+        // c:Src/signals.c:744-752 — `sigtrapped[sig] |= (locallevel <<
+        // ZSIG_SHIFT)`: a trap installed inside a function carries its
+        // scope's locallevel, and `endtrapscope` (c:892-903/945-956) is what
+        // fires THAT one, at the scope exit. Only an untagged (locallevel 0)
+        // EXIT trap belongs to the shell-exit path this hook stands in for.
+        // Without the test, `f() { TRAPEXIT() { echo T } }; f` fired twice —
+        // once from f's endtrapscope and once more from the pipeline hook.
+        let exit_trap_locallevel = trapped >> crate::ported::zsh_h::ZSIG_SHIFT;
+        if (trapped & crate::ported::zsh_h::ZSIG_FUNC as i32) != 0
+            && exit_trap_locallevel == 0
+            && crate::ported::signals::intrap.load(Ordering::SeqCst) == 0
+        {
             // The TRAP<SIG> function is stored in shfunctab as
             // "TRAPEXIT"; calling it by name re-enters
             // execute_script_zsh_pipeline with a fresh VM context.
+            crate::ported::signals::intrap.fetch_add(1, Ordering::SeqCst); // c:1123
             let _ = self.execute_script_zsh_pipeline("TRAPEXIT");
+            crate::ported::signals::intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
         }
         // c:Src/init.c::zexit — `callhookfunc("zshexit", NULL, 1, NULL)`.
         // Fire the `zshexit` shfunc + walk `zshexit_functions` array.
@@ -3983,6 +4040,22 @@ impl ShellExecutor {
             .ok()
             .and_then(|t| t.get(display_name.as_str()).map(|s| s.node.flags))
             .unwrap_or(0);
+        // c:Src/exec.c:5978 — `if (sticky_emulation_differs(shfunc->sticky))`
+        // reads the STORED per-function sticky snapshot that
+        // `shfunc_set_sticky` (c:5402) stamped at definition time. The
+        // synthesized shfunc hardcoded `sticky: None`, so a function
+        // defined under `emulate sh -c '...'` never re-entered its
+        // emulation when called (B07emulate.ztst:6,7,8,12,13,14).
+        // Carry it over from shfunctab like `synth_flags` above.
+        let synth_sticky = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(display_name.as_str())
+                    .and_then(|s| s.sticky.as_deref().map(|b| {
+                        crate::ported::exec::sticky_emulation_dup(b, 0)
+                    }))
+            });
         let mut synth_shf = crate::ported::zsh_h::shfunc {
             node: crate::ported::zsh_h::hashnode {
                 next: None,
@@ -3993,7 +4066,7 @@ impl ShellExecutor {
             lineno: synth_lineno,
             funcdef: None,
             redir: None,
-            sticky: None,
+            sticky: synth_sticky,
             body: None,
         };
         // doshargs: C convention — argv[0] = function name (for
@@ -5809,6 +5882,28 @@ impl ShellExecutor {
             .unwrap_or(false);
         let nullglob = opt_state_get("nullglob").unwrap_or(false) || per_glob_nullglob;
         if nullglob {
+            // c:Src/glob.c:1888-1894 —
+            //   `else if (in_expandredir) {`
+            //     `/* if completing for redirection, we can't remove the`
+            //     `   pattern even if NULL_GLOB is in effect */`
+            //     `zerr("redirection failed (no match): %s", ostr);`
+            //     `zfree(matchbuf, 0);`
+            //     `restore_globstate(saved);`
+            //     `return;`
+            //   `}`
+            // Reached ONLY when gf_nullglob is set (the `else if` chain at
+            // c:1873 owns every other no-match case), which is exactly the
+            // `> file(N)` shape: dropping the word would leave the
+            // redirection with no target at all, so `echo > nope(N)` failed
+            // with an empty filename in `no such file or directory:`.
+            if crate::ported::glob::IN_EXPANDREDIR.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+                zerr(&format!(
+                    "redirection failed (no match): {}",
+                    crate::ported::lex::untokenize(pattern)
+                )); // c:1891
+                self.current_command_glob_failed.set(true);
+                return Vec::new(); // c:1894
+            }
             return Vec::new();
         }
         let nomatch = opt_state_get("nomatch").unwrap_or(true);

@@ -690,11 +690,20 @@ impl ZshCompiler {
         // matching C zsh's `execlist` save/restore at
         // c:Src/exec.c:28 (`oldlineno = lineno`) and c:292
         // (`lineno = oldlineno`).
-        self.current_sublist_line = rel_line as i64;
-        self.builder.emit(Op::LoadInt(rel_line as i64), 0);
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
-        self.builder.emit(Op::Pop, 0);
+        // c:Src/exec.c:1471-1473 — `if (lnp1) lineno = lnp1 - 1;` (and the
+        // same `WC_PIPE_LINENO(pcode)` guard at c:2056). A recorded line of
+        // 0 means "this construct carries no line number", and C then
+        // leaves `lineno` at whatever the caller set. The braceless
+        // short-function body (`f() cmd`, c:Src/parse.c:2112) is the one
+        // construct that deliberately stores 0, so its body inherits the
+        // CALL SITE's line — pinned by E02xtrace's `functions -t` chunks.
+        if raw_line != 0 {
+            self.current_sublist_line = rel_line as i64;
+            self.builder.emit(Op::LoadInt(rel_line as i64), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
         // c:Src/exec.c:1455 — reset DONETRAP=0 at every sublist start
         // so the next sublist's ERREXIT_CHECK fires the ZERR trap
         // on its first non-zero command. The "already fired" state
@@ -721,9 +730,35 @@ impl ZshCompiler {
         let cmd_text = render_list_for_debug(list);
         let txt_const = self.builder.add_constant(Value::str(&cmd_text));
         self.builder.emit(Op::LoadConst(txt_const), 0);
+        // mode 0 = c:1476's pre-sublist DEBUG_BEFORE_CMD arm.
+        self.builder.emit(Op::LoadInt(0), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 1), 0);
-        self.builder.emit(Op::Pop, 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 2), 0);
+        // c:Src/exec.c:1511 — `if (donedebug != 2) execsimple(state);` and
+        // c:1519-1529 (compound form). A DEBUG trap that turned ERREXIT on
+        // makes C SKIP the statement it fired in front of; a trap that ran
+        // `return N` likewise never reaches the command, because execlist's
+        // loop condition (c:1443) tests retflag. BUILTIN_DEBUG_TRAP now
+        // reports either case as Int(1); fall into the skip block when it
+        // does, which routes a forced return out of the enclosing scope
+        // before joining `noexec_skip`'s landing past the statement body.
+        let debug_run = self.builder.emit(Op::JumpIfFalse(0), 0);
+        // Skip path. c:1443 — a `return N` from the trap leaves retflag set
+        // and C's list loop abandons the rest of the list; route to the same
+        // scope-exit patch list `emit_errexit_check` uses.
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_RETFLAG_CHECK, 0),
+            0,
+        );
+        let debug_no_ret = self.builder.emit(Op::JumpIfFalse(0), 0);
+        self.emit_cmd_stack_drain();
+        let j = self.builder.emit(Op::Jump(0), 0);
+        self.return_patches.push(j);
+        let debug_no_ret_at = self.builder.current_pos();
+        self.builder.patch_jump(debug_no_ret, debug_no_ret_at);
+        let debug_skip = self.builder.emit(Op::Jump(0), 0);
+        let debug_run_at = self.builder.current_pos();
+        self.builder.patch_jump(debug_run, debug_run_at);
         // c:Src/exec.c:1390 — `set -n` (noexec option): parse but
         // don't execute. The check runs at the start of each
         // top-level statement; when noexec is set, jump past the
@@ -770,9 +805,29 @@ impl ZshCompiler {
         } else {
             self.compile_sublist(&list.sublist);
         }
+        // c:Src/exec.c:1628-1644 — `sublist_done:` fires the DEBUG trap
+        // AFTER the sublist when DEBUG_BEFORE_CMD is NOT set (the default).
+        // Reached only on the normal path: a statement skipped by the
+        // pre-sublist arm has C's `donedebug` non-zero, which gates this
+        // block off (c:1628), and the noexec skip lands past it too. Mode 1
+        // makes BUILTIN_DEBUG_TRAP take that arm; it returns Int(1) only
+        // when the trap forced a return (c:1639 `if (!retflag) …`).
+        let after_txt = self.builder.add_constant(Value::str(""));
+        self.builder.emit(Op::LoadConst(after_txt), 0);
+        self.builder.emit(Op::LoadInt(1), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 2), 0);
+        let post_ok = self.builder.emit(Op::JumpIfFalse(0), 0);
+        self.emit_cmd_stack_drain();
+        let jp = self.builder.emit(Op::Jump(0), 0);
+        self.return_patches.push(jp);
+        let post_ok_at = self.builder.current_pos();
+        self.builder.patch_jump(post_ok, post_ok_at);
         // Patch the noexec skip to land here (past the statement body).
         let after = self.builder.current_pos();
         self.builder.patch_jump(noexec_skip, after);
+        // Same landing for the DEBUG-trap skip path (c:1511 / c:1519-1529).
+        self.builder.patch_jump(debug_skip, after);
         // c:Src/exec.c:1370 — execlist's own loop condition,
         // `while (wc_code(code) == WC_LIST && !breaks && !retflag &&
         // !errflag)`. A `break`/`continue` that ran in a called
@@ -781,6 +836,21 @@ impl ZshCompiler {
         // an `&&`/`||` chain is one sublist and is not interrupted
         // mid-chain.
         self.emit_break_escape_check();
+    }
+
+    /// Body-relative `$LINENO` for a raw parser line, using the same
+    /// `lineno_offset` / `lineno_addend` / function-body rules as
+    /// [`Self::compile_list`]'s SET_LINENO emit. Factored out so the
+    /// per-pipeline update in [`Self::compile_sublist`] (c:Src/exec.c:2056)
+    /// computes the identical value.
+    fn rel_lineno(&self, raw_line: u64) -> i64 {
+        let v = if self.is_function_body {
+            let off = self.lineno_offset.max(1);
+            raw_line.saturating_sub(off) + self.lineno_addend
+        } else {
+            raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend
+        };
+        v as i64
     }
 
     fn compile_sublist(&mut self, sublist: &ZshSublist) {
@@ -883,6 +953,25 @@ impl ZshCompiler {
                 SublistOp::And => self.builder.emit(Op::JumpIfFalse(0), 0),
                 SublistOp::Or => self.builder.emit(Op::JumpIfTrue(0), 0),
             };
+            // c:Src/exec.c:2055-2057 `execpline2` —
+            //   /* In evaluated traps, don't modify the line number. */
+            //   if (!IN_EVAL_TRAP() && !ineval && WC_PIPE_LINENO(pcode))
+            //       lineno = WC_PIPE_LINENO(pcode) - 1;
+            // Every PIPELINE carries its own line number, so each element
+            // of an `&&` / `||` chain re-anchors `lineno` before it runs
+            // ("The line number is updated for individual pipelines" —
+            // c:1459). zshrs emitted SET_LINENO once per LIST, so every
+            // continuation of a multi-line chain reported the FIRST line:
+            // `zsystem flock … ||` on lines 2-6 all warned `(eval):2:`.
+            // c:2056 — `… && WC_PIPE_LINENO(pcode)`: a recorded 0 means the
+            // construct carries no line number and `lineno` is left alone.
+            if pipes[i + 1].lineno != 0 {
+                self.builder
+                    .emit(Op::LoadInt(self.rel_lineno(pipes[i + 1].lineno)), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
+                self.builder.emit(Op::Pop, 0);
+            }
             self.compile_pipe(pipes[i + 1]);
             // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
             // (WC_SUBLIST_OR) re-read WC_SUBLIST_SIMPLE per chain
@@ -1477,11 +1566,23 @@ impl ZshCompiler {
                     // for the handler to forward to printtime as job_name.
                     // Bug #66 in docs/BUGS.md.
                     let desc = render_sublist_for_debug(sublist);
+                    // c:Src/exec.c:3690 — `is_cursh = (is_builtin ||
+                    // is_shfunc || nullexec || type >= WC_CURSH);`. When the
+                    // timed body runs in the CURRENT shell, execcmd_exec's
+                    // tail (c:4443-4444 `if ((is_cursh || do_exec) && (how &
+                    // Z_TIMED)) shelltime(&shti,&chti,&then,1);`) prints the
+                    // two-line shell/children report; otherwise the forked
+                    // job's own printtime line is what gets emitted. Classify
+                    // the sublist here and hand the verdict to the handler.
+                    let (cursh_hint, cursh_name) = time_cursh_hint(sublist);
+                    let name_const = self.builder.add_constant(Value::str(&cursh_name));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadInt(cursh_hint), 0);
                     let desc_const = self.builder.add_constant(Value::str(&desc));
                     self.builder.emit(Op::LoadConst(desc_const), 0);
                     self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 2),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 4),
                         0,
                     );
                     self.builder.emit(Op::SetStatus, 0);
@@ -1630,10 +1731,28 @@ impl ZshCompiler {
                 // c:Src/loop.c:760 — `cmdpush(CS_ALWAYS);` wraps the
                 // always arm so `%_` xtrace renders `always`.
                 self.emit_cmd_push(crate::ported::zsh_h::CS_ALWAYS as u8);
+                // c:Src/loop.c:777 + :801 — `execlist(state, 1, 0);` … then
+                // `return endval;`. exectry runs the always-list as a plain
+                // recursive execlist and ALWAYS falls through to
+                // `return endval` (the TRY-list's status, captured at c:755),
+                // even when the always-list itself did a `return` — that only
+                // sets `retflag`, it does not skip exectry's own return.
+                // zshrs compiles `return` as a jump to the enclosing
+                // function's exit, which SKIPPED the status restore below, so
+                // `() { { return 2 } always { return 3 } }` exited 3 instead
+                // of 2 (A01grammar.ztst:723). Capture the always-arm's own
+                // return jumps and land them on the restore instead.
+                let saved_return_always = std::mem::take(&mut self.return_patches);
                 self.compile_program(&t.always);
+                let always_returns = std::mem::take(&mut self.return_patches);
+                self.return_patches = saved_return_always;
                 self.emit_cmd_pop();
                 // Whole-construct status: preserve the try block's
                 // status when the always arm exited cleanly.
+                let restore_entry = self.builder.current_pos();
+                for p in &always_returns {
+                    self.builder.patch_jump(*p, restore_entry);
+                }
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_RESTORE_TRY_BLOCK_STATUS, 0),
                     0,
@@ -1660,7 +1779,7 @@ impl ZshCompiler {
                 // semantic. Order matters: continue is distinguished
                 // from break by CONTFLAG (both set BREAKS via
                 // SET_CONTINUE), so check continue BEFORE break.
-                if !inner_returns.is_empty() {
+                if !inner_returns.is_empty() || !always_returns.is_empty() {
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_RETFLAG_CHECK, 0),
                         0,
@@ -5388,7 +5507,26 @@ impl ZshCompiler {
         // (`x${ f; }y`, which both references accept) still takes the
         // generic paramsubst route and still errors — the segment splitter
         // below would have to learn the form, which is a separate change.
-        if !has_bnull && crate::dash_mode::korn_mode() {
+        // zsh 5.10 added the SAME two forms natively — "nofork command
+        // substitution" — plus a third that names the result variable:
+        //
+        //   c:Src/subst.c:1913-1922 (paramsubst) —
+        //     "Handling for nofork command substitution e.g. ${|cmd;} …
+        //      The command string is extracted and executed, and the
+        //      substitution assigned."
+        //   c:Src/subst.c:1924 — `if (inchar == '|' || inchar == Bar ||
+        //     inblank(inchar))` picks the two bare forms;
+        //   c:Src/subst.c:1930 — `else if (inchar == '{' || inchar ==
+        //     Inbrace)` picks `${{VAR} cmd }`.
+        //
+        // So the gate is no longer korn-only: it applies in every mode a
+        // `${` + blank / `|` / `{VAR}` word can legally appear in. The
+        // per-form semantics differ between zsh and ksh/mksh (trailing
+        // newline trimming, chiefly), and those differences are resolved at
+        // RUNTIME inside BUILTIN_KSH_FUNSUB — `emulate -L ksh` can change
+        // the answer after this word was compiled (D10nofork.ztst
+        // "newline removal in ${ ... }, emulation mode, shwordsplit").
+        if !has_bnull {
             let dq = word_is_single_dq_span(s);
             // The BODY is a fresh command line, so it must keep its own
             // quoting: `untokenize` folds the lexer's escape markers away
@@ -5407,21 +5545,26 @@ impl ZshCompiler {
                     .and_then(|t| t.strip_suffix('"'))
                     .unwrap_or(t)
             };
-            if let Some((body, is_valsub)) = ksh_funsub_body(body_src) {
+            if let Some((body, rplyvar, kind)) = ksh_funsub_body(body_src) {
                 let body_idx = self.builder.add_constant(Value::str(body));
                 self.builder.emit(Op::LoadConst(body_idx), 0);
-                self.builder.emit(Op::LoadInt(if is_valsub { 1 } else { 0 }), 0);
+                let var_idx = self.builder.add_constant(Value::str(rplyvar));
+                self.builder.emit(Op::LoadConst(var_idx), 0);
+                self.builder.emit(Op::LoadInt(kind), 0);
+                // `qt` — c:Src/subst.c:1908 `int trim = (!EMULATION(
+                // EMULATE_ZSH)) ? 2 : !qt;`. Whether the word was inside
+                // double quotes is a LEXICAL fact, so it is settled here;
+                // the emulation half is not, so the builtin computes `trim`.
+                self.builder.emit(Op::LoadInt(if dq { 1 } else { 0 }), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_KSH_FUNSUB, 2), 0);
-                // Unquoted, the result is an ordinary expansion and is
-                // IFS-word-split: `IFS=-; set -- ${ print -n "a-b"; }` gives
-                // 2 positionals in both references. Quoted, it is one word.
-                if !dq {
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 1),
-                        0,
-                    );
-                }
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_KSH_FUNSUB, 4), 0);
+                // Unquoted, the result is an ordinary expansion. Under
+                // ksh/mksh (and zsh's SH_WORD_SPLIT) that means IFS word
+                // splitting; under plain zsh it does NOT
+                // (D10nofork.ztst "test word splitting on result" pins both
+                // halves in one chunk). The option is read at RUNTIME, so
+                // the split now happens inside BUILTIN_KSH_FUNSUB rather
+                // than through an unconditional BUILTIN_WORD_SPLIT here.
                 return;
             }
         }
@@ -9363,9 +9506,58 @@ impl ZshCompiler {
                 } else {
                     raw_name.clone()
                 };
+                // c:Src/exec.c:5495 — the anonymous function is invoked
+                // through `execshfunc(shf, args)`, whose own xtrace block
+                // (c:5615-5626) does
+                //     printprompt4();
+                //     for (lptr = firstnode(args); …)
+                //         quotedzputs((char *)getdata(lptr), xtrerr);
+                // with `args[0]` being the function's display name
+                // `(anon)` (ANONYMOUS_FUNCTION_NAME, c:Src/zsh.h). zshrs
+                // dispatches the anon body through `Op::CallFunction` on
+                // its generated `_zshrs_anon_N` name and emitted no trace
+                // line at all, so a traced function calling an anonymous
+                // one showed only the innermost command:
+                // `fn(){ (){ (){ true } } }; functions -T fn; fn` printed
+                // just `+(anon):0> true`, missing the two `'(anon)'` call
+                // lines zsh prints. Reuse the same peek-args/pop-prefix
+                // XTRACE_ARGS contract as the simple-command path
+                // (line ~2904); the prefix is pre-quoted here because C
+                // runs argv[0] through quotedzputs too.
+                let anon_prefix =
+                    crate::ported::utils::quotedzputs(crate::ported::exec::ANONYMOUS_FUNCTION_NAME);
+                let anon_prefix_const = self.builder.add_constant(Value::str(anon_prefix.as_str()));
+                self.builder.emit(Op::LoadConst(anon_prefix_const), 0);
+                let trace_argc = (args.len() + 1).min(u8::MAX as usize) as u8;
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ARGS, trace_argc),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
                 let name_idx = self.builder.add_name(&cleaned);
                 self.builder.emit(Op::CallFunction(name_idx, argc), 0);
                 self.builder.emit(Op::SetStatus, 0);
+                // c:Src/exec.c:5495-5506 — right after `execshfunc(shf,
+                // args); ret = lastval;` execfuncdef runs its OWN
+                // PRINT_EXIT_VALUE report for the anonymous function:
+                //     if (isset(PRINTEXITVALUE) && isset(SHINSTDIN) && lastval)
+                //         fprintf(stderr, "zsh: exit %lld\n", lastval);
+                // doshfunc zeroes opts[PRINTEXITVALUE] for the BODY
+                // (c:6037) and restores it at c:6158, so the report
+                // fires for the call itself. The compiler never emitted
+                // it, so `zsh -f <<<'setopt printexitvalue; () { false; }'`
+                // printed nothing (E01options.ztst:60). The `1` argument
+                // selects the c:5498 variant, which has no `!subsh` term.
+                let anon_flag = self.builder.add_constant(Value::Int(1));
+                self.builder.emit(Op::LoadConst(anon_flag), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PRINT_EXIT_VALUE, 1),
+                    0,
+                );
+                // Pop the builtin's Status(0) WITHOUT SetStatus — the
+                // report must not clobber the anon call's `$?`
+                // (c:5497 `ret = lastval;` is read back at c:5510).
+                self.builder.emit(Op::Pop, 0);
             }
         }
     }
@@ -9493,13 +9685,82 @@ impl ZshCompiler {
         // surfaces verbatim. The latter (used by other operand
         // contexts) wraps in `'…'` which would render
         // `[[ x = a* ]]` as `[[ x = 'a*' ]]` — wrong.
+        //
+        // c:Src/cond.c:217-219 —
+        //   char *rt = dupstring(ecrawstr(state->prog, state->pc, NULL));
+        //   cond_subst(&rt, !fromtest);
+        //   quote_tokenized_output(rt, xtrerr);
+        // `ecrawstr` hands back the TOKENIZED word (quotes already
+        // consumed by the lexer, an active `*` held as the `Star`
+        // token), and `cond_subst` expands parameters WITHOUT
+        // untokenizing. Routing through `compile_word_str` instead
+        // untokenized first, so an active `Star` arrived as a plain
+        // `*` byte and `quote_tokenized_output` escaped it:
+        // `[[ 'f o' == 'f x'* ]]` traced as `f\ x\*` where zsh
+        // prints `f\ x*`. Mirror the case-arm path above: expand only
+        // the substitution segments (EXPAND_TEXT mode 4 = singsub) and
+        // feed the literal segments through still tokenized.
         let push_word_pattern = |s: &mut Self, word: &str| {
-            s.compile_word_str(word);
-            s.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT, 1),
-                0,
-            );
-            s.builder.emit(Op::Concat, 0);
+            let has_expand = word.contains('$')
+                || word.contains('`')
+                || word.contains('\u{85}')
+                || word.contains('\u{8c}')
+                || word.contains('\u{99}');
+            if has_expand {
+                let segments = split_pattern_for_glob_subst(word);
+                let mut first = true;
+                for seg in segments.iter() {
+                    match seg {
+                        PatSeg::Subst(text) => {
+                            let pc = s.builder.add_constant(Value::str(text.as_str()));
+                            s.builder.emit(Op::LoadConst(pc), 0);
+                            s.builder.emit(Op::LoadInt(4), 0);
+                            s.builder
+                                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0), 0);
+                        }
+                        PatSeg::Literal(text) => {
+                            // c:Src/cond.c:205-206 — `cond_subst(&right, …)`
+                            // routes a token-bearing operand through
+                            // `singsub` (c:53), i.e. `prefork(…,
+                            // PREFORK_SINGLE)`, whose `remnulargs` drops the
+                            // Snull/Dnull/Bnull quote markers the lexer left
+                            // in the word. Without that strip
+                            // `quote_tokenized_output` mapped them back to
+                            // `'`/`"` via ztokens, so `[[ 'f o' == 'f x'* ]]`
+                            // traced as `'f\ x'*` instead of zsh's `f\ x*`.
+                            let mut lit = text.to_string();
+                            crate::ported::glob::remnulargs(&mut lit);
+                            let pc = s.builder.add_constant(Value::str(lit.as_str()));
+                            s.builder.emit(Op::LoadConst(pc), 0);
+                        }
+                    }
+                    s.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT, 1),
+                        0,
+                    );
+                    s.builder.emit(Op::Concat, 0);
+                    first = false;
+                }
+                if first {
+                    // Empty word — nothing emitted, keep the buffer balanced.
+                    let pc = s.builder.add_constant(Value::str(""));
+                    s.builder.emit(Op::LoadConst(pc), 0);
+                    s.builder.emit(Op::Concat, 0);
+                }
+            } else {
+                // c:Src/cond.c:205-206 / c:53 — see the Literal arm above:
+                // strip the lexer's Snull/Dnull quote markers the way
+                // `singsub`'s `remnulargs` does before rendering.
+                let mut lit = word.to_string();
+                crate::ported::glob::remnulargs(&mut lit);
+                let pc = s.builder.add_constant(Value::str(lit.as_str()));
+                s.builder.emit(Op::LoadConst(pc), 0);
+                s.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT, 1),
+                    0,
+                );
+                s.builder.emit(Op::Concat, 0);
+            }
         };
         match c {
             ZshCond::Not(inner) => {
@@ -9755,14 +10016,15 @@ impl ZshCompiler {
                     // wrapping in DQ markers makes compile_word_str's
                     // markup-strip skip the Snull pair and the regex
                     // engine sees the meta bytes verbatim.
-                    let already_sq_wrapped =
-                        right.starts_with('\u{9d}') && right.ends_with('\u{9d}');
-                    let dq_wrapped = if right.starts_with('\u{9e}') || already_sq_wrapped {
-                        right.clone()
-                    } else {
-                        format!("\u{9e}{}\u{9e}", right)
-                    };
-                    self.compile_word_str(&dq_wrapped);
+                    // c:Src/cond.c:525-535 `cond_str` — the regex operand is
+                    // `singsub`'d + `untokenize`d, never globbed, so the
+                    // suppression must hold for EVERY shape of the word.
+                    // Testing only `starts_with(Dnull)` mistook a word that
+                    // merely BEGINS with a quoted span (`"x"*y`,
+                    // `[\"\']*"$RE"[\"\']*…`) for a fully quoted one and left
+                    // the trailing `*` to filename-generation:
+                    // `[[ $L =~ "x"*y ]]` died with `no matches found: x*y`.
+                    self.compile_regex_operand(right);
                 } else if is_pattern_op {
                     // RHS handling for `==` / `=` / `!=` patterns:
                     // - If it contains a variable / cmd-subst (`$`, `` ` ``)
@@ -9964,13 +10226,8 @@ impl ZshCompiler {
                 // result as an ERE, not a path) — unless the RHS is
                 // already single-quoted (`[[ x =~ '(p)' ]]` is a
                 // literal regex) or already DQ-wrapped.
-                let already_sq = regex.starts_with('\u{9d}') && regex.ends_with('\u{9d}');
-                let dq_wrapped = if regex.starts_with('\u{9e}') || already_sq {
-                    regex.clone()
-                } else {
-                    format!("\u{9e}{}\u{9e}", regex)
-                };
-                self.compile_word_str(&dq_wrapped);
+                // c:Src/cond.c:525-535 `cond_str` — see compile_regex_operand.
+                self.compile_regex_operand(regex);
                 self.builder.emit(Op::RegexMatch, 0);
             }
             ZshCond::ModCond(op, args) => {
@@ -10201,6 +10458,41 @@ impl ZshCompiler {
                 || w.contains('\u{86}')
                 || w.contains('\u{91}')
                 || w.contains('\u{8f}'))
+    }
+
+    /// Compile the `=~` RHS (the ERE) with substitution ON and filename
+    /// generation / brace expansion OFF.
+    ///
+    /// c:Src/cond.c:113-118 — `COND_REGEX` is rewritten to `COND_MODI` and
+    /// dispatched to `zsh/regex`'s `zcond_regex_match`, which reads the
+    /// operand via `cond_str(a,1,0)` (c:Src/Modules/regex.c:63). `cond_str`
+    /// (c:Src/cond.c:525-535) is `singsub` + `untokenize` — parameter /
+    /// command substitution happens, filename generation never does.
+    ///
+    /// Three shapes, all ending in the same "expand as if inside DQ" state:
+    ///   * the word is ALREADY one quoted span (`'…'` / `"…"`) — compile it
+    ///     as-is; wrapping it again would hide the Snull/Dnull pair from
+    ///     compile_word_str's markup strip.
+    ///   * the word carries NO quote markers — wrap it in a Dnull pair, the
+    ///     long-standing spelling here.
+    ///   * MIXED (`"x"*y`, `[\"\']*"$RE"…`) — a second Dnull pair would NEST,
+    ///     and `word_is_single_dq_span` then reports false so the wrap is
+    ///     inert and the unquoted `*` reaches filename generation. Bump
+    ///     `dq_context_depth` instead: every consumer spells "in DQ" as
+    ///     `dq_context_depth > 0 || word_is_single_dq_span(s)`.
+    fn compile_regex_operand(&mut self, w: &str) {
+        let pure_span = |q: char| -> bool {
+            w.starts_with(q) && w.ends_with(q) && w.chars().filter(|&c| c == q).count() == 2
+        };
+        if pure_span('\u{9e}') || pure_span('\u{9d}') {
+            self.compile_word_str(w);
+        } else if w.contains('\u{9e}') || w.contains('\u{9d}') {
+            self.dq_context_depth += 1;
+            self.compile_word_str(w);
+            self.dq_context_depth -= 1;
+        } else {
+            self.compile_word_str(&format!("\u{9e}{}\u{9e}", w));
+        }
     }
 
     fn emit_binary_test(&mut self, op: &str) {
@@ -10979,6 +11271,51 @@ fn render_list_for_debug(list: &crate::parse::ZshList) -> String {
     render_sublist_for_debug(&list.sublist)
 }
 
+/// Classify a `time`-d sublist as "runs in the current shell" (C's
+/// `is_cursh`) or "forks a job".
+///
+/// Port of the decision at `Src/exec.c:3690`:
+/// ```c
+/// /* This is nonzero if the command is a current shell procedure? */
+/// is_cursh = (is_builtin || is_shfunc || nullexec || type >= WC_CURSH);
+/// ```
+/// `WC_SUBSH` is 8 and `WC_CURSH` is 9 (`Src/zsh.h:895-896`), so `( … )`
+/// falls on the FORKED side while `{ … }`, `for`, `while`, `if`, `case`,
+/// `repeat`, `select` and friends are all current-shell.
+///
+/// Returns `(hint, name)` where hint is
+///   * `1` — current shell for sure (compound, or an assignment/redirection
+///     with no command word, which is C's `nullexec`/`varspc` path),
+///   * `0` — forked job for sure (`( … )`, or a multi-stage pipeline),
+///   * `2` — depends on whether `name` resolves to a builtin or a shell
+///     function, which is only knowable at run time.
+fn time_cursh_hint(sublist: &crate::parse::ZshSublist) -> (i64, String) {
+    // A `&&`/`||` chain or a real pipeline is more than one execcmd_exec
+    // call; C reports per-stage. Treat it as the forked case (the shape the
+    // pre-existing handler already covered).
+    if sublist.next.is_some() || sublist.pipe.next.is_some() {
+        return (0, String::new());
+    }
+    let mut cmd = &sublist.pipe.cmd;
+    // c:Src/exec.c — trailing redirections don't change the command type.
+    while let ZshCommand::Redirected(inner, _) = cmd {
+        cmd = inner;
+    }
+    match cmd {
+        // WC_SUBSH (8) < WC_CURSH (9) — a subshell forks.
+        ZshCommand::Subsh(_) => (0, String::new()),
+        ZshCommand::Simple(s) => match s.words.first() {
+            // c:3403-3460 — assignments / redirections with no command word
+            // return through the `nullexec` / `varspc` arms, all of which
+            // reach the `how & Z_TIMED` shelltime call.
+            None => (1, String::new()),
+            Some(w) => (2, w.clone()),
+        },
+        // Everything else is a WC_* type at or above WC_CURSH.
+        _ => (1, String::new()),
+    }
+}
+
 fn render_sublist_for_debug(sublist: &crate::parse::ZshSublist) -> String {
     let head = render_pipe_for_debug(&sublist.pipe);
     let mut out = if sublist.flags.not {
@@ -11011,12 +11348,47 @@ fn render_pipe_for_debug(pipe: &crate::parse::ZshPipe) -> String {
 fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
     use crate::parse::ZshCommand;
     match cmd {
-        ZshCommand::Simple(s) => s
-            .words
-            .iter()
-            .map(|w| crate::lex::untokenize_preserve_quotes(w))
-            .collect::<Vec<_>>()
-            .join(" "),
+        // c:Src/text.c::gettext2 WC_ASSIGN — each assignment is emitted
+        // `name=value` (or `name=(v1 v2)` for an array) followed by a
+        // SPACE, before the command words. With no command word the
+        // trailing space stays, which is why zsh's `$ZSH_DEBUG_CMD` for a
+        // bare `x=y` is `x=y ` (C05debug:7). Rendering only `s.words`
+        // dropped assignments entirely — a bare assignment came out as the
+        // empty string, and `FOO=1 cmd` lost its prefix.
+        ZshCommand::Simple(s) => {
+            let mut out = String::new();
+            for a in &s.assigns {
+                out.push_str(&a.name);
+                if a.append {
+                    out.push('+'); // c:Src/text.c — `+=` append form
+                }
+                out.push('=');
+                match &a.value {
+                    crate::parse::ZshAssignValue::Scalar(v) => {
+                        out.push_str(&crate::lex::untokenize_preserve_quotes(v));
+                    }
+                    crate::parse::ZshAssignValue::Array(items) => {
+                        out.push('(');
+                        for (i, it) in items.iter().enumerate() {
+                            if i > 0 {
+                                out.push(' ');
+                            }
+                            out.push_str(&crate::lex::untokenize_preserve_quotes(it));
+                        }
+                        out.push(')');
+                    }
+                }
+                out.push(' ');
+            }
+            out.push_str(
+                &s.words
+                    .iter()
+                    .map(|w| crate::lex::untokenize_preserve_quotes(w))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+            out
+        }
         // c:Src/text.c::gettext2 SUBSH/CURSH branches — `time (cmd)`
         // and `time { cmd }` printtime via `printjob → dumptime` read
         // p->text built from the AST's full reconstruction (with the
@@ -11033,7 +11405,21 @@ fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
         ZshCommand::While(_) => "while ...".to_string(),
         ZshCommand::Until(_) => "until ...".to_string(),
         ZshCommand::Repeat(_) => "repeat ...".to_string(),
-        ZshCommand::FuncDef(_) => "funcdef ...".to_string(),
+        // c:Src/text.c::gettext2 WC_FUNCDEF — `name () {` then one
+        // TAB-indented line per body list, then `}`. This is the same shape
+        // `functions name` prints, and it is what `$ZSH_DEBUG_CMD` carries
+        // for a function definition (C05debug:7). The old `"funcdef ..."`
+        // placeholder lost the whole definition.
+        ZshCommand::FuncDef(fd) => {
+            let mut out = format!("{} () {{\n", fd.names.join(" "));
+            for list in &fd.body.lists {
+                out.push('\t');
+                out.push_str(&render_sublist_for_debug(&list.sublist));
+                out.push('\n');
+            }
+            out.push('}');
+            out
+        }
         _ => String::new(),
     }
 }
@@ -11528,16 +11914,46 @@ impl ZshCompiler {
 /// The closing `}` must be the word's last character and brace-balanced
 /// with everything between, so `${ f; }` and `${ if x; then y; fi; }` are
 /// bodies while `${ f; }x` is not a whole-word substitution.
-fn ksh_funsub_body(t: &str) -> Option<(String, bool)> {
+fn ksh_funsub_body(t: &str) -> Option<(String, String, i64)> {
     let rest = t.strip_prefix("${")?;
     let rest = rest.strip_suffix('}')?;
-    let mut it = rest.chars();
-    let first = it.next()?;
-    let is_valsub = first == '|';
-    if !is_valsub && !first.is_whitespace() {
+    let first = rest.chars().next()?;
+    // c:Src/subst.c:1924/1930 — the character right after `${` selects the
+    // form: `|` (or the Bar token) → the REPLY form, a blank → the
+    // stdout-capture form, `{` → the named-variable form `${{VAR} cmd }`.
+    let (body, rplyvar, kind): (&str, String, i64) = if first == '|' {
+        // c:2019-2021 — `rplypm = createparam("REPLY", PM_LOCAL|PM_UNSET|
+        // PM_HIDE)`: the value is $REPLY and REPLY is LOCAL to the body.
+        (&rest[1..], "REPLY".to_string(), 1)
+    } else if first == '{' {
+        // c:1930-1962 — `${{VAR} cmd }`: VAR names the result parameter and
+        // is NOT localised (c:2032 only errors for the two bare forms, so
+        // `rplypm` stays NULL here and assignments inside are global).
+        let after = &rest[1..];
+        let close = after.find('}')?;
+        let name = &after[..close];
+        // c:1937-1938 — `if ((outbracep = itype_end(s+1, INAMESPC, 0)))`:
+        // the text between the inner braces must be a parameter name.
+        if name.is_empty()
+            || !name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return None;
+        }
+        let tail = &after[close + 1..];
+        // c:1949-1953 — "Require space to avoid ${{var}} typo for
+        // ${${var}}": a blank must follow the inner `}`.
+        if !tail.starts_with(|c: char| c == ' ' || c == '\t' || c == '\n') {
+            return None;
+        }
+        (tail, name.to_string(), 2)
+    } else if first.is_whitespace() {
+        // c:2025-2029 — the stdout-capture form; C names its scope
+        // parameter `.zsh.cmdsubst` and reads the body's stdout back.
+        (rest, String::new(), 0)
+    } else {
         return None;
-    }
-    let body = if is_valsub { &rest[1..] } else { rest };
+    };
     // Reject a `}` that closes early — the final `}` we stripped has to be
     // the one that matches the opening `${`.
     let mut depth = 0i32;
@@ -11556,7 +11972,7 @@ fn ksh_funsub_body(t: &str) -> Option<(String, bool)> {
     if depth != 0 {
         return None;
     }
-    Some((body.to_string(), is_valsub))
+    Some((body.to_string(), rplyvar, kind))
 }
 
 fn word_is_single_dq_span(s: &str) -> bool {
@@ -12342,7 +12758,19 @@ fn strip_backtick_subst(s: &str) -> Option<&str> {
 }
 
 fn strip_cmd_subst(s: &str) -> Option<&str> {
-    if !s.starts_with("$(") || !s.ends_with(')') || s.starts_with("$((") {
+    if !s.starts_with("$(") || !s.ends_with(')') {
+        return None;
+    }
+    // c:Src/lex.c:555-567 `cmd_or_math_sub` — a leading `$((` is
+    // arithmetic ONLY when the inner `dquote_parse(')')` succeeds AND the
+    // very next char is the second `)` (c:511-512). Otherwise C rewinds
+    // and calls `skipcomm()` (c:572): it is a COMMAND substitution whose
+    // body happens to open with a subshell — `$((cmd); cmd)`, whose
+    // output must still be IFS word-split like any other `$(…)`.
+    // Rejecting every `$((` here sent those words to the generic expand
+    // bridge, which emits ONE unsplit word: `print $((f a); f b)` printed
+    // the two outputs on separate lines instead of `!a! !b!`.
+    if s.starts_with("$((") && strip_arith_subst(s).is_some() {
         return None;
     }
     // Verify the closing `)` at the end matches the OPENING `$(` at the
@@ -12600,6 +13028,15 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                 subst.push(c);
                 i += 1;
                 if let Some(&nxt) = chars.get(i) {
+                    // c:Src/subst.c:2571-2574 — `(c == '#' || c == Pound) &&
+                    // itype_end(s+1, INAMESPC, 0) != s + 1`: `$#` is the
+                    // length OPERATOR when a parameter name follows, not the
+                    // `$#` positional-count special. See the bare-`$NAME` arm
+                    // below for what mis-splitting it broke.
+                    let hash_is_len_prefix = matches!(nxt, '#' | '\u{84}')
+                        && chars
+                            .get(i + 1)
+                            .is_some_and(|&c2| c2.is_ascii_alphanumeric() || c2 == '_');
                     if nxt == '\u{9d}' {
                         // `$'…'` ANSI-C span — Stringg/Qstring + Snull
                         // body Snull (parse/lex token form). Keep the
@@ -12666,7 +13103,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                             }
                             i += 1;
                         }
-                    } else if matches!(nxt, '$' | '?' | '#' | '*' | '@' | '-' | '!')
+                    } else if (matches!(nxt, '$' | '?' | '#' | '*' | '@' | '-' | '!')
                         || matches!(
                             nxt,
                             '\u{85}' /* Stringg `$` */
@@ -12675,7 +13112,8 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                             | '\u{87}' /* Star `*` */
                             | '\u{9b}' /* Dash `-` */
                             | '\u{9c}' /* Bang `!` */
-                        )
+                        ))
+                        && !hash_is_len_prefix
                     {
                         // Single-char special parameter — `$$` / `$?` /
                         // `$#` / `$*` / `$@` / `$-` / `$!`. The lexer
@@ -12693,6 +13131,26 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                         subst.push(nxt);
                         i += 1;
                     } else {
+                        // c:Src/subst.c:2571-2589 — a `#`/Pound directly
+                        // after the `$` is the LENGTH prefix whenever a
+                        // name follows (`itype_end(s+1, INAMESPC, 0) !=
+                        // s + 1`), i.e. `$#NAME` is "length of $NAME",
+                        // one substitution. The single-char-special arm
+                        // above consumed only the `#` (the `$#`
+                        // positional count), leaving `NAME` behind as a
+                        // Literal segment, so a cond/case RHS pattern of
+                        // `$#otmp` compiled to `0otmp`:
+                        //   `[[ 2 = $#otmp ]]` (otmp="cd") answered NO.
+                        // That is the `while [[ $#tmp != $#otmp ]]`
+                        // fixed-point loop in Completion/Base/Completer/
+                        // _expand:78-81 — it never terminated, so every
+                        // completion whose completer list starts with
+                        // `_expand` (the comptest default, Y01/Y02/Y03)
+                        // spun forever inside `zle complete-word`.
+                        if matches!(nxt, '#' | '\u{84}') {
+                            subst.push(nxt);
+                            i += 1;
+                        }
                         // Bare `$NAME` — consume identifier chars.
                         while i < chars.len() {
                             let cc = chars[i];
@@ -13684,6 +14142,22 @@ fn braced_subscript_dynamic_ref(s: &str) -> Option<(&str, &str)> {
     if !key.contains('$') {
         return None;
     }
+    // c:Src/params.c:1533-1536 — `getarg`'s scan loop finds the end of a
+    // subscript ARGUMENT in the UNEXPANDED text and only then runs
+    // `parsestr`/`singsub` on that slice (c:1567-1571). This fast path
+    // does the opposite: it expands the WHOLE key first and hands the
+    // result to `array_index_lookup`, which rebuilds `${name[key]}` and
+    // re-parses it. That is only sound while the expansion cannot change
+    // the argument structure. A leading `(` flag group makes the
+    // remainder a search PATTERN (c:1389-1391) and a top-level `,` makes
+    // the subscript a RANGE — in both shapes an expanded-in comma
+    // re-splits: `x=','; ${s[(r)$x,(R)$x]}` became the three-argument
+    // `(r),,(R),` and died with "bad substitution" where zsh searches for
+    // the literal `,` on each bound. Leave those to paramsubst, which
+    // splits before expanding.
+    if key.starts_with('(') || key.contains(',') {
+        return None;
+    }
     Some((base, key))
 }
 
@@ -13942,7 +14416,26 @@ fn braced_var_ref(s: &str) -> Option<&str> {
     {
         return Some(inner);
     }
+    // c:Src/params.c:2206 — `int itype = (scanflags & SCANPM_NONAMESPC) ?
+    // IIDENT : INAMESPC;` — inside `${…}` the name is scanned with INAMESPC,
+    // so a ksh93 namespace name (`.k02.foo`, `k.2`) is a plain name here too
+    // and must take the SAME compiled var-read path; that path is what
+    // applies SH_WORD_SPLIT and the KSH_ARRAYS single-element pick.
+    // c:Src/params.c:2257-2260 — a dotted name that `isident()` rejects is a
+    // "badly formed namespace reference", so those are left to paramsubst,
+    // which still raises "bad substitution" for them.
+    if inner.contains('.') && is_namespace_name(inner) {
+        return Some(inner);
+    }
     None
+}
+
+/// True when `name` is a complete ksh93 namespace parameter name — the
+/// INAMESPC walk (c:Src/utils.c:4397-4412) consumes all of it AND
+/// `isident` (c:Src/params.c:1309) accepts it.
+fn is_namespace_name(name: &str) -> bool {
+    crate::ported::utils::itype_end(name, crate::ported::ztype_h::INAMESPC, false) == name.len()
+        && crate::ported::params::isident(name)
 }
 
 /// Match `${=NAME}` / `${==NAME}` / `${=NAME[@]}` / `${=NAME[*]}` —
@@ -13999,6 +14492,11 @@ fn parse_forced_split_brace(s: &str) -> Option<(bool, &str, char)> {
     {
         return Some((force_split, name_part, splice));
     }
+    // c:Src/params.c:2206 — same INAMESPC name scan as `braced_var_ref`, so
+    // `${==.k02.bar}` / `${=.k02.foo}` keep the compiled split/no-split path.
+    if name_part.contains('.') && is_namespace_name(name_part) {
+        return Some((force_split, name_part, splice));
+    }
     None
 }
 
@@ -14049,11 +14547,22 @@ fn bare_subscript_ref(s: &str) -> Option<(&str, &str)> {
     }
     let rest = &s[1..];
     let lb = rest.find('[')?;
-    if !s.ends_with(']') {
+    // c:Src/lex.c:1743 parse_subscript → c:Src/lex.c:1486 dquote_parse
+    // with `endchar == ']'` (so c:1489 `math` is true). `case '[': if
+    // (!math || !bct) brct++;` (c:1600-1602) and `case ']': ... err =
+    // (!brct-- && math);` (c:1604-1606) — the closer is found by a
+    // NESTING walk, and `case '\\':` (c:1493-1509) emits `Bnull` for an
+    // escaped `[`/`]`, i.e. a backslashed bracket is subscript CONTENT
+    // and never a delimiter. Assuming the last byte is the closer made
+    // `$s[(r)\]]` reject here and fall to the runtime bare-form arm,
+    // whose scalar leg has no search-flag support at all (subst.rs
+    // ~20360), so `$s[(r)\]]` expanded empty where zsh gives `]`.
+    let close = subscript_close(rest, lb)?;
+    if close != rest.len() - 1 {
         return None;
     }
     let name = &rest[..lb];
-    let key = &rest[lb + 1..rest.len() - 1];
+    let key = &rest[lb + 1..close];
     if name.is_empty() || key.is_empty() || key == "@" || key == "*" {
         return None;
     }
@@ -14067,10 +14576,65 @@ fn bare_subscript_ref(s: &str) -> Option<(&str, &str)> {
             return None;
         }
     }
-    if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
+    // c:Src/params.c:1389-1391 — a subscript that opens with `(` is a
+    // FLAG group whose remainder is a search PATTERN handed straight to
+    // patcompile (c:1697), so an ESCAPED bracket there is ordinary
+    // pattern text and the braced machinery handles it. A NON-flag key
+    // carrying a bracket must stay on the runtime path: the flat
+    // `${name[key]}` rebuild in fusevm_bridge::array_index_lookup routes
+    // a bracket-bearing plain key to a direct exact-key assoc read,
+    // which would key on the still-escaped text and miss.
+    if key.starts_with('(') {
+        if unescaped_contains(key, &['[', ']', '$', '`']) {
+            return None;
+        }
+    } else if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
         return None;
     }
     Some((name, key))
+}
+
+/// c:Src/lex.c:1600-1606 — locate the `]` that closes the subscript
+/// opened at byte offset `lb`, tracking `brct` nesting and skipping the
+/// char after a backslash exactly as c:Src/lex.c:1493-1509 does (an
+/// escaped bracket becomes `Bnull` + the literal char, never a
+/// delimiter). Returns the byte offset of the closer, or None when the
+/// subscript is unterminated.
+fn subscript_close(rest: &str, lb: usize) -> Option<usize> {
+    let mut brct = 1_i32; // c:1601 — the `[` at `lb`
+    let mut it = rest.char_indices().skip_while(|(i, _)| *i <= lb);
+    while let Some((i, c)) = it.next() {
+        match c {
+            '\\' => {
+                it.next(); // c:1493-1509 — the escaped char is content
+            }
+            '[' => brct += 1, // c:1601
+            ']' => {
+                brct -= 1; // c:1605
+                if brct == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// True when `s` contains any char of `set` that is NOT backslash-escaped
+/// (c:Src/lex.c:1493-1509 — the char after `\` is literal content).
+fn unescaped_contains(s: &str, set: &[char]) -> bool {
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            it.next();
+            continue;
+        }
+        if set.contains(&c) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Match bare `$NAME[KEY]suffix` — same as `bare_subscript_ref` but
@@ -14084,7 +14648,11 @@ fn bare_subscript_with_suffix(s: &str) -> Option<(&str, &str, &str)> {
     }
     let rest = &s[1..];
     let lb = rest.find('[')?;
-    let rb = rest.find(']')?;
+    // c:Src/lex.c:1600-1606 — same nesting/escape-aware closer walk as
+    // bare_subscript_ref; `rest.find(']')` stopped at a BACKSLASHED `]`
+    // (c:1493-1509 content, not a delimiter) and split `$A[\]]x` into
+    // key `\` + suffix `]x`.
+    let rb = subscript_close(rest, lb)?;
     if rb <= lb || rb == rest.len() - 1 {
         return None;
     }

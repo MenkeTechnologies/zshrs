@@ -2278,6 +2278,60 @@ pub fn sticky_emulation_dup(src: &emulation_options, _useheap: i32) -> Emulation
     newsticky // c:5519
 }
 
+/// Port of `int sticky_emulation_differs(Emulation_options sticky2)`
+/// from `Src/exec.c:5829`.
+///
+/// C body:
+/// ```c
+/// /* If no new sticky emulation, not a different emulation */
+/// if (!sticky2)
+///     return 0;
+/// /* If no current sticky emulation, different */
+/// if (!sticky)
+///     return 1;
+/// /* If basic emulation different, different */
+/// if (sticky->emulation != sticky2->emulation)
+///     return 1;
+/// /* If differing numbers of options, different */
+/// if (sticky->n_on_opts != sticky2->n_on_opts ||
+///     sticky->n_off_opts != sticky2->n_off_opts)
+///     return 1;
+/// /* If different options turned on, different */
+/// if (sticky->n_on_opts &&
+///     memcmp(sticky->on_opts, sticky2->on_opts,
+///            sticky->n_on_opts * sizeof(*sticky->on_opts)) != 0)
+///     return 1;
+/// /* If different options turned on, different */
+/// if (sticky->n_off_opts &&
+///     memcmp(sticky->off_opts, sticky2->off_opts,
+///            sticky->n_off_opts * sizeof(*sticky->off_opts)) != 0)
+///     return 1;
+/// return 0;
+/// ```
+pub fn sticky_emulation_differs(sticky2: Option<&emulation_options>) -> i32 {
+    // c:5829
+    let Some(sticky2) = sticky2 else {
+        return 0; // c:5832-5833
+    };
+    let guard = sticky.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(ref cur) = *guard else {
+        return 1; // c:5835-5836
+    };
+    if cur.emulation != sticky2.emulation {
+        return 1; // c:5838-5839
+    }
+    if cur.n_on_opts != sticky2.n_on_opts || cur.n_off_opts != sticky2.n_off_opts {
+        return 1; // c:5841-5843
+    }
+    if cur.n_on_opts != 0 && cur.on_opts != sticky2.on_opts {
+        return 1; // c:5850-5853
+    }
+    if cur.n_off_opts != 0 && cur.off_opts != sticky2.off_opts {
+        return 1; // c:5855-5858
+    }
+    0 // c:5859
+}
+
 /// Port of `void shfunc_set_sticky(Shfunc shf)` from `Src/exec.c:5527`.
 ///
 /// C body:
@@ -6176,8 +6230,70 @@ pub fn doshfunc(
     // here as a HashMap snapshot.
     let funcsave_opts = crate::ported::options::opt_state_snapshot();
 
-    // c:5915-5916 — `funcsave->emulation/sticky = emulation/sticky;`
-    // Emulation snapshot pending the sticky-emulation port.
+    // c:5974-5975 — `funcsave->emulation = emulation;
+    //                funcsave->sticky = sticky;`
+    let funcsave_emulation = crate::ported::options::emulation.load(Ordering::Relaxed);
+    let funcsave_emulation_live = crate::ported::options::EMULATION.load(Ordering::Relaxed);
+    let funcsave_fully = crate::ported::options::FULLY_EMULATING.load(Ordering::Relaxed);
+    let funcsave_sticky = sticky
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|b| sticky_emulation_dup(b, 0));
+
+    // c:5977-6012 —
+    //     if (sticky_emulation_differs(shfunc->sticky)) {
+    //         sticky = sticky_emulation_dup(shfunc->sticky, 1);
+    //         emulation = sticky->emulation;
+    //         funcsave->restore_sticky = 1;
+    //         installemulation(emulation, opts);
+    //         if (sticky->n_on_opts) { ... opts[*onptr] = 1; }
+    //         if (sticky->n_off_opts) { ... opts[*offptr] = 0; }
+    //         /* All emulations start with pattern disables clear */
+    //         clearpatterndisables();
+    //     } else
+    //         funcsave->restore_sticky = 0;
+    //
+    // This whole block was missing, so a function DEFINED inside
+    // `emulate sh -c '...'` did not re-enter that emulation when
+    // called (B07emulate.ztst:6,7,8,12,13,14).
+    let mut funcsave_restore_sticky = 0; // c:6012
+    if sticky_emulation_differs(shfunc.sticky.as_deref()) != 0 {
+        // c:5978
+        let newsticky = sticky_emulation_dup(shfunc.sticky.as_deref().unwrap(), 1); // c:5990
+        let emu = newsticky.emulation; // c:5991
+        *sticky.lock().unwrap_or_else(|e| e.into_inner()) = Some(newsticky);
+        // C's single `emulation` global carries EMULATE_FULLY; the Rust
+        // port splits it into EMULATION (base bits) + FULLY_EMULATING.
+        let emu_base = emu & !crate::ported::zsh_h::EMULATE_FULLY;
+        let emu_fully = (emu & crate::ported::zsh_h::EMULATE_FULLY) != 0;
+        crate::ported::options::emulation.store(emu_base, Ordering::Relaxed); // c:5991
+        crate::ported::options::EMULATION.store(emu_base, Ordering::Relaxed); // (port keeps 2 cells)
+        crate::ported::options::FULLY_EMULATING.store(emu_fully, Ordering::Relaxed);
+        funcsave_restore_sticky = 1; // c:5992
+                                     // c:5993 — `installemulation(emulation, opts);`
+        let mut new_opts: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+        crate::ported::options::installemulation(emu, &mut new_opts); // c:5993
+        for (k, v) in &new_opts {
+            opt_state_set(k, *v);
+        }
+        {
+            let guard = sticky.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(ref st) = *guard {
+                // c:5995-6001 — `opts[*onptr] = 1;`
+                for on in &st.on_opts {
+                    opt_state_set(crate::ported::zsh_h::opt_name(*on as i32), true);
+                }
+                // c:6002-6008 — `opts[*offptr] = 0;`
+                for off in &st.off_opts {
+                    opt_state_set(crate::ported::zsh_h::opt_name(*off as i32), false);
+                }
+            }
+        }
+        // c:6010 — `clearpatterndisables();`
+        crate::ported::pattern::clearpatterndisables();
+    }
 
     // c:5954-5960 — PM_TAGGED / PM_TAGGED_LOCAL turn XTRACE on for the
     // duration of the call:
@@ -6589,7 +6705,13 @@ pub fn doshfunc(
 
     // c:6078-6102 — LOCALOPTIONS restore. Re-apply the snapshot when
     // localoptions was set inside the body.
-    if crate::ported::options::opt_state_get("localoptions").unwrap_or(false) {
+    // c:6129 — `if (isset(LOCALOPTIONS) || funcsave->restore_sticky)`.
+    // A sticky-emulation call ALWAYS restores the full option set on
+    // return, whether or not LOCAL_OPTIONS is on — otherwise the
+    // emulation the call installed leaks into the caller.
+    if crate::ported::options::opt_state_get("localoptions").unwrap_or(false)
+        || funcsave_restore_sticky != 0
+    {
         // c:6091 memcpy(opts, funcsave->opts, sizeof(opts)) — full restore.
         let current = crate::ported::options::opt_state_snapshot();
         for (k, _) in &current {
@@ -6599,6 +6721,14 @@ pub fn doshfunc(
         }
         for (k, v) in &funcsave_opts {
             opt_state_set(k, *v);
+        }
+        // c:6136 / c:6153 — `emulation = funcsave->emulation;`
+        crate::ported::options::emulation.store(funcsave_emulation, Ordering::Relaxed);
+        crate::ported::options::EMULATION.store(funcsave_emulation_live, Ordering::Relaxed);
+        crate::ported::options::FULLY_EMULATING.store(funcsave_fully, Ordering::Relaxed);
+        // c:6137 — `sticky = funcsave->sticky;` (restore_sticky arm only)
+        if funcsave_restore_sticky != 0 {
+            *sticky.lock().unwrap_or_else(|e| e.into_inner()) = funcsave_sticky;
         }
     } else {
         // c:6097-6101 — non-LOCALOPTIONS: restore only the always-
@@ -6740,6 +6870,9 @@ pub fn doshfunc(
 pub struct EvalFuncstackFrame {
     /// c:6191/6193 `fpushed` — whether the frame was actually pushed.
     fpushed: bool,
+    /// c:6147 — `int oineval = ineval, fpushed;`. Restored at c:6215
+    /// (`ineval = oineval;`) by this guard's Drop.
+    oineval: i32,
 }
 
 impl EvalFuncstackFrame {
@@ -6778,10 +6911,25 @@ impl EvalFuncstackFrame {
     pub fn push() -> Self {
         use crate::ported::modules::parameter::FUNCSTACK;
         use crate::ported::zsh_h::{FS_EVAL, FS_SOURCE};
+        // c:6147 — `int oineval = ineval, fpushed;`
+        let oineval = crate::ported::builtin::ineval.load(std::sync::atomic::Ordering::Relaxed);
         // c:6155 — `ineval = !isset(EVALLINENO);`
         let ineval = !crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO);
+        // The global drives `Src/exec.c`'s three `!ineval` lineno gates
+        // (c:1355 / c:1451 / c:2056); zshrs reads it in the
+        // `BUILTIN_SET_LINENO` handler. Only the funcstack half of this
+        // prologue was ported, so `unsetopt evallineno; eval 'print
+        // $LINENO'` counted lines inside the eval string (1) instead of
+        // reporting the caller's line (E01options.ztst:29).
+        crate::ported::builtin::ineval.store(
+            if ineval { 1 } else { 0 },
+            std::sync::atomic::Ordering::Relaxed,
+        );
         if ineval {
-            return EvalFuncstackFrame { fpushed: false }; // c:6193 fpushed = 0
+            return EvalFuncstackFrame {
+                fpushed: false, // c:6193 fpushed = 0
+                oineval,
+            };
         }
         // c:6161 — `fstack.lineno = lineno;`. zshrs mirrors C's single
         // `lineno` global (params.c:123) in `lex::LEX_LINENO`, the one
@@ -6834,7 +6982,10 @@ impl EvalFuncstackFrame {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(frame); // c:6189 funcstack = &fstack
-        EvalFuncstackFrame { fpushed: true } // c:6191 fpushed = 1
+        EvalFuncstackFrame {
+            fpushed: true, // c:6191 fpushed = 1
+            oineval,
+        }
     }
 
     /// c:6191/6193 `fpushed` — whether `EVALLINENO` was set and a frame
@@ -6847,7 +6998,10 @@ impl EvalFuncstackFrame {
 
 impl Drop for EvalFuncstackFrame {
     /// c:6209-6210 — `if (fpushed) funcstack = funcstack->prev;`
+    /// c:6215 — `ineval = oineval;`
     fn drop(&mut self) {
+        crate::ported::builtin::ineval
+            .store(self.oineval, std::sync::atomic::Ordering::Relaxed); // c:6215
         if self.fpushed {
             crate::ported::modules::parameter::FUNCSTACK
                 .lock()

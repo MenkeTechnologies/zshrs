@@ -4760,12 +4760,41 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime, use_gmt: bool) -> String
                 // c:3408 — `switch (*fmt++)` examines the specifier
                 // char (after the digit prefix).
                 if j < bytes.len() && bytes[j] == b'.' {
-                    // c:3409 — fractional-seconds. Default 3 digits if
-                    // none specified (j == i+1).
-                    let digs = digs.min(9);
-                    let trunc_div: u64 = 10u64.pow(9 - digs);
-                    let val = nsec / trunc_div;
-                    preprocessed.push_str(&format!("{:0width$}", val, width = digs as usize));
+                    // c:3409-3430 — `case '.':` fractional seconds.
+                    //   long fnsec = nsec;
+                    //   if (digs < 0 || digs > 9) digs = 9;
+                    //   if (digs < 9) {
+                    //       int trunc; long max = 100000000;
+                    //       for (trunc = 8 - digs; trunc; trunc--)
+                    //           { max /= 10; fnsec /= 10; }
+                    //       max -= 1;
+                    //       fnsec = (fnsec + 5) / 10;
+                    //       if (fnsec > max) fnsec = max;
+                    //   }
+                    //   sprintf(buf, "%0*ld", digs, fnsec);
+                    //
+                    // The `(fnsec + 5) / 10` is a ROUND-half-up, capped
+                    // at all-nines so a carry can't overflow the field.
+                    // The previous port plain-truncated, so 999_999 ns
+                    // under `%3.` printed `000` where zsh prints `001`.
+                    let mut fnsec: u64 = nsec;
+                    // c:3412-3413 — digs default is 3 (c:3362); >9 clamps to 9.
+                    let digs = if digs > 9 { 9 } else { digs };
+                    if digs < 9 {
+                        // c:3418-3422
+                        let mut max: u64 = 100_000_000;
+                        for _ in 0..(8 - digs) {
+                            max /= 10;
+                            fnsec /= 10;
+                        }
+                        max -= 1; // c:3423
+                        fnsec = (fnsec + 5) / 10; // c:3424
+                        if fnsec > max {
+                            fnsec = max; // c:3426
+                        }
+                    }
+                    // c:3428 — `sprintf(buf, "%0*ld", digs, fnsec)`.
+                    preprocessed.push_str(&format!("{:0width$}", fnsec, width = digs as usize));
                     i = j + 1;
                     continue;
                 }
@@ -4805,21 +4834,41 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime, use_gmt: bool) -> String
             i += 1;
         }
 
-        let mut buf = vec![0u8; 256];
-        let c_fmt = CString::new(preprocessed).unwrap_or_default();
-        let len = libc::strftime(
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
-            c_fmt.as_ptr(),
-            tm,
-        );
-
-        if len > 0 {
-            buf.truncate(len);
-            String::from_utf8_lossy(&buf).to_string()
-        } else {
-            String::new()
+        // c:3354-3359 — `if (*fmt == Meta) { int chr = fmt[1] ^ 32;
+        // *buf++ = chr; fmt += 2; }`: C's format string is METAFIED, so an
+        // embedded NUL arrives as `Meta` + 0x20 and is copied straight to
+        // the output, never reaching `strftime(3)`. The Rust port carries
+        // the format as un-metafied bytes, so a NUL is a real interior NUL
+        // — `CString::new` rejected it and `unwrap_or_default()` silently
+        // produced an EMPTY format, dropping the whole result
+        // (`strftime $'%Y\0%m\0%d' …` printed nothing). Split on NUL,
+        // run strftime(3) per segment, and re-join with NUL so the byte
+        // passes through exactly as C's Meta arm does.
+        let mut result = String::new();
+        for (seg_idx, seg) in preprocessed.split('\0').enumerate() {
+            if seg_idx > 0 {
+                result.push('\0');
+            }
+            if seg.is_empty() {
+                continue;
+            }
+            let mut buf = vec![0u8; 256];
+            let c_fmt = match CString::new(seg) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let len = libc::strftime(
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+                c_fmt.as_ptr(),
+                tm,
+            );
+            if len > 0 {
+                buf.truncate(len);
+                result.push_str(&String::from_utf8_lossy(&buf));
+            }
         }
+        result
     }
 
     #[cfg(not(unix))]
@@ -5521,6 +5570,20 @@ pub fn subst_string_by_func(
         .store(SFC_SUBST, Ordering::Relaxed);
     INCOMPFUNC.store(0, Ordering::Relaxed); // c:4028
 
+    // c:Src/exec.c:1429 — `oldlineno = lineno;` / c:1696 — `lineno = oldlineno;`
+    // C runs the hook body through `execlist`, which saves the caller's
+    // `lineno` on entry and restores it on exit, so a shell function
+    // invoked from inside an expansion leaves the CALLER's line number
+    // untouched. zshrs drives `$LINENO` from a per-pipe
+    // BUILTIN_SET_LINENO op: the statement that triggered this expansion
+    // already emitted its own SET_LINENO, the hook body's ops then
+    // overwrite `$LINENO`, and nothing puts it back — so `PS4='%N:%i> '`
+    // rendered the hook's last line for the triggering statement
+    // (`+fn:14>` where zsh prints `+fn:7>`, D01prompt.ztst "Recursive
+    // use of prompts"). Same save/restore shape as the `$(...)` site in
+    // vm_helper.rs:4733/5090.
+    let saved_lineno = getsparam("LINENO");
+
     // c:4030 — `if (doshfunc(func, l, 1))`. Direct doshfunc call
     // mirrors C. body_runner routes through the host body-only entry
     // (matching the same shfunc that `callhookfunc` would resolve).
@@ -5546,6 +5609,21 @@ pub fn subst_string_by_func(
         getaparam("reply") // c:4033
     };
 
+    // c:1696 — `lineno = oldlineno;` (see the save above). `LINENO`
+    // carries PM_READONLY (`integer-readonly-special`), so the restore
+    // writes `u_val` directly instead of going through setsparam — the
+    // same bypass BUILTIN_SET_LINENO uses (fusevm_bridge.rs:7205).
+    if let Some(ln) = saved_lineno {
+        let n: crate::ported::zsh_h::zlong = ln.parse().unwrap_or(0);
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("LINENO") {
+                pm.u_val = n;
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+        }
+        set_lineno(n as i32);
+        crate::ported::lex::set_lineno(n as u64);
+    }
     SFCONTEXT.store(osc, Ordering::Relaxed); // c:4035
     STOPMSG.store(osm, Ordering::Relaxed); // c:4036
     INCOMPFUNC.store(old_incompfunc, Ordering::Relaxed); // c:4037

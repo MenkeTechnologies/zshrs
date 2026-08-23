@@ -3686,8 +3686,8 @@ pub fn moveto(row: usize, col: usize) {
 /// parameters; the capabilities used here (TCMULTRIGHT / TCHORIZPOS /
 /// the multi-* caps) take a single `%d`, so the col/row order is moot
 /// and the output is deterministic across platforms. The
-/// `tcout_func_name` user-hook (c:2414) and `tputs` padding are deferred
-/// — modern terminals need neither.
+/// `tcout_func_name` user-hook (c:2414) is deferred; the `tputs` half
+/// (c:2417) now runs, so `$<n>` delay specs no longer reach the tty.
 pub fn tcoutarg(cap: i32, arg: i32) {
     // c:2409
     use crate::ported::init::tcstr;
@@ -3715,8 +3715,8 @@ pub fn tcoutarg(cap: i32, arg: i32) {
         return;
     }
     let bytes = unsafe { CStr::from_ptr(result) }.to_bytes();
-    // c:2416-2417 — `tputs(result, 1, putshout)` (padding dropped).
-    crate::shout::write(bytes);
+    // c:2416-2417 — `tputs(result, 1, putshout)`.
+    crate::shout::write(&crate::shout::tputs(&String::from_utf8_lossy(bytes)));
     // c:2419 — SELECT_ADD_COST(strlen(result)) cost accounting (no-op).
 }
 
@@ -3765,8 +3765,11 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
         return 1;
     } else if cap_ok {
         // c:2226-2229 — `else if (tccan(cap)) { while(ct--) tcout(cap); return 1; }`
+        // Through `shout::tputs` like `tcout` itself, so a padded cap
+        // (`$<n>`) doesn't put its delay spec on screen ct times.
+        let expanded = crate::shout::tputs(&cap_str);
         for _ in 0..ct {
-            crate::shout::write(cap_str.as_bytes());
+            crate::shout::write(&expanded);
         }
         return 1;
     }
@@ -4076,8 +4079,11 @@ pub fn tcout(cap: i32) {
         return;
     }
     // c:2345 — `tputs(tcstr[cap], 1, putshout)`: goes to the buffered
-    // `shout` stream, not straight to the fd.
-    crate::shout::write(escape.as_bytes());
+    // `shout` stream, not straight to the fd. `shout::tputs` is the
+    // tputs(3) half — it strips the `$<n>` delay specs that capability
+    // strings carry (vt100's `md` is `\e[1m$<2>`), which this port used
+    // to write to the terminal verbatim.
+    crate::shout::tputs_write(&escape);
     // c:2346 — `SELECT_ADD_COST(tclen[cap])` cost accounting dropped
     //          (no scheduling consumer reads it yet).
 }

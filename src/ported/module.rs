@@ -1164,7 +1164,17 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     // semantics when the shadow chain lands.
     if let Some(expected) = d.pm.as_ref() {
         // c:1135
-        if !std::ptr::eq(pm.as_ref(), expected.as_ref()) {
+        // !!! RUST-ONLY IDENTITY TEST !!! C compares POINTERS: `pm` and
+        // `d->pm` are the same heap object whenever the module's own
+        // parameter is the live binding. zshrs's `paramtab` stores `Param`
+        // BY VALUE and hands out clones, so `std::ptr::eq` was false for
+        // every call — `deleteparamdef` always took the c:1147 `return 1`
+        // path, and `zmodload -u zsh/datetime` reported "parameter
+        // `EPOCHSECONDS' already deleted" for a parameter it had just
+        // added. Compare by NAME, which is what identity means for a
+        // by-value table (the shadow-chain walk below is still a no-op
+        // until `pm.old` is wired through paramtab).
+        if pm.node.nam != expected.node.nam {
             // c:1135 pm != d->pm
             // c:1141-1145 — walk pm->old looking for d->pm.
             let mut searchpm = pm.old.clone(); // c:1142
@@ -1192,6 +1202,32 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     // c:1157 — `pm->node.flags = (pm->node.flags & ~PM_READONLY) | PM_REMOVABLE;`
     pm.node.flags = (pm.node.flags & !(PM_READONLY as i32)) | (PM_REMOVABLE as i32); // c:1157
     unsetparam_pm(&mut pm, 0, 1); // c:1158
+    // !!! RUST-ONLY STEP — NO DIRECT C COUNTERPART !!!
+    // C's `unsetparam_pm` ends in the `paramtab->removenode` postlude
+    // (c:Src/params.c:3853-3935) that physically drops the node. The Rust
+    // `unsetparam_pm` stops short of it ("Tied alt-name removal +
+    // paramtab restore-from-old not yet possible without HashTable
+    // backend", params.rs:9807-9810) and only stamps PM_UNSET on the
+    // by-value COPY it was handed, so the paramtab entry survived intact:
+    // after `zmodload -u zsh/datetime` the name was still there and still
+    // PM_READONLY, so the next `zmodload zsh/datetime` failed with
+    // "parameter already exists" and a plain `EPOCHSECONDS=(...)` failed
+    // with "read-only variable". Do the removenode half here.
+    //
+    // KNOWN DIVERGENCE when a local shadows the name: C's c:1141-1153 walk
+    // splices `d->pm` out of the `pm->old` chain first, so it unsets the
+    // MODULE's binding and the local survives. zshrs has no `old` chain
+    // (`params.rs` never assigns `Param::old`) and the local's saved outer
+    // copy lives in the executor's own scope stack, so the node reached
+    // here is the local and the module's binding is unreachable. Removing
+    // it matches C on the three lasting observations — the module's claim
+    // is dropped, `${+NAME}` is 0 after the scope pops, and a later plain
+    // assignment works — and diverges only on the local's value for the
+    // remainder of the enclosing scope (V04features.ztst "Successfully
+    // unloaded a module despite a parameter being hidden" reads it back).
+    if let Ok(mut tab) = paramtab().write() {
+        tab.remove(&d.name); // c:Src/params.c:3900 paramtab->removenode
+    }
     d.pm = None; // c:1159 d->pm = NULL
     0 // c:1160
 }
@@ -4927,9 +4963,18 @@ pub fn bin_zmodload(
     // shadowing the ported one: previously every `-R` operand went to the
     // plugin host, so a zsh module name came back as a dlopen error.
     // No operands (`zmodload -R` = list loaded plugins) still routes here.
+    // A name that already has a `modulestab` node is C's territory too —
+    // most importantly a MOD_ALIAS created by `zmodload -A NAME=REAL`,
+    // whose removal is the whole point of C's `-R` (c:2552-2568). Those
+    // never appear in `linkedmodules`, so the `module_linked` test alone
+    // sent `zmodload -R example` to the plugin host and it came back as a
+    // dlopen error where zsh silently deletes the alias
+    // (V01zmodload.ztst "Delete the module alias again").
     if OPT_ISSET(ops, b'R')
         && !OPT_ISSET(ops, b'A')
-        && !args.iter().any(|a| table.module_linked(a))
+        && !args
+            .iter()
+            .any(|a| table.module_linked(a) || table.modules.contains_key(a))
     {
         // Placed before the c:2490 queue_signals, so nothing to unqueue.
         // Handler lives in the extensions tree (not a port) —
@@ -6356,11 +6401,20 @@ pub fn bin_zmodload_features(
     // The Rust port flattens to a `Vec<String>` since patprogs are
     // deferred; require_module accepts Option<&[String]>.
     let feats: Vec<String> = rest_args.to_vec();
-    let features_arg = if feats.is_empty() {
-        None
-    } else {
-        Some(feats.as_slice())
-    };
+    // c:3252-3260 —
+    //   fep = features = (Feature_enables)zhalloc((arrlen(args)+1)*sizeof(*fep));
+    //   while (*args) { fep->str = *args++; fep->pat = …; fep++; }
+    //   fep->str = NULL; fep->pat = NULL;
+    //   return require_module(modname, features, OPT_ISSET(ops,'s'));
+    // The array is ALWAYS allocated in this arm, so `enablesarr` reaching
+    // do_module_features (c:2077) is never NULL even when `zmodload -F
+    // MODULE` is given no feature words — and NULL is what selects C's
+    // "enable all features" arm (c:2105-2112). An empty non-NULL array
+    // therefore means "enable NOTHING", which is exactly what
+    // `zmodload -F zsh/datetime; zmodload -lF zsh/datetime` must report
+    // (`-b:strftime -p:EPOCHSECONDS …`, V04features.ztst:1). Mapping the
+    // empty case to `None` collapsed the two and enabled everything.
+    let features_arg = Some(feats.as_slice());
     require_module(
         table,
         modname,
@@ -6765,56 +6819,6 @@ pub fn autofeatures(
             }
         }
 
-        // c:3556-3616 — m->autoloads insert/remove in lexical order;
-        // the autoload_* maps mirror the list for the feature→module
-        // reverse lookups the static-link dispatch needs.
-        if add {
-            match fchar {
-                b'b' => {
-                    table
-                        .autoload_builtins
-                        .insert(fnam.to_string(), modname.to_string());
-                }
-                b'c' | b'C' => {
-                    table
-                        .autoload_conditions
-                        .insert(fnam.to_string(), modname.to_string());
-                }
-                b'p' => {
-                    table
-                        .autoload_params
-                        .insert(fnam.to_string(), modname.to_string());
-                }
-                b'f' => {
-                    table
-                        .autoload_mathfuncs
-                        .insert(fnam.to_string(), modname.to_string());
-                }
-                _ => unreachable!(),
-            }
-        } else {
-            // c:3605-3615 — handled above by the m->autoloads remove
-            // (autoload_subret carries the c:3614 ±2). Keep the
-            // feature→module reverse maps in sync silently — the
-            // not-present diagnostic flows through subret below,
-            // exactly like C's c:3631 arm.
-            match fchar {
-                b'b' => {
-                    table.autoload_builtins.remove(fnam);
-                }
-                b'c' | b'C' => {
-                    table.autoload_conditions.remove(fnam);
-                }
-                b'p' => {
-                    table.autoload_params.remove(fnam);
-                }
-                b'f' => {
-                    table.autoload_mathfuncs.remove(fnam);
-                }
-                _ => unreachable!(),
-            }
-        }
-
         // c:3618-3619 — `if (subret == 0) subret = fn(module, fnam, flags);`
         // The fn does NOT run when the m->autoloads remove already
         // produced ±2. Dispatch through the per-type add/del fn so the
@@ -6840,6 +6844,70 @@ pub fn autofeatures(
                 _ => unreachable!(),
             }
         };
+
+        // !!! RUST-ONLY BOOKKEEPING — NO DIRECT C COUNTERPART !!!
+        // C keeps ONE store per feature kind: the autoload stub IS the
+        // `builtintab`/`condtab`/`paramtab`/`mathfuncs` entry, so
+        // `add_autobin`/`del_autobin` (c:426/464) et al. are the only
+        // writers. zshrs splits that into the canonical table PLUS the
+        // `autoload_*` feature→module reverse maps the static-link
+        // dispatch needs (`resolve_autoload_builtin`, printautoparams'
+        // module fallback, autofeatures' own c:3535-3555 owner search).
+        //
+        // These MUST run AFTER the c:3618-3619 fn dispatch, never
+        // before: `del_autobin` probes `autoload_builtins` as its
+        // stand-in for C's `builtintab->getnode2(builtintab, bnam)`
+        // (c:466), so removing the entry first made every
+        // `zmodload -ub NAME` report `NAME: no such builtin` (subret 2)
+        // for a builtin it had just autoloaded — V01zmodload.ztst
+        // "Add/remove autoloaded builtin".
+        //
+        // Mirror the canonical table's outcome: insert only on a clean
+        // add (subret 0), drop only when the delete actually happened
+        // (subret 0, or -2 = "not there, FEAT_IGNORE" per c:3614).
+        if add {
+            if subret == 0 {
+                match fchar {
+                    b'b' => {
+                        table
+                            .autoload_builtins
+                            .insert(fnam.to_string(), modname.to_string());
+                    }
+                    b'c' | b'C' => {
+                        table
+                            .autoload_conditions
+                            .insert(fnam.to_string(), modname.to_string());
+                    }
+                    b'p' => {
+                        table
+                            .autoload_params
+                            .insert(fnam.to_string(), modname.to_string());
+                    }
+                    b'f' => {
+                        table
+                            .autoload_mathfuncs
+                            .insert(fnam.to_string(), modname.to_string());
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        } else if subret == 0 || subret == -2 {
+            match fchar {
+                b'b' => {
+                    table.autoload_builtins.remove(fnam);
+                }
+                b'c' | b'C' => {
+                    table.autoload_conditions.remove(fnam);
+                }
+                b'p' => {
+                    table.autoload_params.remove(fnam);
+                }
+                b'f' => {
+                    table.autoload_mathfuncs.remove(fnam);
+                }
+                _ => unreachable!(),
+            }
+        }
 
         // c:3621-3642 — per-error-code diagnostic.
         if subret != 0 && subret != -2 {
@@ -7560,6 +7628,28 @@ pub static hooktab: std::sync::atomic::AtomicPtr<hookdef> = // c:843
 /// HandlerFunc without an extra table-arg.
 pub static MODULESTAB: Lazy<Mutex<modulestab>> = // c:zmodload.c:32
     Lazy::new(|| Mutex::new(modulestab::new()));
+
+/// !!! RUST-ONLY REGISTRY — NO C COUNTERPART !!!
+///
+/// Names a module's `setbuiltins` (`Src/module.c:501`) has turned OFF
+/// through the feature interface (`zmodload -F MODULE -b:NAME`).
+///
+/// C has no such table: `setbuiltins` calls `deletebuiltin` (c:521), which
+/// physically removes the node from the live `builtintab`, so "is this
+/// builtin currently visible" is answered by the table itself. zshrs's
+/// `builtintab` (`createbuiltintable()`) is an immutable, statically-linked
+/// map that already carries every module builtin, and per-MODULE visibility
+/// is decided by `module_builtin_available`
+/// (`src/extensions/ext_builtins.rs`) from the modulestab load flags. That
+/// is one granularity too coarse for features: `zmodload -F zsh/datetime
+/// -b:strftime` leaves the module LOADED while removing just `strftime`
+/// (V04features.ztst "Enabling and disabling of builtins as features"), so
+/// the per-NAME half needs its own store.
+///
+/// Per-NAME, exactly like C's node removal — a module can disable one of
+/// its builtins and keep the rest.
+pub static DISABLED_MODULE_BUILTINS: Lazy<Mutex<std::collections::HashSet<String>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashSet::new()));
 
 // C zsh classifies module exports by bare integer `type` index 0..4
 // (no named constants — just position-in-table) in `features_()`

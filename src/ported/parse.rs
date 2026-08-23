@@ -1335,7 +1335,10 @@ fn par_cmd() -> Option<ZshCommand> {
         // silently treated trailing words as a new command, masking
         // syntax errors like `{ echo a; } b c`. Mirror C's strict
         // post-compound terminator check. Bug #146 in docs/BUGS.md.
-        if !matches!(inner, ZshCommand::Simple(_)) && tok() == STRING_LEX {
+        if !matches!(inner, ZshCommand::Simple(_))
+            && tok() == STRING_LEX
+            && COND_LIST_DEPTH.with(|d| d.get()) == 0
+        {
             // c:Src/parse.c:2738 — the error token is `zshlextext`, the
             // human-readable source text, so quotes/sigils are shown
             // verbatim (`"quoted"`, `'x'`, `$var`). zshrs's `tokstr()`
@@ -1449,14 +1452,38 @@ fn par_for() -> Option<ZshCommand> {
     // assigns each iteration's pair of values to k and v in turn.
     // We store the names space-joined since variable identifiers
     // can't contain whitespace.
+    //
+    // c:1123-1131 — C's shape is a `for(;;)` whose FIRST iteration takes
+    // the current token unconditionally and only THEN tests the next one:
+    //     for (;;) { n++; ecstr(tokstr); zshlex();
+    //                if (tok != STRING || !strcmp(tokstr, "in") || sel) break;
+    //                if (!isident(tokstr) || errflag) YYERRORV(oecused); }
+    // So the loop variable may itself be spelled `in` — `for in in in in
+    // in stop` iterates $in over `in in in stop` (A01grammar.ztst:292).
+    // The old Rust loop tested `v == "in"` BEFORE taking the first name,
+    // so that form died with "expected variable name in for".
     let mut names: Vec<String> = Vec::new();
-    while tok() == STRING_LEX {
-        let v = tokstr().unwrap_or_default();
-        if v == "in" {
-            break;
+    if tok() == STRING_LEX {
+        loop {
+            names.push(tokstr().unwrap_or_default()); // c:1124 ecstr(tokstr)
+            zshlex(); // c:1125
+                      // c:1126 — `if (tok != STRING || !strcmp(tokstr, "in") || sel) break;`
+            if tok() != STRING_LEX {
+                break;
+            }
+            let v = tokstr().unwrap_or_default();
+            if v == "in" {
+                break;
+            }
+            // c:1127-1132 — C YYERRORs on a non-identifier here. The Rust
+            // lexer can hand back the `(word1 word2)` list of the
+            // `for x (…)` form as a single Inpar-wrapped STRING (see the
+            // list reader below), so stop the name scan instead of
+            // erroring and let that reader handle it.
+            if !crate::ported::params::isident(&v) {
+                break;
+            }
         }
-        names.push(v);
-        zshlex();
     }
     // c:1137-1138 — restore alias / spell-correct state now the
     // name list is fully read (the `in`/`(` list that follows must
@@ -1795,6 +1822,12 @@ fn par_case() -> Option<ZshCommand> {
         if !patterns.is_empty() && absorbed_outpar {
             // skip to body parse
         } else {
+            // c:1253-1256 — `if (tok == BAR) { str = dupstring("");
+            // skip_zshlex = 1; }` — an arm that OPENS with `|` has the
+            // empty string as its first alternative (`case '' in |burble)`).
+            if tok() == BAR_TOK {
+                patterns.push(String::new());
+            }
             loop {
                 if tok() == STRING_LEX {
                     let s = tokstr();
@@ -1899,6 +1932,15 @@ fn par_case() -> Option<ZshCommand> {
                 if tok() == BAR_TOK {
                     set_incasepat(1);
                     zshlex();
+                    // c:1360-1367 — after consuming a `|`, C re-lexes and
+                    // switches on the token:
+                    //     case OUTPAR: case BAR: /* Empty string */
+                    //         str = dupstring(""); break;
+                    // so `spurble|)`, `a||b` and `durgle|)` all carry an
+                    // empty alternative. The old loop silently dropped it.
+                    if tok() == BAR_TOK || tok() == OUTPAR_TOK {
+                        patterns.push(String::new());
+                    }
                 } else {
                     break;
                 }
@@ -2049,6 +2091,9 @@ fn par_if() -> Option<ZshCommand> {
     // Mirrors C's `xtok` where the loop exits, for the post-loop else check
     // (c:1487 `if (xtok == ELSE || tok == ELSE)`).
     let mut xtok_at_exit = IF;
+    // c:1476-1482 — set when the SHORTLOOPS arm took the body; C `break`s
+    // straight out of the arm loop there, so no `fi`/`else` may follow.
+    let mut short_form = false;
 
     loop {
         let xtok = tok(); // c:1420
@@ -2075,11 +2120,20 @@ fn par_if() -> Option<ZshCommand> {
         // via the no-separator chaining rule, so only THEN is a hard stop.
         // fast-syntax-highlighting.plugin.zsh:365-375:
         //   if [[ … ]] { … } elif { type curl … } { … }
+        // COND_LIST_DEPTH: suppress the Rust-only post-compound STRING guard
+        // (see the thread_local's comment) for the condition list — a word
+        // straight after `{ … }` here is the SHORTLOOPS body, not an error.
+        COND_LIST_DEPTH.with(|d| d.set(d.get() + 1));
         let cond = parse_program_until(Some(&[THEN]), false);
+        COND_LIST_DEPTH.with(|d| d.set(d.get() - 1));
         set_incmdpos(true); // c:1438
-                            // c:1439-1442 — ENDINPUT right after the cond is an unterminated if.
+        // c:1440-1443 — `if (tok == ENDINPUT) { cmdpop();
+        // YYERRORV(oecused); }`. YYERRORV only sets LEXERR; the message
+        // ("parse error near `if'") comes from par_list's yyerror, so don't
+        // invent one here — `eval "if"` must print zsh's wording
+        // (A01grammar.ztst:505).
         if tok() == ENDINPUT {
-            zerr("parse error: unterminated if");
+            set_tok(LEXERR); // c:87 `tok = LEXERR`
             return None;
         }
         skip_separators(); // c:1444
@@ -2104,11 +2158,31 @@ fn par_if() -> Option<ZshCommand> {
             zshlex(); // c:1469 — consume }
             set_incmdpos(true); // c:1470
             b
-        } else {
-            // c:1474-1476 — `unset(SHORTLOOPS)` is the default for `if`: a body
-            // that is neither `then …` nor `{ … }` is a parse error.
-            zerr("expected `then' or `{' after if condition");
+        } else if unset(SHORTLOOPS) {
+            // c:1473-1475 — `else if (unset(SHORTLOOPS)) { cmdpop();
+            // YYERRORV(oecused); }`. YYERRORV only flags LEXERR; the single
+            // diagnostic ("parse error near `<zshlextext>'") comes from
+            // par_list's yyerror. zshrs used to invent its own wording, so
+            // `if true;\n:\nfi` said "expected `then' or `{' after if
+            // condition" where zsh says "parse error near `fi'"
+            // (A01grammar.ztst:241).
+            set_tok(LEXERR); // c:87 `tok = LEXERR`
             return None;
+        } else {
+            // c:1476-1482 — SHORTLOOPS short form:
+            //     cmdpop(); cmdpush(nc); par_save_list1(cmplx);
+            //     ecbuf[pp] = WCB_IF(type, …); incmdpos = 1; break;
+            // One sublist is the whole body and the `if` ENDS here — no
+            // `fi`, no `else`. `if { true } print true`
+            // (A01grammar.ztst:500) needs this; without the arm the parse
+            // died on the body's first word.
+            short_form = true;
+            par_list1().map(|sublist| ZshProgram {
+                lists: vec![ZshList {
+                    sublist,
+                    flags: ListFlags::default(),
+                }],
+            })?
         };
         usebrace = this_arm_brace;
 
@@ -2129,6 +2203,11 @@ fn par_if() -> Option<ZshCommand> {
         // `} else` on the same line). Because a brace arm never reaches the
         // loop-top `fi`-consume, it cannot steal an enclosing then-form's `fi`.
         if this_arm_brace && matches!(tok(), SEPER | NEWLIN | SEMI | ENDINPUT) {
+            break;
+        }
+        // c:1481 — the SHORTLOOPS arm ends with `break;` (with xtok still FI
+        // from c:1445), so the construct is complete: no `fi`, no `else`.
+        if short_form {
             break;
         }
     }
@@ -2340,6 +2419,49 @@ fn par_funcdef() -> Option<ZshCommand> {
     //      lands in the AST. This is consistent with C zsh's
     //      par_funcdef which knows it's in funcdef-header context
     //      and accepts the brace either way.
+    // c:Src/parse.c:1687-1698 —
+    //   /* Consume an initial (-T), (--), or (-T --).
+    //    * Anything else is a literal function name.
+    //    */
+    //   if (tok == STRING && tokstr[0] == Dash) {
+    //       if (tokstr[1] == 'T' && !tokstr[2]) { ++do_tracing; zshlex(); }
+    //       if (tok == STRING && tokstr[0] == Dash &&
+    //           tokstr[1] == Dash && !tokstr[2]) { zshlex(); }
+    //   }
+    // The option prologue runs EXACTLY ONCE, before the name wordlist, and
+    // `--` ends it: `function -- -T { … }` defines a function literally
+    // named `-T`, and `function -- { … }` is a plain anonymous function.
+    // The old code tested for `-T` inside the name loop instead, so `--`
+    // was taken as a NAME and a post-`--` `-T` was eaten as the option.
+    {
+        let lead: Option<Vec<char>> = if tok() == STRING_LEX {
+            tokstr().map(|t| t.chars().collect())
+        } else {
+            None
+        };
+        let is_dash = |c: char| c == '-' || c == Dash;
+        if let Some(sc) = lead {
+            if sc.first().copied().is_some_and(is_dash) {
+                // c:1689-1692 — the `-T` tracing option.
+                if sc.len() == 2 && sc[1] == 'T' {
+                    tracing = true;
+                    zshlex();
+                }
+                // c:1693-1697 — an immediately-following `--` ends options.
+                let after: Option<Vec<char>> = if tok() == STRING_LEX {
+                    tokstr().map(|t| t.chars().collect())
+                } else {
+                    None
+                };
+                if let Some(a) = after {
+                    if a.len() == 2 && is_dash(a[0]) && is_dash(a[1]) {
+                        zshlex();
+                    }
+                }
+            }
+        }
+    }
+
     loop {
         match tok() {
             STRING_LEX => {
@@ -2364,13 +2486,10 @@ fn par_funcdef() -> Option<ZshCommand> {
                 // anonymous `function { body }` that executed its body at
                 // parse time (the cascade of "command not found: -zui_std_*"
                 // and "bad substitution" while sourcing stdlib.lzui).
-                let sc: Vec<char> = s.chars().collect();
-                let is_trace_opt = sc.len() == 2 && (sc[0] == '-' || sc[0] == Dash) && sc[1] == 'T';
-                if is_trace_opt {
-                    tracing = true;
-                    zshlex();
-                    continue;
-                }
+                // c:1700-1706 — past the option prologue above, EVERY
+                // remaining STRING is a literal function name (including
+                // `-T`, `--`, `-zui_std_*`, `+foo`, …).
+
                 // c:Src/exec.c::execcmd_args — function name tokens
                 // in `function NAME { ... }` form go through globbing
                 // at parse time. zsh's `function with[bracket] { ... }`
@@ -2668,6 +2787,11 @@ pub fn par_dinbrack() -> Option<()> {
 fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     let mut assigns = Vec::new();
     let mut words = Vec::new();
+    // c:1840 — `char *hasalias = input_hasalias();` — the alias (if any)
+    // whose expansion the FIRST word of this command came out of. Refreshed
+    // (only while still NULL) after every word-lexing zshlex at c:1916-1917 /
+    // 1950-1951 / 1995-1996 / 2025-2026.
+    let mut hasalias: Option<String> = crate::ported::input::input_hasalias();
 
     // c:1934-1974 — `{var}>file` brace-FD detection is wired
     // INSIDE the words loop below (parse.rs:4940-4956) rather than
@@ -2698,6 +2822,14 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
 
     // Parse words and redirections
     loop {
+        // c:1916-1917 — `zshlex(); if (!hasalias) hasalias =
+        // input_hasalias();` — C refreshes after every word-lexing advance.
+        // The previous advance happened at the tail of the last iteration
+        // (or in the caller for the first token), so the top of the loop is
+        // the equivalent observation point.
+        if hasalias.is_none() {
+            hasalias = crate::ported::input::input_hasalias();
+        }
         match tok() {
             ENVSTRING | ENVARRAY if words.is_empty() => {
                 // c:1843-1907 — still in command position (no command
@@ -2786,8 +2918,50 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     set_intypeset(true);
                 }
                 zshlex();
+                // c:1950-1951 — `if (!hasalias) hasalias = input_hasalias();`
+                if hasalias.is_none() {
+                    hasalias = crate::ported::input::input_hasalias();
+                }
                 // Check for function definition foo() { ... }
                 if words.len() == 1 && tok() == INOUTPAR {
+                    // The ALIAS_FUNC_DEF gate applies to EVERY route into the
+                    // funcdef body, not just the match arm below; this early
+                    // return is the single-word shape.
+                    // c:2061-2068 — `if (isset(EXECOPT) && hasalias &&
+                    // !isset(ALIASFUNCDEF) && argc && hasalias !=
+                    // input_hasalias()) { zwarn("defining function based on
+                    // alias `%s'", hasalias); herrflush(); if (noerrs != 2)
+                    // errflag |= ERRFLAG_ERROR; YYERROR(oecused); }`
+                    //
+                    // `hasalias != input_hasalias()` is the "the alias body
+                    // was NOT itself a complete definition" test: when the
+                    // `()` still comes out of the same alias expansion the
+                    // two are equal and the definition is legitimate
+                    // (`alias x='f() { … }'; eval x` — A02alias.ztst:140).
+                    if isset(EXECOPT)
+                        && hasalias.is_some()
+                        && !isset(ALIASFUNCDEF)
+                        && words.len() != 0
+                        && hasalias != crate::ported::input::input_hasalias()
+                    {
+                        crate::ported::utils::zwarn(&format!(
+                            // c:2063
+                            "defining function based on alias `{}'",
+                            hasalias.as_deref().unwrap_or("")
+                        ));
+                        // c:2064 — `herrflush();` — drop input queued for the
+                        // aborted definition.
+                        crate::ported::hist::herrflush();
+                        // c:2065-2066 — setting ERRFLAG_ERROR here is what
+                        // suppresses the follow-up "parse error near `()'":
+                        // zwarn (Src/utils.c:220) returns early once errflag
+                        // is set, so yyerror's own zwarn prints nothing.
+                        if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::SeqCst);
+                        }
+                        set_tok(LEXERR); // c:2067 YYERROR
+                        return None;
+                    }
                     return parse_inline_funcdef(std::mem::take(&mut words));
                 }
                 // `{name}>file` named-fd redirect: the lexer doesn't
@@ -2837,16 +3011,48 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 }
                 // c:2061-2068 — `if (isset(EXECOPT) && hasalias &&
                 // !isset(ALIASFUNCDEF) && argc && hasalias !=
-                // input_hasalias()) { zwarn(...); YYERROR(...); }`
-                // Alias-as-funcdef warning. zshrs's parser doesn't
-                // track `hasalias` (alias-expansion provenance
-                // during parse) yet, so `had_alias` stays false —
-                // the gate is wired here as a marker so the canonical
-                // C predicate is visible. Once alias-provenance lands,
-                // swap `false` for the actual provenance compare.
-                let had_alias = false;
-                if isset(EXECOPT) && had_alias && !isset(ALIASFUNCDEF) && !words.is_empty() {
-                    crate::ported::utils::zwarn("defining function based on alias `(unknown)'");
+                // input_hasalias()) { zwarn("defining function based on
+                // alias `%s'", hasalias); herrflush(); if (noerrs != 2)
+                // errflag |= ERRFLAG_ERROR; YYERROR(oecused); }`
+                //
+                // `hasalias != input_hasalias()` is the "the alias body was
+                // NOT itself a complete definition" test: when the `()`
+                // still comes out of the same alias expansion the two
+                // pointers are equal and the definition is legitimate
+                // (A02alias.ztst:140 `alias x='f() { … }'`).
+                // c:2061-2068 — `if (isset(EXECOPT) && hasalias &&
+                // !isset(ALIASFUNCDEF) && argc && hasalias !=
+                // input_hasalias()) { zwarn("defining function based on
+                // alias `%s'", hasalias); herrflush(); if (noerrs != 2)
+                // errflag |= ERRFLAG_ERROR; YYERROR(oecused); }`
+                //
+                // `hasalias != input_hasalias()` is the "the alias body
+                // was NOT itself a complete definition" test: when the
+                // `()` still comes out of the same alias expansion the
+                // two are equal and the definition is legitimate
+                // (`alias x='f() { … }'; eval x` — A02alias.ztst:140).
+                if isset(EXECOPT)
+                    && hasalias.is_some()
+                    && !isset(ALIASFUNCDEF)
+                    && words.len() != 0
+                    && hasalias != crate::ported::input::input_hasalias()
+                {
+                    crate::ported::utils::zwarn(&format!(
+                    // c:2063
+                    "defining function based on alias `{}'",
+                    hasalias.as_deref().unwrap_or("")
+                    ));
+                    // c:2064 — `herrflush();` — drop input queued for the
+                    // aborted definition.
+                    crate::ported::hist::herrflush();
+                    // c:2065-2066 — setting ERRFLAG_ERROR here is what
+                    // suppresses the follow-up "parse error near `()'":
+                    // zwarn (Src/utils.c:220) returns early once errflag
+                    // is set, so yyerror's own zwarn prints nothing.
+                    if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::SeqCst);
+                    }
+                    set_tok(LEXERR); // c:2067 YYERROR
                     return None;
                 }
                 // foo() { ... } / multi-name `f1 f2 f3() { ... }` style
@@ -3300,6 +3506,20 @@ pub fn get_cond_num(tst: &str) -> i32 {
 /// `static int` (per-process; per-evaluator semantically matches).
 thread_local! {
     static PARSER_INPARTIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+thread_local! {
+    /// !!! WARNING: RUST-ONLY HELPER !!!
+    ///
+    /// C's `par_cmd` has NO post-compound terminator check — a STRING after
+    /// a compound simply ends the list (`par_list` c:670 sees a non-separator
+    /// and stops), and the diagnostic, if any, comes from the `if (!r)` tail.
+    /// zshrs added a strict check inside `par_cmd` (Bug #146) which is wrong
+    /// inside an `if` CONDITION, where a word right after `{ … }` is the
+    /// legal SHORTLOOPS body: `if { true } print true` (c:1476-1482,
+    /// A01grammar.ztst:500). This counter suppresses the Rust-only check
+    /// while a condition list is being parsed.
+    static COND_LIST_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Port of `par_cond_triple(char *a, char *b, char *c)` from
@@ -5609,6 +5829,22 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     let last = &simple.words[par_idx];
     let bare = &last[..last.len() - suffix.len()];
     if bare.is_empty() {
+        return None;
+    }
+    // c:Src/lex.c:2164 `skipcomm` — an EMPTY command substitution `$()`
+    // reaches the parser as `String`/`Qstring` immediately followed by the
+    // `Inpar`…`Outpar` pair the lexer stamped around the (empty) body, so
+    // the word's tail is byte-identical to the funcdef `name()` shape. C
+    // never confuses them because a funcdef arrives as a separate
+    // `INOUTPAR` token (c:Src/parse.c:2051 par_simple) while `$()`'s
+    // parens are consumed inside the word. Here the two shapes are told
+    // apart by what precedes the parens: a `$` marker means command
+    // substitution, so `print a $() b` is a plain command, not a
+    // definition of a function named `$`.
+    if bare.ends_with(crate::ported::zsh_h::Stringg)
+        || bare.ends_with(crate::ported::zsh_h::Qstring)
+        || bare.ends_with('$')
+    {
         return None;
     }
     names.push(super::lex::untokenize(bare));
@@ -8572,7 +8808,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
         // still break cleanly via the end_tokens contains-check
         // above.
         match tok() {
-            DONE | FI | ESAC | DOLOOP if end_tokens.is_none() => {
+            DONE | FI | ESAC | DOLOOP | ZEND if end_tokens.is_none() => {
                 // c:Src/parse.c:par_event — emit the specific token
                 // name (`done`, `fi`, `esac`, `do`) so error-parsing
                 // tools can identify the unmatched terminator. C zsh
@@ -8584,6 +8820,17 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                     FI => "fi",
                     ESAC => "esac",
                     DOLOOP => "do",
+                    // c:Src/parse.c:1184-1190 — `end` closes a loop
+                    // body ONLY under `csh || isset(CSHJUNKIELOOPS)`.
+                    // With the option off the short-loop form
+                    // (par_save_list1, c:1193) consumes one command
+                    // and leaves ZEND in command position, where
+                    // par_event errors. zshrs broke out silently, so
+                    // `unsetopt cshjunkieloops; for f in a b; print
+                    // $f; end` ran and exited 0 instead of the
+                    // expected "parse error near `end'" + status 1
+                    // (E01options.ztst:13).
+                    ZEND => "end",
                     _ => "orphan terminator",
                 };
                 zerr(&format!("parse error near `{}'", name));
@@ -9426,7 +9673,22 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         // `install_emulation_defaults`, so this fires only when a
         // script explicitly disabled the option.
         if unset(SHORTLOOPS) && (!is_repeat || unset(SHORTREPEAT)) {
-            zerr("parse error: short loop form requires SHORTLOOPS option");
+            // c:Src/parse.c:1190 / :1474 / :1551 / :1600 —
+            // `YYERRORV(oecused)` only sets `tok = LEXERR`; the
+            // DIAGNOSTIC is emitted upstream by par_list's
+            // `if (!r) { ... yyerror(1); ... }` (c:670-677), which
+            // prints `parse error near \`<zshlextext>'`. zshrs
+            // invented its own wording, so `unsetopt shortloops;
+            // eval 'for f in a; print $f'` said "short loop form
+            // requires SHORTLOOPS option" where zsh says
+            // "parse error near \`print'" (E01options.ztst:74).
+            // c:87-88 — `#define YYERRORV(O) { tok = LEXERR; ecused =
+            // (O); return; }`. The macro sets the token and RETURNS;
+            // the single diagnostic comes from the caller
+            // (par_list's `if (!r) { ... yyerror(1); ... }`, c:670-677
+            // — mirrored by parse_program_until's LEXERR arm). Calling
+            // yyerror here as well printed the message twice.
+            set_tok(LEXERR); // c:87 `tok = LEXERR`
             return None;
         }
         // c:Src/parse.c:1604 / :1474 / :1551 — short form calls
@@ -9778,7 +10040,20 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                         pipe: ZshPipe {
                             cmd,
                             next: None,
-                            lineno: lineno(),
+                            // c:Src/parse.c:2112 — `(void)ecadd(WCB_PIPE(
+                            // WC_PIPE_END, 0));`. The BRACELESS short-body
+                            // form (`f() cmd`) hand-builds its pipe wordcode
+                            // with a line number of literal 0, unlike
+                            // `par_pline` (c:944) which stores `toklineno+1`.
+                            // `execpline2`'s guard (c:2056 `… &&
+                            // WC_PIPE_LINENO(pcode)`) then never fires, so the
+                            // body runs with the CALLER's `lineno` still in
+                            // place — which is why `f() g; g() :; functions -t
+                            // f; f` traces `+f:4> g` (the call site's line) and
+                            // not the body's own. E02xtrace.ztst pins this
+                            // (its own comment calls the 4 "incorrect", but it
+                            // is what zsh does).
+                            lineno: 0,
                             merge_stderr: false,
                         },
                         next: None,

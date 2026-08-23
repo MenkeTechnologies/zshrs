@@ -142,6 +142,16 @@ pub fn zshlex() {
         return;
     }
 
+    // RUST-ONLY: drop the popped-alias-frame record that `input_hasalias`
+    // falls back on (see `crate::alias_input_frames`). C keeps popped frames
+    // addressable above `instacktop` and lets `inungetc` walk back onto them
+    // (Src/input.c:587-605); zshrs's Vec-based stack destroys them, so the
+    // record is rebuilt per zshlex call. One zshlex covers the whole
+    // gettok/exalias chain, so a NESTED expansion (`secondalias` →
+    // `firstalias` → body) still records every alias in the chain — which is
+    // what C's downward instack walk reports.
+    crate::alias_input_frames::clear();
+
     // lex.c:270-276 — `do { ... } while (tok != ENDINPUT && exalias())`.
     // The do-while re-runs gettok when exalias re-injects alias text;
     // exalias also performs reswdtab keyword promotion (`{` → INBRACE,
@@ -978,6 +988,27 @@ thread_local! {
     pub static LEX_POS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// `LEX_UNGET_BUF` static.
     pub static LEX_UNGET_BUF: std::cell::RefCell<std::collections::VecDeque<char>>
+        = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    /// !!! WARNING: RUST-ONLY HELPER STATE !!!
+    ///
+    /// Lockstep companion to [`LEX_UNGET_BUF`]: one flag per queued
+    /// character recording whether `hungetc` rewound the history-line
+    /// cursor (`hist::hptr`) for it, so the matching re-read in `hgetc`
+    /// can advance it back by exactly the same amount.
+    ///
+    /// C needs no such thing. There, pushback and re-read are the single
+    /// pair `ihungetc` (Src/hist.c:989) / `ihgetc` (c:418), and BOTH test
+    /// the same guard — `(inbufflags & (INP_ALIAS|INP_HIST)) != INP_ALIAS`
+    /// (c:1009 and c:360) — so `hptr--` at c:1011 is always undone by
+    /// `hwaddc` at c:459. zshrs queues pushback in `LEX_UNGET_BUF` and
+    /// re-reads it without re-entering `ihgetc`, so the guard would be
+    /// evaluated at two DIFFERENT moments; at an alias boundary
+    /// `inbufflags` changes in between (the `inpush(" ", INP_ALIAS)` at
+    /// c:Src/lex.c:1926 lands between the unget and the re-read), the
+    /// rewind fires but the re-add is refused, and the history line loses
+    /// exactly one character. Recording the decision makes the pair
+    /// symmetric by construction.
+    pub static LEX_UNGET_HPTR: std::cell::RefCell<std::collections::VecDeque<bool>>
         = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// `char *tokstr` (lex.c:170).
     pub static LEX_TOKSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
@@ -2429,8 +2460,42 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                             b.len = s.len() as i32;
                                         }
                                     });
+                                    // c:Src/lex.c:1308-1314 —
+                                    //     if (lexbuf.ptr[-1] == '\\')
+                                    //         lexbuf.ptr--, lexbuf.len--;
+                                    //     else
+                                    //         break;
+                                    //     ...
+                                    //     add(c);
+                                    // The shared `add(c)` at c:1314 still
+                                    // runs after the backslash is dropped,
+                                    // so `\<newline>` inside '...' under
+                                    // CSHJUNKIEQUOTES keeps a LITERAL
+                                    // newline. Omitting it joined the two
+                                    // lines: `line three  line four`
+                                    // instead of two lines
+                                    // (E01options.ztst:14).
+                                    add('\n');
                                 } else {
-                                    break true; // terminate outer
+                                    // c:Src/lex.c:1311 — `else break;`
+                                    // leaves `c == '\n'` for the c:1317
+                                    // `if (c != '\'')` test (string
+                                    // unterminated → c:1318 `unmatched =
+                                    // '\''`, c:1320-1321 `peek =
+                                    // LEXERR`) AND for c:1444
+                                    // `hungetc(c)`. Pushing the newline
+                                    // back is what decrements `lineno`
+                                    // (Src/input.c:561-562), so zsh
+                                    // reports `(eval):1: unmatched '`.
+                                    // zshrs fell through to EOF instead
+                                    // and reported line 2
+                                    // (E01options.ztst:14).
+                                    c = '\n';
+                                    unmatched = '\''; // c:1318
+                                    if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
+                                        peek = LEXERR; // c:1321
+                                    }
+                                    break true; // c:1323 goto brk
                                 }
                             }
                             Some(ch) => add(ch),
@@ -3383,6 +3448,26 @@ fn checkalias(lextext: &str) -> bool {
                     if all_plain {
                         let pending: String =
                             LEX_UNGET_BUF.with_borrow_mut(|b| b.drain(..).collect());
+                        // These characters LEAVE the unget queue for an
+                        // inbuf frame, so their re-read goes back through
+                        // `ihgetc` -> `hwaddc` (c:459) rather than the
+                        // flag-driven advance in `hgetc`. Undo the rewinds
+                        // `hungetc` recorded for them here so the cursor is
+                        // handed over exactly where `ihwaddc` expects it;
+                        // from this point on C's own guard (c:360) governs,
+                        // including its refusal under INP_ALIAS.
+                        let rewound: Vec<bool> =
+                            LEX_UNGET_HPTR.with_borrow_mut(|b| b.drain(..).collect());
+                        let restore: usize = pending
+                            .chars()
+                            .zip(rewound.iter())
+                            .filter(|(_, &r)| r)
+                            .map(|(ch, _)| ch.len_utf8())
+                            .sum();
+                        if restore != 0 {
+                            let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
+                            crate::ported::hist::hptr.store(pos + restore, Ordering::SeqCst);
+                        }
                         if !pending.is_empty() {
                             inpush(&pending, INP_CONT, None);
                         }
@@ -4568,6 +4653,7 @@ pub fn lex_init(input: &str) {
     // starts from a clean slate (same as the C source's
     // file-static initializers in lex.c).
     LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
+    LEX_UNGET_HPTR.with_borrow_mut(|b| b.clear());
     LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
     LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
     // P7-batch-3 fields: reset to their C-source initial values.
@@ -4639,6 +4725,27 @@ pub(crate) fn hgetc() -> Option<char> {
     if let Some(c) = LEX_UNGET_BUF.with_borrow_mut(|b| b.pop_front()) {
         if c == '\n' {
             LEX_LINENO.set(LEX_LINENO.get() + 1);
+        }
+        // c:Src/hist.c:459 — `hwaddc(c);` at the tail of `ihgetc`. Every
+        // character the lexer reads goes into the history line being
+        // built. A re-read off the unget queue is a read like any other,
+        // so it re-advances `hptr` over the byte `hungetc` rewound above.
+        // `ihwaddc` writes AT the cursor (c:363 `*hptr++ = c`) rather than
+        // appending, so the byte is rewritten in place and the line's
+        // contents are unchanged — only the cursor moves.
+        // c:Src/hist.c:459 — `hwaddc(c);` at the tail of `ihgetc`: a
+        // re-read is a read like any other, so it re-advances the
+        // history-line cursor over the byte `hungetc` rewound. Advance
+        // `hptr` directly instead of calling `ihwaddc`: the bytes are
+        // already in `chline` from the FIRST read (`ihwaddc` writes at the
+        // cursor, c:363 `*hptr++ = c`), so re-writing them is at best a
+        // no-op and at worst overwrites — and re-testing `ihwaddc`'s
+        // c:360 guard here would re-evaluate `inbufflags` at a different
+        // moment than `hungetc` did, which is the asymmetry
+        // `LEX_UNGET_HPTR` exists to remove.
+        if LEX_UNGET_HPTR.with_borrow_mut(|b| b.pop_front()).unwrap_or(false) {
+            let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
+            crate::ported::hist::hptr.store(pos + c.len_utf8(), Ordering::SeqCst); // c:459
         }
         // c:input.c:360-361 — every char returned by ingetc feeds
         // the raw buffer when lex_add_raw is on. Re-reads from the
@@ -4780,6 +4887,56 @@ pub(crate) fn hgetc() -> Option<char> {
 /// in hgetc DOES increment, leaving LEX_LINENO=2 instead of 1.
 fn hungetc(c: char) {
     LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
+    // c:Src/hist.c:1009-1013 — `if ((inbufflags & (INP_ALIAS|INP_HIST)) !=
+    //   INP_ALIAS) { DPUTS(hptr <= chline, ...); hptr--; ... }`.
+    // C's `hungetc` is a function pointer pointing at `ihungetc`
+    // (hist.c:989) whenever history is active, and `ihungetc` rewinds the
+    // history-line cursor so the un-gotten character stops counting as
+    // part of the line being built. The matching re-add happens in
+    // `hgetc`'s unget-queue pop below (C: `ihgetc` c:459 `hwaddc(c)`).
+    //
+    // zshrs's lexer keeps its own `LEX_UNGET_BUF` instead of routing every
+    // pushback through `input::inungetc`, so this half of `ihungetc` was
+    // simply missing: `hptr` stayed one PAST the delimiter that ended a
+    // word. `exalias` (c:Src/lex.c:1957) calls `hwend()` in exactly that
+    // window, so `ihwend` recorded the last word of every line as ending
+    // one byte too far — past the trailing `\n` that `hend` then strips.
+    // `getargs` (c:2481 `dupstrpfx(nam + pos1, pos2 - pos1)`) then indexed
+    // past the stored line and returned nothing, which is why `!:$`,
+    // `!:<last>` and any range touching the final word silently expanded
+    // to nothing while every earlier word worked.
+    //
+    // Inlined rather than factored into a helper: only the chline-cursor
+    // half of `ihungetc` applies here. The caller has already queued the
+    // character, so there is no `inungetc` (c:1021); `LEX_UNGET_BUF`
+    // characters never pass through the ZLE metafied line, so the
+    // `expanding` bookkeeping at c:1004-1008 does not apply; and `qbang`
+    // (c:1014-1015) is maintained by the real `ihungetc` on the inbuf path.
+    // The rewind is by the character's UTF-8 length rather than C's bare
+    // `hptr--` because `ihwaddc` advances `hptr` by `encode_utf8().len()`
+    // (zshrs's `ingetc` yields whole `char`s where C's yields metafied
+    // bytes), so the two have to agree.
+    let did_rewind = {
+        // c:1140 — pool threads run `hungetc = inungetc`, which never
+        // touches chline.
+        let inflags = crate::ported::input::inbufflags.with(|f| f.get());
+        // c:1009 — `if ((inbufflags & (INP_ALIAS|INP_HIST)) != INP_ALIAS)`
+        // and c:360 `if (chline && ...)`: nothing to rewind while the
+        // history line is not being built (`ihwaddc` refuses the same way).
+        let eligible = !crate::worker::in_worker_thread()
+            && (inflags & (crate::ported::zsh_h::INP_ALIAS | crate::ported::zsh_h::INP_HIST))
+                != crate::ported::zsh_h::INP_ALIAS
+            && crate::ported::hist::hlinesz.load(Ordering::SeqCst) != 0;
+        if eligible {
+            let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
+            // c:1010 — `DPUTS(hptr <= chline, "BUG: hungetc attempted at
+            // buffer start");` then c:1011 `hptr--`.
+            crate::ported::hist::hptr
+                .store(pos.saturating_sub(c.len_utf8()), Ordering::SeqCst); // c:1011
+        }
+        eligible
+    };
+    LEX_UNGET_HPTR.with_borrow_mut(|b| b.push_front(did_rewind));
     if c == '\n' {
         // c:input.c:561-562 — `if (((inbufflags & INP_LINENO) ||
         // !strin) && c == '\n') lineno--;`
@@ -4888,9 +5045,29 @@ fn is_valid_assignment_target(s: &str) -> bool {
     {
         let mut sub_chars = s.chars().peekable();
         let mut consumed_bytes = 0usize;
+        // c:1233 — `t = itype_end(t, INAMESPC, 0);`. INAMESPC is IIDENT
+        // PLUS the ksh93 namespace dot (utils.c:4397-4412): an optional
+        // leading `.`, an identifier, then at most ONE `.` followed by a
+        // second identifier. Precompute how far the INAMESPC walk reaches
+        // so the per-char loop below can admit a `.` exactly where the C
+        // classifier does — `.k02.foo=v` and `k.2=test` are assignments,
+        // while `..k=OK` and `.n.s.k=OK` are command words (K02parameter).
+        let namespc_end =
+            crate::ported::utils::itype_end(s, crate::ported::ztype_h::INAMESPC, false);
         while let Some(&c) = sub_chars.peek() {
             if c == Inbrack || c == '[' || c == '+' {
                 break;
+            }
+            // c:1233 — a `.` is an identifier char only while it sits
+            // inside the INAMESPC prefix computed above.
+            if c == '.' {
+                if consumed_bytes >= namespc_end {
+                    return false;
+                }
+                has_ident = true;
+                consumed_bytes += 1;
+                sub_chars.next();
+                continue;
             }
             // Both classifiers are BYTE tables, so a `char as u8` cast truncates.
             // `iident` is ASCII-only; `itok` must stay reachable for the token

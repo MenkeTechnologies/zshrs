@@ -2075,8 +2075,12 @@ pub fn add_cursor_key(km: &mut Keymap, tccode: i32, thingy: Thingy, defchar: i32
 
     if cap_present && !term_broken {
         // c:1271-1273 — `cursorptr = buf; tputs(tcstr[tccode], 1, add_cursor_char);`
+        // The `tputs` is what strips a `$<n>` delay spec out of the cap
+        // before it becomes the bound key sequence; writing `tcstr[cap]`
+        // straight into `buf` bound the literal `$<n>` text as part of the
+        // arrow-key escape, so the real arrow key never matched.
         let escape = tcstr.lock().unwrap()[cap_idx].clone();
-        buf.extend_from_slice(escape.as_bytes());
+        buf.extend_from_slice(&crate::shout::tputs(&escape));
         // c:1281-1282 — sanity: reject zero-length / single-char.
         let len = buf.len();
         if len >= 2 && (buf[0] != 0x83 || len >= 3) {
@@ -2916,33 +2920,40 @@ pub fn getkeycmd() -> Option<super::zle_thingy::Thingy> {
                       // c:1774 — `sentstring:` retry label.
     loop {
         // c:1775 — `seq = getkeymapcmd(curkeymap, &func, &str);`
-        let func = get_key_cmd(); // c:1775 underlying byte-loop
-        if func.is_none() {
+        let Some((func, str)) = get_key_cmd() else {
             // c:1776 `if (!*seq) return NULL;`
             return None;
-        }
-        let func = func.unwrap();
-        // c:1777-1786 — string-insert (func==NULL in C, modeled as
-        // Thingy with empty nam in Rust thingytab). When the binding
-        // is a string-replacement, ungetbytes the str and re-walk.
-        if func.nam.is_empty() {
-            // c:1777 `if (!func)`
-            hops += 1; // c:1778
-            if hops == 20 {
-                // c:1779 hop-cap
-                crate::ported::utils::zerr(
-                    // c:1781
-                    "string inserting another one too many times",
-                );
-                return None; // c:1783
+        };
+        // c:1778-1785 — string-insert. `bindkey -s` binds a STRING, not
+        // a widget: C's keybind returns a NULL Thingy with `*strp` set
+        // (c:673-674), and getkeycmd pushes that string back onto the
+        // input and re-walks the keymap, so the macro plays as if it
+        // had been typed.
+        let func = match func {
+            Some(f) if !f.nam.is_empty() => f,
+            _ => {
+                // c:1778 `if (!func)`
+                hops += 1; // c:1779
+                if hops == 20 {
+                    // c:1779 hop-cap
+                    crate::ported::utils::zerr(
+                        // c:1780
+                        "string inserting another one too many times",
+                    );
+                    return None; // c:1781
+                }
+                match str {
+                    // c:1783 `ungetbytes_unmeta(str, strlen(str));`
+                    Some(s) => {
+                        crate::ported::zle::zle_main::ungetbytes_unmeta(s.as_bytes());
+                        continue; // c:1784 `goto sentstring;`
+                    }
+                    // No widget AND no string — nothing to dispatch or
+                    // replay; treat as end of input rather than spin.
+                    None => return None,
+                }
             }
-            // c:1785 `ungetbytes_unmeta(str, strlen(str))` — no widget
-            // string was bound on this branch in Rust (get_key_cmd
-            // routes string-replacements before returning), so this
-            // arm only fires when the keymap entry has an empty `nam`
-            // sentinel. Loop to retry.
-            continue; // c:1786 `goto sentstring;`
-        }
+        };
         // c:1788 — `func == Th(z_executenamedcmd)` check. zsh uses
         // pointer equality on the global Thingy table; Rust uses
         // name equality against the canonical widget name.

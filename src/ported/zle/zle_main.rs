@@ -1062,11 +1062,12 @@ pub fn zlecore() {
             crate::ported::zle::zle_keymap::selectlocalmap(vis);
         }
 
-        // Resolve the next bound widget via multi-byte keymap lookup.
-        // Mirrors zle_main.c:1136 `bindk = getkeycmd();` — our
-        // get_key_cmd walks the keymap trie reading bytes until it
-        // hits a leaf or a non-prefix.
-        let thingy = get_key_cmd();
+        // c:1136 — `bindk = getkeycmd();`. Goes through `getkeycmd`
+        // (zle_keymap.rs:2916), not straight to the keymap walk, so a
+        // `bindkey -s` send-string is replayed into the input
+        // (zle_keymap.c:1783) instead of resolving to no widget, and
+        // `execute-named-command` gets its c:1786-1796 redirection.
+        let thingy = crate::ported::zle::zle_keymap::getkeycmd();
         // c:1137 — `selectlocalmap(NULL);`
         crate::ported::zle::zle_keymap::selectlocalmap(None);
         let thingy = match thingy {
@@ -3136,10 +3137,17 @@ pub fn in_vi_cmd_mode() -> bool {
 /// unget back into the input buffer.
 ///
 /// Simplified compared to the C source: skips the CSI-sequence
-/// special handling at zle_keymap.c:1645 and the
-/// `t_executenamedcmd` redirection at zle_keymap.c:1787 — both are
-/// host-driven concerns that the bin can layer on top.
-pub fn get_key_cmd() -> Option<Thingy> {
+/// special handling at zle_keymap.c:1645. The
+/// `t_executenamedcmd` redirection at zle_keymap.c:1787 lives in
+/// `getkeycmd` (zle_keymap.rs:2916), as in C.
+///
+/// Return value mirrors C's two out-params (`Thingy *funcp, char
+/// **strp`, c:1581): `None` is C's `!*seq` end-of-input, and the pair
+/// is `(func, str)`. A `bindkey -s` entry resolves to
+/// `(None, Some(string))` — C's `keybind` returns a NULL Thingy with
+/// `*strp` set (c:673-674) — which `getkeycmd` turns into
+/// `ungetbytes_unmeta(str)` + re-walk (c:1783-1784).
+pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
     // c:zle_keymap.c:1607-1616 — a selected LOCAL keymap (viopp/visual/
     // isearch) does NOT replace the global keymap wholesale: each key is
     // looked up in the local map first, and when it is neither bound nor
@@ -3156,6 +3164,13 @@ pub fn get_key_cmd() -> Option<Thingy> {
     };
     let mut buf: Vec<u8> = Vec::with_capacity(8);
     let mut last_match: Option<Thingy> = None;
+    // c:1584 — `char *str = NULL;` — the send-string of the longest
+    // binding matched so far, carried out alongside `func`.
+    let mut last_str: Option<String> = None;
+    // c:1618 — whether anything at all matched. A send-string binding
+    // matches with `func == NULL`, so `last_match.is_some()` can no
+    // longer stand in for "matched".
+    let mut matched = false;
     let mut last_match_len = 0usize;
     // c:zle_keymap.c:1585 — `int lastlen = 0, lastc = lastchar;` —
     // remember lastchar as of the LAST RECORDED MATCH. When the walk
@@ -3209,15 +3224,30 @@ pub fn get_key_cmd() -> Option<Thingy> {
             SeqCst,
         );
 
-        // Look up the current buffer in one keymap: (binding, is_prefix).
-        let lookup = |m: &crate::ported::zle::zle_keymap::Keymap| {
+        // Look up the current buffer in one keymap: ((binding, str), is_prefix).
+        // c:659-675 `keybind(km, keybuf, &s)` — `first[f]` wins for a
+        // single char (c:663-668), otherwise the `multi` node supplies
+        // BOTH `k->bind` and `k->str` (c:670-674). The str half used to
+        // be dropped here, so every `bindkey -s` binding resolved to
+        // "no widget" and the macro never played back.
+        type Bound = (Option<Thingy>, Option<String>);
+        let lookup = |m: &crate::ported::zle::zle_keymap::Keymap| -> (Option<Bound>, bool) {
             if buf.len() == 1 {
-                let bind = m.first[b as usize].clone();
+                // c:663-668 — single char bound in `first[]`.
+                if let Some(t) = m.first[b as usize].clone() {
+                    let pfx = m.multi.keys().any(|k| k.len() > 1 && k[0] == b);
+                    return (Some((Some(t), None)), pfx);
+                }
+                // c:670-674 — not in `first[]`: a single-char
+                // `bindkey -s` lives in `multi` (bindkey() clears the
+                // `first[]` slot for it, zle_keymap.rs:766-768).
+                let entry = m.multi.get(&buf[..]);
+                let bind = entry.map(|e| (e.bind.clone(), e.str.clone()));
                 let pfx = m.multi.keys().any(|k| k.len() > 1 && k[0] == b);
                 (bind, pfx)
             } else {
                 let entry = m.multi.get(&buf[..]);
-                let bind = entry.and_then(|e| e.bind.clone());
+                let bind = entry.map(|e| (e.bind.clone(), e.str.clone()));
                 // Whether the current sequence is a PREFIX of a longer binding.
                 // The entry's `prefixct` only counts when `multi` holds an
                 // intermediate node for `buf`; if it stores full sequences
@@ -3256,9 +3286,19 @@ pub fn get_key_cmd() -> Option<Thingy> {
         // arrived (M-f / M-DEL dead for any typist slower than
         // KEYTIMEOUT). C keeps the read BLOCKING until a real binding
         // or a non-prefix byte resolves the sequence.
-        if let Some(t) = current_match {
-            if t.nam != "undefined-key" {
-                last_match = Some(t);
+        // A send-string node has `bind == None, str == Some` — that IS a
+        // match (C's keybind returns a NULL Thingy, which is not
+        // t_undefinedkey). An intermediate PREFIX node has both None
+        // (C gives those `t_undefinedkey`, c:639) and is not a match.
+        if let Some((bind, s)) = current_match {
+            let is_undef = bind
+                .as_ref()
+                .map(|t| t.nam == "undefined-key")
+                .unwrap_or(false);
+            if !is_undef && (bind.is_some() || s.is_some()) {
+                last_match = bind; // c:1620 `func = f;`
+                last_str = s; // c:1621 `str = s;`
+                matched = true;
                 last_match_len = buf.len();
                 lastc = LASTCHAR.load(SeqCst); // c:1622 — `lastc = lastchar;`
             }
@@ -3284,7 +3324,7 @@ pub fn get_key_cmd() -> Option<Thingy> {
     // Unget any bytes past the matched prefix so the next read sees
     // them. Mirrors the lastlen / keybuflen accounting in
     // zle_keymap.c:1696-1708 (`keybuf[keybuflen = lastlen] = 0`).
-    if last_match.is_some() && buf.len() > last_match_len {
+    if matched && buf.len() > last_match_len {
         let extra = buf[last_match_len..].to_vec();
         ungetbytes(&extra);
         buf.truncate(last_match_len);
@@ -3306,12 +3346,15 @@ pub fn get_key_cmd() -> Option<Thingy> {
     // nothing matched: C returns t_undefinedkey (getkeycmd's caller
     // feeps). Returning None here would read as EOF and EXIT the shell
     // on any unbound key.
-    if last_match.is_none() && !buf.is_empty() {
-        return crate::ported::zle::zle_thingy::thingytab()
-            .lock()
-            .ok()
-            .and_then(|t| t.get("undefined-key").cloned())
-            .or_else(|| Some(Thingy::new("undefined-key")));
+    if !matched && !buf.is_empty() {
+        return Some((
+            crate::ported::zle::zle_thingy::thingytab()
+                .lock()
+                .ok()
+                .and_then(|t| t.get("undefined-key").cloned())
+                .or_else(|| Some(Thingy::new("undefined-key"))),
+            None,
+        ));
     }
 
     if std::env::var_os("ZSHRS_ZLE_LOG").is_some() {
@@ -3331,7 +3374,12 @@ pub fn get_key_cmd() -> Option<Thingy> {
         }
     }
 
-    last_match
+    if !matched {
+        // c:1776 — `if(!*seq) return NULL;` — nothing read at all (EOF).
+        return None;
+    }
+    // c:1710-1711 — `*funcp = func; *strp = str;`
+    Some((last_match, last_str))
 }
 
 /// Execute a widget. Port of `execzlefunc(Thingy func, char **args, int set_bindk, int set_lbindk)` from Src/Zle/zle_main.c:1420.
@@ -4046,8 +4094,8 @@ mod tests {
         let _g = zle_test_setup();
         selectkeymap("emacs", 1);
         ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
-        let t = get_key_cmd().expect("should resolve Ctrl-E");
-        assert_eq!(t.nam, "end-of-line");
+        let (t, _str) = get_key_cmd().expect("should resolve Ctrl-E");
+        assert_eq!(t.expect("widget, not a send-string").nam, "end-of-line");
     }
 
     #[test]
@@ -4058,7 +4106,8 @@ mod tests {
         // ESC-d is bind to kill-word in zle_bindings.c emacs table.
         // Push the bytes and resolve — multi-byte traversal kicks in.
         ungetbytes(b"\x1bd");
-        let t = get_key_cmd().expect("should resolve ESC-d");
+        let (t, _str) = get_key_cmd().expect("should resolve ESC-d");
+        let t = t.expect("widget, not a send-string");
         // Either kill-word or whatever the emacs default binds; assert
         // we got *some* widget (the trie walk worked beyond the single
         // byte) by checking the keybuf actually traversed past 1 byte.

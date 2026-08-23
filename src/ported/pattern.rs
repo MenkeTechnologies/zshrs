@@ -2766,16 +2766,59 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             // backtrack pops the LAST byte from buf and rewinds patparse
             // by 1 so the next patcomppiece call sees that byte as its
             // own atom.
-            let has_trailing_hash = {
-                let sp_hash = zpc_special.lock().unwrap()[ZPC_HASH as usize];
+            // c:1341 — "If we have more than one character, a following hash
+            // or (#c...) only applies to the last, so backtrack one character."
+            // C tests THREE shapes, not just the bare `#` (c:1342-1350):
+            //
+            //   if ((*patparse == zpc_special[ZPC_HASH] ||
+            //        (*patparse == zpc_special[ZPC_INPAR] &&
+            //         patparse[1] == zpc_special[ZPC_HASH] &&
+            //         patparse[2] == 'c') ||
+            //        (*patparse == zpc_special[ZPC_KSH_AT] &&
+            //         patparse[1] == Inpar &&
+            //         patparse[2] == zpc_special[ZPC_HASH] &&
+            //         patparse[3] == 'c')) && morelen)
+            //       patparse = patprev;
+            //
+            // Only the first arm was ported, so `FPATH+(#c0,1)=` compiled the
+            // count over the whole literal run `FPATH+` instead of over the
+            // trailing `+` alone, and `FPATH=` never matched.
+            let has_trailing_quantifier = {
+                let sp = zpc_special.lock().unwrap();
+                let sp_hash = sp[ZPC_HASH as usize];
+                let sp_inpar = sp[ZPC_INPAR as usize];
+                let sp_ksh_at = sp[ZPC_KSH_AT as usize];
+                drop(sp);
                 let p = patparse.lock().unwrap();
-                let hash_at = local_off < p.len() && p.as_bytes()[local_off] == b'#';
+                let b = p.as_bytes();
+                let at = |i: usize| -> u8 { b.get(local_off + i).copied().unwrap_or(0) };
+                // c:1342 — bare `#` / `##` closure.
+                let hash_at = sp_hash == b'#' && at(0) == b'#';
+                // c:1343-1345 — `(#c...)` count spec.
+                let count_at =
+                    sp_hash == b'#' && at(0) == sp_inpar && at(1) == b'#' && at(2) == b'c';
+                // c:1346-1349 — ksh `@(#c...)` form. `Inpar` is the tokenized
+                // `(`; this port keeps pattern bytes raw (see patcompcharsset
+                // at pattern.rs:443), so the literal `(` stands in for it.
+                let ksh_count_at = sp_hash == b'#'
+                    && at(0) == sp_ksh_at
+                    && at(1) == b'('
+                    && at(2) == b'#'
+                    && at(3) == b'c';
                 drop(p);
-                hash_at && sp_hash == b'#'
+                hash_at || count_at || ksh_count_at
             };
-            if buf.len() > 1 && has_trailing_hash {
-                let _ = buf.pop();
-                local_off -= 1;
+            if buf.len() > 1 && has_trailing_quantifier {
+                // c:1322 — `patprev = patparse; METACHARINC(patparse);`, so
+                // `patprev` is the START of the last character, which may be
+                // multibyte. Rewind to that boundary rather than one byte.
+                let mut cut = buf.len() - 1;
+                while cut > 0 && (buf[cut] & 0xC0) == 0x80 {
+                    cut -= 1;
+                }
+                let popped = buf.len() - cut;
+                buf.truncate(cut);
+                local_off -= popped;
             }
             patparse_off.store(local_off, Ordering::Relaxed);
             *flagp |= P_SIMPLE;

@@ -2118,6 +2118,36 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
             }
             // Advance past the escape opcode byte.
             bv.fm_pos += 1;
+        } else if c == b'!' && isset(crate::ported::zsh_h::PROMPTBANG) {
+            // c:Src/prompt.c:946-957 —
+            //     } else if(*bv->fm == '!' && isset(PROMPTBANG)) {
+            //         if(doprint) {
+            //             if(bv->fm[1] == '!') {
+            //                 bv->fm++;
+            //                 addbufspc(1);
+            //                 pputc('!');
+            //             } else {
+            //                 addbufspc(DIGBUFSIZE);
+            //                 convbase(bv->bp, curhist, 10);
+            //                 bv->bp += strlen(bv->bp);
+            //             }
+            //         }
+            //     }
+            // This arm was missing entirely, so `setopt promptbang;
+            // print -P !` emitted a literal `!` instead of the current
+            // history event number (E01options.ztst:61).
+            if doprint != 0 {
+                if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'!') {
+                    bv.fm_pos += 1; // c:949 `bv->fm++`
+                    pputc(bv, b'!'); // c:951
+                } else {
+                    // c:954-955 — `convbase(bv->bp, curhist, 10)`
+                    let n =
+                        crate::ported::hist::curhist.load(std::sync::atomic::Ordering::SeqCst);
+                    stradd(bv, &n.to_string());
+                }
+            }
+            bv.fm_pos += 1; // c:369 loop step
         } else {
             // c:600-607 — plain char. C: `char c = *bv->fm == Meta ?
             // *++bv->fm ^ 32 : *bv->fm; if (doprint) { addbufspc(1); pputc(c); }`.
@@ -2334,9 +2364,12 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
         x if x == TSC_RAW => {
             // c:1087
             // c:1088 — `tputs(tcstr[cap], 1, putraw);` — raw write to tty fd.
+            // `shout::tputs` is the tputs(3) half: it strips the `$<n>`
+            // delay specs capability strings carry (vt100's `md` is
+            // `\e[1m$<2>`), which this port used to emit verbatim.
             let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
             let out_fd = if fd >= 0 { fd } else { 2 };
-            let _ = crate::ported::utils::write_loop(out_fd, cap_str.as_bytes());
+            let _ = crate::ported::utils::write_loop(out_fd, &crate::shout::tputs(&cap_str));
         }
         x if x == TSC_PROMPT => {
             // c:1094
@@ -2353,7 +2386,10 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
             // Pair the wrapping with countprompt's recognition; both
             // sides now use the canonical bytes.
             out.push(Inpar); // c:1097 Inpar marker
-            out.push_str(&cap_str); // c:1099
+                             // c:1099 — `tputs(tcstr[cap], 1, putstr);` — the
+                             // per-byte callback appends into the prompt buffer,
+                             // so the `$<n>` delay specs are stripped here too.
+            out.push_str(&String::from_utf8_lossy(&crate::shout::tputs(&cap_str))); // c:1099
                                     // c:1101-1106 — glitch detection (sg / ug termcap nums).
                                     // tgetnum() not yet ported as a free fn; assume 0 (no glitch)
                                     // which matches modern terminals.
@@ -2364,7 +2400,7 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
             // c:1092 — `tputs(tcstr[cap], 1, putshout);`
             let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
             let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = crate::ported::utils::write_loop(out_fd, cap_str.as_bytes());
+            let _ = crate::ported::utils::write_loop(out_fd, &crate::shout::tputs(&cap_str));
         }
     }
     // zsh-5.9.1 tsetcap dirty pass — re-apply the attributes still

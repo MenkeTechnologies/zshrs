@@ -39,7 +39,7 @@ use crate::ported::params::{
     deleteparamtable, endparamscope, locallevel, newparamtable, paramtab, printparamnode,
     startparamscope,
 };
-use crate::ported::utils::{zerr, zwarn, zwarnnam};
+use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
 use crate::ported::zsh_h::{
     eprog, features, funcwrap, hashnode, hashtable, isset, module, options, param, reswd,
     HashTable, MAX_OPS, OPT_ISSET, PM_AUTOLOAD, PM_DECLARED, PM_HIDE, PM_NAMEREF, PM_NORESTORE,
@@ -202,18 +202,25 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
                 }
             } else {
                 // c:126-131 — declaration changes the param's type.
-                zerr(&format!(
-                    "private: can't change type of private param: {}",
-                    name
-                )); // c:127-129
+                // c:127-129 — `zerrnam("private", "can't change type of
+                // private param: %s", pm->node.nam)`. zerrnam puts the command
+                // name INTO the location prefix (`(anon):private:2: …`);
+                // folding it into the message via zerr produced
+                // `(anon):2: private: …` instead.
+                zerrnam(
+                    "private",
+                    &format!("can't change type of private param: {}", name),
+                ); // c:127-129
                 MAKEPRIVATE_ERROR.store(1, Ordering::Relaxed); // c:130
             }
         } else {
             // c:132-136
-            zerr(&format!(
-                "private: can't change scope of existing param: {}",
-                name
-            )); // c:133-134
+            // c:133-134 — `zerrnam("private", "can't change scope of existing
+            // param: %s", pm->node.nam)`; same prefix rule as above.
+            zerrnam(
+                "private",
+                &format!("can't change scope of existing param: {}", name),
+            ); // c:133-134
             MAKEPRIVATE_ERROR.store(1, Ordering::Relaxed); // c:135
         }
         return; // c:137

@@ -1901,9 +1901,23 @@ pub(crate) fn zzlex() -> i32 {
                     return MINUSEQ;
                 }
                 if m_unary() {
-                    // Check if followed by digit for negative number
-                    if let Some(next) = peek() {
-                        if is_digit(next) || next == '.' {
+                    // c:645-647 — `if (idigit(*ptr) ||
+                    //                  (*ptr == '.' &&
+                    //                   (idigit(ptr[1]) || !itype_end(ptr, INAMESPC, 0))))`
+                    // — Check if followed by digit for negative number.
+                    // C's `!itype_end(...)` arm tests a pointer itype_end
+                    // never returns NULL for, so it is dead there too; the
+                    // live condition is a digit, or a `.` FOLLOWED BY a digit
+                    // (the float literal `-.5`). Without the second-char
+                    // test a namespace name fed its bare leading `.` to
+                    // lexconstant, and `- -.var.f` came back as
+                    // "bad math expression: operator expected at `var.f'".
+                    let mut ahead = m_input_slice_from(m_pos()).chars().collect::<Vec<char>>();
+                    ahead.truncate(2);
+                    if let Some(&next) = ahead.first() {
+                        if is_digit(next)
+                            || (next == '.' && ahead.get(1).copied().is_some_and(is_digit))
+                        {
                             m_pos_sub(1); // Put back the -
                             return lexconstant();
                         }
@@ -2311,15 +2325,22 @@ pub(crate) fn zzlex() -> i32 {
                     return lexconstant();
                 }
 
-                if is_ident_start(c) {
-                    let id_start = m_pos() - c.len_utf8();
-                    while let Some(c) = peek() {
-                        if is_ident(c) {
-                            advance();
-                        } else {
-                            break;
-                        }
-                    }
+                // c:866 — `if ((ie = itype_end(ptr, INAMESPC, 0)) != ptr) {`
+                // The math lexer scans identifiers with INAMESPC, so a ksh93
+                // namespace name (`.var.d`, `k.2`) is ONE math variable —
+                // `$(( .var.x = ++.var.d - -.var.f ))` (K02parameter). The
+                // previous walk was `is_ident_start` + `is_ident`, which is
+                // plain IIDENT and left the leading `.` to be reported as
+                // "bad math expression: illegal character: .".
+                let id_start = m_pos() - c.len_utf8();
+                let namespc_end = crate::ported::utils::itype_end(
+                    &m_input_slice_from(id_start),
+                    crate::ported::ztype_h::INAMESPC,
+                    false,
+                );
+                if namespc_end != 0 {
+                    // c:870 — `p = ptr; ptr = ie;`
+                    m_pos_set(id_start + namespc_end);
 
                     let id = m_input_slice(id_start, m_pos());
 
@@ -2611,6 +2632,8 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "hypot"
             | "ilogb"
             | "int"
+            | "isinf"
+            | "isnan"
             | "j0"
             | "j1"
             | "jn"
@@ -3054,6 +3077,24 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         }
         "ilogb" => unsafe { ilogb(args.first().copied().unwrap_or(0.0)) as f64 }, // c:304
         "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+        // c:Src/Modules/mathfunc.c:315-318 `case MF_ISINF: ret.type =
+        // MN_INTEGER; ret.u.l = (zlong) isinf(argd);`
+        "isinf" => {
+            if args.first().copied().unwrap_or(0.0).is_infinite() {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        // c:Src/Modules/mathfunc.c:320-323 `case MF_ISNAN: ret.type =
+        // MN_INTEGER; ret.u.l = (zlong) isnan(argd);`
+        "isnan" => {
+            if args.first().copied().unwrap_or(0.0).is_nan() {
+                1.0
+            } else {
+                0.0
+            }
+        }
         "j0" => unsafe { j0(args.first().copied().unwrap_or(0.0)) }, // c:325
         "j1" => unsafe { j1(args.first().copied().unwrap_or(0.0)) }, // c:331
         // c:Src/Modules/mathfunc.c:144 `NUMMATHFUNC("jn", math_func, 2, 2,
@@ -3121,7 +3162,10 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // c:Src/Modules/mathfunc.c — MF_ILOGB / MF_INT / MF_ISINF / MF_ISNAN
     // set `ret.type = MN_INTEGER` (e.g. `ilogb(8)` → 3, not 3.). Tag the
     // integer-returning functions so the result prints as an int.
-    if matches!(name, "ilogb" | "int") {
+    // c:Src/Modules/mathfunc.c:306 / :311 / :316 / :321 — MF_ILOGB,
+    // MF_INT, MF_ISINF and MF_ISNAN all set `ret.type = MN_INTEGER`, so
+    // `isnan(x)` yields `0`/`1`, not `0.`/`1.`.
+    if matches!(name, "ilogb" | "int" | "isinf" | "isnan") {
         return mnumber {
             l: result as i64,
             d: 0.0,

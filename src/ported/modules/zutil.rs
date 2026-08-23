@@ -115,7 +115,13 @@ pub fn freematch(m: &mut MatchData) {
 // below operate on that existing struct.
 
 /// `Stypat` mirroring Src/Modules/zutil.c:97-104.
+///
+/// `Clone` is a RUST-ONLY addition (C moves pointers): `(...)` subshells
+/// are in-process in zshrs, so `subshell_begin` has to deep-copy the
+/// zstyle table the way `fork()` copies it for C — see the
+/// `SubshellSnapshot::zstyles` field in fusevm_bridge.rs.
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct stypat {
     pub next: Option<Box<stypat>>, // c:98 Stypat next
     pub pat: String,               // c:99 char *pat
@@ -707,7 +713,13 @@ impl ZFormat {
                         };
                     } else {
                         let signed_test = if right { -testval } else { testval };
-                        let n: i64 = sv.parse().unwrap_or(0);
+                        // c:864 — `actval = (int) mathevali(specs[(unsigned
+                        // char) *s]) - testval;`. The spec's VALUE is an
+                        // arithmetic expression, not a bare integer: the
+                        // documented `%18(s.math.)` with `s:6*3` is true.
+                        // The previous `sv.parse()` returned 0 for any
+                        // non-literal, so every arithmetic test was false.
+                        let n: i64 = crate::ported::math::mathevali(sv).unwrap_or(0);
                         actval = (n - signed_test) != 0;
                     }
                 } else {
@@ -1163,7 +1175,20 @@ pub fn bin_zstyle(
         crate::ported::utils::zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    if args.is_empty() && !OPT_ISSET(ops, b'L') && !OPT_ISSET(ops, b'l') && !OPT_ISSET(ops, b'e') {
+    // c:491-492 — C reaches the bare-list arm only when `!args[0]`, i.e.
+    // NO argument at all was given. `positional_start == 1` means an
+    // option letter was consumed off args[0], so this is `zstyle -X`
+    // (with X's own positionals exhausted), NOT a bare `zstyle`.
+    // Without this gate, `zstyle -d` (delete everything, c:639-640
+    // `zstyletab->emptytable`) fell into the listing arm and returned 0
+    // having deleted nothing — every V05styles chunk after the
+    // `zstyle -d` in chunk 1 then saw the leftover styles.
+    if args.is_empty()
+        && positional_start == 0
+        && !OPT_ISSET(ops, b'L')
+        && !OPT_ISSET(ops, b'l')
+        && !OPT_ISSET(ops, b'e')
+    {
         // c:491-492 + c:580-581 — bare `zstyle` invocation:
         // `list = ZSLIST_BASIC; scanhashtable(zstyletab, ..., printstylenode, list);`
         //
@@ -3046,6 +3071,18 @@ pub fn bin_zparseopts(
             break;
         }
         if o.len() == 1 {
+            // c:Src/builtin.c:336-342 — a lone `-` is END-OF-OPTIONS for
+            // EVERY builtin with an optstr, and `zparseopts`'s table entry
+            // has one (c:Src/Modules/zutil.c:2149
+            // `BUILTIN("zparseopts", …, "a:A:DEFGKMn:v:", NULL)`): the
+            // generic parser sets `ops.ind['-']` and steps past it, so
+            // `bin_zparseopts` never sees the `-`. zshrs parses the flags
+            // here instead and merely BROKE on the `-`, leaving it in the
+            // spec list — so `zparseopts -a optv - a b:` built a phantom
+            // option description named `-`. That phantom then swallowed
+            // the leading dash of every `--xxx` word in the short-option
+            // scan (`--x` reported `bad option: -x` instead of `--x`).
+            i += 1;
             break;
         } // "-"
         let bytes = o.as_bytes();
@@ -3279,24 +3316,51 @@ pub fn bin_zparseopts(
             stopped = true;
             break;
         }
-        // Try whole-name match. c:1978.
+        // c:1978 — `if (!(d = lookup_opt(o + 1)))`. Faithful port of
+        // `lookup_opt` (c:1652-1681), which walks `opt_descs`:
+        //
+        //   if (p->flags & ZOF_GNUL) {
+        //       if (!strcmp(p->name, str) ||
+        //           (strpfx(p->name, str) && str[strlen(p->name)] == '='))
+        //           return p;
+        //   } else if (p->flags & ZOF_ARG) {
+        //       if (strpfx(p->name, str)) return p;
+        //   } else if (!strcmp(p->name, str))
+        //       return p;
+        //
+        // Two divergences fixed here:
+        //   1. The ZOF_ARG arm is a bare PREFIX match — spec `foo:` must
+        //      match the word `-foobar` with optarg `bar` (the documented
+        //      "cuddled" style). The old inline test demanded `=` or
+        //      end-of-string, so every cuddled long optarg fell through to
+        //      the short-option scan and errored `bad option: -f`.
+        //   2. C prepends each new desc (`d->next = opt_descs; opt_descs
+        //      = d;` c:1957-1958), so `opt_descs` is in REVERSE definition
+        //      order and lookup_opt sees the LAST-defined spec first. That
+        //      is exactly what the documented "with overlapping specs the
+        //      last matching spec wins" behaviour rests on, so iterate
+        //      `descs` in reverse.
         let body = &o_raw[1..];
-        let whole_idx = descs.iter().position(|d| {
-            body == d.name
-                || body.starts_with(&d.name)
-                    && body
-                        .as_bytes()
-                        .get(d.name.len())
-                        .is_some_and(|b| *b == b'=' || *b == 0)
-        });
-        let whole_match = whole_idx
-            .map(|idx| {
-                let d = &descs[idx];
-                body == d.name
-                    || (body.starts_with(&d.name)
-                        && (body.as_bytes().get(d.name.len()) == Some(&b'=')))
+        let whole_idx = descs
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, d)| {
+                if d.flags & ZOF_GNUL != 0 {
+                    // c:1657-1659
+                    body == d.name
+                        || (body.starts_with(&d.name)
+                            && body.as_bytes().get(d.name.len()) == Some(&b'='))
+                } else if d.flags & ZOF_ARG != 0 {
+                    // c:1669-1670
+                    body.starts_with(&d.name)
+                } else {
+                    // c:1673-1674
+                    body == d.name
+                }
             })
-            .unwrap_or(false);
+            .map(|(idx, _)| idx);
+        let whole_match = whole_idx.is_some();
         if whole_match {
             let raw_idx = whole_idx.unwrap();
             let dn_len = descs[raw_idx].name.len();
@@ -3338,8 +3402,12 @@ pub fn bin_zparseopts(
                 }
                 cur_idx
             };
-            let dflags = descs[idx].flags;
-            let dname = descs[idx].name.clone();
+            // c:2027-2058 — the flags/name tested in the whole-param arm
+            // are the LOOKED-UP desc's (`d` from lookup_opt), not the
+            // `-M` mapping target's: C applies `map_opt_desc` only inside
+            // `add_opt_val` (c:1648-1650), after the arg has been decided.
+            let dflags = descs[raw_idx].flags;
+            let dname = descs[raw_idx].name.clone();
             if (dflags & ZOF_ARG) != 0 {
                 let e = &body[dn_len..]; // pointer past name
                 if (dflags & ZOF_GNUL) != 0 && e.starts_with('=') {
@@ -3497,7 +3565,28 @@ pub fn bin_zparseopts(
                 }
             }
         }
-        if !keep || !out.is_empty() {
+        // c:2062-2068 — the `-M` pass that marks a mapping TARGET as
+        // "not a real array":
+        //
+        //   if (flags & ZOF_MAP) {
+        //       for (d = opt_descs; d; d = d->next)
+        //           if (d->arr && !d->vals && (d->flags & ZOF_MAP)) {
+        //               if (d->arr->num == 0 && get_opt_desc(d->arr->name))
+        //                   d->arr->num = -1;  /* this is not a real array */
+        //           }
+        //   }
+        //
+        // …and c:2073 `if (a->num >= 0 && …)` then skips it. Under `-M`
+        // the `=NAME` suffix names ANOTHER SPEC, not an array, so
+        // `zparseopts -M -a optv - a:=-aaa -aaa:` must NOT try to assign a
+        // parameter called `-aaa` (zshrs errored `not an identifier:
+        // -aaa`). The array is skipped only when it collected nothing AND
+        // a spec of that name exists — a genuine array of the same name
+        // that DID collect values is still emitted, as in C.
+        let is_map_target = flags_map & ZOF_MAP != 0
+            && out.is_empty()
+            && descs.iter().any(|d| d.name == name);
+        if !is_map_target && (!keep || !out.is_empty()) {
             setaparam(&name, out);
         }
     }
@@ -3682,7 +3771,7 @@ pub struct MatchData {
 // already exist at lines 1608 / 1596 below.
 /// `style_table` — see fields for layout.
 #[allow(non_camel_case_types)]
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct style_table {
     /// `styles` field.
     styles: HashMap<String, Vec<stypat>>,

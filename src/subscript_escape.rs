@@ -226,3 +226,130 @@ pub fn subscript_escape_markers(s: &str, sub: bool) -> String {
     }
     out
 }
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C has no separate function here: this is the scan loop that OPENS
+/// `getarg` (c:Src/params.c:1533-1541), lifted out because the Rust
+/// paramsubst expands the whole subscript in one place and then needs
+/// to know where C would have cut it.
+///
+/// c:Src/params.c:1533-1541 —
+///     for (t = s, i = 0;
+///          (c = *t) &&
+///              ((c != Outbrack && (ishash || c != ',')) || i || inpar);
+///          t++) {
+///         /* Untokenize inull() except before brackets and double-quotes */
+///         if (inull(c)) { c = t[1]; if (c == '[' || … ) { … ++t; } … continue; }
+///         if (c == '[' || c == Inbrack) i++;
+///         else if (c == ']' || c == Outbrack) i--;
+///         if (c == '(' || c == Inpar) inpar++;
+///         else if (c == ')' || c == Outpar) inpar--;
+///         …
+///     }
+///
+/// Returns the two RAW (still unexpanded) argument texts when the scan
+/// stopped on a top-level range comma, else None (one argument only).
+/// `ishash` mirrors C's `ishash` gate: for a hash, `,` is an ordinary
+/// key byte and never terminates the argument.
+pub fn subscript_arg_split(s: &str, ishash: bool) -> Option<(String, String)> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0_i32; // c:1512 — bracket nesting
+    let mut inpar = 0_i32; // c:1512
+    let mut k = 0_usize;
+    while k < chars.len() {
+        let c = chars[k];
+        // c:1543-1552 — `if (inull(c))`: the marker's NEXT char decides.
+        // Before a bracket/brace/paren the pair is skipped wholesale (c:1549
+        // `++t`), so an escaped bracket never moves the nesting counters.
+        // zshrs also sees the SOURCE-literal spelling of the escape (`\`)
+        // because it has no `parse_subscript` re-lex; treat both alike.
+        if c == crate::ported::zsh_h::Bnull
+            || c == crate::ported::zsh_h::Bnullkeep
+            || c == '\\'
+        {
+            if let Some(&n) = chars.get(k + 1) {
+                if matches!(n, '[' | ']' | '(' | ')' | '{' | '}')
+                    || n == crate::ported::zsh_h::Inbrack
+                    || n == crate::ported::zsh_h::Outbrack
+                    || n == crate::ported::zsh_h::Inpar
+                    || n == crate::ported::zsh_h::Outpar
+                    || n == crate::ported::zsh_h::Inbrace
+                    || n == crate::ported::zsh_h::Outbrace
+                {
+                    k += 2; // c:1549 `++t` plus the loop's own `t++`
+                    continue;
+                }
+            }
+            k += 1; // c:1551 `continue` — the escaped char is examined next
+            continue;
+        }
+        // c:1534 — `(c != Outbrack && (ishash || c != ','))`: a top-level
+        // comma ends the argument unless the target is a hash.
+        // `Comma` (c:Src/zsh.h) is the lexer TOKEN spelling of the same byte —
+        // a nested `${…}` body reaches paramsubst tokenized, so testing only
+        // the ASCII form reported "one argument" for `${(A@)a[1,2]}` and every
+        // downstream site then treated the slice as a single element.
+        if (c == ',' || c == crate::ported::zsh_h::Comma) && !ishash && i == 0 && inpar == 0 {
+            return Some((
+                chars[..k].iter().collect(),
+                chars[k + 1..].iter().collect(),
+            ));
+        }
+        match c {
+            '[' | crate::ported::zsh_h::Inbrack => i += 1,      // c:1553
+            ']' | crate::ported::zsh_h::Outbrack => i -= 1,     // c:1555
+            '(' | crate::ported::zsh_h::Inpar => inpar += 1,    // c:1557
+            ')' | crate::ported::zsh_h::Outpar => inpar -= 1,   // c:1559
+            _ => {}
+        }
+        k += 1;
+    }
+    None
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// Resolve "is this subscript a range, and what are its bounds?" using
+/// the parse-time decision recorded by `subscript_arg_split` when one is
+/// available (c:Src/params.c:1533-1536 — C splits BEFORE expanding), and
+/// falling back to a depth-0 comma scan of the already-expanded text for
+/// the reference paths that do not record one.
+pub fn subscript_range_bounds(
+    sub: &str,
+    known: &Option<(String, Option<(String, String)>)>,
+) -> Option<(String, String)> {
+    // The record is only authoritative for the exact subscript text it was
+    // taken from: paramsubst reassigns `subscript` on several arms (the
+    // `${!name}` prefix form, the magic-assoc key rebuild), and a stale
+    // record must not answer for a different string.
+    if let Some((recorded, split)) = known {
+        if recorded == sub {
+            return split.clone();
+        }
+    }
+    let bs: Vec<char> = sub.chars().collect();
+    let mut depth = 0_i32;
+    for (k, &c) in bs.iter().enumerate() {
+        match c {
+            '(' | crate::ported::zsh_h::Inpar | '[' | crate::ported::zsh_h::Inbrack => depth += 1,
+            ')' | crate::ported::zsh_h::Outpar | ']' | crate::ported::zsh_h::Outbrack => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            ',' if depth == 0 => {
+                return Some((
+                    bs[..k].iter().collect(),
+                    bs[k + 1..].iter().collect(),
+                ));
+            }
+            c if c == crate::ported::zsh_h::Comma && depth == 0 => {
+                return Some((
+                    bs[..k].iter().collect(),
+                    bs[k + 1..].iter().collect(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    None
+}

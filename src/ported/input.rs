@@ -643,6 +643,20 @@ pub fn inputline() -> i32 {
                 tab.load_module("zsh/compctl", None, false); // c:init.c:1765
             }
         }
+        // c:Src/Zle/zle_main.c:2244-2252 `setup_()` — loading zsh/zle runs
+        // the module's setup, which registers the widgets
+        // (`init_thingies()`, c:2253) and sets `zle_load_state = 1`
+        // (c:2250). zshrs normally does that eagerly in `zsh_main`, but
+        // that path is skipped when the shell starts with `+Z`; if an rc
+        // file then turns the editor back on with `setopt zle`, this read
+        // is where C's lazy `load_module("zsh/zle")` would fire, so run
+        // the same one-shot setup here.
+        if crate::ported::init::zle_load_state.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            crate::ported::zle::zle_thingy::init_thingies(); // c:2253
+            crate::ported::zle::zle_keymap::createkeymapnamtab();
+            crate::ported::zle::zle_keymap::default_bindings();
+            crate::ported::init::zle_load_state.store(1, std::sync::atomic::Ordering::SeqCst); // c:2250
+        }
         let mut flags = crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY;
         if isset(crate::ported::zsh_h::IGNOREEOF) {
             flags |= crate::ported::zsh_h::ZLRF_IGNOREEOF;
@@ -816,6 +830,74 @@ pub fn stuff(filename: &str) -> i32 {
     0
 }
 
+/*
+ * Check if the current input line, including continuations, is
+ * expanding an alias.  This does not detect alias expansions that
+ * have been fully processed and popped from the input stack.
+ * If there is an alias, the most recently expanded is returned,
+ * else NULL.
+ */
+// c:822-828 — comment copied verbatim from Src/input.c.
+//
+// !!! WARNING: RUST-ONLY HELPER !!!
+//
+// C's `inpoptop` (c:759) only moves `instacktop` DOWN — the popped frame
+// stays addressable, so `inungetc` can walk BACK UP over exhausted alias
+// continuations when the lexer backs the terminator up to a segment start
+// (c:587-605: `do { if (instacktop->alias) …->inuse = 1; instacktop++; }
+// while (instacktop->flags & (INP_ALCONT|INP_HISTCONT) && !…->bufleft);`).
+// That walk-up is what leaves the alias frames visible to
+// `input_hasalias()` after the alias body has been fully lexed.
+//
+// zshrs's `instack` is a `Vec` whose `pop()` DESTROYS the frame, so the
+// walk-up cannot be reconstructed. `crate::alias_input_frames` mirrors the observable:
+// `inpoptop` records the alias name of every frame it restores that carries
+// `INP_ALCONT`, and the list is dropped as soon as a pop lands on flags
+// without `INP_ALCONT` — i.e. exactly when the continuation chain that
+// `inungetc` would have restored has really ended.
+
+/// Port of `char *input_hasalias(void)` from `Src/input.c:831`.
+pub fn input_hasalias() -> Option<String> {
+    // c:831
+    let mut flags = inbufflags.with(|f| f.get()); // c:833
+    let mut instackptr = instack.with(|st| st.borrow().len()); // c:834 instacktop
+    let mut alias_nam: Option<String> = None; // c:835
+
+    loop {
+        // c:837
+        if (flags & INP_CONT) == 0 {
+            // c:839
+            break; // c:840
+        }
+        // c:841 — `DPUTS(instackptr == instack, "BUG: continuation at
+        // bottom of instack");` — Rust can't index below 0, so bail.
+        if instackptr == 0 {
+            break;
+        }
+        instackptr -= 1; // c:842
+        instack.with(|st| {
+            let st = st.borrow();
+            let frame = &st[instackptr];
+            if frame.alias.is_some() {
+                // c:843
+                alias_nam = frame.alias.clone(); // c:844
+            }
+            flags = frame.flags; // c:845
+        });
+    }
+
+    // RUST-ONLY fallback (see crate::alias_input_frames above): the alias frames C
+    // would still have on the stack were destroyed by `Vec::pop`. The
+    // bottom-most recorded name is the outermost alias of the chain, which
+    // is what C's downward walk ends up with for nested expansions
+    // (`secondalias` → `firstalias` → body reports `secondalias`).
+    if alias_nam.is_none() && (inbufflags.with(|f| f.get()) & INP_ALCONT) != 0 {
+        alias_nam = crate::alias_input_frames::outermost();
+    }
+
+    alias_nam // c:848
+}
+
 /// Discard pending input after a parse error.
 /// Port of `inerrflush()` from Src/input.c:665.
 pub fn inerrflush() {
@@ -960,6 +1042,17 @@ pub fn inpoptop() {
                 crate::ported::lex::LEX_INALMORE.with(|f| f.set(1)); // c:775
                 histbackword(); // c:776
             }
+        }
+        // RUST-ONLY bookkeeping for `input_hasalias` — see the crate::alias_input_frames
+        // comment there. Record the alias of a frame restored WITH
+        // INP_ALCONT: C would keep it reachable above `instacktop` for
+        // `inungetc` (c:587-605) to walk back onto.
+        if (entry.flags & INP_ALCONT) != 0 {
+            if let Some(name) = &entry.alias {
+                crate::alias_input_frames::push(name);
+            }
+        } else {
+            crate::alias_input_frames::clear();
         }
         inbuf.with(|b| *b.borrow_mut() = entry.buf);
         inbufpos.with(|p| p.set(entry.bufpos));

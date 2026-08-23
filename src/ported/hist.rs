@@ -2043,7 +2043,27 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
     {
         histremovedups(); // c:1505
     }
-    // *hptr = '\0';                                                         // c:1513 — String is implicit
+    // c:1507-1514 — `if (hptr) { DPUTS(hptr < chline, "History end
+    // pointer off start of line"); *hptr = '\0'; }` — C terminates the
+    // history line AT the cursor, so the stored line is `chline[0..hptr]`.
+    //
+    // NOT applied here, deliberately. zshrs's `hptr` is only a faithful
+    // end-of-line marker on the plain lexing path; on the history-
+    // EXPANSION path it is not. C feeds the expansion back through
+    // `inpush(sline, INP_HIST, NULL)` + `return ingetc()` (c:976-983) so
+    // every expanded character re-enters `ihgetc` and is re-`hwaddc`'d
+    // (c:459), keeping `hptr` at the true end. zshrs splits lexer input
+    // across `input::inbuf` and the Rust-only `LEX_INPUT`/`LEX_UNGET_BUF`
+    // window, and on the INP_HIST re-read the two disagree: `hptr` ends up
+    // BEHIND the expanded text that `ihwaddc` already wrote into `chline`.
+    // Truncating at it therefore drops the expansion — `echo M !:6` stored
+    // as `echo M ` instead of `echo M E` (verified: `fc -l` after
+    // `zshrs --zsh -fis` with the truncation applied). Plain lines were
+    // unaffected, which is what pins the gap to the INP_HIST re-read.
+    //
+    // Until that path keeps `hptr` honest, taking the whole buffer is the
+    // strictly safer divergence: it can only ever include MORE than C
+    // would, and today `hptr == chline.len()` on every non-expansion line.
     let chline_text = chline.lock().unwrap().clone();
     if !chline_text.is_empty() {
         // c:1515
@@ -2122,9 +2142,33 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
         let ptr = text.clone(); // c:1556 ztrdup(chline)
         if (flag & (HISTFLAG_DONE | HISTFLAG_RECALL)) == HISTFLAG_DONE {
             // c:1557
-            // zputs(ptr, shout); fputc('\n', shout); fflush(shout);         // c:1558-1560
-            print!("{}\n", ptr);
-            let _ = std::io::stdout().flush();
+            // c:1558-1560 — `zputs(ptr, shout); fputc('\n', shout);
+            // fflush(shout);`. The echo of a `!`-expanded line goes to
+            // `shout` — the TERMINAL (`fdopen(SHTTY)`, c:Src/init.c:748),
+            // or stderr when there is no tty (c:738) — NEVER to stdout.
+            // The previous port used `print!`, so every history expansion
+            // injected an extra line into the script's captured stdout:
+            // `zsh -fis <<<'print foo\nprint !!'` printed the expanded
+            // `print foo` line ahead of its output where zsh prints
+            // nothing on stdout at all.
+            //
+            // `shout` is resolved the way `init_shout` does it: the tty fd
+            // when the shell has one (c:Src/init.c:748 `shout =
+            // fdopen(SHTTY, "w")`), stderr when it does not (c:738 `shout
+            // = stderr`). Resolved here rather than through
+            // `extensions::shout::write` because that helper falls back to
+            // fd 1, which is the very thing this fix is removing.
+            let shout_fd = {
+                let t = crate::ported::init::SHTTY.load(SeqCst);
+                if t >= 0 {
+                    t // c:Src/init.c:748
+                } else {
+                    2 // c:Src/init.c:738 — shout = stderr
+                }
+            };
+            let mut out = crate::ported::utils::unmetafy_str(&ptr); // c:1558 zputs
+            out.push(b'\n'); // c:1559 fputc('\n', shout)
+            let _ = crate::ported::utils::write_loop(shout_fd, &out); // c:1560 fflush
         }
         if (flag & HISTFLAG_RECALL) != 0 {
             // c:1562
