@@ -368,9 +368,18 @@ mod round_ao_pins {
         assert_parity(r#"f_ao(){ :; }; unfunction f_ao 2>/dev/null; echo $?"#);
     }
 
+    /// The alias name must not collide with a real command on $PATH.
+    /// `alias zt=…; zt` is a SINGLE list, parsed before any of it runs, so
+    /// `zt` is not yet an alias when the parser reaches it and BOTH shells
+    /// fall through to a $PATH lookup — that identical fallthrough is what
+    /// this pins. The name used to be `zt`, which on a developer machine
+    /// resolved to a real GUI application and launched it on every run.
+    /// `_ao` matches this module's convention (see `f_ao` above).
     #[test]
     fn alias_then_unalias() {
-        assert_parity(r#"alias zt='echo z'; zt; unalias zt 2>/dev/null; echo $?"#);
+        assert_parity(
+            r#"alias zt_ao='echo z'; zt_ao; unalias zt_ao 2>/dev/null; echo $?"#,
+        );
     }
 
     #[test]
