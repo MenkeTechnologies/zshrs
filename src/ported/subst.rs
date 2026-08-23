@@ -6850,7 +6850,46 @@ pub fn paramsubst(
                     let had_escape = raw_sub.contains('\\')
                         || raw_sub.contains(crate::ported::zsh_h::Bnull)
                         || raw_sub.contains(crate::ported::zsh_h::Bnullkeep);
-                    if is_flag || !had_escape {
+                    // c:Src/params.c:1583 — `if (ishash && (keymatch || !rev))
+                    // remnulargs(s);`. The escape markers left by the c:1541-1551
+                    // disposition are DELETED for a hash whenever the subscript is
+                    // NOT a value/key GLOB search — i.e. for a plain key, for `(e)`,
+                    // and for `(k)`/`(K)` (whose `keymatch` scan compares the
+                    // subscript text literally, c:653-660). Only `(r)/(R)/(i)/(I)`
+                    // keep them, because there the backslashes are PATTERN escapes
+                    // `patcompile` (c:1697) still has to see.
+                    //
+                    // The port skipped the unescape for EVERY flag group, so
+                    // `${(o)A[(K)\]]}` searched with the two-char `\]` and returned
+                    // the answer zsh gives for `${(o)A[(K)\\\]]}` — one escape level
+                    // off across the whole `(K)`/`(k)`/`(e)` family
+                    // (D06subscript.ztst "Associative array keys interpreted as
+                    // patterns").
+                    let flag_keeps_escapes = is_flag && {
+                        let after = trimmed
+                            .strip_prefix('(')
+                            .or_else(|| trimmed.strip_prefix(crate::ported::zsh_h::Inpar));
+                        match after.and_then(|r| {
+                            r.find(|c| c == ')' || c == crate::ported::zsh_h::Outpar)
+                                .map(|p| &r[..p])
+                        }) {
+                            // c:1398-1417 — `rev` is set by r/R/i/I/k/K; `keymatch`
+                            // only by k/K (and only on a hash).
+                            Some(fl) => {
+                                let keymatch = fl.contains('k') || fl.contains('K');
+                                let rev = keymatch
+                                    || fl.contains('r')
+                                    || fl.contains('R')
+                                    || fl.contains('i')
+                                    || fl.contains('I');
+                                // Keep the escapes only on the glob-search forms.
+                                !(assoc_contains(&var_name) && (keymatch || !rev))
+                            }
+                            // Unterminated flag group: leave it alone.
+                            None => true,
+                        }
+                    };
+                    if (is_flag && flag_keeps_escapes) || !had_escape {
                         (raw_sub, false)
                     } else {
                         let mut folded = String::with_capacity(raw_sub.len());
@@ -6874,12 +6913,31 @@ pub fn paramsubst(
                             crate::subscript_escape::subscript_unescape(&folded, qt, true);
                         if live {
                             // c:1585-1592 still has an expansion to run, so hand
-                            // it only getarg's share of the work (the marker
-                            // disposition, `resolve_dollar = false`) and let
+                            // it only getarg's share of the work and let
                             // parsestr/singsub finish the job as C does.
-                            let (phase1, _) = crate::subscript_escape::subscript_unescape(
-                                &folded, qt, false,
-                            );
+                            //
+                            // c:Src/params.c:1541-1548 —
+                            //     if (c == '[' || c == ']' || c == '(' ||
+                            //         c == ')' || c == '{' || c == '}') {
+                            //         /* nested subscripts in hash keys */
+                            //         if (ishash && i) *t = ztokens[*t - Pound];
+                            //         needtok = 1; ++t;
+                            //     }
+                            // — the marker before a bracket/paren/brace is KEPT
+                            // (only a nested HASH-key subscript untokenizes it),
+                            // so `parsestr` at c:1567 still sees the bracket
+                            // ESCAPED and the inner `[…]` of a nested subscript
+                            // stays intact. `subscript_unescape` hands back PLAIN
+                            // text, which made `$s[$s[(i)\[]]` read as
+                            // `$s[$s[(i)[]]` — the bare `[` opened a second
+                            // subscript and the whole expansion came back empty
+                            // (D06subscript.ztst "Scalar subscripting using a
+                            // pattern subscript to get the index").
+                            // `subscript_escape_markers` is that same C stage
+                            // re-encoded as `Bnull`+char, which is exactly the
+                            // spelling the word compiler consumes.
+                            let phase1 =
+                                crate::subscript_escape::subscript_escape_markers(&folded, qt);
                             (phase1, false)
                         } else {
                             // Stand in for that round ONLY when this pass
@@ -12626,7 +12684,11 @@ pub fn paramsubst(
                         exec_sethparam(&var_name, parts);
                     } else {
                         let __s = match subscript.as_deref() {
-                            Some(k) => format!("{}[{}]", var_name, k),
+                            Some(k) => format!(
+                                "{}[{}]",
+                                var_name,
+                                crate::subscript_escape::subscript_requote_for_assign(k)
+                            ),
                             None => var_name.clone(),
                         };
                         assignsparam(&__s, &value, 0);
@@ -12684,7 +12746,11 @@ pub fn paramsubst(
                             exec_sethparam(&var_name, split_arrasg(&value));
                         } else {
                             let __s = match subscript.as_deref() {
-                                Some(k) => format!("{}[{}]", var_name, k),
+                                Some(k) => format!(
+                                "{}[{}]",
+                                var_name,
+                                crate::subscript_escape::subscript_requote_for_assign(k)
+                            ),
                                 None => var_name.clone(),
                             };
                             assignsparam(&__s, &value, 0);
@@ -12744,7 +12810,11 @@ pub fn paramsubst(
                             exec_sethparam(&var_name, split_arrasg(&value));
                         } else {
                             let __s = match subscript.as_deref() {
-                                Some(k) => format!("{}[{}]", var_name, k),
+                                Some(k) => format!(
+                                "{}[{}]",
+                                var_name,
+                                crate::subscript_escape::subscript_requote_for_assign(k)
+                            ),
                                 None => var_name.clone(),
                             };
                             assignsparam(&__s, &value, 0);

@@ -353,3 +353,42 @@ pub fn subscript_range_bounds(
     }
     None
 }
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// Inverse of [`subscript_unescape`]'s marked set, for the one place the port
+/// has to hand an ALREADY-EXPANDED key back through a text subscript.
+///
+/// c:Src/subst.c:3312-3316 — the `${name[key]=value}` family assigns with
+///     *idend = '\0';
+///     Param pm = setsparam(idbeg, ztrdup(val));
+/// i.e. C re-parses the flat `name[key]` text too. That is sound in C because
+/// `idbeg` still holds the LEXER's spelling, where a `]` inside the key is a
+/// `Bnull`-marked byte and cannot close the subscript. zshrs's paramsubst has
+/// already resolved the subscript to plain text by then (`expand_sub_arg`), so
+/// the rebuilt string `B[\\]]` re-parsed as key `\` — the assignment landed on
+/// the wrong key and the read-back came up empty (D06subscript.ztst
+/// "Associative array substitution-assignment with reverse pattern subscript
+/// key"). Re-apply the escaping the re-parse will strip, exactly over the set
+/// c:Src/lex.c:1501-1506 marks for `endchar == ']'`, so the round trip is the
+/// identity.
+///
+/// Returns the input untouched for a FLAG-GROUP subscript (`(r)pat`), whose
+/// parentheses are structure rather than data.
+pub fn subscript_requote_for_assign(k: &str) -> std::borrow::Cow<'_, str> {
+    let trimmed = k.trim_start();
+    if trimmed.starts_with('(') || trimmed.starts_with(crate::ported::zsh_h::Inpar) {
+        return std::borrow::Cow::Borrowed(k); // flag group: structural
+    }
+    // c:Src/lex.c:1501-1506 — the set that `dquote_parse(']')` marks.
+    if !k.contains(|c| matches!(c, '$' | '\\' | '`' | '[' | ']' | '(' | ')' | '{' | '}' | '"')) {
+        return std::borrow::Cow::Borrowed(k);
+    }
+    let mut out = String::with_capacity(k.len() * 2);
+    for c in k.chars() {
+        if matches!(c, '$' | '\\' | '`' | '[' | ']' | '(' | ')' | '{' | '}' | '"') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    std::borrow::Cow::Owned(out)
+}
