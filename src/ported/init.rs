@@ -1143,8 +1143,22 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     // termflags = TERM_UNKNOWN;                                             // c:1103
     TERMFLAGS.store(TERM_UNKNOWN, Ordering::SeqCst);
     // curjob = prevjob = coprocin = coprocout = -1;                         // c:1104
-    // zgettime_monotonic_if_available(&shtimer);                            // c:1105
-    // srand((unsigned)(shtimer.tv_sec + shtimer.tv_nsec));                  // c:1106
+    // c:1121 — `zgettime_monotonic_if_available(&shtimer);  /* init
+    // $SECONDS */`. C stamps `shtimer` at STARTUP. zshrs's analog
+    // (`params::shtimer_lock()`) is a lazily-initialised OnceLock, so
+    // without this it got stamped on its FIRST READ instead — making every
+    // elapsed-since-shell-start measurement come out ~0. Visible in bare
+    // `time`, whose real-time column is `now - shtimer`
+    // (c:Src/jobs.c:1961 `dtime_ts(&dtimespec, &shtimer, &now)`): it
+    // printed `0.000 total` and a nonsense `1684500% cpu`. Stamped with the
+    // same wall-clock basis the consumers use (`SystemTime` since the
+    // epoch), not CLOCK_MONOTONIC, so the subtraction below stays valid.
+    // TOUCH, not assign: the lock's initialiser stamps "now" on first
+    // access, so touching it primes it exactly once. Re-assigning here
+    // would RE-stamp it on the `zsh_main` path, resetting $SECONDS after
+    // the process-entry stamp in `bins/zshrs.rs::main` already ran.
+    let _ = crate::ported::params::shtimer_lock(); // c:1121
+    // srand((unsigned)(shtimer.tv_sec + shtimer.tv_nsec));                  // c:1122
     #[cfg(unix)]
     unsafe {
         let mut ts: libc::timespec = std::mem::zeroed();

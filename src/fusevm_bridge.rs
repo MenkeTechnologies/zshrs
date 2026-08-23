@@ -6778,7 +6778,23 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
     // the sub-chunk runs in-process (no fork). Output format matches
     // `time simple-cmd` (already implemented elsewhere via exectime).
     vm.register_builtin(BUILTIN_TIME_SUBLIST, |vm, argc| {
-        let sub_idx = vm.pop().to_int() as usize;
+        // A negative sub-chunk index is the compiler's marker for the BARE
+        // `time` keyword, which has no body to run.
+        // c:Src/exec.c:5331-5334 exectime:
+        //   if (WC_TIMED_TYPE(state->pc[-1]) == WC_TIMED_EMPTY) {
+        //       shelltime(NULL,NULL,NULL,0);
+        //       return 0;
+        //   }
+        // `shelltime(NULL, NULL, NULL, 0)` is the ONE call that prints the
+        // shell/children pair: with delta==0 and both pointers NULL, both
+        // `!delta == !shell` (c:Src/jobs.c:1964) and `!delta == !kids`
+        // (c:1985) hold. Verified: `zsh -fc 'time'` prints
+        //   shell  0.00s user 0.00s system … / children  0.00s user …
+        // while every `time <body>` form prints nothing (see the is_cursh
+        // note below). zshrs previously compiled bare `time` to a plain
+        // `status = 0` and printed nothing at all.
+        let sub_idx_raw = vm.pop().to_int();
+        let sub_idx = sub_idx_raw as usize;
         // c:Src/jobs.c:1028-1029 — `pn->text` arg to printtime. argc==2
         // means the compiler also pushed a desc string (bug #66 fix);
         // older callers with argc==1 push only sub_idx and we synthesize
@@ -6801,6 +6817,10 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         } else {
             (-1, String::new())
         };
+        if sub_idx_raw < 0 {
+            crate::ported::jobs::shelltime(None, None, None, 0); // c:5333
+            return Value::Status(0); // c:5334
+        }
         let chunk_opt = vm.chunk.sub_chunks.get(sub_idx).cloned();
         let Some(chunk) = chunk_opt else {
             return Value::Status(0);
@@ -6918,6 +6938,21 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
             //   getrusage(RUSAGE_CHILDREN, &ti); dtime_tv(… kids delta …);
             //   if (!delta == !kids)   printtime(&dtimespec, &ti, "children");
             // With delta=1 and both pointers non-NULL, BOTH lines print.
+            //
+            // !!! DO NOT "FIX" THIS TO PRINT NOTHING !!!
+            // The locally-installed `zsh` may print nothing here and look
+            // like the oracle. It is not: this behaviour was ADDED by
+            // upstream 53088 (ChangeLog 2024-09-14, Bart Schaefer) —
+            // "Src/exec.c, Src/jobs.c, Test/A01grammar.ztst,
+            //  Test/A08time.ztst: enable `time' on builtins, assignments,
+            //  and other current-shell actions, including failed commands."
+            // — which also ADDED Test/A08time.ztst chunks 8-15, the ones
+            // that assert `shell*` / `children*` for `time x=1`,
+            // `time echo $(…)`, `time for ((…))`, `time builtin nonesuch`
+            // and `time false`. zsh 5.9 (2022-05) predates 53088, so a 5.9.x
+            // binary is silent for every one of those shapes while both
+            // vendored C trees (src/zsh 5.9.0.3-test and 5.9.999.3-test)
+            // carry the c:4443 call. Corpus + C source are the spec here.
             let mut d_self = ru_self_after;
             d_self.ru_utime = sub(ru_self_after.ru_utime, ru_self_before.ru_utime); // c:1954
             d_self.ru_stime = sub(ru_self_after.ru_stime, ru_self_before.ru_stime); // c:1955
@@ -6933,6 +6968,7 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, "children")
             );
         } else {
+
             // c:Src/jobs.c:1037 — the forked job's own printtime line, with
             // `pn->text` (the command source) as %J.
             let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);

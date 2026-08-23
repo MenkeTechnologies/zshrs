@@ -1104,6 +1104,22 @@ mod initial_env {
 }
 
 fn main() {
+    // c:Src/init.c:1121 — `zgettime_monotonic_if_available(&shtimer);
+    // /* init $SECONDS */`. C stamps `shtimer` once, at shell start.
+    // zshrs's analog is a lazily-primed OnceLock
+    // (`params::shtimer_lock()`), and the `-c` driver never reaches
+    // `setupvals` (it dispatches straight into `ShellExecutor::new`), so
+    // nothing stamped it: the FIRST reader primed it to its own "now",
+    // making every elapsed-since-shell-start measurement come out ~0.
+    //   zsh   -fc 'sleep 2.2; print $SECONDS'  -> 2
+    //   zshrs -fc 'sleep 2.2; print $SECONDS'  -> 0   (before this)
+    //   zsh   -fc 'sleep 0.5; time'  -> `shell … 1% cpu 0.511 total`
+    //   zshrs -fc 'sleep 0.5; time'  -> `… 1875199% cpu 0.000 total`
+    // Merely TOUCHING the lock primes it to the current instant, which is
+    // exactly C's stamp; doing it here — the process entry point, before
+    // any dispatch path forks off — covers `-c`, script and interactive
+    // alike. Must stay the first statement so shell init cannot skew it.
+    let _ = zsh::ported::params::shtimer_lock(); // c:1121
     // c:Src/params.c:893 createparamtable reads `environ` exactly as
     // it was at process entry. Snapshot it as the first statement so
     // nothing later in shell init (setenv from builtins, lazy crate
