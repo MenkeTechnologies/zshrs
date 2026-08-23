@@ -56,13 +56,15 @@ pub struct PrewarmStats {
 /// `$fpath` resolution works (`getfpfunc` walks it in order), so the
 /// cached chunk matches the file the loader would have read.
 ///
-/// Files already cached with the same mtime + length are skipped
-/// without being read, so re-running the pass after installing one
-/// plugin costs one `stat` per completer rather than a recompile.
+/// Every file is read, because the cache key is a hash of the exact
+/// definition text (see `autoload_cache`), not a `stat` of the path.
+/// A file whose text already has an entry is hashed and skipped without
+/// being parsed — the parse, not the read, is what this pass exists to
+/// avoid paying twice.
 pub fn prewarm_fpath(dirs: &[PathBuf]) -> PrewarmStats {
     let t0 = Instant::now();
     let mut stats = PrewarmStats::default();
-    let mut batch: Vec<(String, Vec<u8>, i64, u64)> = Vec::new();
+    let mut batch: Vec<(String, Vec<u8>, String, [u8; 32])> = Vec::new();
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for dir in dirs {
@@ -84,24 +86,32 @@ pub fn prewarm_fpath(dirs: &[PathBuf]) -> PrewarmStats {
                 continue;
             }
             let path = entry.path();
-            let meta = match std::fs::metadata(&path) {
-                Ok(m) if m.is_file() => m,
+            match std::fs::metadata(&path) {
+                Ok(m) if m.is_file() => {}
                 _ => continue,
-            };
+            }
             if !claimed.insert(name.clone()) {
                 continue; // shadowed by an earlier fpath dir
             }
             stats.seen += 1;
-            let (mtime, len) = source_stamps(&meta);
-            if crate::autoload_cache::try_load_for_source(&name, mtime, len).is_some() {
+            // The exact text the loader would compile, and its digest —
+            // the cache key. Muted the same way the compile is, because
+            // building it runs a probe parse.
+            let Some(source) = definition_source(&name, &path) else {
+                stats.failed += 1;
+                continue;
+            };
+            let sha = crate::autoload_cache::source_digest(&source);
+            let dir_key = dir.to_string_lossy().to_string();
+            if crate::autoload_cache::try_load_for_source(&name, &dir_key, &sha).is_some() {
                 stats.fresh += 1;
                 continue;
             }
-            match compile_one(&name, &path) {
+            match compile_source(&name, &path, &source) {
                 Some(blob) => {
                     stats.bytes += blob.len();
                     stats.compiled += 1;
-                    batch.push((name, blob, mtime, len));
+                    batch.push((name, blob, dir_key, sha));
                 }
                 None => stats.failed += 1,
             }
@@ -124,43 +134,48 @@ pub fn prewarm_fpath(dirs: &[PathBuf]) -> PrewarmStats {
     stats
 }
 
-/// mtime + length, the pair every cache entry is stamped with.
-fn source_stamps(meta: &std::fs::Metadata) -> (i64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (meta.mtime(), meta.len())
-}
-
-/// Parse + compile one completer into the chunk the loader installs.
+/// Run `f` with `zerr` diagnostics muted.
 ///
-/// `ksh_style = false`: compinit autoloads every completer with
-/// `autoload -rUz` (sh:337/541), which is zsh-style, and the loader
-/// declines to use a cached chunk for a ksh-style autoload anyway — so
-/// caching one would be dead weight at best and wrong at worst.
-fn compile_one(name: &str, path: &Path) -> Option<Vec<u8>> {
-    let body = std::fs::read_to_string(path).ok()?;
-    // `noerrs = 1` (c:Src/utils.c — the `zerr` gate) for the whole
-    // pass: a completer this port cannot parse yet is counted and
-    // skipped, not announced. Without it the `stripkshdef` probe parse
-    // inside `autoload_definition_source` printed a bare
-    // ":30: parse error near `;;'" from somewhere in a 13k-file sweep,
-    // with no filename and nothing the user could act on. errflag is
-    // still SET under noerrs, which is what the caller reads.
+/// `noerrs = 1` (c:Src/utils.c — the `zerr` gate) for the whole pass: a
+/// completer this port cannot parse yet is counted and skipped, not
+/// announced. Without it the `stripkshdef` probe parse inside
+/// `autoload_definition_source` printed a bare ":30: parse error near
+/// `;;'" from somewhere in a 13k-file sweep, with no filename and
+/// nothing the user could act on. errflag is still SET under noerrs,
+/// which is what the caller reads.
+fn muted<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
     let saved_noerrs = {
         let mut g = crate::ported::utils::noerrs_lock().lock().ok()?;
         let prev = *g;
         *g = 1;
         prev
     };
-    let result = compile_one_inner(name, path, &body);
+    let result = f();
     if let Ok(mut g) = crate::ported::utils::noerrs_lock().lock() {
         *g = saved_noerrs;
     }
     result
 }
 
-/// The body of [`compile_one`], with diagnostics already muted.
-fn compile_one_inner(name: &str, path: &Path, body: &str) -> Option<Vec<u8>> {
-    let source = crate::vm_helper::autoload_definition_source(name, body, false);
+/// The exact definition text the loader would compile for this file —
+/// the thing the cache key hashes.
+///
+/// `ksh_style = false`: compinit autoloads every completer with
+/// `autoload -rUz` (sh:337/541), which is zsh-style, and the loader
+/// declines to use a cached chunk for a ksh-style autoload anyway — so
+/// caching one would be dead weight at best and wrong at worst.
+fn definition_source(name: &str, path: &Path) -> Option<String> {
+    let body = std::fs::read_to_string(path).ok()?;
+    muted(|| Some(crate::vm_helper::autoload_definition_source(name, &body, false)))
+}
+
+/// Parse + compile one definition text into the chunk the loader installs.
+fn compile_source(name: &str, path: &Path, source: &str) -> Option<Vec<u8>> {
+    muted(|| compile_source_inner(name, path, source))
+}
+
+/// The body of [`compile_source`], with diagnostics already muted.
+fn compile_source_inner(name: &str, path: &Path, source: &str) -> Option<Vec<u8>> {
     // Mirror `strinbeg()` (c:Src/hist.c:1033): parsing a STRING must
     // report EOF when the lexer buffer drains instead of falling
     // through to `inputline()` and reading the process's stdin.
@@ -170,7 +185,7 @@ fn compile_one_inner(name: &str, path: &Path, body: &str) -> Option<Vec<u8>> {
         !crate::ported::utils::ERRFLAG_ERROR,
         std::sync::atomic::Ordering::Relaxed,
     );
-    crate::ported::parse::parse_init(&source);
+    crate::ported::parse::parse_init(source);
     let program = crate::ported::parse::parse();
     let failed = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
         & crate::ported::utils::ERRFLAG_ERROR)

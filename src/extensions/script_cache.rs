@@ -366,32 +366,10 @@ fn read_owned_shard(path: &Path) -> Option<ScriptShard> {
 
 fn write_shard_atomic(path: &Path, shard: &ScriptShard) -> Result<(), String> {
     let bytes = rkyv::to_bytes::<_, 4096>(shard).map_err(|e| format!("rkyv serialize: {}", e))?;
-
-    let parent = path.parent().expect("cache path has parent");
-    let _ = std::fs::create_dir_all(parent);
-
-    let pid = std::process::id();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let tmp_path = parent.join(format!(
-        "{}.tmp.{}.{}",
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("scripts.rkyv"),
-        pid,
-        nanos
-    ));
-
-    {
-        let mut f = File::create(&tmp_path).map_err(|e| e.to_string())?;
-        f.write_all(&bytes).map_err(|e| e.to_string())?;
-        f.sync_all().map_err(|e| e.to_string())?;
-    }
-
-    std::fs::rename(&tmp_path, path).map_err(|e| e.to_string())?;
-    Ok(())
+    // Shared with `autoload_cache`: same temp-then-rename scheme, and
+    // the same obligation to unlink the temp on a failed write and to
+    // reap temps abandoned by processes that died mid-write.
+    crate::atomic_write::write_bytes_atomic(path, &bytes)
 }
 
 fn now_secs() -> i64 {

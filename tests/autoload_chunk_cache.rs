@@ -164,3 +164,96 @@ fn cached_autoload_chunk_matches_a_fresh_compile_and_yields_to_an_edit() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// A cache entry whose chunk does not define the function it is stored
+/// under must not be able to break the autoload.
+///
+/// This is the failure the shard actually produced: a chunk emitted by a
+/// different build passed every freshness test, ran, defined nothing, and
+/// the loader reported `function not defined by file`. On a real `$fpath`
+/// that meant `_megacomplete` failing four times per `<TAB>` and the
+/// completion system returning zero matches. Nothing in the suite caught
+/// it, because every test only ever asked whether a *correct* chunk was
+/// reused.
+///
+/// The entry is poisoned in place — chunk swapped, key and binary stamp
+/// left untouched — so the loader is guaranteed to accept it and the
+/// recovery is what is being measured.
+#[test]
+fn a_cached_chunk_that_defines_nothing_is_discarded_and_recompiled() {
+    let Some(bin) = zshrs_bin() else {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    };
+    let tmp = std::env::temp_dir().join(format!("zshrs-poisoned-{}", std::process::id()));
+    let home = tmp.join("home");
+    let fpath = tmp.join("fpath");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::create_dir_all(&fpath).expect("mkdir fpath");
+    std::fs::write(fpath.join("zt_victim"), "print victim-ok\n").expect("write victim");
+    std::fs::write(fpath.join("zt_donor"), "print donor-ok\n").expect("write donor");
+
+    // Warm both entries with chunks this binary really produced.
+    let warm = run(&bin, &home, &fpath, "autoload -Uz zt_victim zt_donor; zt_victim; zt_donor");
+    assert!(
+        warm.contains("victim-ok") && warm.contains("donor-ok"),
+        "warm-up run misbehaved: {warm:?}",
+    );
+
+    let shard_path = home.join("autoloads.rkyv");
+    let bytes = std::fs::read(&shard_path).expect("shard written");
+    let archived = rkyv::check_archived_root::<zsh::autoload_cache::AutoloadShard>(&bytes[..])
+        .expect("shard is a valid archive");
+    let mut shard: zsh::autoload_cache::AutoloadShard =
+        rkyv::Deserialize::deserialize(archived, &mut rkyv::Infallible).expect("deserialize shard");
+    let donor_blob = shard
+        .entries
+        .get("zt_donor")
+        .expect("donor entry present")
+        .chunk_blob
+        .clone();
+    let victim = shard.entries.get_mut("zt_victim").expect("victim entry");
+    assert_ne!(
+        victim.chunk_blob, donor_blob,
+        "the two functions compiled to the same chunk — poison would be a no-op",
+    );
+    // Key, directory and producing-binary stamp all stay as the loader
+    // wrote them; only the bytecode is now somebody else's.
+    victim.chunk_blob = donor_blob.clone();
+    let poisoned = rkyv::to_bytes::<_, 4096>(&shard).expect("re-serialize shard");
+    std::fs::write(&shard_path, &poisoned[..]).expect("write poisoned shard");
+
+    let out = Command::new(&bin)
+        .args(["-c", "autoload -Uz zt_victim; zt_victim"])
+        .env("ZSHRS_HOME", &home)
+        .env("FPATH", &fpath)
+        .env_remove("ZDOTDIR")
+        .output()
+        .expect("spawn zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stdout.contains("victim-ok"),
+        "loader did not recover from the poisoned chunk: stdout={stdout:?} stderr={stderr:?}",
+    );
+    assert!(
+        !stderr.contains("function not defined by file"),
+        "poisoned chunk surfaced as a load failure: {stderr:?}",
+    );
+
+    // And the bad entry is gone rather than waiting to fail again.
+    let after = std::fs::read(&shard_path).expect("shard still there");
+    let archived_after = rkyv::check_archived_root::<zsh::autoload_cache::AutoloadShard>(&after[..])
+        .expect("shard still a valid archive");
+    let shard_after: zsh::autoload_cache::AutoloadShard =
+        rkyv::Deserialize::deserialize(archived_after, &mut rkyv::Infallible)
+            .expect("deserialize shard");
+    if let Some(entry) = shard_after.entries.get("zt_victim") {
+        assert_ne!(
+            entry.chunk_blob, donor_blob,
+            "the poisoned chunk is still cached — the next shell fails again",
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
