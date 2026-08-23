@@ -511,11 +511,41 @@ pub fn strmetasort(
             .collect(),
         None => arr
             .iter()
-            .map(|s| sortelt {
-                orig: s.clone(),
-                cmp: apply_transforms(s),
-                origlen: -1,
-                len: -1,
+            .map(|s| {
+                // c:275-283 — the `unmetalenp == NULL` arm. C's rule there is
+                //   "Not yet unmetafied.  See if it needs unmetafying.
+                //    If it doesn't, there can't be any embedded nulls,
+                //    since these are metafied."
+                // followed by the unmetafy loop at c:305-315 which sets
+                // `needlen = 1` when a `Meta`-escaped byte decodes to `'\0'`,
+                // and finally c:384 `sortarrptr->len = needlen ? len : -1;`.
+                //
+                // !!! RUST-ONLY DIVERGENCE !!! zshrs stores an embedded NUL as
+                // a RAW 0x00 byte inside the `String` (a Rust `String` holds
+                // one fine), not as C's two-byte `Meta`+`\0^32` pair, so there
+                // is nothing to unmetafy — but `needlen` must still be
+                // computed, and the length it needs is simply the byte length.
+                // Without it every element carried `len == -1`, eltpcmp took
+                // its no-length arm, and `strcoll` truncated each operand at
+                // the first NUL — so `${(o)}` over `$'a\0c' $'a\0b' $'a'`
+                // called all three equal and the stable sort left the array in
+                // INPUT order (D04parameter.ztst "Sorting arrays with embedded
+                // nulls").
+                let cmp = apply_transforms(s);
+                // c:312 needlen, measured on the same buffer c:316 `len` is
+                // measured on (the transformed copy) — the case/backslash
+                // transforms neither create nor destroy NUL bytes, so the two
+                // agree with C's split reading.
+                let needlen = cmp.as_bytes().contains(&0u8); // c:283/312
+                let len = if needlen { cmp.len() as i32 } else { -1 }; // c:384
+                sortelt {
+                    orig: s.clone(),
+                    cmp,
+                    // c:270 — C assigns `origlen` only on the `unmetalenp`
+                    // arm; nothing reads it here.
+                    origlen: -1,
+                    len,
+                }
             })
             .collect(),
     };

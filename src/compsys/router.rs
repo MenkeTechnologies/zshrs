@@ -729,6 +729,7 @@ mod tests {
             redir: None,
             sticky: None,
             body: Some("print hi".to_string()),
+            redir_text: None,
         };
         let put = |shf: shfunc| {
             let mut tab = crate::ported::hashtable::shfunctab_lock().write().unwrap();

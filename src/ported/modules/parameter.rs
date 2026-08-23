@@ -884,6 +884,7 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
         redir: None,
         sticky: None,
         body: Some(val.clone()), // body source retained for deferred-recompile flows
+        redir_text: None,
     };
     // c:303 — `shfunc_set_sticky(shf);` (EXTERN exec.c). Stamps the
     // pending sticky-emulation snapshot onto the new function.
@@ -1116,20 +1117,52 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                             std::collections::HashMap<String, String>,
                         > = std::cell::RefCell::new(std::collections::HashMap::new());
                     }
-                    if let Some(hit) = FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned()) {
-                        hit
-                    } else {
-                        let out = match crate::ported::exec::parse_string(text, 0) {
-                            Some(prog) => format!(
-                                "\t{}",
-                                crate::ported::text::getpermtext(Box::new(prog), None, 1)
-                            ),
-                            None => format!("\t{}", text),
+                    let deparsed =
+                        if let Some(hit) = FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned())
+                        {
+                            hit
+                        } else {
+                            let out = match crate::ported::exec::parse_string(text, 0) {
+                                Some(prog) => {
+                                    crate::ported::text::getpermtext(Box::new(prog), None, 1)
+                                }
+                                None => text.to_string(),
+                            };
+                            FN_DEPARSE_CACHE
+                                .with(|c| c.borrow_mut().insert(text.to_string(), out.clone()));
+                            out
                         };
-                        FN_DEPARSE_CACHE
-                            .with(|c| c.borrow_mut().insert(text.to_string(), out.clone()));
-                        out
+                    // c:422-425 — `if (shf->redir) start = "{\n\t"; else
+                    // start = "\t";`. A definition that carried trailing
+                    // redirections prints its body BRACED, because the
+                    // redirections have to hang off the closing brace.
+                    // `redir_text` is zshrs's rendered stand-in for
+                    // `shf->redir` (see shfunc::redir_text).
+                    // c:440 — `getpermtext(shf->redir, NULL, 1)`. zshrs's
+                    // fusevm definition path stores the already-rendered text
+                    // in the Rust-only `redir_text` twin instead of a second
+                    // Eprog (see `shfunc::redir_text`), so consult both.
+                    let redir: Option<String> = shf
+                        .redir
+                        .as_ref()
+                        .map(|r| crate::ported::text::getpermtext(r.clone(), None, 1)) // c:440
+                        .filter(|t| !t.is_empty())
+                        .or_else(|| shf.redir_text.clone());
+                    let start = if redir.is_some() {
+                        "{\n\t" // c:423
+                    } else {
+                        "\t" // c:425
+                    };
+                    // c:436 — `h = dyncat(start, t);`
+                    let mut h = format!("{}{}", start, deparsed);
+                    // c:439-443 — `if (shf->redir) { t =
+                    // getpermtext(shf->redir, NULL, 1); h = zhtricat(h,
+                    // "\n}", t); }`
+                    if let Some(rt) = redir {
+                        h.push_str("\n}"); // c:441
+                        h.push_str(&rt); // c:441
                     }
+                    h
                 }
             };
             (v, true)

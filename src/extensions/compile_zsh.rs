@@ -90,6 +90,14 @@ pub struct ZshCompiler {
     break_escape_suppress: u32,
     /// `return_patches` field.
     return_patches: Vec<usize>,
+    /// c:Src/exec.c — the analogue of C's file-scope `static Eprog
+    /// redir_prog`, which `execcmd` fills in for `f() { … } > out` and
+    /// `execfuncdef` consumes at c:5453 (`shf->redir = dupeprog(redir_prog,
+    /// 0)`). Set by the `Redirected(FuncDef, …)` arm just before it hands
+    /// the definition to `compile_funcdef`, taken there, and rendered into
+    /// the registered function's `redir_text` so `functions` / `which` /
+    /// `${functions[…]}` can re-emit it (c:Src/hashtable.c:988-994).
+    redir_prog_text: Option<String>,
     /// Depth tracker for errexit (`set -e`) suppression. Incremented
     /// when entering a context where a non-zero status is part of the
     /// control flow (if/while/until tests, `&&`/`||` LHS, `!` negation,
@@ -303,6 +311,7 @@ impl ZshCompiler {
             open_loop_depth: 0,
             break_escape_suppress: 0,
             return_patches: Vec::new(),
+            redir_prog_text: None,
             errexit_suppress_depth: 0,
             dq_context_depth: 0,
             assign_context_depth: 0,
@@ -390,6 +399,26 @@ impl ZshCompiler {
     fn emit_print_exit_value(&mut self) {
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_PRINT_EXIT_VALUE, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
+    /// c:Src/exec.c:1417 + c:1536-1538 — save `noerrexit` and OR in
+    /// `NOERREXIT_EXIT | NOERREXIT_RETURN` for one `&&`/`||` chain operand
+    /// (or a `!`-negated command). Leaves the VM stack and `$?` untouched.
+    fn emit_noerrexit_suppress(&mut self) {
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_NOERREXIT_SUPPRESS, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
+    /// c:Src/exec.c:1621 / c:1626 — `noerrexit = oldnoerrexit;`.
+    fn emit_noerrexit_restore(&mut self) {
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_NOERREXIT_RESTORE, 0),
             0,
         );
         self.builder.emit(Op::Pop, 0);
@@ -921,9 +950,27 @@ impl ZshCompiler {
         // pops at the end. This way `a && b && c` shows "cmdand" on
         // pipe[1]'s trace and "cmdand cmdand" on pipe[2]'s, matching
         // zsh -x byte-for-byte.
-        let has_chain_or_negate = pipe_nots.iter().any(|&n| n) || !ops.is_empty();
-        if has_chain_or_negate {
+        // c:Src/exec.c:1533-1538 — per chain ELEMENT:
+        //     int isandor = WC_SUBLIST_TYPE(code) != WC_SUBLIST_END;
+        //     int isnot   = WC_SUBLIST_FLAGS(code) & WC_SUBLIST_NOT;
+        //     /* suppress errexit for commands before && and || and after ! */
+        //     if (isandor || isnot)
+        //         noerrexit |= NOERREXIT_EXIT | NOERREXIT_RETURN;
+        // and the matching `noerrexit = oldnoerrexit;` at c:1621 / c:1626.
+        // `errexit_suppress_depth` above only silences the checks THIS
+        // compilation emits; the runtime bits are what reach a called
+        // function's own execlist (c:5930 clears only NOERREXIT_RETURN).
+        // Suppression is PER ELEMENT, not per sublist: the final
+        // (WC_SUBLIST_END) element of a chain is `isandor == 0`, so C leaves
+        // `noerrexit` alone for it and its own body IS subject to ERR_EXIT /
+        // ZERR. Bumping `errexit_suppress_depth` across the whole sublist also
+        // silenced the checks compiled INSIDE that last element, so
+        //   set -e; true && { false; echo NOT REACHED }
+        // ran `echo NOT REACHED` (C03traps:80).
+        let elem0_suppressed = !ops.is_empty() || pipe_nots[0] || sublist.flags.not;
+        if elem0_suppressed {
             self.errexit_suppress_depth += 1;
+            self.emit_noerrexit_suppress(); // c:1538
         }
         self.compile_pipe(pipes[0]);
         // c:Src/exec.c:1489-1492 — the FIRST chain element's own
@@ -934,6 +981,10 @@ impl ZshCompiler {
         self.emit_sublist_finish(pipes[0], pipe_nots[0]);
         if sublist.flags.not {
             self.emit_negate_status();
+        }
+        if elem0_suppressed {
+            self.emit_noerrexit_restore(); // c:1621 / c:1626
+            self.errexit_suppress_depth -= 1;
         }
         let mut chain_pushes = 0usize;
         for (i, op) in ops.iter().enumerate() {
@@ -972,6 +1023,13 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
                 self.builder.emit(Op::Pop, 0);
             }
+            // c:1533-1538 — this element is `isandor` unless it is the final
+            // (WC_SUBLIST_END) one; `isnot` is its own `!`.
+            let elem_suppressed = i + 1 < ops.len() || pipe_nots[i + 1];
+            if elem_suppressed {
+                self.errexit_suppress_depth += 1;
+                self.emit_noerrexit_suppress(); // c:1538
+            }
             self.compile_pipe(pipes[i + 1]);
             // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
             // (WC_SUBLIST_OR) re-read WC_SUBLIST_SIMPLE per chain
@@ -985,6 +1043,10 @@ impl ZshCompiler {
             if pipe_nots[i + 1] {
                 self.emit_negate_status();
             }
+            if elem_suppressed {
+                self.emit_noerrexit_restore(); // c:1621 / c:1626
+                self.errexit_suppress_depth -= 1;
+            }
             // c:Src/exec.c — POSIX/zsh rule: only the LAST command in
             // an && / || chain can trigger errexit, AND only when it
             // was actually executed (not short-circuited). Emit the
@@ -993,21 +1055,20 @@ impl ZshCompiler {
             // the chain but aren't terminal. The check sits before the
             // skip-jump target so `false && X` (where X is skipped)
             // bypasses it entirely.
-            if i == ops.len() - 1 {
-                // Temporarily lift suppression so this terminal check
-                // actually fires.
-                self.errexit_suppress_depth -= 1;
+            // c:1548-1549 — `if (isnot) this_noerrexit = 1;` on the END
+            // element skips the whole c:1651 block, so a trailing `! cmd`
+            // gets no ZERR / errexit handling at all.
+            if i == ops.len() - 1 && !pipe_nots[i + 1] {
+                // Suppression is already back at the enclosing level here
+                // (the per-element bump above is balanced), so this is the
+                // sublist's own c:1651 check.
                 self.emit_errexit_check();
-                self.errexit_suppress_depth += 1;
             }
             self.builder.patch_jump(skip, self.builder.current_pos());
         }
         // Bulk-pop the chain pushes (mirrors `cmdsp = csp` restore).
         for _ in 0..chain_pushes {
             self.emit_cmd_pop();
-        }
-        if has_chain_or_negate {
-            self.errexit_suppress_depth -= 1;
         }
     }
 
@@ -1445,7 +1506,19 @@ impl ZshCompiler {
             ZshCommand::For(f) => self.compile_for(f),
             ZshCommand::Case(c) => self.compile_case(c),
             ZshCommand::Repeat(r) => self.compile_repeat(r),
-            ZshCommand::FuncDef(f) => self.compile_funcdef(f),
+            ZshCommand::FuncDef(f) => {
+                self.compile_funcdef(f);
+                // c:Src/exec.c:5495-5496 — an ANONYMOUS function definition
+                // executes immediately (`execshfunc(shf, args); ret = lastval;`)
+                // and its status is the sublist's, so execlist's c:1651
+                // ZERR / ERR_EXIT / ERR_RETURN block runs on it like any other
+                // command. zshrs emitted nothing here, so
+                //   setopt ERR_EXIT; () { false; print X; }
+                // ran X and kept going (E01options:19,21; C03traps:74).
+                // A NAMED definition leaves lastval 0, so the check is a no-op
+                // for it — same as C.
+                self.emit_errexit_check();
+            }
             ZshCommand::Cond(c) => {
                 self.compile_cond(c);
                 // c:Src/exec.c — a `[[ ]]` command's status participates in the
@@ -1513,7 +1586,16 @@ impl ZshCompiler {
                             flags: crate::parse::ListFlags::default(),
                         };
                         f.body = Box::new(crate::parse::ZshProgram { lists: vec![list] });
+                        // c:Src/exec.c — C stashes the definition's trailing
+                        // redirections in the file-scope `redir_prog` before
+                        // `execfuncdef` runs, which copies it to `shf->redir`
+                        // (c:5453) purely so the function can be PRINTED back
+                        // with them (c:Src/hashtable.c:988-994). Render the
+                        // same text here; the executable effect is already
+                        // handled by the body wrapping above.
+                        self.redir_prog_text = Some(getredirs(redirs));
                         self.compile_command(&ZshCommand::FuncDef(f));
+                        self.redir_prog_text = None;
                         return;
                     }
                     self.compile_command(inner);
@@ -4660,8 +4742,9 @@ impl ZshCompiler {
     }
 
     fn emit_unbraced_subscript(&mut self, name: &str, key: &str, suffix: &str, quoted: bool) {
+        let key = subscript_literal_key(key);
         let name_const = self.builder.add_constant(Value::str(name));
-        let key_const = self.builder.add_constant(Value::str(key));
+        let key_const = self.builder.add_constant(Value::str(key.as_ref()));
         let suffix_const = self.builder.add_constant(Value::str(suffix));
         self.builder.emit(Op::LoadConst(name_const), 0);
         self.builder.emit(Op::LoadConst(key_const), 0);
@@ -5260,7 +5343,26 @@ impl ZshCompiler {
                             && matches!(chars.get(e + 2), Some('=') | Some('\u{8d}' /* Equals */)))
                 })
             };
+        // c:Src/parse.c par_simple (intypeset) + c:Src/exec.c:4265 —
+        // for a BINF_ASSIGN / BINF_MAGICEQUALS builtin an
+        // assignment-SHAPED argument (`NAME=v`, `NAME+=v`,
+        // `NAME[sub]=v`) is parsed as an ASSIGNMENT word and preforked
+        // with PREFORK_ASSIGN, which never runs the globlist pass — so
+        // the `[`/`]` of a SUBSCRIPT is not a glob bracket. zshrs
+        // compiled it as an ordinary word, so `typeset ptr[1]=var` (and
+        // every `typeset arr[2]=x` / `local h[k]=v`) died with
+        // `no matches found: ptr[1]=var` before bin_typeset ever saw the
+        // name (K01nameref.ztst:13 needs the nameref-name check that
+        // sits behind it). `assign_builtin_arg_depth > 0 &&
+        // assign_context_depth > 0` is the established discriminator for
+        // "assignment-shaped arg of a typeset-family builtin" (see the
+        // `ssub` gate at compile_zsh.rs:6668); array ELEMENTS of a
+        // paren-init bump only `assign_context_depth`, so `a=(x[1]=y)`
+        // keeps globbing exactly as zsh does.
+        let is_typeset_assign_arg =
+            self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0;
         let trigger_glob = !looks_like_kv_pair
+            && !is_typeset_assign_arg
             && (unquoted(s, '*')
             || unquoted(s, '\u{87}')   // Star (parse/tokens.rs:14)
             || unquoted(s, '?')
@@ -6460,8 +6562,9 @@ impl ZshCompiler {
         // effect for the resolved literal.
         let untoked_preserve = crate::lex::untokenize_preserve_quotes(s);
         if let Some((base, key)) = braced_subscript_ref(&untoked_preserve) {
+            let key = subscript_literal_key(key);
             let name_const = self.builder.add_constant(Value::str(base));
-            let key_const = self.builder.add_constant(Value::str(key));
+            let key_const = self.builder.add_constant(Value::str(key.as_ref()));
             self.builder.emit(Op::LoadConst(name_const), 0);
             self.builder.emit(Op::LoadConst(key_const), 0);
             self.builder
@@ -9343,6 +9446,14 @@ impl ZshCompiler {
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
         self.builder.emit(Op::SetSlot(count_slot), 0);
 
+        // c:Src/loop.c:520 — `lastval = 0; /* used when the repeat count is
+        // zero */`. Without it a zero-count `repeat` leaves the PREVIOUS
+        // command's status standing: `(exit 4); repeat 0 do done` reported 4
+        // where zsh reports 0. Emitted after the count eval (c:517), which
+        // must still see the prior `$?` for `repeat $?`.
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
+
         // c:Src/loop.c:522 — `cmdpush(CS_REPEAT)` AFTER the count eval.
         self.emit_cmd_push(crate::ported::zsh_h::CS_REPEAT as u8);
 
@@ -9378,8 +9489,8 @@ impl ZshCompiler {
 
     fn compile_funcdef(&mut self, f: &crate::parse::ZshFuncDef) {
         // Compile the body to a fusevm sub-chunk and register via
-        // BUILTIN_REGISTER_COMPILED_FN with four args:
-        //   [name, base64(bincode(chunk)), body_source, line_base_str]
+        // BUILTIN_REGISTER_COMPILED_FN with five args:
+        //   [name, base64(bincode(chunk)), body_source, line_base_str, tracing]
         // The handler stores the chunk in functions_compiled and the source
         // text in function_source so introspection (whence, which, typeset
         // -f, ${functions[name]}) returns canonical body text.
@@ -9480,8 +9591,25 @@ impl ZshCompiler {
                 .builder
                 .add_constant(Value::str(line_base_str.as_str()));
             self.builder.emit(Op::LoadConst(anchor_const), 0);
+            // c:Src/exec.c:5382 — `do_tracing = *state->pc++;` and
+            // c:5387 `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
+            // then c:5437 `shf->node.flags = tracing_flags;`. The `-T` of
+            // `function -T name { … }` is parsed into ZshFuncDef.tracing
+            // (parse.rs c:1689-1692) but had NO consumer, so a traced
+            // definition registered an untraced function (E02xtrace:6,7,8,9).
+            let tracing_const = self
+                .builder
+                .add_constant(Value::str(if f.tracing { "1" } else { "0" }));
+            self.builder.emit(Op::LoadConst(tracing_const), 0);
+            // c:Src/exec.c:5451-5456 — `shf->redir = <redir_prog>`. Empty
+            // when the definition carried no trailing redirection, which is
+            // C's `redir_prog == NULL` (`shf->redir` stays NULL and nothing
+            // is printed after the closing brace).
+            let redir_text = self.redir_prog_text.clone().unwrap_or_default();
+            let redir_const = self.builder.add_constant(Value::str(redir_text.as_str()));
+            self.builder.emit(Op::LoadConst(redir_const), 0);
             self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_REGISTER_COMPILED_FN, 4),
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_REGISTER_COMPILED_FN, 6),
                 0,
             );
             self.builder.emit(Op::SetStatus, 0);
@@ -9888,9 +10016,19 @@ impl ZshCompiler {
                     // on the operand — mirrors the existing
                     // suppression logic for binary-cond LHS at line
                     // 4857. Bug #156 in docs/BUGS.md.
-                    self.dq_context_depth += 1;
-                    self.compile_word_str(arg);
-                    self.dq_context_depth -= 1;
+                    // c:Src/cond.c:194-197 — the unary operand takes the
+                    // SAME `cond_subst(&left, !fromtest)` as a binary one, so
+                    // a word ending in a glob QUALIFIER (c:Src/glob.c:1157
+                    // `checkglobqual`) IS filename-generated:
+                    // `[[ -z z*(#qN) ]]` is "did the (N) glob produce
+                    // nothing?", not "is the literal text empty?".
+                    if Self::cond_operand_has_globqual(arg) {
+                        self.compile_word_str(arg);
+                    } else {
+                        self.dq_context_depth += 1;
+                        self.compile_word_str(arg);
+                        self.dq_context_depth -= 1;
+                    }
                 }
                 self.emit_file_test(&op_clean);
             }
@@ -9962,9 +10100,16 @@ impl ZshCompiler {
                         // glob-expand operands. Same logic as the
                         // ZshCond::Unary arm above (line 4814+).
                         // Bug #156 in docs/BUGS.md.
-                        self.dq_context_depth += 1;
-                        self.compile_word_str(op);
-                        self.dq_context_depth -= 1;
+                        // c:Src/cond.c:194-197 + Src/glob.c:1157 — except
+                        // when the word ends in a glob QUALIFIER, which
+                        // `cond_subst` DOES filename-generate.
+                        if Self::cond_operand_has_globqual(op) {
+                            self.compile_word_str(op);
+                        } else {
+                            self.dq_context_depth += 1;
+                            self.compile_word_str(op);
+                            self.dq_context_depth -= 1;
+                        }
                     }
                     self.emit_file_test(&left_clean);
                     return;
@@ -10452,12 +10597,72 @@ impl ZshCompiler {
     /// already does correctly. Tokens tested: Star `\u{87}`,
     /// Quest `\u{86}`, Inbrack `\u{91}`, Inbrace `\u{8f}`.
     fn cond_operand_suppresses_glob(w: &str) -> bool {
+        // c:Src/cond.c:41-54 `cond_subst` — a `[[ … ]]` operand is
+        // `singsub`'d (substitution, NO filename generation) UNLESS
+        // `checkglobqual` says the word ends in a glob QUALIFIER, in which
+        // case it goes through the full prefork + `zglob` pipeline:
+        //   `if (glob_ok && checkglobqual(*strp, strlen(*strp), 1, NULL))`
+        // So `[[ -z z*(#qN) ]]` really does glob and really can produce the
+        // empty string. Suppressing globbing for EVERY operand with a glob
+        // token left the literal text `z*(#qN)` in place, which is never
+        // empty.
+        if Self::cond_operand_has_globqual(w) {
+            return false;
+        }
         !w.contains('\u{9e}')
             && !w.contains('\u{9d}')
             && (w.contains('\u{87}')
                 || w.contains('\u{86}')
                 || w.contains('\u{91}')
                 || w.contains('\u{8f}'))
+    }
+
+    /// c:Src/glob.c:1157 `checkglobqual(str, sl, nobareglob = 1, NULL)` as
+    /// `cond_subst` calls it (c:Src/cond.c:43-44). Answers "does this
+    /// TOKENIZED word end in a glob qualifier?" for the compile-time text.
+    ///
+    /// C asks the question at RUNTIME, after prefork has substituted the
+    /// word; here only the source text is available, so a qualifier that
+    /// arrives from a parameter is not seen. That is the same limitation the
+    /// surrounding compile-time glob-suppression decision already has.
+    fn cond_operand_has_globqual(w: &str) -> bool {
+        let chars: Vec<char> = w.chars().collect();
+        if chars.is_empty() {
+            return false;
+        }
+        let mut sp: Option<usize> = None;
+        if crate::ported::glob::checkglobqual(&chars, chars.len() as i32, 1, &mut sp) != 0 {
+            return true;
+        }
+        // c:Src/glob.c:1191 — `if (isset(EXTENDEDGLOB) && !zpc_disables[
+        // ZPC_HASH] && s[1] == Pound)`. C evaluates that option at RUNTIME,
+        // by which time the script's own `setopt extendedglob` has taken
+        // effect; zshrs decides here, while compiling, when it typically has
+        // NOT. `checkglobqual` therefore reports 0 for `z*(#qN)` compiled
+        // ahead of a `setopt extendedglob`. Re-run the c:1191-1195 arm with
+        // EXTENDEDGLOB assumed: an explicit `(#q…)` has no other meaning, and
+        // c:1197's bare-qualifier arm is already dead here because
+        // `cond_subst` passes nobareglob = 1 (c:Src/cond.c:44).
+        use crate::ported::zsh_h::{Inpar, Outpar, Pound};
+        if chars.len() < 4 || *chars.last().unwrap() != Outpar {
+            return false;
+        }
+        let mut paren = 0i32;
+        let mut i = chars.len() - 2;
+        loop {
+            if chars[i] == Inpar && paren == 0 {
+                return chars.get(i + 1) == Some(&Pound) && chars.get(i + 2) == Some(&'q');
+            }
+            match chars[i] {
+                Outpar => paren += 1,
+                Inpar => paren -= 1,
+                _ => {}
+            }
+            if i == 0 {
+                return false;
+            }
+            i -= 1;
+        }
     }
 
     /// Compile the `=~` RHS (the ERE) with substitution ON and filename
@@ -11333,6 +11538,54 @@ fn render_sublist_for_debug(sublist: &crate::parse::ZshSublist) -> String {
         out.push(' ');
         out.push_str(&render_sublist_for_debug(next));
     }
+    out
+}
+
+/// Port of `void getredirs(LinkList redirs)` from `Src/text.c:800`.
+///
+/// C accumulates into the `tptr` text buffer; this returns the same bytes
+/// as a String. Only the arm C actually reaches for a function-definition
+/// redirection list is covered — `REDIR_CLOSE` and unknown types are
+/// `DPUTS("BUG: …")` in C, so they are dropped here too.
+fn getredirs(redirs: &[crate::parse::ZshRedir]) -> String {
+    use crate::ported::zsh_h::*;
+    // c:803-807 — `static char *fstr[] = { … }`, indexed by `f->type`.
+    const FSTR: [&str; 18] = [
+        ">", ">|", ">>", ">>|", "&>", "&>|", "&>>", "&>>|", "<>", "<", "<<", "<<-", "<<<", "<&",
+        ">&", "", /* >&- */
+        "<", ">",
+    ];
+    let mut out = String::new();
+    out.push(' '); // c:811 taddchr(' ')
+    for f in redirs {
+        // c:812
+        // c:815-829 — every type except REDIR_CLOSE shares one arm.
+        if f.rtype == REDIR_CLOSE || f.rtype < 0 || f.rtype as usize >= FSTR.len() {
+            continue; // c:889-896 — DPUTS "BUG:" arms
+        }
+        // c:Src/zsh.h — `IS_READFD(X)` is
+        // `((X)>=REDIR_READWRITE && (X)<=REDIR_MERGEIN) || (X)==REDIR_INPIPE`.
+        let is_readfd = (f.rtype >= REDIR_READWRITE && f.rtype <= REDIR_MERGEIN)
+            || f.rtype == REDIR_INPIPE;
+        if let Some(varid) = &f.varid {
+            // c:830-833 — `{varid}` form
+            out.push('{');
+            out.push_str(varid);
+            out.push('}');
+        } else if f.fd != if is_readfd { 0 } else { 1 } {
+            // c:834-835 — a non-default fd is written as one digit
+            out.push_str(&f.fd.to_string());
+        }
+        // c:872-876 — `taddstr(fstr[f->type]); if (f->type != REDIR_MERGEIN
+        // && f->type != REDIR_MERGEOUT) taddchr(' '); taddstr(f->name);`
+        out.push_str(FSTR[f.rtype as usize]); // c:873
+        if f.rtype != REDIR_MERGEIN && f.rtype != REDIR_MERGEOUT {
+            out.push(' '); // c:875
+        }
+        out.push_str(&crate::lex::untokenize_preserve_quotes(&f.name)); // c:876
+        out.push(' '); // c:878
+    }
+    out.pop(); // c:898 `tptr--` drops the trailing separator
     out
 }
 
@@ -14049,6 +14302,43 @@ fn parse_zsh_flag_subscript(s: &str) -> Option<(&str, &str, &str)> {
     Some((flags, base, key))
 }
 
+/// Resolve a LITERAL `[…]` subscript's backslash quoting the way
+/// `getindex` does before the key ever reaches the hash table.
+///
+/// c:Src/params.c:2029 — `getindex` never reads the subscript as the outer
+/// lexer left it; it calls `parse_subscript(s, scanflags & SCANPM_DQUOTED,
+/// ']')`, which re-lexes the text through `dquote_parse(']', sub)`
+/// (c:Src/lex.c:1751-1769). With `endchar == ']'` a backslash before one of
+/// ``$ \ ` ] [ ( ) { }`` becomes a `Bnull` marker + the bare char
+/// (c:Src/lex.c:1497-1512); `getarg` then keeps the marker before a bracket
+/// and untokenizes the rest to a literal `\` (c:Src/params.c:1538-1551), and
+/// `remnulargs` (c:1583) plus the `parsestr` + `singsub` round (c:1585-1592)
+/// delete what is left. Net effect: `A[\\q]` keys on `\q`, `A[\\\\q]` on
+/// `\\q`, `A[\q]` on `\q` (a backslash before an unlisted char is ordinary
+/// text, c:Src/lex.c:1508-1511). `subscript_escape::subscript_unescape` is
+/// that composite; the ASSIGNMENT path already runs it
+/// (compile_zsh.rs:3854), the READ fast paths did not, so
+/// `A[$'\\q']=v; print $A[\\q]` missed by exactly one escape level
+/// (D06subscript.ztst "Associative array lookup (direct subscripting)").
+///
+/// A subscript that OPENS with a flag group is left alone: c:1583's
+/// `if (ishash && (keymatch || !rev)) remnulargs(s);` skips the marker
+/// deletion for a reverse/pattern search, because there the backslashes are
+/// PATTERN escapes that `patcompile` (c:1697) still has to see.
+fn subscript_literal_key(key: &str) -> std::borrow::Cow<'_, str> {
+    let trimmed = key.trim_start();
+    if trimmed.starts_with('(')
+        || trimmed.starts_with(crate::ported::zsh_h::Inpar)
+        || !key.contains('\\')
+    {
+        return std::borrow::Cow::Borrowed(key); // c:1583 (rev/keymatch) or nothing to do
+    }
+    // `resolve_dollar` is true: this is a compile-time LITERAL key (the
+    // callers reject `$`/backtick keys), so there is no `parsestr`/`singsub`
+    // round after this and c:1585-1592's share of the work belongs here.
+    std::borrow::Cow::Owned(crate::subscript_escape::subscript_unescape(key, false, true).0)
+}
+
 /// Split a subscripted name like `m[k]` or `arr[1]` into (base, key).
 /// Returns None if `s` is a plain identifier with no `[...]`.
 fn split_subscript(s: &str) -> Option<(&str, &str)> {
@@ -14373,7 +14663,18 @@ fn escape_quoted_glob_metas(s: &str) -> String {
                 in_dquote = !in_dquote;
                 out.push(c);
             }
-            '*' | '?' | '[' | '(' | ')' | '|' | '~' | '#' | '^' if in_squote || in_dquote => {
+            // c:Src/lex.c:1390-1404 — `-` and `!` become the Dash / Bang
+            // TOKENS only when the lexer sees them UNQUOTED; pattern.c's
+            // range parser (c:1483 `*patparse == Dash`) and its negation
+            // test look for those tokens, so a quoted `-` / `!` is an
+            // ordinary bracket member. zshrs flattens the quoted span back
+            // to plain text and re-tokenizes it downstream, which would
+            // promote them again — backslash-escape them here for the same
+            // reason the glob metas below are escaped. Pins
+            // `[[ - = ['a-z'] ]]` and `[[ a = ['!a'] ]]`.
+            '*' | '?' | '[' | '(' | ')' | '|' | '~' | '#' | '^' | '-' | '!'
+                if in_squote || in_dquote =>
+            {
                 // Backslash-escape so glob_match_static treats as
                 // literal char. The runtime glob translator already
                 // handles `\X` → escape-X. zsh's pattern matcher

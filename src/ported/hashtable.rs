@@ -1611,11 +1611,25 @@ pub fn createshfunctable() {
 /// Returns the removed function (or None if absent).
 /// WARNING: param names don't match C — Rust=(nam) vs C=(ht, nam)
 pub fn removeshfuncnode(nam: &str) -> Option<shfunc> {
+    // c:841-844 — the two arms are EXCLUSIVE:
+    //     if (!strncmp(nam, "TRAP", 4) && (sigidx = getsigidx(nam + 4)) != -1)
+    //         hn = removetrap(sigidx);
+    //     else
+    //         hn = removehashnode(shfunctab, nam);
+    // The Rust port ran BOTH: `removetrap` already pulls the TRAP<SIG>
+    // node out of shfunctab (signals.rs c:832-841), so the follow-up
+    // `remove` returned None and the caller (`bin_unhash`, c:4405) read
+    // that as "no such hash table element". `unfunction TRAPZERR` then
+    // reported an error AND — because the second remove ran outside
+    // removetrap's dosavetrap window — the localtraps restore had
+    // nothing to put back (C03traps:13,14).
     if let Some(sig_part) = nam.strip_prefix("TRAP") {
+        // c:841
         if let Some(sig) = getsigidx(sig_part) {
-            removetrap(sig);
+            return removetrap(sig); // c:842
         }
     }
+    // c:844 — `hn = removehashnode(shfunctab, nam);`
     shfunctab_lock()
         .write()
         .expect("shfunctab poisoned")
@@ -2432,6 +2446,17 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             // c:990
             let mut so = io::stdout();
             let _ = zputs(&t, &mut so); // c:991
+        }
+    } else if let Some(t) = &hn.redir_text {
+        // RUST-ONLY twin of the branch above, exactly parallel to the
+        // `body`-instead-of-`funcdef` fallback at c:947: the fusevm
+        // definition path registers the redirection list as already-rendered
+        // text rather than a second Eprog, so there is nothing for
+        // `getpermtext` to walk. Without this, `functions f` / `which f`
+        // dropped the `} > out` tail that C prints at c:991.
+        if !t.is_empty() {
+            let mut so = io::stdout();
+            let _ = zputs(t, &mut so); // c:991
         }
     }
 
@@ -3556,6 +3581,7 @@ pub fn shfunc_with_body(name: &str, body: &str) -> shfunc {
         redir: None,
         sticky: None,
         body: Some(body.to_string()),
+        redir_text: None,
     }
 }
 
@@ -3576,6 +3602,7 @@ pub fn shfunc_autoload(name: &str) -> shfunc {
         redir: None,
         sticky: None,
         body: None,
+        redir_text: None,
     }
 }
 

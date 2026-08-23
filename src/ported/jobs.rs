@@ -2617,7 +2617,17 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
             // c:2076
             if !prog.is_empty() && !posixbuiltins {
                 // c:2077
-                zwarnnam(prog, "no current job"); // c:2078
+                // c:2085 — `zwarnnam(prog, "%%%c: no such job", *s ? *s : '%')`.
+                // The `%c` is the character AFTER the leading `%` that c:2073's
+                // `s++` skipped, so `%%` reports "%%", `%+` reports "%+", and a
+                // bare `%` (no char left) reports "%%". The port carried the
+                // older "no current job" wording, which no longer matches.
+                let spec = if idx < s_bytes.len() {
+                    s_bytes[idx] as char
+                } else {
+                    '%'
+                };
+                zwarnnam(prog, &format!("%{}: no such job", spec)); // c:2085
             }
             return -1; // c:2079-2080
         }
@@ -2629,8 +2639,8 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
         if prevjob == -1 {
             // c:2087
             if !prog.is_empty() && !posixbuiltins {
-                // c:2088
-                zwarnnam(prog, "no previous job"); // c:2089
+                // c:2095
+                zwarnnam(prog, "%-: no such job"); // c:2096
             }
             return -1; // c:2090-2091
         }
@@ -4401,7 +4411,22 @@ pub fn waitonejob(jn: &mut job) {
         // walk the C `pipestats[]` array. zshrs's paramtab fast-path
         // reads from `paramtab["pipestatus"]` so mirror the C array
         // into the param table for visibility.
-        crate::ported::params::setaparam("pipestatus", vec![lastval.to_string()]);
+        // c:Src/jobs.c:83 — the canonical store is `pipestats[]` above;
+        // this paramtab write is the Rust-only mirror. A local shadow
+        // (`typeset -h +g pipestatus`) has no PM_SPECIAL and no GSU, so
+        // the C writer cannot reach it — skip the mirror too, or the
+        // shadow loses its PM_UNSET (B02typeset.ztst:37,38).
+        let shadowed = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get("pipestatus")
+                    .map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0)
+            })
+            .unwrap_or(false);
+        if !shadowed {
+            crate::ported::params::setaparam("pipestatus", vec![lastval.to_string()]);
+        }
     }
 }
 

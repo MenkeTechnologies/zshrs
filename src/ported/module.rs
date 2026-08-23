@@ -1944,8 +1944,17 @@ impl modulestab {
         // !!! RUST-ONLY PARAM !!! — carries C's per-entry
         // `Feature_enables.pat` (see FEAT_PATTERN_ARGS).
         feat_pat: bool,
-    ) -> bool {
+    ) -> i32 {
         // c:2200
+        // c:2201-2202 —
+        //   Now returns 0 for success (changed post-4.3.4),
+        //   1 for complete failure, 2 if some features couldn't be set.
+        // The port used to return `bool`, which collapsed 2 onto 0: a
+        // `zmodload zsh/datetime` whose `p:EPOCHSECONDS` could not be added
+        // (local parameter in the way, or a global of the same name) printed
+        // C's two diagnostics and then exited 0 instead of 2
+        // (V04features.ztst "Failed to add parameter if local parameter
+        // present" / "Loading won't override global parameter").
         // Faithful port of the find_module-found branch (c:2249-2320).
         // The !find_module branch (c:2219-2247) requires DSO loading and
         // never fires in zshrs's static-link path: every linked module
@@ -1983,7 +1992,7 @@ impl modulestab {
         // c:2208 — modname_ok(name)
         if modname_ok(name) == 0 {
             // c:2210 — zerr if !silent (silent flag not threaded yet)
-            return false;
+            return 1;
         }
         crate::ported::signals::queue_signals(); // c:2222
                                                  // c:2223 — find_module(name, FINDMOD_ALIASP)
@@ -2007,7 +2016,7 @@ impl modulestab {
             if !self.module_linked(name) {
                 let _ = do_load_module(self, name, 1); // c:2225
                 unqueue_signals(); // c:2226
-                return false; // c:2227 return 1
+                return 1; // c:2227
             }
             // c:2229 — m = zshcalloc(sizeof(*m));
             let mut m = module::new(name);
@@ -2050,7 +2059,7 @@ impl modulestab {
                 let _ = finish_module(self, name); // c:2243
                 delete_module(self, name); // c:2244
                 unqueue_signals(); // c:2245
-                return false; // c:2246 return 1
+                return 1; // c:2246
             }
             // c:2248-2249 — m->node.flags |= MOD_INIT_S | MOD_INIT_B;
             //               m->node.flags &= ~MOD_SETUP;
@@ -2059,14 +2068,14 @@ impl modulestab {
                 m.node.flags &= !MOD_SETUP;
             }
             unqueue_signals(); // c:2250
-            return true; // c:2251 return bootret
+            return bootret; // c:2251
         }
 
         // c:2249 — if (MOD_SETUP) return 0;
         let flags = self.modules.get(name).unwrap().node.flags;
         if (flags & MOD_SETUP) != 0 {
             unqueue_signals(); // c:2250
-            return true; // c:2251 return 0
+            return 0; // c:2251
         }
         // c:2253-2257 —
         //   if (m->node.flags & MOD_UNLOAD)
@@ -2090,13 +2099,13 @@ impl modulestab {
             }
         } {
             unqueue_signals(); // c:2256
-            return true; // c:2257 return 0
+            return 0; // c:2257
         }
         // c:2259-2262 — circular-dependency detection.
         if (flags & MOD_BUSY) != 0 {
             unqueue_signals(); // c:2260
             crate::ported::utils::zerr(&format!("circular dependencies for module ;{}", name));
-            return false; // c:2262 return 1
+            return 1; // c:2262
         }
         self.modules.get_mut(name).unwrap().node.flags |= MOD_BUSY; // c:2264
 
@@ -2108,11 +2117,13 @@ impl modulestab {
             .map(|d| d.iter().cloned().collect())
             .unwrap_or_default();
         for dep in &deps_snapshot {
-            if !self.load_module(dep, None, false) {
-                // c:2272 — return 1 on dep failure
+            // c:2272 — `if (load_module(…, NULL, silent) == 1)`: only a COMPLETE
+            // dependency failure aborts; a status-2 dep (features partly set)
+            // carries on.
+            if self.load_module(dep, None, false) == 1 {
                 self.modules.get_mut(name).unwrap().node.flags &= !MOD_BUSY; // c:2273
                 unqueue_signals(); // c:2274
-                return false; // c:2275 return 1
+                return 1; // c:2275
             }
         }
         self.modules.get_mut(name).unwrap().node.flags &= !MOD_BUSY; // c:2278
@@ -2156,7 +2167,7 @@ impl modulestab {
                     m.node.flags &= !MOD_SETUP;
                 }
                 unqueue_signals(); // c:2300
-                return false; // c:2301 return 1
+                return 1; // c:2301
             }
             // c:2303 — `m->flags |= MOD_INIT_S;`
             self.modules.get_mut(name).unwrap().node.flags |= MOD_INIT_S;
@@ -2191,7 +2202,7 @@ impl modulestab {
                 m.node.flags &= !MOD_SETUP;
             }
             unqueue_signals(); // c:2314
-            return false; // c:2315 return 1
+            return 1; // c:2315
         }
         // c:2317-2318 — `m->flags |= MOD_INIT_B; m->flags &= ~MOD_SETUP;`
         if let Some(m) = self.modules.get_mut(name) {
@@ -2199,7 +2210,7 @@ impl modulestab {
             m.node.flags &= !MOD_SETUP;
         }
         unqueue_signals(); // c:2319
-        true // c:2320 return bootret (0)
+        bootret // c:2320 return bootret
     }
 
     // Backend handler for zmodload -u                                       // c:2813
@@ -4770,11 +4781,10 @@ pub fn require_module(
             crate::ported::signals::unqueue_signals();
             return 1;
         }
-        if !table.load_module(&mname, features, feat_pat) {
-            crate::ported::signals::unqueue_signals();
-            return 1;
-        }
-        0
+        // c:2354 — `ret = load_module(module, features, silent);` — the full
+        // 0/1/2 status, NOT a success flag: 2 means the module loaded but some
+        // feature could not be set, and `zmodload` reports it.
+        table.load_module(&mname, features, feat_pat)
     } else {
         // c:2356 — `ret = do_module_features(m, features, 0);`
         // Module already loaded; just enable the requested features.

@@ -1854,6 +1854,70 @@ pub fn bin_cd(
             format!("/{}", segs.join("/"))
         }
     };
+    // c:1221-1235 — reconcile the LOGICAL path with the directory we are
+    // actually standing in:
+    //   if (stat(unmeta(new_pwd), &st1) < 0) {
+    //       new_pwd = metafy(zgetcwd(), -1, META_DUP);
+    //   } else if (stat(".", &st2) < 0) {
+    //       if (chdir(unmeta(new_pwd)) < 0)
+    //           zwarn("unable to chdir(%s): %e", new_pwd, errno);
+    //   } else if (st1.st_ino != st2.st_ino || st1.st_dev != st2.st_dev) {
+    //       if (chasinglinks) new_pwd = metafy(zgetcwd(), -1, META_DUP);
+    //       else if (chdir(unmeta(new_pwd)) < 0)
+    //           zwarn("unable to chdir(%s): %e", new_pwd, errno);
+    //   }
+    // The first arm is what makes `cd .` recover after the cwd was renamed
+    // out from under the shell: the textual `$PWD/.` no longer stats, so
+    // zsh falls back to `getcwd()` and $PWD becomes the NEW name. Without
+    // it $PWD kept the stale path forever.
+    let mut new_pwd_logical = new_pwd_logical;
+    match std::fs::metadata(&new_pwd_logical) {
+        Err(_) => {
+            // c:1221-1224
+            if let Ok(c) = env::current_dir() {
+                new_pwd_logical = c.to_string_lossy().into_owned(); // c:1224
+            }
+        }
+        Ok(st1) => {
+            use std::os::unix::fs::MetadataExt as _;
+            match std::fs::metadata(".") {
+                // c:1225-1227 — the cwd itself is gone; move to new_pwd.
+                Err(_) => {
+                    if env::set_current_dir(&new_pwd_logical).is_err() {
+                        zwarn(&format!(
+                            // c:1227
+                            "unable to chdir({}): {}",
+                            new_pwd_logical,
+                            crate::ported::utils::zsh_errno_msg(
+                                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                            )
+                        ));
+                    }
+                }
+                // c:1228 — the logical path names a DIFFERENT directory
+                // than the one we are in.
+                Ok(st2) => {
+                    if st1.ino() != st2.ino() || st1.dev() != st2.dev() {
+                        if chase {
+                            // c:1229-1232
+                            if let Ok(c) = env::current_dir() {
+                                new_pwd_logical = c.to_string_lossy().into_owned(); // c:1232
+                            }
+                        } else if env::set_current_dir(&new_pwd_logical).is_err() {
+                            zwarn(&format!(
+                                // c:1234
+                                "unable to chdir({}): {}",
+                                new_pwd_logical,
+                                crate::ported::utils::zsh_errno_msg(
+                                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                                )
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
     // c:Src/builtin.c:849 + cd_new_pwd dirstack maintenance —
     // collapsed into a single post-cd update here since the Rust
     // cd_get_dest returns a String rather than a LinkNode that
@@ -4074,6 +4138,8 @@ pub fn bin_typeset(
             // c:2779
             printflags &= !PRINT_WITH_NAMESPACE; // c:2780
         }
+        // c:2776 — `int exclude = 0;`
+        let mut exclude: u32 = 0; // c:2776
         if !OPT_ISSET(&ops, b'p') {
             // c:2782
             if (on | roff) == 0 {
@@ -4084,6 +4150,15 @@ pub fn bin_typeset(
                 // c:2785
                 printflags |= PRINT_NAMEONLY; // c:2786
             }
+        } else if (printflags & (PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY)) != 0 {
+            // c:2787
+            // c:2788-2791 —
+            //     /*
+            //      * For POSIX export/readonly, exclude non-scalars unless
+            //      * explicitly requested.
+            //      */
+            //     exclude = (PM_ARRAY|PM_HASHED) & ~(on|roff);
+            exclude = (PM_ARRAY | PM_HASHED) & !((on as u32) | (roff as u32)); // c:2792
         }
         // c:2792 — `scanhashtable(paramtab, 1, on|roff, 0, paramtab->printnode,
         //               printflags|(roff ? PRINT_NAMEONLY : 0));`
@@ -4128,7 +4203,34 @@ pub fn bin_typeset(
         // for every not-yet-loaded module and suppress the placeholder
         // rows for the same names (zsh -f shows `undefined WATCH`, not
         // a set `WATCH`).
-        let stubs: Vec<(&'static str, &'static str)> = crate::vm_helper::autoload_param_stubs();
+        let mut stubs: Vec<(&'static str, &'static str)> = crate::vm_helper::autoload_param_stubs();
+        // c:Src/module.c:1218-1223 add_autoparam — the stub IS the
+        // paramtab node in C, so `typeset -h +g WATCH` inside a function
+        // pushes a LOCAL over it (`pm->old = stub`, Src/params.c
+        // createparam) and the stub becomes invisible: the scan sees only
+        // the local, and once `unset` flags that local PM_UNSET
+        // printparamnode drops it (c:Src/params.c:6136-6148). zshrs keeps
+        // the stub OUT of paramtab and synthesises the row here, so the
+        // synthetic row survived the shadowing and `typeset -h +g -m '*';
+        // unset -m '*'; typeset` still listed `undefined WATCH` /
+        // `undefined watch` (B02typeset.ztst:38). Drop the synthetic row
+        // for any name the paramtab currently holds at a non-zero level —
+        // that node is the local shadow and must be listed in its place.
+        {
+            let tab = paramtab().read().unwrap();
+            // A node at a non-zero level IS the shadow; a node flagged
+            // PM_UNSET inside a function is the shadow after `unset`
+            // (c:Src/params.c:unsetparam_pm keeps the local node and
+            // only raises PM_UNSET, so the stub underneath stays
+            // covered until the scope ends).
+            let in_func = locallevel.load(Ordering::Relaxed) != 0;
+            stubs.retain(|(n, _)| {
+                !tab.get(*n).is_some_and(|pm| {
+                    pm.level != 0
+                        || (in_func && (pm.node.flags as u32 & PM_UNSET) != 0)
+                })
+            });
+        }
         let names: Vec<String> = {
             let tab = paramtab().read().unwrap();
             let mut names: Vec<String> = tab
@@ -4164,6 +4266,13 @@ pub fn bin_typeset(
                     // which drops zshrs's paramtab placeholder for every
                     // module that has not booted and prints the C
                     // `undefined NAME` stub instead.
+                    // c:2794 — `scanhashtable(paramtab, 1, on|roff, exclude,
+                    // paramtab->printnode, printflags)`. `flags2` (exclude) is
+                    // scanhashtable's REJECT mask: c:Src/hashtable.c:394
+                    // `if (... (flags2 && (hn->flags & flags2))) continue;`.
+                    if exclude != 0 && (f & exclude) != 0 {
+                        return false; // c:394
+                    }
                     on_roff_expanded == 0 || (f & on_roff_expanded) != 0
                 })
                 .map(|(k, _)| k.clone())
@@ -5370,9 +5479,27 @@ pub fn bin_typeset(
                     continue;
                 }
             }
+            // c:Src/Modules/param_private.c:678 — with zsh/param/private
+            // loaded, `realparamtab->getnode` IS `getprivatenode`, so
+            // c:Src/builtin.c:3109's `paramtab->getnode(paramtab, pname)`
+            // returns NULL for a private declared in an OUTER scope. Without
+            // the walk, `typeset -p array_test` inside a function called from
+            // the declaring one found the private node, then printparamnode
+            // dropped it silently at its PM_RO_BY_DESIGN level test
+            // (c:Src/params.c:6157-6162) — no output AND no error, where zsh
+            // prints `typeset: no such variable: array_test` and exits 1
+            // (V10private.ztst:15). SAFETY: read-only `pm->old` walk under
+            // the read guard held for the lookup.
             let existed = paramtab()
                 .read()
-                .map(|t| t.contains_key(arg_name))
+                .map(|t| {
+                    t.get(arg_name).is_some_and(|pm| {
+                        !crate::ported::modules::param_private::getprivatenode(
+                            &**pm as *const crate::ported::zsh_h::param,
+                        )
+                        .is_null() // c:3109 getnode hook
+                    })
+                })
                 .unwrap_or(false);
             if existed {
                 // c:Src/params.c:6275 — printparamnode looks up the
@@ -5952,6 +6079,34 @@ pub fn bin_typeset(
                     if !arg.contains('=') && isset(crate::ported::zsh_h::TYPESETTOUNSET) {
                         pm.node.flags |= PM_DEFAULTED as i32;
                     }
+                    // c:2412-2413 + c:2426 — the newspecial preserve block.
+                    // C REUSES the special's own Param struct for the local
+                    // ("For specials, we keep the same struct but zero
+                    // everything", c:2385-2388): it copies the saved values
+                    // into `tpm` —
+                    //     tpm->base  = pm->base;
+                    //     tpm->width = pm->width;
+                    // — and leaves `pm->base` / `pm->width` untouched, then
+                    // restores the readonly bit explicitly:
+                    //     /*
+                    //      * Readonlyness of special parameters must be preserved.
+                    //      */
+                    //     pm->node.flags |= tpm->node.flags & PM_READONLY;
+                    // zshrs allocates a FRESH node for the shadow, so both
+                    // have to be copied off `pm.old` (the node the special
+                    // was pushed down to). Without them `() { local status;
+                    // typeset -p status }` printed `typeset -i status=0`
+                    // instead of zsh's `typeset -i10 -r status=0`
+                    // (B02typeset.ztst:67) — base 0 suppressed the radix and
+                    // the missing PM_READONLY dropped the `-r` letter.
+                    if keep_special {
+                        if let Some(old) = pm.old.as_ref() {
+                            pm.base = old.base; // c:2412
+                            pm.width = old.width; // c:2413
+                            pm.node.flags |= (old.node.flags as u32 & PM_READONLY) as i32;
+                            // c:2426
+                        }
+                    }
                 }
             }
         }
@@ -6357,7 +6512,32 @@ pub fn bin_typeset(
                     // `alen` is always even and the gate cannot fire — which is why
                     // the test is scoped to the flat shape here.
                     let odd_pairs = !bracket_shape && elems.len() % 2 != 0; // c:4081
-                    if odd_pairs {
+                    // c:Src/params.c:3485-3502 — when the parser marked ANY
+                    // element as a `[key]=value` triad, EVERY element must be
+                    // one:
+                    //     /*
+                    //      * We strictly enforce [key]=value syntax for associative
+                    //      * arrays.  Marker can only indicate a Marker / key / value
+                    //      * triad; it cannot be there by accident.
+                    //      */
+                    //     for (aptr = val; *aptr; aptr += 3)
+                    //         if (**aptr != Marker) {
+                    //             ... zerr("bad [key]=value syntax for associative array");
+                    //             return NULL;
+                    //         }
+                    // So a MIXED list (`local -A h=(1 one [2]=two 3 three)`)
+                    // fails with THAT message, not with arrhashsetfn's
+                    // odd-element-count one (B02typeset.ztst:63). zshrs's
+                    // parser hands the elements down as plain strings, so the
+                    // `[k]=v` shape is recognised exactly the way
+                    // `bracket_shape` above recognises it.
+                    let any_bracket = elems
+                        .iter()
+                        .any(|e| e.starts_with('[') && e.contains("]=")); // c:3495
+                    if any_bracket && !bracket_shape {
+                        zerr("bad [key]=value syntax for associative array"); // c:3499
+                        // c:3500 `return NULL;` — the parameter is NOT set.
+                    } else if odd_pairs {
                         // c:4083 — `zerr(...)`; zshrs's zerr raises ERRFLAG_ERROR
                         // itself (c:Src/utils.c:194), so the shell aborts the rest
                         // of the input exactly as C does.
@@ -8292,8 +8472,14 @@ pub fn bin_functions(
             stack
                 .iter()
                 .rev()
-                .find(|fs| !fs.name.is_empty()) // c:3626
-                .map(|fs| fs.name.clone()) // c:3631
+                // c:3623 — `if (fs->tp == FS_FUNC)`. C skips FS_EVAL and
+                // FS_SOURCE frames and takes the innermost real FUNCTION.
+                // Matching on "name is non-empty" instead picked the `(eval)`
+                // frame for `f() { eval autoload -X }` (the zinit /
+                // C04funcdef:29 idiom), so the load was attempted for a
+                // function literally named `(eval)`.
+                .find(|fs| fs.tp == crate::ported::zsh_h::FS_FUNC && !fs.name.is_empty()) // c:3623
+                .map(|fs| fs.name.clone()) // c:3628
         };
         let ret;
         if funcname.is_none() {
@@ -8333,6 +8519,7 @@ pub fn bin_functions(
                     redir: None,
                     sticky: None,
                     body: None,
+                    redir_text: None,
                 }));
                 if let Ok(mut t) = shfunctab_lock().write() {
                     t.addnode(new_shf); // c:3646
@@ -8608,6 +8795,7 @@ pub fn bin_functions(
                 redir: None,
                 sticky: None,
                 body: None,
+                redir_text: None,
             });
             let new_shf_ptr = Box::into_raw(new_shf);
             let _ = mkautofn(new_shf_ptr); // c:3765
@@ -9987,13 +10175,30 @@ pub fn bin_whence(
             }
             continue;
         }
-        // c:4200-4203 — `-p` BIN_COMMAND special case: builtin first.
+        // c:4157-4164 — `} else if (func == BIN_COMMAND &&
+        //     OPT_ISSET(ops,'p') && (hn = builtintab->getnode(builtintab,
+        //     *argv))) {`
+        //     /*
+        //      * Special case for "command -p[vV]" which needs to
+        //      * show a builtin in preference to an external command.
+        //      */
+        //     builtintab->printnode(hn, printflags);
+        //     informed = 1;
         if func == BIN_COMMAND && OPT_ISSET(ops, b'p') {
-            // c:4200
-            if BUILTINS.iter().any(|b| b.node.nam == *arg) {
-                // c:4201
-                println!("{}: builtin", arg); // c:4202
-                informed = 1;
+            // c:4157
+            if let Some(b) = BUILTINS.iter().find(|b| b.node.nam == *arg) {
+                // c:4158
+                // c:4163 — `builtintab->printnode(hn, printflags)`, NOT a
+                // hardcoded `NAME: builtin` line: `printflags` here is
+                // PRINT_WHENCE_SIMPLE for `-pv` (prints just `echo`) and
+                // PRINT_WHENCE_VERBOSE for `-p -V` (prints `echo is a shell
+                // builtin`). The `NAME: builtin` spelling is the
+                // PRINT_WHENCE_WORD form and belongs to `whence -w`.
+                printbuiltinnode(
+                    &b.node as *const hashnode as *mut hashnode,
+                    printflags,
+                ); // c:4163
+                informed = 1; // c:4164
                 continue;
             }
         }
@@ -10438,10 +10643,17 @@ pub fn bin_unhash(
                 if crate::provenance::active() {
                     crate::provenance::on_func_unset(nm);
                 }
-                let from_tab = shfunctab_lock()
-                    .write()
-                    .map(|mut g| g.remove(nm).is_some())
-                    .unwrap_or(false);
+                // c:4405 — `if ((hn = ht->removenode(ht, *argv)))`. For
+                // shfunctab `removenode` IS `removeshfuncnode`
+                // (c:Src/hashtable.c:825 `shfunctab->removenode =
+                // removeshfuncnode;`), which routes a `TRAP<SIG>` name
+                // through `removetrap` so the LOCAL_TRAPS save/restore and
+                // the sigtrapped[] teardown happen. Calling the raw table
+                // remove here skipped both: `unfunction TRAPZERR` inside a
+                // `setopt localtraps` function left the trap armed with a
+                // dangling function and never restored the outer handler
+                // (C03traps:13,14).
+                let from_tab = crate::ported::hashtable::removeshfuncnode(nm).is_some();
                 // Also remove from the executor's compiled-function /
                 // source maps. Without this, `unset -f f` cleared
                 // shfunctab but dispatch_function_call still found the
@@ -11076,6 +11288,39 @@ pub fn bin_print(
                 return 0; // c:4741 `if (fmt && !*args) return 0;`
             }
             &m_filtered
+        } else {
+            rest
+        };
+        // c:4744-4764 — the per-argument interpretation loop runs over the
+        // FORMAT ARGUMENTS (C consumed `fmt` at c:4692/4694, so `first`/
+        // `args` no longer contain it) after the `-m` filter and before the
+        // `-o`/`-O` sort. Only the `-P` arm matters here; `-D` has no
+        // fmt-specific behaviour and the `\`-escape arm is handled by
+        // printf_format. This `-f` fast-branch returned before bin_print's
+        // shared `-P` loop below, so `print -P -f '%s' %W` emitted the
+        // literal `%W` instead of the date.
+        let p_expanded: Vec<String>;
+        let rest: &[String] = if OPT_ISSET(ops, b'P') {
+            // c:4745-4746 — `if (OPT_ISSET(ops, 'P'))
+            //   txtunknownattrs = TXT_ATTR_ALL;`
+            crate::ported::prompt::txtunknownattrs.store(
+                crate::ported::zsh_h::TXT_ATTR_ALL,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            p_expanded = rest
+                .iter()
+                .map(|a| {
+                    // c:4757-4759 — `promptexpand(metafy(args[n], …), 0, …)`.
+                    let mut s = crate::ported::prompt::expand_prompt(a);
+                    // c:Src/prompt.c:236-247 — `if (!ns) { … chuck(Inpar/
+                    // Outpar/Nularg); }`: the ns=0 caller must not leak the
+                    // SGR-wrapping markers. See the same strip in the non-fmt
+                    // `-P` loop below.
+                    s.retain(|c| c != '\x01' && c != '\x02');
+                    s
+                })
+                .collect();
+            &p_expanded
         } else {
             rest
         };
@@ -14668,6 +14913,25 @@ struct TestParse<'a> {
     /// (c:Src/parse.c:89-96). `bin_test` checks it before anything else and
     /// returns 2 with no further diagnostic (c:7284-7288).
     errflag: bool,
+    /// !!! WARNING: RUST-ONLY FIELD (no C counterpart) !!!
+    ///
+    /// C zsh grew `<` / `>` lexical string comparison in the `test` builtin
+    /// with commit f51fed9dda (54103), which added three things at once: the
+    /// INANG/OUTANG arms of `testlex` (c:Src/builtin.c:7246-7249), the two
+    /// extra spellings in `par_cond_2`'s binary-operator list
+    /// (c:Src/parse.c:2498-2499) and the `COND_STRGTR`/`COND_STRLT` arm of
+    /// `par_cond_triple` (c:Src/parse.c:2666-2671). The zsh this build is
+    /// checked against (5.9.2) predates it and reports
+    /// `condition expected: >` instead, which
+    /// `tests/zshrs_shell.rs::test_test_lt_gt_not_string_comparators` pins.
+    /// Bourne-family drop-ins (`sh`/`ksh`/`dash`/`bash`) have always accepted
+    /// the operators, so the three arms stay live under `posix_faithful()`
+    /// and are switched off in `--zsh` mode.
+    ///
+    /// This replaces an argv-wide `any(a == "<" || a == ">")` rejection which
+    /// also killed the forms 5.9.2 ACCEPTS, where the angle bracket is an
+    /// operand rather than the operator (`[ -n \> ]` → true).
+    angle_ops: bool,
 }
 
 impl<'a> TestParse<'a> {
@@ -14680,6 +14944,7 @@ impl<'a> TestParse<'a> {
             tok: TEST_NULLTOK,
             tokstr: None,
             errflag: false,
+            angle_ops: crate::dash_mode::posix_faithful(),
         }
     }
 
@@ -14714,9 +14979,12 @@ impl<'a> TestParse<'a> {
             "!" => TEST_BANG,    // c:7215
             "(" => TEST_INPAR,   // c:7217
             ")" => TEST_OUTPAR,  // c:7219
-            "<" => TEST_INANG,   // c:7221
-            ">" => TEST_OUTANG,  // c:7223
-            _ => TEST_STRING,    // c:7225
+            // c:7221-7224 — the INANG/OUTANG arms only exist from 54103 on;
+            // see `TestParse::angle_ops`. Without them `<` / `>` lex as a
+            // plain STRING, which is what pre-54103 zsh does.
+            "<" if self.angle_ops => TEST_INANG,  // c:7221
+            ">" if self.angle_ops => TEST_OUTANG, // c:7223
+            _ => TEST_STRING,                     // c:7225
         };
         self.idx += 1; // c:7226 — `testargs++`
     }
@@ -14805,8 +15073,8 @@ impl<'a> TestParse<'a> {
         if n_testargs > 2 {
             let nxt = self.next_arg().unwrap_or_default().to_string();
             let is_binop = nxt == "="
-                || nxt == "<"
-                || nxt == ">"
+                // c:2498-2499 — added by 54103; see `TestParse::angle_ops`.
+                || (self.angle_ops && (nxt == "<" || nxt == ">"))
                 || nxt == "=="
                 || nxt == "!="
                 || (nxt.starts_with(crate::ported::zsh_h::IS_DASH)
@@ -14933,7 +15201,10 @@ impl<'a> TestParse<'a> {
     /// `COND_*` opcode plus the two `COND_MOD`/`COND_MODI` fallbacks; anything
     /// else is a parse error naming the middle argument.
     fn par_cond_triple(&mut self, a: String, b: String, c: String) -> Option<TestCond> {
-        let known = matches!(b.as_str(), "=" | "<" | ">" | "==" | "!=" | "=~") // c:2663-2691
+        let known = matches!(b.as_str(), "=" | "==" | "!=" | "=~") // c:2663-2691
+            // c:2666-2671 — the COND_STRGTR / COND_STRLT arm added by 54103;
+            // see `TestParse::angle_ops`.
+            || (self.angle_ops && matches!(b.as_str(), "<" | ">"))
             || b.starts_with(crate::ported::zsh_h::IS_DASH)                    // c:2692
             || (a.starts_with(crate::ported::zsh_h::IS_DASH) && a.chars().count() > 1); // c:2703
         if known {
@@ -15114,34 +15385,13 @@ pub fn bin_test(
         }
     }
 
-    // c:Src/builtin.c:7276-7280 — `[ ]`/`test` uses `parse_cond`, whose
-    // `testlex` maps `<` / `>` to INANG / OUTANG. Both zsh 5.9 and 5.9.2
-    // nevertheless reject them from this builtin:
-    //   `test a '<' b` → `zsh:1: condition expected: <` rc=2
-    // Only `[[ ]]` (which routes through `execcond`) accepts them for lex
-    // compare. Bug #98 in docs/BUGS.md.
+    // The `<` / `>` rejection zsh 5.9.2 performs is NOT a blanket argv scan:
+    // it falls out of the grammar, so it only fires when the angle bracket
+    // reaches OPERATOR position. `[ -n \> ]` is accepted (the `>` is the
+    // operand of `-n`), and `[ 5 \> 3 ]` is rejected with
+    // `condition expected: >`. See `TestParse::angle_ops` for the three
+    // grammar arms that carry it and the mode gate.
     //
-    // !!! POSIX-FAITHFUL GATE !!! This zsh-only rejection is WRONG for the
-    // Bourne-family drop-ins: dash / sh / ksh / bash `test` all accept
-    // `string1 < string2` / `>` as lexical string comparison (`[ abc \< abd ]`
-    // → true). Under `--sh`/`--ksh`/`--dash`/`--bash` (posix_faithful) skip the
-    // rejection and let the INANG/OUTANG grammar arm (c:2573-2583) build
-    // COND_STRLT / COND_STRGTR, matching the real shell.
-    if !crate::dash_mode::posix_faithful() && argv.iter().any(|a| a == "<" || a == ">") {
-        let offending = argv
-            .iter()
-            .find(|a| a.as_str() == "<" || a.as_str() == ">")
-            .map(|s| s.as_str())
-            .unwrap_or("<");
-        // Use zwarn (cmd=None) — zsh's `[ ]` parse-error format is
-        // `<script>:<line>: condition expected: <`, NOT
-        // `<script>:test:<line>:...`. zwarn omits the builtin-name
-        // segment that zwarnnam adds; zwarn also doesn't set
-        // errflag, so `echo $?` after the failed test still runs.
-        crate::ported::utils::zwarn(&format!("condition expected: {}", offending));
-        return 2;
-    }
-
     // c:7276-7281 — `zcontext_save(); testargs = argv; tok = NULLTOK;
     //                condlex = testlex; testlex(); prog = parse_cond();`
     let mut p = TestParse::new(&argv);
@@ -18089,6 +18339,14 @@ fn printf_format(
             // between `%` and the conversion. Capture them so `printf
             // "%-10s" hi` and `printf "%.3f" 3.14159` render correctly.
             let mut spec = String::from("%");
+            // c:Src/builtin.c:5170 — `start = c++;`. `start` is the RAW
+            // format text from the `%` onward; the invalid-directive
+            // diagnostic (c:5414-5419) prints it after planting a temporary
+            // NUL at `c[1]`, i.e. "% .. <bad conversion char>". `spec` is a
+            // REWRITTEN spec (`*` width already substituted by its numeric
+            // value), so it cannot serve as `start`; accumulate the raw text
+            // separately as each character is consumed.
+            let mut raw = String::from("%");
             // c:Src/builtin.c:5199-5219 — `%n$` positional argument
             // specifier. A leading 1-9 digit run followed by `$` selects
             // the n-th argument (1-based) for this conversion instead of
@@ -18102,6 +18360,7 @@ fn printf_format(
                 while let Some(&d) = iter.peek() {
                     if d.is_ascii_digit() {
                         digits.push(d);
+                        raw.push(d);
                         iter.next();
                     } else {
                         break;
@@ -18109,6 +18368,7 @@ fn printf_format(
                 }
                 if iter.peek() == Some(&'$') {
                     iter.next(); // c:5202 — consume `$`
+                    raw.push('$');
                     let narg: usize = digits.parse().unwrap_or(0);
                     // c:5203-5212 — out-of-range positional is a hard
                     // error (`zwarnnam(...); return 1`). `argc` in C is
@@ -18149,34 +18409,93 @@ fn printf_format(
                     // produced "%': invalid directive").
                     Some(&c) if matches!(c, '-' | '+' | ' ' | '#' | '0' | '\'') => {
                         spec.push(c);
+                        raw.push(c);
                         iter.next();
                     }
                     _ => break,
                 }
             }
-            // c:Src/builtin.c:4791-4796 — width can be either a
-            // digit literal or `*` (consume next arg as width).
+            // c:Src/builtin.c:5205-5215 — width can be either a
+            // digit literal (`width = strtoul(c, &endptr, 0); c = endptr;`)
+            // or `*` (consume an arg as the width).
             // Without `*` handling, `printf '%*d' 4 7` rendered the
             // literal `%*d` because the iter saw `*` and aborted the
             // spec walk before reaching the conversion char.
             if iter.peek() == Some(&'*') {
-                iter.next(); // c:4796 — consume the `*` marker
-                             // c:Src/builtin.c:5240-5247 — the `*` width arg is
-                             // MATH-EVALUATED (`width = (int)mathevali(metafy(*argp,
-                             // …))`), not a plain integer parse: `0x1f`→31, ` 4`→4,
-                             // `'A`→65, `2+3`→5. parse_int_arg is the shared
-                             // getnum→mathevali path (same one the %d/%i arm uses),
-                             // and on a math error it zeroes the value and flags
-                             // ret=1 (c:5243 `errflag → ret = 1`). Previously the
-                             // plain `str::parse` silently yielded 0 for any non-
-                             // decimal width arg.
-                let w: i64 = args.get(arg_i).map(|s| parse_int_arg(s)).unwrap_or(0);
-                arg_i += 1;
-                spec.push_str(&w.to_string());
+                iter.next(); // c:5207 — consume the `*` marker
+                raw.push('*');
+                // c:5208-5231 — `if (idigit(*++c))`: a `*` width may itself
+                // carry a positional specifier (`%*n$d`), naming which
+                // argument supplies the width. Unlike the leading `%n$`
+                // (c:5183, which tests `'1'..'9'`), `idigit` here accepts
+                // `0` too, so `%*0$d` reaches the range check and errors.
+                if matches!(iter.peek(), Some(&d) if d.is_ascii_digit()) {
+                    let raw_before_digits = raw.len();
+                    let mut digits = String::new();
+                    while let Some(&d) = iter.peek() {
+                        if d.is_ascii_digit() {
+                            digits.push(d);
+                            raw.push(d);
+                            iter.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if iter.peek() == Some(&'$') {
+                        iter.next(); // c:5211 — `c = endptr + 1;`
+                        raw.push('$');
+                        let narg: usize = digits.parse().unwrap_or(0);
+                        // c:5212-5224 — `if (narg > argc || narg <= 0)`.
+                        // `argc` is the remaining window (total minus the
+                        // already-folded `first_off`).
+                        if narg == 0 || first_off + narg > args.len() {
+                            return Err((
+                                out,
+                                format!("{}: argument specifier out of range", narg), // c:5214
+                            ));
+                        }
+                        // c:5227-5228 — `if (narg > maxarg) maxarg = narg;`
+                        //               `argp = first + narg - 1;`
+                        // NOTE: unlike the leading `%n$` (which only sets
+                        // `curarg`), a `*n$` width MOVES the sequential
+                        // cursor `argp`, and the `argp++` below leaves it
+                        // past the width argument.
+                        if narg > cycle_maxarg {
+                            cycle_maxarg = narg;
+                        }
+                        arg_i = first_off + narg - 1;
+                    } else {
+                        // c:5208-5210 — digits NOT followed by `$` are left
+                        // unconsumed by C (`c` still points at the first of
+                        // them). They therefore fall through the `.`/size
+                        // -modifier tests and land on the conversion switch,
+                        // where a digit is an unknown directive. Peekable
+                        // cannot push the run back, so raise the identical
+                        // diagnostic here: `start` truncated after the first
+                        // digit (c:5416-5418 plants the NUL at `c[1]`).
+                        let mut msg = raw[..raw_before_digits].to_string();
+                        msg.push(digits.as_bytes()[0] as char);
+                        return Err((out, format!("{}: invalid directive", msg))); // c:5419
+                    }
+                }
+                // c:5232-5238 — `if (*argp) { width = mathevali(...); argp++;
+                // ... }`. The `*` width arg is MATH-EVALUATED, not a plain
+                // integer parse: `0x1f`->31, ` 4`->4, `'A`->65, `2+3`->5.
+                // parse_int_arg is the shared getnum->mathevali path (the same
+                // one the %d/%i arm uses), and on a math error it zeroes the
+                // value and flags ret=1 (c:5235 `errflag -> ret = 1`).
+                // When the args have run out `width` stays at its 0 init
+                // (c:5180) and `argp` is NOT advanced.
+                if let Some(a) = args.get(arg_i) {
+                    let w: i64 = parse_int_arg(a);
+                    arg_i += 1; // c:5234
+                    spec.push_str(&w.to_string());
+                }
             } else {
                 while let Some(&c) = iter.peek() {
                     if c.is_ascii_digit() {
                         spec.push(c);
+                        raw.push(c);
                         iter.next();
                     } else {
                         break;
@@ -18184,11 +18503,55 @@ fn printf_format(
                 }
             }
             if iter.peek() == Some(&'.') {
-                iter.next(); // consume the `.`
-                             // `.` precision: also accepts `*` per c:4796 same as width.
+                iter.next(); // c:5248 — consume the `.`
+                raw.push('.');
+                // c:5249 — `if (*++c == '*')`: precision accepts `*` exactly
+                // like width, positional specifier included.
                 if iter.peek() == Some(&'*') {
                     iter.next();
+                    raw.push('*');
                     saw_prec_star = true;
+                    // c:5250-5273 — `if (idigit(*++c))`: `%.*n$d` names the
+                    // argument that supplies the precision.
+                    if matches!(iter.peek(), Some(&d) if d.is_ascii_digit()) {
+                        let raw_before_digits = raw.len();
+                        let mut digits = String::new();
+                        while let Some(&d) = iter.peek() {
+                            if d.is_ascii_digit() {
+                                digits.push(d);
+                                raw.push(d);
+                                iter.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        if iter.peek() == Some(&'$') {
+                            iter.next(); // c:5253 — `c = endptr + 1;`
+                            raw.push('$');
+                            let narg: usize = digits.parse().unwrap_or(0);
+                            // c:5254-5266 — `if (narg > argc || narg <= 0)`
+                            if narg == 0 || first_off + narg > args.len() {
+                                return Err((
+                                    out,
+                                    format!("{}: argument specifier out of range", narg), // c:5256
+                                ));
+                            }
+                            // c:5269-5270 — `if (narg > maxarg) maxarg = narg;`
+                            //               `argp = first + narg - 1;`
+                            if narg > cycle_maxarg {
+                                cycle_maxarg = narg;
+                            }
+                            arg_i = first_off + narg - 1;
+                        } else {
+                            // c:5250-5252 — see the width case above: an
+                            // un-`$`-terminated digit run is left for the
+                            // conversion switch, i.e. an invalid directive.
+                            let mut msg = raw[..raw_before_digits].to_string();
+                            msg.push(digits.as_bytes()[0] as char);
+                            return Err((out, format!("{}: invalid directive", msg)));
+                            // c:5419
+                        }
+                    }
                     // c:Src/builtin.c:5275-5288 — the `*` precision arg is
                     // math-evaluated identically to the `*` width arg
                     // (`prec = (int)mathevali(metafy(*argp, …))`, error →
@@ -18217,6 +18580,7 @@ fn printf_format(
                     while let Some(&c) = iter.peek() {
                         if c.is_ascii_digit() {
                             spec.push(c);
+                            raw.push(c);
                             iter.next();
                         } else {
                             break;
@@ -18232,8 +18596,11 @@ fn printf_format(
             // into `spec`: it would corrupt the format passed to the
             // format_spec_* helpers. Only one modifier char is skipped,
             // matching C (so `%lld` then errors on the second `l`).
-            if matches!(iter.peek(), Some('l') | Some('L') | Some('h')) {
-                iter.next();
+            if let Some(&m) = iter.peek() {
+                if matches!(m, 'l' | 'L' | 'h') {
+                    raw.push(m); // c:5290 — `c++` past the modifier; `start` still covers it
+                    iter.next();
+                }
             }
             // c:Src/builtin.c:5215/5310 — a `%n$` positional spec sets
             // `curarg` directly; the conversion arms below read from
@@ -18607,13 +18974,25 @@ fn printf_format(
                 // is preserved (matches C — the warning fires AFTER
                 // earlier output bytes have already been emitted).
                 Some(other) => {
-                    // c:5430-5436 — the message echoes `start`: the spec
-                    // text from `%` through the bad conversion char
-                    // inclusive (C null-terminates at `c[1]`). `spec`
-                    // already holds `%`+flags+width+`.prec`; append the
-                    // bad char. e.g. `%0$s` → "%0$: invalid directive".
-                    return Err((out, format!("{}{}: invalid directive", spec, other)));
-                    // c:5435
+                    // c:5414-5419 — the message echoes `start`: the RAW
+                    // format text from `%` through the bad conversion char
+                    // inclusive.
+                    //   c:5415-5417 — `if (*c) { save = c[1]; c[1] = '\0'; }`
+                    // i.e. the temporary NUL lands AFTER the bad char, but
+                    // only when the bad char is itself non-NUL. A conversion
+                    // char that IS a NUL (`printf $'%\0'`) leaves `start`
+                    // terminated at the `%` itself, so zsh prints just "%".
+                    // `start` is a C string either way, so it also stops at
+                    // any earlier embedded NUL.
+                    let mut msg = raw.clone();
+                    if other != '\0' {
+                        msg.push(other); // c:5416
+                    }
+                    if let Some(nul) = msg.find('\0') {
+                        msg.truncate(nul);
+                    }
+                    return Err((out, format!("{}: invalid directive", msg)));
+                    // c:5419
                 }
                 // c:Src/builtin.c:5430-5436 — a bare `%` with nothing
                 // after it (end of format) is an invalid directive, same
@@ -18628,21 +19007,31 @@ fn printf_format(
                 arg_i = saved_argi;
             }
         }
-        // c:Src/builtin.c:5175-5178 — at the end of a cycle that used
-        // positional specs, fold the highest positional into the base
-        // offset (`first += maxarg`) and advance the sequential cursor
-        // past it so the reapply check below sees forward progress.
-        if cycle_maxarg > 0 {
-            first_off += cycle_maxarg;
-            if first_off > arg_i {
-                arg_i = first_off;
-            }
+        // c:Src/builtin.c:5521-5522 — `if (maxarg && (argp - first > maxarg))
+        //     maxarg = argp - first;`
+        // C runs this at the tail of every conversion; `argp` only ever
+        // grows within a cycle and `maxarg` is not read again until the
+        // cycle ends, so evaluating it once here is equivalent.
+        if cycle_maxarg > 0 && arg_i.saturating_sub(first_off) > cycle_maxarg {
+            cycle_maxarg = arg_i - first_off;
         }
-        // c:Src/builtin.c:5527 — `} while (... && !fmttrunc ...)`. A `\c`
-        // in the format or a `%b` arg stops the reuse loop.
-        if fmttrunc || arg_i == prev || arg_i >= args.len() {
+        // c:Src/builtin.c:5525 — `if (maxarg) argp = first + maxarg;`
+        if cycle_maxarg > 0 {
+            arg_i = first_off + cycle_maxarg;
+        }
+        let _ = prev;
+        // c:Src/builtin.c:5527 — `} while (*argp && argp != first &&
+        //     !fmttrunc && !OPT_ISSET(ops,'r'));`. A `\c` in the format or
+        // in a `%b` arg stops the reuse loop. `argp != first` is C's
+        // "did this cycle consume anything" guard — note `first` only ever
+        // advances by `maxarg`, so with no positional specs it stays at
+        // args[0] and the test is simply "argp moved".
+        if fmttrunc || arg_i >= args.len() || arg_i == first_off {
             break;
         }
+        // c:Src/builtin.c:5158-5162 (top of the next iteration) —
+        //   `if (maxarg) { first += maxarg; argc -= maxarg; maxarg = 0; }`
+        first_off += cycle_maxarg;
     }
     Ok((out, bounds, n_targets))
 }

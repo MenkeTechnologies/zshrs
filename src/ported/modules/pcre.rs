@@ -161,7 +161,12 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) ->
         // -a -m` and anchor at EVERY line start instead.
         pattern_str.push_str(r"\A");
     }
-    pattern_str.push_str(&target);
+    // c:94 — `pcre2_compile(target, …)`. PCRE2 reads `\0[0-7]{0,2}` as an
+    // octal character code; the fancy_regex backend reads `\0` as a group-0
+    // back-reference and refuses to compile. Rewrite just that escape.
+    pattern_str.push_str(&crate::extensions::regex_mod::pcre2_octal_escapes(
+        &target,
+    ));
 
     match Regex::new(&pattern_str) {
         Ok(re) => {
@@ -860,10 +865,13 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
     // — the caseless setting from `setopt REMATCHPCRE` was silently
     // discarded so `[[ ABC -pcre-match abc ]]` returned false under
     // the option, against documented behavior.
+    // c:455 — `pcre2_compile(rhre_plain, …)`. See bin_pcre_compile for why
+    // the `\0…` octal escape has to be rewritten for the fancy_regex backend.
+    let rhs_plain_re = crate::extensions::regex_mod::pcre2_octal_escapes(&rhs_plain);
     let pcre_compile_pat = if isset(REMATCHPCRE) && !isset(CASEMATCH) {
-        format!("(?i){}", rhs_plain) // c:436
+        format!("(?i){}", rhs_plain_re) // c:436
     } else {
-        rhs_plain.clone()
+        rhs_plain_re
     };
 
     // c:445-451 — BASHREMATCH option selects the output-variable shape:

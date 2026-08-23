@@ -2250,6 +2250,57 @@ pub fn createparam(
         None
     };
 
+    // c:1064-1080 — PM_RO_BY_DESIGN rejection, verbatim:
+    //
+    //     if (oldpm && (oldpm->node.flags & PM_RO_BY_DESIGN)) {
+    //         if (!(flags & PM_LOCAL)) {
+    //             /* Must call the API for namerefs and specials to work */
+    //             pm = (Param) paramtab->getnode2(paramtab, oldpm->node.nam);
+    //             if (!pm || ((pm->node.flags & PM_NAMEREF) &&
+    //                         pm->level != locallevel)) {
+    //                 zerr("%s: can't modify read-only parameter", name);
+    //                 return NULL;
+    //             }
+    //         }
+    //         /**
+    //          * Implementation note: In the case of a readonly nameref,
+    //          * the right thing might be to insert a new global into
+    //          * the paramtab and point the local pm->old at it, rather
+    //          * than error.  That is why gethashnode2() is called
+    //          * first, to avoid skipping up the stack prematurely.
+    //          **/
+    //     }
+    //
+    // `paramtab->getnode2` is `getprivatenode2`
+    // (c:Src/Modules/param_private.c:617, installed by setup_ at c:679)
+    // whenever zsh/param/private is loaded, which is what makes a private
+    // belonging to an OUTER scope resolve to NULL here and turn a deeper
+    // scope's assignment into this error instead of a silent new global
+    // (V10private.ztst:41,42). Without the block zshrs fell through to
+    // assignstrvalue's generic PM_READONLY guard, whose wording
+    // (`read-only variable: q`) is a different message.
+    if let Some(op) = oldpm.clone() {
+        // c:1064
+        if (op.node.flags as u32 & PM_RO_BY_DESIGN) != 0 && (flags as u32 & PM_LOCAL) == 0 {
+            // c:1064-1065
+            // c:1067 — `pm = paramtab->getnode2(paramtab, oldpm->node.nam);`
+            let visible =
+                crate::ported::modules::param_private::getprivatenode2(&*op as *const param);
+            let reject = if visible.is_null() {
+                true // c:1068 `!pm`
+            } else {
+                let vpm: &param = unsafe { &*visible };
+                (vpm.node.flags as u32 & PM_NAMEREF) != 0
+                    && vpm.level != locallevel.load(Ordering::Relaxed) as i32
+                // c:1068-1069
+            };
+            if reject {
+                zerr(&format!("{}: can't modify read-only parameter", name)); // c:1071
+                return None; // c:1072
+            }
+        }
+    }
+
     // c:1086-1125 — the PM_NAMEREF chase. Previously elided; ported
     // here verbatim.
     //
@@ -14975,6 +15026,30 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // live time values regardless of explicit zmodload. p10k
         // and many other prompts rely on this without an explicit
         // zmodload (zsh ships datetime preloaded in most configs).
+        // c:Src/params.c:1130-1153 createparam / c:2264 getparamnode — a
+        // `local NAME=…` over a module special SPLICES A NEW Param into
+        // paramtab ahead of the special (`pm->old = oldpm`), and every read
+        // from then on goes through the NEW node's `stdgetfn`, not the
+        // module's getfn. zshrs has no `old` chain, but `local` does replace
+        // the paramtab node, so the shadow is observable as "the node for
+        // this name is no longer PM_SPECIAL". Decline the module getter in
+        // that state so the ordinary paramtab read wins.
+        // Without this, `fn() { local EPOCHSECONDS=scruts; print $EPOCHSECONDS }`
+        // printed the live epoch (V04features.ztst "Module special parameter
+        // is hidden by a local parameter") even though `${(t)EPOCHSECONDS}`
+        // already reported `scalar-local`.
+        "EPOCHSECONDS" | "EPOCHREALTIME"
+            if paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get(name)
+                        .map(|pm| (pm.node.flags as u32 & PM_SPECIAL) == 0)
+                })
+                .unwrap_or(false) =>
+        {
+            None
+        }
         "EPOCHSECONDS" => {
             // c:Src/Modules/datetime.c:206 `getcurrentsecs`. zsh requires
             // explicit `zmodload zsh/datetime` before EPOCHSECONDS is

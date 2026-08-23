@@ -42,12 +42,18 @@ use crate::zsh_h::{PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_TYP
 pub(crate) struct mathvalue {
     pub val: mnumber,
     pub lval: Option<String>,
-    /// `Value pval` slot from the C source. zsh uses it to cache the
-    /// resolved parameter handle so write-back doesn't re-parse the
-    /// `lval` string. Rust port leaves this as `()` for now — the
-    /// resolved variable lives in `crate::ported::exec::ShellExecutor`'s
-    /// `variables` map, looked up by `lval` on each access.
-    pub pval: (),
+    /// `Value pval` slot from the C source (c:314-318 — "If this is not
+    /// zero, we've retrieved a variable and this stores a reference to
+    /// it"). C caches the resolved `Value` here so `getmathparam` and
+    /// `setmathvar` share ONE subscript resolution (c:334-336 "Try to be
+    /// clever about reusing subscripts by caching the Value structure").
+    ///
+    /// !!! WARNING: RUST-ONLY SHAPE !!! zshrs's paramtab exposes no `Value`
+    /// handle, so the port caches the RESOLVED LVALUE STRING instead —
+    /// `array[++x]` collapsed to `array[1]` — which gives the same
+    /// evaluate-the-subscript-once contract. `None` = not yet resolved,
+    /// matching C's NULL. Populated by `op` (see the note there).
+    pub pval: Option<String>,
 }
 
 /// Operator associativity and type flags
@@ -641,6 +647,19 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
 
     if let Some(err) = m_error_take() {
         return Err(err);
+    }
+
+    // c:410-416 —
+    //   Internally, we parse the contents of parentheses at top
+    //   precedence... so we can return a parenthesis here if
+    //   there are too many at the end.
+    //   if (mtok == M_OUTPAR && !errflag)
+    //       zerr("bad math expression: unexpected ')'");
+    // The trailing-character scan below inspects the INPUT cursor, which
+    // is already past the `)` that `mathparse` lexed into `mtok`, so an
+    // unbalanced close was silently accepted (`foo="3)"; $((foo))` → 3).
+    if m_mtok() == M_OUTPAR {
+        return Err("bad math expression: unexpected ')'".to_string());
     }
 
     // Check for trailing characters
@@ -2426,7 +2445,7 @@ impl Default for mathvalue {
                 type_: MN_INTEGER,
             },
             lval: None,
-            pval: (),
+            pval: None, // c:922 — `stack[sp].pval = NULL;`
         }
     }
 }
@@ -2441,7 +2460,7 @@ pub(crate) fn push(val: mnumber, lval: Option<String>) {
     m_stack_push(mathvalue {
         val,
         lval,
-        pval: (),
+        pval: None, // c:922 — `stack[sp].pval = NULL;`
     });
 }
 
@@ -3306,6 +3325,79 @@ pub(crate) fn op(what: i32) {
 
     let tp = OP_TYPE[what as usize];
 
+    // c:Src/math.c:308-320 —
+    //   struct mathvalue {
+    //       /*
+    //        * If we need to get a variable, this is the string to be passed
+    //        * to the parameter code.  It may include a subscript.
+    //        */
+    //       char *lval;
+    //       /*
+    //        * If this is not zero, we've retrieved a variable and this
+    //        * stores a reference to it.
+    //        */
+    //       Value pval;
+    //   };
+    // c:334-336 —
+    //   Get a number from a variable.
+    //   Try to be clever about reusing subscripts by caching the Value
+    //   structure.
+    //
+    // `getmathparam` fills `mptr->pval` on the first read (c:341-343) and
+    // `setmathvar` writes back THROUGH that cached Value (c:976-993) rather
+    // than re-resolving `lval`, so an operand's subscript is evaluated
+    // EXACTLY ONCE however many times the operator touches it. That is what
+    // makes `(( array[++x]++ ))` bump `x` once (C01arith.ztst "no double
+    // increment for subscript").
+    //
+    // !!! WARNING: RUST-ONLY SHAPE !!! zshrs's paramtab hands back no
+    // `Value` handle to cache, so the port caches the RESOLVED LVALUE
+    // instead — `array[++x]` collapsed to `array[1]` — and passes that same
+    // string to both `getmathparam` and `setmathvar`. Two subscript forms
+    // are left untouched because they are not arithmetic and re-resolving
+    // them is side-effect free: an associative-array key (matching the
+    // PM_HASHED test `setmathvar` itself uses) and a `(flags)pat` search
+    // subscript, which `getmathparam` resolves with its own scanner.
+    let resolve_lval = |lv: &Option<String>| -> Option<String> {
+        let name = lv.as_ref()?;
+        let Some(bi) = name.find('[') else {
+            return Some(name.clone());
+        };
+        let close = name.rfind(']').unwrap_or(name.len());
+        let base = &name[..bi];
+        let body = if close > bi { &name[bi + 1..close] } else { "" };
+        if body.starts_with('(') {
+            return Some(name.clone());
+        }
+        let is_hashed = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(base)
+                    .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED)
+            })
+            .unwrap_or(false);
+        if is_hashed {
+            return Some(name.clone());
+        }
+        // Save/restore evaluator state around the recursive matheval —
+        // mirrors `setmathvar` (math.rs) and C `mathevall`'s xyy* pattern
+        // (c:367).
+        let saved = save_state();
+        let idx = matheval(body).map(|n| {
+            if n.type_ == MN_FLOAT {
+                n.d as i64
+            } else {
+                n.l
+            }
+        });
+        restore_state(saved);
+        match idx {
+            Ok(i) => Some(format!("{}[{}]", base, i)),
+            Err(_) => Some(name.clone()),
+        }
+    };
+
     // Binary operators
     if (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO)) != 0 {
         if m_stack_len() < 2 {
@@ -3318,9 +3410,27 @@ pub(crate) fn op(what: i32) {
             return;
         }
 
-        let b = pop();
-        let mv_a = pop_with_lval();
-        let a = if (mv_a.val.type_ == MN_UNSET) {
+        let b = pop(); // c:1170 — `b = pop(0);`
+        let mut mv_a = pop_with_lval();
+        // c:1365-1367 — the write-back reuses `stack + sp + 1`, i.e. the very
+        // mathvalue just popped, so a compound assignment (`arr[++i] += 1`)
+        // resolves its subscript once. Cache the resolved lvalue in `pval`
+        // (see the note at the head of `op`) before either half runs.
+        if (tp & (OP_E2 | OP_E2IO)) != 0 {
+            mv_a.pval = resolve_lval(&mv_a.lval);
+            if mv_a.pval.is_some() {
+                mv_a.lval = mv_a.pval.clone();
+            }
+        }
+        let mv_a = mv_a;
+        // c:1171 — `a = pop(what == EQ);`. `pop`'s `noget` argument
+        // (c:930-940) suppresses the deferred variable read, so a PLAIN
+        // assignment NEVER fetches the lvalue's current value: `a` stays
+        // MN_UNSET. Two behaviours depend on it — `x=/bar; (( x = 32 ))`
+        // must not try to evaluate `/bar` as an expression, and
+        // `(( x = 3.5 )); (( x = 4 ))` must store the integer 4 (not 4.0)
+        // even though `x` still holds a float-looking string.
+        let a = if (mv_a.val.type_ == MN_UNSET) && what != EQ {
             if let Some(ref name) = mv_a.lval {
                 getmathparam(name)
             } else {
@@ -3349,8 +3459,22 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 },
             )
-        } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != COMMA {
-            // Different types, coerce to float
+        } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT)
+            && what != COMMA
+            // c:1183 — `(a.type != MN_UNSET || what != EQ)`. A plain
+            // assignment left `a` unresolved above, so there is nothing to
+            // coerce; without this guard the MN_UNSET lvalue counted as an
+            // integer and dragged an integer RHS into float.
+            && (a.type_ != MN_UNSET || what != EQ)
+        {
+            // c:1184-1192 —
+            //   Different types, so coerce to float.
+            //   It may happen during an assignment that the LHS
+            //   variable is actually an integer, but there's still
+            //   no harm in doing the arithmetic in floating point;
+            //   the assignment will do the correct conversion.
+            //   This way, if the parameter is actually a scalar, but
+            //   used to contain an integer, we can write a float into it.
             (
                 mnumber {
                     l: 0,
@@ -3759,7 +3883,18 @@ pub(crate) fn op(what: i32) {
         return;
     }
 
-    let mv = pop_with_lval();
+    let mut mv = pop_with_lval();
+    // c:1375 + c:1400/1408/1436/1443 — `getmathparam(stack + sp)` and
+    // `setmathvar(stack + sp, …)` operate on the SAME mathvalue, so the
+    // ++/-- operators resolve their operand's subscript once. See the note
+    // at the head of `op`.
+    if matches!(what, POSTPLUS | POSTMINUS | PREPLUS | PREMINUS) {
+        mv.pval = resolve_lval(&mv.lval);
+        if mv.pval.is_some() {
+            mv.lval = mv.pval.clone();
+        }
+    }
+    let mv = mv;
     let val = if (mv.val.type_ == MN_UNSET) {
         if let Some(ref name) = mv.lval {
             getmathparam(name)

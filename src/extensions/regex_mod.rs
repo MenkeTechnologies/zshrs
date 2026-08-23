@@ -186,6 +186,53 @@ pub fn get_match_variables(
     vars
 }
 
+/// !!! WARNING: BACKEND ADAPTER — NO C COUNTERPART !!!
+///
+/// C zsh's `zsh/pcre` hands the pattern straight to `pcre2_compile`
+/// (Src/Modules/pcre.c:94). zshrs matches with `fancy_regex`/`regex`
+/// instead, and the two engines disagree on ONE escape that zsh's own
+/// test-suite exercises: PCRE2 reads `\0` as an OCTAL character code —
+/// `\0` is NUL, and up to two further octal digits may follow
+/// (`\012`) — while `regex` reads `\0` as a back-reference to group 0
+/// and refuses to compile ("Invalid back reference to group 0").
+///
+/// Rewrite that one form into the `\x{…}` escape both engines agree
+/// on, leaving every other escape (including `\1`…`\9` back-references
+/// and `\\`) byte-for-byte alone.
+///
+/// Reference: pcre2pattern(3), "Non-printing characters" — "\0dd
+/// character with octal code 0dd".
+pub fn pcre2_octal_escapes(pat: &str) -> String {
+    let b: Vec<char> = pat.chars().collect();
+    let mut out = String::with_capacity(pat.len());
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] != '\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        if b[i + 1] != '0' {
+            // Any other escape — copy the pair verbatim so `\\` can't
+            // make the NEXT character look like the start of an escape.
+            out.push(b[i]);
+            out.push(b[i + 1]);
+            i += 2;
+            continue;
+        }
+        // `\0` plus up to two more octal digits.
+        let mut val: u32 = 0;
+        let mut n = 0usize;
+        while n < 3 && i + 1 + n < b.len() && ('0'..='7').contains(&b[i + 1 + n]) {
+            val = val * 8 + (b[i + 1 + n] as u32 - '0' as u32);
+            n += 1;
+        }
+        out.push_str(&format!("\\x{{{:x}}}", val));
+        i += 1 + n;
+    }
+    out
+}
+
 /// `[[ lhs =~ rhs ]]` cond-test entry point.
 /// Port of `cond_regex_match()` from Src/Modules/regex.c — the
 /// dispatch hook the lexer wires for the `=~` operator. Returns

@@ -861,7 +861,51 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
             .map(|t| t.is_bound("zsh/param/private"))
             .unwrap_or(false)
     {
-        return dispatch_builtin_raw("private", args);
+        // c:Src/Modules/param_private.c:683-685 — the swap copies EXACTLY
+        // two fields:
+        //     ((Builtin)hn)->handlerfunc = bintab[0].handlerfunc;
+        //     ((Builtin)hn)->optstr = bintab[0].optstr;
+        // `defopts` is NOT copied, so the `local` node keeps its own
+        // (NULL) defaults while `private`'s node keeps `"P"`. That is
+        // what makes `local x` delegate straight to bin_typeset
+        // (c:225-229 `if (!OPT_ISSET(ops, 'P'))`) while `private x`
+        // opens a private scope. Dispatching `local` through the
+        // `private` NODE inherited defopts="P", so every `local NAME`
+        // ran the private-promotion path: `() { local h=scalar;
+        // private -A h }` reported "can't change type of private param"
+        // where zsh reports "can't change scope of existing param"
+        // (V10private.ztst:13), and `local` silently made privates.
+        // zshrs's builtintab maps to `&'static builtin` rows in an
+        // immutable static, so mirror C's field swap on a private
+        // static copy of the `local` node instead of mutating the table.
+        static LOCAL_AS_PRIVATE: std::sync::LazyLock<crate::ported::zsh_h::builtin> =
+            std::sync::LazyLock::new(|| crate::ported::zsh_h::builtin {
+                // c:683 `save_local = *(Builtin)hn;` — start from the
+                // real `local` row so name/flags/minargs/maxargs/funcid/
+                // defopts all stay `local`'s.
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: "local".to_string(),
+                    flags: (crate::ported::zsh_h::BINF_PLUSOPTS
+                        | crate::ported::zsh_h::BINF_MAGICEQUALS
+                        | crate::ported::zsh_h::BINF_PSPECIAL
+                        | crate::ported::zsh_h::BINF_ASSIGN) as i32,
+                },
+                // c:684 — handlerfunc from bintab[0] (bin_private).
+                handlerfunc: Some(
+                    crate::ported::modules::param_private::bin_private
+                        as crate::ported::zsh_h::HandlerFunc,
+                ),
+                minargs: 0,
+                maxargs: -1,
+                funcid: 0,
+                // c:685 — optstr from bintab[0] (private's, which adds `P`).
+                optstr: Some("AE:%F:%HL:%PR:%TUZ:%ahi:%lnmrtux".to_string()),
+                // c:683-685 — NOT copied: `local` keeps its own defaults.
+                defopts: None,
+            });
+        let bn_ptr = &*LOCAL_AS_PRIVATE as *const _ as *mut _;
+        return crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr);
     }
     // c:Bugs #475/#504/#555 — bash-only builtins (`mapfile`,
     // `readarray`, `compopt`) should emit "command not found" in
@@ -5908,10 +5952,49 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
             // unquoted form only — in_dq_context is NOT a valid
             // discriminator here (the quoted "$@" fast path emits
             // GET_VAR directly without an EXPAND_TEXT wrapper).
-            return with_executor(|exec| {
+            let pp = with_executor(|exec| {
                 sync_status(exec);
-                Value::array(exec.pparams().iter().map(Value::str).collect())
+                exec.pparams()
             });
+            // c:Src/subst.c:1817 — `int nojoin = (pf_flags &
+            // PREFORK_SHWORDSPLIT) ? !(ifs && *ifs) && !qt : 0;`
+            // c:Src/subst.c:3908-3911 — `if (nojoin == 0 || sep) { val =
+            //     sepjoin(aval, sep, 1); isarr = 0; }`
+            // c:Src/subst.c:3919-3921 — `if (force_split && !isarr) { aval =
+            //     sepsplit(val, spsep, 0, 1); … }`
+            //
+            // So under SH_WORD_SPLIT an UNQUOTED `$@`/`$*` with a NON-EMPTY
+            // `$IFS` is first JOINED on `$IFS[1]` and then re-split on `$IFS`
+            // — which is why `setopt shwordsplit; set -- one:two b:c; IFS=:;
+            // print -l $@` is four words in zsh (and in bash, and in ksh).
+            // The port returned the raw positional list, so an element
+            // carrying an IFS byte was never broken up
+            // (D04parameter.ztst "Splitting of $@ on IFS: single element";
+            // `zshrs --bash -c 'set -- "a b" c; printf "[%s]\n" $@'` printed
+            // `[a b]` where bash prints `[a]` `[b]`).
+            //
+            // The gates are C's, verbatim: `!force_dq` is `!qt`, an UNSET or
+            // EMPTY `$IFS` leaves `nojoin` at 1 (no join, no split), and the
+            // whole rule is inert without SH_WORD_SPLIT (`nojoin = 0` there,
+            // but `force_split` at c:3913 is `!ssub && (spbreak || spsep)`,
+            // all clear, so neither branch runs).
+            if !force_dq && crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
+                let ifs = crate::ported::params::getsparam("IFS").unwrap_or_default(); // c:1817
+                if !ifs.is_empty() {
+                    // c:3909 `sepjoin(aval, sep, 1)` with sep NULL → $IFS[1].
+                    let sep0: String = ifs.chars().next().map(String::from).unwrap_or_default();
+                    let joined = pp.join(&sep0);
+                    // c:3919 `sepsplit(val, spsep, 0, 1)` with spsep NULL →
+                    // split on $IFS; multsub's PREFORK_SPLIT walker is the
+                    // port of that (subst.rs:1603).
+                    let (_j, parts, _isarr, _f) = crate::ported::subst::multsub(
+                        &joined,
+                        crate::ported::zsh_h::PREFORK_SPLIT,
+                    );
+                    return Value::array(parts.into_iter().map(Value::str).collect());
+                }
+            }
+            return Value::array(pp.iter().map(Value::str).collect());
         }
         // RC_EXPAND_PARAM: when the option is set and `name` refers to
         // an array, return Value::Array so the enclosing word's
@@ -8792,6 +8875,37 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         }
         Value::Int(0)
     });
+    // c:Src/exec.c:1536-1538 —
+    //     /* suppress errexit for commands before && and || and after ! */
+    //     if (isandor || isnot)
+    //         noerrexit |= NOERREXIT_EXIT | NOERREXIT_RETURN;
+    // The bits live on the PROCESS-GLOBAL `noerrexit`, so they are still
+    // in force inside a shell function called from that position (doshfunc
+    // clears only NOERREXIT_RETURN, c:5930). zshrs suppressed the check
+    // purely at COMPILE time (`errexit_suppress_depth`), which cannot
+    // reach a separately-compiled function body — so
+    //   TRAPZERR(){ print E }; f(){ print f; false; }; f && t
+    // fired the ZERR trap from inside `f` where zsh stays silent
+    // (C03traps:14, E01options:18,19,21).
+    vm.register_builtin(BUILTIN_NOERREXIT_SUPPRESS, |_vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let old = crate::ported::exec::noerrexit.load(Ordering::Relaxed); // c:1417
+        NOERREXIT_SAVES.with(|st| st.borrow_mut().push(old));
+        crate::ported::exec::noerrexit.store(
+            old | crate::ported::zsh_h::NOERREXIT_EXIT
+                | crate::ported::zsh_h::NOERREXIT_RETURN,
+            Ordering::Relaxed,
+        ); // c:1538
+        Value::Int(0)
+    });
+    // c:Src/exec.c:1621 / c:1626 — `noerrexit = oldnoerrexit;`
+    vm.register_builtin(BUILTIN_NOERREXIT_RESTORE, |_vm, _argc| {
+        use std::sync::atomic::Ordering;
+        if let Some(old) = NOERREXIT_SAVES.with(|st| st.borrow_mut().pop()) {
+            crate::ported::exec::noerrexit.store(old, Ordering::Relaxed); // c:1621
+        }
+        Value::Int(0)
+    });
     vm.register_builtin(BUILTIN_DONETRAP_RESET, |_vm, _argc| {
         // c:Src/exec.c:1455 — `donetrap = 0;` at sublist start.
         // Reset before each top-level statement so the next
@@ -9987,7 +10101,28 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         } else {
             nc_str.to_string() // c:3360-3363
         };
-        let status = with_executor(|exec| exec.host_exec_external(&[cmd]));
+        // c:Src/exec.c:3350/3360-3363 — C does not "run NULLCMD" as a
+        // special case: it APPENDS the word to the command's arg list
+        // (`addlinknode(args, dupstring(nullcmd))`) and falls through to
+        // execcmd's ordinary dispatch, so a NULLCMD naming a BUILTIN runs the
+        // builtin. `host_exec_external` only knows how to spawn a process, so
+        // the documented `NULLCMD=:` idiom (and the SHNULLCMD `:` chosen at
+        // c:3350) reported `command not found: :`. Consult builtintab first,
+        // exactly as execcmd's `builtintab->getnode` step does (c:3056).
+        // The zshrs-original coreutils-shaped builtins (`cat`, `basename`, …
+        // — EXT_BUILTIN_NAMES) are deliberately excluded: they are NOT what
+        // execcmd's `builtintab->getnode` finds in zsh, and the documented
+        // `READNULLCMD=cat` / `NULLCMD=cat` idioms must keep reaching the
+        // real `/bin/cat` the way `zsh -f` does. (`is_extension_builtin` is
+        // the wrong test here — it also answers true for core names like `:`
+        // that fusevm happens to implement in-process.)
+        let is_core_builtin = crate::extensions::ext_builtins::builtin_in_builtintab(&cmd)
+            && !crate::extensions::ext_builtins::EXT_BUILTIN_NAMES.contains(&cmd.as_str());
+        let status = if is_core_builtin {
+            dispatch_builtin_raw(&cmd, Vec::new()) // c:3056
+        } else {
+            with_executor(|exec| exec.host_exec_external(&[cmd]))
+        };
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         Value::Status(status)
     });
@@ -10402,7 +10537,18 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // BUILTIN_DONETRAP_RESET (compile_list emit at
         // compile_zsh.rs).
         let already_done = crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0;
-        if !already_done {
+        // c:Src/exec.c:1652-1653 —
+        //     if (sigtrapped[SIGZERR] && lastval &&
+        //         !(noerrexit & NOERREXIT_EXIT)) {
+        // The ZERR half of the check is gated on the SAME runtime bit as
+        // the errexit half below. Without this an `&&`/`||` operand — or
+        // anything it calls — still fired ZERR, so
+        //   TRAPZERR(){ print E }; f(){ print f; false; }; f && t
+        // printed E where zsh is silent (C03traps:14, E01options:18).
+        let zerr_suppressed = (crate::ported::exec::noerrexit.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::NOERREXIT_EXIT)
+            != 0; // c:1653
+        if !already_done && !zerr_suppressed {
             // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR
             // trap dispatch. Fires whenever a command exits
             // non-zero.
@@ -11351,6 +11497,10 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // c:Src/exec.c:5382 `do_tracing = *state->pc++;` — the `-T` of
         // `function -T name { … }`, carried across from compile_funcdef.
         let do_tracing = iter.next().map(|s| s == "1").unwrap_or(false); // c:5382
+        // c:Src/exec.c:5451-5456 — `shf->redir = <redir_prog>`: the rendered
+        // text of the definition's trailing redirections (empty when there
+        // were none). See `shfunc::redir_text`.
+        let redir_text = iter.next().unwrap_or_default(); // c:5453
         // c:5387 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
         let tracing_flags: u32 = if do_tracing {
             crate::ported::zsh_h::PM_TAGGED_LOCAL
@@ -11435,6 +11585,14 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
                 if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
                     let mut shf = crate::ported::hashtable::shfunc_with_body(&name, &body_source);
+                    // c:Src/exec.c:5453/5455 — `shf->redir = …`. Stored as
+                    // rendered text (see `shfunc::redir_text`); `None` is C's
+                    // `shf->redir == NULL`.
+                    shf.redir_text = if redir_text.is_empty() {
+                        None
+                    } else {
+                        Some(redir_text.clone())
+                    };
                     // c:Src/exec.c:5437 — `shf->node.flags = tracing_flags;`
                     shf.node.flags |= tracing_flags as i32; // c:5437
                     // c:5532-5538 — /* Is this function traced and redefining
@@ -13378,6 +13536,28 @@ pub const BUILTIN_XTRACE_IS_ON: u16 = 611;
 /// (sublist boundary). Mirrors C `Src/exec.c:1455` — `donetrap = 0`.
 /// Stack: untouched. argc = 0. Bug #303 in docs/BUGS.md.
 pub const BUILTIN_DONETRAP_RESET: u16 = 612;
+
+/// c:Src/exec.c:1417 (`int oldnoerrexit = noerrexit;`) + c:1536-1538
+/// (`if (isandor || isnot) noerrexit |= NOERREXIT_EXIT|NOERREXIT_RETURN;`).
+/// Saves the current `noerrexit` on a per-thread stack and ORs in the two
+/// suppression bits for the duration of one `&&`/`||` chain operand (or a
+/// `!`-negated command). Stack: untouched. argc = 0.
+pub const BUILTIN_NOERREXIT_SUPPRESS: u16 = 665;
+
+/// c:Src/exec.c:1621 / c:1626 — `noerrexit = oldnoerrexit;`. Pops the
+/// matching save pushed by [`BUILTIN_NOERREXIT_SUPPRESS`].
+/// Stack: untouched. argc = 0.
+pub const BUILTIN_NOERREXIT_RESTORE: u16 = 666;
+
+thread_local! {
+    /// c:Src/exec.c:1417 — C keeps `oldnoerrexit` as an execlist-local
+    /// automatic, so the save/restore pairs nest with the C call stack.
+    /// zshrs's compiler emits the two halves as separate ops, so the saved
+    /// values need an explicit stack. Thread-local because `noerrexit`
+    /// itself is per-shell state and worker threads run their own lists.
+    static NOERREXIT_SAVES: std::cell::RefCell<Vec<i32>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
 
 /// `[[ -z X ]]` / `[[ -n X ]]` operand-empty test that honours zsh's
 /// array-splice semantics. C zsh evaluates `[[ -z X ]]` per

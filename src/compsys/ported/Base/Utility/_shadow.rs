@@ -346,6 +346,7 @@ mod tests {
             redir: None,
             sticky: None,
             body: Some(body.to_string()),
+            redir_text: None,
         }
     }
 

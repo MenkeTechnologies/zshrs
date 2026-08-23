@@ -643,7 +643,9 @@ pub fn loadautofn(
     shf: *mut shfunc, // c:5682 (Src/exec.c)
     _ks: i32,
     autol: i32,
-    _ignore_loaddir: i32,
+    current_fpath: i32, // c:5735 — 4th C param is `current_fpath`, NOT an
+                        // "ignore loaddir" flag; `eval_autoload` passes
+                        // `OPT_ISSET(ops,'d')` here (c:3182).
 ) -> i32 {
     if shf.is_null() {
         return 1;
@@ -660,21 +662,57 @@ pub fn loadautofn(
     // Without this, `autoload -Uz $fdir/.hist.*` (zsh-hist) named the
     // functions correctly but every call died with "definition file not
     // found". Mirrors C loadautofn's PM_LOADDIR spec-path branch.
+    //
+    // c:5747-5757 —
+    //     if (shf->filename && shf->filename[0] == '/' &&
+    //         (shf->node.flags & PM_LOADDIR))
+    //     {
+    //         char *spec_path[2];
+    //         spec_path[0] = dupstring(shf->filename);
+    //         spec_path[1] = NULL;
+    //         prog = getfpfunc(shf->node.nam, &ksh, &fdir, spec_path, 0);
+    //         if (prog == &dummy_eprog &&
+    //             (current_fpath || (shf->node.flags & PM_CUR_FPATH)))
+    //             prog = getfpfunc(shf->node.nam, &ksh, &fdir, NULL, 0);
+    //     }
+    //     else
+    //         prog = getfpfunc(shf->node.nam, &ksh, &fdir, NULL, 0);
+    let fn_flags = unsafe { (*shf).node.flags } as u32;
     let loaddir_spec: Option<Vec<String>> = {
         let s = unsafe { &*shf };
-        if (s.node.flags as u32 & PM_LOADDIR) != 0 {
+        // c:5747 — the spec-path arm needs an ABSOLUTE filename, not just
+        // PM_LOADDIR.
+        if s.filename.as_deref().is_some_and(|f| f.starts_with('/'))
+            && (fn_flags & PM_LOADDIR) != 0
+        {
             s.filename.clone().map(|d| vec![d])
         } else {
             None
         }
     };
-    let path = match getfpfunc(
+    let mut looked_up = getfpfunc(
         &name,
         &mut dir_path,
         loaddir_spec.as_deref(),
         0,
         &mut dump_hit,
-    ) {
+    ); // c:5753 / c:5759
+    // c:5754-5756 — the explicit load directory missed; `-d` (PM_CUR_FPATH,
+    // set by `autoload -d`, c:3383) or an explicit `current_fpath` argument
+    // means "also try $fpath". The Rust port never retried, so
+    // `autoload -dUz $PWD/extra/def; def` and
+    // `def() { autoload -dXUz $PWD/extra; }; def` both reported
+    // "function definition file not found" where zsh loads ./def
+    // (C04funcdef:33,40).
+    if looked_up.is_none()
+        && loaddir_spec.is_some()
+        && (current_fpath != 0 || (fn_flags & crate::ported::zsh_h::PM_CUR_FPATH) != 0)
+    {
+        dir_path = None;
+        dump_hit = None;
+        looked_up = getfpfunc(&name, &mut dir_path, None, 0, &mut dump_hit); // c:5756
+    }
+    let path = match looked_up {
         Some(p) => p,
         None => {
             // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
@@ -868,6 +906,7 @@ pub fn loadautofn(
                 redir: None,
                 sticky: None,
                 body: Some(body),
+                redir_text: None,
             };
             loadautofnsetfile(&mut shf, dir_path.as_deref()); // c:5657
             tab.add(shf);
@@ -984,6 +1023,29 @@ pub fn resolvebuiltin<'a>(
     }
     Some(hn) // c:2723
 }
+
+/// Port of `static struct builtin commandbn` from `Src/exec.c:281-282`.
+///
+/// c:280 — /* structure for command builtin for when it is used with -v or -V */
+///
+/// `BUILTIN("command", 0, bin_whence, 0, -1, BIN_COMMAND, "pvV", NULL)`.
+/// This is a SEPARATE descriptor from the `BIN_PREFIX("command", …)` row in
+/// `builtintab` (which carries no handler at all): c:3209 swaps `hn` to this
+/// one when `command -v` / `command -V` is seen, so the dispatch lands in
+/// `bin_whence` with funcid `BIN_COMMAND`.
+pub static commandbn: std::sync::LazyLock<crate::ported::zsh_h::builtin> =
+    std::sync::LazyLock::new(|| {
+        crate::ported::builtin::BUILTIN(
+            "command",
+            0,
+            Some(crate::ported::builtin::bin_whence),
+            0,
+            -1,
+            crate::ported::hashtable_h::BIN_COMMAND,
+            Some("pvV"),
+            None,
+        ) // c:282
+    });
 
 /// Dispatch decision returned by `execcmd_compile_head` — the
 /// fusevm-bytecode-time head resolver that mirrors the local-variable
@@ -7118,6 +7180,7 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
             redir: None,
             sticky: None,
             body: None,
+            redir_text: None,
         });
         // c:5396-5401 — redir_prog ownership.
         // C: `if (names && nonempty(names) && redir_prog) shf->redir = dupeprog(redir_prog,0)`
@@ -10284,6 +10347,42 @@ pub fn execcmd_exec(
         // when both held the same suffix.
         if let Some(ref mut v) = args {
             v.drain(0..dispatch.precmd_skip);
+            // c:3154 — `pushnode(preargs, "command");` /* Leave everything
+            // alone, dispatch to whence. We need to put the name back in
+            // the list. */  `command -v`/`-V` keeps its whole word list and
+            // dispatches to the `command` builtin (bin_whence with
+            // BIN_COMMAND), so the name goes back on the front after the
+            // precommand strip. `execcmd_compile_head` only REPORTS this
+            // via `has_command_vv` (the fusevm compiler acts on it); the
+            // tree-walker has to perform it. Without this the head after
+            // the strip was `-v`, which resolves to nothing —
+            // `x=command; $x -v cat` printed nothing.
+            if dispatch.has_command_vv {
+                v.insert(0, "command".to_string()); // c:3154
+            } else if dispatch.use_defpath {
+                // c:3165 — `if (pnode) uremnode(preargs, pnode);` /* We
+                // don't need this node as we're not treating "command" as a
+                // builtin this time. */  The `-p` word is consumed here,
+                // same reason as above: compile_head drops it from its own
+                // local list only.
+                if v
+                    .first()
+                    .map(|w| {
+                        let b = w.as_bytes();
+                        b.len() >= 2
+                            && IS_DASH(b[0] as char)
+                            && w[1..].chars().all(|c| c == 'p' || c == 'v' || c == 'V')
+                    })
+                    .unwrap_or(false)
+                {
+                    v.remove(0); // c:3165
+                }
+                // c:3176-3177 — `if (IS_DASH(argdata[0]) && IS_DASH(argdata[1])
+                // && !argdata[2]) uremnode(preargs, argnode);`
+                if v.first().map(|w| w == "--").unwrap_or(false) {
+                    v.remove(0); // c:3177
+                }
+            }
         }
         let _ = head_args;
         preargs.clear();
@@ -10304,7 +10403,15 @@ pub fn execcmd_exec(
         // exec.rs:10177); otherwise execbuiltin returns 1 silently
         // on a null `bn`.
         hn = None;
-        if is_builtin != 0 {
+        if dispatch.has_command_vv {
+            // c:3209 — `hn = &commandbn.node;`. The `command -v`/`-V` form
+            // dispatches through the dedicated descriptor (bin_whence /
+            // BIN_COMMAND / optstr "pvV"), NOT through builtintab's
+            // handler-less `BIN_PREFIX("command", …)` row — looking the name
+            // up there gave a null handler and `command -v cat` printed
+            // nothing.
+            hn = Some(&*commandbn as *const builtin as *mut builtin); // c:3209
+        } else if is_builtin != 0 {
             if let Some(target) = args.as_ref().and_then(|v| v.first()) {
                 if let Some(entry) = BUILTINS.iter().find(|b| b.node.nam == *target) {
                     hn = Some(entry as *const builtin as *mut builtin);
