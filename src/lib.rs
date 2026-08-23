@@ -224,6 +224,13 @@ pub mod fmt;
 /// `func_body_fmt` submodule.
 #[path = "extensions/func_body_fmt.rs"]
 pub mod func_body_fmt;
+/// `funcdef_capture` submodule — Rust-only verbatim capture of function
+/// body source text as `hgetc` consumes it, so `functions` / `typeset -f`
+/// work for functions defined interactively or on stdin (where zshrs's
+/// `LEX_INPUT` window does not exist). No C counterpart: C zsh
+/// reconstructs the text from wordcode via `getpermtext` (Src/text.c:189).
+#[path = "extensions/funcdef_capture.rs"]
+pub mod funcdef_capture;
 /// `global_rc` submodule — runtime sysconfdir resolution for the
 /// system-wide startup files (Rust-only; zsh bakes the path in at build
 /// time).

@@ -2552,13 +2552,13 @@ fn par_funcdef() -> Option<ZshCommand> {
     // UNBRACED short body (`function f () cmd`) can be sliced for `functions`
     // rendering. pos() AFTER a zshlex is already past the next token (one-token
     // lookahead), so record it BEFORE each advance (mirrors parse.rs:2484).
-    let mut unbraced_body_start = pos();
+    let mut body_mark = crate::funcdef_capture::body_mark_begin();
     if saw_paren {
         zshlex();
     }
 
     while tok() == SEPER || tok() == NEWLIN {
-        unbraced_body_start = pos();
+        crate::funcdef_capture::body_mark_restart(&mut body_mark);
         zshlex();
     }
 
@@ -2616,7 +2616,7 @@ fn par_funcdef() -> Option<ZshCommand> {
                 return None;
             }
         }
-        let body_start = pos();
+        crate::funcdef_capture::body_mark_restart(&mut body_mark);
         zshlex();
         // c:Src/parse.c — func body terminates at OUTBRACE_TOK.
         // Explicit end-token keeps the inner parse from hitting the
@@ -2635,8 +2635,7 @@ fn par_funcdef() -> Option<ZshCommand> {
         // (at EOF `pos()-1` excluded it), then strip that single trailing
         // brace — so a body ending in a balanced `} always { ... }` keeps
         // its close on the `.zwc` round-trip.
-        let body_end = pos();
-        let body_source = input_slice(body_start, body_end)
+        let body_source = crate::funcdef_capture::body_text(body_mark)
             .map(|s| {
                 let t = s.trim();
                 // Strip the statement SEPARATOR that followed the funcdef
@@ -2708,7 +2707,7 @@ fn par_funcdef() -> Option<ZshCommand> {
         // getpermtext — hashtable.rs:1397). Without it `function f () print x`
         // listed as `f () { }` (empty).
         par_cmd().map(|cmd| {
-            let body_source = input_slice(unbraced_body_start, pos())
+            let body_source = crate::funcdef_capture::body_text(body_mark)
                 .map(|s| {
                     s.trim()
                         .trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace())
@@ -5548,6 +5547,7 @@ pub fn dump_autoload(
             redir: None,
             sticky: None, // c:4060 NULL
             body: None,
+            redir_text: None,
         };
         // c:4059 — shf->funcdef = mkautofn(shf);  (placeholder Eprog ptr)
         let _ = crate::ported::builtin::mkautofn(&mut shf as *mut _);
@@ -8946,7 +8946,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                         // printed `a; echo b` instead of
                         // `echo a; echo b` for `f() { echo a;
                         // echo b }`.
-                        let body_start = pos();
+                        let body_mark = crate::funcdef_capture::body_mark_begin();
                         zshlex();
                         // c:Src/parse.c — synth funcdef body terminates
                         // at OUTBRACE_TOK. Explicit end-token avoids
@@ -8963,8 +8963,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                         // `parse error near '}'` on every function. Match the
                         // canonical strip used by the other two funcdef arms
                         // (parse.rs:2457 / 9528).
-                        let body_end = pos();
-                        let body_source = input_slice(body_start, body_end)
+                        let body_source = crate::funcdef_capture::body_text(body_mark)
                             .map(|s| {
                                 let t = s.trim();
                                 let t = t.strip_suffix('}').unwrap_or(t).trim_end();
@@ -9726,10 +9725,10 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // AFTER a zshlex is already past the next token (one-token lookahead), so
     // body_start must be recorded BEFORE each advance. Mirrors the braced
     // path's body_start-before-zshlex capture (parse.rs:2484).
-    let mut body_start = pos();
+    let mut body_mark = crate::funcdef_capture::body_mark_begin();
     zshlex(); // skip ()
     while tok() == SEPER || tok() == NEWLIN {
-        body_start = pos();
+        crate::funcdef_capture::body_mark_restart(&mut body_mark);
         zshlex();
     }
     // c:Src/parse.c:1728-1748 — after `()` (and any separators, skipped at
@@ -9754,7 +9753,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         // renders from this raw `body` string, not getpermtext. Without it the
         // body listed as `f () { }` (empty).
         let cmd = par_cmd()?;
-        let body_source = input_slice(body_start, pos())
+        let body_source = crate::funcdef_capture::body_text(body_mark)
             .map(|s| {
                 s.trim()
                     .trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace())
@@ -9942,21 +9941,21 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
     // UNBRACED short body (`f() cmd`) can be sliced for `functions` rendering.
     // pos() AFTER a zshlex is already past the next token (one-token
     // lookahead), so record it BEFORE each advance (mirrors parse.rs:2484).
-    let mut unbraced_body_start = pos();
+    let mut body_mark = crate::funcdef_capture::body_mark_begin();
     // Skip ()
     if tok() == INOUTPAR {
         zshlex();
     }
 
     while tok() == SEPER || tok() == NEWLIN {
-        unbraced_body_start = pos();
+        crate::funcdef_capture::body_mark_restart(&mut body_mark);
         zshlex();
     }
 
     // Parse body
     if tok() == INBRACE_TOK {
         // Same body_start-before-zshlex fix as par_funcdef.
-        let body_start = pos();
+        crate::funcdef_capture::body_mark_restart(&mut body_mark);
         zshlex();
         // c:Src/parse.c — inline funcdef body terminates at OUTBRACE_TOK.
         // Explicit end-token keeps the inner parse from hitting the
@@ -9981,8 +9980,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
         // into `par_subsh: 'always' block missing }` on the `.zwc`
         // source path (getpermtext re-emits the file with no trailing
         // newline, so the last funcdef `}` sits at EOF). Bug #642.
-        let body_end = pos();
-        let body_source = input_slice(body_start, body_end)
+        let body_source = crate::funcdef_capture::body_text(body_mark)
             .map(|s| {
                 // The slice now always ends with the funcdef `}` (plus
                 // optional trailing whitespace). Trim, strip that single
@@ -10028,7 +10026,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
         // `f () { }` (empty).
         match par_cmd() {
             Some(cmd) => {
-                let body_source = input_slice(unbraced_body_start, pos())
+                let body_source = crate::funcdef_capture::body_text(body_mark)
                     .map(|s| {
                         s.trim()
                             .trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace())
