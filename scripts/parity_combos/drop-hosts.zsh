@@ -206,3 +206,6 @@ zstyle :prezto:module:completion loaded 1
 zstyle zle-hook types isearch-exit isearch-update line-pre-redraw line-init line-finish history-line-set keymap-select
 zstyle zle-line-finish widgets 0:user:_zsh_highlight_widget_orig-s000-r000-zle-line-finish 1:.hist.format.hook
 zstyle zle-line-init widgets 0:user:_zsh_highlight_widget_orig-s000-r000-zle-line-init 1:.hist.format.hook
+
+# Definitions for the non-zsh functions the styles above name.
+source ${${(%):-%x}:A:h}/../parity_zstyle_stubs.zsh

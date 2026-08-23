@@ -227,4 +227,4 @@ zstyle zle-line-finish widgets 0:user:_zsh_highlight_widget_orig-s000-r000-zle-l
 zstyle zle-line-init widgets 0:user:_zsh_highlight_widget_orig-s000-r000-zle-line-init 1:.hist.format.hook
 
 # Definitions for the non-zsh functions the styles above name.
-source ${0:A:h}/parity_zstyle_stubs.zsh
+source ${${(%):-%x}:A:h}/parity_zstyle_stubs.zsh

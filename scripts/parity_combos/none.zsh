@@ -2,3 +2,6 @@
 # Source fixture: scripts/parity_zstyle.zsh
 # no styles at all — compsys defaults
 
+
+# Definitions for the non-zsh functions the styles above name.
+source ${${(%):-%x}:A:h}/../parity_zstyle_stubs.zsh
