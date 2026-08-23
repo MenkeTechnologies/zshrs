@@ -2126,6 +2126,36 @@ pub fn scanbuiltins(
                 pm.node.nam = n;
                 f(&pm, flags);
             }
+            // Host-registered native commands (`extensions/native_cmds.rs`) —
+            // a THIRD extension registry, and the only one owned by the
+            // binary rather than by this crate: the fat `zshrs-native` build
+            // registers `git` (zvcs), `arb` (arblang) and `stryke`
+            // (strykelang) before the shell reads a line. They dispatch
+            // in-process through `try_run_registered_builtin` and `whence -w`
+            // already calls them builtins (`ext_builtins::
+            // is_extension_builtin`), so `${(k)builtins}` has to list them or
+            // `${+builtins[git]}` reports 0 for a name the same shell
+            // dispatches as a builtin — the exact inconsistency the daemon
+            // z* family had before the block above.
+            //
+            // Empty in the thin shell, so this loop costs one empty-Vec walk.
+            // Same `dis == 0` / `hide_ext_builtins()` gating as its two
+            // neighbours: under `--zsh` the builtin namespace stays zsh's.
+            for n in crate::native_cmds::names() {
+                if disabled_set.contains(&n) {
+                    continue; // c:825 honor `disable`
+                }
+                if !emitted.insert(n.clone()) {
+                    continue;
+                }
+                pm.u_str = if want_val {
+                    Some("defined".to_string()) // c:846 — dispatches in-process
+                } else {
+                    None
+                };
+                pm.node.nam = n;
+                f(&pm, flags);
+            }
         }
     }
 }

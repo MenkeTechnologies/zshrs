@@ -794,7 +794,31 @@ pub(crate) fn try_run_registered_builtin(name: &str, argv: &[String]) -> Option<
         "help" => with_executor(|e| e.builtin_help(argv)),
         "cdreplay" => with_executor(|e| e.builtin_cdreplay(argv)),
         "zsleep" => crate::extensions::ext_builtins::zsleep(argv),
-        _ => return None,
+        // Host-registered native commands (`extensions/native_cmds.rs`): the
+        // fat binary's sibling runtimes — `git` (zvcs), `arb` (arblang),
+        // `stryke` (strykelang) in the zshrs-native build. Unknown here in the
+        // thin shell, where the table is empty and this arm falls through to
+        // `None` exactly as before.
+        //
+        // Reached from the two places that ask "is this a builtin?": the
+        // pre-PATH arm of the ZshrsHost dispatch (after functions and after
+        // builtintab, so a user `git()` still shadows it) and the forced
+        // `builtin NAME` precommand. `command git` consults neither, so the
+        // escape hatch to the `git` on PATH is untouched.
+        //
+        // The registry's contract is full argv — argv[0] is the command name
+        // as invoked, which zvcs needs for its `git-<verb>` dashed form and
+        // for its `zvcs: <command>: <reason>` diagnostics — while every arm
+        // above takes the operands alone, so the name is spliced back on here.
+        n => {
+            if !crate::native_cmds::is_enabled(n) {
+                return None;
+            }
+            let full: Vec<String> = std::iter::once(n.to_string())
+                .chain(argv.iter().cloned())
+                .collect();
+            return crate::native_cmds::dispatch(n, &full);
+        }
     };
     Some(s)
 }
@@ -2043,6 +2067,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         {
             return Value::Status(dispatch_builtin_raw(&n, r));
         }
+        // c:Src/exec.c:3275-3278 — `command NAME` asks for the thing on
+        // `PATH`, not the in-process one. The host-registered native commands
+        // (`extensions/native_cmds.rs`) are caught inside `execute_external`,
+        // which is this very call, so they are marked as explicitly forced
+        // past for its duration — matching what `command cat` already does to
+        // the coreutils shadow.
+        let _forced = crate::native_cmds::force_external();
         Value::Status(with_executor(|exec| exec.execute_external(&n, &r, &[])).unwrap_or(127))
     });
 

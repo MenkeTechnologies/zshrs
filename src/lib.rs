@@ -211,6 +211,10 @@ pub mod dumpers;
 /// `ext_builtins` submodule.
 #[path = "extensions/ext_builtins.rs"]
 pub mod ext_builtins;
+/// `native_cmds` submodule — builtins contributed by the linking binary
+/// (the fat `zshrs-native` build registers `git` / `arb` / `stryke` here).
+#[path = "extensions/native_cmds.rs"]
+pub mod native_cmds;
 /// `fds` submodule.
 #[path = "extensions/fds.rs"]
 pub mod fds;
@@ -474,4 +478,23 @@ where
 /// Returns Some(exit_code) if handled, None if no handler registered.
 pub fn try_stryke_dispatch(code: &str) -> Option<i32> {
     STRYKE_HANDLER.get().map(|f| f(code))
+}
+
+/// Register a native command contributed by the linking binary.
+///
+/// Convenience re-spelling of [`native_cmds::register`] at the crate root, so
+/// a fat binary's `main` reads as one call per runtime:
+///
+/// ```ignore
+/// zsh::register_native_command("git", |argv| zvcs::run_argv(argv));
+/// ```
+///
+/// The name then dispatches in-process — `whence -w git` says `builtin`,
+/// `${+builtins[git]}` is 1, `builtin git` reaches it, a user `git()` function
+/// still shadows it, and `command git` still runs the one on `PATH`.
+pub fn register_native_command<F>(name: &str, f: F)
+where
+    F: Fn(&[String]) -> i32 + Send + Sync + 'static,
+{
+    native_cmds::register(name, f);
 }

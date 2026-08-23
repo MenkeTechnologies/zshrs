@@ -920,7 +920,18 @@ pub fn bin_enable(
             // immutable static lookup and tracks the disabled set in
             // BUILTINS_DISABLED so dispatch can mask the entry.
             Tab::Builtin => {
-                if createbuiltintable().get(nm).is_none() {
+                // Host-registered native commands (`extensions/native_cmds.rs`
+                // — `git`/`arb`/`stryke` in the fat build) dispatch as builtins
+                // but have no `builtintab` entry, so the membership test alone
+                // rejected them: `disable git` answered "no such hash table
+                // element" for a name the same shell's `whence -w` called a
+                // builtin. They read the same `BUILTINS_DISABLED` set that the
+                // arm below writes, so accepting the name here is all that is
+                // needed for `disable git` to fall the shell through to the
+                // `git` on `PATH`, and `enable git` to take it back.
+                if createbuiltintable().get(nm).is_none()
+                    && !crate::native_cmds::is_registered(nm)
+                {
                     return false;
                 }
                 if let Ok(mut set) = BUILTINS_DISABLED.lock() {

@@ -10679,9 +10679,15 @@ pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::
 ///    coreutils shadows (`cat`, `head`, `sort`, `cut`, …) that zshrs runs
 ///    in-process. Without this they dispatch on a literal name but report
 ///    `none`/external — a builtin that `whence` can't see.
+///  * host-registered native commands (`extensions/native_cmds.rs`) — the
+///    sibling runtimes a fat binary links in (`git`, `arb`, `stryke` in the
+///    zshrs-native build). They dispatch through `try_run_registered_builtin`
+///    like the rest, so they must classify the same way; the table is empty in
+///    the thin shell, where this term is always false.
 pub fn is_extension_builtin(name: &str) -> bool {
     fusevm::shell_builtins::is_builtin(name)
         || LOCAL_ONLY_BUILTINS.contains(&name)
+        || crate::native_cmds::is_registered(name)
         || extension_builtin_defs().any(|b| b.node.nam == name)
 }
 
