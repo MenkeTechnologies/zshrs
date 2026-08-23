@@ -111,21 +111,28 @@ def write(outdir: str, name: str, what: str, lines: list[str]) -> None:
         f.write(HEADER.format(what=what))
         f.write("\n".join(lines) + "\n")
         # `statements()` keeps only lines starting with "zstyle ", so the
-        # fixture's own `source parity_zstyle_stubs.zsh` line never reaches a
-        # combo. Without it every one of these files — `full.zsh` included,
-        # which claims to be the complete live config — names
-        # zpwrMonthlyCachingPolicy / _megacomplete / _fasd_zsh_word_complete*
-        # in a function-valued style without defining them, and compsys
-        # quietly takes a different path: an unknown completer is skipped and
-        # a missing cache-policy reads as "always rebuild". Emit it here so
-        # every combo is self-contained. `${(%):-%x}` (the file being
-        # sourced) rather than `$0`: `$0` is only the script path when
-        # FUNCTION_ARGZERO is set, and with it unset `:A` resolves the
-        # bare shell name against $PWD and the source silently misses.
-        f.write(
-            "\n# Definitions for the non-zsh functions the styles above name.\n"
-            "source ${${(%):-%x}:A:h}/../parity_zstyle_stubs.zsh\n"
-        )
+        # fixture's own definitions never reach a combo. Without them every
+        # one of these files — `full.zsh` included, which claims to be the
+        # complete live config — names zpwrMonthlyCachingPolicy /
+        # _megacomplete / _fasd_zsh_word_complete* in a function-valued style
+        # without defining them, and compsys quietly takes a different path:
+        # an unknown completer is skipped and a missing cache-policy reads as
+        # "always rebuild".
+        #
+        # INLINED, not sourced: a combo has to be a single self-contained
+        # file that can be copied or sourced from anywhere. A `source`d
+        # sibling also needs a path expression, and every such expression is
+        # a footgun — `${0:A:h}` silently resolves against $PWD when
+        # FUNCTION_ARGZERO is unset, so the definitions would just quietly
+        # not load.
+        f.write("\n" + stub_body())
+
+
+def stub_body() -> str:
+    """Definitions from parity_zstyle_stubs.zsh, the source of truth."""
+    path = os.path.join(REPO, "scripts", "parity_zstyle_stubs.zsh")
+    text = open(path).read()
+    return text[text.index("# --- cache-policy"):]
 
 
 def main() -> int:

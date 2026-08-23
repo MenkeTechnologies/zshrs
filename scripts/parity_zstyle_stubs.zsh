@@ -1,8 +1,8 @@
 # Companion to parity_zstyle.zsh — definitions for the functions that
 # fixture NAMES but that live outside zsh's own Completion tree.
 #
-# Why this file exists
-# --------------------
+# Why these exist
+# ----------------
 # parity_zstyle.zsh is a capture of the author's live `zstyle -L`. Several
 # styles are function-VALUED, and seven of the functions they name ship
 # with zpwr/fasd rather than with zsh:
@@ -18,9 +18,11 @@
 # completer chain than the one being modelled, which makes the fixture a
 # weaker test than it looks.
 #
-# Sourced AFTER parity_zstyle.zsh. Kept separate because that file is
-# regenerated wholesale by scripts/dump_live_zstyle.py, which would discard
-# anything added to it.
+# This file is the SOURCE OF TRUTH. Its body is inlined verbatim into
+# parity_zstyle.zsh and into every scripts/parity_combos/*.zsh by
+# scripts/gen_parity_combos.py and scripts/dump_live_zstyle.py, so each of
+# those is a single self-contained file that can be sourced or copied
+# anywhere with no sibling dependency. Edit here, then regenerate.
 #
 # Contract, not behaviour
 # -----------------------

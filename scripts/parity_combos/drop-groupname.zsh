@@ -204,5 +204,50 @@ zstyle zle-hook types isearch-exit isearch-update line-pre-redraw line-init line
 zstyle zle-line-finish widgets 0:user:_zsh_highlight_widget_orig-s000-r000-zle-line-finish 1:.hist.format.hook
 zstyle zle-line-init widgets 0:user:_zsh_highlight_widget_orig-s000-r000-zle-line-init 1:.hist.format.hook
 
-# Definitions for the non-zsh functions the styles above name.
-source ${${(%):-%x}:A:h}/../parity_zstyle_stubs.zsh
+# --- cache-policy -----------------------------------------------------
+# Reproduced verbatim from zpwr's autoload/common/zpwrBindZstyle. Portable
+# as-is: a `(Nm+N)` glob qualifier and nothing else. Returns 0 (rebuild)
+# when the cache file is older than N days, which is what `_cache_invalid`
+# tests. Exercising the real body keeps the `(Nm+N)` qualifier itself in
+# the parity surface.
+zpwrMonthlyCachingPolicy () {
+    # rebuild if cache is more than a month old
+    local -a oldp
+    oldp=( "$1"(Nm+31) )
+    (( $#oldp ))
+}
+
+zpwrWeeklyCachingPolicy () {
+    # rebuild if cache is more than a week old
+    local -a oldp
+    oldp=( "$1"(Nm+7) )
+    (( $#oldp ))
+}
+
+zpwrDailyCachingPolicy () {
+    # rebuild if cache is more than a day old
+    local -a oldp
+    oldp=( "$1"(Nm+1) )
+    (( $#oldp ))
+}
+
+# --- completers -------------------------------------------------------
+# The real `_megacomplete` runs `\_complete` and returns its status, then
+# adds tmux-pane words and a few other sources when the environment offers
+# them. The delegation is the part the chain depends on, and it is
+# reproducible; the extra sources need a live tmux pane, so they are left
+# out rather than faked.
+_megacomplete () {
+    local ret
+    \_complete && ret=0 || ret=1
+    return ret
+}
+
+# fasd completers need a populated fasd database. With none, the honest
+# result is "no matches", i.e. status 1 so the chain continues to
+# `_approximate` / `_correct` exactly as it would when fasd has nothing to
+# offer for this word.
+_fasd_zsh_word_complete ()         { return 1 }
+_fasd_zsh_word_complete_d ()       { return 1 }
+_fasd_zsh_word_complete_f ()       { return 1 }
+_fasd_zsh_word_complete_trigger () { return 1 }

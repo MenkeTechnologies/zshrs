@@ -160,10 +160,15 @@ def main() -> int:
         # missing cache-policy means "always rebuild" — so the fixture would model
         # a different completer chain than the one captured. The companion file
         # defines them; emit the source line here so a regeneration cannot drop it.
-        f.write(
-            "\n# Definitions for the non-zsh functions the styles above name.\n"
-            "source ${${(%):-%x}:A:h}/parity_zstyle_stubs.zsh\n"
-        )
+        # INLINED, not sourced: the fixture must be a single self-contained
+        # file. A sourced sibling needs a path expression and every such
+        # expression is a footgun — `${0:A:h}` silently resolves against $PWD
+        # when FUNCTION_ARGZERO is unset, so the definitions would quietly not
+        # load and the fixture would model a different completer chain.
+        stubs = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "parity_zstyle_stubs.zsh")
+        text = open(stubs).read()
+        f.write("\n" + text[text.index("# --- cache-policy"):])
     print(f"{args.out}: {len(statements)} statements")
     return 0
 
