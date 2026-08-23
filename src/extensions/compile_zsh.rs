@@ -1676,8 +1676,25 @@ impl ZshCompiler {
                     // command's failure was swallowed.
                     self.emit_errexit_check();
                 } else {
-                    // Bare `time` — print zero stats and exit 0.
+                    // c:Src/exec.c:5331-5334 — bare `time` (WC_TIMED_EMPTY):
+                    //   shelltime(NULL,NULL,NULL,0); return 0;
+                    // which prints the two-line shell/children report. Route
+                    // through BUILTIN_TIME_SUBLIST with a NEGATIVE sub-chunk
+                    // index as the "no body" marker (same operand shape as
+                    // the timed-sublist form, so the handler keeps one
+                    // argc==4 decode). The previous arm just set $?=0 and
+                    // printed nothing, so `time` alone was silent where zsh
+                    // reports the shell's accumulated times.
+                    let name_const = self.builder.add_constant(Value::str(""));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadInt(0), 0);
+                    let desc_const = self.builder.add_constant(Value::str(""));
+                    self.builder.emit(Op::LoadConst(desc_const), 0);
+                    self.builder.emit(Op::LoadInt(-1), 0); // c:5332 WC_TIMED_EMPTY
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 4),
+                        0,
+                    );
                     self.builder.emit(Op::SetStatus, 0);
                 }
             }
