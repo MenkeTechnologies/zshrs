@@ -639,7 +639,7 @@ pub fn inputline() -> i32 {
         if !crate::ported::init::zle_modules_loaded.swap(true, std::sync::atomic::Ordering::SeqCst)
         {
             let mut tab = crate::ported::module::MODULESTAB.lock().unwrap();
-            if tab.load_module("zsh/zle", None, false) {
+            if tab.load_module("zsh/zle", None, false) != 1 {
                 tab.load_module("zsh/compctl", None, false); // c:init.c:1765
             }
         }
@@ -651,6 +651,16 @@ pub fn inputline() -> i32 {
         // file then turns the editor back on with `setopt zle`, this read
         // is where C's lazy `load_module("zsh/zle")` would fire, so run
         // the same one-shot setup here.
+        //
+        // `zle_load_state` is the ONLY gate, exactly as in C — so every
+        // zshrs stand-in for "zsh/zle just got loaded" has to set it, or
+        // this block performs a SECOND module load and the DESTRUCTIVE
+        // `default_bindings()` (c:Src/Zle/zle_keymap.c:1309) rebuilds
+        // every keymap from fresh structs, discarding the bindings the
+        // user made in between. `bin_bindkey` (zle_keymap.rs) is that
+        // stand-in — in C `bindkey` is a builtin OF zsh/zle, so calling
+        // it autoloads the module first — and it now stores
+        // `zle_load_state = 1` the way C's `setup_` does.
         if crate::ported::init::zle_load_state.load(std::sync::atomic::Ordering::SeqCst) == 0 {
             crate::ported::zle::zle_thingy::init_thingies(); // c:2253
             crate::ported::zle::zle_keymap::createkeymapnamtab();
