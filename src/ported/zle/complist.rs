@@ -3577,8 +3577,27 @@ pub fn complistmatches(
         LASTLISTLEN.store(0, Ordering::SeqCst);
         if let Some(lp) = &listprompt {
             // c:2060
-            // c:2061 — clearflag = (USEZLE && !termflags && dolastprompt)
-            CLEARFLAG.store(if usezle { 1 } else { 0 }, Ordering::SeqCst);
+            // c:2061 — `clearflag = (isset(USEZLE) && !termflags && dolastprompt);`
+            // All three conjuncts, not just USEZLE: `dolastprompt` is cleared by
+            // addmatch (compcore.c:3014-3015) whenever `complastprompt` is empty
+            // — i.e. under NO_ALWAYS_LAST_PROMPT, or when the completion function
+            // set `compstate[last_prompt]=''`. Dropping it left clearflag=1 there,
+            // and zrefresh's reset frame then took the `if (clearflag)` branch
+            // (zle_refresh.c:1168-1172, `\r` + `moveto(0, lpromptw)`) instead of
+            // the `!clearflag` branch (c:1146-1167, TCCLEAREOD + the
+            // `zputs(lpromptbuf)` prompt re-emit), so the prompt was never
+            // repainted after the listing. Same defect as the compresult.c:1925
+            // asklist site.
+            let termflags = crate::ported::params::TERMFLAGS.load(Ordering::Relaxed);
+            let dolastprompt = crate::ported::zle::compcore::dolastprompt.load(Ordering::Relaxed);
+            CLEARFLAG.store(
+                if usezle && termflags == 0 && dolastprompt != 0 {
+                    1
+                } else {
+                    0
+                },
+                Ordering::SeqCst,
+            ); // c:2061
             MSCROLL.store(1, Ordering::SeqCst); // c:2062
                                                 // c:2049-2052 — `mlistp = dupstring(listprompt); if (!*mlistp)
                                                 //   mlistp = default;`. MLISTP feeds compprintfmt (the scroll
