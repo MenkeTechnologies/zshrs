@@ -3094,8 +3094,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // from zsh: a script doing `[[ -z $PIPESTATUS ]]` to detect
         // zsh-vs-bash would mis-classify. Bug #64 in docs/BUGS.md.
         with_executor(|exec| {
-            let strs: Vec<String> = pipestatus.iter().map(|s| s.to_string()).collect();
-            exec.set_array("pipestatus".to_string(), strs);
+            // c:Src/jobs.c:83 `int pipestats[MAX_PIPESTATS]` — the values
+            // live in that C GLOBAL, reached through `pipestatus`'s GSU
+            // (c:Src/params.c pipestatgetfn). A `typeset -h +g pipestatus`
+            // local shadow carries no PM_SPECIAL and no GSU, so the C
+            // writer cannot reach it; skip the paramtab mirror likewise or
+            // the shadow loses its PM_UNSET (B02typeset.ztst:37,38).
+            let shadowed = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get("pipestatus").map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0))
+                .unwrap_or(false);
+            if !shadowed {
+                let strs: Vec<String> = pipestatus.iter().map(|s| s.to_string()).collect();
+                exec.set_array("pipestatus".to_string(), strs);
+            }
         });
 
         Value::Status(last_status)
@@ -5315,7 +5328,15 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         let mut out = String::with_capacity(p.len() * 2);
         for c in p.chars() {
             match c {
-                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '#' | '^' | '~' | '\\' => {
+                // c:Src/lex.c:1390-1404 — `-` / `!` are Dash / Bang TOKENS
+                // only when the LEXER sees them unquoted; pattern.c's range
+                // parser (c:1483) and negation test look for the tokens, so
+                // a SUBSTITUTED `-` / `!` must stay an ordinary character
+                // with GLOB_SUBST off. Without these two,
+                // `cset='^a-z'; [[ - = ["$cset"] ]]` built a live `a-z`
+                // range out of substituted text.
+                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '#' | '^' | '~' | '-'
+                | '!' | '\\' => {
                     out.push('\\');
                     out.push(c);
                 }
@@ -7548,8 +7569,14 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // field directly instead.
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             if let Some(pm) = tab.get_mut("LINENO") {
-                pm.u_val = n;
-                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                // c:Src/utils.c:121 `zlong lineno` — the value lives in the C
+                // GLOBAL, reached through LINENO's GSU. A `typeset -h +g LINENO`
+                // local shadow has no PM_SPECIAL and no GSU, so C's `lineno = N`
+                // never touches it; skip the paramtab mirror for the same reason.
+                if (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0 {
+                    pm.u_val = n;
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
             }
         }
         // Mirror to the file-static `lineno` (utils.c:121) that
@@ -11321,6 +11348,15 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         let body_source = iter.next().unwrap_or_default();
         let line_base_str = iter.next().unwrap_or_default();
         let line_base: i64 = line_base_str.parse().unwrap_or(0);
+        // c:Src/exec.c:5382 `do_tracing = *state->pc++;` — the `-T` of
+        // `function -T name { … }`, carried across from compile_funcdef.
+        let do_tracing = iter.next().map(|s| s == "1").unwrap_or(false); // c:5382
+        // c:5387 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
+        let tracing_flags: u32 = if do_tracing {
+            crate::ported::zsh_h::PM_TAGGED_LOCAL
+        } else {
+            0
+        }; // c:5387
         let bytes = base64_decode(&body_b64);
         let status = match bincode::deserialize::<fusevm::Chunk>(&bytes) {
             Ok(chunk) => with_executor(|exec| {
@@ -11399,6 +11435,40 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
                 if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
                     let mut shf = crate::ported::hashtable::shfunc_with_body(&name, &body_source);
+                    // c:Src/exec.c:5437 — `shf->node.flags = tracing_flags;`
+                    shf.node.flags |= tracing_flags as i32; // c:5437
+                    // c:5532-5538 — /* Is this function traced and redefining
+                    //                  itself? */
+                    //     if (funcstack && funcstack->tp == FS_FUNC &&
+                    //             !strcmp(s, funcstack->name)) {
+                    //         Shfunc old = ((Shfunc)shfunctab->getnode(shfunctab, s));
+                    //         if (old)
+                    //             shf->node.flags |= old->node.flags &
+                    //                                (PM_TAGGED|PM_TAGGED_LOCAL);
+                    //     }
+                    // The ported walker does this at exec.rs:7387, but fusevm —
+                    // not that walker — is what registers a `name() { … }`, so a
+                    // `functions -T f`-tagged function that redefined itself
+                    // came back untraced (E02xtrace:6).
+                    if let Ok(stk) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+                        if let Some(top) = stk.last() {
+                            // c:5533
+                            if top.tp == crate::ported::zsh_h::FS_FUNC && top.name == name {
+                                // c:5535 — `Shfunc old = shfunctab->getnode(shfunctab, s);`
+                                // Read through the write guard already held
+                                // above: `shfunctab_lock()` is a std RwLock and
+                                // is NOT reentrant, so re-acquiring it here
+                                // self-deadlocked on exactly the
+                                // self-redefinition case (C04funcdef:30 hung).
+                                if let Some(old) = tab.get(&name) {
+                                    // c:5537
+                                    shf.node.flags |= old.node.flags
+                                        & (crate::ported::zsh_h::PM_TAGGED as i32
+                                            | crate::ported::zsh_h::PM_TAGGED_LOCAL as i32);
+                                }
+                            }
+                        }
+                    }
                     // `shfunc_with_body` stamps the AMBIENT `scriptfilename`
                     // (c:Src/exec.c:5383). That is right for an ordinary
                     // definition but wrong twice over for an autoloaded one:
@@ -11468,6 +11538,7 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 if crate::provenance::active() {
                     crate::provenance::on_func_define(
                         &name,
+                        Some(body_source.as_str()),
                         def_file_for_prov.as_deref(),
                         std::cmp::max(1, line_base),
                     );
@@ -14307,6 +14378,27 @@ impl fusevm::ShellHost for ZshrsHost {
                 // c:Src/exec.c:160 `int subsh;` — saved so End can put the
                 // parent's value back (subshells nest).
                 subsh: crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed),
+                // c:Src/builtin.c:541-547 — `enable`/`disable` flip the
+                // DISABLED bit on the `builtintab` node; c's fork for
+                // `( … )` gives the child a private copy of the table.
+                // See SubshellSnapshot::builtins_disabled.
+                builtins_disabled: crate::ported::builtin::BUILTINS_DISABLED
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default(),
+                // c:Src/builtin.c:541-547 — same for `disable -r` on the
+                // `reswdtab` node. See SubshellSnapshot::reswds_disabled.
+                reswds_disabled: crate::ported::hashtable::reswdtab_lock()
+                    .read()
+                    .map(|t| {
+                        t.iter()
+                            .filter(|(_, r)| {
+                                (r.node.flags & crate::ported::zsh_h::DISABLED as i32) != 0
+                            })
+                            .map(|(n, _)| n.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             });
             // c:Src/exec.c:1192-1193 — `if (!(flags & ESUB_FAKE)) subsh = 1;`
             // A `( … )` is a real subshell, so the body runs with subsh set.
@@ -14476,6 +14568,23 @@ impl fusevm::ShellHost for ZshrsHost {
                 // dies with the fork in C; restore the parent's value here.
                 crate::ported::exec::subsh
                     .store(snap.subsh, std::sync::atomic::Ordering::Relaxed);
+                // c:Src/builtin.c:541-547 — the child's `enable`/`disable`
+                // only touched its forked copy of `builtintab` /
+                // `reswdtab`. Put the parent's DISABLED sets back.
+                // See SubshellSnapshot::builtins_disabled.
+                if let Ok(mut s) = crate::ported::builtin::BUILTINS_DISABLED.lock() {
+                    *s = snap.builtins_disabled;
+                }
+                if let Ok(mut t) = crate::ported::hashtable::reswdtab_lock().write() {
+                    let names: Vec<String> = t.iter().map(|(n, _)| n.clone()).collect();
+                    for n in names {
+                        if snap.reswds_disabled.contains(&n) {
+                            t.disable(&n);
+                        } else {
+                            t.enable(&n);
+                        }
+                    }
+                }
                 // c:Src/signals.c:39 — same fork-copy reasoning for the
                 // per-signal trap flags cleared at subshell entry.
                 if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
@@ -15273,7 +15382,19 @@ impl fusevm::ShellHost for ZshrsHost {
             let bn_in_tab =
                 !disabled && crate::ported::builtin::createbuiltintable().contains_key(name);
             if bn_in_tab {
-                return Some(dispatch_builtin_raw(name, args));
+                // c:Src/exec.c:4287 — `lastval = execbuiltin(args, assigns,
+                // (Builtin) hn);`. The store happens BEFORE any errflag
+                // handling, so a builtin that BOTH raises errflag (zerr) and
+                // returns non-zero still publishes its status. zshrs relied on
+                // the VM's trailing `SetStatus` op to publish it, and that op
+                // is skipped once the builtin set ERRFLAG_ERROR — so
+                // `() { private SECONDS }` (makeprivate's zerrnam + return 1)
+                // reported 0 where zsh reports 1 (V10private.ztst:22).
+                let __st = dispatch_builtin_raw(name, args);
+                crate::ported::builtin::LASTVAL
+                    .store(__st, std::sync::atomic::Ordering::Relaxed); // c:4287
+                with_executor(|exec| exec.set_last_status(__st)); // c:4287
+                return Some(__st);
             }
             // zshrs-original opcode builtins (async, doctor, peach, …) are not
             // in builtintab, so a run-time-resolved name (`$var`) never reaches

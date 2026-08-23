@@ -418,11 +418,18 @@ $ provenance -m greet          # arm it first — nothing is recorded until you 
 $ greet; greet
 $ provenance greet             # or `provenance -f greet`
 greet()
-  origin: function greet (greet.zsh:2, 2026-08-18 11:48:01.139)
+  origin: function greet { MSG="hi $1" } (greet.zsh:2, 2026-08-18 11:48:01.139)
   ops:
      1. call       greet()                                  greet.zsh:3              11:48:01.139
      2. call       greet()                                  greet.zsh:4              11:48:01.140
 ```
+
+The origin and every `redefine` carry the function's body (collapsed to one
+line, truncated with `…`), so the chain shows what the body was and what it
+was changed to. A `call` op carries the arguments the call was made with — `greet world`
+records `greet(world)` — so repeated calls to one function stay
+distinguishable; empty or whitespace-bearing arguments are single-quoted and
+long lists are truncated with `…`.
 
 Reading a name that was never armed is an error, not an empty chain —
 `provenance -f greet` on its own answers `not tracked: greet()`.

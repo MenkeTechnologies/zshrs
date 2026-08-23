@@ -957,7 +957,7 @@ fn def_site(file: Option<&str>, line: i64) -> Site {
 /// Arm tracking for shell function `name`, seeding its origin from where
 /// the function is defined right now. Returns false when the engine is
 /// disabled by config/env.
-pub fn track_func(name: &str, file: Option<&str>, line: i64) -> bool {
+pub fn track_func(name: &str, body: Option<&str>, file: Option<&str>, line: i64) -> bool {
     if !enabled() {
         return false;
     }
@@ -979,9 +979,21 @@ pub fn track_func(name: &str, file: Option<&str>, line: i64) -> bool {
     // one always carries a 1-based line.
     if file.is_some() || line > 0 {
         let site = def_site(file, line);
-        l.func
-            .entry(name.to_string())
-            .or_insert_with(|| ProvNode::origin(format!("function {}", name), site));
+        // Seed the origin with the body the function has RIGHT NOW.
+        // Arming an already-defined function is the common case
+        // (`provenance -m greet` on something sourced earlier), and it
+        // never passes through `on_func_define`, so this is the only
+        // chance to record what the body was before any redefinition.
+        let summary = body_summary(body);
+        l.func.entry(name.to_string()).or_insert_with(|| {
+            ProvNode::origin(
+                match &summary {
+                    Some(b) => format!("function {} {{ {} }}", name, b),
+                    None => format!("function {}", name),
+                },
+                site,
+            )
+        });
     }
     drop(l);
     PROV_ACTIVE.store(true, Ordering::Relaxed);
@@ -1039,11 +1051,39 @@ fn auto_arm_func(l: &mut Ledger, name: &str) -> bool {
     true
 }
 
+/// Collapse a function body to one line that fits the chain's argument
+/// column. Bodies are multi-line and indented; the chain wants "what is
+/// this, and what did it become", not a listing, so runs of whitespace
+/// (newlines included) fold to a single space and the tail is cut with
+/// `…`. Returns None when there is no body text to show, so a caller
+/// with nothing to record renders exactly as it did before.
+fn body_summary(body: Option<&str>) -> Option<String> {
+    let collapsed = body?.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    // `render` lays the argument column out as `{:<40}`; leave room for
+    // the function name and the ellipsis.
+    const MAX_BODY_WIDTH: usize = 32;
+    if collapsed.chars().count() > MAX_BODY_WIDTH {
+        let keep: String = collapsed.chars().take(MAX_BODY_WIDTH).collect();
+        Some(format!("{}…", keep))
+    } else {
+        Some(collapsed)
+    }
+}
+
 /// A function was defined, at `file`:`line`. The first definition is the
 /// origin; a later one is a `redefine` op, so a chain shows every body
 /// the name ever had and where each came from.
-pub fn on_func_define(name: &str, file: Option<&str>, line: i64) {
+///
+/// `body` is the function's source text. It is recorded on both the
+/// origin and every `redefine`, because a redefinition op that names
+/// only the function cannot answer what the body was changed TO — which
+/// is the only reason to look at a redefine op at all.
+pub fn on_func_define(name: &str, body: Option<&str>, file: Option<&str>, line: i64) {
     let site = def_site(file, line);
+    let summary = body_summary(body);
     let mut l = lock();
     if !auto_arm_func(&mut l, name) {
         return;
@@ -1051,33 +1091,96 @@ pub fn on_func_define(name: &str, file: Option<&str>, line: i64) {
     match l.func.get_mut(name) {
         Some(node) => node.push_op(ProvOp {
             op: "redefine".to_string(),
-            args: vec![name.to_string()],
+            args: vec![match &summary {
+                Some(b) => format!("{} {{ {} }}", name, b),
+                None => name.to_string(),
+            }],
             site,
         }),
         None => {
             l.func.insert(
                 name.to_string(),
-                ProvNode::origin(format!("function {}", name), site),
+                ProvNode::origin(
+                    match &summary {
+                        Some(b) => format!("function {} {{ {} }}", name, b),
+                        None => format!("function {}", name),
+                    },
+                    site,
+                ),
             );
         }
     }
 }
 
+/// Render a call's positionals the way the chain displays them:
+/// `greet(alpha beta)`. An argument that is empty or carries whitespace
+/// is single-quoted so `f 'a b'` and `f a b` stay distinguishable; the
+/// whole list is capped to the width of `render`'s argument column so a
+/// call with a hundred arguments cannot smear the table.
+fn call_signature(name: &str, args: &[String]) -> String {
+    // `render` lays the argument column out as `{:<40}`; leave room for
+    // the name, the parentheses and the ellipsis.
+    const MAX_ARGS_WIDTH: usize = 32;
+    let mut rendered = String::new();
+    for (i, a) in args.iter().enumerate() {
+        if i > 0 {
+            rendered.push(' ');
+        }
+        if a.is_empty() || a.chars().any(char::is_whitespace) {
+            rendered.push('\'');
+            rendered.push_str(a);
+            rendered.push('\'');
+        } else {
+            rendered.push_str(a);
+        }
+        if rendered.chars().count() > MAX_ARGS_WIDTH {
+            let keep: String = rendered.chars().take(MAX_ARGS_WIDTH).collect();
+            rendered = format!("{}…", keep);
+            break;
+        }
+    }
+    format!("{}({})", name, rendered)
+}
+
 /// A function is about to run. The op records the *call* site, which is
-/// where the caller stands, not where the function was defined.
-pub fn on_func_call(name: &str, file: Option<&str>, line: i64) {
+/// where the caller stands, not where the function was defined, and the
+/// ARGUMENTS the call was made with — without them two calls to the same
+/// function are indistinguishable on the chain, which defeats the point
+/// of asking where a value came from.
+///
+/// `args` is the positional list only: `doshfunc`'s `doshargs[0]` is the
+/// function name (`Src/exec.c:5986` sets `argzero` from it) and the
+/// positionals are `doshargs[1..]` (c:5978-5998).
+pub fn on_func_call(
+    name: &str,
+    args: &[String],
+    body: Option<&str>,
+    file: Option<&str>,
+    line: i64,
+) {
     let site = Site::now();
+    // Arming a function that already exists (`provenance -m greet` on a
+    // function defined earlier) never saw `on_func_define`, so the chain
+    // is created HERE. Seed its origin with the body the function
+    // currently has; without this the common arm-after-definition case
+    // shows an origin with no body at all.
+    let summary = body_summary(body);
     let mut l = lock();
     if !auto_arm_func(&mut l, name) {
         return;
     }
-    let node = l
-        .func
-        .entry(name.to_string())
-        .or_insert_with(|| ProvNode::origin(format!("function {}", name), def_site(file, line)));
+    let node = l.func.entry(name.to_string()).or_insert_with(|| {
+        ProvNode::origin(
+            match &summary {
+                Some(b) => format!("function {} {{ {} }}", name, b),
+                None => format!("function {}", name),
+            },
+            def_site(file, line),
+        )
+    });
     node.push_op(ProvOp {
         op: "call".to_string(),
-        args: vec![format!("{}()", name)],
+        args: vec![call_signature(name, args)],
         site,
     });
 }
@@ -1505,6 +1608,49 @@ mod tests {
         );
     }
 
+    /// A `call` op must carry the arguments the call was made with.
+    /// Without them two calls to one function are byte-identical on the
+    /// chain, so "where did this value come from" cannot distinguish
+    /// `deploy staging` from `deploy prod` — which is the question the
+    /// engine exists to answer.
+    #[test]
+    fn call_ops_record_the_arguments_they_were_called_with() {
+        let _g = setup();
+        assert!(track_func("deploy", None, Some("/tmp/d.zsh"), 1));
+        on_func_call("deploy", &["staging".to_string()], None, Some("/tmp/d.zsh"), 1);
+        on_func_call("deploy", &["prod".to_string()], None, Some("/tmp/d.zsh"), 2);
+        on_func_call("deploy", &[], None, Some("/tmp/d.zsh"), 3);
+        let node = lookup_func("deploy").expect("armed");
+        let args: Vec<&str> = node.ops.iter().map(|o| o.args[0].as_str()).collect();
+        assert_eq!(
+            args,
+            vec!["deploy(staging)", "deploy(prod)", "deploy()"],
+            "each call must be distinguishable by its arguments"
+        );
+    }
+
+    /// An empty or whitespace-bearing argument is single-quoted, so
+    /// `f 'a b'` (one argument) does not render the same as `f a b`
+    /// (two), and a long list is capped rather than smearing the table.
+    #[test]
+    fn call_signature_quotes_ambiguous_args_and_caps_long_lists() {
+        let one = call_signature("f", &["a b".to_string()]);
+        let two = call_signature("f", &["a".to_string(), "b".to_string()]);
+        assert_eq!(one, "f('a b')");
+        assert_eq!(two, "f(a b)");
+        assert_ne!(one, two, "quoting is what keeps these apart");
+        assert_eq!(call_signature("f", &["".to_string()]), "f('')");
+
+        let many: Vec<String> = (0..40).map(|i| format!("arg{i}")).collect();
+        let rendered = call_signature("f", &many);
+        assert!(rendered.ends_with("…)"), "long list truncates: {rendered}");
+        assert!(
+            rendered.chars().count() <= 40,
+            "must fit render's 40-wide arg column: {} chars",
+            rendered.chars().count()
+        );
+    }
+
     #[test]
     fn track_all_skips_the_parameters_the_shell_rewrites_itself() {
         let _g = setup();
@@ -1535,10 +1681,10 @@ mod tests {
     fn a_function_records_its_definition_calls_and_removal() {
         let _g = setup();
         assert!(set_track_all(true));
-        on_func_define("build", Some("/tmp/lib.zsh"), 12);
+        on_func_define("build", None, Some("/tmp/lib.zsh"), 12);
         note_line(40);
-        on_func_call("build", Some("/tmp/lib.zsh"), 12);
-        on_func_define("build", Some("/tmp/lib.zsh"), 80);
+        on_func_call("build", &[], None, Some("/tmp/lib.zsh"), 12);
+        on_func_define("build", None, Some("/tmp/lib.zsh"), 80);
         on_func_unset("build");
         let node = lookup_func("build").expect("the function has a chain");
         assert_eq!(node.origin, "function build");
@@ -1563,7 +1709,7 @@ mod tests {
     fn arming_a_function_before_it_exists_leaves_the_origin_to_its_definition() {
         let _g = setup();
         // `(None, 0)` is shfunc_def_site's "no such function".
-        assert!(track_func("later", None, 0));
+        assert!(track_func("later", None, None, 0));
         assert!(
             lookup_func("later").is_none(),
             "no definition has happened yet, so there is nothing to attribute"
@@ -1574,7 +1720,7 @@ mod tests {
             "but it IS armed"
         );
 
-        on_func_define("later", Some("/tmp/lib.zsh"), 7);
+        on_func_define("later", None, Some("/tmp/lib.zsh"), 7);
         let node = lookup_func("later").expect("the definition creates the chain");
         assert_eq!(node.origin, "function later");
         assert_eq!(
@@ -1589,7 +1735,7 @@ mod tests {
         );
 
         // A LATER definition is still a redefine, against the real origin.
-        on_func_define("later", Some("/tmp/lib.zsh"), 20);
+        on_func_define("later", None, Some("/tmp/lib.zsh"), 20);
         let node = lookup_func("later").expect("still tracked");
         assert_eq!(node.origin_site.line, 7, "the origin does not move");
         let ops: Vec<&str> = node.ops.iter().map(|o| o.op.as_str()).collect();
@@ -1603,14 +1749,14 @@ mod tests {
     #[test]
     fn arming_an_existing_function_seeds_the_origin_from_its_definition_site() {
         let _g = setup();
-        assert!(track_func("known", Some("/tmp/lib.zsh"), 3));
+        assert!(track_func("known", None, Some("/tmp/lib.zsh"), 3));
         let node = lookup_func("known").expect("armed with a known definition site");
         assert_eq!(node.origin_site.line, 3);
         assert_eq!(node.origin_site.file.as_deref(), Some("/tmp/lib.zsh"));
         assert!(node.ops.is_empty());
 
         // Re-arming does not move the origin or duplicate the node.
-        assert!(track_func("known", Some("/tmp/lib.zsh"), 3));
+        assert!(track_func("known", None, Some("/tmp/lib.zsh"), 3));
         let node = lookup_func("known").expect("still there");
         assert_eq!(node.origin_site.line, 3);
         assert_eq!(tracked_func_names(), vec!["known".to_string()]);
@@ -1619,11 +1765,11 @@ mod tests {
     #[test]
     fn an_unarmed_function_records_nothing_without_track_all() {
         let _g = setup();
-        on_func_define("quiet", Some("/tmp/lib.zsh"), 1);
-        on_func_call("quiet", Some("/tmp/lib.zsh"), 1);
+        on_func_define("quiet", None, Some("/tmp/lib.zsh"), 1);
+        on_func_call("quiet", &[], None, Some("/tmp/lib.zsh"), 1);
         assert!(lookup_func("quiet").is_none());
-        assert!(track_func("quiet", Some("/tmp/lib.zsh"), 1));
-        on_func_call("quiet", Some("/tmp/lib.zsh"), 1);
+        assert!(track_func("quiet", None, Some("/tmp/lib.zsh"), 1));
+        on_func_call("quiet", &[], None, Some("/tmp/lib.zsh"), 1);
         let node = lookup_func("quiet").expect("armed by name");
         assert_eq!(node.ops.len(), 1, "only the call after arming: {:?}", node.ops);
         assert!(untrack_func("quiet"));
