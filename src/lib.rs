@@ -87,6 +87,10 @@ pub mod startup_signals;
 /// `arith_compiler` submodule.
 #[path = "extensions/arith_compiler.rs"]
 pub mod arith_compiler;
+/// `atomic_write` submodule — the shared temp-file-safe shard writer
+/// used by both rkyv caches.
+#[path = "extensions/atomic_write.rs"]
+pub mod atomic_write;
 /// `autoload_cache` submodule.
 #[path = "extensions/autoload_cache.rs"]
 pub mod autoload_cache;

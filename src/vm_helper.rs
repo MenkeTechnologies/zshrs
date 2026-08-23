@@ -3275,8 +3275,8 @@ impl ShellExecutor {
     }
 
     /// Install an autoloaded function by running its definition program,
-    /// reusing the rkyv-cached chunk when the definition file has not
-    /// changed since it was compiled.
+    /// reusing the rkyv-cached chunk when the cache can PROVE the chunk
+    /// was compiled from this same definition text by this same binary.
     ///
     /// `registered` is what `autoload_register_source` produced: either
     /// `name() { <file body> }` or, for a file that already contains the
@@ -3286,13 +3286,21 @@ impl ShellExecutor {
     /// of shell — the dominant cost of the first `git <tab>`.
     ///
     /// Two conditions gate caching, because outside them the chunk is not a
-    /// function of the file's bytes alone:
+    /// function of the definition text alone:
     ///   * ksh-style autoload (`KSHAUTOLOAD` / `PM_KSHSTORED`) runs the file
     ///     at top level instead of wrapping it, so the same bytes produce a
     ///     different program depending on a runtime option;
     ///   * without `PM_UNALIASED` (`autoload` without `-U`) the body is
     ///     parsed WITH alias expansion, so the chunk depends on the alias
     ///     table too. Every compsys / plugin autoload uses `-Uz`.
+    ///
+    /// A hit that runs without defining `name` is treated as a corrupt
+    /// entry, not as a failed load: the entry is dropped and the real
+    /// source compiled. Installing a function is the one thing this
+    /// function exists to do, so "it ran and the function is not there"
+    /// is a fact the loader can check for itself rather than leaving the
+    /// caller to report `function not defined by file` for what is
+    /// actually a bad cache line.
     fn run_autoload_definition(
         &mut self,
         name: &str,
@@ -3302,13 +3310,13 @@ impl ShellExecutor {
         let unaliased = crate::ported::utils::getshfunc(name)
             .map(|f| (f.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0)
             .unwrap_or(false);
-        let stamps = if ksh_style || !unaliased {
+        let key = if ksh_style || !unaliased {
             None
         } else {
-            autoload_source_stamps(name)
+            autoload_source_key(name, registered)
         };
-        if let Some((mtime, len)) = stamps {
-            if let Some(blob) = crate::autoload_cache::try_load_for_source(name, mtime, len) {
+        if let Some((dir, sha)) = key.as_ref() {
+            if let Some(blob) = crate::autoload_cache::try_load_for_source(name, dir, sha) {
                 match bincode::deserialize::<fusevm::Chunk>(&blob) {
                     Ok(chunk) if !chunk.ops.is_empty() => {
                         tracing::debug!(
@@ -3316,17 +3324,31 @@ impl ShellExecutor {
                             ops = chunk.ops.len(),
                             "autoload: rkyv chunk hit, skipping parse+compile"
                         );
-                        return self.run_chunk_with_exit_hooks(chunk, "autoload:cached");
+                        let status = self.run_chunk_with_exit_hooks(chunk, "autoload:cached");
+                        if self.functions_compiled.contains_key(name) {
+                            return status;
+                        }
+                        // The chunk ran and `name` is still undefined, so
+                        // it is not this function's definition program
+                        // whatever the key said. Drop it and fall through
+                        // to a real compile — a wrong answer here costs
+                        // every completion on the shell.
+                        tracing::warn!(
+                            name,
+                            "autoload: cached chunk did not define the function; \
+                             dropping the entry and recompiling"
+                        );
+                        crate::autoload_cache::try_remove(name);
                     }
                     _ => {}
                 }
             }
         }
         let chunk = self.compile_script_isolated(registered)?;
-        if let Some((mtime, len)) = stamps {
+        if let Some((dir, sha)) = key.as_ref() {
             match bincode::serialize(&chunk) {
                 Ok(blob) => {
-                    if let Err(e) = crate::autoload_cache::try_save_one(name, &blob, mtime, len) {
+                    if let Err(e) = crate::autoload_cache::try_save_one(name, &blob, dir, *sha) {
                         tracing::warn!(name, error = %e, "autoload: rkyv chunk save failed");
                     }
                 }
@@ -6116,24 +6138,27 @@ fn autoload_is_ksh_style(name: &str) -> bool {
     // c:5781
 }
 
-/// `(mtime_secs, len)` of the definition file an autoloaded function was
-/// loaded from, or `None` when it cannot be pinned down.
+/// The cache key for an autoloaded function: `(resolved fpath dir,
+/// SHA-256 of the definition text)`, or `None` when the directory
+/// cannot be pinned down.
 ///
 /// `loadautofn` records the resolved fpath directory on the shfunc
-/// (`filename` + `PM_LOADDIR`, c:Src/exec.c:5657), so the file is
-/// `<dir>/<name>`. A function whose `filename` is the placeholder `"zsh"`
-/// — or one loaded out of a `.zwc` digest, where no single file backs the
-/// body — yields `None` and simply is not cached.
-fn autoload_source_stamps(name: &str) -> Option<(i64, u64)> {
-    use std::os::unix::fs::MetadataExt;
+/// (`filename` + `PM_LOADDIR`, c:Src/exec.c:5657); a function whose
+/// `filename` is still the placeholder `"zsh"` was not resolved through
+/// `$fpath` and is not cached.
+///
+/// The hash is over `registered` — the exact string about to be
+/// compiled — and NOT over a `stat` of `<dir>/<name>`. Those are not the
+/// same thing: `getfpfunc` prefers a `<dir>.zwc` digest over the plain
+/// file whenever the digest is newer (c:Src/parse.c:3771-3777), so the
+/// body being installed may have no relationship to the bytes of the
+/// file that path names. Stamping the path let a chunk built from one
+/// text be served for another.
+fn autoload_source_key(name: &str, registered: &str) -> Option<(String, [u8; 32])> {
     let dir = crate::ported::utils::getshfunc(name)
         .and_then(|f| f.filename)
         .filter(|d| d != "zsh")?;
-    let meta = std::fs::metadata(Path::new(&dir).join(name)).ok()?;
-    if !meta.is_file() {
-        return None;
-    }
-    Some((meta.mtime(), meta.len()))
+    Some((dir, crate::autoload_cache::source_digest(registered)))
 }
 
 fn autoload_register_source(name: &str, body: &str) -> String {
