@@ -533,7 +533,28 @@ fn command_is_valid_tables(cmd: &str, decoration: StatementDecoration) -> bool {
     // fish:272-275 — Builtins. (Reserved words resolve at the lexer level and never
     // reach here as STRING tokens, so no reswdtab check is needed.)
     if !is_valid && builtin_ok {
-        is_valid = crate::ported::builtin::createbuiltintable().contains_key(cmd);
+        is_valid = crate::ported::builtin::createbuiltintable().contains_key(cmd)
+            // zshrs's extension builtins (provenance, dbview, zcache, …)
+            // are NOT in createbuiltintable — they live in
+            // EXT_BUILTIN_NAMES and dispatch through ext_builtins. The
+            // highlighter asked only the core table, so every one of them
+            // painted as an unknown token even though `whence -w
+            // provenance` says `builtin` and `${+builtins[provenance]}`
+            // is 1 in the same shell.
+            //
+            // `builtin_in_builtintab` is the predicate every OTHER
+            // consumer asks (ext_builtins.rs:207-228), and it already
+            // honours the `--zsh` / ZSHRS_HIDE_EXT_BUILTINS gate, so a
+            // zshrs-original builtin correctly goes back to unknown-token
+            // under emulation, where it is hidden from the namespace.
+            // NOTE: `builtin_in_builtintab` alone is NOT a membership
+            // test — `builtin_owning_module` returns None for an unknown
+            // name and its `None => true` arm then reports every string
+            // as available. Membership in EXT_BUILTIN_NAMES has to come
+            // first; the availability call adds the `disable`/module and
+            // ZSHRS_HIDE_EXT_BUILTINS gates on top.
+            || (crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&cmd)
+                && crate::ext_builtins::builtin_in_builtintab(cmd));
     }
 
     // fish:277-280 — Functions.
@@ -2001,6 +2022,46 @@ mod tests {
         assert_eq!(colors[0].foreground, HighlightRole::operat);
         assert_eq!(colors[4].foreground, HighlightRole::operat); // [
         assert_eq!(colors[6].foreground, HighlightRole::operat); // ]
+    }
+
+    /// zshrs's EXTENSION builtins (`provenance`, `dbview`, `zcache`, …)
+    /// live in EXT_BUILTIN_NAMES, not in `createbuiltintable`. The command
+    /// check consulted only the core table, so every one of them painted
+    /// as an unknown token even though `whence -w provenance` reports
+    /// `builtin` and `${+builtins[provenance]}` is 1 in the same shell.
+    ///
+    /// The negative half matters just as much: `builtin_in_builtintab` is
+    /// NOT a membership test on its own — `builtin_owning_module` returns
+    /// None for an unknown name and its `None => true` arm reports every
+    /// string as available. Calling it without the EXT_BUILTIN_NAMES
+    /// membership check first turned literally every word green.
+    #[test]
+    fn extension_builtins_are_commands_but_unknown_words_are_not() {
+        let _g = lock();
+        let ctx = OperationContext::empty();
+
+        for name in ["provenance", "dbview"] {
+            let line = format!("{name} -m x");
+            let mut colors = Vec::new();
+            highlight_shell(&line, &mut colors, &ctx, true, None);
+            assert_eq!(
+                colors[0].foreground,
+                HighlightRole::command,
+                "{name} is an extension builtin and must colour as a command"
+            );
+        }
+
+        // A near-miss prefix of a real extension builtin must NOT pass.
+        for bogus in ["provenanc", "zzqwx", "dbvie"] {
+            let line = format!("{bogus} arg");
+            let mut colors = Vec::new();
+            highlight_shell(&line, &mut colors, &ctx, true, None);
+            assert_eq!(
+                colors[0].foreground,
+                HighlightRole::error,
+                "{bogus} is not a command and must colour as unknown-token"
+            );
+        }
     }
 
     // fish:1342-1821 — the highlight_shell integration checks, zsh syntax.
