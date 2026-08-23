@@ -211,3 +211,6 @@ zstyle zle-line-init widgets 0:user:_zsh_highlight_widget_orig-s000-r000-zle-lin
 
 # forced axis
 zstyle ':completion:*' group-name
+
+# Definitions for the non-zsh functions the styles above name.
+source ${${(%):-%x}:A:h}/../parity_zstyle_stubs.zsh

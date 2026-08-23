@@ -162,7 +162,7 @@ def main() -> int:
         # defines them; emit the source line here so a regeneration cannot drop it.
         f.write(
             "\n# Definitions for the non-zsh functions the styles above name.\n"
-            "source ${0:A:h}/parity_zstyle_stubs.zsh\n"
+            "source ${${(%):-%x}:A:h}/parity_zstyle_stubs.zsh\n"
         )
     print(f"{args.out}: {len(statements)} statements")
     return 0

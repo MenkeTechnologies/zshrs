@@ -3,3 +3,6 @@
 # only the two list-shaping styles
 zstyle ':completion:*:descriptions' format '-<<%d>>-'
 zstyle ':completion:*' group-name ''
+
+# Definitions for the non-zsh functions the styles above name.
+source ${${(%):-%x}:A:h}/../parity_zstyle_stubs.zsh
