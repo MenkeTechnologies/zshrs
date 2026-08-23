@@ -4490,6 +4490,27 @@ pub fn domenuselect(
         }
     }
 
+    // !!! WARNING: RUST-ONLY HOOK — NO C COUNTERPART !!!
+    //
+    // C's ZLE has no autosuggestion, so `domenuselect` has nothing to tear
+    // down here. zshrs does: `extensions/zle_fx.rs` keeps a fish-ported
+    // suggestion in `$POSTDISPLAY` plus a grey `fg=8` attr for that span, and
+    // it recomputes them from `zlecore()`'s post-dispatch hook
+    // (zle_main.rs:1154). This loop never goes back through that dispatch —
+    // it reads keys itself and calls `selfinsert`/`selfinsertunmeta` and
+    // `menucomplete` directly (c:2756-2779) — so without this call the
+    // suggestion computed for the PRE-TAB buffer stays live for the whole
+    // menu while the buffer underneath it keeps growing. Measured over a pty
+    // with `menu select=0 interactive`: typing `g`, TAB, `i` drew the command
+    // row as `giit status` (buffer `gi` + stale grey ghost `it status`) while
+    // the status row below it correctly read `interactive: gi[]`.
+    //
+    // Placed after every early return above so a `domenuselect` that bails
+    // (no old list / already on the stack / below $MENUSELECT) leaves the
+    // suggestion alone — only a loop that is really about to own the buffer
+    // drops it. `zlecore` recomputes on the first widget after the loop ends.
+    crate::zle_fx::on_completion_takeover();
+
     // c:2427-2432 — `if (zlemetaline != NULL) wasmeta = 1;
     //                else { wasmeta = 0; metafy_line(); }`.
     //

@@ -16,6 +16,10 @@
 //!   * `compute_render_attrs()`  → `native_render_attrs(...)` — the native layer,
 //!     painted between HighlightManager regions and user `$region_highlight` so
 //!     script plugins always win over the native engine
+//!   * `domenuselect()` entry    → `on_completion_takeover()` — drop the ghost
+//!     before a key loop that never returns to `zlecore()` starts rewriting the
+//!     buffer (fish: `can_autosuggest()` is false while the pager owns the line,
+//!     reader.rs:5519-5531)
 //!
 //! All three engines are ON by default in interactive mode (bare `zshrs -f` gets
 //! the full fish experience). Opt-out: `ZSHRS_NATIVE_ZLE_FX=0`. When a script
@@ -627,6 +631,51 @@ fn zattr_to_text_attr(a: crate::ported::zsh_h::zattr) -> TextAttr {
             .then(|| ((a >> TXT_ATTR_FG_COL_SHIFT) & 0xff as zattr) as u8),
         bg_color: (a & TXTBGCOLOUR != 0)
             .then(|| ((a >> TXT_ATTR_BG_COL_SHIFT) & 0xff as zattr) as u8),
+    }
+}
+
+/// Completion-takeover reset — called when a completion key loop is about to
+/// take over key reading and rewrite the buffer WITHOUT going back through
+/// `zlecore()`'s dispatch (and therefore without `on_post_widget`).
+///
+/// `domenuselect` (complist.rs, port of c:Src/Zle/complist.c:2383) reads keys
+/// itself and calls `selfinsert`/`menucomplete` directly (c:2756-2779), so the
+/// suggestion computed for the pre-TAB buffer stays in `$POSTDISPLAY` and in
+/// `ghost_attr` for the whole menu. The renderer keeps appending it to a buffer
+/// that is now longer: typing `g<TAB>i` under `menu select interactive` drew
+/// `g` + `i` + grey `it status` as `giit status` while the status line
+/// correctly read `interactive: gi[]`.
+///
+/// fish's equivalent guard is `can_autosuggest()` (vendor/fish/reader/reader.rs:5519-5531),
+/// which returns false unless the active edit line is the command line — while
+/// the pager owns input there is no suggestion; `update_autosuggestion`
+/// (reader.rs:5575-5580) then clears it outright.
+///
+/// Only the NATIVE ghost is dropped: `$POSTDISPLAY` is cleared only when this
+/// module owns it (`ghost_attr` is `Some`), so a user widget's own
+/// `$POSTDISPLAY` survives menu selection untouched. The next widget that runs
+/// through `zlecore` re-enters `on_post_widget` and recomputes normally.
+pub fn on_completion_takeover() {
+    if !enabled() {
+        return;
+    }
+    let owned = with_fx(|fx| {
+        let owned = fx.ghost_attr.is_some();
+        fx.ghost_attr = None;
+        owned
+    });
+    if owned {
+        crate::ported::zle::zle_params::set_postdisplay(Some(""));
+        // fish reader.rs:5577-5578 — the `!can_autosuggest()` arm of
+        // `update_autosuggestion`: drop the in-flight request key AND the
+        // suggestion. `last_request_line` is this port's sync analog of
+        // `in_flight_autosuggest_request` (autosuggest.rs:151-152); leaving it
+        // set would make the recompute after the menu exits a no-op whenever
+        // the menu ended on the same buffer text it started with.
+        autosuggest::with_state(|st| {
+            st.last_request_line.clear();
+            st.autosuggestion.clear();
+        });
     }
 }
 
