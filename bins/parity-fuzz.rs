@@ -472,6 +472,18 @@ fn run_with_timeout_stdin(mut cmd: Command, timeout: Duration, feed: Option<&str
 // startup; the runners below cd into it. None in the other modes.
 static FIXTURE_CWD: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
+/// Whether [`FIXTURE_CWD`] is a DATA fixture — a directory tree the probes read,
+/// whose CONTENTS are the thing the two shells are compared against (glob,
+/// stat, autoload, zmv) — rather than a scratch cwd.
+///
+/// The end-of-run completeness check keys off this. A data fixture that ends
+/// empty means both shells matched nothing and the run proved nothing. A
+/// scratch cwd (`setup_scratch_fixture`) is created EMPTY on purpose — it
+/// exists so a probe that writes does so outside the source tree — so its
+/// emptiness is the normal case and says nothing about whether the run
+/// measured anything.
+static FIXTURE_IS_DATA: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
 /// Feed each case to the shell on STDIN rather than via `-c`.
 ///
 /// Set once at startup, for the modes that need C's SHINSTDIN to be ON. Every
@@ -12718,12 +12730,15 @@ fn main() {
     match args.mode {
         Mode::Glob | Mode::Stat => {
             FIXTURE_CWD.set(setup_glob_fixture()).ok();
+            FIXTURE_IS_DATA.set(true).ok();
         }
         Mode::Autoload => {
             FIXTURE_CWD.set(setup_autoload_fixture()).ok();
+            FIXTURE_IS_DATA.set(true).ok();
         }
         Mode::Zmv => {
             FIXTURE_CWD.set(setup_zmv_fixture()).ok();
+            FIXTURE_IS_DATA.set(true).ok();
         }
         // Modes whose probes (or whose MINIMIZED probes) can create files must
         // never run from the source tree — see setup_scratch_fixture.
@@ -12746,6 +12761,7 @@ fn main() {
         | Mode::Redir
         | Mode::Cmdsub => {
             FIXTURE_CWD.set(setup_scratch_fixture()).ok();
+            FIXTURE_IS_DATA.set(false).ok();
         }
         _ => {}
     }
@@ -13027,12 +13043,28 @@ compared, but not evidence the generator reached anything)",
         incomplete = true;
     }
     if let Some(dir) = FIXTURE_CWD.get() {
+        // A DATA fixture must still hold its tree: empty means both shells
+        // matched nothing and agreed about nothing. A SCRATCH cwd only has to
+        // still EXIST — it is created empty and stays that way unless a probe
+        // writes, so requiring content there failed every clean procsub run
+        // (2000 cases, 0 divergences, "compared against nothing"). What can
+        // still go wrong for a scratch cwd is the directory vanishing under
+        // the workers, which is what is checked instead.
+        let is_data = FIXTURE_IS_DATA.get().copied().unwrap_or(false);
+        let exists = dir.is_dir();
         let populated = std::fs::read_dir(dir)
             .map(|mut d| d.next().is_some())
             .unwrap_or(false);
-        if !populated {
+        if !exists {
             println!(
-                "\nINCOMPLETE: fixture {} is missing or empty at end of run — \
+                "\nINCOMPLETE: fixture {} vanished during the run — the probes \
+                 did not run where they were meant to",
+                dir.display()
+            );
+            incomplete = true;
+        } else if is_data && !populated {
+            println!(
+                "\nINCOMPLETE: fixture {} is empty at end of run — \
                  both shells were compared against nothing",
                 dir.display()
             );
