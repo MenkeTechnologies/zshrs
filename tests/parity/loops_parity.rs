@@ -389,3 +389,72 @@ mod for_loop_status_carry {
         assert_parity("set -- a b; (exit 5); for x; do echo $?; (exit 6); done");
     }
 }
+
+/// `Src/loop.c:141-145` + `:199-203` (execfor), `:478-481` (execwhile),
+/// `:534-537` (execrepeat) — a loop that abandons its body because `errflag`
+/// is set forces the escaping status:
+/// `if (errflag) { if (breaks) breaks--; lastval = 1; break; }`.
+/// So a fatal error inside a loop leaves 1, while the same command outside a
+/// loop leaves its own status (a bad `[[ ]]` pattern is 2).
+mod errflag_abort_status {
+    use super::*;
+
+    #[test]
+    fn bad_pattern_in_loop_body_exits_one() {
+        assert_parity("setopt extendedglob; for i in 1 2; do [[ abc == [ ]]; done; print never");
+        assert_parity("setopt extendedglob; while true; do [[ abc == [ ]]; done; print never");
+        assert_parity("setopt extendedglob; until false; do [[ abc == [ ]]; done; print never");
+        assert_parity("setopt extendedglob; repeat 2; do [[ abc == [ ]]; done; print never");
+        assert_parity(
+            "setopt extendedglob; for (( i=0; i<2; i++ )); do [[ abc == [ ]]; done; print never",
+        );
+    }
+
+    /// The same fatal error OUTSIDE any loop keeps the command's own status.
+    #[test]
+    fn bad_pattern_outside_a_loop_keeps_its_own_status() {
+        assert_parity("setopt extendedglob; [[ abc == [ ]]");
+        assert_parity("setopt extendedglob; { [[ abc == [ ]] } 2>/dev/null; print rc=$?");
+    }
+
+    /// The loop still aborts on the first offending iteration, and the
+    /// function it sits in propagates the forced 1.
+    #[test]
+    fn loop_aborts_at_the_error_and_propagates_through_a_function() {
+        assert_parity(
+            "setopt extendedglob; for i in 1 2; do print A; [[ abc == [ ]]; print B; done; print never",
+        );
+        assert_parity(
+            "setopt extendedglob; f(){ for i in 1 2; do [[ abc == [ ]]; done; }; f; print rc=$?",
+        );
+    }
+
+    /// Other errflag sources take the same path.
+    #[test]
+    fn arithmetic_and_readonly_errors_in_a_loop_exit_one() {
+        assert_parity("for i in 1 2; do : $((1/0)); done; print never");
+        assert_parity("while true; do : $((1/0)); done; print never");
+        assert_parity("for i in 1 2; do typeset -r RO=1; RO=2; done; print never");
+    }
+
+    /// An ERREXIT abort is NOT an errflag abort: C leaves execlist through
+    /// `zexit(lastval)` and never reaches the loop's `if (errflag)` arm, so
+    /// the failing command's own status must survive.
+    #[test]
+    fn errexit_abort_keeps_the_failing_commands_status() {
+        assert_parity("setopt errexit; for i in 1 2; do (exit 7); done; print never");
+        assert_parity("setopt errexit; while true; do false; done; print never");
+        assert_parity("setopt errexit; repeat 2; do false; done; print never");
+        assert_parity("setopt errexit; f(){ for i in 1 2; do false; done; }; f; print never");
+    }
+
+    /// Ordinary loop exits are untouched.
+    #[test]
+    fn normal_loop_exits_are_unaffected() {
+        assert_parity("for i in 1 2; do false; done; print rc=$?");
+        assert_parity("for i in 1 2; do (exit 7); done; print rc=$?");
+        assert_parity("f(){ for i in 1 2; do return 5; done; }; f; print rc=$?");
+        assert_parity("for i in 1 2 3; do [[ $i == 2 ]] && break; done; print rc=$?");
+        assert_parity("for i in 1 2; do exit 9; done; print never");
+    }
+}
