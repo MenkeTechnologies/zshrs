@@ -4791,6 +4791,25 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         let kind = vm.pop().to_int();
         let rplyvar = vm.pop().to_str();
         let body = vm.pop().to_str();
+        // !!! POSIX-FAMILY GATE !!! bash, dash and sh have no nofork
+        // command substitution — all three answer `bad substitution` and
+        // fail, measured on this host:
+        //   bash -c 'printf "%s\\n" "${ printf inner; }"'  -> rc 1
+        //   dash -c 'printf "%s\\n" "${ printf inner; }"'  -> rc 2
+        //   sh   -c 'printf "%s\\n" "${ printf inner; }"'  -> rc 1
+        // The Korn family DOES have it (funsub/valsub) and so does zsh
+        // 5.10 (`${ … }` / `${| … }` / `${{VAR} … }`), so the gate is the
+        // bare bash/sh/dash drop-in only: `posix_faithful()` without the
+        // Korn leg. `--zsh` and native zshrs keep the substitution.
+        if crate::dash_mode::posix_faithful() && !crate::dash_mode::korn_mode() {
+            crate::ported::utils::zerr("bad substitution");
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return Value::str("");
+        }
         let live_status = vm.last_status;
         // c:Src/subst.c:1625 — paramsubst's `qt` is "am I inside double
         // quotes", which is a LEXICAL property of the whole word. The

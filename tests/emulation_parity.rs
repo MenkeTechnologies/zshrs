@@ -3105,8 +3105,23 @@ fn korn_funsub_and_valsub_run_in_the_current_shell() {
         );
     }
 
-    // Every other personality keeps zsh's "bad substitution" rejection.
-    for flags in [&["--zsh"][..], &["--bash"][..], &["--dash"][..], &["--sh"][..]] {
+    // The POSIX-family drop-ins keep the "bad substitution" rejection,
+    // because all three references do — measured on this host:
+    //   bash -c 'printf "%s\n" "${ printf inner; }"'  -> rc 1
+    //   dash -c 'printf "%s\n" "${ printf inner; }"'  -> rc 2
+    //   sh   -c 'printf "%s\n" "${ printf inner; }"'  -> rc 1
+    //
+    // `--zsh` is NOT in this list any more. zsh 5.10 added the same three
+    // forms natively as "nofork command substitution" (c:Src/subst.c:
+    // 1913-1922, pinned by zsh's own D10nofork.ztst), and zshrs implements
+    // them for every non-POSIX-drop-in mode — see the gate in
+    // compile_zsh.rs and BUILTIN_KSH_FUNSUB. The zsh 5.9 binaries this
+    // suite runs against still answer "bad substitution", so this is a
+    // deliberate step AHEAD of the installed reference, not a divergence
+    // from it; korn_funsub_and_valsub_run_in_the_current_shell pins the
+    // ksh/mksh half above and the zsh half is covered by the nofork
+    // tests.
+    for flags in [&["--bash"][..], &["--dash"][..], &["--sh"][..]] {
         let (stdout, code) = run_zshrs(flags, r#"print -r -- "${ printf inner; }""#);
         assert_eq!(stdout, "", "{flags:?}: `${{ … }}` must not expand");
         assert_ne!(code, 0, "{flags:?}: `${{ … }}` must be an error");
