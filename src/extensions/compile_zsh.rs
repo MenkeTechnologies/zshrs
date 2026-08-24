@@ -382,6 +382,7 @@ impl ZshCompiler {
             0,
         );
         let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+        self.emit_loop_errflag_status();
         self.emit_cmd_stack_drain();
         let j = self.builder.emit(Op::Jump(0), 0);
         self.return_patches.push(j);
@@ -424,6 +425,33 @@ impl ZshCompiler {
         self.builder.emit(Op::Pop, 0);
     }
 
+    /// c:Src/loop.c:141-145 + :199-203 (execfor), :478-481 (execwhile),
+    /// :534-537 (execrepeat) — every loop that abandons its body because
+    /// `errflag` is set forces the escaping status first:
+    ///
+    /// ```c
+    /// if (errflag) { if (breaks) breaks--; lastval = 1; break; }
+    /// ```
+    ///
+    /// so `for i in 1 2; do [[ abc == [ ]]; done` exits 1 where the bare
+    /// `[[ abc == [ ]]` exits 2. Outside a loop C has no such assignment and
+    /// the failing command's own status survives, hence the `open_loop_depth`
+    /// gate; `execselect` likewise has no assignment, which is why
+    /// `compile_select` does not bump that counter. The runtime op re-tests
+    /// `errflag` itself so an ERREXIT (`set -e`) abort — which in C leaves
+    /// execlist through `zexit(lastval)` and never reaches the loop's
+    /// `if (errflag)` — keeps the failing command's status.
+    fn emit_loop_errflag_status(&mut self) {
+        if self.open_loop_depth == 0 {
+            return;
+        }
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_ERRFLAG_STATUS, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
     fn emit_errexit_check(&mut self) {
         if self.errexit_suppress_depth > 0 {
             // Suppressed for errexit/ZERR — but a fatal errflag still ends
@@ -442,6 +470,7 @@ impl ZshCompiler {
         // cmd_stack and emit the scope-exit Jump tracked by
         // return_patches.
         let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+        self.emit_loop_errflag_status();
         self.emit_cmd_stack_drain();
         let j = self.builder.emit(Op::Jump(0), 0);
         self.return_patches.push(j);

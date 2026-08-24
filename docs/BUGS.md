@@ -289,6 +289,52 @@ Test/D04parameter.ztst:1313 "Modifiers with repetition" now passes.
 
 ---
 
+## #1104 — a fatal error inside a loop exits 2 where zsh exits 1 — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+```zsh
+setopt extendedglob; for i in 1 2; do [[ abc == [ ]]; done
+setopt extendedglob; [[ abc == [ ]]
+```
+```
+zsh  : rc=1   |  rc=2
+zshrs: rc=2   |  rc=2
+```
+
+Every loop in `Src/loop.c` that abandons its body because `errflag` is set
+forces the escaping status first — `execfor` c:141-145 and c:199-203,
+`execwhile` c:478-481, `execrepeat` c:534-537:
+
+```c
+if (errflag) { if (breaks) breaks--; lastval = 1; break; }
+```
+
+so the bad-pattern status 2 never leaves the loop. zshrs's compiled loops
+lower to raw jumps and the fatal-abort edge jumps straight to the chunk-end
+landing, carrying the failing command's own status out. Same divergence for
+every errflag source (`$((1/0))`, a readonly reassignment) and every loop
+form (`for`, `for ((;;))`, `while`, `until`, `repeat`); outside a loop both
+shells agree.
+
+`execselect` (c:217+) deliberately has NO such assignment, and
+`compile_select` is the one loop compiler that does not bump
+`open_loop_depth`, so the new emission skips it for free.
+
+An ERREXIT abort travels the same compiled edge but is NOT an errflag abort:
+in C it leaves execlist through `zexit(lastval)` and never reaches the loop's
+`if (errflag)` arm, so the failing command's status has to survive. The
+runtime op therefore re-tests `errflag` itself rather than trusting the
+compile-time position — `setopt errexit; for i in 1 2; do (exit 7); done`
+still exits 7.
+
+Fixed in `src/extensions/compile_zsh.rs` (`emit_loop_errflag_status`, emitted
+on both abort edges) + `src/fusevm_bridge.rs`
+(`BUILTIN_LOOP_ERRFLAG_STATUS`); covered by
+`tests/parity/loops_parity.rs::errflag_abort_status`.
+
+---
+
 ## #1094 — a background job that finishes before `disown` runs can already be gone from the job table — improved, residual race open
 
 **Status:** `open` (materially improved 2026-08-24; failure rate roughly halved,

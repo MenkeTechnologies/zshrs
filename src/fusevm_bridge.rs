@@ -8917,6 +8917,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::builtin::LOOPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:114
         Value::Int(0)
     });
+    // c:Src/loop.c:141-145 + :199-203 (execfor), :478-481 (execwhile),
+    // :534-537 (execrepeat) — every loop that abandons its body because
+    // `errflag` is set FORCES the escaping status first:
+    //     if (errflag) { if (breaks) breaks--; lastval = 1; break; }
+    // so a fatal error inside a loop leaves 1, not whatever the failing
+    // command set. `setopt extendedglob; for i in 1 2; do [[ abc == [ ]]; done`
+    // exits 1 in zsh while the bare `[[ abc == [ ]]` exits 2; zshrs's compiled
+    // loops jumped straight to the chunk-end landing and carried the cond's 2
+    // out. `execselect` has no such assignment (c:217+), which is why
+    // `compile_select` does not bump `open_loop_depth` and never emits this.
+    vm.register_builtin(BUILTIN_LOOP_ERRFLAG_STATUS, |vm, _argc| {
+        // The `if (errflag)` half of the C guard is re-tested HERE, not at
+        // compile time: the same abort edge also carries an ERREXIT
+        // (`set -e`) exit, which in C leaves execlist via `zexit(lastval)`
+        // and never reaches the loop's `if (errflag)` arm — so that status
+        // must survive untouched.
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            vm.last_status = 1; // c:144/201/480/536
+            with_executor(|exec| exec.set_last_status(1)); // c:144/201/480/536
+        }
+        Value::Int(0)
+    });
     vm.register_builtin(BUILTIN_LOOP_EXIT, |_vm, _argc| {
         use std::sync::atomic::Ordering::SeqCst;
         // Saturating: a chunk aborted mid-loop (errflag, `return`)
@@ -13726,6 +13751,13 @@ pub const BUILTIN_NOERREXIT_SUPPRESS: u16 = 665;
 /// matching save pushed by [`BUILTIN_NOERREXIT_SUPPRESS`].
 /// Stack: untouched. argc = 0.
 pub const BUILTIN_NOERREXIT_RESTORE: u16 = 666;
+
+/// c:Src/loop.c:144 + :201 (execfor), :480 (execwhile), :536 (execrepeat) —
+/// `lastval = 1;` on the `errflag` exit from a loop body. Emitted only on the
+/// fatal-abort path of a compiled for/while/until/repeat; `execselect` has no
+/// such assignment in C and never emits it.
+/// Stack: pushes Int(0). argc = 0.
+pub const BUILTIN_LOOP_ERRFLAG_STATUS: u16 = 667;
 
 thread_local! {
     /// c:Src/exec.c:1417 — C keeps `oldnoerrexit` as an execlist-local
