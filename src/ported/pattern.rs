@@ -759,6 +759,41 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 // Raw `\X` — Bnull-equivalent quoting marker in the
                 // zshrs pipeline; pass both through to the parser's
                 // `\X` literal arm. Trailing lone `\` stays itself.
+                //
+                // C draws two provenances here that this arm cannot see
+                // apart (docs/BUGS.md #1090):
+                //   source quote — `[[ "man ls" = man\ * ]]`, `${v//\%/%%}`
+                //   pattern DATA — `p='a\ b'; ${arr[(I)$p]}`
+                // c:Src/glob.c:3633-3643 `zshtokenize` honors the escape only
+                // before a `ztokens` metacharacter and leaves BOTH bytes as
+                // literals before anything else — so in C a raw backslash in
+                // the tokenized input is DATA and a quote is `Bnull`. Every
+                // source path in zshrs hands this arm a raw backslash for the
+                // quote (the cond/case pattern builder in
+                // `extensions::compile_zsh`, `${…//…}`'s builder in
+                // `ported::subst`), so the raw form has to keep meaning
+                // "quote" here; enforcing the C rule at this site alone
+                // regressed 8 real-world corpus tests across zinit / p10k /
+                // zpwr / fsh.
+                //
+                // The provenance is therefore settled UPSTREAM instead: a
+                // pattern built from a VALUE spells a data backslash `\\`
+                // (this arm's literal-backslash form) before it gets here.
+                // `escape_data_backslashes` in `ported::subst`'s paramsubst
+                // does that for the search-subscript patterns
+                // (`${a[(I)…]}` / `(i)` / `(r)` / `(R)` / `(K)`), which is
+                // the whole set that reaches `patcompile` through
+                // `zshtokenize` alone (c:Src/params.c:1727).
+                //
+                // STILL OPEN (#1090, globsubst leg): `${~spec}` in a `[[ ]]`
+                // RHS or `case` arm. That value is emitted as a bare variable
+                // read and tokenized by the cond/case matcher, so nothing in
+                // `ported::subst` sees it and the escape would have to happen
+                // at that matcher. Doing it inside paramsubst instead is
+                // wrong: the doubled backslash then leaks into NON-pattern
+                // uses of `${~arr[i]}`, which nothing untokenizes back.
+                // Pinned by the `#[ignore]`d globsubst cases in
+                // `tests/parity/cond_parity.rs`.
                 opush!('\\');
                 if i + 1 < chars.len() {
                     opush!(chars[i + 1]);
@@ -1322,8 +1357,7 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
 // just before returning; the `(` arm reads it immediately after its own
 // patcompswitch call returns, so nested groups each observe their own
 // value.
-static PATSWITCH_GFCHANGED: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
+static PATSWITCH_GFCHANGED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `patcompbranch(int *flagp, int paren)` from `Src/pattern.c:942`.
 ///
@@ -1617,12 +1651,12 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                                                                         // Marker under SHGLOB (c:500-510) or `disable -p '('`. With `(`
                                                                         // disabled, `(#i)abc` is the LITERAL text `(#i)abc`, so the
                                                                         // flag spec must not fire.
-        // c:955-956 — the ksh form `@(#...)`:
-        //   `(*patparse == zpc_special[ZPC_KSH_AT] &&
-        //     patparse[1] == Inpar && patparse[2] == zpc_special[ZPC_HASH])`
-        // is equally a glob-flag specifier. c:961 then skips 3 bytes
-        // instead of 2. Misc/globtests.ksh:94 writes `(#i)FOO@(#I)X@(#i)X`
-        // and zshrs reported "bad pattern" without this arm.
+                                                                        // c:955-956 — the ksh form `@(#...)`:
+                                                                        //   `(*patparse == zpc_special[ZPC_KSH_AT] &&
+                                                                        //     patparse[1] == Inpar && patparse[2] == zpc_special[ZPC_HASH])`
+                                                                        // is equally a glob-flag specifier. c:961 then skips 3 bytes
+                                                                        // instead of 2. Misc/globtests.ksh:94 writes `(#i)FOO@(#I)X@(#i)X`
+                                                                        // and zshrs reported "bad pattern" without this arm.
         let sp_ksh_at = zpc_special.lock().unwrap()[ZPC_KSH_AT as usize];
         let at_form = hash_char == b'#'
             && sp_ksh_at != 0
@@ -2434,17 +2468,17 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     return -1;
                 }
                 *flagp |= flags2 & P_HSTART; // c:1526
-                // c:1019 — the caller chains the FOLLOWING piece with
-                // `pattail(chain, latest)`, which WALKS to the end of this
-                // piece's next-chain. patcompnot's chain is
-                // `P_BRANCH -> P_EXCLUDE -> P_NOTHING` (c:1773, c:1779-1781),
-                // so the tail is the trailing P_NOTHING, NOT the P_BRANCH.
-                // Reporting the P_BRANCH made patcompbranch's `set_next`
-                // OVERWRITE the branch's link to the P_EXCLUDE, silently
-                // deleting the negation whenever anything followed it:
-                // `[[ foob = !(foo)b* ]]` matched, as did
-                // `[[ mad.moo.cow = !(*.*).!(*.*) ]]`. (The `^pat` arm in
-                // patcompbranch already compensates by hand.)
+                                             // c:1019 — the caller chains the FOLLOWING piece with
+                                             // `pattail(chain, latest)`, which WALKS to the end of this
+                                             // piece's next-chain. patcompnot's chain is
+                                             // `P_BRANCH -> P_EXCLUDE -> P_NOTHING` (c:1773, c:1779-1781),
+                                             // so the tail is the trailing P_NOTHING, NOT the P_BRANCH.
+                                             // Reporting the P_BRANCH made patcompbranch's `set_next`
+                                             // OVERWRITE the branch's link to the P_EXCLUDE, silently
+                                             // deleting the negation whenever anything followed it:
+                                             // `[[ foob = !(foo)b* ]]` matched, as did
+                                             // `[[ mad.moo.cow = !(*.*).!(*.*) ]]`. (The `^pat` arm in
+                                             // patcompbranch already compensates by hand.)
                 let mut t = starter_off as usize;
                 loop {
                     let n = {
@@ -2821,10 +2855,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     // PURES fast path is off, i.e. under `(#i)`/`(#a1)`, so
                     // `(#i)sub/deep.txt` compiled `sub/deep.txt` as ONE
                     // component and matched nothing — even with exact case.
-                    b'/' => {
-                        paren == 0
-                            && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0
-                    }
+                    b'/' => paren == 0 && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0,
                     _ => false,
                 };
                 if stop_here {
@@ -5359,9 +5390,7 @@ pub fn patmatch(
         // frozen into the compiled program.
         let live_class_hit = |ch: char| -> bool {
             use crate::ported::ztype_h::{iwsep, IIDENT, ISEP, IWORD};
-            if (classmask & (1 << 10)) != 0
-                && crate::ported::utils::wcsitype(ch, IIDENT as u32)
-            {
+            if (classmask & (1 << 10)) != 0 && crate::ported::utils::wcsitype(ch, IIDENT as u32) {
                 return true; // c:3702-3706
             }
             if (classmask & (1 << 11)) != 0 && crate::ported::utils::wcsitype(ch, ISEP as u32) {
@@ -5911,18 +5940,14 @@ pub fn patmatch(
                     // `readme` vs `(#i)readme~README|readme~README` ran the
                     // SECOND branch's exclusion case-insensitively and
                     // wrongly excluded the match.
-                    let branch_flags_eff = if code
-                        .get(asserted_operand + I_OP)
-                        .copied()
-                        .unwrap_or(0)
-                        == P_GFLAGS
-                    {
-                        let b = asserted_operand + I_BODY;
-                        let bits = i32::from_le_bytes(code[b..b + 4].try_into().unwrap());
-                        (glob_flags & !(GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | 0xff)) | bits
-                    } else {
-                        glob_flags
-                    };
+                    let branch_flags_eff =
+                        if code.get(asserted_operand + I_OP).copied().unwrap_or(0) == P_GFLAGS {
+                            let b = asserted_operand + I_BODY;
+                            let bits = i32::from_le_bytes(code[b..b + 4].try_into().unwrap());
+                            (glob_flags & !(GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | 0xff)) | bits
+                        } else {
+                            glob_flags
+                        };
                     let exclude_node = next;
                     // Allocate (reset) the sync buffer for this EXCLUDE.
                     let prev_buf = EXCSYNC_BUF.with(|b| {
@@ -6024,10 +6049,7 @@ pub fn patmatch(
                             // `[[ xyz = readme~README|xyz ]]` never tried
                             // `xyz`.
                             let mut nxt = next;
-                            while nxt != 0
-                                && nxt < code.len()
-                                && P_ISEXCLUDE(code[nxt + I_OP])
-                            {
+                            while nxt != 0 && nxt < code.len() && P_ISEXCLUDE(code[nxt + I_OP]) {
                                 let nb: [u8; 4] =
                                     code[nxt + I_NEXT..nxt + I_NEXT + 4].try_into().unwrap();
                                 nxt = u32::from_le_bytes(nb) as usize;
@@ -6169,8 +6191,8 @@ pub fn patmatch(
                     }
                     patinput += 1; // c:2862
                     compend += 1; // c:2863
-                    // c:2865-2873 — out of range "allowing for signedness,
-                    // which we need if we are using zlongs".
+                                  // c:2865-2873 — out of range "allowing for signedness,
+                                  // which we need if we are using zlongs".
                     if out_of_range || (comp & (1i64 << 62)) != 0 {
                         // c:2875-2881 — "This is as far as we can go. If
                         // we're doing a range \"from\", skip all the
@@ -6223,10 +6245,10 @@ pub fn patmatch(
                     save -= 1;
                     patinput = save;
                     no += 1; // c:2902
-                    // c:2903-2908 — "With a range start and an
-                    // unrepresentable test number, we just back down the
-                    // test string without changing the number until we get
-                    // to a representable one."
+                             // c:2903-2908 — "With a range start and an
+                             // unrepresentable test number, we just back down the
+                             // test string without changing the number until we get
+                             // to a representable one."
                     if patinput < compend {
                         comp /= 10;
                     }

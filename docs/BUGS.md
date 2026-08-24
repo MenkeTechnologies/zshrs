@@ -19,6 +19,492 @@ CI green pending the underlying fix.
 
 ---
 
+## #1095 — `chflags` offered six root-only flags to an ordinary user — fixed
+
+**Status:** `fixed` 2026-08-24. Two independent engine bugs met on one line of
+`compsys::ported::BSD::Type::_file_flags` (sh:6 `su = (( ! EUID || $+_comp_priv_prefix ))`),
+both forcing `su` true, so `chflags <TAB>` gained `arch`/`noarch`,
+`sappnd`/`nosappnd`, `schg`/`noschg`.
+
+1. **`getiparam("EUID")` returns 0 for everyone.** `$EUID` is libc-backed via
+   `euidgetfn()` (`params.rs:11271` → `geteuid(2)`), and only the SCALAR getter
+   consults it (`params.rs:15049`). `getiparam` short-circuits on the node's
+   PM_INTEGER flag and returns `u_val` (`params.rs:5720-5726`), which nothing
+   writes. Same family as the HISTCMD note directly above that code.
+2. **`getaparam(x).is_some()` is not `${+x}`.** `_main_complete:42-43` does
+   `local _comp_priv_prefix` then `unset _comp_priv_prefix`, so the node exists
+   carrying PM_UNSET; `getaparam` hands back `Some(vec![])` for it
+   (`params.rs:6250-6255` never consults PM_UNSET). Shell semantics confirmed
+   identical in both shells: `f(){ local x; unset x; print $+x }` → `0`.
+
+Fixed at the call site — read EUID through `getsparam` (the path `$EUID` uses)
+and test set-ness with `issetvar` (`params.rs:1503`, the `[[ -v … ]]` path).
+Harness: FAIL (16 rows) → PASS.
+
+**Both underlying defects are still open and affect every caller** — `getiparam`
+ignoring a libc-backed getter, and `getaparam` reporting a declared-but-unset
+parameter as set. Fixing them in `params.rs` should let the call site revert to
+the literal `sh:6` shape.
+
+---
+
+## #1096 — `$words` / `$CURRENT` are not views onto `compwords` / `compcurrent` — partially worked around
+
+**Status:** `open` (engine), symptom fixed for `comparguments -i` 2026-08-24.
+
+In C the two parameters are gsu VIEWS onto the globals —
+`{ "words", PM_ARRAY, VAL(compwords), … }` / `{ "CURRENT", PM_INTEGER, VAL(compcurrent), … }`
+(c:Src/Zle/complete.c:1249-1251) — so a completer assigning `$words`/`$CURRENT`
+moves the globals and the next `comparguments -i` re-parses the rewritten line.
+That idiom injects a synthetic command word before re-entering `_arguments`.
+
+zshrs has no gsu binding: the parameters own their own copies while
+`ca_parse_line` reads `COMPWORDS`/`COMPCURRENT` (`complete.rs:287`,
+`computil.rs:3917`, `:5011-5017`); only the global→parameter direction was
+mirrored (`complete.rs:1626-1635`, `restrict_range`).
+
+Minimal repro, `zsh -f` + `compinit`:
+```zsh
+_tst() { words=( tst foo '' ); CURRENT=3; _arguments ':a:(a1 a2)' ':b:(b1 b2)' }
+```
+`tst <TAB>` → zsh `tst b` (positional 2), zshrs `tst a` (positional 1).
+
+`Completion/Unix/Command/_ansible:296-297` is the real caller
+(`words=( role "$words[@]" ); (( CURRENT++ ))`), so `ansible-galaxy <TAB>` lost
+nine `->galaxy` subcommands and offered only `collection`/`role`. Harness:
+FAIL → PASS via a parameter→global mirror on the `-i` path in
+`compsys/…/_arguments.rs`. **The general fix is a real gsu binding in
+`complete.rs`**; until then any other assignment site stays wrong.
+
+---
+
+## #1097 — a glob qualifier with trailing text is a fatal `bad pattern` in zsh, a literal in zshrs — open
+
+**Status:** `open`, root cause proven 2026-08-24.
+
+```zsh
+$ /bin/zsh -f -c 'setopt nonomatch; t=( *(-/):t:directories ); print -r -- "n=$#t"'
+zsh:1: bad pattern: *(-/):t:directories          # rc=1, aborts the enclosing function
+$ zshrs --zsh -f -c '…same…'
+n=1                                              # rc=0
+```
+
+Boundary measured: `*(-/)` / `*(/)` (a directory-only qualifier) followed by
+trailing `:…` is fatal in zsh; `*(-.):t:source` is not (both shells return the
+literal under `nonomatch`).
+
+Consumer: `_CC`'s last spec passes `_files -g "*(-.):t:source files" -g "*(-/):t:directories"`.
+The user's `_files` override builds one brace expansion of both, and
+`_path_files:472` (`tmp1=( $~tmp1 ) 2>/dev/null`) globs each alternative — zsh
+dies on the third, never reaches the `directories` sdef, and completes uniquely
+to `files`; zshrs keeps going and adds 18 directories. Lives in
+`ported/glob.rs` / `ported/pattern.rs`. Affects comptab cell `CC `.
+
+---
+
+## #1098 — an unquoted command substitution nested inside `${…}` is IFS-split twice — open
+
+**Status:** `open`, root cause proven 2026-08-24.
+
+```zsh
+s='Foo Bar,Baz Qux,'
+a=( ${(s:,:)s} )                       # zsh n=2   zshrs n=2
+b=( ${(s:,:)"$(print -rn -- $s)"} )    # zsh n=2   zshrs n=2
+c=( ${(s:,:)$(print -rn -- $s)} )      # zsh n=2   zshrs n=4   [Foo|Bar|Baz|Qux]
+d=( ${(s:,:)${s}} )                    # zsh n=2   zshrs n=2
+e=( ${(s:,:)$(<<<$s)} )                # zsh n=2   zshrs n=4
+```
+
+Only an unquoted command substitution NESTED inside `${…}` is additionally
+IFS-split by zshrs; zsh treats the inner result as one word for the outer flags.
+
+Consumer: `_xft_fonts:38` —
+`${(us:,:)$(_call_program fonts fc-list -f '%\{family\},')}`. Measured inside
+the live completion: zsh 800 elements, zshrs 2082, because family names with
+spaces get shredded. That moves the match count (800 → 801) and the column
+layout (823 → 812 display rows). Lives in `ported/subst.rs`. Affects comptab
+cells `fc-list `, `fc-match `.
+
+---
+
+## #1099 — a parse error while autoloading under `emulate ksh -c` is misattributed and not fatal — open
+
+**Status:** `open`, root cause proven 2026-08-24.
+
+```zsh
+fpath=(/tmp/ksfp $fpath); autoload -Uz _files
+g(){ emulate ksh -c _files }
+g; print "rc=$?"
+```
+```
+zsh  : _files:36: parse error: condition expected: "$glob"          rc=1
+zshrs: g:36: parse error: condition expected: glob
+       g:50: parse error: condition expected: glob
+       g:1: _files: function not defined by file                    rc=1
+```
+
+`emulate ksh -c f` puts SH_GLOB in effect while `f` is autoloaded, so the file
+is PARSED under ksh rules and `(#b)` is a `[[` parse error. Four divergences:
+zshrs attributes the error to the caller instead of the loadee, emits two errors
+where zsh abandons the parse after one, adds a spurious
+`function not defined by file`, and prints the offending token without its
+source-text quoting.
+
+Chain for comptab cells `git-cvsserver `/`git-cvsserver -`: `_git:281`
+(`emulate ksh -c _${service}`) → `_git-cvsserver:9` → `_arguments`. Under zsh
+the SHELL `_arguments` is autoloaded inside that emulation and dies at its own
+line 135, so `_git`'s `let _ret && _default` fallback lists all files. zshrs's
+`_arguments` is a native Rust port with no parse step, so it succeeds and lists
+options. **The cells therefore cannot match while `_arguments` is a port** —
+matching would require zsh's shell `_arguments` to be parsed under ksh emulation
+and fail. The attribution bugs live in the autoload+parse path
+(`ported/exec.rs`, `ported/parse.rs`, `zerrmsg`) and are worth fixing on their
+own merits.
+
+The worklist's older `__origfiles:30/41/82` math-expression cascade is **gone** —
+`(I)` subscripts inside `(( ))` now agree in both shells.
+
+---
+
+## #1094 — a background job that finishes before `disown` runs can already be gone from the job table — improved, residual race open
+
+**Status:** `open` (materially improved 2026-08-24; failure rate roughly halved,
+not eliminated). Surfaced by the generated probe corpus
+(`zsh_compat_parity_gaps::probe_sweep_2026_06_12_b::probe_b_row_149`), which is
+intermittently red in a full-suite run and green in isolation.
+
+```zsh
+/bin/echo bg & disown 2>/dev/null; print rc=$?
+```
+
+**Cause of the part that is fixed.** `bin_fg` (which serves
+`fg`/`bg`/`jobs`/`wait`/`disown`) ran an UNCONDITIONAL `scanjobs()` at entry,
+sweeping and deleting every done job before the builtin dispatched. C has no
+such call — c:Src/jobs.c:2467-2478 is `queue_signals(); wait_for_processes();
+if (unset(NOTIFY)) scanjobs();`, and NOTIFY is on by default so that `scanjobs`
+never fires. C's report-and-delete is `update_job`'s tail, gated at c:639 on
+`(isset(NOTIFY) || job == thisjob) && (jn->stat & STAT_LOCKED)`. `STAT_LOCKED`
+is the load-bearing half: a job is locked only once its command list has been
+submitted, so a `&` job started earlier in the SAME list stays in the table for
+`disown` to find.
+
+**Fix applied.** Drop the unconditional sweep from `bin_fg` (`ported::jobs.rs`,
+c:2474) and port c:639's gated tail into `update_bg_job` after its `update_job`
+call, where the table and index are both in hand (the ported `update_job` is a
+pure state transition, so printjob's side effects live in
+`exec_jobs::printjob_delete_tail`, c:1350-1363). Removing the sweep alone
+regressed `/bin/echo a & sleep 0.3; jobs`, which then listed a done job zsh had
+already swept; the `STAT_LOCKED` gate is what makes both shapes agree.
+
+**Measured, controlled A/B under identical CPU load** (four spinners, the same
+150 iterations back-to-back, same session):
+
+```
+HEAD (no fix)      zsh 2/150     zshrs 37/150
+with the fix       zsh 1/150     zshrs 19/150
+```
+
+On a quiet box the fix measures 0/100 and 0/300; the residual only appears under
+load. **Note that zsh is not 0 under load either** — the shape is inherently
+racy for both shells; zshrs is simply still an order of magnitude worse.
+
+**Attempted and reverted — do not repeat.** Also removing the `scanjobs()` call
+from the SIGCHLD handler (`ported::signals.rs`, NOTIFY-gated) on the theory that
+it was the remaining deleter made the rate **worse**, 48/150 under the same
+load. Whatever remains is not that call.
+
+**Where to look next.** C brackets its critical sections with
+`queue_signals()`/`unqueue_signals()` so a SIGCHLD arriving mid-list is deferred
+rather than mutating the job table under a running builtin; `bin_fg` already
+queues (c:2467, ported at `jobs.rs:2985`), so the remaining window is before the
+builtin is entered — between the `&` fork and the dispatch. zshrs has the
+queueing primitives (`ported::signals_h::queue_signals` and friends, honored by
+the handler at `signals.rs:373`); the gap is which sections take them.
+
+**Do not `#[ignore]` this probe** — unlike the five in #1093 it is a genuine
+zshrs bug, and the CI flakiness is the bug reporting itself.
+
+---
+
+## #1093 — five parity tests assert against zsh 5.9 where zshrs targets the newer vendored tree — ignored, not a gap
+
+**Status:** `ignored` 2026-08-24. Not port bugs; each is the local oracle being
+older than the C the port follows, or a property of the debug build.
+
+The parity suites diff zshrs against the installed `/bin/zsh` **5.9** (2022-05),
+but the port is written against the vendored tree at
+`/Users/wizard/forkedRepos/zsh`, which reports `VERSION=5.9.0.3-test`. Where the
+two disagree the suite flags zshrs, and zshrs is right. Each test carries the
+citation in its `#[ignore]` reason.
+
+**`time` on builtins / current-shell actions — 3 tests**
+`time_keyword_parity::time_stderr_present::time_emits_some_stderr_in_zsh`,
+`::time_default_stderr_format_has_known_marker`,
+`time_keyword_parity::timefmt::timefmt_J_just_command_name`.
+
+`time true` prints nothing under 5.9 and prints `shell` / `children` under
+zshrs. That behaviour was ADDED by upstream 53088 (ChangeLog 2024-09-14, Bart
+Schaefer): *"enable `time' on builtins, assignments, and other current-shell
+actions, including failed commands"*, which also added `Test/A08time.ztst`
+chunks 8-15. The vendored tree carries the `c:Src/exec.c:4443` call, and zsh's
+own test file passes against zshrs:
+
+```
+$ cargo test --test ztst_runner -- a08_time
+test a08_time ... ok
+```
+
+`src/fusevm_bridge.rs` already carries a `!!! DO NOT "FIX" THIS TO PRINT
+NOTHING !!!` note on the `is_cursh` arm for exactly this reason. Verified
+agreeing shapes: `time sleep 0`, `time /bin/true`, `time ( : )`, bare `time`.
+
+**Dotted parameter names — 1 test**
+`modules_parity::hlgroup_module::esc_and_sgr_for_named_group`.
+
+Not about `zsh/hlgroup`: `zmodload zsh/hlgroup` fails in BOTH shells. The
+divergence is the next line, `typeset -gA .zle.hlgroups` — 5.9 answers
+`typeset: not valid in this context: .zle.hlgroups` and aborts the script, and
+rejects plain `typeset -g a.b=1` the same way. zshrs accepts both because
+`ported::params::isident` mirrors the vendored `isident`, which opens with an
+explicit leading-`.` namespace block (*"we need to distinguish the leading
+namespace at this point"*) absent from 5.9.
+
+**Debug-build CPU — 1 test**
+`zsh_compat_parity_gaps::corpus_dash_fc_control_flow::times_builtin_summary`.
+
+`times` reports the shell's own consumed CPU. The unoptimised binary spends more
+of it before reaching the builtin — measured at startup, zsh `user 0.00 sys
+0.00` against zshrs `user 0.01 sys 0.01` — so zshrs prints `0m0.01s` where zsh
+prints `0m0.00s`. Deterministic across 6/6 runs, so it is a true measurement of
+this build rather than flakiness; a release build rounds back to `0.00`, but
+CLAUDE.md pins local dev to debug builds.
+
+**If the reference shell is ever upgraded past 53088, un-ignore all five and
+re-measure** — the first four should pass unchanged.
+
+---
+
+## #1092 — completion lines that tie on the display string kept insertion order; zsh inherits libc `qsort`'s tie permutation — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+`afconvert -` lists `--soundcheck-generate` twice with different descriptions.
+Measured with `scripts/comptab_parity.py --case 'afconvert -' --keys tab
+--rows 40 --cols 110 --settle 1500`, exactly two rows differed — a clean swap.
+
+**The sort that decides this is `cd_sort`, not `matchcmp`.** For
+`_arguments`-generated option descriptions, `_arguments:515,527` reaches options
+via `_describe -O option`, and `_describe` defaults to `list-grouped`, so it
+passes `-g`; `cd_init` runs `cd_group` (c:Src/Zle/computil.c:127) and
+`cd_state.groups != 0`, which sends `cd_prep` down the **grouped** branch
+(c:246-395) rather than `CRT_DESC`. That branch emits one `CRT_SPEC` run per
+listing line plus a trailing `CRT_EXPL` run:
+
+- `CRT_SPEC` (c:741-745) — `mats[0] = run->strs->match; dpys[0] = run->strs->str`,
+  the BARE name, added with `-2V<grp>` (c:747-762), an **unsorted** group.
+- `CRT_EXPL` (c:770-830) — `mats` empty, `dpys[i] = sep + desc + padding`, the
+  description column, display-only.
+
+Verified live against `/bin/zsh` 5.9 with a `compdescribe` shell wrapper:
+
+```
+RUN opts=[… -2V -default-] mats=[--soundcheck-generate] dpys=[--soundcheck-generate]
+RUN opts=[… -2V -default-] mats=[--soundcheck-generate] dpys=[--soundcheck-generate]
+RUN opts=[-E22 … -J -default-] mats=[] dpys=[… -- Also enabled. … -- analyze audio, add SoundCheck …]
+```
+
+So descriptions never travel in `disp`, `makearray`/`matchcmp` are not involved
+at all, and because the groups are `-2V` the listing order IS the order
+`cd_prep` emits its runs. The decision happens at c:305-306:
+
+```c
+if (cd_groups_want_sorting())
+    qsort(grps, preplines, sizeof(Cdstr), cd_sort);
+```
+
+`cd_sort` (c:233-236) compares only `sortstr`, the bare display string, so the
+two entries TIE — and `qsort(3)` is not stable. zshrs used
+`tolerant_sort::qsort_tolerant`, a stable merge sort, and so preserved insertion
+order. Replaying libc's permutation directly on the real 22-element input
+reproduces zsh byte-for-byte: input index 6 (`Also enabled.`) lands before index
+3 (`analyze audio…`).
+
+**Fix.** `ported::zle::computil::cd_prep`, the c:306 sort only — call
+`libc::qsort` over `*mut cdstr` element pointers with an `extern "C"` thunk
+delegating to the existing `cd_sort`, so the tie permutation matches per
+platform instead of being hardcoded. Ownership is round-tripped through
+`Box::into_raw` / `Box::from_raw`. Nothing else changed; the `CRT_EXPL` run
+still supplies descriptions exactly once, so rendering is untouched.
+
+**Results.** `afconvert -` FAIL → PASS. The whole group 0/8 → **8/8**
+(`afconvert -`, `busted -`, `cjk-gs-integrate -`, `elixirc -`, `gptx -`,
+`hexgplc -`, `httpd-wrapper -`, `hwloc-distrib -`). The 11 already-passing cells
+stay 11/11. Native mode passes too. `cargo test --lib -- computil` 118 passed;
+`--test parity -- complet` 23 passed; `ztst_runner` `y01_completion`,
+`y02_compmatch`, `y03_arguments` all green.
+
+**Two wrong turns, recorded so they are not repeated.** This entry previously
+blamed (1) sort stability at `makearray`'s `matchcmp`, implemented and measured
+as 0/8 with output unchanged, then (2) "`disp` lacks the description", from
+instrumentation showing both matches reaching `makearray` with identical `str`
+and `disp`. Both readings were wrong in the same way: the mechanism really WAS
+an unstable-`qsort` tie, but at a different sort site. **Disproving a mechanism
+at one call site does not disprove the mechanism** — `makearray` was simply not
+the sort that orders this listing.
+
+**Harness note:** `comptab_parity.py` builds the child env from scratch and
+forwards only `ZSHRS_LOG` / `RUST_LOG`. A probe keyed off any other variable
+silently never fires and reads as "this code is never called" — that produced
+wrong turn (2).
+
+---
+
+## #1090 — a backslash in a match pattern lost its provenance, so a `${(q)}`-quoted needle matched one character too few — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+```zsh
+a=('a b'); b=('a\ b'); p='a\ b'
+${a[(I)$p]}            # zsh 0, zshrs was 1
+${b[(I)$p]}            # zsh 1, zshrs was 0
+[[ 'a b'  == ${~p} ]]  # zsh no,  zshrs matched
+```
+
+A backslash in a pattern means two opposite things:
+
+- **source quoting** — `[[ "man ls" = man\ * ]]`, `${branch//\%/%%}`; the lexer
+  quotes the char and the backslash is not pattern data.
+- **data** — `p='a\ b'`; the backslash is an ordinary character of the value.
+
+c:Src/glob.c:3633-3643 `zshtokenize` is the spec: a raw backslash becomes a
+`Bnull` quote marker ONLY before a glob metacharacter; before anything else
+nothing is rewritten and BOTH bytes survive as literals. Escapes before real
+metas (`\*`, `\$`) already agreed.
+
+**Failed approach, do not repeat.** Enforcing that rule inside `patcompile`'s
+input normalizer fixes every data case and breaks every source case, because in
+zshrs every source path hands that arm a raw backslash for the quote. Measured:
+**8 real-world corpus regressions** across zinit, powerlevel10k, zpwr and
+fast-syntax-highlighting — `${branch//\%/%%}` stopped substituting,
+`${local_dir//\//--}` stopped splitting, `${entry%\%*}` stopped stripping.
+Patching the two known laundering sites was not enough.
+
+**Fix.** Settle the provenance UPSTREAM instead of at the matcher. A pattern
+built from a VALUE now spells a data backslash as `\\` — the normalizer's
+literal-backslash form — before it reaches the compiler, via
+`escape_data_backslashes` in `ported::subst`'s `paramsubst`, applied to
+search-subscript patterns and to the `${~spec}` value at the `strcatsub` site
+(c:Src/subst.c:822/4464). Source paths are untouched, so the raw form keeps
+meaning "quote" at the normalizer and both provenances are correct at once.
+
+**Verified.** All nine shapes byte-identical to zsh — the four data cases, the
+two source cases (`[[ "man ls" = man\ * ]]`, `case … in man\ *)`), and
+`${branch//\%/%%}` → `feat%%50`, `${d//\//--}`, `${e%\%*}`. The 8 previously
+regressed corpus tests plus `omz_snippet_corpus_parity::omzp_man::glob_equality_guard`
+all pass. `tests/parity/cond_parity.rs::backslash_provenance_in_patterns` — 12
+tests covering both provenances, escapes before real metacharacters, and a
+trailing lone backslash — is fully live; its 8 data-provenance cases were
+`#[ignore]`d against this entry and the attributes are now removed.
+
+---
+
+## #1091 — `_arguments` split a `(…)` / `((…))` action list on whitespace instead of eval'ing it — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+```zsh
+_arguments '1:command:((a\:"add files to archive" b\:"benchmark"))'
+```
+zsh offers one match, `a  -- add files to archive`. zshrs offered four: `a`
+described as `"add`, plus `files`, `to`, `archive"`, quote characters included.
+
+c:Completion/Base/Utility/_arguments:425 and :435 —
+`eval ws\=\( "${action[3,-3]}" \)` / `eval ws\=\( "${action[2,-2]}" \)`. The
+body is an ARRAY-ASSIGNMENT word list, so it gets the full shell tokenizer:
+quoting, backslash escapes, parameter and command substitution, globbing. The
+port used `body.split_whitespace()`.
+
+Fixed by running the assignment the way zsh does. `7z ` was the worst case: the
+split multiplied the match count enough to take the completion from zsh's 0.10s
+to over 25s. Root-cause group 1 of `scripts/comptab_divergent_cases.txt`
+(`7z`, `7za`, `7zr`, `ansible-config`).
+
+---
+
+## #1088 — a leading `~` in a match pattern stayed literal, so powerlevel10k lost its home/home-subfolder directory icon — fixed
+
+**Status:** `fixed` 2026-08-23.
+
+```zsh
+cwd=$HOME/foo
+[[ $cwd == ~/* ]]  && echo A          # zsh: A     zshrs: (nothing)
+[[ $HOME == ~ ]]   && echo B          # zsh: B     zshrs: (nothing)
+a='~/*'; [[ $cwd == ${~a} ]] && echo D   # zsh: D  zshrs: (nothing)
+case $cwd in (~/*) echo F;; esac      # zsh: F     zshrs: (nothing)
+```
+
+c:Src/cond.c:299-307 evaluates the RHS of `==` as
+`right = dupstring(ecrawstr(…)); singsub(&right); … patcompile(right, …)`.
+`singsub` is `prefork(PREFORK_SINGLE)` (c:Src/subst.c:520) and prefork runs
+`filesub`, so an unquoted leading `~` in a pattern is a home directory. The
+`case` word takes the same route (c:Src/loop.c:610). zshrs untokenized the
+pattern at compile time and re-tokenized it inside the matcher, and the
+tilde never met `filesub` on either side of that round trip.
+
+The visible casualty was powerlevel10k's `dir` segment. Its
+`_POWERLEVEL9K_DIR_CLASSES` walk (internal/p10k.zsh:2029) tests
+`[[ $_p9k__cwd == ${~a} ]]` against `/etc|/etc/*`, `~`, `~/*`, `*` in order.
+Both tilde classes missed, every path under `$HOME` fell through to the `*`
+DEFAULT class, and the prompt drew `FOLDER_ICON` (U+F115) where zsh draws
+`HOME_SUB_ICON` (U+F07C).
+
+Fixed by `pattern_filesub` in `src/fusevm_bridge.rs`, applied in
+`BUILTIN_COND_STRMATCH` and `ShellHost::str_match`: shtokenize → `filesub` →
+untokenize, gated on a LEADING `~` (raw or Tilde token), which is all
+`filesubstr` (c:Src/subst.c:741) ever expands. A `~` elsewhere is
+EXTENDED_GLOB's "except" operator and passes through untouched; a quoted one
+has already been backslash-escaped by `escape_quoted_glob_metas` and so fails
+the leading-char test.
+
+---
+
+## #1089 — `return` out of a redirected compound command leaked the redirection into the caller, killing gitstatusd — fixed
+
+**Status:** `fixed` 2026-08-23.
+
+```zsh
+printf 'AAA\nBBB\n' > inp.txt
+f() { local l; while IFS= read -r l; do return 0; done <inp.txt; }
+f; print -n "fd0: "; cat            # zsh: the shell's stdin   zshrs: BBB
+```
+
+Same for `{ …; return } < f`, `for … do return; done < f` and
+`if …; then return; fi < f`; plain loop exit and `break` were already
+correct. c:Src/exec.c:4364 runs `fixfds(save)` on every exit path out of
+`execcmd_exec`, `return`'s included. zshrs compiles `return` to a Jump past
+the body's `WithRedirectsEnd`, so the scope stayed on
+`redirect_scope_stack` and its saved fds never came back — the caller
+inherited the callee's redirected fd.
+
+gitstatus tripped over it. `gitstatus.plugin.zsh`'s daemon sets fd 0 to the
+request FIFO, then sources `gitstatus/install`, whose
+`_gitstatus_install_main` returns out of
+`while … done <"$gitstatus_dir"/install.info`. fd 0 stayed on install.info,
+so `gitstatusd` read EOF on startup and logged `src/request.cc:116 EOF.
+Exiting.`; `gitstatus_start` then failed its handshake with
+`kill -- -$pgid: no such process`. With no gitstatusd, `VCS_STATUS_REMOTE_URL`
+is empty, powerlevel10k's `_p9k_vcs_icon` falls through to the `*` arm
+(internal/p10k.zsh:3867) and draws the generic `VCS_GIT_ICON` (U+F1D3)
+instead of `VCS_GIT_GITHUB_ICON` (U+F113).
+
+Fixed by `ShellExecutor::unwind_redirect_scopes_to` in
+`src/fusevm_bridge.rs`, called around the function-body run in both
+`dispatch_function_call` and `run_function_body_only`
+(`src/vm_helper.rs`): every scope opened above the depth recorded at entry
+is closed, restoring its saved fds.
+
+---
+
 ## #1083 — a quoted word that was entirely one expansion vanished when the pattern held a backslash — fixed
 
 **Status:** `fixed` 2026-08-18.

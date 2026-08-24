@@ -848,3 +848,227 @@ print -r -- "${history[(R)(#i)*BETA*]}""#,
         );
     }
 }
+
+/// A backslash in a match pattern means one of two OPPOSITE things depending
+/// on where it came from, and the pattern compiler has to keep them apart:
+///
+///   * SOURCE-level quoting — `[[ "man ls" = man\ * ]]`. The lexer quotes the
+///     space; the pattern is `man ` followed by an active `*`.
+///   * DATA — `p='a\ b'; [[ x == ${~p} ]]`. The backslash is an ordinary
+///     character of the value and stays in the pattern as itself.
+///
+/// c:Src/glob.c:3633-3643 `zshtokenize` draws the line: a raw backslash is
+/// rewritten to a quote marker ONLY when the next character is a glob
+/// metacharacter (the `for (t = ztokens; *t; t++)` scan); before anything else
+/// no arm fires and both bytes survive as literals.
+///
+/// zshrs collapsed both spellings into `\X` and honored the escape
+/// unconditionally, so every data-provenance backslash matched one character
+/// too few. zpwr's `_files` override is the real-world casualty: its dedup
+/// guard `(( $tried[(I)${(q)tmp}] ))` uses a `${(q)}`-quoted needle, so any
+/// value containing a space matched a pattern group it should not have and
+/// that group was `continue`d past on every file completion. BUGS.md #1090.
+mod backslash_provenance_in_patterns {
+    use super::*;
+
+    /// Fixture: element 1 holds a plain space, element 2 holds a REAL
+    /// backslash followed by a space.
+    const FIX: &str = "a=('a b'); b=('a\\ b'); p='a\\ b'\n";
+
+    fn assert_fix(body: &str) {
+        assert_parity(&format!("{FIX}{body}"));
+    }
+
+    // ── data provenance: the backslash is a character of the value ──
+
+    #[test]
+    fn subscript_I_data_backslash_does_not_match_plain_space() {
+        assert_fix(r#"print -r -- "A=${a[(I)$p]}""#);
+    }
+
+    #[test]
+    fn subscript_I_data_backslash_matches_literal_backslash() {
+        assert_fix(r#"print -r -- "B=${b[(I)$p]}""#);
+    }
+
+    #[test]
+    fn subscript_r_data_backslash_returns_the_backslash_element() {
+        assert_fix(r#"print -r -- "R=${b[(r)$p]}""#);
+    }
+
+    #[test]
+    #[ignore = "BUGS.md #1090 (globsubst leg) — the subscript legs are fixed; `${~spec}` is not. The value reaches the matcher as a bare variable read, so \
+the port of C's `strcatsub` shtokenize (c:Src/subst.c:822/4464) never runs on it \
+and a data backslash is spelled the same way a source-level quote is. Escaping it \
+inside paramsubst instead doubles the backslash in NON-pattern uses of `${~arr[i]}` \
+(nothing untokenizes it back), so the escape has to happen where the pattern is \
+compiled — in the cond/case matcher, not in the value."]
+    fn globsubst_cond_data_backslash_does_not_match_plain_space() {
+        assert_fix(r#"[[ 'a b' == ${~p} ]] && print T1match || print T1no"#);
+    }
+
+    #[test]
+    #[ignore = "BUGS.md #1090 (globsubst leg) — the subscript legs are fixed; `${~spec}` is not. The value reaches the matcher as a bare variable read, so \
+the port of C's `strcatsub` shtokenize (c:Src/subst.c:822/4464) never runs on it \
+and a data backslash is spelled the same way a source-level quote is. Escaping it \
+inside paramsubst instead doubles the backslash in NON-pattern uses of `${~arr[i]}` \
+(nothing untokenizes it back), so the escape has to happen where the pattern is \
+compiled — in the cond/case matcher, not in the value."]
+    fn globsubst_cond_data_backslash_matches_literal_backslash() {
+        assert_fix(r#"[[ 'a\ b' == ${~p} ]] && print T2match || print T2no"#);
+    }
+
+    #[test]
+    #[ignore = "BUGS.md #1090 (globsubst leg) — the subscript legs are fixed; `${~spec}` is not. The value reaches the matcher as a bare variable read, so \
+the port of C's `strcatsub` shtokenize (c:Src/subst.c:822/4464) never runs on it \
+and a data backslash is spelled the same way a source-level quote is. Escaping it \
+inside paramsubst instead doubles the backslash in NON-pattern uses of `${~arr[i]}` \
+(nothing untokenizes it back), so the escape has to happen where the pattern is \
+compiled — in the cond/case matcher, not in the value."]
+    fn globsubst_case_data_backslash() {
+        assert_fix(
+            r#"case 'a b'  in ${~p}) print C1match;; *) print C1no;; esac
+               case 'a\ b' in ${~p}) print C2match;; *) print C2no;; esac"#,
+        );
+    }
+
+    /// The `${(q)}`-quoted-needle shape `_files` actually uses.
+    #[test]
+    fn quoted_needle_subscript_search() {
+        assert_parity(
+            r#"tried=('x' 'a b'); tmp='a b'
+               print -r -- "hit=${tried[(I)${(q)tmp}]}""#,
+        );
+    }
+
+    // ── source provenance: the backslash is shell quoting ──
+
+    #[test]
+    fn source_quoted_space_still_matches_with_active_star() {
+        assert_parity(
+            r#"for b in "man ls" "git log" "manatee x"; do
+                 if [[ "$b" = man\ * ]]; then print "$b -> already-man"; else print "$b -> wrap"; fi
+               done"#,
+        );
+    }
+
+    #[test]
+    fn source_quoted_space_in_case_arm() {
+        assert_parity(r#"case 'man ls' in man\ *) print yes;; *) print no;; esac"#);
+    }
+
+    // ── escapes before real metacharacters are honored on BOTH paths ──
+
+    #[test]
+    fn escaped_star_is_literal_from_source_and_from_data() {
+        assert_parity(
+            r#"d=('a*b'); q='a\*b'
+               print -r -- "src=${d[(I)a\*b]} data=${d[(I)$q]}"
+               [[ 'a*b' == ${~q} ]] && print Qmatch || print Qno
+               [[ 'azb' == ${~q} ]] && print Zmatch || print Zno"#,
+        );
+    }
+
+    #[test]
+    fn escaped_dollar_is_literal() {
+        assert_parity(r#"c=('a$b'); print -r -- "d=${c[(I)a\$b]}""#);
+    }
+
+    /// A trailing lone backslash must not be swallowed.
+    #[test]
+    fn trailing_lone_backslash_in_pattern() {
+        assert_parity(
+            r#"e=('ab\' 'ab'); f='ab\'
+               print -r -- "t=${e[(I)$f]}""#,
+        );
+    }
+}
+
+/// The other half of the BUGS.md #1090 split: a backslash that IS shell
+/// quoting must keep working everywhere it already did. These are the exact
+/// shapes the first (reverted) attempt at #1090 regressed — `${branch//\%/%%}`
+/// stopped substituting, `${local_dir//\//--}` stopped splitting and
+/// `${entry%\%*}` stopped stripping — plus the subscript case, where zsh
+/// applies the DATA rule even to source text because a subscript pattern
+/// reaches `patcompile` through `zshtokenize` alone (c:Src/params.c:1727).
+mod backslash_source_quoting_still_works {
+    use super::*;
+
+    /// f-sy-h / p10k percent-doubling: `\%` in a `${//}` pattern is a quoted
+    /// `%`, so it matches a bare `%`.
+    #[test]
+    fn replace_escaped_percent_doubles_it() {
+        assert_parity(
+            r#"for branch in 'feat%50' 'plain' '%%lead' 'a%b%c'; do
+                 print -r -- "[$branch] -> [${branch//\%/%%}]"
+               done"#,
+        );
+    }
+
+    /// zinit path encoding: `\/` in a `${//}` pattern is a quoted separator,
+    /// not the pattern/replacement delimiter.
+    #[test]
+    fn replace_escaped_slash_is_the_pattern_not_the_delimiter() {
+        assert_parity(
+            r#"for local_dir in 'a/b/c' '/lead' 'trail/' 'none'; do
+                 print -r -- "[$local_dir] -> [${local_dir//\//--}]"
+               done"#,
+        );
+    }
+
+    /// fast-syntax-highlighting chroma split: `%` anchored strip with a
+    /// source-escaped `%` in the pattern.
+    #[test]
+    fn suffix_strip_with_escaped_percent() {
+        assert_parity(
+            r#"for entry in '/main.ch%git' '/-grep.ch' 'x%y%z' ''; do
+                 print -r -- "file=[${entry%\%*}] arg=[${(M)entry%\%*}]"
+               done"#,
+        );
+    }
+
+    /// A subscript pattern is tokenized as a VALUE even when it was typed in
+    /// the source, so `\ ` there is a literal backslash + space — real zsh
+    /// answers 2, the element that actually holds a backslash.
+    #[test]
+    fn subscript_source_escaped_space_is_data_not_a_quote() {
+        assert_parity(
+            r#"z=('a b' 'a\ b')
+               print -r -- "space=${z[(I)a\ b]}"
+               print -r -- "dollar=${z[(I)a\$b]}""#,
+        );
+    }
+}
+
+/// The full `zshtokenize` escape matrix for a DATA pattern (BUGS.md #1090).
+/// `\X` quotes X only when X reaches the `ztokens` scan — the `switch` labels
+/// at c:Src/glob.c:3596 / 3613-3615 / 3619-3631 plus the `\` case at c:3589.
+/// A character that is in the `ztokens` TABLE but has no switch label (`$`,
+/// `{`, `}`, backtick, `,`, `'`, `"`) keeps both bytes as literal data.
+mod zshtokenize_escape_matrix_for_data_patterns {
+    use super::*;
+
+    /// Every glob metacharacter: `\X` from a value is a literal X.
+    #[test]
+    fn escape_before_a_metachar_quotes_it() {
+        assert_parity(
+            r#"setopt extendedglob
+arr=( 'a*b' 'a-b' 'a!b' 'a=b' 'a~b' 'a<b' 'a[b' 'a#b' 'a^b' 'a?b' 'a(b' 'a|b' 'a\b' )
+for q in 'a\*b' 'a\-b' 'a\!b' 'a\=b' 'a\~b' 'a\<b' 'a\[b' 'a\#b' 'a\^b' 'a\?b' 'a\(b' 'a\|b' 'a\\b'; do
+  print -r -- "q=[$q] I=${arr[(I)$q]} r=[${arr[(r)$q]}]"
+done"#,
+        );
+    }
+
+    /// The `ztokens`-table members with no switch label: the backslash is
+    /// ordinary data and matches itself.
+    #[test]
+    fn escape_before_a_non_metachar_stays_literal() {
+        assert_parity(
+            r#"arr=( 'a$b' 'a\$b' 'a{b' 'a\{b' 'a,b' 'a\,b' 'a`b' 'a\`b' )
+for q in 'a\$b' 'a\{b' 'a\,b' 'a\`b'; do
+  print -r -- "q=[$q] I=${arr[(I)$q]}"
+done"#,
+        );
+    }
+}

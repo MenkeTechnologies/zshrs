@@ -1273,6 +1273,12 @@ mod hlgroup_module {
     /// full ANSI escape. `.zle.sgr[name]` returns the SGR digits
     /// only. Direct port of Modules/hlgroup.c convertattr().
     #[test]
+    #[ignore = "reference-version skew, NOT a zshrs gap and not about zsh/hlgroup (`zmodload zsh/hlgroup` fails in BOTH shells). The next line is the divergence: \
+/bin/zsh 5.9 rejects the dotted parameter name outright (`typeset: not valid in this \
+context: .zle.hlgroups`) and aborts, while zshrs accepts it because \
+ported::params::isident mirrors the vendored 5.9.0.3-test isident, which has an \
+explicit leading-`.` namespace block (`we need to distinguish the leading namespace`). \
+zsh 5.9 also rejects plain `typeset -g a.b=1`. docs/BUGS.md #1093."]
     fn esc_and_sgr_for_named_group() {
         // Pre-set the user's `.zle.hlgroups` assoc with a known
         // value — both shells must derive the same `.zle.esc` /

@@ -319,3 +319,93 @@ EOF
         );
     }
 }
+
+/// A `return` out of a compound command that carries a redirection must
+/// restore the fd, exactly like every other exit path from `execcmd_exec`
+/// (c:Src/exec.c:4364 `fixfds(save)`). zshrs used to jump past the scope's
+/// restore, so the CALLER inherited the callee's redirected fd.
+///
+/// This is what broke gitstatus under zshrs: the daemon points fd 0 at its
+/// request FIFO, then sources `gitstatus/install`, whose
+/// `_gitstatus_install_main` returns out of `while … done <install.info`.
+/// fd 0 stayed on install.info, `gitstatusd` read EOF and exited, and
+/// powerlevel10k lost `VCS_STATUS_REMOTE_URL` (and with it the per-forge
+/// VCS icon). BUGS.md #1089.
+mod return_restores_redirect {
+    use super::*;
+
+    /// Fixture: `inner.txt` is what the redirected compound command reads,
+    /// `outer.txt` is what the enclosing scope's fd 0 must still be on
+    /// after the function returns.
+    const SETUP: &str = "printf 'IN1\\nIN2\\n' > inner.txt\n\
+                         printf 'OUTER\\n' > outer.txt\n";
+
+    fn assert_fd0_restored(body: &str) {
+        let d = tdir();
+        assert_parity_in(d.path(), &format!("{SETUP}{body}"));
+    }
+
+    #[test]
+    fn return_from_while_with_redirect() {
+        assert_fd0_restored(
+            "f() { local l; while IFS= read -r l; do return 0; done < inner.txt }\n\
+             { f; print -n 'fd0='; cat } < outer.txt\n",
+        );
+    }
+
+    #[test]
+    fn return_from_brace_group_with_redirect() {
+        assert_fd0_restored(
+            "f() { local l; { read -r l; return 0 } < inner.txt }\n\
+             { f; print -n 'fd0='; cat } < outer.txt\n",
+        );
+    }
+
+    #[test]
+    fn return_from_for_with_redirect() {
+        assert_fd0_restored(
+            "f() { local l; for l in a b; do return 0; done < inner.txt }\n\
+             { f; print -n 'fd0='; cat } < outer.txt\n",
+        );
+    }
+
+    #[test]
+    fn return_from_if_with_redirect() {
+        assert_fd0_restored(
+            "f() { if true; then return 0; fi < inner.txt }\n\
+             { f; print -n 'fd0='; cat } < outer.txt\n",
+        );
+    }
+
+    /// The gitstatus shape exactly: the redirected loop with the early
+    /// `return` lives in a SOURCED file, and the caller checks fd 0 after
+    /// `source` comes back.
+    #[test]
+    fn return_from_redirected_loop_in_sourced_file() {
+        assert_fd0_restored(
+            "print -r -- '_main() { local l; while IFS= read -r l; do return 0; done < inner.txt }\n\
+             _main' > inst.sh\n\
+             { source ./inst.sh; print -n 'fd0='; cat } < outer.txt\n",
+        );
+    }
+
+    /// Regression guard: plain loop exit (no `return`) already restored the
+    /// fd and must keep doing so.
+    #[test]
+    fn loop_falls_off_end_with_redirect() {
+        assert_fd0_restored(
+            "f() { local l; while IFS= read -r l; do :; done < inner.txt }\n\
+             { f; print -n 'fd0='; cat } < outer.txt\n",
+        );
+    }
+
+    /// Regression guard: a redirect the function opens with bare `exec` is
+    /// deliberately NOT restored (c:Src/exec.c:3978-3986 nullexec==1).
+    #[test]
+    fn bare_exec_redirect_still_survives_the_function() {
+        assert_fd0_restored(
+            "f() { exec < inner.txt }\n\
+             { f; print -n 'fd0='; cat } < outer.txt\n",
+        );
+    }
+}

@@ -3183,8 +3183,8 @@ impl ZshCompiler {
             self.builder.emit(Op::SetStatus, 0);
             self.emit_print_exit_value(); // c:Src/exec.c:4308-4316
                                           // `return`/`exit` short-circuit. Drain cmd_stack so the
-            // pushes from enclosing if/then/for/etc. don't leak past
-            // the function's return target.
+                                          // pushes from enclosing if/then/for/etc. don't leak past
+                                          // the function's return target.
             if first == "return"
                 || first == "exit"
                 || first_clean == "return"
@@ -4152,15 +4152,15 @@ impl ZshCompiler {
                                                // before the bridge, so the handler needs the
                                                // compile-time literal/dynamic bit to reproduce the
                                                // split (argc 4 = dynamic).
-                // c:Src/params.c:2008/1409 — `getindex` parses the
-                // subscript, and its flag block, off the SOURCE spelling
-                // BEFORE the c:1585-1592 expansion round. zshrs expands
-                // the key here at compile/word time, so the source text
-                // has to travel alongside it or the runtime cannot tell
-                // `h[(r)$x]=Z` (a search) from `x='(r)v'; h[$x]=Z` (the
-                // literal key `(r)v`) — and it must never be recovered by
-                // re-splitting a flattened `name[key]`, which breaks on a
-                // key containing `]`.
+                                               // c:Src/params.c:2008/1409 — `getindex` parses the
+                                               // subscript, and its flag block, off the SOURCE spelling
+                                               // BEFORE the c:1585-1592 expansion round. zshrs expands
+                                               // the key here at compile/word time, so the source text
+                                               // has to travel alongside it or the runtime cannot tell
+                                               // `h[(r)$x]=Z` (a search) from `x='(r)v'; h[$x]=Z` (the
+                                               // literal key `(r)v`) — and it must never be recovered by
+                                               // re-splitting a flattened `name[key]`, which breaks on a
+                                               // key containing `]`.
                 let src_const = self.builder.add_constant(Value::str(trace_key.as_str()));
                 self.builder.emit(Op::LoadConst(src_const), 0);
                 if key_has_expansion {
@@ -6792,8 +6792,9 @@ impl ZshCompiler {
                         if let Some(inner) =
                             untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                         {
-                            let body_const =
-                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
+                            let body_const = self
+                                .builder
+                                .add_constant(Value::str(self.brace_array_body(s, inner)));
                             self.builder.emit(Op::LoadConst(body_const), 0);
                             self.builder.emit(
                                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6871,8 +6872,9 @@ impl ZshCompiler {
                         // (`argument_array_names=( "${(@s/:/)argument_array_names[2]}" )`)
                         // saw one name instead of two, so `git checkout <TAB>`
                         // offered 88 matches where zsh offers 107.
-                        let body_const =
-                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
+                        let body_const = self
+                            .builder
+                            .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6896,8 +6898,9 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const =
-                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
+                        let body_const = self
+                            .builder
+                            .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -6918,8 +6921,9 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const =
-                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
+                        let body_const = self
+                            .builder
+                            .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -7037,8 +7041,9 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const =
-                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
+                        let body_const = self
+                            .builder
+                            .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -7058,8 +7063,9 @@ impl ZshCompiler {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
-                        let body_const =
-                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
+                        let body_const = self
+                            .builder
+                            .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -7077,8 +7083,9 @@ impl ZshCompiler {
                 // — non-splat-subscript casmod now applies to `value`
                 // directly instead of refetching the source array.
                 if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
-                    let body_const =
-                            self.builder.add_constant(Value::str(self.brace_array_body(s, inner)));
+                    let body_const = self
+                        .builder
+                        .add_constant(Value::str(self.brace_array_body(s, inner)));
                     self.builder.emit(Op::LoadConst(body_const), 0);
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -9006,7 +9013,7 @@ impl ZshCompiler {
         self.builder.patch_jump(exit_jump, loop_exit);
 
         self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
-        // Pair with the cmdpush we did after init.
+                                          // Pair with the cmdpush we did after init.
         self.emit_cmd_pop();
     }
 
@@ -9614,9 +9621,9 @@ impl ZshCompiler {
             // `function -T name { … }` is parsed into ZshFuncDef.tracing
             // (parse.rs c:1689-1692) but had NO consumer, so a traced
             // definition registered an untraced function (E02xtrace:6,7,8,9).
-            let tracing_const = self
-                .builder
-                .add_constant(Value::str(if f.tracing { "1" } else { "0" }));
+            let tracing_const =
+                self.builder
+                    .add_constant(Value::str(if f.tracing { "1" } else { "0" }));
             self.builder.emit(Op::LoadConst(tracing_const), 0);
             // c:Src/exec.c:5451-5456 — `shf->redir = <redir_prog>`. Empty
             // when the definition carried no trailing redirection, which is
@@ -10307,6 +10314,13 @@ impl ZshCompiler {
                                     // Bnull-escape — emit `\` + next char
                                     // literally so patcompile sees the
                                     // backslash-escape sequence.
+                                    //
+                                    // The raw backslash IS the quote spelling
+                                    // `patcompile`'s normalizer expects from a
+                                    // SOURCE-level pattern; a pattern built
+                                    // from a VALUE spells a data backslash
+                                    // `\\` instead. See the `\\` arm of that
+                                    // normalizer and docs/BUGS.md #1090.
                                     if let Some(next) = iter.next() {
                                         filtered.push('\\');
                                         filtered.push(next);
@@ -11582,8 +11596,8 @@ fn getredirs(redirs: &[crate::parse::ZshRedir]) -> String {
         }
         // c:Src/zsh.h — `IS_READFD(X)` is
         // `((X)>=REDIR_READWRITE && (X)<=REDIR_MERGEIN) || (X)==REDIR_INPIPE`.
-        let is_readfd = (f.rtype >= REDIR_READWRITE && f.rtype <= REDIR_MERGEIN)
-            || f.rtype == REDIR_INPIPE;
+        let is_readfd =
+            (f.rtype >= REDIR_READWRITE && f.rtype <= REDIR_MERGEIN) || f.rtype == REDIR_INPIPE;
         if let Some(varid) = &f.varid {
             // c:830-833 — `{varid}` form
             out.push('{');

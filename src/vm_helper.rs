@@ -137,9 +137,7 @@ pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
     // all_quotes, ignored. Only `nmatches` was served live here, so
     // `$compstate[list_lines]` and friends read empty from shell code
     // where zsh reports a value.
-    if resolved == "compstate"
-        && crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS.contains(&key)
-    {
+    if resolved == "compstate" && crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS.contains(&key) {
         return Some((
             true,
             Some(
@@ -470,9 +468,8 @@ pub struct SubshellSnapshot {
     /// entry. Same fork-copy semantics as THINGYTAB — a subshell's
     /// `bindkey -N km` / `bindkey -D km` mutates only the child's
     /// keymap registry in C zsh. Bug #454 in docs/BUGS.md.
-    pub keymapnamtab: crate::ported::hashtable::hashtable_nodes<
-        crate::ported::zle::zle_keymap::KeymapName,
-    >,
+    pub keymapnamtab:
+        crate::ported::hashtable::hashtable_nodes<crate::ported::zle::zle_keymap::KeymapName>,
     /// Parent's `$!` (clone::lastpid) at subshell entry. C zsh forks
     /// for `(...)`, so a background job started INSIDE the subshell
     /// sets the child's `lastpid` only — `( : & ); echo $!` prints 0
@@ -944,7 +941,6 @@ pub fn autoload_def_file(name: &str) -> Option<String> {
     })
 }
 
-
 /// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
 ///
 /// C's `zexecve` (Src/exec.c:504-643) performs the whole `#!` recovery
@@ -961,11 +957,7 @@ pub fn autoload_def_file(name: &str) -> Option<String> {
 /// `Err(eno)` is what C's `return eno` (c:643) would hand back — either
 /// the original `eno` or the `errno` from a failed open/read (c:632/634).
 #[allow(non_snake_case)]
-pub fn zexecve_recover(
-    pth: &str,
-    argv: &[String],
-    eno: i32,
-) -> Result<(String, Vec<String>), i32> {
+pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, Vec<String>), i32> {
     if eno == libc::ENOEXEC || eno == libc::ENOENT {
         // c:534
         let cpth = match std::ffi::CString::new(pth) {
@@ -1035,7 +1027,8 @@ pub fn zexecve_recover(
                         // c:557 — pathprog rewrite path.
                         let pprog = if !interp_str.starts_with('/') {
                             // c:561
-                            crate::ported::utils::pathprog(&interp_str).map(|p| p.display().to_string())
+                            crate::ported::utils::pathprog(&interp_str)
+                                .map(|p| p.display().to_string())
                         } else {
                             None
                         };
@@ -1141,7 +1134,6 @@ pub fn zexecve_recover(
     }
     Err(eno) // c:643
 }
-
 
 impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
@@ -1892,30 +1884,30 @@ impl ShellExecutor {
         // seed aborts with "not an identifier: WORDCHARS".
         crate::ported::utils::inittyptab(); // c:1277
         stamp_special_params(); // c:838-847 — create in C's order
-        // Standard zsh scalar param defaults — direct port of
-        // `createparamtable` (Src/params.c:817-988) + the `setupvals`
-        // tail. Writes through canonical `setsparam` (Src/params.c:3350).
-        //
-        // c:params.c:972-973 — ZSH_VERSION / ZSH_PATCHLEVEL.
-        // `zsh_version::ZSH_VERSION` (emitted by build.rs from the
-        // vendored `Config/version.mk`) is the development snapshot
-        // tag `5.9.0.3-test`; shipped zsh binaries report the clean
-        // release form (`5.9`). Bug #73 in docs/BUGS.md — cross-shell
-        // scripts that gate on `[[ $ZSH_VERSION = 5.9 ]]` or split on
-        // `.` expecting MAJOR.MINOR break on the `-test` suffix.
-        //
-        // Use the cleaned `patchlevel::ZSH_VERSION` here ("5.9") and
-        // surface the full snapshot tag as `$ZSHRS_VERSION` for
-        // zshrs-specific identity checks.
-        // ZSH_VERSION / ZSH_PATCHLEVEL / ZSHRS_VERSION / ZSH_NAME /
-        // ZSH_ARGZERO are NOT seeded here: C creates them at the END of
-        // `createparamtable` (c:970-973, after the environ import) and
-        // ZSH_NAME at `Src/init.c:1364` (setupvals, later still). They
-        // are seeded at those C positions further down, because a name
-        // created before the import lands in a different chain slot —
-        // `ZSH_NAME` seeded here came out BEHIND every same-bucket
-        // environment variable in `${(k)parameters}` instead of ahead
-        // of them (c:Src/hashtable.c:214-215 front-insert).
+                                // Standard zsh scalar param defaults — direct port of
+                                // `createparamtable` (Src/params.c:817-988) + the `setupvals`
+                                // tail. Writes through canonical `setsparam` (Src/params.c:3350).
+                                //
+                                // c:params.c:972-973 — ZSH_VERSION / ZSH_PATCHLEVEL.
+                                // `zsh_version::ZSH_VERSION` (emitted by build.rs from the
+                                // vendored `Config/version.mk`) is the development snapshot
+                                // tag `5.9.0.3-test`; shipped zsh binaries report the clean
+                                // release form (`5.9`). Bug #73 in docs/BUGS.md — cross-shell
+                                // scripts that gate on `[[ $ZSH_VERSION = 5.9 ]]` or split on
+                                // `.` expecting MAJOR.MINOR break on the `-test` suffix.
+                                //
+                                // Use the cleaned `patchlevel::ZSH_VERSION` here ("5.9") and
+                                // surface the full snapshot tag as `$ZSHRS_VERSION` for
+                                // zshrs-specific identity checks.
+                                // ZSH_VERSION / ZSH_PATCHLEVEL / ZSHRS_VERSION / ZSH_NAME /
+                                // ZSH_ARGZERO are NOT seeded here: C creates them at the END of
+                                // `createparamtable` (c:970-973, after the environ import) and
+                                // ZSH_NAME at `Src/init.c:1364` (setupvals, later still). They
+                                // are seeded at those C positions further down, because a name
+                                // created before the import lands in a different chain slot —
+                                // `ZSH_NAME` seeded here came out BEHIND every same-bucket
+                                // environment variable in `${(k)parameters}` instead of ahead
+                                // of them (c:Src/hashtable.c:214-215 front-insert).
         setsparam("WORDCHARS", "*?_-.[]~=/&;!#$%^(){}<>");
         // SHLVL is NOT seeded here. c:Src/params.c:948-951 increments it
         // AFTER the environ-import loop, so the +1 lives at the end of that
@@ -1994,18 +1986,18 @@ impl ShellExecutor {
                 .as_deref()
                 .unwrap_or(crate::ported::config_h::DEFAULT_TMPPREFIX),
         ); // c:870
-        // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
-        // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Real paramtab
-        // seeds (NOT read-time fallbacks) so `unset NULLCMD` truly
-        // unsets — the bare-redirect "redirection with no command"
-        // diagnostic depends on getsparam returning None afterwards.
-        // c:config.h:48 DEFAULT_READNULLCMD "more" — the parity
-        // floor agrees: scrubbed-env Homebrew zsh 5.9.1 -fc reports
-        // READNULLCMD=more (probed; the previous macOS arm's "less"
-        // guess came from the USER's env exporting READNULLCMD=less
-        // — zpwr sets it). This block runs AFTER the env import, so
-        // these are DEFAULT seeds only: an env-imported value must
-        // win (C seeds before the import loop, c:854-885 vs c:893+).
+           // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
+           // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Real paramtab
+           // seeds (NOT read-time fallbacks) so `unset NULLCMD` truly
+           // unsets — the bare-redirect "redirection with no command"
+           // diagnostic depends on getsparam returning None afterwards.
+           // c:config.h:48 DEFAULT_READNULLCMD "more" — the parity
+           // floor agrees: scrubbed-env Homebrew zsh 5.9.1 -fc reports
+           // READNULLCMD=more (probed; the previous macOS arm's "less"
+           // guess came from the USER's env exporting READNULLCMD=less
+           // — zpwr sets it). This block runs AFTER the env import, so
+           // these are DEFAULT seeds only: an env-imported value must
+           // win (C seeds before the import loop, c:854-885 vs c:893+).
         if getsparam("NULLCMD").map_or(true, |v| v.is_empty()) {
             setsparam("NULLCMD", "cat");
         }
@@ -2030,15 +2022,12 @@ impl ShellExecutor {
         } else {
             String::new()
         };
-        setsparam(
-            "HOST",
-            env_at_entry("HOST").as_deref().unwrap_or(&hostname),
-        ); // c:875
-        // c:Src/params.c:878-882 — `setsparam("LOGNAME", (str = getlogin())
-        //     && *str ? ztrdup_metafy(str) : ztrdup(cached_username));`
-        // Also pre-import in C (c:878 vs c:893+); creating it during the
-        // import instead put LOGNAME behind the environment variables
-        // sharing its bucket.
+        setsparam("HOST", env_at_entry("HOST").as_deref().unwrap_or(&hostname)); // c:875
+                                                                                 // c:Src/params.c:878-882 — `setsparam("LOGNAME", (str = getlogin())
+                                                                                 //     && *str ? ztrdup_metafy(str) : ztrdup(cached_username));`
+                                                                                 // Also pre-import in C (c:878 vs c:893+); creating it during the
+                                                                                 // import instead put LOGNAME behind the environment variables
+                                                                                 // sharing its bucket.
         let logname_default = {
             let from_getlogin = unsafe {
                 let p = libc::getlogin(); // c:880
@@ -2060,35 +2049,35 @@ impl ShellExecutor {
                 .as_deref()
                 .unwrap_or(&logname_default),
         ); // c:878
-        // c:Src/init.c:1186-1193 — default prompt strings. zsh sets
-        // PS4 to "+%N:%i> " for ZSH emulation ("+ " for KSH/SH).
-        // Without seeding, PS4 reads empty and `set -x` output has
-        // no prefix at all. Bug #92 in docs/BUGS.md.
-        //
-        // C zsh runs createparamtable's env-import loop (c:893-924)
-        // BEFORE init.c:1186 fires, so an exported $PS4 in the parent
-        // env wins over the default seed. zshrs's env import happens
-        // further down in ShellExecutor::new() (at the createparamtable
-        // call site), so getsparam() reads None here even when env has
-        // a value, and the default would clobber the user's PS4.
-        //
-        // Additional wrinkle: C zsh's PROMPT / PROMPT2 / PROMPT3 /
-        // PROMPT4 params are ALIASES for PS1..PS4 (Src/params.c:381,
-        // 415-421 — both IPDEF7R entries bind to the same `prompt*`
-        // global). So `export PROMPT4=...` in the parent env sets the
-        // shared global, and `$PS4` reads the same string. The user's
-        // interactive shell exports PROMPT4 (the form zsh's prompt
-        // theme system uses), so when zshrs -x runs, PROMPT4 is in
-        // env but PS4 is not. Without aliasing in the env-probe step,
-        // zshrs seeds default PS4 and ignores the user's customised
-        // prefix.
-        //
-        // Probe env::var directly for the name AND its alias; first
-        // non-empty wins. Only fall through to the default seed when
-        // every candidate is empty. Mirrors C zsh's behavior without
-        // reshuffling the rest of new(). Bug: `zshrs -x` ignored the
-        // user's custom PS4/PROMPT4 unless re-forwarded with
-        // `PS4=$PROMPT4 zshrs -x`.
+           // c:Src/init.c:1186-1193 — default prompt strings. zsh sets
+           // PS4 to "+%N:%i> " for ZSH emulation ("+ " for KSH/SH).
+           // Without seeding, PS4 reads empty and `set -x` output has
+           // no prefix at all. Bug #92 in docs/BUGS.md.
+           //
+           // C zsh runs createparamtable's env-import loop (c:893-924)
+           // BEFORE init.c:1186 fires, so an exported $PS4 in the parent
+           // env wins over the default seed. zshrs's env import happens
+           // further down in ShellExecutor::new() (at the createparamtable
+           // call site), so getsparam() reads None here even when env has
+           // a value, and the default would clobber the user's PS4.
+           //
+           // Additional wrinkle: C zsh's PROMPT / PROMPT2 / PROMPT3 /
+           // PROMPT4 params are ALIASES for PS1..PS4 (Src/params.c:381,
+           // 415-421 — both IPDEF7R entries bind to the same `prompt*`
+           // global). So `export PROMPT4=...` in the parent env sets the
+           // shared global, and `$PS4` reads the same string. The user's
+           // interactive shell exports PROMPT4 (the form zsh's prompt
+           // theme system uses), so when zshrs -x runs, PROMPT4 is in
+           // env but PS4 is not. Without aliasing in the env-probe step,
+           // zshrs seeds default PS4 and ignores the user's customised
+           // prefix.
+           //
+           // Probe env::var directly for the name AND its alias; first
+           // non-empty wins. Only fall through to the default seed when
+           // every candidate is empty. Mirrors C zsh's behavior without
+           // reshuffling the rest of new(). Bug: `zshrs -x` ignored the
+           // user's custom PS4/PROMPT4 unless re-forwarded with
+           // `PS4=$PROMPT4 zshrs -x`.
         let seed_prompt = |name: &str, alias: Option<&str>, default: &str| {
             let cur = crate::ported::params::getsparam(name);
             let have_param = cur.as_deref().map_or(false, |s| !s.is_empty());
@@ -2765,12 +2754,12 @@ impl ShellExecutor {
         };
         let cputype = to_str(&uname_buf.machine);
         crate::ported::params::setsparam("CPUTYPE", &cputype); // c:961
-        // OSTYPE: configure's `$host_os`, resolved on the build host and
-        // frozen into config.h — C never re-derives it from uname() at
-        // startup. Deriving it here made the two writers disagree, so the
-        // same binary answered `darwin25.5.0` under -c and `darwin23.6.0`
-        // under -i. Single source of truth: config_h::OSTYPE, exactly as
-        // MACHTYPE below.
+                                                               // OSTYPE: configure's `$host_os`, resolved on the build host and
+                                                               // frozen into config.h — C never re-derives it from uname() at
+                                                               // startup. Deriving it here made the two writers disagree, so the
+                                                               // same binary answered `darwin25.5.0` under -c and `darwin23.6.0`
+                                                               // under -i. Single source of truth: config_h::OSTYPE, exactly as
+                                                               // MACHTYPE below.
         crate::ported::params::setsparam("OSTYPE", crate::ported::config_h::OSTYPE); // c:990
                                                                                      // MACHTYPE: configure's `$host_cpu`, i.e. the config.guess
                                                                                      // canonical arch name — NOT uname's `machine`. The two differ
@@ -2778,12 +2767,12 @@ impl ShellExecutor {
                                                                                      // `aarch64`), and zsh reports the latter. Single source of
                                                                                      // truth: config_h::MACHTYPE (= build target arch).
         crate::ported::params::setsparam("MACHTYPE", crate::ported::config_h::MACHTYPE); // c:967
-        // VENDOR: configure's `$host_vendor`. Deriving it from uname's
-        // `sysname` here was a second, non-C writer that disagreed with
-        // `config_h::VENDOR` off Darwin: config.guess emits `pc` for x86_64
-        // Linux (config.guess:1222) and `unknown` for aarch64 Linux
-        // (config.guess:1009), a distinction `sysname` cannot make. Single
-        // source of truth, exactly as OSTYPE/MACHTYPE above.
+                                                                                         // VENDOR: configure's `$host_vendor`. Deriving it from uname's
+                                                                                         // `sysname` here was a second, non-C writer that disagreed with
+                                                                                         // `config_h::VENDOR` off Darwin: config.guess emits `pc` for x86_64
+                                                                                         // Linux (config.guess:1222) and `unknown` for aarch64 Linux
+                                                                                         // (config.guess:1009), a distinction `sysname` cannot make. Single
+                                                                                         // source of truth, exactly as OSTYPE/MACHTYPE above.
         crate::ported::params::setsparam("VENDOR", crate::ported::config_h::VENDOR); // c:992
 
         // c:Src/init.c:963 — `setsparam("TTY", ttyname(0) ?: "")`, which
@@ -2801,44 +2790,44 @@ impl ShellExecutor {
             }
         };
         crate::ported::params::setsparam("TTY", &tty_str); // c:969
-        // c:Src/params.c:971 — `setsparam("ZSH_ARGZERO", ztrdup(posixzero))`:
-        // the kernel-supplied argv[0] of THIS binary, in --zsh parity mode
-        // too. The bin entrypoint overrides this with the script path for
-        // -c / runscript invocations. (A previous revision probed the
-        // system zsh install path and reported THAT as ZSH_ARGZERO for
-        // byte-parity — faking the shell's identity. Parity tests that
-        // compare the value must normalize the machine-specific binary
-        // path in the test row instead.)
+                                                           // c:Src/params.c:971 — `setsparam("ZSH_ARGZERO", ztrdup(posixzero))`:
+                                                           // the kernel-supplied argv[0] of THIS binary, in --zsh parity mode
+                                                           // too. The bin entrypoint overrides this with the script path for
+                                                           // -c / runscript invocations. (A previous revision probed the
+                                                           // system zsh install path and reported THAT as ZSH_ARGZERO for
+                                                           // byte-parity — faking the shell's identity. Parity tests that
+                                                           // compare the value must normalize the machine-specific binary
+                                                           // path in the test row instead.)
         let argzero_default = env::args().next().unwrap_or_else(|| "zsh".to_string());
         crate::ported::params::setsparam("ZSH_ARGZERO", &argzero_default); // c:971
-        // c:Src/params.c:972 — ZSH_VERSION. `zsh_version::ZSH_VERSION`
-        // (emitted by build.rs from the vendored `Config/version.mk`) is
-        // the development snapshot tag `5.9.0.3-test`; shipped zsh
-        // binaries report the clean release form (`5.9`). Bug #73 in
-        // docs/BUGS.md — cross-shell scripts that gate on
-        // `[[ $ZSH_VERSION = 5.9 ]]` or split on `.` expecting
-        // MAJOR.MINOR break on the `-test` suffix. Use the cleaned
-        // `patchlevel::ZSH_VERSION` here ("5.9") and surface the full
-        // snapshot tag as `$ZSHRS_VERSION` for zshrs identity checks.
+                                                                           // c:Src/params.c:972 — ZSH_VERSION. `zsh_version::ZSH_VERSION`
+                                                                           // (emitted by build.rs from the vendored `Config/version.mk`) is
+                                                                           // the development snapshot tag `5.9.0.3-test`; shipped zsh
+                                                                           // binaries report the clean release form (`5.9`). Bug #73 in
+                                                                           // docs/BUGS.md — cross-shell scripts that gate on
+                                                                           // `[[ $ZSH_VERSION = 5.9 ]]` or split on `.` expecting
+                                                                           // MAJOR.MINOR break on the `-test` suffix. Use the cleaned
+                                                                           // `patchlevel::ZSH_VERSION` here ("5.9") and surface the full
+                                                                           // snapshot tag as `$ZSHRS_VERSION` for zshrs identity checks.
         crate::ported::params::setsparam("ZSH_VERSION", crate::ported::patchlevel::ZSH_VERSION); // c:972
-        // c:Src/params.c:973 + Src/patchlevel.h — `ZSH_PATCHLEVEL` is a
-        // git-describe-style identifier (`zsh-MAJOR.MINOR-N-gHASH`) of
-        // the upstream commit zshrs targets. `build.rs` emits "unknown"
-        // because the vendored zsh tarball ships no CUSTOM_PATCHLEVEL
-        // define; use the canonical const in `patchlevel.rs` instead.
-        // Bug #90 in docs/BUGS.md — scripts that fingerprint by
-        // $ZSH_PATCHLEVEL fell to the wildcard arm under "unknown".
+                                                                                                 // c:Src/params.c:973 + Src/patchlevel.h — `ZSH_PATCHLEVEL` is a
+                                                                                                 // git-describe-style identifier (`zsh-MAJOR.MINOR-N-gHASH`) of
+                                                                                                 // the upstream commit zshrs targets. `build.rs` emits "unknown"
+                                                                                                 // because the vendored zsh tarball ships no CUSTOM_PATCHLEVEL
+                                                                                                 // define; use the canonical const in `patchlevel.rs` instead.
+                                                                                                 // Bug #90 in docs/BUGS.md — scripts that fingerprint by
+                                                                                                 // $ZSH_PATCHLEVEL fell to the wildcard arm under "unknown".
         crate::ported::params::setsparam(
             "ZSH_PATCHLEVEL",
             crate::ported::patchlevel::ZSH_PATCHLEVEL,
         ); // c:973
-        // Skip ZSHRS_VERSION whenever the zsh-compatible namespace must
-        // stay free of zshrs-original names, so `${(k)parameters}`
-        // doesn't carry a name zsh doesn't ship — same predicate and
-        // reasoning as the guard in `ported::params::createparamtable`.
-        // `hide_ext_builtins()` is `--zsh` OR `ZSHRS_HIDE_EXT_BUILTINS`
-        // (the parity harnesses' knob). Scripts can still detect zshrs
-        // via `$ZSH_VERSION`, which carries a `-test` suffix.
+           // Skip ZSHRS_VERSION whenever the zsh-compatible namespace must
+           // stay free of zshrs-original names, so `${(k)parameters}`
+           // doesn't carry a name zsh doesn't ship — same predicate and
+           // reasoning as the guard in `ported::params::createparamtable`.
+           // `hide_ext_builtins()` is `--zsh` OR `ZSHRS_HIDE_EXT_BUILTINS`
+           // (the parity harnesses' knob). Scripts can still detect zshrs
+           // via `$ZSH_VERSION`, which carries a `-test` suffix.
         if !crate::ext_builtins::hide_ext_builtins() {
             crate::ported::params::setsparam(
                 "ZSHRS_VERSION",
@@ -2868,21 +2857,21 @@ impl ShellExecutor {
         // which setupvals runs AFTER createparamtable, so the node lands
         // ahead of the imported environment in its bucket chain.
         crate::ported::params::setsparam("ZSH_NAME", "zsh"); // c:Src/init.c:1364
-        // LOGNAME is seeded pre-import now (c:878) — see the block by the
-        // TMPPREFIX/HOST seeds above.
-        //
-        // DO NOT setsparam("USERNAME", ...) anywhere in init. `$USERNAME`
-        // is a special parameter whose SETTER (`usernamesetfn` in
-        // params.rs) performs setgid(2) + setuid(2) to actually change
-        // the effective user — a deliberate upstream zsh feature for
-        // `USERNAME=other-user cmd`. Calling it at init seeds the value
-        // AND tries to change uid/gid; when the resolved pwd's pw_uid
-        // differs from `getuid()` (sudo launches, macOS Keychain-helper
-        // inherited env, container entry points, etc.) the setgid call
-        // fails with EPERM and emits `zsh:1: failed to change group ID:
-        // Operation not permitted`. Upstream seeds `$USERNAME` via the
-        // GETTER path (`usernamegetfn` reads through `cached_username`
-        // populated by `inittyptab` → `get_username`), no setter call.
+                                                             // LOGNAME is seeded pre-import now (c:878) — see the block by the
+                                                             // TMPPREFIX/HOST seeds above.
+                                                             //
+                                                             // DO NOT setsparam("USERNAME", ...) anywhere in init. `$USERNAME`
+                                                             // is a special parameter whose SETTER (`usernamesetfn` in
+                                                             // params.rs) performs setgid(2) + setuid(2) to actually change
+                                                             // the effective user — a deliberate upstream zsh feature for
+                                                             // `USERNAME=other-user cmd`. Calling it at init seeds the value
+                                                             // AND tries to change uid/gid; when the resolved pwd's pw_uid
+                                                             // differs from `getuid()` (sudo launches, macOS Keychain-helper
+                                                             // inherited env, container entry points, etc.) the setgid call
+                                                             // fails with EPERM and emits `zsh:1: failed to change group ID:
+                                                             // Operation not permitted`. Upstream seeds `$USERNAME` via the
+                                                             // GETTER path (`usernamegetfn` reads through `cached_username`
+                                                             // populated by `inittyptab` → `get_username`), no setter call.
 
         // c:Src/init.c:1176 — `module_path = mkarray(MODULE_DIR)`.
         // The canonical init lives in `init::setupvals` (port of
@@ -3652,45 +3641,45 @@ impl ShellExecutor {
                         _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
                         let registered = autoload_register_source(name, &body);
                         {
-                        // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
-                        // as the function body; it executes nothing at load
-                        // time, so the global `lineno` still holds the line the
-                        // CALL was made on when doshfunc records
-                        // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
-                        // installs the body by RUNNING `name() { … }` through
-                        // the pipeline, which walks the counter to the file's
-                        // last line — so the very first call of an autoloaded
-                        // function reported its caller's line as that instead:
-                        // `$functrace` read `script.zsh:1` where zsh reads
-                        // `script.zsh:4`, and inside completion `_subscript:0`
-                        // where zsh reads `_subscript:125`. Every LATER call
-                        // was already correct, because the load only happens
-                        // once.
-                        let caller_lineno = crate::ported::lex::lineno();
-                        // c:5384-5388 assigns `shf->lineno` only when a
-                        // `name() { … }` STATEMENT defines the function. An
-                        // autoload stub's Shfunc keeps the 0 it was created
-                        // with, and loadautofn replaces only `funcdef`, so zsh
-                        // reports `funcsourcetrace` as `<file>:0`. Running a
-                        // synthesized wrapper here stamps line 1 instead, so
-                        // put the stub's value back when the wrapper was ours.
-                        let synthesized = registered != body;
-                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
-                        crate::ported::lex::set_lineno(caller_lineno);
-                        if synthesized {
-                            // c:5384-5388 sets `shf->lineno` only where a
-                            // `name() { … }` STATEMENT defines the function; an
-                            // autoload stub keeps the 0 it was created with and
-                            // loadautofn replaces only `funcdef`, so
-                            // `funcsourcetrace` reads `<file>:0`. Executing our
-                            // synthesized wrapper records a line base of 1
-                            // instead. -1 marks "autoload-installed" so the
-                            // call-time clamp below can tell that apart from an
-                            // INLINE `f() { … }`, whose base underflows to 0 but
-                            // whose def line really is >= 1.
-                            self.function_line_base.insert(name.to_string(), -1);
+                            // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
+                            // as the function body; it executes nothing at load
+                            // time, so the global `lineno` still holds the line the
+                            // CALL was made on when doshfunc records
+                            // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
+                            // installs the body by RUNNING `name() { … }` through
+                            // the pipeline, which walks the counter to the file's
+                            // last line — so the very first call of an autoloaded
+                            // function reported its caller's line as that instead:
+                            // `$functrace` read `script.zsh:1` where zsh reads
+                            // `script.zsh:4`, and inside completion `_subscript:0`
+                            // where zsh reads `_subscript:125`. Every LATER call
+                            // was already correct, because the load only happens
+                            // once.
+                            let caller_lineno = crate::ported::lex::lineno();
+                            // c:5384-5388 assigns `shf->lineno` only when a
+                            // `name() { … }` STATEMENT defines the function. An
+                            // autoload stub's Shfunc keeps the 0 it was created
+                            // with, and loadautofn replaces only `funcdef`, so zsh
+                            // reports `funcsourcetrace` as `<file>:0`. Running a
+                            // synthesized wrapper here stamps line 1 instead, so
+                            // put the stub's value back when the wrapper was ours.
+                            let synthesized = registered != body;
+                            let _ = self.run_autoload_definition(name, &registered, ksh_style);
+                            crate::ported::lex::set_lineno(caller_lineno);
+                            if synthesized {
+                                // c:5384-5388 sets `shf->lineno` only where a
+                                // `name() { … }` STATEMENT defines the function; an
+                                // autoload stub keeps the 0 it was created with and
+                                // loadautofn replaces only `funcdef`, so
+                                // `funcsourcetrace` reads `<file>:0`. Executing our
+                                // synthesized wrapper records a line base of 1
+                                // instead. -1 marks "autoload-installed" so the
+                                // call-time clamp below can tell that apart from an
+                                // INLINE `f() { … }`, whose base underflows to 0 but
+                                // whose def line really is >= 1.
+                                self.function_line_base.insert(name.to_string(), -1);
+                            }
                         }
-                    }
                     }
                     if let Some(dir) = loaded_dir.as_deref() {
                         restore_loaddir(name, dir, abspath_used, ksh_style);
@@ -3782,10 +3771,17 @@ impl ShellExecutor {
                       // the registration once. Nested calls simply check out additional
                       // VMs; the pool grows to the max call depth. Re-entrant and
                       // panic-safe: the VM is returned on the normal path below.
+                      // c:Src/exec.c:4364 — a `return` out of a redirected compound
+                      // command still runs `fixfds(save)`. See
+                      // `unwind_redirect_scopes_to`.
+        let redir_depth = self.redirect_scope_stack.len();
         let mut vm = crate::vm_pool::acquire(chunk);
         vm.last_status = seed_status;
         let _ = vm.run();
-        Some(vm.last_status)
+        let status = vm.last_status;
+        drop(vm);
+        self.unwind_redirect_scopes_to(redir_depth);
+        Some(status)
     }
 
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
@@ -4010,45 +4006,46 @@ impl ShellExecutor {
                                 let _ctx =
                                     crate::ported::exec::EvalContextFrame::push("evalautofunc");
                                 {
-                        // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
-                        // as the function body; it executes nothing at load
-                        // time, so the global `lineno` still holds the line the
-                        // CALL was made on when doshfunc records
-                        // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
-                        // installs the body by RUNNING `name() { … }` through
-                        // the pipeline, which walks the counter to the file's
-                        // last line — so the very first call of an autoloaded
-                        // function reported its caller's line as that instead:
-                        // `$functrace` read `script.zsh:1` where zsh reads
-                        // `script.zsh:4`, and inside completion `_subscript:0`
-                        // where zsh reads `_subscript:125`. Every LATER call
-                        // was already correct, because the load only happens
-                        // once.
-                        let caller_lineno = crate::ported::lex::lineno();
-                        // c:5384-5388 assigns `shf->lineno` only when a
-                        // `name() { … }` STATEMENT defines the function. An
-                        // autoload stub's Shfunc keeps the 0 it was created
-                        // with, and loadautofn replaces only `funcdef`, so zsh
-                        // reports `funcsourcetrace` as `<file>:0`. Running a
-                        // synthesized wrapper here stamps line 1 instead, so
-                        // put the stub's value back when the wrapper was ours.
-                        let synthesized = registered != body;
-                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
-                        crate::ported::lex::set_lineno(caller_lineno);
-                        if synthesized {
-                            // c:5384-5388 sets `shf->lineno` only where a
-                            // `name() { … }` STATEMENT defines the function; an
-                            // autoload stub keeps the 0 it was created with and
-                            // loadautofn replaces only `funcdef`, so
-                            // `funcsourcetrace` reads `<file>:0`. Executing our
-                            // synthesized wrapper records a line base of 1
-                            // instead. -1 marks "autoload-installed" so the
-                            // call-time clamp below can tell that apart from an
-                            // INLINE `f() { … }`, whose base underflows to 0 but
-                            // whose def line really is >= 1.
-                            self.function_line_base.insert(name.to_string(), -1);
-                        }
-                    }
+                                    // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
+                                    // as the function body; it executes nothing at load
+                                    // time, so the global `lineno` still holds the line the
+                                    // CALL was made on when doshfunc records
+                                    // `funcsave->fstack.lineno = lineno` (c:6013). zshrs
+                                    // installs the body by RUNNING `name() { … }` through
+                                    // the pipeline, which walks the counter to the file's
+                                    // last line — so the very first call of an autoloaded
+                                    // function reported its caller's line as that instead:
+                                    // `$functrace` read `script.zsh:1` where zsh reads
+                                    // `script.zsh:4`, and inside completion `_subscript:0`
+                                    // where zsh reads `_subscript:125`. Every LATER call
+                                    // was already correct, because the load only happens
+                                    // once.
+                                    let caller_lineno = crate::ported::lex::lineno();
+                                    // c:5384-5388 assigns `shf->lineno` only when a
+                                    // `name() { … }` STATEMENT defines the function. An
+                                    // autoload stub's Shfunc keeps the 0 it was created
+                                    // with, and loadautofn replaces only `funcdef`, so zsh
+                                    // reports `funcsourcetrace` as `<file>:0`. Running a
+                                    // synthesized wrapper here stamps line 1 instead, so
+                                    // put the stub's value back when the wrapper was ours.
+                                    let synthesized = registered != body;
+                                    let _ =
+                                        self.run_autoload_definition(name, &registered, ksh_style);
+                                    crate::ported::lex::set_lineno(caller_lineno);
+                                    if synthesized {
+                                        // c:5384-5388 sets `shf->lineno` only where a
+                                        // `name() { … }` STATEMENT defines the function; an
+                                        // autoload stub keeps the 0 it was created with and
+                                        // loadautofn replaces only `funcdef`, so
+                                        // `funcsourcetrace` reads `<file>:0`. Executing our
+                                        // synthesized wrapper records a line base of 1
+                                        // instead. -1 marks "autoload-installed" so the
+                                        // call-time clamp below can tell that apart from an
+                                        // INLINE `f() { … }`, whose base underflows to 0 but
+                                        // whose def line really is >= 1.
+                                        self.function_line_base.insert(name.to_string(), -1);
+                                    }
+                                }
                             }
                             sourcelevel.fetch_sub(1, Relaxed);
                             RETFLAG.store(saved_retflag, Relaxed);
@@ -4341,9 +4338,11 @@ impl ShellExecutor {
             .and_then(|t| {
                 t.get(name)
                     .or_else(|| t.get(display_name.as_str()))
-                    .and_then(|s| s.sticky.as_deref().map(|b| {
-                        crate::ported::exec::sticky_emulation_dup(b, 0)
-                    }))
+                    .and_then(|s| {
+                        s.sticky
+                            .as_deref()
+                            .map(|b| crate::ported::exec::sticky_emulation_dup(b, 0))
+                    })
             });
         let mut synth_shf = crate::ported::zsh_h::shfunc {
             node: crate::ported::zsh_h::hashnode {
@@ -4428,9 +4427,14 @@ impl ShellExecutor {
         // Bug #1059.
         let saved_cmdstack: Vec<u8> =
             crate::ported::prompt::CMDSTACK.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        // c:Src/exec.c:4364 — a `return` out of a redirected compound
+        // command still runs `fixfds(save)`. See
+        // `unwind_redirect_scopes_to`.
+        let redir_depth = self.redirect_scope_stack.len();
         let _ctx = ExecutorContext::enter(self);
         let status = crate::ported::exec::doshfunc(&mut synth_shf, doshargs, false, body_runner);
         drop(_ctx);
+        self.unwind_redirect_scopes_to(redir_depth);
         crate::ported::prompt::CMDSTACK.with(|s| *s.borrow_mut() = saved_cmdstack);
 
         self.prompt_funcstack.pop();
@@ -4480,7 +4484,8 @@ impl ShellExecutor {
         // fallback to `cmd` for a bare command.
         {
             let last = args.last().cloned().unwrap_or_else(|| cmd.to_string());
-            crate::ported::params::set_zunderscore(std::slice::from_ref(&last)); // c:3546
+            crate::ported::params::set_zunderscore(std::slice::from_ref(&last));
+            // c:3546
         }
         // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
         // Native (Rust) plugin builtins registered via `zmodload -R`
@@ -4607,228 +4612,240 @@ impl ShellExecutor {
         // C recurses through zexecve for each rewrite; the loop is that
         // recursion, re-driving the spawn with the rewritten argv.
         loop {
-        let mut command = Command::new(&spawn_prog);
-        {
-            use std::os::unix::process::CommandExt as _;
-            command.arg0(&spawn_arg0);
-        }
-        // c:Src/exec.c execute — C unmetafies every arg before the
-        // execve (the child must see raw bytes, not the shell's
-        // internal Meta encoding). Args carrying Meta-char pairs
-        // (from `$'\xff'` etc., vm_helper::meta_encode_byte) are
-        // decoded to raw bytes via OsStr; plain args pass through
-        // unchanged. Bug #127.
-        for a in &spawn_args {
-            if a.contains('\u{83}') {
-                use std::os::unix::ffi::OsStrExt as _;
-                command.arg(std::ffi::OsStr::from_bytes(&unmetafy_str(a)));
-            } else {
-                command.arg(a);
+            let mut command = Command::new(&spawn_prog);
+            {
+                use std::os::unix::process::CommandExt as _;
+                command.arg0(&spawn_arg0);
             }
-        }
-
-        // Redirect handling lives in fusevm's WithRedirectsBegin/End
-        // ops at compile time; `_redirects` arrives empty here.
-
-        // c:Src/jobs.c — `time` reports only on JOBS (forked work). This
-        // is the single chokepoint where an external process is actually
-        // spawned (both fg and bg, all callers), AFTER the
-        // command-not-found and resolvebuiltin early-returns above — so
-        // counting here makes BUILTIN_TIME_SUBLIST report `time sleep 0`
-        // / `time /usr/bin/true` (external → fork) while staying silent
-        // for `time true` (builtin, never reaches this point). The
-        // subshell entry counts separately (fusevm_bridge.rs:9573).
-        FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        return if background {
-            match command.spawn() {
-                Ok(child) => {
-                    let pid = child.id();
-                    let cmd_str = format!("{} {}", cmd, args.join(" "));
-                    let job_id = self.jobs.add_job(child, cmd_str, JobState::Running);
-                    println!("[{}] {}", job_id, pid);
-                    Ok(0)
-                }
-                Err(e) => {
-                    // c:534-627 — the kernel refused the file; retry with
-                    // the interpreter the `#!` line names (or `/bin/sh` for a
-                    // shebang-less script). See zexecve_recover.
-                    let eno = e.raw_os_error().unwrap_or(0);
-                    if eno == libc::ENOEXEC || eno == libc::ENOENT {
-                        // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
-                        // candidate `pbuf` from its own `$path` walk, never the
-                        // bare word; and c:544 `*argv = pth;` then puts that
-                        // resolved path into argv[0] for the interpreter. Here
-                        // libc did the PATH search inside the spawn, so redo it
-                        // with `pathprog` (utils.rs:798) before probing —
-                        // otherwise a `#!` script found on `$path` was handed to
-                        // its interpreter as the bare name and `#!echo foo`
-                        // printed `foo tstcmd-arg` instead of
-                        // `foo <dir>/tstcmd-arg`.
-                        let probe_pth = if spawn_prog.contains('/') {
-                            spawn_prog.clone()
-                        } else {
-                            match crate::ported::utils::pathprog(&spawn_prog) {
-                                Some(p) => p.display().to_string(), // c:815
-                                None => spawn_prog.clone(),
-                            }
-                        };
-                        let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
-                        cargv.push(spawn_arg0.clone());
-                        cargv.extend_from_slice(&spawn_args);
-                        if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
-                            spawn_arg0 = newargv.first().cloned().unwrap_or_else(|| prog.clone());
-                            spawn_args = newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
-                            spawn_prog = prog;
-                            continue;
-                        }
-                    }
-                    let sn = crate::ported::utils::scriptname_get()
-                        .unwrap_or_else(|| "zshrs".to_string());
-                    if e.kind() == io::ErrorKind::NotFound {
-                        // Inline Rust FFI export run in the background: an
-                        // in-process FFI call has nothing to background, so run
-                        // it synchronously (mirrors the plugin-builtin path).
-                        if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
-                            return Ok(rc);
-                        }
-                        // zsh: absolute paths emit "no such file or
-                        // directory" (the OS error, since the path was
-                        // tried directly), not "command not found"
-                        // (which implies PATH search).
-                        // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
-                        // else … zerr("command not found: %s", arg0);`. `eno` is set
-                        // by an execve that actually ran, and zsh runs execve directly
-                        // for ANY arg0 containing a slash (no PATH search), so
-                        // `./foo` and `dir/foo` report the errno, not "command not
-                        // found". Testing only for a LEADING slash mis-reported the
-                        // relative forms:
-                        //   ./nonexistent_script
-                        //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
-                        //   zshrs: zsh:1: command not found: ./nonexistent_script
-                        if cmd.contains('/') {
-                            eprintln!("{}: no such file or directory: {}", zerr_prefix(&sn), cmd);
-                        } else {
-                            eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
-                        }
-                        Ok(127)
-                    } else {
-                        Err(format!("{}: {}: {}", sn, cmd, e))
-                    }
+            // c:Src/exec.c execute — C unmetafies every arg before the
+            // execve (the child must see raw bytes, not the shell's
+            // internal Meta encoding). Args carrying Meta-char pairs
+            // (from `$'\xff'` etc., vm_helper::meta_encode_byte) are
+            // decoded to raw bytes via OsStr; plain args pass through
+            // unchanged. Bug #127.
+            for a in &spawn_args {
+                if a.contains('\u{83}') {
+                    use std::os::unix::ffi::OsStrExt as _;
+                    command.arg(std::ffi::OsStr::from_bytes(&unmetafy_str(a)));
+                } else {
+                    command.arg(a);
                 }
             }
-        } else {
-            // Queue signals across the wait so zshrs's SIGCHLD reaper
-            // (waitpid(-1) in wait_for_processes, delivered on any
-            // thread) can't reap this child before Command::status()
-            // does — otherwise status() fails with ECHILD ("No child
-            // processes"). See ForegroundWaitGuard in fusevm_bridge.
-            let status_result = {
-                let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
-                command.status()
-            };
-            match status_result {
-                Ok(status) => Ok(status.code().unwrap_or(1)),
-                Err(e) => {
-                    // c:534-627 — the kernel refused the file; retry with
-                    // the interpreter the `#!` line names (or `/bin/sh` for a
-                    // shebang-less script). See zexecve_recover.
-                    let eno = e.raw_os_error().unwrap_or(0);
-                    if eno == libc::ENOEXEC || eno == libc::ENOENT {
-                        // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
-                        // candidate `pbuf` from its own `$path` walk, never the
-                        // bare word; and c:544 `*argv = pth;` then puts that
-                        // resolved path into argv[0] for the interpreter. Here
-                        // libc did the PATH search inside the spawn, so redo it
-                        // with `pathprog` (utils.rs:798) before probing —
-                        // otherwise a `#!` script found on `$path` was handed to
-                        // its interpreter as the bare name and `#!echo foo`
-                        // printed `foo tstcmd-arg` instead of
-                        // `foo <dir>/tstcmd-arg`.
-                        let probe_pth = if spawn_prog.contains('/') {
-                            spawn_prog.clone()
-                        } else {
-                            match crate::ported::utils::pathprog(&spawn_prog) {
-                                Some(p) => p.display().to_string(), // c:815
-                                None => spawn_prog.clone(),
-                            }
-                        };
-                        let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
-                        cargv.push(spawn_arg0.clone());
-                        cargv.extend_from_slice(&spawn_args);
-                        if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
-                            spawn_arg0 = newargv.first().cloned().unwrap_or_else(|| prog.clone());
-                            spawn_args = newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
-                            spawn_prog = prog;
-                            continue;
-                        }
+
+            // Redirect handling lives in fusevm's WithRedirectsBegin/End
+            // ops at compile time; `_redirects` arrives empty here.
+
+            // c:Src/jobs.c — `time` reports only on JOBS (forked work). This
+            // is the single chokepoint where an external process is actually
+            // spawned (both fg and bg, all callers), AFTER the
+            // command-not-found and resolvebuiltin early-returns above — so
+            // counting here makes BUILTIN_TIME_SUBLIST report `time sleep 0`
+            // / `time /usr/bin/true` (external → fork) while staying silent
+            // for `time true` (builtin, never reaches this point). The
+            // subshell entry counts separately (fusevm_bridge.rs:9573).
+            FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            return if background {
+                match command.spawn() {
+                    Ok(child) => {
+                        let pid = child.id();
+                        let cmd_str = format!("{} {}", cmd, args.join(" "));
+                        let job_id = self.jobs.add_job(child, cmd_str, JobState::Running);
+                        println!("[{}] {}", job_id, pid);
+                        Ok(0)
                     }
-                    // Use scriptname (the user-visible shell identifier
-                    // — "zsh" in --zsh mode, "zshrs" otherwise) instead
-                    // of a hardcoded "zshrs:" prefix so --zsh-mode
-                    // diagnostics byte-match C zsh's stderr format.
-                    let sn = crate::ported::utils::scriptname_get()
-                        .unwrap_or_else(|| "zshrs".to_string());
-                    if e.kind() == io::ErrorKind::NotFound {
-                        // c:Src/exec.c — `command_not_found_handler` user
-                        // hook: when a command lookup fails AND a function
-                        // by that name is defined, call it with the cmd
-                        // name + original args and return its rc instead
-                        // of the default 127 + "command not found" error.
-                        // Documented in zshmisc(1) under "Special
-                        // Functions". Bug #426.
-                        //
-                        // The hook only fires for bare names (PATH search
-                        // failed); absolute paths skip it and emit the
-                        // OS-error path below — matches zsh behavior.
-                        if !cmd.contains('/') {
-                            let mut hook_args = Vec::with_capacity(args.len() + 1);
-                            hook_args.push(cmd.to_string());
-                            hook_args.extend_from_slice(args);
-                            if let Some(rc) =
-                                self.dispatch_function_call("command_not_found_handler", &hook_args)
-                            {
+                    Err(e) => {
+                        // c:534-627 — the kernel refused the file; retry with
+                        // the interpreter the `#!` line names (or `/bin/sh` for a
+                        // shebang-less script). See zexecve_recover.
+                        let eno = e.raw_os_error().unwrap_or(0);
+                        if eno == libc::ENOEXEC || eno == libc::ENOENT {
+                            // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
+                            // candidate `pbuf` from its own `$path` walk, never the
+                            // bare word; and c:544 `*argv = pth;` then puts that
+                            // resolved path into argv[0] for the interpreter. Here
+                            // libc did the PATH search inside the spawn, so redo it
+                            // with `pathprog` (utils.rs:798) before probing —
+                            // otherwise a `#!` script found on `$path` was handed to
+                            // its interpreter as the bare name and `#!echo foo`
+                            // printed `foo tstcmd-arg` instead of
+                            // `foo <dir>/tstcmd-arg`.
+                            let probe_pth = if spawn_prog.contains('/') {
+                                spawn_prog.clone()
+                            } else {
+                                match crate::ported::utils::pathprog(&spawn_prog) {
+                                    Some(p) => p.display().to_string(), // c:815
+                                    None => spawn_prog.clone(),
+                                }
+                            };
+                            let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
+                            cargv.push(spawn_arg0.clone());
+                            cargv.extend_from_slice(&spawn_args);
+                            if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
+                                spawn_arg0 =
+                                    newargv.first().cloned().unwrap_or_else(|| prog.clone());
+                                spawn_args =
+                                    newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
+                                spawn_prog = prog;
+                                continue;
+                            }
+                        }
+                        let sn = crate::ported::utils::scriptname_get()
+                            .unwrap_or_else(|| "zshrs".to_string());
+                        if e.kind() == io::ErrorKind::NotFound {
+                            // Inline Rust FFI export run in the background: an
+                            // in-process FFI call has nothing to background, so run
+                            // it synchronously (mirrors the plugin-builtin path).
+                            if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
                                 return Ok(rc);
                             }
-                        }
-                        // Inline Rust FFI export: consulted after builtins,
-                        // functions, PATH search, and command_not_found_handler
-                        // have all missed — real commands keep priority.
-                        if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
-                            return Ok(rc);
-                        }
-                        // zsh: absolute paths emit "no such file or
-                        // directory" (the OS error, since the path was
-                        // tried directly), not "command not found"
-                        // (which implies PATH search).
-                        // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
-                        // else … zerr("command not found: %s", arg0);`. `eno` is set
-                        // by an execve that actually ran, and zsh runs execve directly
-                        // for ANY arg0 containing a slash (no PATH search), so
-                        // `./foo` and `dir/foo` report the errno, not "command not
-                        // found". Testing only for a LEADING slash mis-reported the
-                        // relative forms:
-                        //   ./nonexistent_script
-                        //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
-                        //   zshrs: zsh:1: command not found: ./nonexistent_script
-                        if cmd.contains('/') {
-                            eprintln!("{}: no such file or directory: {}", zerr_prefix(&sn), cmd);
+                            // zsh: absolute paths emit "no such file or
+                            // directory" (the OS error, since the path was
+                            // tried directly), not "command not found"
+                            // (which implies PATH search).
+                            // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
+                            // else … zerr("command not found: %s", arg0);`. `eno` is set
+                            // by an execve that actually ran, and zsh runs execve directly
+                            // for ANY arg0 containing a slash (no PATH search), so
+                            // `./foo` and `dir/foo` report the errno, not "command not
+                            // found". Testing only for a LEADING slash mis-reported the
+                            // relative forms:
+                            //   ./nonexistent_script
+                            //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
+                            //   zshrs: zsh:1: command not found: ./nonexistent_script
+                            if cmd.contains('/') {
+                                eprintln!(
+                                    "{}: no such file or directory: {}",
+                                    zerr_prefix(&sn),
+                                    cmd
+                                );
+                            } else {
+                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                            }
+                            Ok(127)
                         } else {
-                            eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                            Err(format!("{}: {}: {}", sn, cmd, e))
                         }
-                        Ok(127)
-                    } else if e.kind() == io::ErrorKind::PermissionDenied {
-                        // zsh: non-executable file → "permission denied"
-                        // on stderr and exit 126 (POSIX "command found
-                        // but not executable").
-                        eprintln!("{}: permission denied: {}", zerr_prefix(&sn), cmd);
-                        Ok(126)
-                    } else {
-                        Err(format!("{}: {}: {}", sn, cmd, e))
                     }
                 }
-            }
-        };
+            } else {
+                // Queue signals across the wait so zshrs's SIGCHLD reaper
+                // (waitpid(-1) in wait_for_processes, delivered on any
+                // thread) can't reap this child before Command::status()
+                // does — otherwise status() fails with ECHILD ("No child
+                // processes"). See ForegroundWaitGuard in fusevm_bridge.
+                let status_result = {
+                    let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
+                    command.status()
+                };
+                match status_result {
+                    Ok(status) => Ok(status.code().unwrap_or(1)),
+                    Err(e) => {
+                        // c:534-627 — the kernel refused the file; retry with
+                        // the interpreter the `#!` line names (or `/bin/sh` for a
+                        // shebang-less script). See zexecve_recover.
+                        let eno = e.raw_os_error().unwrap_or(0);
+                        if eno == libc::ENOEXEC || eno == libc::ENOENT {
+                            // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
+                            // candidate `pbuf` from its own `$path` walk, never the
+                            // bare word; and c:544 `*argv = pth;` then puts that
+                            // resolved path into argv[0] for the interpreter. Here
+                            // libc did the PATH search inside the spawn, so redo it
+                            // with `pathprog` (utils.rs:798) before probing —
+                            // otherwise a `#!` script found on `$path` was handed to
+                            // its interpreter as the bare name and `#!echo foo`
+                            // printed `foo tstcmd-arg` instead of
+                            // `foo <dir>/tstcmd-arg`.
+                            let probe_pth = if spawn_prog.contains('/') {
+                                spawn_prog.clone()
+                            } else {
+                                match crate::ported::utils::pathprog(&spawn_prog) {
+                                    Some(p) => p.display().to_string(), // c:815
+                                    None => spawn_prog.clone(),
+                                }
+                            };
+                            let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
+                            cargv.push(spawn_arg0.clone());
+                            cargv.extend_from_slice(&spawn_args);
+                            if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
+                                spawn_arg0 =
+                                    newargv.first().cloned().unwrap_or_else(|| prog.clone());
+                                spawn_args =
+                                    newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
+                                spawn_prog = prog;
+                                continue;
+                            }
+                        }
+                        // Use scriptname (the user-visible shell identifier
+                        // — "zsh" in --zsh mode, "zshrs" otherwise) instead
+                        // of a hardcoded "zshrs:" prefix so --zsh-mode
+                        // diagnostics byte-match C zsh's stderr format.
+                        let sn = crate::ported::utils::scriptname_get()
+                            .unwrap_or_else(|| "zshrs".to_string());
+                        if e.kind() == io::ErrorKind::NotFound {
+                            // c:Src/exec.c — `command_not_found_handler` user
+                            // hook: when a command lookup fails AND a function
+                            // by that name is defined, call it with the cmd
+                            // name + original args and return its rc instead
+                            // of the default 127 + "command not found" error.
+                            // Documented in zshmisc(1) under "Special
+                            // Functions". Bug #426.
+                            //
+                            // The hook only fires for bare names (PATH search
+                            // failed); absolute paths skip it and emit the
+                            // OS-error path below — matches zsh behavior.
+                            if !cmd.contains('/') {
+                                let mut hook_args = Vec::with_capacity(args.len() + 1);
+                                hook_args.push(cmd.to_string());
+                                hook_args.extend_from_slice(args);
+                                if let Some(rc) = self
+                                    .dispatch_function_call("command_not_found_handler", &hook_args)
+                                {
+                                    return Ok(rc);
+                                }
+                            }
+                            // Inline Rust FFI export: consulted after builtins,
+                            // functions, PATH search, and command_not_found_handler
+                            // have all missed — real commands keep priority.
+                            if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
+                                return Ok(rc);
+                            }
+                            // zsh: absolute paths emit "no such file or
+                            // directory" (the OS error, since the path was
+                            // tried directly), not "command not found"
+                            // (which implies PATH search).
+                            // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
+                            // else … zerr("command not found: %s", arg0);`. `eno` is set
+                            // by an execve that actually ran, and zsh runs execve directly
+                            // for ANY arg0 containing a slash (no PATH search), so
+                            // `./foo` and `dir/foo` report the errno, not "command not
+                            // found". Testing only for a LEADING slash mis-reported the
+                            // relative forms:
+                            //   ./nonexistent_script
+                            //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
+                            //   zshrs: zsh:1: command not found: ./nonexistent_script
+                            if cmd.contains('/') {
+                                eprintln!(
+                                    "{}: no such file or directory: {}",
+                                    zerr_prefix(&sn),
+                                    cmd
+                                );
+                            } else {
+                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                            }
+                            Ok(127)
+                        } else if e.kind() == io::ErrorKind::PermissionDenied {
+                            // zsh: non-executable file → "permission denied"
+                            // on stderr and exit 126 (POSIX "command found
+                            // but not executable").
+                            eprintln!("{}: permission denied: {}", zerr_prefix(&sn), cmd);
+                            Ok(126)
+                        } else {
+                            Err(format!("{}: {}: {}", sn, cmd, e))
+                        }
+                    }
+                }
+            };
         }
     }
     /// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
@@ -4979,8 +4996,7 @@ impl ShellExecutor {
         // is `_git`'s exact shape, and the leaked context flipped c:4354's
         // `mark_empty`, keeping the empty element that plan9 must delete.
         let saved_dq = std::mem::replace(&mut self.in_dq_context, 0);
-        let saved_subexp =
-            crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.replace(0));
+        let saved_subexp = crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.replace(0));
         let out = self.run_command_substitution_inner(cmd_str, false);
         crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.set(saved_subexp));
         self.in_dq_context = saved_dq;
@@ -5493,72 +5509,74 @@ impl ShellExecutor {
                 // A funsub/valsub skips ALL of it: that is the entire
                 // difference between `${ list; }` and `$(list)`.
                 if !shared_state {
-                if let Ok(mut t) = crate::ported::params::paramtab().write() {
-                    *t = paramtab_snap;
-                }
-                if let Ok(mut m) = crate::ported::params::paramtab_hashed_storage().lock() {
-                    *m = paramtab_hashed_snap;
-                }
-                self.set_pparams(pparams_snap);
-                crate::ported::options::opt_state_restore(opts_snap);
-                // Restore the parent's IFS (subshell isolation): the body's
-                // `IFS=` must not leak out and word-split the parent's use
-                // of the cmdsub result. Runtime word-splitting reads the
-                // IFS *string* (this `ifs_lock` global), so restoring it is
-                // sufficient. Deliberately do NOT call inittyptab() here —
-                // that rewrites the process-global typtab the LEXER reads
-                // on every character, and firing it per-cmdsub races
-                // concurrent lexing in zshrs's worker threads, producing
-                // spurious "parse error" flakes (HEAD ran clean 3/3; the
-                // per-cmdsub inittyptab flaked ~50%). The typtab only
-                // affects re-lexing — the parent is already compiled — and
-                // leaving it at the body's value is strictly less divergent
-                // than the prior behavior, which leaked the whole IFS.
-                if let Ok(mut g) = crate::ported::params::ifs_lock().lock() {
-                    *g = ifs_snap;
-                }
-                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
-                    *t = traps_snap;
-                }
-                // Restore function tables (parallel to the trap/param
-                // restore above). Bug #455.
-                if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
-                    t.restore(shfunctab_snap);
-                }
-                self.functions_compiled = functions_compiled_snap;
-                self.function_source = function_source_snap;
-                // Discard anything the substitution added to the completion
-                // arena — the in-process stand-in for the forked child's
-                // address space going away (see comp_arena_save above).
-                crate::comp_match_handles::comp_arena_restore(comp_arena_snap);
-                // Undo the clearjobtab above — in C the cleared table
-                // belongs to the forked child and dies with it, so the
-                // parent's table must come back untouched.
-                if let (Some(js), Some(t)) = (jobtab_snap, crate::ported::jobs::JOBTAB.get()) {
-                    if let Ok(mut g) = t.lock() {
-                        *g = js;
+                    if let Ok(mut t) = crate::ported::params::paramtab().write() {
+                        *t = paramtab_snap;
                     }
-                }
-                if let (Some(mj), Some(m)) = (maxjob_snap, crate::ported::jobs::MAXJOB.get()) {
-                    if let Ok(mut g) = m.lock() {
-                        *g = mj;
+                    if let Ok(mut m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                        *m = paramtab_hashed_snap;
                     }
-                }
-                if let (Some(tj), Some(t)) = (thisjob_snap, crate::ported::jobs::THISJOB.get()) {
-                    if let Ok(mut g) = t.lock() {
-                        *g = tj;
+                    self.set_pparams(pparams_snap);
+                    crate::ported::options::opt_state_restore(opts_snap);
+                    // Restore the parent's IFS (subshell isolation): the body's
+                    // `IFS=` must not leak out and word-split the parent's use
+                    // of the cmdsub result. Runtime word-splitting reads the
+                    // IFS *string* (this `ifs_lock` global), so restoring it is
+                    // sufficient. Deliberately do NOT call inittyptab() here —
+                    // that rewrites the process-global typtab the LEXER reads
+                    // on every character, and firing it per-cmdsub races
+                    // concurrent lexing in zshrs's worker threads, producing
+                    // spurious "parse error" flakes (HEAD ran clean 3/3; the
+                    // per-cmdsub inittyptab flaked ~50%). The typtab only
+                    // affects re-lexing — the parent is already compiled — and
+                    // leaving it at the body's value is strictly less divergent
+                    // than the prior behavior, which leaked the whole IFS.
+                    if let Ok(mut g) = crate::ported::params::ifs_lock().lock() {
+                        *g = ifs_snap;
                     }
-                }
-                if let (Some(cj), Some(t)) = (curjob_snap, crate::ported::jobs::CURJOB.get()) {
-                    if let Ok(mut g) = t.lock() {
-                        *g = cj;
+                    if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                        *t = traps_snap;
                     }
-                }
-                if let (Some(pj), Some(t)) = (prevjob_snap, crate::ported::jobs::PREVJOB.get()) {
-                    if let Ok(mut g) = t.lock() {
-                        *g = pj;
+                    // Restore function tables (parallel to the trap/param
+                    // restore above). Bug #455.
+                    if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+                        t.restore(shfunctab_snap);
                     }
-                }
+                    self.functions_compiled = functions_compiled_snap;
+                    self.function_source = function_source_snap;
+                    // Discard anything the substitution added to the completion
+                    // arena — the in-process stand-in for the forked child's
+                    // address space going away (see comp_arena_save above).
+                    crate::comp_match_handles::comp_arena_restore(comp_arena_snap);
+                    // Undo the clearjobtab above — in C the cleared table
+                    // belongs to the forked child and dies with it, so the
+                    // parent's table must come back untouched.
+                    if let (Some(js), Some(t)) = (jobtab_snap, crate::ported::jobs::JOBTAB.get()) {
+                        if let Ok(mut g) = t.lock() {
+                            *g = js;
+                        }
+                    }
+                    if let (Some(mj), Some(m)) = (maxjob_snap, crate::ported::jobs::MAXJOB.get()) {
+                        if let Ok(mut g) = m.lock() {
+                            *g = mj;
+                        }
+                    }
+                    if let (Some(tj), Some(t)) = (thisjob_snap, crate::ported::jobs::THISJOB.get())
+                    {
+                        if let Ok(mut g) = t.lock() {
+                            *g = tj;
+                        }
+                    }
+                    if let (Some(cj), Some(t)) = (curjob_snap, crate::ported::jobs::CURJOB.get()) {
+                        if let Ok(mut g) = t.lock() {
+                            *g = cj;
+                        }
+                    }
+                    if let (Some(pj), Some(t)) = (prevjob_snap, crate::ported::jobs::PREVJOB.get())
+                    {
+                        if let Ok(mut g) = t.lock() {
+                            *g = pj;
+                        }
+                    }
                 } // if !shared_state
             }
         }

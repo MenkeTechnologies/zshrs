@@ -137,6 +137,12 @@ mod time_stderr_present {
     /// builtins produce zero usage and zsh prints nothing). Both
     /// shells must agree on whether stderr is empty or not.
     #[test]
+    #[ignore = "reference-version skew, NOT a zshrs gap: `time` on builtins / current-shell actions was ADDED by upstream 53088 (ChangeLog 2024-09-14, Bart \
+Schaefer). The vendored C tree (5.9.0.3-test) carries that call and zsh's own \
+A08time.ztst chunks for it PASS against zshrs (`cargo test --test ztst_runner -- \
+a08_time`). The installed /bin/zsh 5.9 (2022-05) predates it and is silent here, so \
+this asserts against a stale oracle. See the DO-NOT-FIX note on the is_cursh arm in \
+src/fusevm_bridge.rs. docs/BUGS.md #1093."]
     fn time_emits_some_stderr_in_zsh() {
         if !zsh_available() {
             return;
@@ -156,6 +162,12 @@ mod time_stderr_present {
     /// stderr from `time` contains "total" or similar marker
     /// (zsh default format includes ' total').
     #[test]
+    #[ignore = "reference-version skew, NOT a zshrs gap: `time` on builtins / current-shell actions was ADDED by upstream 53088 (ChangeLog 2024-09-14, Bart \
+Schaefer). The vendored C tree (5.9.0.3-test) carries that call and zsh's own \
+A08time.ztst chunks for it PASS against zshrs (`cargo test --test ztst_runner -- \
+a08_time`). The installed /bin/zsh 5.9 (2022-05) predates it and is silent here, so \
+this asserts against a stale oracle. See the DO-NOT-FIX note on the is_cursh arm in \
+src/fusevm_bridge.rs. docs/BUGS.md #1093."]
     fn time_default_stderr_format_has_known_marker() {
         if !zsh_available() {
             return;
@@ -179,6 +191,12 @@ mod timefmt {
 
     /// Custom `TIMEFMT='%J'` → output is just the command name.
     #[test]
+    #[ignore = "reference-version skew, NOT a zshrs gap: `time` on builtins / current-shell actions was ADDED by upstream 53088 (ChangeLog 2024-09-14, Bart \
+Schaefer). The vendored C tree (5.9.0.3-test) carries that call and zsh's own \
+A08time.ztst chunks for it PASS against zshrs (`cargo test --test ztst_runner -- \
+a08_time`). The installed /bin/zsh 5.9 (2022-05) predates it and is silent here, so \
+this asserts against a stale oracle. See the DO-NOT-FIX note on the is_cursh arm in \
+src/fusevm_bridge.rs. docs/BUGS.md #1093."]
     fn timefmt_J_just_command_name() {
         if !zsh_available() {
             return;
