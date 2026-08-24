@@ -9,8 +9,8 @@
 //!     header: { magic, format_version, zshrs_version, pointer_width, built_at_secs },
 //!     entries: HashMap<canonical_path, ScriptEntry>,
 //!   }
-//!   ScriptEntry { mtime_secs, mtime_nsecs, binary_mtime_at_cache, cached_at_secs,
-//!                 chunk_blob: `Vec<u8>` }
+//!   ScriptEntry { mtime_secs, mtime_nsecs, binary_mtime_at_cache,
+//!                 binary_len_at_cache, cached_at_secs, chunk_blob: `Vec<u8>` }
 //!
 //! Inner `chunk_blob` is bincode for now — `fusevm::Chunk` is owned by the
 //! upstream `fusevm` crate and only derives `serde::Serialize`/`Deserialize`,
@@ -24,8 +24,10 @@
 //!     lookups pay validation once.
 //!   - `rkyv::check_archived_root::<ScriptShard>` validates the byte image.
 //!   - Header validated for magic / format_version / zshrs_version / pointer_width.
-//!   - Per-entry: source mtime must match, and `binary_mtime_at_cache` ≥ running
-//!     zshrs binary's mtime (any rebuild of zshrs invalidates entries silently).
+//!   - Per-entry: source mtime must match, and the entry's recorded binary
+//!     identity (`binary_mtime_at_cache`, `binary_len_at_cache`) must EQUAL the
+//!     running binary's (mtime, len). Bytecode is only ever replayed by the
+//!     exact build that emitted it; any rebuild invalidates entries silently.
 //!
 //! Write path:
 //!   - `bin_zsystem_flock(LOCK_EX)` on `scripts.rkyv.lock` so concurrent writers serialize.
@@ -54,7 +56,10 @@ use std::os::unix::fs::MetadataExt;
 /// "ZRSC" little-endian.
 pub const SHARD_MAGIC: u32 = 0x5A525343;
 /// Bumped on incompatible rkyv schema changes.
-pub const SHARD_FORMAT_VERSION: u32 = 1;
+///
+/// v2 added `ScriptEntry::binary_len_at_cache`; a v1 shard has no length to
+/// compare against, so it is rejected wholesale rather than half-validated.
+pub const SHARD_FORMAT_VERSION: u32 = 2;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
@@ -78,8 +83,14 @@ pub struct ScriptEntry {
     pub mtime_secs: i64,
     /// `mtime_nsecs` field.
     pub mtime_nsecs: i64,
-    /// `binary_mtime_at_cache` field.
+    /// mtime of the zshrs binary that compiled `chunk_blob`.
     pub binary_mtime_at_cache: i64,
+    /// Size of the zshrs binary that compiled `chunk_blob`. Paired with
+    /// `binary_mtime_at_cache` to identify the emitting build: mtime alone
+    /// has one-second granularity and moves in both directions (an older
+    /// binary restored over a newer one keeps its old timestamp), so it
+    /// cannot by itself prove the running build emitted these bytes.
+    pub binary_len_at_cache: u64,
     /// `cached_at_secs` field.
     pub cached_at_secs: i64,
     /// `chunk_blob` field.
@@ -206,11 +217,28 @@ impl ScriptCache {
             return None;
         }
 
-        if let Some(bin_mtime) = current_binary_mtime_secs() {
-            let cached_bin_mtime: i64 = entry.binary_mtime_at_cache.into();
-            if cached_bin_mtime < bin_mtime {
-                return None;
+        // Was this chunk emitted by the binary that is running right now?
+        //
+        // EXACT equality on (mtime, len), the same test `autoload_cache`
+        // already applies to its chunks. The previous `cached < running`
+        // comparison only rejected a cache written by an OLDER build, so a
+        // binary whose mtime went BACKWARDS — an earlier build restored over
+        // a later one, a `cp` that preserves timestamps, a checkout of a
+        // previously-built target dir — silently replayed the newer build's
+        // bytecode. Proven by touching the binary's mtime into the past and
+        // watching the shard still hit. The one-second granularity of the
+        // stored mtime has the same effect when a rebuild lands in the same
+        // second as the cache write, which is why the length is compared too.
+        match current_binary_identity() {
+            Some((bin_mtime, bin_len)) => {
+                let cached_bin_mtime: i64 = entry.binary_mtime_at_cache.into();
+                let cached_bin_len: u64 = entry.binary_len_at_cache.into();
+                if cached_bin_mtime != bin_mtime || cached_bin_len != bin_len {
+                    return None;
+                }
             }
+            // No `current_exe()` — nothing can be proven, so nothing is used.
+            None => return None,
         }
 
         Some(entry.chunk_blob.as_slice().to_vec())
@@ -240,11 +268,12 @@ impl ScriptCache {
             _ => fresh_shard(),
         };
 
-        let bin_mtime = current_binary_mtime_secs().unwrap_or(0);
+        let (bin_mtime, bin_len) = current_binary_identity().unwrap_or((0, 0));
         let entry = ScriptEntry {
             mtime_secs,
             mtime_nsecs,
             binary_mtime_at_cache: bin_mtime,
+            binary_len_at_cache: bin_len,
             cached_at_secs: now_secs(),
             chunk_blob,
         };
@@ -391,12 +420,14 @@ pub fn file_mtime(path: &Path) -> Option<(i64, i64)> {
     Some((meta.mtime(), meta.mtime_nsec()))
 }
 
-fn current_binary_mtime_secs() -> Option<i64> {
-    static BIN_MTIME: OnceLock<Option<i64>> = OnceLock::new();
-    *BIN_MTIME.get_or_init(|| {
+/// `(mtime, len)` of the running zshrs binary — the identity a cached chunk
+/// is stamped with, mirroring `autoload_cache::current_binary_identity`.
+fn current_binary_identity() -> Option<(i64, u64)> {
+    static BIN_ID: OnceLock<Option<(i64, u64)>> = OnceLock::new();
+    *BIN_ID.get_or_init(|| {
         let exe = std::env::current_exe().ok()?;
-        let (secs, _) = file_mtime(&exe)?;
-        Some(secs)
+        let meta = std::fs::metadata(&exe).ok()?;
+        Some((meta.mtime(), meta.len()))
     })
 }
 
@@ -520,6 +551,59 @@ mod tests {
         cache.put(&path_str, mtime_s, mtime_ns, vec![9u8]).unwrap();
 
         assert!(cache.get(&path_str, mtime_s + 1, mtime_ns).is_none());
+    }
+
+    /// Bytecode is not portable between builds, so an entry must be refused
+    /// whichever way the recorded binary timestamp points. The old
+    /// `cached < running` test only caught the "cache written by an older
+    /// build" direction, which meant a binary whose mtime moved BACKWARDS
+    /// (an earlier build restored over a later one, a `cp -p`, a checkout of
+    /// a previously-built target dir) replayed the newer build's chunks.
+    #[test]
+    fn an_entry_from_another_binary_is_never_served() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache_path = dir.path().join("scripts.rkyv");
+        let cache = ScriptCache::open(&cache_path).unwrap();
+
+        let script_path = dir.path().join("test.zsh");
+        std::fs::write(&script_path, "echo hi").unwrap();
+        let (mtime_s, mtime_ns) = file_mtime(&script_path).unwrap();
+        let path_str = script_path.to_string_lossy().to_string();
+        cache.put(&path_str, mtime_s, mtime_ns, vec![9u8]).unwrap();
+        assert_eq!(
+            cache.get(&path_str, mtime_s, mtime_ns),
+            Some(vec![9u8]),
+            "the emitting binary must hit its own entry",
+        );
+
+        // Restamp the entry as if a NEWER build had produced it — the
+        // direction the old comparison let through.
+        let mut shard = read_owned_shard(&cache_path).expect("shard readable");
+        shard
+            .entries
+            .get_mut(&path_str)
+            .expect("entry present")
+            .binary_mtime_at_cache += 10_000;
+        write_shard_atomic(&cache_path, &shard).unwrap();
+        let reopened = ScriptCache::open(&cache_path).unwrap();
+        assert!(
+            reopened.get(&path_str, mtime_s, mtime_ns).is_none(),
+            "a chunk from a newer build was accepted",
+        );
+
+        // Same length, same-second mtime, different build: only the length
+        // term can reject this one.
+        let mut shard = read_owned_shard(&cache_path).expect("shard readable");
+        let entry = shard.entries.get_mut(&path_str).expect("entry present");
+        entry.binary_mtime_at_cache -= 10_000;
+        entry.binary_len_at_cache += 1;
+        write_shard_atomic(&cache_path, &shard).unwrap();
+        let reopened = ScriptCache::open(&cache_path).unwrap();
+        assert!(
+            reopened.get(&path_str, mtime_s, mtime_ns).is_none(),
+            "a chunk from a same-second build of a different size was accepted",
+        );
     }
 
     #[test]
