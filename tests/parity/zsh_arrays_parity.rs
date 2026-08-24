@@ -1178,3 +1178,90 @@ mod empty_element_quoting {
         assert_parity(r#"a=(1 2 3); set -- "${a[@]}"; print $#"#);
     }
 }
+
+/// Subscript-range ASSIGNMENT bounds — `Src/params.c:2001` (getindex)
+/// resolves the two bounds of a range INDEPENDENTLY and
+/// `Src/params.c:2944-2953` (setarrvalue) then clamps each on its own,
+/// so an out-of-range bound can collapse the range to an EMPTY one that
+/// INSERTS rather than overwrites. A single subscript `a[i]` is the
+/// range `[i, i]` (c:2114) and follows the same rule.
+mod subscript_assign_bounds {
+    use super::*;
+
+    /// `a[-10]=(…)` on a 3-element array: start clamps to 0 and end to 0
+    /// (c:2944-2953), an empty range at the front → the value is INSERTED
+    /// and every original element survives. Regression: the end bound was
+    /// floored at 1, which overwrote element 1 and dropped "some".
+    #[test]
+    fn out_of_range_negative_index_array_rhs_inserts_at_front() {
+        assert_parity(r#"a=(some sunny day); a[-10]=(we\'ll meet again); print -l $a"#);
+        assert_parity(r#"a=(1 2 3); a[-4]=(x y); print -l $a; print $#a"#);
+    }
+
+    /// In-range negative and positive single subscripts still REPLACE the
+    /// element they name — the fix must not turn those into inserts.
+    #[test]
+    fn in_range_single_index_array_rhs_still_replaces() {
+        assert_parity(r#"a=(1 2 3); a[-2]=(x y); print -l $a"#);
+        assert_parity(r#"a=(1 2 3); a[2]=(x y); print -l $a"#);
+        assert_parity(r#"a=(1 2 3); a[-1]=(z); print -l $a"#);
+        assert_parity(r#"a=(1 2 3); a[5]=(x y); print -l $a; print $#a"#);
+    }
+
+    /// `start == 0 && end == 0` is off the front of the index range:
+    /// without KSH_ZERO_SUBSCRIPT it is VALFLAG_EMPTY (c:2148) and
+    /// setarrvalue (c:2910) rejects the assignment; with the option it
+    /// degrades to the first element (c:2140).
+    #[test]
+    fn zero_subscript_assignment_is_rejected() {
+        assert_parity(r#"a=(1 2 3); { a[0]=(x) } 2>&1; print -l $a"#);
+        assert_parity(r#"a=(1 2 3); { a[0,0]=(x) } 2>&1; print -l $a"#);
+        assert_parity(r#"a=(1 2 3); { a[0]+=(x) } 2>&1; print -l $a"#);
+        assert_parity(r#"x=abc; { x[0,0]=Z } 2>&1; print -r -- "$x""#);
+    }
+
+    #[test]
+    fn zero_subscript_with_kshzerosubscript_hits_first_element() {
+        assert_parity(r#"setopt kshzerosubscript; a=(1 2 3); a[0]=(x); print -l $a"#);
+        assert_parity(r#"setopt kshzerosubscript; a=(1 2 3); a[0]=x; print -l $a"#);
+    }
+}
+
+/// A range subscript narrows the array BEFORE any `#`/`%`/`/`/`:mod`
+/// operator runs (`Src/params.c:2001` getindex → `Src/subst.c:2857`),
+/// and the `(@)` flag keeps that array shape even inside double quotes
+/// (`Src/subst.c:3030-3034`, nojoin == 2).
+mod slice_then_operator {
+    use super::*;
+
+    #[test]
+    fn at_flag_slice_strip_applies_to_slice_only() {
+        assert_parity(r#"a=(aa bb cc dd); print -l "${(@)a[1,2]#?}""#);
+        assert_parity(r#"a=(aa bb cc dd); print -l "${(@)a[1,2]%?}""#);
+        assert_parity(r#"a=(aa bb cc dd); print -l "${(@)${(@)a}[-2,-1]#?}""#);
+    }
+
+    #[test]
+    fn at_flag_slice_replace_applies_to_slice_only() {
+        assert_parity(r#"a=(aa bb cc dd); print -l "${(@)a[1,2]/a/X}""#);
+        assert_parity(r#"a=(aa bb cc dd); print -l "${(@)a[1,2]//a/X}""#);
+    }
+
+    /// `(@)` keeps isarr through the DQ sepjoin, so the modifier loops
+    /// per element instead of running once on the joined slice.
+    #[test]
+    fn at_flag_slice_modifier_runs_per_element() {
+        assert_parity(r#"a=(/a/b /c/d /e/f); print -l "${(@)a[1,2]:t}""#);
+        assert_parity(r#"a=(/a/b /c/d /e/f); print -l "${(@)${(@)a}[1,2]:h}""#);
+        assert_parity(r#"a=(aa bb cc dd); print -l "${(@)a[1,2]:u}""#);
+    }
+
+    /// Without `(@)`, a quoted slice still sepjoins to one scalar first —
+    /// the fix must not turn every quoted slice into an array.
+    #[test]
+    fn quoted_slice_without_at_flag_still_joins() {
+        assert_parity(r#"a=(/a/b /c/d /e/f); print -l "${a[1,2]:t}""#);
+        assert_parity(r#"a=(aa bb cc dd); print -l "${a[1,2]#?}""#);
+        assert_parity(r#"a=(aa bb cc dd); print -l "${a[2]#?}""#);
+    }
+}

@@ -14039,7 +14039,13 @@ pub fn paramsubst(
                 let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
-                if let Some(arr) = arrays_get(&var_name)
+                if let Some(arr) =
+                    // c:Src/subst.c:2857-2890 — a range subscript already
+                    // narrowed `aval`; the operator runs over the SLICE.
+                    split_parts
+                        .clone()
+                        .filter(|_| per_element && subscript.is_some())
+                        .or_else(|| arrays_get(&var_name))
                     .or_else(|| {
                         // c:3433 `getmatcharr(&aval, …)` — the array arm is
                         // chosen on `isarr`, and a bare assoc IS an array (of
@@ -14789,7 +14795,21 @@ pub fn paramsubst(
                                 .is_none()
                     })
                     .unwrap_or(false);
-                if let Some(arr) = arrays_get(&var_name)
+                // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
+                // element on `[@]`/bare `@`. `[*]`/bare `*` join in
+                // DQ; bug #322 in docs/BUGS.md. `!qt` (unquoted) and
+                // explicit `(@)` flag (nojoin==2) still trigger per-
+                // element regardless of subscript form.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_var = matches!(var_name.as_str(), "@");
+                let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
+                if let Some(arr) =
+                    // c:Src/subst.c:2857-2890 — a range subscript already
+                    // narrowed `aval`; the operator runs over the SLICE.
+                    split_parts
+                        .clone()
+                        .filter(|_| per_element && subscript.is_some())
+                        .or_else(|| arrays_get(&var_name))
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so a single-`/` replace applies per value.
                     .or_else(|| {
@@ -14826,14 +14846,6 @@ pub fn paramsubst(
                     // out `red X green` instead of `red X` — the
                     // greedy `b*` only swallowed "blue" (one
                     // element) instead of "blue green" (joined).
-                    // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
-                    // element on `[@]`/bare `@`. `[*]`/bare `*` join in
-                    // DQ; bug #322 in docs/BUGS.md. `!qt` (unquoted) and
-                    // explicit `(@)` flag (nojoin==2) still trigger per-
-                    // element regardless of subscript form.
-                    let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
-                    let is_at_var = matches!(var_name.as_str(), "@");
-                    let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
                     if per_element {
                         let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
                         value = new_arr.join(" "); // c:3870 per-element
@@ -15071,7 +15083,13 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name)
+                if let Some(arr) =
+                    // c:Src/subst.c:2857-2890 — a range subscript already
+                    // narrowed `aval`; the operator runs over the SLICE.
+                    split_parts
+                        .clone()
+                        .filter(|_| per_element_array && subscript.is_some())
+                        .or_else(|| arrays_get(&var_name))
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -15308,7 +15326,13 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name)
+                if let Some(arr) =
+                    // c:Src/subst.c:2857-2890 — a range subscript already
+                    // narrowed `aval`; the operator runs over the SLICE.
+                    split_parts
+                        .clone()
+                        .filter(|_| per_element_array && subscript.is_some())
+                        .or_else(|| arrays_get(&var_name))
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -15551,7 +15575,13 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name)
+                if let Some(arr) =
+                    // c:Src/subst.c:2857-2890 — a range subscript already
+                    // narrowed `aval`; the operator runs over the SLICE.
+                    split_parts
+                        .clone()
+                        .filter(|_| per_element_array && subscript.is_some())
+                        .or_else(|| arrays_get(&var_name))
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -15819,7 +15849,13 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name)
+                if let Some(arr) =
+                    // c:Src/subst.c:2857-2890 — a range subscript already
+                    // narrowed `aval`; the operator runs over the SLICE.
+                    split_parts
+                        .clone()
+                        .filter(|_| per_element_array && subscript.is_some())
+                        .or_else(|| arrays_get(&var_name))
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -16314,7 +16350,13 @@ pub fn paramsubst(
                     // pseudo-name always; `[*]` only outside DQ; slice
                     // only outside DQ. Anything else is scalar (single
                     // index, named key, sepjoined range/star in DQ).
-                    let per_element = is_at || is_at_var || ((is_star || is_range) && !qt);
+                    // c:Src/subst.c:3030-3034 — the `(@)` flag (nojoin == 2)
+                    // keeps `isarr` at -1 through the DQ sepjoin, so modify()
+                    // at c:4533 still loops per element. Without it
+                    // `"${(@)a[1,2]:t}"` fell into the scalar arm, joined the
+                    // slice and ran the modifier once on "aa bb".
+                    let per_element =
+                        is_at || is_at_var || nojoin == 2 || ((is_star || is_range) && !qt);
                     let scalar_subscript = subscript.is_some() && !per_element;
                     if scalar_subscript {
                         // c:2859/2887 isarr=0 after subscript → scalar.
@@ -22984,6 +23026,21 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                         '[' => ']', // c:1370
                         '{' => '}', // c:1373
                         '<' => '>', // c:1376
+                        // c:1379-1390 — get_strarg ALSO pairs the TOKENIZED
+                        // bracket forms, and inside an unquoted `${…}` the
+                        // lexer has already rewritten `{`/`}` to
+                        // Inbrace/Outbrace. Without these arms `${f:F{5}h}`
+                        // searched for a second Inbrace, swallowed the rest of
+                        // the modifier chain into the count, and died with
+                        // "unrecognized modifier `F'" (D04parameter.ztst
+                        // "Modifiers with repetition"). Quoted `"${f:F{5}h}"`
+                        // keeps the literal braces and is handled by the ASCII
+                        // arms above — zsh errors there too, because the
+                        // literal `}` closes the substitution first.
+                        crate::ported::zsh_h::Inpar => crate::ported::zsh_h::Outpar, // c:1379-1381
+                        crate::ported::zsh_h::Inang => crate::ported::zsh_h::Outang, // c:1382-1384
+                        crate::ported::zsh_h::Inbrace => crate::ported::zsh_h::Outbrace, // c:1385-1387
+                        crate::ported::zsh_h::Inbrack => crate::ported::zsh_h::Outbrack, // c:1388-1390
                         other => other,
                     };
                     let mut num = String::new();

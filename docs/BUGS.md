@@ -166,6 +166,129 @@ The worklist's older `__origfiles:30/41/82` math-expression cascade is **gone** 
 
 ---
 
+## #1100 — `a[-10]=(x y)` overwrites the first element instead of inserting before it — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+```zsh
+a=(some sunny day); a[-10]=(we\'ll meet again); print -l $a
+```
+```
+zsh  : we'll meet again some sunny day
+zshrs: we'll meet again sunny day          # "some" lost
+```
+
+`Src/params.c:2114` (getindex) makes a SINGLE subscript the range `[i, i]`:
+`end = we ? we : start;` puts the same RAW user index in both bounds, and only
+the start is shifted down by one (c:2120). `setarrvalue` then resolves the two
+bounds INDEPENDENTLY — `start += len` clamped at 0, `end += len + 1` clamped at
+0 (c:2944-2953) — so `a[-10]` on a 3-element array becomes start==end==0, an
+EMPTY range at the front, and the value is INSERTED with every original element
+kept. zshrs ran the END bound through its `start_translate` helper, which floors
+at 1, collapsing the range to `[0,1)` and overwriting element 1.
+
+Fixed in `src/fusevm_bridge.rs` — both the range form and the single-subscript
+form now resolve their bounds through the same `start_translate`/`end_translate`
+pair, exactly as C resolves `v->start`/`v->end`. Covered by
+`tests/parity/zsh_arrays_parity.rs::subscript_assign_bounds`.
+Test/D04parameter.ztst:1420 "Out of range negative array subscripts" now passes.
+
+---
+
+## #1101 — `a[0]=(x)` was a silent no-op where zsh rejects the assignment — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+```zsh
+a=(1 2 3); a[0]=(x);   print -l $a; print rc=$?
+a=(1 2 3); a[0,0]=(x); print -l $a
+```
+```
+zsh  : a: assignment to invalid subscript range   (rc=1, array untouched)
+zshrs: 1 2 3 rc=0                                 # silent no-op
+zshrs: x 1 2 3                                    # front-INSERT for [0,0]
+```
+
+`Src/params.c:2124-2151` (getindex): `start == 0 && end == 0` is a range
+entirely off the front of the index range. With KSH_ZERO_SUBSCRIPT it degrades
+to the first element (`end = startnextlen;` c:2140); without it the range gets
+VALFLAG_EMPTY (c:2148) and `setarrvalue` (c:2910) / `setstrvalue` (c:2708)
+reject the assignment. zshrs had neither arm: the single-subscript path bailed
+early on `i == 0` and the range path front-inserted.
+
+Sibling of #110, which fixed the same rejection for the SCALAR-RHS form
+(`a[0]=val`) inside `assignsparam`. The ARRAY-RHS and range forms
+(`a[0]=(x)`, `a[0,0]=(x)`, `a[0]+=(x)`, `x[0,0]=Z`) take the separate
+subscript-assign path in `fusevm_bridge.rs` and never reached that gate.
+
+Fixed in `src/fusevm_bridge.rs` — the zero-zero range now sets VALFLAG_EMPTY on
+the `value` handed to `setarrvalue`/`assignstrvalue` (which already carry the C
+rejection), or resolves to the first element under KSH_ZERO_SUBSCRIPT.
+
+---
+
+## #1102 — a range subscript is discarded by `#`/`%`/`/`/`:mod`; `(@)` slice joins in double quotes — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+```zsh
+a=(aa bb cc dd);   print -l "${(@)a[1,2]#?}"
+a=(/a/b /c/d /e/f); print -l "${(@)a[1,2]:t}"
+```
+```
+zsh  : a b                 |  b d
+zshrs: a b c d             |  "aa bb"   (one joined word)
+```
+
+Two independent gaps on the same expression:
+
+1. `Src/params.c:2001` (getindex) narrows `aval` to the slice BEFORE any
+   operator runs, so `#`/`##`/`%`/`%%`/`/`/`//` see only the sliced elements.
+   zshrs kept the narrowed array in `split_parts` but all six operator arms
+   re-read the whole parameter with `arrays_get(&var_name)`, throwing the slice
+   away. They now prefer `split_parts` whenever a subscript was present and the
+   expansion is array-shaped — the same precedence the `:#` arm already used.
+2. `Src/subst.c:3030-3034` — the `(@)` flag keeps `isarr` at -1 through the DQ
+   sepjoin, so `modify()` (c:4533) still loops per element. zshrs's modifier arm
+   gated per-element mode on the `[@]`/`[*]` SUBSCRIPT only, so `"${(@)a[1,2]:t}"`
+   fell into the scalar arm and ran `:t` once on the joined slice.
+
+Both fixed in `src/ported/subst.rs`; covered by
+`tests/parity/zsh_arrays_parity.rs::slice_then_operator`.
+
+---
+
+## #1103 — `${f:F{5}h}` died with "unrecognized modifier `F'" — fixed
+
+**Status:** `fixed` 2026-08-24.
+
+```zsh
+f=/one/two/three/four; print ${f:F{5}h}
+```
+```
+zsh  : /
+zshrs: zsh:1: unrecognized modifier `F'
+```
+
+`Src/subst.c:4705` reads the `:F` repetition count with `get_intarg`, whose
+argument is a `get_strarg` DELIMITED string (c:1348): the character after `F` is
+the delimiter, and `(`/`[`/`{`/`<` pair with their closers — c:1379-1390 also
+pairs the TOKENIZED `Inpar`/`Inang`/`Inbrace`/`Inbrack` forms, which is what the
+lexer produces for `{`/`}` inside an UNQUOTED `${…}`. zshrs's inline count
+parser mapped only the raw ASCII brackets, so it searched for a second `Inbrace`,
+swallowed `2}h` into the count, ran out of modifier text and reported the flag
+letter as an unknown modifier. The other four spellings (`.1.`, `+2+`, `(3)`,
+`<4>`) were unaffected because their delimiters are never tokenized.
+
+Quoted `"${f:F{5}h}"` still errors — in double quotes the braces stay literal and
+the first `}` closes the substitution — which is what zsh does too.
+
+Fixed in `src/ported/subst.rs`; covered by
+`tests/parity/subst_flags_more_parity.rs::modifier_repetition_count`.
+Test/D04parameter.ztst:1313 "Modifiers with repetition" now passes.
+
+---
+
 ## #1094 — a background job that finishes before `disown` runs can already be gone from the job table — improved, residual race open
 
 **Status:** `open` (materially improved 2026-08-24; failure rate roughly halved,
