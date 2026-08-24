@@ -78,8 +78,62 @@ fn make_ops() -> options {
 /// two-line list prints `g:unset:4: bad option: -Z` for `unset` on line 4.
 fn comparguments(sh_line: u64, argv: &[&str]) -> i32 {
     crate::compsys::ported::shared::set_sh_lineno(sh_line);
+    if argv.first() == Some(&"-i") {
+        publish_words_to_globals();
+    }
     let v: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     bin_comparguments("comparguments", &v, &make_ops(), 0)
+}
+
+/// Emulate the `$words` / `$CURRENT` gsu binding for the one call that reads
+/// them: `comparguments -i` (c:2629 → `ca_parse_line`, which walks
+/// `compwords[1..]` from `compcurrent`).
+///
+/// In C the two parameters are VIEWS onto the globals —
+/// `{ "words", PM_ARRAY, VAL(compwords), … }` /
+/// `{ "CURRENT", PM_INTEGER, VAL(compcurrent), … }`
+/// (`Src/Zle/complete.c:1249-1251`) — so a completion function that assigns to
+/// `$words`/`$CURRENT` moves `compwords`/`compcurrent` with it and the very
+/// next `comparguments -i` parses the REWRITTEN line. That idiom is how the
+/// stock completers inject a synthetic command word before re-entering
+/// `_arguments`; `Completion/Unix/Command/_ansible:296-297` is the case that
+/// exposed it:
+///
+///     words=( role "$words[@]" )
+///     (( CURRENT++ ))
+///     …
+///     _arguments -s -S $args
+///
+/// zshrs has no gsu binding — the parameters own their own copies and the
+/// globals live in `complete.rs` (`COMPWORDS`/`COMPCURRENT`), documented at
+/// `complete.rs:2968-2981` — so the assignment moved only the parameter and
+/// `ca_parse_line` kept parsing the PREVIOUS word vector. Measured on
+/// `zsh -f` + `compinit` with
+/// `_tst() { words=( tst foo '' ); CURRENT=3; _arguments ':a:(a1 a2)' ':b:(b1 b2)' }`:
+/// zsh completes `tst b` (positional 2), zshrs completed `tst a` (positional
+/// 1). On the real corpus `ansible-galaxy <TAB>` lost the nine `->galaxy`
+/// subcommands (`delete import info init install list remove search setup`)
+/// and offered only the two `::type:(collection role)` values.
+///
+/// The mirror runs in the parameter→global direction only. The opposite
+/// direction is already covered: `restrict_range` (`complete.rs:1626-1635`)
+/// writes both halves whenever `comparguments -W` narrows the line to a
+/// `*::`/`*:::` rest range.
+fn publish_words_to_globals() {
+    use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS};
+    use std::sync::atomic::Ordering;
+    if let Some(w) = getaparam("words") {
+        if let Ok(mut g) = COMPWORDS
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *g = w;
+        }
+    }
+    let cur = getiparam("CURRENT");
+    if cur > 0 {
+        COMPCURRENT.store(cur as i32, Ordering::Relaxed);
+    }
 }
 
 /// Read an associative array as the flat `key value key value …` list
@@ -1188,7 +1242,8 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                         // sh:392 — if (( ! $state[(I)$action] ))
                         if !state.iter().any(|s| s == &st) {
                             // sh:393 comparguments -W line opt_args <nul>
-                            let _ = comparguments(393, &["-W", "line", "opt_args", nul_sep.as_str()]);
+                            let _ =
+                                comparguments(393, &["-W", "line", "opt_args", nul_sep.as_str()]);
                             state.push(st.clone());
                             state_descr.push(descr.clone());
                             setaparam("state", state.clone());
@@ -1243,9 +1298,18 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                     } else if action.starts_with("((") && action.ends_with("))") {
                         // sh:421 — ((literal:desc …)) → _describe.
                         let body = &action[2..action.len() - 2];
-                        let ws: Vec<String> =
-                            body.split_whitespace().map(|s| s.to_string()).collect();
-                        setaparam("ws", ws);
+                        // sh:425 — `eval ws\=\( "${action[3,-3]}" \)`. The body is
+                        // an ARRAY-ASSIGNMENT word list, so it gets the full shell
+                        // tokenizer: quoting, backslash escapes, parameter and
+                        // command substitution, globbing. Splitting on bare
+                        // whitespace instead turned
+                        // `((a\:"add files to archive" b\:"benchmark"))` into four
+                        // matches (`a` described as `"add`, plus `files`, `to`,
+                        // `archive"`) with the quote characters surviving into the
+                        // display, where zsh yields one `a -- add files to archive`.
+                        // It also multiplied the match count enough to take `7z `
+                        // from zsh's 0.10s to over 25s.
+                        let _ = execute_script(&format!("ws=( {} )", body));
                         let mut dv = vec![
                             "-t".to_string(),
                             subc.clone(),
@@ -1264,9 +1328,9 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                     } else if action.starts_with('(') && action.ends_with(')') {
                         // sh:431 — (literal list) → _all_labels + compadd.
                         let body = &action[1..action.len() - 1];
-                        let ws: Vec<String> =
-                            body.split_whitespace().map(|s| s.to_string()).collect();
-                        setaparam("ws", ws);
+                        // sh:435 — `eval ws\=\( "${action[2,-2]}" \)`; same
+                        // array-assignment tokenization as the `((…))` arm above.
+                        let _ = execute_script(&format!("ws=( {} )", body));
                         let mut av = vec![
                             subc.clone(),
                             "expl".to_string(),
@@ -1670,7 +1734,10 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                 matched = true; // sh:557
 
                 // sh:559 comparguments -L "${equal[1]%%:*}" descrs actions subcs
-                let _ = comparguments(559, &["-L", opt_name.as_str(), "descrs", "actions", "subcs"]);
+                let _ = comparguments(
+                    559,
+                    &["-L", opt_name.as_str(), "descrs", "actions", "subcs"],
+                );
                 have_descrs = true;
                 let subcs = getaparam("subcs").unwrap_or_default();
                 let _ = _tags(&subcs); // sh:561

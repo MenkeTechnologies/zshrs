@@ -921,29 +921,29 @@ fn stringsubst(
                 let cmd_open = pos + 1; // c:237 (s after $)
                                         // `chars` already mirrors `str3` — no re-collect.
                                         //
-                // When the opening delimiter is the TOKEN `Inpar`, the lexer
-                // already decided where this substitution ends: `skipcomm`
-                // (lex.c:2164 `add(Inpar)`, its caller adding `Outpar`) marks
-                // the two delimiters and leaves every other paren in the body
-                // as a plain ASCII character. Counting ASCII parens as well
-                // therefore re-decides a question the lexer has answered, and
-                // gets it wrong wherever the body legitimately contains a
-                // paren the lexer skipped over — a here-document body:
-                //
-                //     x=$(cat <<\EOF
-                //     a)b
-                //     EOF
-                //     )
-                //
-                // stopped at the `)` in the body, ran `cat <<\EOF\na`, and
-                // spliced the leftover `b\nEOF\n)` back into the string, so
-                // `$x` came out as `ab\nEOF\n)` where zsh gives `a)b`. That is
-                // what corrupted every `_retrieve_cache` array, since
-                // Completion/Base/Utility/_store_cache:50-54 wraps each cached
-                // array in exactly this construct.
-                //
-                // A literal `(` / `)` reaches here only on the untokenized
-                // path, so keep counting ASCII when the opener itself is ASCII.
+                                        // When the opening delimiter is the TOKEN `Inpar`, the lexer
+                                        // already decided where this substitution ends: `skipcomm`
+                                        // (lex.c:2164 `add(Inpar)`, its caller adding `Outpar`) marks
+                                        // the two delimiters and leaves every other paren in the body
+                                        // as a plain ASCII character. Counting ASCII parens as well
+                                        // therefore re-decides a question the lexer has answered, and
+                                        // gets it wrong wherever the body legitimately contains a
+                                        // paren the lexer skipped over — a here-document body:
+                                        //
+                                        //     x=$(cat <<\EOF
+                                        //     a)b
+                                        //     EOF
+                                        //     )
+                                        //
+                                        // stopped at the `)` in the body, ran `cat <<\EOF\na`, and
+                                        // spliced the leftover `b\nEOF\n)` back into the string, so
+                                        // `$x` came out as `ab\nEOF\n)` where zsh gives `a)b`. That is
+                                        // what corrupted every `_retrieve_cache` array, since
+                                        // Completion/Base/Utility/_store_cache:50-54 wraps each cached
+                                        // array in exactly this construct.
+                                        //
+                                        // A literal `(` / `)` reaches here only on the untokenized
+                                        // path, so keep counting ASCII when the opener itself is ASCII.
                 let tokenized = matches!(chars.get(cmd_open), Some(&c) if c == Inpar);
                 let mut depth = 0_i32; // c:237
                 let mut end = cmd_open; // c:237
@@ -977,14 +977,14 @@ fn stringsubst(
                                                                                  // here-doc inside a double-quoted `"$(...)"` (docker's
                                                                                  // `_retrieve_cache` serialized cache), emptying it → the
                                                                                  // docker completer produced 0 matches.
-                    // c:399 — `getoutput(str2 + 1, qt || (pf_flags &
-                    // PREFORK_SINGLE))`. The second argument is C's `qt`
-                    // ("give me ONE word"); when it is clear `readoutput`
-                    // c:4866 runs `spacesplit` and the substitution yields as
-                    // many words as the output has fields. The port had it
-                    // hard-wired to 1 and joined, so an UNQUOTED `$(…)` inside
-                    // a `${…}` operand never split: `${x:-$(echo a b c)}` came
-                    // back as the single word `a b c` where zsh gives three.
+                                                                                 // c:399 — `getoutput(str2 + 1, qt || (pf_flags &
+                                                                                 // PREFORK_SINGLE))`. The second argument is C's `qt`
+                                                                                 // ("give me ONE word"); when it is clear `readoutput`
+                                                                                 // c:4866 runs `spacesplit` and the substitution yields as
+                                                                                 // many words as the output has fields. The port had it
+                                                                                 // hard-wired to 1 and joined, so an UNQUOTED `$(…)` inside
+                                                                                 // a `${…}` operand never split: `${x:-$(echo a b c)}` came
+                                                                                 // back as the single word `a b c` where zsh gives three.
                     let qt_out = qt || (pf_flags & PREFORK_SINGLE) != 0; // c:399
                     let words = getoutput(&cmd, if qt_out { 1 } else { 0 }); // c:399
                     let prefix: String = chars[..pos].iter().collect(); // c:404 `l1 = str2 - str3`
@@ -999,7 +999,7 @@ fn stringsubst(
                        // memmove(str2, str, strlen(str)+1); continue; }`: empty
                        // output leaves prefix+suffix spliced together.
                     let mut s = match words.first() {
-                        Some(w) => w.clone(), // c:401
+                        Some(w) => w.clone(),  // c:401
                         None => String::new(), // c:401-403
                     };
                     // c:406-415 — `if (nonempty(pl))`: the output produced MORE
@@ -1325,12 +1325,7 @@ fn stringsubst(
                     s_word = words[words.len() - 1].clone(); // c:413
                     l1_prefix = ""; // c:414
                 }
-                str3 = format!(
-                    "{}{}{}",
-                    l1_prefix,
-                    s_word.trim_end_matches('\n'),
-                    suffix
-                ); // c:417-420
+                str3 = format!("{}{}{}", l1_prefix, s_word.trim_end_matches('\n'), suffix); // c:417-420
                 chars = str3.chars().collect(); // c:237
                 pos = l1_prefix.chars().count() + s_word.trim_end_matches('\n').chars().count(); // c:420
                 list.setdata(node_idx, str3.clone()); // c:422
@@ -2741,7 +2736,8 @@ pub fn dopadding(
                 } else {
                     // c:893
                     // Only part of preone fits
-                    result.push_str(&pre_units[pre_len - padding_needed..].concat()); // c:893
+                    result.push_str(&pre_units[pre_len - padding_needed..].concat());
+                    // c:893
                 } // c:893
             } else {
                 // c:893
@@ -2755,7 +2751,8 @@ pub fn dopadding(
 
                     if partial > 0 {
                         // c:893
-                        result.push_str(&mul_units[mul_len - partial..].concat()); // c:893
+                        result.push_str(&mul_units[mul_len - partial..].concat());
+                        // c:893
                     } // c:893
                     for _ in 0..full_repeats {
                         // c:893
@@ -3017,7 +3014,6 @@ thread_local! {
     /// zsh leaves alone. Scope the C-strict rule to just that call.
     static ANSI_C_SNULL_STRICT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
-
 
 pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> {
     // c:1460
@@ -3431,6 +3427,84 @@ pub fn paramsubst(
     };
     // !!! WARNING: RUST-ONLY HELPER !!!
     //
+    // c:Src/glob.c:3630-3643 — `zshtokenize` rewrites a backslash into a
+    // `Bnull` quote marker ONLY when the next character reaches its `ztokens`
+    // scan; before anything else no arm of the switch fires and BOTH bytes
+    // stay in the string as ordinary data. A subscript
+    // pattern reaches `patcompile` through that tokenizer alone
+    // (c:Src/params.c:1727 `tokenize(s); remnulargs(s); patcompile(s, …)`),
+    // so its backslashes follow that rule whether they were typed in the
+    // source or came out of a parameter — real zsh answers 2, not 1, for
+    //     a=('a b' 'a\ b'); print ${a[(I)a\ b]}
+    // because `\ ` is a literal backslash followed by a literal space.
+    //
+    // `ported::pattern`'s input normalizer reads a lone raw `\X` as a QUOTE
+    // of X (the spelling every SOURCE-level pattern path hands it — the cond
+    // RHS builder, `${v//\%/%%}`) and spells a literal backslash as the pair
+    // `\\`. So doubling the backslashes `zshtokenize` declines to consume is
+    // what carries C's Bnull-vs-raw split into the Rust encoding. Applied
+    // BEFORE `glob::tokenize` so the tokenizer still sees each escape in its
+    // original position: `\` + metachar is left alone and becomes `Bnull` +
+    // char there, exactly as in C. docs/BUGS.md #1090.
+    let escape_data_backslashes = |v: &str| -> String {
+        if !v.contains('\\') {
+            return v.to_string();
+        }
+        let cs: Vec<char> = v.chars().collect();
+        let mut out = String::with_capacity(v.len() + 4);
+        let mut i = 0;
+        while i < cs.len() {
+            let c = cs[i];
+            if c != '\\' {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            // The escape is honored only when the next character reaches
+            // `zshtokenize`'s ztokens scan, which is the exact `switch` label
+            // set at c:Src/glob.c:3596 (`<`), c:3613-3615 (`(`/`|`/`)`) and
+            // c:3619-3631 (`>`/`^`/`#`/`~`/`[`/`]`/`*`/`?`/`=`/`-`/`!`), plus
+            // the `\` case at c:3589. A char that is in the `ztokens` TABLE
+            // but has no switch label — `$`, `{`, `}`, `` ` ``, `,`, `'`, `"` —
+            // never reaches the scan, so its backslash stays data: zsh answers
+            // 2, not 1, for
+            //     a=('a$b' 'a\$b'); q='a\$b'; print ${a[(I)$q]}
+            // Such a pair is left for `zshtokenize` to fold into `Bnull` +
+            // char and is copied through untouched here.
+            let quotes_meta = cs.get(i + 1).map_or(false, |&n| {
+                matches!(
+                    n,
+                    '<' | '('
+                        | '|'
+                        | ')'
+                        | '>'
+                        | '^'
+                        | '#'
+                        | '~'
+                        | '['
+                        | ']'
+                        | '*'
+                        | '?'
+                        | '='
+                        | '-'
+                        | '!'
+                        | '\\'
+                )
+            });
+            if quotes_meta {
+                out.push(c);
+                out.push(cs[i + 1]);
+                i += 2;
+            } else {
+                // c:3641 `bslash = 0` with nothing rewritten — a data
+                // backslash. `\\` is the normalizer's literal-backslash form.
+                out.push('\\');
+                out.push('\\');
+                i += 1;
+            }
+        }
+        out
+    };
     // c:Src/glob.c:2687-2688 — `singsub(replstrp); untokenize(*replstrp);`:
     // the `${x/pat/REPL}` replacement word is expanded with `singsub` and then
     // UNTOKENIZED, so anything the replacement's own expansion tokenized is
@@ -3492,7 +3566,7 @@ pub fn paramsubst(
                 let mut ind = false;
                 for ch in t[1..c].chars() {
                     match ch {
-                        'i' | 'I' => ind = true, // c:1411-1420
+                        'i' | 'I' => ind = true,              // c:1411-1420
                         'r' | 'R' | 'k' | 'K' => ind = false, // c:1390-1410
                         _ => {}
                     }
@@ -4040,18 +4114,17 @@ pub fn paramsubst(
             // (c:Src/utils.c:4192-4194 typtab INBLANK).
             let inblank = |c: char| c == ' ' || c == '\t' || c == '\n';
             // c:1908 — `int trim = (!EMULATION(EMULATE_ZSH)) ? 2 : !qt;`
-            let trim: i32 =
-                if !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH) {
-                    2
-                } else if qt {
-                    0
-                } else {
-                    1
-                };
+            let trim: i32 = if !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH) {
+                2
+            } else if qt {
+                0
+            } else {
+                1
+            };
             let mut cmdarg: Option<String> = None; // c:1903
             let mut rplyvar: Option<String> = None; // c:1875
-            // Which C branch produced `rplyvar`: 0 = `${ cmd }` (rplytmp,
-            // c:1876), 1 = `${|cmd}` (c:1924), 2 = `${{VAR} cmd}` (c:1929).
+                                                    // Which C branch produced `rplyvar`: 0 = `${ cmd }` (rplytmp,
+                                                    // c:1876), 1 = `${|cmd}` (c:1924), 2 = `${{VAR} cmd}` (c:1929).
             let mut kind = 0_i32;
             if inchar == '|' || inchar == crate::ported::zsh_h::Bar || inblank(inchar) {
                 // c:1924-1928 — `if (inchar == '|' || inchar == Bar ||
@@ -4077,8 +4150,8 @@ pub fn paramsubst(
                 // c:1937 — `if (outbracep && *outbracep == Outbrace)`.
                 if j > 1 && j < bch.len() && bch[j] == outchar {
                     let endvar = j; // c:1940
-                    // c:1943-1947 — "Require space to avoid ${{var}} typo
-                    // for ${${var}}".
+                                    // c:1943-1947 — "Require space to avoid ${{var}} typo
+                                    // for ${${var}}".
                     if endvar + 1 < bch.len() && inblank(bch[endvar + 1]) {
                         cmdarg = Some(bch[endvar + 1..].iter().collect()); // c:1981
                         rplyvar = Some(bch[1..endvar].iter().collect()); // c:1982
@@ -5812,7 +5885,8 @@ pub fn paramsubst(
         let mut subexp_value: Option<String> = if idx < body_chars.len()
             && (body_chars[idx] == '$' || body_chars[idx] == Qstring || body_chars[idx] == Stringg)
             && !is_bare_special_dollar
-            && !snull_quoted_body // c:2650 (`isstring(*s)` — see the Snull skip above)
+            && !snull_quoted_body
+        // c:2650 (`isstring(*s)` — see the Snull skip above)
         // c:2649
         {
             // Walk just the nested $-form (depth-tracked over its
@@ -5998,8 +6072,7 @@ pub fn paramsubst(
                         // c:Src/params.c:736 — same `v->arr` slot the outer
                         // arms read, so the referenced association is walked
                         // once for the whole expansion.
-                        getvaluearr_assoc!(n)
-                            .map(|m| m.values().cloned().collect::<Vec<String>>())
+                        getvaluearr_assoc!(n).map(|m| m.values().cloned().collect::<Vec<String>>())
                     }),
                     None => None,
                 }
@@ -6602,16 +6675,16 @@ pub fn paramsubst(
         // the subscript opener as Inbrack TOKEN since the lexer
         // tokenizes `[`/`]` inside `${…}` to Inbrack/Outbrack.
         let mut subscript: Option<String> = None; // c:2867
-        // The PARSE-TIME argument split for `subscript`, recorded while the
-        // subscript text is still UNEXPANDED (c:Src/params.c:1533-1536).
-        //   None            — this reference took a path that never recorded
-        //                     one; downstream falls back to scanning the
-        //                     expanded text (legacy behaviour).
-        //   Some(None)      — exactly one argument: never a range.
-        //   Some(Some(a,b)) — a range whose bounds are already expanded.
+                                                  // The PARSE-TIME argument split for `subscript`, recorded while the
+                                                  // subscript text is still UNEXPANDED (c:Src/params.c:1533-1536).
+                                                  //   None            — this reference took a path that never recorded
+                                                  //                     one; downstream falls back to scanning the
+                                                  //                     expanded text (legacy behaviour).
+                                                  //   Some(None)      — exactly one argument: never a range.
+                                                  //   Some(Some(a,b)) — a range whose bounds are already expanded.
         let mut subscript_split: Option<(String, Option<(String, String)>)> = None; // c:1533
-                                                  // Apply the deferred `${!prefix@}`/`${!prefix*}` splat subscript (the
-                                                  // `!` block above bound the name array into subexp_array_temp).
+                                                                                    // Apply the deferred `${!prefix@}`/`${!prefix*}` splat subscript (the
+                                                                                    // `!` block above bound the name array into subexp_array_temp).
         if let Some(s) = bang_prefix_subscript.take() {
             subscript = Some(s);
         }
@@ -6636,26 +6709,25 @@ pub fn paramsubst(
                 return (String::new(), new_pos, vec![]);
             }
             idx += 1; // c:2867
-            // c:Src/params.c:2029 — `getindex` hands the subscript text to
-            // `parse_subscript` (c:Src/lex.c:1743), which brackets the whole
-            // parse with `zcontext_save()` / `zcontext_restore()` (c:1750,
-            // c:1786).  `zcontext_restore` ends in `parse_context_restore`,
-            // whose last statement is `errflag &= ~ERRFLAG_ERROR;`
-            // (c:Src/parse.c:354) — so parsing ANY subscript wipes a pending
-            // error, and that is observable: an inner expansion that already
-            // failed (`s=a:b; "${${(ZZ)s}[1]}"`) reports its diagnostic, the
-            // outer subscript parse clears the flag, the expansion yields the
-            // empty string and the enclosing command still runs at status 0.
-            // Without the subscript zsh aborts (`"${${(ZZ)s}}"` exits 1), and
-            // an error raised while EVALUATING the subscript text
-            // (`"${z[${(ZZ)s}]}"`) still aborts because the clear happens at
-            // parse time, before `getarg` substitutes.
-            //
-            // c:Src/lex.c:1748 `if (!*s || *s == endchar) return 0;` — an
-            // EMPTY subscript returns before `zcontext_save`, so no clear.
-            let sub_body_empty = idx >= body_chars.len()
-                || body_chars[idx] == ']'
-                || body_chars[idx] == Outbrack; // c:Src/lex.c:1748
+                      // c:Src/params.c:2029 — `getindex` hands the subscript text to
+                      // `parse_subscript` (c:Src/lex.c:1743), which brackets the whole
+                      // parse with `zcontext_save()` / `zcontext_restore()` (c:1750,
+                      // c:1786).  `zcontext_restore` ends in `parse_context_restore`,
+                      // whose last statement is `errflag &= ~ERRFLAG_ERROR;`
+                      // (c:Src/parse.c:354) — so parsing ANY subscript wipes a pending
+                      // error, and that is observable: an inner expansion that already
+                      // failed (`s=a:b; "${${(ZZ)s}[1]}"`) reports its diagnostic, the
+                      // outer subscript parse clears the flag, the expansion yields the
+                      // empty string and the enclosing command still runs at status 0.
+                      // Without the subscript zsh aborts (`"${${(ZZ)s}}"` exits 1), and
+                      // an error raised while EVALUATING the subscript text
+                      // (`"${z[${(ZZ)s}]}"`) still aborts because the clear happens at
+                      // parse time, before `getarg` substitutes.
+                      //
+                      // c:Src/lex.c:1748 `if (!*s || *s == endchar) return 0;` — an
+                      // EMPTY subscript returns before `zcontext_save`, so no clear.
+            let sub_body_empty =
+                idx >= body_chars.len() || body_chars[idx] == ']' || body_chars[idx] == Outbrack; // c:Src/lex.c:1748
             if !sub_body_empty {
                 crate::ported::utils::errflag.fetch_and(
                     !crate::ported::zsh_h::ERRFLAG_ERROR,
@@ -6765,8 +6837,8 @@ pub fn paramsubst(
                 // split below applies to each half separately.
                 let needtok_of = |__arg: &str| -> bool {
                     __arg.chars().any(|c| {
-                    // SPECCHARS (zsh.h:228) — full set per C ispecial.
-                    matches!(c,
+                        // SPECCHARS (zsh.h:228) — full set per C ispecial.
+                        matches!(c,
                         '#' | '$' | '^' | '*' | '(' | ')' | '=' | '|' |
                         '{' | '}' | '[' | ']' | '`' | '<' | '>' | '?' |
                         '~' | ';' | '&' | '\n' | '\t' | ' ' | '\\' |
@@ -6842,181 +6914,184 @@ pub fn paramsubst(
                 // argument's text. Keep it a closure so the split above can
                 // apply it to each bound separately.
                 let expand_sub_arg = |raw_sub: String| -> String {
-                let needtok = needtok_of(&raw_sub);
-                let (raw_sub, sub_literal_resolved) = {
-                    let trimmed = raw_sub.trim_start();
-                    let is_flag = trimmed.starts_with('(')
-                        || trimmed.starts_with(crate::ported::zsh_h::Inpar);
-                    let had_escape = raw_sub.contains('\\')
-                        || raw_sub.contains(crate::ported::zsh_h::Bnull)
-                        || raw_sub.contains(crate::ported::zsh_h::Bnullkeep);
-                    // c:Src/params.c:1583 — `if (ishash && (keymatch || !rev))
-                    // remnulargs(s);`. The escape markers left by the c:1541-1551
-                    // disposition are DELETED for a hash whenever the subscript is
-                    // NOT a value/key GLOB search — i.e. for a plain key, for `(e)`,
-                    // and for `(k)`/`(K)` (whose `keymatch` scan compares the
-                    // subscript text literally, c:653-660). Only `(r)/(R)/(i)/(I)`
-                    // keep them, because there the backslashes are PATTERN escapes
-                    // `patcompile` (c:1697) still has to see.
-                    //
-                    // The port skipped the unescape for EVERY flag group, so
-                    // `${(o)A[(K)\]]}` searched with the two-char `\]` and returned
-                    // the answer zsh gives for `${(o)A[(K)\\\]]}` — one escape level
-                    // off across the whole `(K)`/`(k)`/`(e)` family
-                    // (D06subscript.ztst "Associative array keys interpreted as
-                    // patterns").
-                    let flag_keeps_escapes = is_flag && {
-                        let after = trimmed
-                            .strip_prefix('(')
-                            .or_else(|| trimmed.strip_prefix(crate::ported::zsh_h::Inpar));
-                        match after.and_then(|r| {
-                            r.find(|c| c == ')' || c == crate::ported::zsh_h::Outpar)
-                                .map(|p| &r[..p])
-                        }) {
-                            // c:1398-1417 — `rev` is set by r/R/i/I/k/K; `keymatch`
-                            // only by k/K (and only on a hash).
-                            Some(fl) => {
-                                let keymatch = fl.contains('k') || fl.contains('K');
-                                let rev = keymatch
-                                    || fl.contains('r')
-                                    || fl.contains('R')
-                                    || fl.contains('i')
-                                    || fl.contains('I');
-                                // Keep the escapes only on the glob-search forms.
-                                !(assoc_contains(&var_name) && (keymatch || !rev))
+                    let needtok = needtok_of(&raw_sub);
+                    let (raw_sub, sub_literal_resolved) = {
+                        let trimmed = raw_sub.trim_start();
+                        let is_flag = trimmed.starts_with('(')
+                            || trimmed.starts_with(crate::ported::zsh_h::Inpar);
+                        let had_escape = raw_sub.contains('\\')
+                            || raw_sub.contains(crate::ported::zsh_h::Bnull)
+                            || raw_sub.contains(crate::ported::zsh_h::Bnullkeep);
+                        // c:Src/params.c:1583 — `if (ishash && (keymatch || !rev))
+                        // remnulargs(s);`. The escape markers left by the c:1541-1551
+                        // disposition are DELETED for a hash whenever the subscript is
+                        // NOT a value/key GLOB search — i.e. for a plain key, for `(e)`,
+                        // and for `(k)`/`(K)` (whose `keymatch` scan compares the
+                        // subscript text literally, c:653-660). Only `(r)/(R)/(i)/(I)`
+                        // keep them, because there the backslashes are PATTERN escapes
+                        // `patcompile` (c:1697) still has to see.
+                        //
+                        // The port skipped the unescape for EVERY flag group, so
+                        // `${(o)A[(K)\]]}` searched with the two-char `\]` and returned
+                        // the answer zsh gives for `${(o)A[(K)\\\]]}` — one escape level
+                        // off across the whole `(K)`/`(k)`/`(e)` family
+                        // (D06subscript.ztst "Associative array keys interpreted as
+                        // patterns").
+                        let flag_keeps_escapes = is_flag && {
+                            let after = trimmed
+                                .strip_prefix('(')
+                                .or_else(|| trimmed.strip_prefix(crate::ported::zsh_h::Inpar));
+                            match after.and_then(|r| {
+                                r.find(|c| c == ')' || c == crate::ported::zsh_h::Outpar)
+                                    .map(|p| &r[..p])
+                            }) {
+                                // c:1398-1417 — `rev` is set by r/R/i/I/k/K; `keymatch`
+                                // only by k/K (and only on a hash).
+                                Some(fl) => {
+                                    let keymatch = fl.contains('k') || fl.contains('K');
+                                    let rev = keymatch
+                                        || fl.contains('r')
+                                        || fl.contains('R')
+                                        || fl.contains('i')
+                                        || fl.contains('I');
+                                    // Keep the escapes only on the glob-search forms.
+                                    !(assoc_contains(&var_name) && (keymatch || !rev))
+                                }
+                                // Unterminated flag group: leave it alone.
+                                None => true,
                             }
-                            // Unterminated flag group: leave it alone.
-                            None => true,
-                        }
-                    };
-                    if (is_flag && flag_keeps_escapes) || !had_escape {
-                        (raw_sub, false)
-                    } else {
-                        let mut folded = String::with_capacity(raw_sub.len());
-                        for c in raw_sub.chars() {
-                            if c == crate::ported::zsh_h::Bnull
-                                || c == crate::ported::zsh_h::Bnullkeep
-                            {
-                                folded.push('\\'); // c:1550
-                            } else {
-                                folded.push(c);
-                            }
-                        }
-                        // First pass answers "does an UNESCAPED `$`/backtick
-                        // survive?" — i.e. does C's c:1592 singsub still have
-                        // work to do. When it doesn't, this call also stands in
-                        // for the c:1585-1592 parsestr/singsub round (which for
-                        // an expansion-free subscript only removes the quoting
-                        // this function already resolved), so the round below is
-                        // skipped rather than re-reading the bare `$` as live.
-                        let (resolved, live) =
-                            crate::subscript_escape::subscript_unescape(&folded, qt, true);
-                        if live {
-                            // c:1585-1592 still has an expansion to run, so hand
-                            // it only getarg's share of the work and let
-                            // parsestr/singsub finish the job as C does.
-                            //
-                            // c:Src/params.c:1541-1548 —
-                            //     if (c == '[' || c == ']' || c == '(' ||
-                            //         c == ')' || c == '{' || c == '}') {
-                            //         /* nested subscripts in hash keys */
-                            //         if (ishash && i) *t = ztokens[*t - Pound];
-                            //         needtok = 1; ++t;
-                            //     }
-                            // — the marker before a bracket/paren/brace is KEPT
-                            // (only a nested HASH-key subscript untokenizes it),
-                            // so `parsestr` at c:1567 still sees the bracket
-                            // ESCAPED and the inner `[…]` of a nested subscript
-                            // stays intact. `subscript_unescape` hands back PLAIN
-                            // text, which made `$s[$s[(i)\[]]` read as
-                            // `$s[$s[(i)[]]` — the bare `[` opened a second
-                            // subscript and the whole expansion came back empty
-                            // (D06subscript.ztst "Scalar subscripting using a
-                            // pattern subscript to get the index").
-                            // `subscript_escape_markers` is that same C stage
-                            // re-encoded as `Bnull`+char, which is exactly the
-                            // spelling the word compiler consumes.
-                            let phase1 =
-                                crate::subscript_escape::subscript_escape_markers(&folded, qt);
-                            (phase1, false)
+                        };
+                        if (is_flag && flag_keeps_escapes) || !had_escape {
+                            (raw_sub, false)
                         } else {
-                            // Stand in for that round ONLY when this pass
-                            // actually resolved an escape. A subscript whose
-                            // backslashes C leaves alone (`${a[1,\2]}` — the
-                            // bounds are arithmetic and `\2` is a math syntax
-                            // error there) must still reach parsestr/singsub so
-                            // it fails the same way.
-                            let changed = resolved != folded;
-                            (resolved, changed)
-                        }
-                    }
-                };
-                let expanded = if needtok && !sub_literal_resolved {
-                    // c:Src/params.c::getarg:1564-1572 — when needtok
-                    // fires, the full sequence is:
-                    //   char exe = opts[EXECOPT];
-                    //   s = dupstring(s);
-                    //   if (parsestr(&s)) return 0;
-                    //   if (scanflags & SCANPM_NOEXEC)
-                    //     opts[EXECOPT] = 0;
-                    //   singsub(&s);
-                    //   opts[EXECOPT] = exe;
-                    // C-faithful port:
-                    //   1) parsestr re-tokenizes via dquote_parse
-                    //      (Src/lex.c:1694) — recognises nested
-                    //      `${…}`/`$(…)`/`$((…))`/backticks the same
-                    //      way a normal command parse does. On parse
-                    //      failure, return 0 (subscript invalid).
-                    //   2) singsub resolves the substitutions.
-                    //   3) untokenize (c:1584) before the assoc lookup
-                    //      so token bytes (Dash/Equals/Bar/etc.) become
-                    //      ASCII for the `map.get(sub)` key match.
-                    // SCANPM_NOEXEC's opts[EXECOPT] juggle is omitted
-                    // — zshrs doesn't expose a SCANPM_NOEXEC scanflag
-                    // on the assoc/array lookup path yet, so the
-                    // setpaths-style "don't execute cmd-subs" gate
-                    // never fires here.
-                    let parsed = match crate::ported::lex::parsestr(&raw_sub) {
-                        Ok(p) => p,
-                        Err(_) => {
-                            // c:1567 — `if (parsestr(&s)) return 0;`.
-                            // Treat as empty subscript so the lookup
-                            // returns nothing rather than feeding
-                            // garbage into singsub.
-                            String::new()
+                            let mut folded = String::with_capacity(raw_sub.len());
+                            for c in raw_sub.chars() {
+                                if c == crate::ported::zsh_h::Bnull
+                                    || c == crate::ported::zsh_h::Bnullkeep
+                                {
+                                    folded.push('\\'); // c:1550
+                                } else {
+                                    folded.push(c);
+                                }
+                            }
+                            // First pass answers "does an UNESCAPED `$`/backtick
+                            // survive?" — i.e. does C's c:1592 singsub still have
+                            // work to do. When it doesn't, this call also stands in
+                            // for the c:1585-1592 parsestr/singsub round (which for
+                            // an expansion-free subscript only removes the quoting
+                            // this function already resolved), so the round below is
+                            // skipped rather than re-reading the bare `$` as live.
+                            let (resolved, live) =
+                                crate::subscript_escape::subscript_unescape(&folded, qt, true);
+                            if live {
+                                // c:1585-1592 still has an expansion to run, so hand
+                                // it only getarg's share of the work and let
+                                // parsestr/singsub finish the job as C does.
+                                //
+                                // c:Src/params.c:1541-1548 —
+                                //     if (c == '[' || c == ']' || c == '(' ||
+                                //         c == ')' || c == '{' || c == '}') {
+                                //         /* nested subscripts in hash keys */
+                                //         if (ishash && i) *t = ztokens[*t - Pound];
+                                //         needtok = 1; ++t;
+                                //     }
+                                // — the marker before a bracket/paren/brace is KEPT
+                                // (only a nested HASH-key subscript untokenizes it),
+                                // so `parsestr` at c:1567 still sees the bracket
+                                // ESCAPED and the inner `[…]` of a nested subscript
+                                // stays intact. `subscript_unescape` hands back PLAIN
+                                // text, which made `$s[$s[(i)\[]]` read as
+                                // `$s[$s[(i)[]]` — the bare `[` opened a second
+                                // subscript and the whole expansion came back empty
+                                // (D06subscript.ztst "Scalar subscripting using a
+                                // pattern subscript to get the index").
+                                // `subscript_escape_markers` is that same C stage
+                                // re-encoded as `Bnull`+char, which is exactly the
+                                // spelling the word compiler consumes.
+                                let phase1 =
+                                    crate::subscript_escape::subscript_escape_markers(&folded, qt);
+                                (phase1, false)
+                            } else {
+                                // Stand in for that round ONLY when this pass
+                                // actually resolved an escape. A subscript whose
+                                // backslashes C leaves alone (`${a[1,\2]}` — the
+                                // bounds are arithmetic and `\2` is a math syntax
+                                // error there) must still reach parsestr/singsub so
+                                // it fails the same way.
+                                let changed = resolved != folded;
+                                (resolved, changed)
+                            }
                         }
                     };
-                    // c:1584 — C's untokenize maps quote markers back
-                    // to their ztokens chars (Dnull -> '"', Snull ->
-                    // '\''): assoc keys are LITERAL text including
-                    // quote characters — `H["a b"]=v` stores the
-                    // 5-char key `"a b"` and `${H["a b"]}` must
-                    // produce the same bytes to match (verified zsh
-                    // 5.9; the plain Rust untokenize strips the
-                    // markers, so the lookup key lost its quotes and
-                    // missed).
-                    crate::ported::lex::untokenize_preserve_quotes(&singsub(&parsed))
-                // c:1571 + c:1584
-                } else {
-                    crate::ported::lex::untokenize_preserve_quotes(&raw_sub)
-                };
-                expanded
+                    let expanded = if needtok && !sub_literal_resolved {
+                        // c:Src/params.c::getarg:1564-1572 — when needtok
+                        // fires, the full sequence is:
+                        //   char exe = opts[EXECOPT];
+                        //   s = dupstring(s);
+                        //   if (parsestr(&s)) return 0;
+                        //   if (scanflags & SCANPM_NOEXEC)
+                        //     opts[EXECOPT] = 0;
+                        //   singsub(&s);
+                        //   opts[EXECOPT] = exe;
+                        // C-faithful port:
+                        //   1) parsestr re-tokenizes via dquote_parse
+                        //      (Src/lex.c:1694) — recognises nested
+                        //      `${…}`/`$(…)`/`$((…))`/backticks the same
+                        //      way a normal command parse does. On parse
+                        //      failure, return 0 (subscript invalid).
+                        //   2) singsub resolves the substitutions.
+                        //   3) untokenize (c:1584) before the assoc lookup
+                        //      so token bytes (Dash/Equals/Bar/etc.) become
+                        //      ASCII for the `map.get(sub)` key match.
+                        // SCANPM_NOEXEC's opts[EXECOPT] juggle is omitted
+                        // — zshrs doesn't expose a SCANPM_NOEXEC scanflag
+                        // on the assoc/array lookup path yet, so the
+                        // setpaths-style "don't execute cmd-subs" gate
+                        // never fires here.
+                        let parsed = match crate::ported::lex::parsestr(&raw_sub) {
+                            Ok(p) => p,
+                            Err(_) => {
+                                // c:1567 — `if (parsestr(&s)) return 0;`.
+                                // Treat as empty subscript so the lookup
+                                // returns nothing rather than feeding
+                                // garbage into singsub.
+                                String::new()
+                            }
+                        };
+                        // c:1584 — C's untokenize maps quote markers back
+                        // to their ztokens chars (Dnull -> '"', Snull ->
+                        // '\''): assoc keys are LITERAL text including
+                        // quote characters — `H["a b"]=v` stores the
+                        // 5-char key `"a b"` and `${H["a b"]}` must
+                        // produce the same bytes to match (verified zsh
+                        // 5.9; the plain Rust untokenize strips the
+                        // markers, so the lookup key lost its quotes and
+                        // missed).
+                        crate::ported::lex::untokenize_preserve_quotes(&singsub(&parsed))
+                    // c:1571 + c:1584
+                    } else {
+                        crate::ported::lex::untokenize_preserve_quotes(&raw_sub)
+                    };
+                    expanded
                 }; // end expand_sub_arg
-                // c:Src/params.c:1533-1536 — getarg's scan loop locates the
-                // end of the FIRST argument in the *UNEXPANDED* subscript
-                // text:
-                //   for (t = s, i = 0;
-                //        (c = *t) && ((c != Outbrack && (ishash || c != ','))
-                //                     || i || inpar);
-                //        t++)
-                // Only then (c:1567-1571) does `parsestr`/`singsub` expand
-                // that slice. So a comma PRODUCED BY the expansion is never a
-                // range separator: `x=','; ${s[(r)$x,(R)$x]}` searches for the
-                // literal `,` on both bounds. zshrs expanded the whole
-                // subscript first and split the result, so `(r)$x,(R)$x`
-                // became `(r),,(R),` — three "arguments" — and the expansion
-                // died with "bad substitution".
-                let expanded = match crate::subscript_escape::subscript_arg_split(&raw_sub, assoc_contains(&var_name)) {
+                   // c:Src/params.c:1533-1536 — getarg's scan loop locates the
+                   // end of the FIRST argument in the *UNEXPANDED* subscript
+                   // text:
+                   //   for (t = s, i = 0;
+                   //        (c = *t) && ((c != Outbrack && (ishash || c != ','))
+                   //                     || i || inpar);
+                   //        t++)
+                   // Only then (c:1567-1571) does `parsestr`/`singsub` expand
+                   // that slice. So a comma PRODUCED BY the expansion is never a
+                   // range separator: `x=','; ${s[(r)$x,(R)$x]}` searches for the
+                   // literal `,` on both bounds. zshrs expanded the whole
+                   // subscript first and split the result, so `(r)$x,(R)$x`
+                   // became `(r),,(R),` — three "arguments" — and the expansion
+                   // died with "bad substitution".
+                let expanded = match crate::subscript_escape::subscript_arg_split(
+                    &raw_sub,
+                    assoc_contains(&var_name),
+                ) {
                     Some((a_raw, b_raw)) => {
                         // c:2036 + c:2118 — one getarg call per bound.
                         let a = expand_sub_arg(a_raw);
@@ -7864,8 +7939,13 @@ pub fn paramsubst(
                     && crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS.contains(&sub)
                 {
                     Some(
-                        crate::ported::zle::compcore::get_compstate_str(sub)
-                            .unwrap_or_else(|| if sub == "nmatches" { "0".into() } else { String::new() }),
+                        crate::ported::zle::compcore::get_compstate_str(sub).unwrap_or_else(|| {
+                            if sub == "nmatches" {
+                                "0".into()
+                            } else {
+                                String::new()
+                            }
+                        }),
                     )
                 } else {
                     paramtab_hashed_storage()
@@ -8001,8 +8081,7 @@ pub fn paramsubst(
                                 if ct >= hsize * 2 {
                                     let osize = hsize; // c:463
                                     hsize = osize * 4; // c:466
-                                    let old_head =
-                                        std::mem::replace(&mut head, vec![-1; hsize]); // c:467
+                                    let old_head = std::mem::replace(&mut head, vec![-1; hsize]); // c:467
                                     ct = 0; // c:468
                                     for b in 0..osize {
                                         // c:472
@@ -8128,13 +8207,12 @@ pub fn paramsubst(
                     // an UNEXPANDED subscript — `arithsubst` -> `singsub` ->
                     // paramsubst, where the c:1533 scan never ran — leave
                     // `subscript_split` at None and still get their one round.
-                    let pat = if subscript_split.is_none()
-                        && (pat.contains('$') || pat.contains('`'))
-                    {
-                        singsub(&pat)
-                    } else {
-                        pat
-                    };
+                    let pat =
+                        if subscript_split.is_none() && (pat.contains('$') || pat.contains('`')) {
+                            singsub(&pat)
+                        } else {
+                            pat
+                        };
                     // c:Src/params.c:1696-1750 assoc-subscript flag
                     // dispatch:
                     //   (r)/(R): match against VALUE, return VALUE(s)
@@ -8278,7 +8356,7 @@ pub fn paramsubst(
                     } else {
                         patcompile(
                             &{
-                                let mut __pat_tok = pat.clone();
+                                let mut __pat_tok = escape_data_backslashes(&pat);
                                 crate::ported::glob::tokenize(&mut __pat_tok);
                                 __pat_tok
                             },
@@ -8309,7 +8387,7 @@ pub fn paramsubst(
                         } else if match_against_key && !key_glob {
                             patcompile(
                                 &{
-                                    let mut __key_tok = hay.to_string();
+                                    let mut __key_tok = escape_data_backslashes(hay);
                                     crate::ported::glob::tokenize(&mut __key_tok);
                                     __key_tok
                                 },
@@ -8386,7 +8464,10 @@ pub fn paramsubst(
                             String::new()
                         }
                     } else {
-                        map.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
+                        map.iter()
+                            .find(|(k, _)| k == key)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_default()
                     }
                 } else if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0 {
                     // c:Src/params.c:1492-1494 — `if (v->scanflags &
@@ -8408,7 +8489,10 @@ pub fn paramsubst(
                         String::new()
                     }
                 } else {
-                    map.iter().find(|(k, _)| k == sub).map(|(_, v)| v.clone()).unwrap_or_default()
+                    map.iter()
+                        .find(|(k, _)| k == sub)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default()
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
                 // c:2926 (array)
@@ -8596,13 +8680,12 @@ pub fn paramsubst(
                     // an UNEXPANDED subscript — `arithsubst` -> `singsub` ->
                     // paramsubst, where the c:1533 scan never ran — leave
                     // `subscript_split` at None and still get their one round.
-                    let pat = if subscript_split.is_none()
-                        && (pat.contains('$') || pat.contains('`'))
-                    {
-                        singsub(&pat)
-                    } else {
-                        pat
-                    };
+                    let pat =
+                        if subscript_split.is_none() && (pat.contains('$') || pat.contains('`')) {
+                            singsub(&pat)
+                        } else {
+                            pat
+                        };
                     // c:Src/params.c:1513-1516 — the OUTER paramflags
                     // override the subscript's index-vs-value (`*inv`):
                     //   if (WANTKEYS)      *inv = (ind || !WANTVALS);
@@ -8708,7 +8791,7 @@ pub fn paramsubst(
                         } else {
                             patcompile(
                                 &{
-                                    let mut __pat_tok = (&pat).to_string();
+                                    let mut __pat_tok = escape_data_backslashes(&pat);
                                     crate::ported::glob::tokenize(&mut __pat_tok);
                                     __pat_tok
                                 },
@@ -8987,7 +9070,8 @@ pub fn paramsubst(
                         // one getarg found in the UNEXPANDED text; consult that
                         // decision when paramsubst recorded one.
                         let top_comma =
-                            crate::subscript_escape::subscript_range_bounds(sub, &subscript_split).is_some();
+                            crate::subscript_escape::subscript_range_bounds(sub, &subscript_split)
+                                .is_some();
                         if top_comma {
                             None
                         } else {
@@ -9434,7 +9518,7 @@ pub fn paramsubst(
                             } else {
                                 patcompile(
                                     &{
-                                        let mut __pat_tok = (&pat).to_string();
+                                        let mut __pat_tok = escape_data_backslashes(&pat);
                                         crate::ported::glob::tokenize(&mut __pat_tok);
                                         __pat_tok
                                     },
@@ -9928,7 +10012,7 @@ pub fn paramsubst(
                         } else {
                             patcompile(
                                 &{
-                                    let mut __pat_tok = (&pat).to_string();
+                                    let mut __pat_tok = escape_data_backslashes(&pat);
                                     crate::ported::glob::tokenize(&mut __pat_tok);
                                     __pat_tok.push(crate::ported::zsh_h::Star); // c:1698
                                     __pat_tok
@@ -10149,8 +10233,11 @@ pub fn paramsubst(
                             // c:Src/lex.c:1743 parse_subscript nesting walk.
                             // c:Src/params.c:1533-1536 — the range comma is
                             // the one getarg found in the UNEXPANDED text.
-                            let top_comma =
-                                crate::subscript_escape::subscript_range_bounds(sub, &subscript_split).is_some();
+                            let top_comma = crate::subscript_escape::subscript_range_bounds(
+                                sub,
+                                &subscript_split,
+                            )
+                            .is_some();
                             if top_comma {
                                 None
                             } else {
@@ -10608,9 +10695,9 @@ pub fn paramsubst(
             // first subscript (`${a[N][M]}`) walks into the element's chars
             // (handled below). Equivalent to `${${a[lo,hi]}[M]}`.
             // c:Src/params.c:1533-1536 — a RANGE is decided on the unexpanded text.
-            let first_slice = subscript
-                .as_deref()
-                .filter(|s| crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some());
+            let first_slice = subscript.as_deref().filter(|s| {
+                crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
+            });
             if let (Some(s1_raw), Some(full)) = (first_slice, arrays_get(&var_name)) {
                 // s1 (the first subscript) can carry the Dash token too.
                 let s1 = s1_raw.replace('\u{9b}', "-");
@@ -10814,7 +10901,8 @@ pub fn paramsubst(
             // the integer-parse path bailed on the non-numeric `@`.
             let is_at_or_star = matches!(sub, "@" | "*");
             // c:Src/params.c:1533-1536 — range decided pre-expansion.
-            let is_slice = crate::subscript_escape::subscript_range_bounds(sub, &subscript_split).is_some();
+            let is_slice =
+                crate::subscript_escape::subscript_range_bounds(sub, &subscript_split).is_some();
             // c:Src/params.c getarg — `(r)pat`/`(R)pat`/`(i)pat`/`(I)pat`
             // subscript flags do a pattern-search returning the match
             // (or empty when no match). Bug #587: the integer-parse
@@ -11126,9 +11214,12 @@ pub fn paramsubst(
             // = chars in arr[1]). Only `[@]`/`[*]`/range `[N,M]` keep
             // array shape (SCANPM_ISVAR_AT at c:2027-2029), feeding the
             // c:3853 element-count path.
-            let single_slot_subscript = subscript
-                .as_deref()
-                .map_or(false, |s| s != "@" && s != "*" && crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_none());
+            let single_slot_subscript = subscript.as_deref().map_or(false, |s| {
+                s != "@"
+                    && s != "*"
+                    && crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
+                        .is_none()
+            });
             // c:Src/params.c:2915 — a flagged subscript `[(I)pat]` /
             // `[(R)pat]` / `[(K)pat]` that matched MULTIPLE entries set
             // SCANPM_MATCHMANY → array shape (isarr != 0), even though
@@ -11628,22 +11719,22 @@ pub fn paramsubst(
                         return None;
                     }
                     match var_name.as_str() {
-                    "aliases" => aliastab_lock().read().ok().map(|t| {
-                        let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
-                        names.sort();
-                        names
-                    }),
-                    "functions" | "dis_functions" => shfunctab_lock().read().ok().map(|t| {
-                        let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
-                        names.sort();
-                        names
-                    }),
-                    "commands" => cmdnamtab_lock().read().ok().map(|t| {
-                        let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
-                        names.sort();
-                        names
-                    }),
-                    _ => None,
+                        "aliases" => aliastab_lock().read().ok().map(|t| {
+                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                            names.sort();
+                            names
+                        }),
+                        "functions" | "dis_functions" => shfunctab_lock().read().ok().map(|t| {
+                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                            names.sort();
+                            names
+                        }),
+                        "commands" => cmdnamtab_lock().read().ok().map(|t| {
+                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                            names.sort();
+                            names
+                        }),
+                        _ => None,
                     }
                 })
                 // c:Src/subst.c — on an indexed array, `(k)` is a no-
@@ -12217,7 +12308,10 @@ pub fn paramsubst(
                                   // array iteration MUST fire — `\${arr[@]:#pat}` filters
                                   // the elements, not the joined scalar.
                 let is_array_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"))
-                    || subscript.as_deref().map_or(false, |s| crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some());
+                    || subscript.as_deref().map_or(false, |s| {
+                        crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
+                            .is_some()
+                    });
                 let has_subscript = subscript.is_some() && !is_array_subscript;
                 // c:Src/subst.c:3317 — under qt (DQ context) without an
                 // explicit @/*-style subscript, the array sepjoins to
@@ -12747,10 +12841,10 @@ pub fn paramsubst(
                         } else {
                             let __s = match subscript.as_deref() {
                                 Some(k) => format!(
-                                "{}[{}]",
-                                var_name,
-                                crate::subscript_escape::subscript_requote_for_assign(k)
-                            ),
+                                    "{}[{}]",
+                                    var_name,
+                                    crate::subscript_escape::subscript_requote_for_assign(k)
+                                ),
                                 None => var_name.clone(),
                             };
                             assignsparam(&__s, &value, 0);
@@ -12811,10 +12905,10 @@ pub fn paramsubst(
                         } else {
                             let __s = match subscript.as_deref() {
                                 Some(k) => format!(
-                                "{}[{}]",
-                                var_name,
-                                crate::subscript_escape::subscript_requote_for_assign(k)
-                            ),
+                                    "{}[{}]",
+                                    var_name,
+                                    crate::subscript_escape::subscript_requote_for_assign(k)
+                                ),
                                 None => var_name.clone(),
                             };
                             assignsparam(&__s, &value, 0);
@@ -13407,15 +13501,15 @@ pub fn paramsubst(
                     // greedy `${x//(a#)(b|(#e))/<>}`, whose shortest probe never
                     // runs, yields "<>c<>".
                     let mut pat_notend: i32 = 0; // c:2882
-                    // c:Src/glob.c:2818-2825 `iincchar` — C's `ioff` (the
-                    // `patoffset` every scan hands to `pattrylen`) is stepped by
-                    // `mb_charlenconv`, which returns 1 unconditionally when the
-                    // MULTIBYTE option is unset (c:Src/utils.c:5795). So a step
-                    // covers ONE BYTE without MULTIBYTE and one character with
-                    // it — exactly `charsub`'s rule (c:Src/pattern.c:2008), which
-                    // is what makes `CHARSUB(patinstart, *sp) + patoffset`
-                    // (c:Src/pattern.c:2561) add two values in one unit. Convert
-                    // this scan's character index accordingly.
+                                                 // c:Src/glob.c:2818-2825 `iincchar` — C's `ioff` (the
+                                                 // `patoffset` every scan hands to `pattrylen`) is stepped by
+                                                 // `mb_charlenconv`, which returns 1 unconditionally when the
+                                                 // MULTIBYTE option is unset (c:Src/utils.c:5795). So a step
+                                                 // covers ONE BYTE without MULTIBYTE and one character with
+                                                 // it — exactly `charsub`'s rule (c:Src/pattern.c:2008), which
+                                                 // is what makes `CHARSUB(patinstart, *sp) + patoffset`
+                                                 // (c:Src/pattern.c:2561) add two values in one unit. Convert
+                                                 // this scan's character index accordingly.
                     let ioff = |ci: usize| -> i32 {
                         let b = val
                             .char_indices()
@@ -13706,10 +13800,8 @@ pub fn paramsubst(
                                             break;
                                         }
                                         // c:3053 umlen2 += iincchar(&ptr, mpos - ptr)
-                                        ptr += val[ptr..]
-                                            .chars()
-                                            .next()
-                                            .map_or(1, |ch| ch.len_utf8());
+                                        ptr +=
+                                            val[ptr..].chars().next().map_or(1, |ch| ch.len_utf8());
                                     }
                                 }
                                 let e = byte_off.partition_point(|&b| b < mpos);
@@ -13931,7 +14023,10 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                        t != "@"
+                            && t != "*"
+                            && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                                .is_none()
                     })
                     .unwrap_or(false);
                 // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
@@ -14571,8 +14666,7 @@ pub fn paramsubst(
                             // forced EVERY candidate to end at `nn` — so a pattern
                             // carrying `(#e)` in only ONE alternation branch
                             // (`a(b|(#e))`) never matched in the interior.
-                            let start_byte: usize =
-                                cv[..start].iter().map(|c| c.len_utf8()).sum();
+                            let start_byte: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
                             let full: String = cv.iter().collect();
                             let mut m_end: Option<usize> = None;
                             if let Some(prog) = crate::ported::pattern::patcompile(
@@ -14597,9 +14691,7 @@ pub fn paramsubst(
                                     .store(base_flags, std::sync::atomic::Ordering::Relaxed);
                                 let mut pst = crate::ported::pattern::rpat::new();
                                 // c:3035 pattrylen(p, t, umlen, ...)
-                                let longest = if (prog.0.flags
-                                    & crate::ported::zsh_h::PAT_ANY)
-                                    != 0
+                                let longest = if (prog.0.flags & crate::ported::zsh_h::PAT_ANY) != 0
                                 {
                                     Some(full.len() - start_byte)
                                 } else {
@@ -14618,12 +14710,11 @@ pub fn paramsubst(
                                         let mut ptr = start_byte; // c:3046
                                         while ptr < mpos {
                                             // c:3047 set_pat_end(p, *ptr)
-                                            pat_notend_one =
-                                                if full.as_bytes()[ptr] != 0 {
-                                                    crate::ported::zsh_h::PAT_NOTEND
-                                                } else {
-                                                    0
-                                                };
+                                            pat_notend_one = if full.as_bytes()[ptr] != 0 {
+                                                crate::ported::zsh_h::PAT_NOTEND
+                                            } else {
+                                                0
+                                            };
                                             crate::ported::pattern::patflags.store(
                                                 base_flags | pat_notend_one,
                                                 std::sync::atomic::Ordering::Relaxed,
@@ -14692,7 +14783,10 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                        t != "@"
+                            && t != "*"
+                            && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                                .is_none()
                     })
                     .unwrap_or(false);
                 if let Some(arr) = arrays_get(&var_name)
@@ -14794,7 +14888,10 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                        t != "@"
+                            && t != "*"
+                            && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                                .is_none()
                     })
                     .unwrap_or(false);
                 // c:Src/subst.c:3317 — under qt without @/*-subscript
@@ -15038,7 +15135,10 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                        t != "@"
+                            && t != "*"
+                            && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                                .is_none()
                     })
                     .unwrap_or(false);
                 // c:Src/subst.c:3317 — under qt (DQ context) without
@@ -15271,7 +15371,10 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                        t != "@"
+                            && t != "*"
+                            && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                                .is_none()
                     })
                     .unwrap_or(false);
                 // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
@@ -15511,7 +15614,10 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                        t != "@"
+                            && t != "*"
+                            && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                                .is_none()
                     })
                     .unwrap_or(false);
                 // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
@@ -15982,23 +16088,21 @@ pub fn paramsubst(
                                 .map(|m| m.values().cloned().collect::<Vec<String>>())
                         })
                         .or_else(|| vars_get(other_name).map(|s| vec![s])); // c:3494-3496
-                    // c:3030-3037 — the `qt` collapse (`val = sepjoin(aval, sep, 1);
-                    // isarr = 0;`) runs BEFORE this operator, which is why
-                    // `"${a:^b}"` zips the JOINED left operand while `${a:^b}`
-                    // zips element-wise. The upstream collapse site records it in
-                    // `isarr`/`dq_collapsed`; a NESTED inner (`"${${a:^b}}"`)
-                    // runs in the outer's scalar context, which the bridge hands
-                    // over as a raw string with qt=false, so SUBEXP_SCALAR_CTX
-                    // carries it instead. `[@]`/`[*]` keeps isarr=-1 through the
-                    // qt transition (params.c:2027-2029 SCANPM_ISVAR_AT), so it
-                    // stays element-wise.
-                    let is_at_subscript_zip =
-                        matches!(subscript.as_deref(), Some("@") | Some("*"));
-                    let scalar_ctx = (qt
-                        || dq_collapsed
-                        || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0)
-                        && !is_at_subscript_zip
-                        && nojoin != 2;
+                                                                            // c:3030-3037 — the `qt` collapse (`val = sepjoin(aval, sep, 1);
+                                                                            // isarr = 0;`) runs BEFORE this operator, which is why
+                                                                            // `"${a:^b}"` zips the JOINED left operand while `${a:^b}`
+                                                                            // zips element-wise. The upstream collapse site records it in
+                                                                            // `isarr`/`dq_collapsed`; a NESTED inner (`"${${a:^b}}"`)
+                                                                            // runs in the outer's scalar context, which the bridge hands
+                                                                            // over as a raw string with qt=false, so SUBEXP_SCALAR_CTX
+                                                                            // carries it instead. `[@]`/`[*]` keeps isarr=-1 through the
+                                                                            // qt transition (params.c:2027-2029 SCANPM_ISVAR_AT), so it
+                                                                            // stays element-wise.
+                    let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                    let scalar_ctx =
+                        (qt || dq_collapsed || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0)
+                            && !is_at_subscript_zip
+                            && nojoin != 2;
                     // C's `aval` at this point: the CURRENT expansion value with
                     // any subscript / flags already applied — `split_parts` when
                     // an operator or subscript produced it, else the raw array.
@@ -16193,7 +16297,10 @@ pub fn paramsubst(
                     // some unquoted contexts.
                     let is_at = subscript.as_deref() == Some("@");
                     let is_star = matches!(subscript.as_deref(), Some("*") | Some("\u{87}"));
-                    let is_range = subscript.as_deref().map_or(false, |s| crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some());
+                    let is_range = subscript.as_deref().map_or(false, |s| {
+                        crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
+                            .is_some()
+                    });
                     // c:Src/subst.c:2916 SCANPM_ISVAR_AT — bare `@`
                     //   pseudo-name keeps per-element shape in DQ (same
                     //   as `[@]` subscript). `${@:t}` loops the
@@ -16534,9 +16641,12 @@ pub fn paramsubst(
                     // the picked SCALAR (`${arr[1]:0:3}` = first 3 chars
                     // of arr[1]). Only `[@]`/`[*]`/range `[N,M]` keep the
                     // array shape that drives the slice path.
-                    let single_slot_subscript = subscript
-                        .as_deref()
-                        .map_or(false, |s| s != "@" && s != "*" && crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_none());
+                    let single_slot_subscript = subscript.as_deref().map_or(false, |s| {
+                        s != "@"
+                            && s != "*"
+                            && crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
+                                .is_none()
+                    });
                     let array_source: Option<Vec<String>> = if single_slot_subscript {
                         None // c:2915 (scalar picked → substring on val)
                     } else {
@@ -16951,16 +17061,16 @@ pub fn paramsubst(
                 })
             }) == Some(true);
             let declared = paramtab()
-                    .read()
-                    .ok()
-                    .and_then(|tab| {
-                        tab.get(&var_name).map(|p| {
-                            let f = p.node.flags as u32;
-                            (f & crate::ported::zsh_h::PM_DECLARED) != 0
-                                || (f & crate::ported::zsh_h::PM_UNSET) == 0
-                        })
+                .read()
+                .ok()
+                .and_then(|tab| {
+                    tab.get(&var_name).map(|p| {
+                        let f = p.node.flags as u32;
+                        (f & crate::ported::zsh_h::PM_DECLARED) != 0
+                            || (f & crate::ported::zsh_h::PM_UNSET) == 0
                     })
-                    .unwrap_or(false)
+                })
+                .unwrap_or(false)
                 || arrays_contains(&var_name)
                 || assoc_contains(&var_name)
                 || crate::ported::modules::parameter::PARTAB_ARRAY
@@ -17382,34 +17492,35 @@ pub fn paramsubst(
                             "array-special".to_string()
                         } else if magic_bound
                             && matches!(
-                            var_name.as_str(),
-                            "aliases"
-                                | "galiases"
-                                | "saliases"
-                                | "dis_aliases"
-                                | "dis_galiases"
-                                | "dis_saliases"
-                                | "functions"
-                                | "dis_functions"
-                                | "builtins"
-                                | "dis_builtins"
-                                | "reswords"
-                                | "dis_reswords"
-                                | "options"
-                                | "commands"
-                                | "modules"
-                                | "nameddirs"
-                                | "userdirs"
-                                | "jobtexts"
-                                | "jobdirs"
-                                | "jobstates"
-                                | "parameters"
-                                | "dirstack"
-                                | "errnos"
-                                | "sysparams"
-                                | "mapfile"
-                                | "langinfo"
-                        ) {
+                                var_name.as_str(),
+                                "aliases"
+                                    | "galiases"
+                                    | "saliases"
+                                    | "dis_aliases"
+                                    | "dis_galiases"
+                                    | "dis_saliases"
+                                    | "functions"
+                                    | "dis_functions"
+                                    | "builtins"
+                                    | "dis_builtins"
+                                    | "reswords"
+                                    | "dis_reswords"
+                                    | "options"
+                                    | "commands"
+                                    | "modules"
+                                    | "nameddirs"
+                                    | "userdirs"
+                                    | "jobtexts"
+                                    | "jobdirs"
+                                    | "jobstates"
+                                    | "parameters"
+                                    | "dirstack"
+                                    | "errnos"
+                                    | "sysparams"
+                                    | "mapfile"
+                                    | "langinfo"
+                            )
+                        {
                             // Magic-assoc params — type is association.
                             // Direct port of subst.c:2814 paramtab
                             // lookup which finds the magic-assoc entry
@@ -17809,7 +17920,9 @@ pub fn paramsubst(
                 // branch — pinned by r_flag_then_L_lowercase parity.
                 let parts: Vec<String> = value.split_whitespace().map(|s| transform(s)).collect();
                 value = parts.join(" ");
-                if subscript.as_deref().map_or(false, |s| crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()) {
+                if subscript.as_deref().map_or(false, |s| {
+                    crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
+                }) {
                     split_parts = Some(parts);
                 }
                 let _ = is_subexp_temp;
@@ -17939,7 +18052,10 @@ pub fn paramsubst(
                 .as_deref()
                 .map(|s| {
                     let t = s.trim();
-                    t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                    t != "@"
+                        && t != "*"
+                        && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                            .is_none()
                 })
                 .unwrap_or(false);
             let src_elems: Option<Vec<String>> = if let Some(prev) = split_parts.clone() {
@@ -18010,7 +18126,8 @@ pub fn paramsubst(
                     // c:4045 `strmetasort(aval, sortit, NULL)` — one call for
                     // the whole flag set, so `(ni)` folds case AND compares
                     // digit runs instead of picking one or the other.
-                    crate::ported::sort::strmetasort(&mut parts, sortit as u32, None); // c:4045
+                    crate::ported::sort::strmetasort(&mut parts, sortit as u32, None);
+                    // c:4045
                 }
             }
             if let Some(ref jsep) = sep {
@@ -18139,7 +18256,10 @@ pub fn paramsubst(
                 .as_deref()
                 .map(|s| {
                     let t = s.trim();
-                    t != "@" && t != "*" && crate::subscript_escape::subscript_range_bounds(t, &subscript_split).is_none()
+                    t != "@"
+                        && t != "*"
+                        && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
+                            .is_none()
                 })
                 .unwrap_or(false)
             {
@@ -18332,7 +18452,8 @@ pub fn paramsubst(
                     // BACKWARDS as a post-sort `reverse()` instead of C's
                     // negated comparator, which flips the order of tied
                     // elements rather than leaving them alone.
-                    crate::ported::sort::strmetasort(&mut sorted, sortit as u32, None); // c:4045
+                    crate::ported::sort::strmetasort(&mut sorted, sortit as u32, None);
+                    // c:4045
                 }
             } // c:4046
             let join_with = sep.as_deref().unwrap_or(" "); // c:4313
@@ -18341,7 +18462,6 @@ pub fn paramsubst(
                                             // padding, splat) see the sorted/uniq list.
             split_parts = Some(sorted); // c:4313
         } // c:4290
-
 
         // (%) prompt-expand — interpret %F{red}, %~, %n, %{...%},
         // etc. Per-element on arrays. Direct port of subst.c:2405 /
@@ -18415,33 +18535,33 @@ pub fn paramsubst(
             let mut in_sq = false; // c:2439
             let mut in_dq = false; // c:2439
             let mut in_comment = false; // c:2451
-            // c:Src/subst.c:4191,4196 — `untokenize(*ap);` / `untokenize(val);`
-            // runs on the value BEFORE `bufferwords`, and C's untokenize DROPS
-            // the Nularg sentinel outright (`Src/exec.c:2143 if (c != Nularg)`).
-            // That is what keeps a nulstring element out of the `(z)` word list:
-            // for `q=("" 1)`, `"${(z)${(@)q}}"` lexes ` 1` and yields the single
-            // word `1`, not an empty word plus `1`. Only the Nularg half of
-            // untokenize is applied here — the rest of zshrs's untokenize also
-            // decodes `$'…'` regions, which the `(z)` lexer below must see in
-            // source form.
+                                        // c:Src/subst.c:4191,4196 — `untokenize(*ap);` / `untokenize(val);`
+                                        // runs on the value BEFORE `bufferwords`, and C's untokenize DROPS
+                                        // the Nularg sentinel outright (`Src/exec.c:2143 if (c != Nularg)`).
+                                        // That is what keeps a nulstring element out of the `(z)` word list:
+                                        // for `q=("" 1)`, `"${(z)${(@)q}}"` lexes ` 1` and yields the single
+                                        // word `1`, not an empty word plus `1`. Only the Nularg half of
+                                        // untokenize is applied here — the rest of zshrs's untokenize also
+                                        // decodes `$'…'` regions, which the `(z)` lexer below must see in
+                                        // source form.
             let chars_v: Vec<char> = value.chars().filter(|&c| c != Nularg).collect(); // c:2439 + c:4196
-            // c:Src/lex.c:941 — `int pct = 0;` in gettokstr(): the count of
-            // still-open `(` inside the CURRENT word. It gates three things:
-            // c:960 (blanks stop breaking the word), c:991 (a `)` only ends the
-            // word at depth 0) and c:1001 (a `|` only breaks at depth 0). It is
-            // a gettokstr() local, so it restarts at 0 for every new word.
+                                                                                       // c:Src/lex.c:941 — `int pct = 0;` in gettokstr(): the count of
+                                                                                       // still-open `(` inside the CURRENT word. It gates three things:
+                                                                                       // c:960 (blanks stop breaking the word), c:991 (a `)` only ends the
+                                                                                       // word at depth 0) and c:1001 (a `|` only breaks at depth 0). It is
+                                                                                       // a gettokstr() local, so it restarts at 0 for every new word.
             let mut pct: i32 = 0; // c:941
-            // c:Src/lex.c:322-353 — ctxtlex() maintains the global `incmdpos`
-            // from the token it just returned. `(` is only the INPAR token in
-            // command position (c:821), and ENVARRAY needs it too (c:1229).
+                                  // c:Src/lex.c:322-353 — ctxtlex() maintains the global `incmdpos`
+                                  // from the token it just returned. `(` is only the INPAR token in
+                                  // command position (c:821), and ENVARRAY needs it too (c:1229).
             let mut incmdpos_z: bool = true; // c:322-353
-            // c:Src/hist.c:3391 — `int envarray = 0;` in bufferwords().
+                                             // c:Src/hist.c:3391 — `int envarray = 0;` in bufferwords().
             let mut envarray: bool = false; // c:3391
-            // !!! WARNING: RUST-ONLY HELPER !!!
-            // C keeps `incmdpos` in a shell global that ctxtlex() (Src/lex.c:322)
-            // rewrites after every token, and recognises reserved words inside
-            // zshlex()/exalias(). This tokenizer has no token enum, so the same
-            // classification is done on the finished word text here.
+                                            // !!! WARNING: RUST-ONLY HELPER !!!
+                                            // C keeps `incmdpos` in a shell global that ctxtlex() (Src/lex.c:322)
+                                            // rewrites after every token, and recognises reserved words inside
+                                            // zshlex()/exalias(). This tokenizer has no token enum, so the same
+                                            // classification is done on the finished word text here.
             fn z_incmdpos_after_word(w: &str, incmdpos: bool) -> bool {
                 if !incmdpos {
                     // c:345 — a plain STRING always leaves command position.
@@ -18763,7 +18883,8 @@ pub fn paramsubst(
                     '\n' if pct != 0 => cur.push(ch), // c:960
                     '\n' if (shsplit & LEXFLAGS_NEWLINE) != 0 => {
                         // c:2461 (n: nl as ws)
-                        push_word(&mut cur, &mut words, &mut pct, &mut incmdpos_z); // c:2461
+                        push_word(&mut cur, &mut words, &mut pct, &mut incmdpos_z);
+                        // c:2461
                     } // c:2461
                     // c:bufferwords — the (z) flag emits shell-token
                     // separators (`;`, `&`, `\n`, `|`, `||`, `&&`) as
@@ -18916,41 +19037,42 @@ pub fn paramsubst(
                     // break the word at paren depth 0.
                     c if c.is_whitespace() && pct == 0 => {
                         // c:2439
-                        push_word(&mut cur, &mut words, &mut pct, &mut incmdpos_z); // c:2439
+                        push_word(&mut cur, &mut words, &mut pct, &mut incmdpos_z);
+                        // c:2439
                     } // c:2439
                     _ => cur.push(ch), // c:2439
                 } // c:2439
                 p += 1; // c:2439
             } // c:2439
             push_word(&mut cur, &mut words, &mut pct, &mut incmdpos_z); // c:2439
-                                             // c:4174-4198 — bufferwords result becomes a word list:
-                                             // when there are multiple words OR isarr was set, the
-                                             // value is the list (aval), else the single joined val.
-                                             // Mirror by setting split_parts so the auto_splat block
-                                             // (or DQ join via sepjoin gate) consumes the list.
-                                             // Per c:3274 split-from-scalar convention, isarr = 2.
-                                             // Bug #363: zsh's `(z)` flag produces TOKENIZED words —
-                                             // a `$` inside any word is the literal char `$`, NOT a
-                                             // new param reference. Without an "already-tokenized"
-                                             // marker, downstream stringsubst re-expands `$VAR` as a
-                                             // fresh param-ref (UNSET → empty → element elided).
-                                             // Prefix `$` and `` ` `` with Bnull (the lexer's
-                                             // backslash-token) so the chars survive stringsubst's
-                                             // `$`/`` ` `` arms (Src/subst.c:265 `case Bnull: *s='\0'`
-                                             // skip) and untokenize to the literal char at the final
-                                             // output pass. Mirrors C bufferwords' tokenized result.
-                                             // Wrap each `$` / `` ` `` in Snull single-quote markers rather
-                                             // than prefixing with Bnull. Both stop stringsubst re-expanding
-                                             // the char (subst.rs:654-665 treats a Snull region as a literal
-                                             // `'…'` span, stripping the markers and keeping the content
-                                             // verbatim), but Bnull UNTOKENIZES to a literal backslash
-                                             // (C ztokens maps Bnull → `\`, lex.rs:4936), so `${(z)v}` for
-                                             // v=`a$b` came out `a\$b` instead of zsh's `a$b`. Snull is
-                                             // stripped by stringsubst before any untokenize sees it, so the
-                                             // `$` survives as a bare literal char — matching zsh's `(z)`
-                                             // which keeps `$foo` unexpanded AND unescaped. Bug #363's
-                                             // re-expansion guard is preserved (Snull is still a literal
-                                             // region); only the spurious backslash is gone.
+                                                                        // c:4174-4198 — bufferwords result becomes a word list:
+                                                                        // when there are multiple words OR isarr was set, the
+                                                                        // value is the list (aval), else the single joined val.
+                                                                        // Mirror by setting split_parts so the auto_splat block
+                                                                        // (or DQ join via sepjoin gate) consumes the list.
+                                                                        // Per c:3274 split-from-scalar convention, isarr = 2.
+                                                                        // Bug #363: zsh's `(z)` flag produces TOKENIZED words —
+                                                                        // a `$` inside any word is the literal char `$`, NOT a
+                                                                        // new param reference. Without an "already-tokenized"
+                                                                        // marker, downstream stringsubst re-expands `$VAR` as a
+                                                                        // fresh param-ref (UNSET → empty → element elided).
+                                                                        // Prefix `$` and `` ` `` with Bnull (the lexer's
+                                                                        // backslash-token) so the chars survive stringsubst's
+                                                                        // `$`/`` ` `` arms (Src/subst.c:265 `case Bnull: *s='\0'`
+                                                                        // skip) and untokenize to the literal char at the final
+                                                                        // output pass. Mirrors C bufferwords' tokenized result.
+                                                                        // Wrap each `$` / `` ` `` in Snull single-quote markers rather
+                                                                        // than prefixing with Bnull. Both stop stringsubst re-expanding
+                                                                        // the char (subst.rs:654-665 treats a Snull region as a literal
+                                                                        // `'…'` span, stripping the markers and keeping the content
+                                                                        // verbatim), but Bnull UNTOKENIZES to a literal backslash
+                                                                        // (C ztokens maps Bnull → `\`, lex.rs:4936), so `${(z)v}` for
+                                                                        // v=`a$b` came out `a\$b` instead of zsh's `a$b`. Snull is
+                                                                        // stripped by stringsubst before any untokenize sees it, so the
+                                                                        // `$` survives as a bare literal char — matching zsh's `(z)`
+                                                                        // which keeps `$foo` unexpanded AND unescaped. Bug #363's
+                                                                        // re-expansion guard is preserved (Snull is still a literal
+                                                                        // region); only the spurious backslash is gone.
             let snull = crate::ported::zsh_h::Snull;
             for w in words.iter_mut() {
                 if w.contains('$') || w.contains('`') {
@@ -19531,12 +19653,12 @@ pub fn paramsubst(
                 // c:4124 — `tmp = quotestring(val, quotetype)` returns the
                 // quoted BODY only (utils.c:6131-6134); C then wraps it here.
                 let body = quotestring(s, qt_effective); // c:4124
-                                                        // c:4042-4063 — `pre`/`post` select the wrapper:
-                                                        //   QT_DOLLARS            → pre = 2, post = 1  (`$` + `'` … `'`)
-                                                        //   QT_SINGLE / QT_DOUBLE → pre = post = 1     (`'` … `'` / `"` … `"`)
-                                                        //   QT_BACKSLASH{,_PATTERN}, QT_SINGLE_OPTIONAL → none
-                                                        // c:4129-4130 — the pair character is `"` for QT_DOUBLE, else `'`.
-                                                        // c:4132-4133 — QT_DOLLARS additionally sets `val[0] = '$'`.
+                                                         // c:4042-4063 — `pre`/`post` select the wrapper:
+                                                         //   QT_DOLLARS            → pre = 2, post = 1  (`$` + `'` … `'`)
+                                                         //   QT_SINGLE / QT_DOUBLE → pre = post = 1     (`'` … `'` / `"` … `"`)
+                                                         //   QT_BACKSLASH{,_PATTERN}, QT_SINGLE_OPTIONAL → none
+                                                         // c:4129-4130 — the pair character is `"` for QT_DOUBLE, else `'`.
+                                                         // c:4132-4133 — QT_DOLLARS additionally sets `val[0] = '$'`.
                 let wrapped = if quotetype == QT_DOLLARS {
                     format!("$'{}'", body) // c:4129-4133
                 } else if quotetype == crate::ported::zsh_h::QT_DOUBLE {
@@ -19915,7 +20037,9 @@ pub fn paramsubst(
                 // so list-context rendering emits the padded elements.
                 let parts: Vec<String> = value.split_whitespace().map(|s| pad_one(s)).collect();
                 value = parts.join(" ");
-                if subscript.as_deref().map_or(false, |s| crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()) {
+                if subscript.as_deref().map_or(false, |s| {
+                    crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
+                }) {
                     split_parts = Some(parts);
                 }
             } else if isarr != 0 {
@@ -20028,17 +20152,16 @@ pub fn paramsubst(
                 let e_multi = !single_e && !value.contains(Snull) && !value.contains('\u{0}');
                 let mut done = false;
                 if e_multi {
-                    let (ms_joined, ms_parts, ms_isarr, _ms) =
-                        ANSI_C_SNULL_STRICT.with(|flag| {
-                            let prev = flag.get();
-                            flag.set(true);
-                            let r = match subst_parse_str(&value, single_e, quoteerr) {
-                                Some(parsed) => multsub(&parsed, PREFORK_NOSHWORDSPLIT), // c:4472 + c:4480
-                                None => multsub(&value, PREFORK_NOSHWORDSPLIT),
-                            };
-                            flag.set(prev);
-                            r
-                        });
+                    let (ms_joined, ms_parts, ms_isarr, _ms) = ANSI_C_SNULL_STRICT.with(|flag| {
+                        let prev = flag.get();
+                        flag.set(true);
+                        let r = match subst_parse_str(&value, single_e, quoteerr) {
+                            Some(parsed) => multsub(&parsed, PREFORK_NOSHWORDSPLIT), // c:4472 + c:4480
+                            None => multsub(&value, PREFORK_NOSHWORDSPLIT),
+                        };
+                        flag.set(prev);
+                        r
+                    });
                     if ms_isarr && ms_parts.len() > 1 {
                         value = ms_joined;
                         split_parts = Some(ms_parts);
@@ -20071,21 +20194,20 @@ pub fn paramsubst(
         // seven (D04parameter.ztst "Rule 9: Shell Word Splitting"). The bare
         // `$name` path has its own c:1705 block further down; only the braced
         // one was uncovered.
-        let spbreak = force_split
-            || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt); // c:1707
-        // c:Src/subst.c:3906-3911 — inside the same `if (ssub || spbreak || …)`
-        // block, an ARRAY-shaped value is JOINED FIRST when `nojoin == 0`:
-        //     if (isarr || quoted_array_with_offset) {
-        //         if (nojoin == 0 || sep) { val = sepjoin(aval, sep, 1);
-        //                                   isarr = 0; }
-        // and only then does c:3919 `sepsplit` re-split it. That join-then-split
-        // is what makes `setopt shwordsplit; ${${string}/o/ }` seven words: the
-        // inner split gave four elements, the replacement put a space INSIDE
-        // three of them, and the outer round re-splits on the new spaces. The
-        // port skipped the join entirely (the split below is gated on
-        // `split_parts.is_none()`), so those inner spaces survived.
-        // `(@)`/`(*)` (nojoin != 0) and an explicit `(j:…:)` sep keep their
-        // shape, exactly as the C condition says.
+        let spbreak = force_split || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt); // c:1707
+                                                                                               // c:Src/subst.c:3906-3911 — inside the same `if (ssub || spbreak || …)`
+                                                                                               // block, an ARRAY-shaped value is JOINED FIRST when `nojoin == 0`:
+                                                                                               //     if (isarr || quoted_array_with_offset) {
+                                                                                               //         if (nojoin == 0 || sep) { val = sepjoin(aval, sep, 1);
+                                                                                               //                                   isarr = 0; }
+                                                                                               // and only then does c:3919 `sepsplit` re-split it. That join-then-split
+                                                                                               // is what makes `setopt shwordsplit; ${${string}/o/ }` seven words: the
+                                                                                               // inner split gave four elements, the replacement put a space INSIDE
+                                                                                               // three of them, and the outer round re-splits on the new spaces. The
+                                                                                               // port skipped the join entirely (the split below is gated on
+                                                                                               // `split_parts.is_none()`), so those inner spaces survived.
+                                                                                               // `(@)`/`(*)` (nojoin != 0) and an explicit `(j:…:)` sep keep their
+                                                                                               // shape, exactly as the C condition says.
         if spbreak && !in_ssub && sep.is_none() && nojoin == 0 {
             if let Some(parts) = split_parts.clone() {
                 if parts.len() > 1 {
@@ -20108,13 +20230,13 @@ pub fn paramsubst(
             // the signal the `${=…}` inner kept the leading "" that the
             // `(s:X:)` inner already dropped.
             SUBEXP_NONAT_SPLIT.with(|c| c.set(nojoin != 2)); // c:184
-            // c:Src/subst.c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
-            // Call the ported sepsplit (→ spacesplit for the IFS case)
-            // rather than splitting inline: the prior inline did
-            // `value.split(|c| ifs.contains(c)).filter(non-empty)`, which
-            // collapsed empty fields for NON-whitespace IFS — `IFS=,;
-            // ${=}` on "a,,b" dropped the middle field. sepsplit keeps
-            // them as Nularg per zsh's word-splitting (Bug #636).
+                                                             // c:Src/subst.c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
+                                                             // Call the ported sepsplit (→ spacesplit for the IFS case)
+                                                             // rather than splitting inline: the prior inline did
+                                                             // `value.split(|c| ifs.contains(c)).filter(non-empty)`, which
+                                                             // collapsed empty fields for NON-whitespace IFS — `IFS=,;
+                                                             // ${=}` on "a,,b" dropped the middle field. sepsplit keeps
+                                                             // them as Nularg per zsh's word-splitting (Bug #636).
             let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false); // c:3921
             if !parts.is_empty() {
                 value = parts.join(" ");
@@ -20201,8 +20323,7 @@ pub fn paramsubst(
                 // is a single-element search, not a slice, so it must not
                 // auto-splat (it was yielding zero words).
                 let top_comma =
-                    crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
-                        .is_some();
+                    crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some();
                 s != "@" && s != "*" && !top_comma
             })
             .unwrap_or(false); // c:3950
@@ -20313,23 +20434,23 @@ pub fn paramsubst(
                 || split_parts.is_some()))); // c:3950 ((s::) made an array)
                                              // c:3932 — `else l->list.flags &= ~LF_ARRAY;` (the non-array default;
                                              // the array case overrides it below, once `parts` is known).
-        //
-        // c:Src/subst.c:3897 — the SECOND LF_ARRAY stamp (c:3929-3932) is
-        // reached only from inside `if (ssub || spbreak || spsep || sep ||
-        // quoted_array_with_offset)`. When none of those hold, the c:3881-3884
-        // stamp is final, so it must survive to multsub (c:632) even on the
-        // paths that do NOT splat.
+                                             //
+                                             // c:Src/subst.c:3897 — the SECOND LF_ARRAY stamp (c:3929-3932) is
+                                             // reached only from inside `if (ssub || spbreak || spsep || sep ||
+                                             // quoted_array_with_offset)`. When none of those hold, the c:3881-3884
+                                             // stamp is final, so it must survive to multsub (c:632) even on the
+                                             // paths that do NOT splat.
         let split_join_block_ran =
             sep.is_some() || spsep.is_some() || force_split || pf_flags & PREFORK_SINGLE != 0; // c:3897
-        // The zero-element array is exactly that case: c:3885 turned it into
-        // the empty SCALAR (so `auto_splat` above is false by construction and
-        // the array-shaped stamp below never runs), yet C recorded its
-        // arrayness one line earlier. Without carrying the bit here, multsub
-        // hands the outer expansion a SCALAR and every outer operator
-        // char-indexes an empty string — `${#${arr}[1,2]}` gave 0 where zsh
-        // gives 1, and `${#${(q)arr}[1,2]}` gave 2 (the two chars of `''`)
-        // where zsh gives 1. `(j)`/`(f)`/`(s)` re-enter the c:3897 block and
-        // correctly come back scalar.
+                                                                                               // The zero-element array is exactly that case: c:3885 turned it into
+                                                                                               // the empty SCALAR (so `auto_splat` above is false by construction and
+                                                                                               // the array-shaped stamp below never runs), yet C recorded its
+                                                                                               // arrayness one line earlier. Without carrying the bit here, multsub
+                                                                                               // hands the outer expansion a SCALAR and every outer operator
+                                                                                               // char-indexes an empty string — `${#${arr}[1,2]}` gave 0 where zsh
+                                                                                               // gives 1, and `${#${(q)arr}[1,2]}` gave 2 (the two chars of `''`)
+                                                                                               // where zsh gives 1. `(j)`/`(f)`/`(s)` re-enter the c:3897 block and
+                                                                                               // correctly come back scalar.
         PARAMSUBST_LF_ARRAY
             .with(|c| c.set(empty_arr_scalarized && lf_array_c3882 && !split_join_block_ran));
         // c:Src/subst.c:2653 + c:283 — this paramsubst is the INNER of a
@@ -20673,17 +20794,17 @@ pub fn paramsubst(
             // `s='  a  b  '; print -rl -- "${(@)${=s}}"` kept a leading
             // empty word where zsh prints just `a` and `b`.
             let split_isarr_2 = (spsep.is_some() || force_split) && nojoin != 2; // c:3938
-            // c:Src/subst.c:4354 `if (qt && !*y && isarr != 2)`. The isarr != 2
-            // half only takes effect for a NESTED inner here: a directly quoted
-            // expansion reaches this port without C's surrounding Dnull markers
-            // (see the note above), and those markers are what keep an isarr ==
-            // 2 split's outer empties alive in C — so the top-level case still
-            // marks on `qt` alone. Inside a nested `${…${…}…}` there are no
-            // such markers in C either (the inner's list goes straight back to
-            // the outer paramsubst), so C's guard applies as written: a
-            // split-derived empty stays a genuinely empty node and prefork
-            // deletes it, which is how zshrs's nested reader tells it apart
-            // from a sentinel the inner deliberately produced.
+                                                                                 // c:Src/subst.c:4354 `if (qt && !*y && isarr != 2)`. The isarr != 2
+                                                                                 // half only takes effect for a NESTED inner here: a directly quoted
+                                                                                 // expansion reaches this port without C's surrounding Dnull markers
+                                                                                 // (see the note above), and those markers are what keep an isarr ==
+                                                                                 // 2 split's outer empties alive in C — so the top-level case still
+                                                                                 // marks on `qt` alone. Inside a nested `${…${…}…}` there are no
+                                                                                 // such markers in C either (the inner's list goes straight back to
+                                                                                 // the outer paramsubst), so C's guard applies as written: a
+                                                                                 // split-derived empty stays a genuinely empty node and prefork
+                                                                                 // deletes it, which is how zshrs's nested reader tells it apart
+                                                                                 // from a sentinel the inner deliberately produced.
             let mark_empty = if subexp_dq { !split_isarr_2 } else { qt }; // c:4354
             let emit_part = |s: &str| -> String {
                 if s.is_empty() {
@@ -21272,14 +21393,14 @@ pub fn paramsubst(
                 subscript_str = Some(crate::lex::untokenize(&expanded)); // c:1584
                 pos = q + 1; // c:1625
             } // c:1625
-            // c:Src/params.c:1583-1620 — getarg's terminal branch on the
-            // RESOLVED subscript text: `if (ishash) { ht->getnode(ht, s) }
-            // else { r = mathevalarg(s, &s); }`. An empty `s` is a legal
-            // (missing) hash key but an ILLEGAL math expression
-            // (c:Src/math.c:1536-1539 "bad math expression: empty string",
-            // where plain matheval would return 0). The text reaches zero
-            // length either written empty (`$A[]`) or expanded empty
-            // (`$A[$unset]`); C treats both the same. Mirrors the braced walk.
+              // c:Src/params.c:1583-1620 — getarg's terminal branch on the
+              // RESOLVED subscript text: `if (ishash) { ht->getnode(ht, s) }
+              // else { r = mathevalarg(s, &s); }`. An empty `s` is a legal
+              // (missing) hash key but an ILLEGAL math expression
+              // (c:Src/math.c:1536-1539 "bad math expression: empty string",
+              // where plain matheval would return 0). The text reaches zero
+              // length either written empty (`$A[]`) or expanded empty
+              // (`$A[$unset]`); C treats both the same. Mirrors the braced walk.
             if subscript_str.as_deref() == Some("") && !assoc_contains(&var_name) {
                 crate::ported::math::mathevalarg(""); // c:1618
                 errflag_set_error();
@@ -21334,7 +21455,8 @@ pub fn paramsubst(
                 // HISTFILE into the ring and built a 574k-entry map to read one
                 // event. A flagged subscript `[(R)pat]` still needs the map
                 // machinery and is excluded above.
-                crate::vm_helper::partab_get(&var_name, sub).unwrap_or_default() // c:1585
+                crate::vm_helper::partab_get(&var_name, sub).unwrap_or_default()
+            // c:1585
             } else if let Some(map) = assoc_get(&var_name) {
                 // c:Src/params.c::getarg — (I)/(i)/(R)/(r)/(k)/(K)/(e)/(n)/(b)
                 // hash subscript routing. Delegate to the canonical getarg so
@@ -21587,21 +21709,23 @@ pub fn paramsubst(
                     // path already routes these; mirror it through the same
                     // canonical getarg.
                     sub.trim_start().strip_prefix('(').and_then(|rest| {
-                        let close = rest.find(')')?;
-                        if rest[..close]
-                            .chars()
-                            .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f'))
-                        {
-                            crate::ported::params::getarg(
-                                sub.trim_start(),
-                                None,
-                                None,
-                                Some(&s),
-                            )
-                        } else {
-                            None
-                        }
-                    })
+                            let close = rest.find(')')?;
+                            if rest[..close].chars().all(|c| {
+                                matches!(
+                                    c,
+                                    'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f'
+                                )
+                            }) {
+                                crate::ported::params::getarg(
+                                    sub.trim_start(),
+                                    None,
+                                    None,
+                                    Some(&s),
+                                )
+                            } else {
+                                None
+                            }
+                        })
                 {
                     v.to_str().to_string()
                 } else if let Some((lo, hi)) = sub.split_once(',') {
@@ -22259,24 +22383,24 @@ pub fn paramsubst(
                     // c:1625
                     let prefix: String = chars[..start_pos].iter().collect(); // c:1625
                     let suffix: String = chars[after_pos..].iter().collect(); // c:1625
-                    // c:Src/subst.c:4272-4298 — "Empty array or single
-                    // element": with ZERO or ONE value C never runs the
-                    // first/last sticking loop below. It assembles ONE node
-                    //     y = hcalloc((aptr - ostr) + vallen + strlen(fstr) + 1);
-                    //     strcpy(y, ostr);        // c:4290
-                    //     *str = y + (aptr - ostr);   // c:4291
-                    //     if (vallen) { strcpy(*str, aval[0]); *str += vallen; } // c:4292-4296
-                    //     strcpy(*str, fstr);     // c:4297
-                    //     setdata(n, y); return n;
-                    // i.e. prefix + aval[0] + suffix, with the resume cursor
-                    // left at the START of the suffix. The port ran the
-                    // sticking loop for every length, and with exactly one
-                    // value `i == 0` matched FIRST, so the element took the
-                    // prefix and the suffix was DROPPED: `set -- hi;
-                    // print \"$*\"x` printed `"hi` instead of `"hi"x` (only
-                    // words that reach this runtime path — one carrying a
-                    // Bnull escape marker — were affected; the compiler's
-                    // segment fast path handles the rest).
+                                                                              // c:Src/subst.c:4272-4298 — "Empty array or single
+                                                                              // element": with ZERO or ONE value C never runs the
+                                                                              // first/last sticking loop below. It assembles ONE node
+                                                                              //     y = hcalloc((aptr - ostr) + vallen + strlen(fstr) + 1);
+                                                                              //     strcpy(y, ostr);        // c:4290
+                                                                              //     *str = y + (aptr - ostr);   // c:4291
+                                                                              //     if (vallen) { strcpy(*str, aval[0]); *str += vallen; } // c:4292-4296
+                                                                              //     strcpy(*str, fstr);     // c:4297
+                                                                              //     setdata(n, y); return n;
+                                                                              // i.e. prefix + aval[0] + suffix, with the resume cursor
+                                                                              // left at the START of the suffix. The port ran the
+                                                                              // sticking loop for every length, and with exactly one
+                                                                              // value `i == 0` matched FIRST, so the element took the
+                                                                              // prefix and the suffix was DROPPED: `set -- hi;
+                                                                              // print \"$*\"x` printed `"hi` instead of `"hi"x` (only
+                                                                              // words that reach this runtime path — one carrying a
+                                                                              // Bnull escape marker — were affected; the compiler's
+                                                                              // segment fast path handles the rest).
                     if values.len() <= 1 {
                         let value = values.first().map(String::as_str).unwrap_or(""); // c:4287
                         result_nodes.push(format!("{prefix}{value}{suffix}")); // c:4289-4297
@@ -22586,8 +22710,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
             // only a name absent from paramtab falls back to a ONE-TIME
             // snapshot of the environment zshrs was started with, which cannot
             // change without going through a paramtab-creating assignment.
-            static OUTPUT_RADIX_ENV: std::sync::OnceLock<Option<i32>> =
-                std::sync::OnceLock::new();
+            static OUTPUT_RADIX_ENV: std::sync::OnceLock<Option<i32>> = std::sync::OnceLock::new();
             let in_paramtab = crate::ported::params::paramtab()
                 .read()
                 .map(|t| t.get("OUTPUT_RADIX").is_some())
@@ -23320,8 +23443,8 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 // `[[:space:]]` and changed nothing (D04parameter.ztst
                 // "Different behaviour of :s and :S modifiers").
                 let replay_glob = mode != 0 || isset(HISTSUBSTPATTERN); // c:Src/hist.c:2336
-                                                                       // Sliding-window glob search — same shape as the s/S arm's
-                                                                       // `do_match` (a port of getmatch()'s SUB_SUBSTR loop).
+                                                                        // Sliding-window glob search — same shape as the s/S arm's
+                                                                        // `do_match` (a port of getmatch()'s SUB_SUBSTR loop).
                 let g_find = |hay: &str| -> Option<(usize, usize)> {
                     let cv: Vec<char> = hay.chars().collect();
                     let n = cv.len();
@@ -24029,7 +24152,9 @@ fn vars_contains(name: &str) -> bool {
     // `pm->env` was never set for a PM_DONTIMPORT special (c:326), so C
     // never calls `delenv` — and the inherited `_=…` made `${+_}`
     // report 1 where zsh reports 0.
-    let has_node = paramtab().read().map_or(false, |tab| tab.get(name).is_some());
+    let has_node = paramtab()
+        .read()
+        .map_or(false, |tab| tab.get(name).is_some());
     in_paramtab_and_set
         || (!has_node && std::env::var(name).is_ok())
         || lookup_special_var(name).is_some()

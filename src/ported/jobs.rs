@@ -821,6 +821,27 @@ pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
             }
         }
         update_job(&mut jn[ji]);
+        // c:Src/jobs.c:639-643 — update_job's report tail:
+        //     if ((isset(NOTIFY) || job == thisjob) && (jn->stat & STAT_LOCKED)) {
+        //         if (printjob(jn, !!isset(LONGLISTJOBS), 0) && zleactive)
+        //             zleentry(ZLE_CMD_REFRESH);
+        //     }
+        // The ported `update_job` is a pure state transition (the Rust purity
+        // refactor split printjob's side effects out), so the tail lands here,
+        // where the table and the job index are both in hand.
+        //
+        // `STAT_LOCKED` is the whole point of the gate: a job is locked only
+        // once its command list has been submitted, so a `&` job started
+        // earlier in the SAME list is deliberately left in the table. That is
+        // what makes `/bin/echo bg & disown` rc=0 in zsh on every run — the
+        // job is still there for `disown` to find. Sweeping unconditionally
+        // (the old `scanjobs()` at the head of `bin_fg`) deleted it whenever
+        // the child happened to exit first: 4/100 against zsh's 0/100.
+        // docs/BUGS.md #1094.
+        let notify = crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY);
+        if (notify || ji as i32 == thisjob) && (jn[ji].stat & stat::LOCKED) != 0 {
+            crate::exec_jobs::printjob_delete_tail(jn, ji); // c:641 → c:1350-1363
+        }
         return true;
     }
     false
@@ -2988,16 +3009,24 @@ pub fn bin_fg(
     // so the table reflects the current state before we list/dispatch.
     // C's wait_for_processes (Src/signals.c:249) routes each reaped
     // (pid, status) through update_bg_job internally; the Rust port
-    // returns the pairs and leaves the routing to the caller. Then run
-    // the update_job→printjob done-delete chain (Src/jobs.c:639-641 →
-    // 1350-1363) so finished jobs leave the table before we list.
+    // returns the pairs and leaves the routing to the caller.
+    //
+    // Routing is ALL this does. There is no `scanjobs()` here in C — the
+    // only one is the NOTIFY-gated call at c:2477 just below. An
+    // unconditional sweep was reporting and DELETING every done job on
+    // the way in, which is not the same thing: c:639 gates the
+    // report/delete on `(isset(NOTIFY) || job == thisjob) && (jn->stat &
+    // STAT_LOCKED)`, and a `&` job started earlier in the SAME command
+    // list is not locked yet, so C leaves it in the table. That is why
+    // `/bin/echo bg & disown` is rc=0 in zsh every time and was rc=1 in
+    // zshrs whenever the child happened to exit first — measured 4/100
+    // against zsh's 0/100. docs/BUGS.md #1094.
     {
         let reaped = wait_for_processes();
         let mut tab = table.lock().expect("jobtab poisoned");
         for (pid, status) in reaped {
             update_bg_job(&mut tab, pid, status);
         }
-        scanjobs(&mut tab);
     }
 
     // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();`. (The routing

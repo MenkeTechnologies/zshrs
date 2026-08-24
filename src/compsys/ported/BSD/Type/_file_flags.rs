@@ -45,7 +45,6 @@
 //! ```
 
 use crate::compsys::ported::_values::_values;
-use crate::ported::params::{getaparam, getiparam};
 
 /// sh:23 — `[[ $OSTYPE = (darwin|dragonfly|freebsd|netbsd)* ]]`.
 fn is_bsd_like(ostype: &str) -> bool {
@@ -140,8 +139,29 @@ pub fn _file_flags(args: &[String]) -> i32 {
     // shadow the caller's binding; the port has no local-param scope so
     // there is nothing to do here (curcontext is read as-is by `_values`).
     // `su = (( ! EUID || $+_comp_priv_prefix ))`.
-    let euid = getiparam("EUID");
-    let su = euid == 0 || getaparam("_comp_priv_prefix").is_some();
+    // `$EUID` is a libc-backed special: its value comes from `euidgetfn()`
+    // (`params.rs:11271` → `geteuid(2)`), which only the SCALAR getter consults
+    // (`params.rs:15049`). `getiparam` short-circuits on the paramtab node's
+    // PM_INTEGER flag and returns its `u_val` (`params.rs:5720-5726`), and
+    // nothing ever writes that slot — so `getiparam("EUID")` reported 0 and
+    // `! EUID` was true for every user. Read it the way `$EUID` reads.
+    let euid: i64 = crate::ported::params::getsparam("EUID")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    // `$+_comp_priv_prefix` is an IS-IT-SET test, not an is-it-declared test.
+    // `_main_complete` (Completion/Base/Core/_main_complete:42-43) declares the
+    // parameter and then unsets it —
+    //     local _comp_priv_prefix
+    //     unset _comp_priv_prefix
+    // — purely to hide a caller-scope value, so inside every completer the
+    // node exists but carries PM_UNSET and `${+_comp_priv_prefix}` is 0.
+    // `getaparam` hands back `Some(vec![])` for that node (params.rs:6250-6255
+    // returns `pm.u_arr` without consulting PM_UNSET), so `.is_some()` read the
+    // declaration as a value and made `su` true for an ordinary user: `chflags
+    // <TAB>` gained the six root-only flags `arch`/`noarch`, `sappnd`/`nosappnd`
+    // and `schg`/`noschg` that zsh does not offer. `issetvar` (params.rs:1503,
+    // the `[[ -v … ]]` path) is the PM_UNSET-aware test that matches `${+…}`.
+    let su = euid == 0 || crate::ported::params::issetvar("_comp_priv_prefix") != 0;
 
     // sh:6 — `copts=( "${@}" )`; `_values -O copts` (sh:70) reads it back
     // by name, so publish it as the `copts` array param.

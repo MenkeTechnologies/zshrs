@@ -613,9 +613,53 @@ pub fn cd_prep() -> i32 {
         };
         if want_sort != 0 {
             // c:305
-            // c:306 — qsort cd_sort; tolerant sort: cd_sort→strcmp/numeric may
-            // not be a strict weak order, which makes Rust's sort_by PANIC.
-            crate::tolerant_sort::qsort_tolerant(&mut prep_lines, |a, b| cd_sort(a, b));
+            // c:306 — `qsort(grps, preplines, sizeof(Cdstr), cd_sort)`.
+            //
+            // This has to be libc's `qsort(3)` itself, not a Rust sort.
+            // `cd_sort` (c:233) compares only `sortstr`, the bare display
+            // string, so two entries that share a name but carry different
+            // descriptions TIE — and `qsort` is not stable, so which of them
+            // ends up first is decided by libc's permutation of equal keys
+            // (macOS/BSD run a Bentley-McIlroy quicksort). Nothing downstream
+            // reorders them: each line becomes its own CRT_SPEC run (c:334)
+            // added with `-2V` (c:747-762), an *unsorted* group, so this
+            // array's order is literally the order of the listing. A stable
+            // sort here therefore diverges from zsh on exactly those ties —
+            // Bug #1092, `afconvert -` listing its two `--soundcheck-generate`
+            // rows the other way round. Calling the same entry point the C
+            // does keeps the tie permutation identical per platform.
+            //
+            // `cd_sort`→`zstrcmp` is also not guaranteed to be a strict weak
+            // order, which is why a Rust `sort_by` was never an option here:
+            // it would panic. `qsort` tolerates it, as it does for C.
+            let mut ptrs: Vec<*mut cdstr> = prep_lines.drain(..).map(Box::into_raw).collect();
+            // c:233-236 — the comparator receives `const void *` pointing at
+            // the array's elements, and each element is itself a `Cdstr`
+            // (a pointer to `struct cdstr`), hence the double indirection.
+            unsafe extern "C" fn cd_sort_qsort_thunk(
+                a: *const libc::c_void,
+                b: *const libc::c_void,
+            ) -> libc::c_int {
+                let (pa, pb) =
+                    unsafe { (&**(a as *const *const cdstr), &**(b as *const *const cdstr)) };
+                match cd_sort(pa, pb) {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
+                }
+            }
+            unsafe {
+                libc::qsort(
+                    ptrs.as_mut_ptr() as *mut libc::c_void,
+                    ptrs.len(),
+                    std::mem::size_of::<*mut cdstr>(),
+                    Some(cd_sort_qsort_thunk),
+                );
+            }
+            prep_lines = ptrs
+                .into_iter()
+                .map(|p| unsafe { Box::from_raw(p) })
+                .collect();
             // c:306
         }
 

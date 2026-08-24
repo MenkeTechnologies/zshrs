@@ -247,3 +247,91 @@ mod named_dir_iuser_chars {
         assert_parity(r#"hash -d good=/g; print ~good"#);
     }
 }
+
+/// A leading `~` in a MATCH PATTERN — `[[ … == ~/* ]]`, `${~var}` holding
+/// `~/*`, and `case` arms. c:Src/cond.c:299-307 `singsub`s the RHS before
+/// `patcompile`, and c:Src/loop.c:610 does the same for `case`, so the
+/// tilde is a home directory on both.
+///
+/// powerlevel10k's `_POWERLEVEL9K_DIR_CLASSES` walk (internal/p10k.zsh:2029)
+/// is the real-world consumer: `[[ $_p9k__cwd == ${~a} ]]` against `~` and
+/// `~/*`. When those missed, every path under `$HOME` fell through to the
+/// `*` class and the prompt drew the wrong directory icon. BUGS.md #1088.
+mod tilde_in_match_pattern {
+    use super::*;
+
+    #[test]
+    fn cond_rhs_literal_tilde_slash_star() {
+        assert_parity(r#"cwd=$HOME/a/b; [[ $cwd == ~/* ]] && print sub || print no"#);
+    }
+
+    #[test]
+    fn cond_rhs_bare_tilde_matches_home() {
+        assert_parity(r#"[[ $HOME == ~ ]] && print home || print no"#);
+    }
+
+    #[test]
+    fn cond_rhs_named_user_tilde() {
+        assert_parity(r#"cwd=$HOME/a; [[ $cwd == ~$USERNAME/* ]] && print sub || print no"#);
+    }
+
+    /// The `${~var}` spelling p10k actually uses — GLOB_SUBST promotes the
+    /// value to a pattern, and prefork's `filesub` still expands its tilde.
+    #[test]
+    fn cond_rhs_globsubst_var_holding_tilde_pattern() {
+        assert_parity(r#"cwd=$HOME/a/b; a='~/*'; [[ $cwd == ${~a} ]] && print sub || print no"#);
+    }
+
+    /// The p10k class walk in miniature: first match wins, so `~` must not
+    /// swallow a subfolder and `~/*` must beat the catch-all `*`.
+    #[test]
+    fn dir_classes_walk_picks_home_subfolder() {
+        assert_parity(
+            r#"cwd=$HOME/a/b
+               for a in '/etc|/etc/*' '~' '~/*' '*'; do
+                 [[ $cwd == ${~a} ]] && { print -r -- "match=$a"; break }
+               done"#,
+        );
+    }
+
+    #[test]
+    fn dir_classes_walk_picks_home_exactly() {
+        assert_parity(
+            r#"cwd=$HOME
+               for a in '/etc|/etc/*' '~' '~/*' '*'; do
+                 [[ $cwd == ${~a} ]] && { print -r -- "match=$a"; break }
+               done"#,
+        );
+    }
+
+    #[test]
+    fn case_arm_tilde_slash_star() {
+        assert_parity(
+            r#"cwd=$HOME/a; case $cwd in (~) print home;; (~/*) print sub;; (*) print def;; esac"#,
+        );
+    }
+
+    /// Regression guard: a QUOTED leading tilde stays literal.
+    #[test]
+    fn quoted_tilde_stays_literal() {
+        assert_parity(r#"[[ '~/a' == '~/'* ]] && print lit || print no"#);
+    }
+
+    /// Regression guard: without the `~` flag the substituted value is
+    /// literal text, so no tilde expansion and no glob promotion.
+    #[test]
+    fn plain_var_pattern_does_not_tilde_expand() {
+        assert_parity(r#"cwd=$HOME/a; p='~/*'; [[ $cwd == $p ]] && print match || print no"#);
+    }
+
+    /// Regression guard: a NON-leading `~` is EXTENDED_GLOB's "except"
+    /// operator and must survive the filesub round trip untouched.
+    #[test]
+    fn extended_glob_except_operator_unaffected() {
+        assert_parity(
+            r#"setopt extendedglob
+               [[ ac == (a*)~ab ]] && print c1 || print n1
+               [[ ab == (a*)~ab ]] && print c2 || print n2"#,
+        );
+    }
+}

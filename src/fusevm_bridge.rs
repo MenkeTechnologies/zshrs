@@ -864,7 +864,13 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // (needs_load checks MOD_INIT_B).
     if name == "private" {
         if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
-            let _ = crate::ported::module::require_module(&mut tab, "zsh/param/private", None, 0, false);
+            let _ = crate::ported::module::require_module(
+                &mut tab,
+                "zsh/param/private",
+                None,
+                0,
+                false,
+            );
             // c:2710 ensurefeature
         }
     }
@@ -2759,12 +2765,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_ext_overridable!(vm, BUILTIN_DOCTOR, "doctor", builtin_doctor);
     reg_ext_overridable!(vm, BUILTIN_DBVIEW, "dbview", builtin_dbview);
     reg_ext_overridable!(vm, BUILTIN_PROFILE, "profile", builtin_profile);
-    reg_ext_overridable!(
-        vm,
-        BUILTIN_PROVENANCE,
-        "provenance",
-        builtin_provenance
-    );
+    reg_ext_overridable!(vm, BUILTIN_PROVENANCE, "provenance", builtin_provenance);
 
     reg_passthru!(vm, BUILTIN_ZPROF, "zprof");
 
@@ -2941,8 +2942,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         tt.remove("EXIT");
                     }
                     if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
-                        if let Some(slot) = st.get_mut(crate::ported::signals_h::SIGEXIT as usize)
-                        {
+                        if let Some(slot) = st.get_mut(crate::ported::signals_h::SIGEXIT as usize) {
                             *slot = 0;
                         }
                     }
@@ -3087,9 +3087,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // Same EINTR retry as the stage reap loop below.
                     match waitpid_eintr(pid) {
                         Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
-                        Some(status) if libc::WIFSIGNALED(status) => {
-                            128 + libc::WTERMSIG(status)
-                        }
+                        Some(status) if libc::WIFSIGNALED(status) => 128 + libc::WTERMSIG(status),
                         Some(_) => 1,
                         None => 0,
                     }
@@ -3178,7 +3176,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let shadowed = crate::ported::params::paramtab()
                 .read()
                 .ok()
-                .and_then(|t| t.get("pipestatus").map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0))
+                .and_then(|t| {
+                    t.get("pipestatus")
+                        .map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0)
+                })
                 .unwrap_or(false);
             if !shadowed {
                 let strs: Vec<String> = pipestatus.iter().map(|s| s.to_string()).collect();
@@ -4281,7 +4282,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // PREFORK_SINGLE is paramsubst's `ssub` (c:Src/subst.c:1761) and
         // gates off c:3913's `force_split`, so `(s::)` / `(f)` / `(0)` do
         // not split there. argc 2 = ordinary word, no ssub.
-        let ssub = if argc >= 3 { vm.pop().to_int() != 0 } else { false };
+        let ssub = if argc >= 3 {
+            vm.pop().to_int() != 0
+        } else {
+            false
+        };
         let flags = vm.pop().to_str();
         let name = vm.pop().to_str();
         let body = format!("${{({}){}}}", flags, name);
@@ -4299,117 +4304,120 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // already does the indexed-array vs assoc decision, PM_HASHED
     // auto-vivification, numeric-subscript bounds handling, and
     // PM_READONLY rejection.
-/// Assign `val` to one element of the PM_HASHED parameter `name`.
-///
-/// This is the tail of C's `assignsparam` for a subscripted target:
-/// c:Src/params.c:3251 `getvalue(&vbuf, &t, 1)` (→ `fetchvalue` →
-/// `getindex`) followed by c:3343 `assignstrvalue(v, val, flags)`.
-///
-/// C hands `getindex` the FLAT `"name[subscript]"` text, and that is
-/// safe there because its subscript is still the SOURCE spelling: the
-/// bracket walk at c:2008 `parse_subscript` runs BEFORE the
-/// `parsestr`/`singsub` round at c:1585-1592, so a `]` that arrives by
-/// expansion can never terminate it. zshrs expands a subscript before
-/// this builtin runs, so re-flattening to `name[key]` and re-splitting
-/// corrupts any key containing `]` (`k='x]y'; h[$k]=5` stored `x`). The
-/// two halves therefore stay separate the whole way down:
-///
-///   * `sub` is the EXPANDED subscript — the key text.
-///   * `sub_src` is the SOURCE subscript, used for ONE decision, the
-///     one C makes at c:1410: `if (v->pm && (*s == '(' || *s == Inpar))`
-///     — is there a flag block? Flags can only be literal (they are read
-///     at c:1409, before any expansion), so `x='(r)v'; h[$x]=Z` has no
-///     flag block and stores the literal key `(r)v`, while `h[(r)$x]=Z`
-///     does have one and is a search.
-///
-/// With no flag block there is nothing for `getindex` to resolve beyond
-/// the exact-key rebind at c:1596-1616, so the key goes straight to the
-/// element store and never meets a parser. With one, `getindex` runs on
-/// the EXPANDED text: its flag block is byte-identical to the source's
-/// (flags are literal) and its pattern is already substituted, which is
-/// what c:1585-1592 would have produced anyway.
-fn assign_hash_element(name: &str, sub: &str, sub_src: &str, val: &str) -> i32 {
-    use crate::ported::zsh_h::{Inpar, PM_HASHED, PM_READONLY, SCANPM_ARRONLY};
-    let pm = crate::ported::params::paramtab()
-        .read()
-        .ok()
-        .and_then(|t| t.get(name).cloned());
-    // c:3216-3221 — `if (v->pm->node.flags & PM_READONLY)`.
-    if pm
-        .as_ref()
-        .is_some_and(|p| (p.node.flags as u32 & PM_READONLY) != 0)
-    {
-        crate::ported::utils::zerr(&format!("read-only variable: {}", name)); // c:3217
-        return 1; // c:3221
-    }
-    // c:1410 — `if (v->pm && (*s == '(' || *s == Inpar))`, read off the
-    // SOURCE spelling.
-    let has_flags = sub_src.starts_with('(') || sub_src.starts_with(Inpar);
-    if has_flags {
-        let mut v = crate::ported::zsh_h::value {
-            pm,
-            arr: Vec::new(),
-            // c:2274-2280 — fetchvalue promotes a PM_ARRAY/PM_HASHED
-            // value with no caller flags to SCANPM_ARRONLY; assignsparam
-            // arrives through `getvalue`, i.e. flags 0.
-            scanflags: SCANPM_ARRONLY as i32,
-            valflags: 0,
-            start: 0,
-            end: -1, // c:2279
-        };
-        let bracketed = format!("[{}]", sub); // c:2281 `*s == '['`
-        let mut sp: &str = &bracketed;
-        if crate::ported::params::getindex(&mut sp, &mut v, 0) != 0 {
-            // c:2020-2022 — `zerr("invalid subscript")` already reported.
-            return 1;
-        }
-        let elem_is_hash = v
-            .pm
+    /// Assign `val` to one element of the PM_HASHED parameter `name`.
+    ///
+    /// This is the tail of C's `assignsparam` for a subscripted target:
+    /// c:Src/params.c:3251 `getvalue(&vbuf, &t, 1)` (→ `fetchvalue` →
+    /// `getindex`) followed by c:3343 `assignstrvalue(v, val, flags)`.
+    ///
+    /// C hands `getindex` the FLAT `"name[subscript]"` text, and that is
+    /// safe there because its subscript is still the SOURCE spelling: the
+    /// bracket walk at c:2008 `parse_subscript` runs BEFORE the
+    /// `parsestr`/`singsub` round at c:1585-1592, so a `]` that arrives by
+    /// expansion can never terminate it. zshrs expands a subscript before
+    /// this builtin runs, so re-flattening to `name[key]` and re-splitting
+    /// corrupts any key containing `]` (`k='x]y'; h[$k]=5` stored `x`). The
+    /// two halves therefore stay separate the whole way down:
+    ///
+    ///   * `sub` is the EXPANDED subscript — the key text.
+    ///   * `sub_src` is the SOURCE subscript, used for ONE decision, the
+    ///     one C makes at c:1410: `if (v->pm && (*s == '(' || *s == Inpar))`
+    ///     — is there a flag block? Flags can only be literal (they are read
+    ///     at c:1409, before any expansion), so `x='(r)v'; h[$x]=Z` has no
+    ///     flag block and stores the literal key `(r)v`, while `h[(r)$x]=Z`
+    ///     does have one and is a search.
+    ///
+    /// With no flag block there is nothing for `getindex` to resolve beyond
+    /// the exact-key rebind at c:1596-1616, so the key goes straight to the
+    /// element store and never meets a parser. With one, `getindex` runs on
+    /// the EXPANDED text: its flag block is byte-identical to the source's
+    /// (flags are literal) and its pattern is already substituted, which is
+    /// what c:1585-1592 would have produced anyway.
+    fn assign_hash_element(name: &str, sub: &str, sub_src: &str, val: &str) -> i32 {
+        use crate::ported::zsh_h::{Inpar, PM_HASHED, PM_READONLY, SCANPM_ARRONLY};
+        let pm = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(name).cloned());
+        // c:3216-3221 — `if (v->pm->node.flags & PM_READONLY)`.
+        if pm
             .as_ref()
-            .is_some_and(|p| crate::ported::zsh_h::PM_TYPE(p.node.flags as u32) == PM_HASHED);
-        if elem_is_hash {
-            // A search subscript: the c:1596 exact-key rebind did not
-            // happen, so the value still refers to the whole association
-            // and c:3343 `assignstrvalue` reports it — either "attempt to
-            // set slice of associative array" (c:2701-2706, the scanflags
-            // survived the c:2179 clear) or "attempt to set associative
-            // array to scalar" (c:2831-2839, they did not and no member
-            // was found).
-            let pre = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
-            crate::ported::params::assignstrvalue(
-                Some(&mut v),
-                Some(val.to_string()),
-                crate::ported::zsh_h::ASSPM_WARN,
-            ); // c:3343
-            let post = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
-            return if post != pre { 1 } else { 0 };
+            .is_some_and(|p| (p.node.flags as u32 & PM_READONLY) != 0)
+        {
+            crate::ported::utils::zerr(&format!("read-only variable: {}", name)); // c:3217
+            return 1; // c:3221
         }
-        // c:1596-1616 — a non-search flag group (`(e)`, `(w)`, `(n:N:)`,
-        // `(p)`, or an unrecognised one, c:1498 `flagerr`): `v->pm` is now
-        // the ELEMENT and its name is the subscript with the group already
-        // consumed. That name IS the key.
-        let key = v.pm.as_ref().map_or(sub, |p| p.node.nam.as_str()).to_string();
-        return store_hash_element(name, &key, val);
+        // c:1410 — `if (v->pm && (*s == '(' || *s == Inpar))`, read off the
+        // SOURCE spelling.
+        let has_flags = sub_src.starts_with('(') || sub_src.starts_with(Inpar);
+        if has_flags {
+            let mut v = crate::ported::zsh_h::value {
+                pm,
+                arr: Vec::new(),
+                // c:2274-2280 — fetchvalue promotes a PM_ARRAY/PM_HASHED
+                // value with no caller flags to SCANPM_ARRONLY; assignsparam
+                // arrives through `getvalue`, i.e. flags 0.
+                scanflags: SCANPM_ARRONLY as i32,
+                valflags: 0,
+                start: 0,
+                end: -1, // c:2279
+            };
+            let bracketed = format!("[{}]", sub); // c:2281 `*s == '['`
+            let mut sp: &str = &bracketed;
+            if crate::ported::params::getindex(&mut sp, &mut v, 0) != 0 {
+                // c:2020-2022 — `zerr("invalid subscript")` already reported.
+                return 1;
+            }
+            let elem_is_hash = v
+                .pm
+                .as_ref()
+                .is_some_and(|p| crate::ported::zsh_h::PM_TYPE(p.node.flags as u32) == PM_HASHED);
+            if elem_is_hash {
+                // A search subscript: the c:1596 exact-key rebind did not
+                // happen, so the value still refers to the whole association
+                // and c:3343 `assignstrvalue` reports it — either "attempt to
+                // set slice of associative array" (c:2701-2706, the scanflags
+                // survived the c:2179 clear) or "attempt to set associative
+                // array to scalar" (c:2831-2839, they did not and no member
+                // was found).
+                let pre = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+                crate::ported::params::assignstrvalue(
+                    Some(&mut v),
+                    Some(val.to_string()),
+                    crate::ported::zsh_h::ASSPM_WARN,
+                ); // c:3343
+                let post = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+                return if post != pre { 1 } else { 0 };
+            }
+            // c:1596-1616 — a non-search flag group (`(e)`, `(w)`, `(n:N:)`,
+            // `(p)`, or an unrecognised one, c:1498 `flagerr`): `v->pm` is now
+            // the ELEMENT and its name is the subscript with the group already
+            // consumed. That name IS the key.
+            let key =
+                v.pm.as_ref()
+                    .map_or(sub, |p| p.node.nam.as_str())
+                    .to_string();
+            return store_hash_element(name, &key, val);
+        }
+        // c:1596-1616 with no flag group at all — the subscript is the key
+        // verbatim. Nothing to parse, so an expanded `]` stays intact.
+        store_hash_element(name, sub, val)
     }
-    // c:1596-1616 with no flag group at all — the subscript is the key
-    // verbatim. Nothing to parse, so an expanded `]` stays intact.
-    store_hash_element(name, sub, val)
-}
 
-/// c:Src/params.c:2841 — `foundparam->gsu.s->setfn(foundparam, val)`,
-/// the write to one member of an association. This port keeps assoc
-/// members as plain strings in `paramtab_hashed_storage` rather than as
-/// Params carrying their own `strsetfn` (the same substitution
-/// `arrhashsetfn` makes at c:4113), so the member write is a map insert.
-fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
-    if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
-        store
-            .entry(name.to_string())
-            .or_default()
-            .insert(key.to_string(), val.to_string()); // c:2841
+    /// c:Src/params.c:2841 — `foundparam->gsu.s->setfn(foundparam, val)`,
+    /// the write to one member of an association. This port keeps assoc
+    /// members as plain strings in `paramtab_hashed_storage` rather than as
+    /// Params carrying their own `strsetfn` (the same substitution
+    /// `arrhashsetfn` makes at c:4113), so the member write is a map insert.
+    fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
+        if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+            store
+                .entry(name.to_string())
+                .or_default()
+                .insert(key.to_string(), val.to_string()); // c:2841
+        }
+        0
     }
-    0
-}
 
     vm.register_builtin(BUILTIN_SET_ASSOC, |vm, _argc| {
         // `${~spec}` carrier: an assignment statement is a word-
@@ -4853,8 +4861,7 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                     crate::ported::params::unsetparam(&rplyvar);
                     let st = exec.execute_script(&body).unwrap_or(0);
                     exec.set_last_status(st);
-                    let reply =
-                        crate::ported::params::getsparam(&rplyvar).unwrap_or_default();
+                    let reply = crate::ported::params::getsparam(&rplyvar).unwrap_or_default();
                     match saved {
                         Some(v) => {
                             crate::ported::params::setsparam(&rplyvar, &v);
@@ -4944,11 +4951,9 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
 
     // c:Src/subst.c:3032 `val = sepjoin(aval, sep, 1)` — see the
     // BUILTIN_QUOTED_STAR_ONE_WORD doc comment.
-    vm.register_builtin(BUILTIN_QUOTED_STAR_ONE_WORD, |vm, _argc| {
-        match vm.pop() {
-            Value::Array(items) if items.is_empty() => Value::str(String::new()),
-            other => other,
-        }
+    vm.register_builtin(BUILTIN_QUOTED_STAR_ONE_WORD, |vm, _argc| match vm.pop() {
+        Value::Array(items) if items.is_empty() => Value::str(String::new()),
+        other => other,
     });
 
     // BUILTIN_QUOTEDZPUTS — re-wrap top-of-stack scalar via the
@@ -6037,10 +6042,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                     // c:3919 `sepsplit(val, spsep, 0, 1)` with spsep NULL →
                     // split on $IFS; multsub's PREFORK_SPLIT walker is the
                     // port of that (subst.rs:1603).
-                    let (_j, parts, _isarr, _f) = crate::ported::subst::multsub(
-                        &joined,
-                        crate::ported::zsh_h::PREFORK_SPLIT,
-                    );
+                    let (_j, parts, _isarr, _f) =
+                        crate::ported::subst::multsub(&joined, crate::ported::zsh_h::PREFORK_SPLIT);
                     return Value::array(parts.into_iter().map(Value::str).collect());
                 }
             }
@@ -6987,7 +6990,6 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, "children")
             );
         } else {
-
             // c:Src/jobs.c:1037 — the forked job's own printtime line, with
             // `pn->text` (the command source) as %J.
             let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);
@@ -7360,8 +7362,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // (`bash -c 'v=0; v=1 :; printf "[%s]\n" "$v"'` → `[0]`, while
         // dash / ksh93 / mksh / bash-as-sh all print `[1]`). zshrs tracks
         // bash's `set -o posix` in dash_mode::BASH_ONLY_OPTS, so honor it.
-        let bash_suppresses = crate::dash_mode::bash_mode()
-            && !crate::dash_mode::bash_set_o_get("posix");
+        let bash_suppresses =
+            crate::dash_mode::bash_mode() && !crate::dash_mode::bash_set_o_get("posix");
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
             && !name.is_empty()
             && !bash_suppresses
@@ -7889,9 +7891,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         let key = if scalar_rhs
             && key_src.as_deref().is_some_and(|src| {
                 let b = src.as_bytes();
-                (0..b.len()).any(|i| {
-                    (b[i] == b'$' || b[i] == b'`') && (i == 0 || b[i - 1] != b'\\')
-                })
+                (0..b.len())
+                    .any(|i| (b[i] == b'$' || b[i] == b'`') && (i == 0 || b[i - 1] != b'\\'))
             }) {
             crate::ported::subst::singsub(&key) // c:1592
         } else {
@@ -8893,9 +8894,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // Saturating: a chunk aborted mid-loop (errflag, `return`)
         // unwinds through `run_chunk`'s restore rather than this op, so
         // never let a stray decrement drive the count negative.
-        let _ = crate::ported::builtin::LOOPS.fetch_update(SeqCst, SeqCst, |n| {
-            Some(if n > 0 { n - 1 } else { 0 })
-        }); // c:188
+        let _ = crate::ported::builtin::LOOPS
+            .fetch_update(SeqCst, SeqCst, |n| Some(if n > 0 { n - 1 } else { 0 })); // c:188
         Value::Int(0)
     });
 
@@ -8978,8 +8978,7 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         let old = crate::ported::exec::noerrexit.load(Ordering::Relaxed); // c:1417
         NOERREXIT_SAVES.with(|st| st.borrow_mut().push(old));
         crate::ported::exec::noerrexit.store(
-            old | crate::ported::zsh_h::NOERREXIT_EXIT
-                | crate::ported::zsh_h::NOERREXIT_RETURN,
+            old | crate::ported::zsh_h::NOERREXIT_EXIT | crate::ported::zsh_h::NOERREXIT_RETURN,
             Ordering::Relaxed,
         ); // c:1538
         Value::Int(0)
@@ -9839,7 +9838,7 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
             const { std::cell::Cell::new(false) };
     }
     vm.register_builtin(BUILTIN_COND_STRMATCH, |vm, _argc| {
-        let pat = vm.pop().to_str();
+        let pat = pattern_filesub(&vm.pop().to_str());
         let s = vm.pop().to_str();
         // bash `shopt -s nocasematch` → case-insensitive `[[ == ]]` / `[[ != ]]`.
         // Lowercase BOTH sides for the match decision (glob metacharacters are
@@ -10318,7 +10317,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
             // exiting the shell.
             let oerrexit_opt = isset(crate::ported::zsh_h::ERREXIT); // c:1478
             crate::ported::options::opt_state_set("errexit", false); // c:1480
-            let oldnoerrexit = crate::ported::exec::noerrexit.load(std::sync::atomic::Ordering::Relaxed);
+            let oldnoerrexit =
+                crate::ported::exec::noerrexit.load(std::sync::atomic::Ordering::Relaxed);
             crate::ported::exec::noerrexit.store(
                 oldnoerrexit
                     | crate::ported::zsh_h::NOERREXIT_EXIT
@@ -10329,8 +10329,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                // is NOT set on ZSH_DEBUG_CMD, so the canonical
                // setsparam path is fine here — no direct paramtab
                // mutation needed).
-            // c:1636 — the post-sublist arm has no ZSH_DEBUG_CMD assignment;
-            // the parameter is a DEBUG_BEFORE_CMD feature only.
+               // c:1636 — the post-sublist arm has no ZSH_DEBUG_CMD assignment;
+               // the parameter is a DEBUG_BEFORE_CMD feature only.
             if before {
                 crate::ported::params::setsparam("ZSH_DEBUG_CMD", &cmd_text);
             }
@@ -10341,18 +10341,21 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
             // c:1491-1492 — `if (!retflag) lastval = ret;`. A trap that
             // ran `return N` keeps the forced status; anything else
             // leaves the pre-trap `$?` alone.
-            let retflag = crate::ported::builtin::RETFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0;
+            let retflag =
+                crate::ported::builtin::RETFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0;
             if !retflag {
-                crate::ported::builtin::LASTVAL.store(ret, std::sync::atomic::Ordering::Relaxed); // c:1492
+                crate::ported::builtin::LASTVAL.store(ret, std::sync::atomic::Ordering::Relaxed);
+                // c:1492
             }
-            crate::ported::exec::noerrexit.store(oldnoerrexit, std::sync::atomic::Ordering::Relaxed); // c:1494
-                                                                                   // c:1499 — `donedebug = isset(ERREXIT) ? 2 : 1;`. The trap
-                                                                                   // setting ERREXIT is zsh's documented "skip this command"
-                                                                                   // signal (zshmisc(1), DEBUG trap).
+            crate::ported::exec::noerrexit
+                .store(oldnoerrexit, std::sync::atomic::Ordering::Relaxed); // c:1494
+                                                                            // c:1499 — `donedebug = isset(ERREXIT) ? 2 : 1;`. The trap
+                                                                            // setting ERREXIT is zsh's documented "skip this command"
+                                                                            // signal (zshmisc(1), DEBUG trap).
             let donedebug2 = before && isset(crate::ported::zsh_h::ERREXIT); // c:1499
             crate::ported::options::opt_state_set("errexit", oerrexit_opt); // c:1500/1643
             crate::ported::exec::DONETRAP.store(exiting, std::sync::atomic::Ordering::Relaxed); // c:1493/1641
-                                                                            // c:Src/exec.c:1501-1502 — `if (pm) unsetparam_pm(pm, 0, 1);`
+                                                                                                // c:Src/exec.c:1501-1502 — `if (pm) unsetparam_pm(pm, 0, 1);`
             if before {
                 crate::ported::params::unsetparam("ZSH_DEBUG_CMD");
             }
@@ -10363,7 +10366,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                 // own counter (the ported LASTVAL atomic is a separate store)
                 // and report "skip" so the emit-side jump lands past the
                 // statement, where the RETFLAG escape unwinds the function.
-                let forced = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+                let forced =
+                    crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
                 vm.last_status = forced;
                 with_executor(|exec| exec.set_last_status(forced));
                 return Value::Int(1);
@@ -11604,11 +11608,11 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
         // c:Src/exec.c:5382 `do_tracing = *state->pc++;` — the `-T` of
         // `function -T name { … }`, carried across from compile_funcdef.
         let do_tracing = iter.next().map(|s| s == "1").unwrap_or(false); // c:5382
-        // c:Src/exec.c:5451-5456 — `shf->redir = <redir_prog>`: the rendered
-        // text of the definition's trailing redirections (empty when there
-        // were none). See `shfunc::redir_text`.
+                                                                         // c:Src/exec.c:5451-5456 — `shf->redir = <redir_prog>`: the rendered
+                                                                         // text of the definition's trailing redirections (empty when there
+                                                                         // were none). See `shfunc::redir_text`.
         let redir_text = iter.next().unwrap_or_default(); // c:5453
-        // c:5387 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
+                                                          // c:5387 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
         let tracing_flags: u32 = if do_tracing {
             crate::ported::zsh_h::PM_TAGGED_LOCAL
         } else {
@@ -11702,19 +11706,19 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                     };
                     // c:Src/exec.c:5437 — `shf->node.flags = tracing_flags;`
                     shf.node.flags |= tracing_flags as i32; // c:5437
-                    // c:5532-5538 — /* Is this function traced and redefining
-                    //                  itself? */
-                    //     if (funcstack && funcstack->tp == FS_FUNC &&
-                    //             !strcmp(s, funcstack->name)) {
-                    //         Shfunc old = ((Shfunc)shfunctab->getnode(shfunctab, s));
-                    //         if (old)
-                    //             shf->node.flags |= old->node.flags &
-                    //                                (PM_TAGGED|PM_TAGGED_LOCAL);
-                    //     }
-                    // The ported walker does this at exec.rs:7387, but fusevm —
-                    // not that walker — is what registers a `name() { … }`, so a
-                    // `functions -T f`-tagged function that redefined itself
-                    // came back untraced (E02xtrace:6).
+                                                            // c:5532-5538 — /* Is this function traced and redefining
+                                                            //                  itself? */
+                                                            //     if (funcstack && funcstack->tp == FS_FUNC &&
+                                                            //             !strcmp(s, funcstack->name)) {
+                                                            //         Shfunc old = ((Shfunc)shfunctab->getnode(shfunctab, s));
+                                                            //         if (old)
+                                                            //             shf->node.flags |= old->node.flags &
+                                                            //                                (PM_TAGGED|PM_TAGGED_LOCAL);
+                                                            //     }
+                                                            // The ported walker does this at exec.rs:7387, but fusevm —
+                                                            // not that walker — is what registers a `name() { … }`, so a
+                                                            // `functions -T f`-tagged function that redefined itself
+                                                            // came back untraced (E02xtrace:6).
                     if let Ok(stk) = crate::ported::modules::parameter::FUNCSTACK.lock() {
                         if let Some(top) = stk.last() {
                             // c:5533
@@ -11760,8 +11764,8 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                         // Re-registration of an unchanged body relabels nothing.
                         if prev.body.as_deref() == Some(body_source.as_str()) {
                             shf.filename = prev.filename.clone();
-                            shf.node.flags |= prev.node.flags
-                                & crate::ported::zsh_h::PM_LOADDIR as i32;
+                            shf.node.flags |=
+                                prev.node.flags & crate::ported::zsh_h::PM_LOADDIR as i32;
                         }
                     }
                     // c:Src/exec.c:5409 — `shf->lineno = lineno;`. Use
@@ -11787,9 +11791,10 @@ fn store_hash_element(name: &str, key: &str, val: &str) -> i32 {
                     if shf.sticky.is_none() {
                         if let Some(prev) = tab.get(&name) {
                             if prev.body.as_deref() == Some(body_source.as_str()) {
-                                shf.sticky = prev.sticky.as_deref().map(|b| {
-                                    crate::ported::exec::sticky_emulation_dup(b, 0)
-                                });
+                                shf.sticky = prev
+                                    .sticky
+                                    .as_deref()
+                                    .map(|b| crate::ported::exec::sticky_emulation_dup(b, 0));
                             }
                         }
                     }
@@ -13144,6 +13149,43 @@ pub const BUILTIN_EXEC_DYNAMIC: u16 = 606;
 /// can't leak into this command's null-command status decision
 /// (c:Src/exec.c:3009 `use_cmdoutval = !args`). See BUILTIN_EXEC_DYNAMIC.
 pub const BUILTIN_USE_CMDOUTVAL_RESET: u16 = 637;
+/// Tilde-expand a match pattern's leading `~`, the way `singsub` does
+/// before the pattern reaches `patcompile`.
+///
+/// c:Src/cond.c:299-307 — `right = dupstring(ecrawstr(…)); singsub(&right);
+/// … patcompile(right, …)`. `singsub` is `prefork(PREFORK_SINGLE)`
+/// (c:Src/subst.c:520), and prefork runs `filesub` on every word, so an
+/// unquoted `~` in a `[[ … == ~/* ]]` pattern — or one that arrives via
+/// `${~var}` — is a home directory, not a literal character. `case`
+/// patterns take the same route (c:Src/loop.c:610 `singsub(&pat)`).
+/// zshrs untokenizes the pattern at compile time and re-tokenizes it in
+/// the matcher, so the expansion has to happen here.
+///
+/// Only a LEADING `~` is considered, which is all `filesubstr`
+/// (c:Src/subst.c:741) ever expands: a `~` elsewhere is EXTENDED_GLOB's
+/// "except" operator and must survive untouched, and a quoted one has
+/// already been backslash-escaped by `escape_quoted_glob_metas` so it
+/// fails the leading-char test.
+///
+/// powerlevel10k's directory segment is the visible consumer: its
+/// `_POWERLEVEL9K_DIR_CLASSES` walk matches `$PWD` against `~` and `~/*`
+/// via `[[ $_p9k__cwd == ${~a} ]]` (internal/p10k.zsh:2029). Without the
+/// expansion both classes missed, every path under `$HOME` fell through
+/// to the `*` DEFAULT class, and the prompt showed the generic folder
+/// icon in place of the home / home-subfolder one.
+fn pattern_filesub(pattern: &str) -> String {
+    let first = pattern.chars().next();
+    if first != Some('~') && first != Some(crate::ported::zsh_h::Tilde) {
+        return pattern.to_string();
+    }
+    // filesubstr keys on the Tilde TOKEN, so shtokenize first (a raw `~`
+    // becomes Tilde; an already-tokenized one passes through), then
+    // untokenize the surviving glob metas back for the matcher.
+    let mut tok = pattern.to_string();
+    crate::ported::glob::shtokenize(&mut tok);
+    crate::ported::lex::untokenize(&crate::ported::subst::filesub(&tok, 0))
+}
+
 /// `[[ lhs == pat ]]` / `!=` glob compare — cond-specific so the
 /// bad-pattern diagnostic follows Src/cond.c:308-316: zwarnnam
 /// "bad pattern: %s" WITHOUT errflag (the script continues) and the
@@ -14104,6 +14146,7 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
+        let pattern: &str = &pattern_filesub(pattern);
         // Shell glob match — `*`, `?`, `[...]`, alternation. After the
         // cond path moved to BUILTIN_COND_STRMATCH, the consumer here
         // is the `case` arm dispatch, whose bad-pattern semantics are
@@ -14854,8 +14897,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
                 // c:Src/exec.c:160 / :1192-1193 — the child's `subsh = 1`
                 // dies with the fork in C; restore the parent's value here.
-                crate::ported::exec::subsh
-                    .store(snap.subsh, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::exec::subsh.store(snap.subsh, std::sync::atomic::Ordering::Relaxed);
                 // c:Src/builtin.c:541-547 — the child's `enable`/`disable`
                 // only touched its forked copy of `builtintab` /
                 // `reswdtab`. Put the parent's DISABLED sets back.
@@ -15679,8 +15721,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // `() { private SECONDS }` (makeprivate's zerrnam + return 1)
                 // reported 0 where zsh reports 1 (V10private.ztst:22).
                 let __st = dispatch_builtin_raw(name, args);
-                crate::ported::builtin::LASTVAL
-                    .store(__st, std::sync::atomic::Ordering::Relaxed); // c:4287
+                crate::ported::builtin::LASTVAL.store(__st, std::sync::atomic::Ordering::Relaxed); // c:4287
                 with_executor(|exec| exec.set_last_status(__st)); // c:4287
                 return Some(__st);
             }
@@ -15813,7 +15854,8 @@ impl fusevm::ShellHost for ZshrsHost {
         // call (c:3546), i.e. exactly `args.last()`.
         {
             let last_call_arg = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-            crate::ported::params::set_zunderscore(std::slice::from_ref(&last_call_arg)); // c:6257
+            crate::ported::params::set_zunderscore(std::slice::from_ref(&last_call_arg));
+            // c:6257
         }
 
         status
@@ -16378,6 +16420,30 @@ impl ShellExecutor {
         self.multios_scope_stack.push(Vec::new());
     }
 
+    /// Restore every redirect scope opened above `depth`.
+    ///
+    /// c:Src/exec.c:4364 — `fixfds(save)` runs on EVERY exit path out of
+    /// `execcmd_exec`, the one an early `return` takes out of a compound
+    /// command carrying redirections included (`while … done < f`,
+    /// `{ …; return } < f`, `if …; then return; fi < f`). zshrs compiles
+    /// `return` to a Jump past the body's `WithRedirectsEnd`, so that
+    /// scope stayed on the stack and its saved fds never came back — the
+    /// caller inherited the callee's redirected fd.
+    ///
+    /// gitstatus hit this: `gitstatus.plugin.zsh`'s daemon sources
+    /// `gitstatus/install`, whose `_gitstatus_install_main` returns out of
+    /// `while … done <"$gitstatus_dir"/install.info`. fd 0 stayed on
+    /// install.info instead of reverting to the request FIFO, so
+    /// `gitstatusd` read EOF on startup and exited ("EOF. Exiting."),
+    /// `gitstatus_start` failed, `VCS_STATUS_REMOTE_URL` came back empty
+    /// and powerlevel10k rendered the generic git icon in place of the
+    /// per-forge one.
+    pub fn unwind_redirect_scopes_to(&mut self, depth: usize) {
+        while self.redirect_scope_stack.len() > depth {
+            self.host_redirect_scope_end();
+        }
+    }
+
     /// Pop the top redirect scope, restoring saved fds.
     pub fn host_redirect_scope_end(&mut self) {
         // c:Src/exec.c — restore saved fds FIRST so the multios
@@ -16453,7 +16519,7 @@ impl ShellExecutor {
         // so `read -d $'\xa0' <<<$'first\xa0second'` saw `c2 83 c2 80`
         // where every other writer (`print`, a pipe) emits the single `a0`.
         let raw = crate::ported::utils::unmetafy_str(&content); // c:4719
-        // c:4675 — `write_loop(fd, t, len); close(fd);`
+                                                                // c:4675 — `write_loop(fd, t, len); close(fd);`
         if std::fs::write(&tmp, &raw).is_err() {
             return; // c:4674 — tempfile failure → no redirect
         }
@@ -16847,7 +16913,11 @@ mod word_assemble_tests {
     #[test]
     fn leading_empty_then_literal_then_plan9() {
         let r = word_assemble_plan9(
-            &[Value::array(vec![]), Value::str("pre"), arr(&["x", "y", "z"])],
+            &[
+                Value::array(vec![]),
+                Value::str("pre"),
+                arr(&["x", "y", "z"]),
+            ],
             &[false, false, true],
         );
         assert_eq!(out(r), vec!["prex", "prey", "prez"]);
@@ -16875,6 +16945,9 @@ mod word_assemble_tests {
             &[Value::array(vec![]), Value::array(vec![])],
             &[false, true],
         );
-        assert!(out(r).is_empty(), "plan9 empty array still deletes the word");
+        assert!(
+            out(r).is_empty(),
+            "plan9 empty array still deletes the word"
+        );
     }
 }
