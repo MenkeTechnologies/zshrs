@@ -246,7 +246,13 @@ const PORTABLE_CORPUS: &[&str] = &[
     "printf '%s\\n' \"$(( 3 == 3 && 4 != 5 ))\"",                  // compound comparison
     "a=5; printf '%s\\n' \"$(( a > 0 ? (a > 3 ? 2 : 1) : 0 ))\"",  // nested ternary
     "printf '%s\\n' \"$(( 100 / 3 * 3 ))\"",                       // left-assoc div/mul → 99
-    "printf '%s\\n' \"${TERM+set}\"",                              // +alt (unquoted var may be unset→'')
+    // `+alt` on a variable the script OWNS. This read `${TERM+set}`, whose
+    // answer is the reference's identity rather than the operator: bash
+    // defaults TERM to `dumb` when the environment carries none, while zsh and
+    // dash leave it unset. `/bin/sh` is bash on macOS and dash on Linux, so the
+    // `sh` leg could not agree with both — it passed on the ubuntu runner and
+    // failed on the macOS one. Both branches of the operator are covered now.
+    "unset u; s=1; printf '%s|%s\\n' \"${u+set}\" \"${s+set}\"",         // +alt, unset and set
     "a=hello; b=$a; a=world; printf '%s\\n' \"$b\"",               // value copy, not alias
     "v=$(printf 'x\\ny\\n'); printf '[%s]\\n' \"$v\"",             // multiline cmd-sub trims trailing NL
     "x=5; { x=10; }; printf '%s\\n' \"$x\"",                       // brace group shares scope
