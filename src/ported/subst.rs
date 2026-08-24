@@ -22653,12 +22653,14 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
 /// `":gs/x/y/"`, …), empty when no chain was recognised. c:Src/subst.c:3760-3784
 /// applies the very same chain twice over, once per shape:
 ///
-///     if (!isarr)
-///         modify(&val, &s, inbrace);
-///     else {
-///         char *ss;  char **ap = aval;  char **pp = aval = …;
-///         while ((*pp = *ap++)) { ss = s; modify(pp++, &ss, inbrace); }
-///     }
+/// ```c
+/// if (!isarr)
+///     modify(&val, &s, inbrace);
+/// else {
+///     char *ss;  char **ap = aval;  char **pp = aval = …;
+///     while ((*pp = *ap++)) { ss = s; modify(pp++, &ss, inbrace); }
+/// }
+/// ```
 ///
 /// Callers that keep an element list (`aval`) re-run `modify` per element
 /// with this text; the scalar (`val`) result is what this function already
