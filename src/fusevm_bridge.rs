@@ -8093,18 +8093,46 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .or_else(|| crate::ported::math::mathevali(t).ok())
                     .unwrap_or(0)
             };
-            let (start, end) = if let Some((s_str, e_str)) = key.split_once(',') {
-                let s = ksh_shift(eval_bound(s_str));
-                let e = ksh_shift(eval_bound(e_str));
-                (start_translate(s), end_translate(e))
+            let (raw_start, raw_end) = if let Some((s_str, e_str)) = key.split_once(',') {
+                (ksh_shift(eval_bound(s_str)), ksh_shift(eval_bound(e_str)))
             } else {
                 let i = ksh_shift(eval_bound(&key));
-                if i == 0 {
-                    return;
-                }
-                let n = start_translate(i);
-                (n, n)
+                (i, i)
             };
+            // c:Src/params.c:2124-2151 (getindex) — `start == 0 && end == 0`
+            // is the range entirely off the START of the index range. With
+            // KSH_ZERO_SUBSCRIPT it degrades to "the first element"
+            // (`end = startnextlen;` c:2140, i.e. the 0-based range [0,1)).
+            // Without it the range is flagged VALFLAG_EMPTY (c:2148) and
+            // setarrvalue (c:2910) rejects the assignment with
+            // "assignment to invalid subscript range". zshrs silently
+            // returned for `a[0]=(x)` and front-INSERTED for `a[0,0]=(x)`.
+            let mut valflags = 0i32;
+            let (raw_start, raw_end) = if raw_start == 0 && raw_end == 0 {
+                if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                    (1, 1) // c:2140 — first element, in the 1-based convention below
+                } else {
+                    valflags |= crate::ported::zsh_h::VALFLAG_EMPTY; // c:2148
+                    (-1, 0) // c:2149 — bounds unused; setarrvalue errors first
+                }
+            } else {
+                (raw_start, raw_end)
+            };
+            // c:Src/params.c:2114 (getindex) — a SINGLE subscript is the
+            // range `[i, i]`: `end = we ? we : start;` sets BOTH bounds to
+            // the same RAW user index, and only the START is then shifted
+            // down by one (`if (start > 0) start -= startprevlen;` c:2120).
+            // setarrvalue (c:2944-2953) afterwards resolves each bound
+            // INDEPENDENTLY — `start += len` clamped at 0, `end += len + 1`
+            // clamped at 0 — so an out-of-range negative index such as
+            // `a[-10]` on a 3-element array yields start==end==0, an EMPTY
+            // range at the front that INSERTS. Running the end bound of a
+            // single subscript through `start_translate` (which floors at 1)
+            // instead collapsed that to [0,1) and OVERWROTE element 1:
+            // `a=(some sunny day); a[-10]=(we'll meet again)` dropped "some"
+            // (Test/D04parameter.ztst:1420 "Out of range negative array
+            // subscripts"). Both forms therefore share one translator pair.
+            let (start, end) = (start_translate(raw_start), end_translate(raw_end));
             // c:Src/params.c:3518-3520 (assignaparam ASSPM_AUGMENT) — a
             // subscripted `+=` to an array does NOT prepend the old slice;
             // it collapses the range to an EMPTY range positioned right
@@ -8144,7 +8172,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     pm,
                     arr: Vec::new(),
                     scanflags: 0,
-                    valflags: 0,
+                    valflags,
                     start,
                     end,
                 };
@@ -8190,7 +8218,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 pm: taken,
                 arr: Vec::new(),
                 scanflags: 0,
-                valflags: 0,
+                valflags,
                 start,
                 end,
             };

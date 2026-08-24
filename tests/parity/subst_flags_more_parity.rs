@@ -627,3 +627,44 @@ mod quoted_empty_subscript_word_survives {
         assert_parity(r#"setopt rcexpandparam; e=(); print -rl -- A x${e}y B"#);
     }
 }
+
+/// `:F` history-modifier repetition count — `Src/subst.c:4705` reads the
+/// count with `get_intarg`, which is a `get_strarg` DELIMITED argument
+/// (`Src/subst.c:1348`): the character right after `F` is the delimiter,
+/// and `(`/`[`/`{`/`<` pair with their closers — including the TOKENIZED
+/// `Inbrace`/`Outbrace` forms the lexer produces inside an unquoted
+/// `${…}` (c:1379-1390).
+mod modifier_repetition_count {
+    use super::*;
+
+    #[test]
+    fn f_count_accepts_every_delimiter_spelling() {
+        assert_parity(r#"f=/one/two/three/four; print ${f:F.2.h}"#);
+        assert_parity(r#"f=/one/two/three/four; print ${f:F+2+h}"#);
+        assert_parity(r#"f=/one/two/three/four; print ${f:F(2)h}"#);
+        assert_parity(r#"f=/one/two/three/four; print ${f:F<2>h}"#);
+        assert_parity(r#"f=/one/two/three/four; print ${f:F[2]h}"#);
+    }
+
+    /// The brace spelling only works UNQUOTED, where the lexer has
+    /// rewritten `{`/`}` to Inbrace/Outbrace; inside double quotes the
+    /// literal `}` closes the substitution first and zsh itself errors.
+    #[test]
+    fn f_count_brace_delimiter_unquoted() {
+        assert_parity(r#"f=/one/two/three/four; print ${f:F{2}h}"#);
+        assert_parity(r#"f=/one/two/three/four; print ${f:F{5}h}"#);
+        assert_parity(r#"f=/one/two/three/four; print ${f:F{2}t}"#);
+    }
+
+    #[test]
+    fn f_count_brace_delimiter_in_double_quotes_errors_like_zsh() {
+        assert_parity(r#"f=/one/two/three/four; { print "${f:F{2}h}" } 2>&1"#);
+    }
+
+    /// `:f` (unbounded) must keep working next to the `:F` change.
+    #[test]
+    fn fixed_point_repetition_unaffected() {
+        assert_parity(r#"f=/one/two/three/four; print ${f:fh}"#);
+        assert_parity(r#"print ${${:-aaa}:fs/a/b/}"#);
+    }
+}
