@@ -47,19 +47,21 @@ pub(crate) struct PluginSnapshot {
     pub(crate) autoloads: std::collections::HashSet<String>,
 }
 
-/// Mtime (seconds since epoch) of the running zshrs binary. Same
-/// helper as `script_cache::current_binary_mtime_secs` — we duplicate
-/// it here so plugin_cache doesn't need to take a script_cache dep
-/// and so the OnceLock is per-cache (the value is identical anyway
-/// since it's process-global). Returns None if the executable's
-/// metadata can't be read (extremely rare — usually only if the
-/// binary was deleted out from under us mid-run).
-fn current_binary_mtime() -> Option<i64> {
-    static BIN_MTIME: OnceLock<Option<i64>> = OnceLock::new();
-    *BIN_MTIME.get_or_init(|| {
+/// `(mtime, len)` of the running zshrs binary — the identity a cached
+/// plugin delta is stamped with. Same helper as
+/// `script_cache::current_binary_identity` and
+/// `autoload_cache::current_binary_identity`; duplicated here so
+/// plugin_cache doesn't take a dep on either, and so the OnceLock is
+/// per-cache (the value is process-global and identical anyway).
+/// Returns None if the executable's metadata can't be read (extremely
+/// rare — usually only if the binary was deleted out from under us
+/// mid-run), in which case nothing can be proven and nothing is used.
+fn current_binary_identity() -> Option<(i64, u64)> {
+    static BIN_ID: OnceLock<Option<(i64, u64)>> = OnceLock::new();
+    *BIN_ID.get_or_init(|| {
         let exe = std::env::current_exe().ok()?;
         let meta = std::fs::metadata(&exe).ok()?;
-        Some(meta.mtime())
+        Some((meta.mtime(), meta.len()))
     })
 }
 
@@ -149,7 +151,8 @@ impl PluginCache {
                 mtime_nsecs INTEGER NOT NULL,
                 source_time_ms INTEGER NOT NULL,
                 cached_at INTEGER NOT NULL,
-                binary_mtime INTEGER NOT NULL DEFAULT 0
+                binary_mtime INTEGER NOT NULL DEFAULT 0,
+                binary_len INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS plugin_functions (
@@ -267,12 +270,20 @@ impl PluginCache {
             "ALTER TABLE plugins ADD COLUMN binary_mtime INTEGER NOT NULL DEFAULT 0",
             [],
         );
+        // Same one-time migration for the binary LENGTH (column added
+        // 2026-08). A row written before this column existed defaults to
+        // 0, which can never equal a real binary length, so pre-migration
+        // rows are treated as belonging to some other build and are
+        // recompiled — the safe direction.
+        let _ = self.conn.execute(
+            "ALTER TABLE plugins ADD COLUMN binary_len INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(())
     }
 
-    /// Check if a cached entry exists with matching mtime AND the
-    /// running zshrs binary's mtime is no newer than when the entry
-    /// was cached. Direct port of script_cache.rs's invalidation
+    /// Check if a cached entry exists with matching source mtime AND the
+    /// entry was captured by the exact binary that is running now. Direct port of script_cache.rs's invalidation
     /// logic (lines 188-194): any zshrs rebuild silently invalidates
     /// plugin-cached deltas because runtime semantics may have
     /// shifted (paramsubst flags, option aliases, builtin
@@ -281,19 +292,27 @@ impl PluginCache {
     /// regression where `zinit.zsh`'s `${ZINIT[BIN_DIR]}` returned
     /// empty after re-source until the cache was manually cleared.
     pub fn check(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<i64> {
-        let row: Option<(i64, i64)> = self
+        let row: Option<(i64, i64, i64)> = self
             .conn
             .query_row(
-                "SELECT id, binary_mtime FROM plugins WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
+                "SELECT id, binary_mtime, binary_len FROM plugins WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
                 params![path, mtime_secs, mtime_nsecs],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
-        let (id, cached_bin_mtime) = row?;
-        if let Some(bin_mtime) = current_binary_mtime() {
-            if cached_bin_mtime < bin_mtime {
-                return None;
-            }
+        let (id, cached_bin_mtime, cached_bin_len) = row?;
+        // EXACT equality on (mtime, len), the same test `autoload_cache`
+        // applies to its chunks. The previous `cached < running`
+        // comparison only rejected a delta captured by an OLDER build, so
+        // a binary whose mtime went BACKWARDS — an earlier build restored
+        // over a later one, a `cp -p`, a checkout of a previously-built
+        // target dir — silently replayed a newer build's deltas. The
+        // stored mtime also has one-second granularity, so a rebuild
+        // landing in the same second as the cache write compared equal
+        // and passed; the length rules that out too.
+        let (bin_mtime, bin_len) = current_binary_identity()?;
+        if cached_bin_mtime != bin_mtime || cached_bin_len != bin_len as i64 {
+            return None;
         }
         Some(id)
     }
@@ -486,10 +505,10 @@ impl PluginCache {
         self.conn
             .execute("DELETE FROM plugins WHERE path = ?1", params![path])?;
 
-        let bin_mtime = current_binary_mtime().unwrap_or(0);
+        let (bin_mtime, bin_len) = current_binary_identity().unwrap_or((0, 0));
         self.conn.execute(
-            "INSERT INTO plugins (path, mtime_secs, mtime_nsecs, source_time_ms, cached_at, binary_mtime) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![path, mtime_secs, mtime_nsecs, source_time_ms as i64, now, bin_mtime],
+            "INSERT INTO plugins (path, mtime_secs, mtime_nsecs, source_time_ms, cached_at, binary_mtime, binary_len) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![path, mtime_secs, mtime_nsecs, source_time_ms as i64, now, bin_mtime, bin_len as i64],
         )?;
         let plugin_id = self.conn.last_insert_rowid();
 
