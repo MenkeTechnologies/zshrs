@@ -6524,7 +6524,9 @@ pub fn domenuselect(
 /// matters — never called `domenuselect(NULL, NULL)`. That NULL `dummy` is
 /// load-bearing: `domenuselect`'s early bail (c:2407-2408) reads
 ///
-///     if (fdat || (dummy && (!(s = getsparam("MENUSELECT")) || …)))
+/// ```c
+/// if (fdat || (dummy && (!(s = getsparam("MENUSELECT")) || …)))
+/// ```
 ///
 /// so a NULL `dummy` SKIPS the `$MENUSELECT` threshold test entirely. Going
 /// through `menucomplete` instead means the loop is only ever entered via the
