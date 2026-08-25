@@ -91,13 +91,42 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
     let mut idx = 0usize;
 
     // sh:7-13  getopts O:/C:
+    //
+    // The loop is written out here instead of calling the `getopts`
+    // builtin, so the builtin's PARAMETER side effects have to be
+    // reproduced by hand or they are simply missing. `$OPTARG` is the
+    // one that escapes: `getopts` stores the consumed option-argument in
+    // the C global `zoptarg` (`Src/builtin.c:5763-5776`, `zoptarg = p`),
+    // which backs the *special* parameter `OPTARG` — and sh:3-4 declares
+    // `local tags def expl descr action mesgs nm subopts` / `local opt ws
+    // curcontext` WITHOUT `OPTARG`, so the store lands on the global and
+    // outlives the call. (`OPTIND` does not escape: `doshfunc` saves and
+    // resets `zoptind`/`optcind` per function entry and restores them on
+    // exit, `Src/exec.c:5904-5909` / `:6060-6063` — so every callee sees
+    // `OPTIND=1` regardless. Only `zoptarg` is left un-saved.)
+    //
+    // Losing it is observable, not cosmetic: `_command_names` calls
+    // `_alternative -O args …` (the user's
+    // `~/.zpwr/autoload/comp_utils/_command_names` sh:55), so under zsh
+    // every completer below that frame sees `OPTARG=args`, while zshrs
+    // left it empty. `_parameters` lists parameters *with their values as
+    // descriptions*, `compdescribe -I … -g` groups matches by identical
+    // description (`cd_group`, `Src/Zle/computil.c:142-181`), and an
+    // empty `OPTARG` joined the empty-value group — which re-chunked the
+    // whole grouped listing to 6 columns where zsh uses 7. The column
+    // count is what the match TOTAL is made of, because every gap in a
+    // column is padded with `-E<n>` dummy matches (`CRT_DUMMY`,
+    // `Src/Zle/computil.c:754-768`): one lost column cost 91 matches, so
+    // `-<TAB><TAB>` offered "all 2080 possibilities" against zsh's 2171.
     while idx < args.len() {
         let a = &args[idx];
         if a == "-O" && idx + 1 < args.len() {
             // Read the named array `${(@P)OPTARG}`
+            let _ = setsparam("OPTARG", &args[idx + 1]); // c:builtin.c:5776
             subopts = getaparam(&args[idx + 1]).unwrap_or_default();
             idx += 2;
         } else if a == "-C" && idx + 1 < args.len() {
+            let _ = setsparam("OPTARG", &args[idx + 1]); // c:builtin.c:5776
             // Replace last `:`-field of curcontext
             if let Some(i) = curcontext.rfind(':') {
                 curcontext.truncate(i);
