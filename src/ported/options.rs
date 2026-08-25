@@ -1731,17 +1731,23 @@ impl opt_state_store {
     /// name is not the canonical spelling of an option and therefore
     /// lives in `extra`.
     ///
-    /// `optlookup` (c:684-715) strips `_`, lowercases, and maps a `no…`
-    /// prefix to the negated canonical number, so it answers for
-    /// spellings that are NOT the array's key. Requiring
-    /// `opt_name(o) == name` keeps every one of those in `extra` under
-    /// the literal string, which is where the HashMap had them.
+    /// `optno_by_name` is keyed by `opt_name(idx)`, so it answers ONLY
+    /// for the canonical spelling. Every other spelling `optlookup`
+    /// would canonicalise — `noglob`, `GLOB`, `no_glob` — stays in
+    /// `extra` under its literal string, which is where the HashMap
+    /// had it.
+    ///
+    /// It has to be `optno_by_name` and not `optlookup`: `optlookup`
+    /// reads the option state itself (c:721 `isset(SHOPTIONLETTERS)`),
+    /// and every caller here is inside an `OPTS_LIVE` guard. Under the
+    /// write guard that is a self-deadlock, which is exactly how it
+    /// presented — E01options.ztst:53 stopped failing and started
+    /// hanging. `optno_by_name` reads a `OnceLock` table built from
+    /// `opt_name`, and touches no option.
     fn slot(name: &str) -> Option<usize> {
-        let o = optlookup(name);
-        if o > 0 && o < OPT_SIZE && opt_name(o) == name {
-            Some(o as usize)
-        } else {
-            None
+        match optno_by_name(name) {
+            Some(o) if o > 0 && o < OPT_SIZE => Some(o as usize),
+            _ => None,
         }
     }
 
@@ -1826,8 +1832,11 @@ impl opt_state_store {
     /// changed nothing, so the common case invalidates nothing.
     pub fn restore(self) {
         let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
+        let mut changed: Vec<i32> = Vec::new();
+        // `optlookup` reads the option state (c:721), so the non-canonical
+        // keys are resolved AFTER the guard is dropped, never under it.
+        let mut changed_extra: Vec<String> = Vec::new();
         if let Ok(mut g) = m.write() {
-            let mut changed: Vec<i32> = Vec::new();
             for (i, (&old, &new)) in g.flat.iter().zip(self.flat.iter()).enumerate() {
                 if old != new {
                     changed.push(i as i32);
@@ -1835,19 +1844,21 @@ impl opt_state_store {
             }
             for (k, v) in g.extra.iter() {
                 if self.extra.get(k) != Some(v) {
-                    changed.push(optlookup(k));
+                    changed_extra.push(k.clone());
                 }
             }
             for (k, v) in self.extra.iter() {
                 if g.extra.get(k) != Some(v) {
-                    changed.push(optlookup(k));
+                    changed_extra.push(k.clone());
                 }
             }
             *g = self;
-            drop(g);
-            for optno in changed {
-                crate::opts_cache::invalidate_one(optno);
-            }
+        }
+        for optno in changed {
+            crate::opts_cache::invalidate_one(optno);
+        }
+        for k in changed_extra {
+            crate::opts_cache::invalidate_one(optlookup(&k));
         }
     }
 
@@ -2253,22 +2264,25 @@ pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
         // nothing (the common case) the diff is empty and the isset() cache
         // stays entirely warm. Names present in exactly one side, or with a
         // different value, are the only ones whose cached read must drop.
-        let mut changed: Vec<i32> = Vec::new();
+        // Names, not optnos: `optlookup` reads the option state itself
+        // (c:721 `isset(SHOPTIONLETTERS)`), so resolving one under this
+        // write guard is a self-deadlock.
+        let mut changed: Vec<String> = Vec::new();
         let live = g.to_map();
         for (k, v) in live.iter() {
             if snap.get(k) != Some(v) {
-                changed.push(optlookup(k));
+                changed.push(k.clone());
             }
         }
         for (k, v) in snap.iter() {
             if live.get(k) != Some(v) {
-                changed.push(optlookup(k));
+                changed.push(k.clone());
             }
         }
         *g = opt_state_store::from_map(&snap);
         drop(g);
-        for optno in changed {
-            crate::opts_cache::invalidate_one(optno);
+        for k in changed {
+            crate::opts_cache::invalidate_one(optlookup(&k));
         }
     }
 }
