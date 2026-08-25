@@ -208,6 +208,14 @@ pub fn init_named(filename: &str) {
 
         let _ = tracing::subscriber::set_global_default(subscriber);
 
+        // c:Src/utils.c:2007-2010 — record the log file as a descriptor
+        // the shell owns. The appender never exposes it, so it cannot be
+        // registered at the open the way `movefd` registers its result;
+        // the sweep finds it by elimination. Done here, with the guard
+        // above still held, because the sweep only inspects descriptors
+        // at or above 10 and the guard's reservations are 3-9.
+        crate::lowfd::register_internal_fds();
+
         Guards {
             #[cfg(feature = "profiling")]
             _chrome: chrome_guard,

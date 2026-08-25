@@ -16050,7 +16050,50 @@ impl ShellExecutor {
             let n_check = target.trim_start_matches('&');
             if n_check != "-" {
                 if let Ok(src_fd) = n_check.parse::<i32>() {
-                    if unsafe { libc::fcntl(src_fd, libc::F_GETFD) } == -1 {
+                    // c:Src/exec.c:3884-3897 — a descriptor above 9 that
+                    // the shell knows about is NOT the script's to
+                    // duplicate:
+                    //
+                    //   else if (fn->fd2 > 9 &&
+                    //            (fn->fd2 <= max_zsh_fd &&
+                    //             ((fdtable[fn->fd2] != FDT_UNUSED &&
+                    //               fdtable[fn->fd2] != FDT_EXTERNAL) ||
+                    //              fn->fd2 == coprocin ||
+                    //              fn->fd2 == coprocout))) {
+                    //       fil = -1;
+                    //       errno = EBADF;
+                    //
+                    // `FDT_EXTERNAL` is exempt because that is a
+                    // descriptor the script itself asked for (`{v}>file`,
+                    // c:2409) and 0/1/2 (c:Src/init.c:1900). Anything
+                    // past `max_zsh_fd` is left alone on purpose —
+                    // c:3886-3891: "the shell doesn't know about it. Just
+                    // assume the user knows what they're doing."
+                    //
+                    // Only the open-ness of the descriptor was checked
+                    // here, so `>&11` happily duplicated the shell's own
+                    // history database and `>&10` its log. The `exec
+                    // N>&-` half of this pair was already ported
+                    // (fusevm_bridge.rs:7047, c:3830-3835); this half was
+                    // not, and the ported copy in `ported/exec.rs:11466`
+                    // is not on the VM's redirection path.
+                    let shell_owned = src_fd > 9 && {
+                        let max_fd =
+                            crate::ported::utils::MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+                        let cin = crate::ported::modules::clone::coprocin
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        let cout = crate::ported::modules::clone::coprocout
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        src_fd <= max_fd && {
+                            let kind = crate::ported::utils::fdtable_get(src_fd)
+                                & crate::ported::zsh_h::FDT_TYPE_MASK;
+                            (kind != crate::ported::zsh_h::FDT_UNUSED
+                                && kind != crate::ported::zsh_h::FDT_EXTERNAL)
+                                || src_fd == cin
+                                || src_fd == cout
+                        }
+                    };
+                    if unsafe { libc::fcntl(src_fd, libc::F_GETFD) } == -1 || shell_owned {
                         // c:Src/exec.c — zwarn with real lineno prefix.
                         crate::ported::utils::zwarn(&format!("{}: bad file descriptor", src_fd));
                         self.set_last_status(1);

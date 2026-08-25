@@ -62,6 +62,46 @@ const FIRST_SCRIPT_FD: RawFd = 3;
 /// How many slots the guard can hold at most: the whole script range.
 const SCRIPT_FD_SLOTS: usize = (FIRST_INTERNAL_FD - FIRST_SCRIPT_FD) as usize;
 
+/// Upper bound of the sweep that registers freshly-landed internal
+/// descriptors in the fdtable.
+///
+/// An internal open lands on the lowest descriptor free at the time, so
+/// with the script range held it lands just above [`FIRST_INTERNAL_FD`];
+/// SQLite adds at most two more per database (`-wal`, `-shm`). 64 is far
+/// past anything the shell opens for itself. A descriptor that somehow
+/// lands above it simply stays unregistered — the behaviour before this
+/// sweep existed — rather than costing a longer scan on every open.
+const FD_SCAN_LIMIT: RawFd = 64;
+
+/// Is `fd` open in this process?
+fn fd_is_open(fd: RawFd) -> bool {
+    // SAFETY: F_GETFD only interrogates the descriptor table.
+    unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
+}
+
+/// The descriptors at or above [`FIRST_INTERNAL_FD`] that this process
+/// was STARTED with.
+///
+/// They belong to whoever spawned us — `zshrs 11>&1 -c …` is legal — and
+/// c:Src/exec.c:3886-3891 is explicit that the shell must keep its hands
+/// off a descriptor it did not open: "If the requested fd is >
+/// max_zsh_fd, the shell doesn't know about it. Just assume the user
+/// knows what they're doing." Recording them once lets the sweep below
+/// register only descriptors that appeared afterwards, which are the
+/// shell's own.
+///
+/// Captured on the first [`LowFdGuard::new`], which by construction runs
+/// before the first internal open (that open is what the guard exists to
+/// push upward).
+fn inherited_fds() -> &'static [bool] {
+    static INHERITED: std::sync::OnceLock<Vec<bool>> = std::sync::OnceLock::new();
+    INHERITED.get_or_init(|| {
+        (0..FD_SCAN_LIMIT)
+            .map(|fd| fd >= FIRST_INTERNAL_FD && fd_is_open(fd))
+            .collect()
+    })
+}
+
 /// Occupies every currently-free descriptor below [`FIRST_INTERNAL_FD`] so that
 /// opens performed while it is alive are pushed above the user's fd range.
 /// Releases them on drop.
@@ -96,6 +136,9 @@ impl LowFdGuard {
     /// plus at most [`SCRIPT_FD_SLOTS`] `fcntl` calls, and only for slots that
     /// are actually free.
     pub fn new() -> Self {
+        // Before anything is opened, so the snapshot is of the parent's
+        // descriptors only. Cheap after the first call (a `OnceLock` read).
+        let _ = inherited_fds();
         let mut held = Vec::with_capacity(SCRIPT_FD_SLOTS);
         // SAFETY: plain fd syscalls; every descriptor here came from this
         // thread's own `open`/`fcntl` and is closed exactly once — either at the
@@ -157,6 +200,73 @@ impl Drop for LowFdGuard {
     }
 }
 
+/// Mark every descriptor the shell has just opened for itself as
+/// `FDT_INTERNAL`.
+///
+/// c:Src/utils.c:2007-2010 — `movefd` ends with `check_fd_table(fd);
+/// fdtable[fd] = FDT_INTERNAL;`, so in C every descriptor the shell
+/// relocates for its own use is registered at the moment it is
+/// relocated. That registration is what the rest of the shell reads:
+/// c:Src/exec.c:3830-3835 refuses `exec N>&-` on an internal descriptor
+/// ("file descriptor %d used by shell, not closed"), and
+/// c:Src/exec.c:3884-3897 fails `>&N` / `<&N` with `EBADF` when
+/// `fdtable[N]` is neither `FDT_UNUSED` nor `FDT_EXTERNAL`. Both of
+/// those gates are ported; both were dead for the shell's OWN
+/// descriptors.
+///
+/// zshrs does not reach its internal descriptors through `movefd`. The
+/// log file, the history database and the compsys database are opened by
+/// `tracing-appender` and by SQLite, which hand back a `File` / a
+/// `Connection` and never expose the descriptor — so there is no
+/// `movefd` call site at which to register them, and they landed with
+/// `fdtable` still reading `FDT_UNUSED`. The shell's own log sat at
+/// fd 10 and its history database at fd 11, unregistered, and every gate
+/// above waved them through: `exec 11>&-` closed the live SQLite handle
+/// and `exec 3>&11` duplicated it.
+///
+/// The guard is the choke point every one of those opens passes through,
+/// so the registration happens here instead: whatever is open above
+/// [`FIRST_INTERNAL_FD`] that we did not inherit and that nothing has
+/// claimed is, by elimination, a descriptor the shell opened for itself.
+///
+/// A slot that is already claimed is never overwritten — `FDT_EXTERNAL`
+/// (a `{varid}>` descriptor, c:Src/exec.c:2409), `FDT_MODULE`,
+/// `FDT_PROC_SUBST` and the rest keep their meaning. And a user
+/// redirection racing this sweep from another thread self-corrects: the
+/// redirection sets its slot to `FDT_EXTERNAL` unconditionally after the
+/// open, so a momentary `FDT_INTERNAL` here is overwritten by the
+/// classification that matters.
+/// # Why this is not in `LowFdGuard::drop`
+///
+/// `fdtable_get`/`fdtable_set` take a `Mutex` (utils.rs:11483). This
+/// module's header spells out why a lock must never be on the guard's
+/// path: `fork(2)` is called directly in `fusevm_bridge.rs` and
+/// `ported/exec.rs`, only the forking thread survives into the child,
+/// and a mutex held by any other thread at that moment is inherited
+/// permanently locked — so the child's first guard would deadlock. Doing
+/// the sweep in `drop` did exactly that, and
+/// `guard_still_works_in_a_fork_child_while_other_threads_hold_it`
+/// caught it.
+///
+/// So the sweep is an explicit step on the open path instead
+/// ([`with_high_fds`]), which only the shell's own database and log
+/// opens take, and which no fork child runs. `LowFdGuard` itself stays
+/// pure raw-syscall and fork-safe.
+pub fn register_internal_fds() {
+    let inherited = inherited_fds();
+    for fd in FIRST_INTERNAL_FD..FD_SCAN_LIMIT {
+        if inherited[fd as usize] || !fd_is_open(fd) {
+            continue;
+        }
+        if crate::ported::utils::fdtable_get(fd) != crate::ported::zsh_h::FDT_UNUSED {
+            continue; // already classified — EXTERNAL, MODULE, PROC_SUBST, …
+        }
+        crate::ported::utils::check_fd_table(fd); // c:2008
+        crate::ported::utils::fdtable_set(fd, crate::ported::zsh_h::FDT_INTERNAL); // c:2009
+        tracing::debug!(fd, "lowfd: registered shell-internal descriptor");
+    }
+}
+
 impl Default for LowFdGuard {
     fn default() -> Self {
         Self::new()
@@ -166,13 +276,50 @@ impl Default for LowFdGuard {
 /// Run `f` with the low descriptors reserved, so anything it opens lands at or
 /// above [`FIRST_INTERNAL_FD`].
 pub fn with_high_fds<T>(f: impl FnOnce() -> T) -> T {
-    let _guard = LowFdGuard::new();
-    f()
+    let out = {
+        let _guard = LowFdGuard::new();
+        f()
+    };
+    // The guard is released above, so anything `f` opened is now at its
+    // final descriptor and can be registered as the shell's own.
+    register_internal_fds();
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A descriptor the shell opens for itself is registered as
+    /// `FDT_INTERNAL`, which is what makes c:Src/exec.c:3830-3835 refuse
+    /// `exec N>&-` on it and c:Src/exec.c:3884-3897 fail `>&N` with
+    /// `EBADF`. Both gates are ported; both read the fdtable, and the
+    /// shell's own descriptors were never in it.
+    #[test]
+    fn an_internal_open_is_registered_in_the_fdtable() {
+        // Same serialisation the other guard tests take: these tests share
+        // one process, and a guard in flight moves descriptors 3-9 under
+        // any test that is sampling them.
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        use std::os::unix::io::AsRawFd;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("internal");
+        let _file = with_high_fds(|| std::fs::File::create(&path).expect("create"));
+        let fd = _file.as_raw_fd();
+        assert!(
+            fd >= FIRST_INTERNAL_FD,
+            "the guard must push a shell-internal open above the script range; landed on {fd}"
+        );
+        assert!(
+            fd < FD_SCAN_LIMIT,
+            "test descriptor {fd} is past the sweep bound, the assertion below would be vacuous"
+        );
+        assert_eq!(
+            crate::ported::utils::fdtable_get(fd),
+            crate::ported::zsh_h::FDT_INTERNAL,
+            "fd {fd} is the shell's own and must be marked FDT_INTERNAL (c:Src/utils.c:2009)"
+        );
+    }
     use std::os::unix::fs::MetadataExt as _;
     use std::os::unix::io::AsRawFd;
     use std::sync::atomic::{AtomicBool, Ordering};
