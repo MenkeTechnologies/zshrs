@@ -948,6 +948,17 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // "No Matches" where zsh lists the expansions.
         let word_tok = crate::comp_word_tok::get();
         let in_math = linwhat.load(Ordering::Relaxed) == IN_MATH_LW;
+        // c:698 — `makebangspecial(0)`. Clears ISPECIAL on `bangchar` for the
+        // duration of the `multiquote` calls below, restored at c:719. The
+        // completion word is not history-expanded, so a `!` in it must not be
+        // re-quoted as `\!` when it is published into `$PREFIX`/`$SUFFIX` —
+        // even though the SAME `quotestring` must escape it everywhere else in
+        // an interactive shell.
+        //
+        // This is a no-op unless something actually reads the bit;
+        // `quotestring`'s `ispecial` only started doing so in a103e66b60,
+        // which is why wiring it now matters and did not before.
+        crate::ported::utils::makebangspecial(false);
         let (pre, suf) = if !isset(crate::ported::zsh_h::COMPLETEINWORD) {
             // c:699
             // c:700-703 — `tmp = (linwhat == IN_MATH ? dupstring(s)
@@ -983,6 +994,10 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
                 )
             }
         };
+        // c:719 — `makebangspecial(1)`. Restores the bit, but only if
+        // `inittyptab` had stored `ZTF_BANGCHAR` (utils.c:4291); in a
+        // non-interactive shell it correctly stays clear.
+        crate::ported::utils::makebangspecial(true);
         let _ = crate::ported::params::setsparam("PREFIX", &pre);
         let _ = crate::ported::params::setsparam("SUFFIX", &suf);
         // c:724-741 — `$IPREFIX` / `$ISUFFIX`.
