@@ -2334,6 +2334,31 @@ pub fn zrefresh() {
                                                // list) passes its `!trashedzle` gate and actually parks below the
                                                // line. trashzle sets trashedzle=1 + resetneeded=1; consuming
                                                // resetneeded here is where trashedzle gets cleared again, matching C.
+        // c:787 (resetvideo) —
+        // ```c
+        //     if (showinglist > 0)
+        //         showinglist = -2;
+        // ```
+        // Verified against the checked-out fork: Src/Zle/zle_refresh.c:786-787,
+        // the two lines immediately above `trashedzle = 0;` in `resetvideo()`.
+        // A frame that finished with a completion listing on screen left
+        // `showinglist` at the POSITIVE `nlnct` marker (c:1717-1718 — "most
+        // lines of the buffer we've shown at once with the current list
+        // showing"). A reset frame repaints the display from the top and the
+        // listing below the prompt is no longer on screen — clear-screen wipes
+        // the terminal outright — so C re-arms `showinglist` to -2 here. That
+        // makes this same zrefresh's post-list branch (c:1706) run
+        // `listmatches()` and reprint the grid under the freshly drawn command
+        // line. The inlined resetvideo below/above ported c:789 (trashedzle)
+        // but skipped these two lines, so Ctrl-L cleared the screen and lost
+        // the listing: `showinglist` stayed at nlnct and the post-list branch's
+        // `showinglist > 0 && showinglist < nlnct` test was false.
+        if SHOWINGLIST.load(Ordering::Relaxed) > 0 {
+            tracing::debug!(target: "zle_refresh",
+                showinglist = SHOWINGLIST.load(Ordering::Relaxed),
+                "reset frame: re-arming showinglist = -2 (c:786-787)");
+            SHOWINGLIST.store(-2, Ordering::Relaxed);
+        }
         TRASHEDZLE.store(0, Ordering::Relaxed);
         // c:1146-1153 —
         // ```c
