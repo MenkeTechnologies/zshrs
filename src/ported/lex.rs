@@ -510,6 +510,77 @@ fn add(c: char) {
     LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
 }
 
+/// Port of the `SETPARBEGIN` macro from `Src/lex.c:468-472`:
+///
+/// ```c
+/// #define SETPARBEGIN {                                             \
+///     if ((lexflags & LEXFLAGS_ZLE) && !(inbufflags & INP_ALIAS) && \
+///         zlemetacs >= zlemetall+1-inbufct)                         \
+///         parbegin = inbufct;                                       \
+///     }
+/// ```
+///
+/// Records where a command/process substitution (`` ` ``, `$(`,
+/// `<(`, `>(`) opened, but only when the cursor is at or past that
+/// point. `get_comp_string` (zle_tricky.c:1464-1480) reads it to
+/// restart its lex against the INTERIOR of the substitution, which
+/// is what puts the first word inside `$(`/`` ` `` in command
+/// position. A C preprocessor macro, so it stays a macro here — the
+/// same mapping `DPUTS`/`ERRMSG` (zsh_h.rs:2394/2437) use.
+macro_rules! SETPARBEGIN {
+    () => {{
+        let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+        if (LEX_LEXFLAGS.get() & LEXFLAGS_ZLE) != 0
+            && (crate::ported::input::inbufflags.with(|f| f.get())
+                & crate::ported::zsh_h::INP_ALIAS)
+                == 0
+            && crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst)
+                >= crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) + 1 - inbufct
+        {
+            LEX_PARBEGIN.set(inbufct);
+        }
+    }};
+}
+
+/// Port of the `SETPAREND` macro from `Src/lex.c:473-481`:
+///
+/// ```c
+/// #define SETPAREND {                                               \
+///     if ((lexflags & LEXFLAGS_ZLE) && !(inbufflags & INP_ALIAS) && \
+///         parbegin != -1 && parend == -1) {                         \
+///         if (zlemetacs >= zlemetall + 1 - inbufct)                 \
+///             parbegin = -1;                                        \
+///         else                                                      \
+///             parend = inbufct;                                     \
+///     }                                                             \
+///     }
+/// ```
+///
+/// Closes the substitution `SETPARBEGIN` opened: a cursor at or past
+/// the closing delimiter means the cursor was never inside it, so the
+/// record is dropped; otherwise the end offset is kept so
+/// `get_comp_string` can trim the line to the substitution body.
+macro_rules! SETPAREND {
+    () => {{
+        let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+        if (LEX_LEXFLAGS.get() & LEXFLAGS_ZLE) != 0
+            && (crate::ported::input::inbufflags.with(|f| f.get())
+                & crate::ported::zsh_h::INP_ALIAS)
+                == 0
+            && LEX_PARBEGIN.get() != -1
+            && LEX_PAREND.get() == -1
+        {
+            if crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst)
+                >= crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) + 1 - inbufct
+            {
+                LEX_PARBEGIN.set(-1);
+            } else {
+                LEX_PAREND.set(inbufct);
+            }
+        }
+    }};
+}
+
 /// Determine if (( is arithmetic or command
 /// Decide whether `( ... )` after a `$` is a math expression
 /// `$((...))` or a command substitution `$(...)`. Direct port of
@@ -2566,6 +2637,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 // Backtick command substitution
                 add(Tick);
                 cmdpush(CS_BQUOTE as u8);
+                SETPARBEGIN!(); // c:1353
                 loop {
                     let ch = hgetc();
                     match ch {
@@ -2614,6 +2686,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     break;
                 }
                 add(Tick);
+                SETPAREND!(); // c:1388
             }
 
             // c:1044 — `case LX2_TILDE:` — `~`.
@@ -2961,8 +3034,10 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
             '`' => {
                 add(Qtick);
                 if intick {
+                    SETPAREND!(); // c:1587
                     cmdpop();
                 } else {
+                    SETPARBEGIN!(); // c:1584
                     cmdpush(CS_BQUOTE as u8);
                 }
                 intick = !intick;
@@ -3901,6 +3976,7 @@ fn skipcomm() -> Result<(), ()> {
     let outer_was_recording = LEX_LEX_ADD_RAW.get() != 0;
 
     cmdpush(CS_CMDSUBST as u8);
+    SETPARBEGIN!(); // c:2163
     add(Inpar);
 
     // c:2096-2143 — save outer tokstr/lexbuf into the variables that
@@ -3997,6 +4073,31 @@ fn skipcomm() -> Result<(), ()> {
                     b.siz = new_lexbuf_siz;
                     b.len = final_len;
                 });
+                // c:2283 — `lexstop = new_lexstop;`. Comment at
+                // c:2255-2259: "We're also going to propagate the
+                // lexical state: if we couldn't parse the command
+                // substitution we can't continue."
+                // `zcontext_restore_partial` above put back the
+                // lexstop from BEFORE the body was read, so an
+                // unterminated `$(`/`<(`/`>(` looked terminated to
+                // the caller. gettokstr's `else if (e == '(')` arm
+                // then took its `default: peek = LEXERR; goto brk;`
+                // exit (lex.c:1044-1046) with `lexstop == 0`, so the
+                // `brk:` epilogue's `hungetc(c)` (lex.c:1444) pushed
+                // the `$` back onto zshrs's lexer-level unget
+                // queue — `c` is still the `$` on that path. C's
+                // `inungetc` returns that byte to the input FRAME,
+                // which `get_comp_string`'s `inpop` (c:1461)
+                // discards; zshrs's queue outlives the frame, so the
+                // stray `$` prefixed the next word the lexer built —
+                // `echo $(gr<TAB>` re-lexed the substitution body
+                // `grx` as `$grx`.
+                LEX_LEXSTOP.set(new_lexstop);
+            }
+            // c:2287-2288 — `if (!lexstop) SETPAREND`.
+            let lexstop_now = LEX_LEXSTOP.get();
+            if !lexstop_now {
+                SETPAREND!();
             }
             cmdpop();
         }
