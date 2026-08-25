@@ -9070,6 +9070,24 @@ impl ZshCompiler {
         is_tilde(cs.get(flag_at)) && !is_tilde(cs.get(flag_at + 1))
     }
 
+    /// True when a `COND_MOD` operand (`[[ -prefix PAT ]]`, `-suffix`,
+    /// `-after`, `-between`) carries no substitution at all, so the parser's
+    /// tokenized word IS the final value and can go straight to the handler
+    /// the way C's `ecgetarr` + `cond_str(…, raw=1)` pair hands it over
+    /// (c:Src/cond.c:131-132 / c:525-534). Anything with a `$` / backtick in it
+    /// still has to run through the expander.
+    fn modcond_arg_is_pure_literal(arg: &str) -> bool {
+        !arg.chars().any(|c| {
+            matches!(
+                c,
+                // `$` raw / String / Qstring — parameter, arithmetic, `$(…)`.
+                '$' | '\u{85}' | '\u{8c}'
+                // backtick raw / Tick / Qtick — command substitution.
+                | '`' | '\u{93}' | '\u{99}'
+            )
+        })
+    }
+
     /// Emit a PATTERN word (for `case` arms and `[[ = ]]` RHS) so that
     /// GLOB_SUBST is honored: glob metachars that come from a SUBSTITUTION
     /// (`$p` → `a*`) are literal-ized unless `$~`/`${~}` or the GLOB_SUBST
@@ -10439,10 +10457,45 @@ impl ZshCompiler {
                 // `[[ -prefix PAT ]]` etc. — completion/module condition
                 // (C COND_MOD). Push each already-expanded operand word, then
                 // the operator word last, and dispatch to the host handler
-                // which runs cond_psfix/cond_range → do_comp_vars. Operands
-                // undergo parameter expansion but NOT globbing (cond operand
-                // semantics), so DQ-suppress globbing like the unary path.
+                // which runs cond_psfix/cond_range → do_comp_vars. An operand
+                // is never FILENAME-globbed, so the substitution path still
+                // DQ-suppresses globbing like the unary path — but its glob
+                // metachars stay PATTERN-active, because every COND_MOD
+                // handler feeds its operand to `patcompile`. See the two
+                // arms below for which half of that each operand takes.
                 for arg in args {
+                    // c:Src/cond.c:131-132 — `strs = ecgetarr(state, l, EC_DUP,
+                    // NULL)`. The COND_MOD operands are the wordcode strings
+                    // the PARSER stored (c:Src/parse.c:2716 par_cond_multi),
+                    // i.e. still in the lexer's TOKENIZED form, and
+                    // `cond_str(a, n, 1)` keeps them that way. A source-level
+                    // `*` therefore reaches `patcompile` as `Star`, and
+                    // `[[ -prefix :*: ]]` is a real glob test — while a
+                    // QUOTED `':*:'` arrives as inull-wrapped literal text and
+                    // is not.
+                    //
+                    // A word with no substitution in it has nothing for the
+                    // expander to do, so emit the parser's token string
+                    // directly. Routing it through `compile_word_str` (which
+                    // untokenizes) is what turned `Star` back into a literal
+                    // `*`: `[[ -prefix :*: ]]` compiled the pattern `:*:` as
+                    // three literal chars, so `_zstyle`'s `[[ ! -prefix :*: ]]`
+                    // test (Completion/Zsh/Command/_zstyle) took the wrong
+                    // branch and `zstyle :completion:<TAB>` lost the whole
+                    // `functions`/`_completers`/... sub-context list.
+                    //
+                    // `remnulargs` here stands in for the one C's `patcompile`
+                    // runs on its own input (c:Src/pattern.c:571) — zshrs's
+                    // `patcompile` decodes `Snull`/`Dnull` through the
+                    // `ztokens` table instead of dropping them, so the quote
+                    // markers have to come off before it sees them.
+                    if Self::modcond_arg_is_pure_literal(arg) {
+                        let mut lit = arg.to_string();
+                        crate::ported::glob::remnulargs(&mut lit);
+                        let c = self.builder.add_constant(Value::str(lit.as_str()));
+                        self.builder.emit(Op::LoadConst(c), 0);
+                        continue;
+                    }
                     self.dq_context_depth += 1;
                     self.compile_word_str(arg);
                     self.dq_context_depth -= 1;
@@ -11951,6 +12004,37 @@ fn is_splice_expansion(s: &str) -> bool {
         // group, so scan position-independently via `plan9_flag_state`.
         if plan9_flag_state(inner).is_some() {
             return false;
+        }
+        // c:Src/params.c:2231 — `isvarat = (t[0] == '@' && !t[1]);`.
+        // `fetchvalue` derives it from the parameter NAME alone, and the name
+        // is what is left AFTER the flag loop (c:Src/subst.c:2550+) has already
+        // consumed the `(…)` group — so `${(q)@}` is exactly as much an
+        // `isvarat` reference as `${@}` is. c:Src/params.c:2278 stores it as
+        // `v->scanflags = scanflags | (isvarat ? SCANPM_ISVAR_AT : 0)`,
+        // c:Src/subst.c:2916 turns that into `isarr = -1`, and the quoted
+        // sepjoin at c:Src/subst.c:3032 (`if (qt && !getlen && isarr > 0)`)
+        // is gated on isarr being strictly POSITIVE — so a bare `@` keeps its
+        // words inside `"…"` whatever flags were written. Note this is the `@`
+        // rule only: `$*` resolves to the plain `pparams` array (no
+        // SCANPM_ISVAR_AT), gets `isarr = 1`, and so DOES join in `"…"`.
+        //
+        // Only the flagless spellings were recognised below, so every flagged
+        // form (`"${(q)@}"`, `"${(q-)@}"`, `"${(U)@}"`, `"${(#)@}"`, …)
+        // compiled to CONCAT_DISTRIBUTE and collapsed to a single word.
+        let after_flag_group = match inner.strip_prefix('(') {
+            Some(rest) => match rest.find(')') {
+                Some(close) => &rest[close + 1..],
+                None => inner,
+            },
+            None => inner,
+        };
+        // `@` is a one-character name, so the `!t[1]` half of the C test is
+        // satisfied by construction: whatever follows is the subscript or the
+        // `${name<op>word}` operator, neither of which `fetchvalue` has even
+        // looked at yet when it computes `isvarat`. Hence `"${@%c}"` and
+        // `"${@//b/Z}"` splat their words just like `"${@}"` does.
+        if after_flag_group.starts_with('@') {
+            return true;
         }
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;

@@ -1551,27 +1551,70 @@ pub fn dupbrinfo(
     (head, last_ptr)
 }
 
-/// Check if string has real tokens (not escaped)
-/// Port of has_real_token(const char *s) from zle_tricky.c
+/// Port of `has_real_token()` from `Src/Zle/zle_tricky.c:1056-1077`
+/// ("This is a bit like has_token(), but ignores nulls.").
+///
+/// The input is a LEXED word, not raw user text: every character the
+/// parser found special has already been rewritten to its `Ztoken`
+/// marker (`Star` = U+0087 for a glob `*`, `Stringg` = U+0085 for a
+/// live `$`, …), and a character that was quoted keeps its literal
+/// form. So the test C makes is on the token BYTE, never on the
+/// printable character:
+///
+/// ```text
+/// if (itok(*s) && !inull(*s))
+///     return 1;
+/// ```
+///
+/// `itok` covers `Pound`..`Nularg` and `inull` covers the null
+/// subrange `Snull`..`Nularg` (`Src/utils.c` `inittyptab`), so the
+/// predicate is exactly "a token that is not a quote/backslash
+/// placeholder".
+///
+/// The single caller is the quote-form block in `get_comp_string`
+/// (c:1728-1731): a word whose first char is `Snull`/`Dnull` is the
+/// inside of a quoted string, and it only counts as one when nothing
+/// AFTER that opening marker is a real token. Inside single quotes
+/// the lexer emits `*` as a plain `*`, so `'…*'` must pass this test
+/// and get `qipre`/`qisuf`/`autoq` set.
+///
+/// A previous revision of this function was an ad-hoc rewrite that
+/// scanned for the LITERAL characters ``$ ` " ' \ { } [ ] * ? ~`` with
+/// backslash-escape tracking. That has no counterpart in the C: it
+/// fired on the ordinary `*` inside `zstyle ':completion:*'<TAB>`,
+/// which skipped the whole quote-form block, left `QIPREFIX`/
+/// `QISUFFIX`/`$compstate[quote]` empty, and made the insertion
+/// rewrite the word without its quotes (`':completion:*'` →
+/// `:completion:`). The doc comment claimed "Port of has_real_token"
+/// while implementing something else.
 pub fn has_real_token(s: &str) -> bool {
-    let special = ['$', '`', '"', '\'', '\\', '{', '}', '[', ']', '*', '?', '~'];
+    use crate::ported::zsh_h::{Qstring, Snull, Stringg};
+    use crate::ported::ztype_h::{inull, itok};
 
-    let mut escaped = false;
-    for c in s.chars() {
-        if escaped {
-            escaped = false;
+    let sc: Vec<char> = s.chars().collect();
+    let mut i = 0usize;
+    // c:1061 — `while (*s)`
+    while i < sc.len() {
+        let c = sc[i];
+        // c:1066-1071 — `$'…'` strings are treated like nulls: skip the
+        // two-char introducer (`Qstring` + `'`, or `String` + `Snull`).
+        if (c == Qstring && sc.get(i + 1) == Some(&'\''))
+            || (c == Stringg && sc.get(i + 1) == Some(&Snull))
+        {
+            i += 2;
             continue;
         }
-        if c == '\\' {
-            escaped = true;
-            continue;
+        // c:1072-1073 — `if (itok(*s) && !inull(*s)) return 1;`.
+        // C indexes `typtab` with `(unsigned char) *s`; a metafied word
+        // holds no char above U+00FF, and anything that did could not be
+        // a token, so it maps to a byte that is never ITOK.
+        let b = if (c as u32) < 0x100 { c as u32 as u8 } else { 0 };
+        if itok(b) && !inull(b) {
+            return true; // c:1073
         }
-        if special.contains(&c) {
-            return true;
-        }
+        i += 1; // c:1074
     }
-
-    false
+    false // c:1076
 }
 
 /// Port of `get_comp_string()` from Src/Zle/zle_tricky.c:1087 — the
@@ -4945,10 +4988,25 @@ mod tests {
     fn test_has_real_token() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        assert!(has_real_token("$HOME"));
-        assert!(has_real_token("*.txt"));
+        use crate::ported::zsh_h::{Dnull, Qstring, Snull, Star, Stringg};
+        // C's `has_real_token` is only ever handed a LEXED word, so the
+        // inputs here carry Ztoken markers, not printable specials.
+        // c:1072 — a live `$` lexes to `Stringg`, a glob `*` to `Star`.
+        assert!(has_real_token(&format!("{Stringg}HOME")));
+        assert!(has_real_token(&format!("{Star}.txt")));
+        // c:1072 — plain text has no token at all.
         assert!(!has_real_token("hello"));
-        assert!(!has_real_token("test\\$var")); // escaped
+        // c:1072 — a QUOTED `$`/`*` stays a literal char, so it is not a
+        // token. This is the case the old ad-hoc scan got wrong: the word
+        // `':completion:*'` lexes to Snull + `:completion:*` + Snull.
+        assert!(!has_real_token("test$var"));
+        assert!(!has_real_token(&format!("{Snull}:completion:*{Snull}")));
+        // c:1072 — `inull` markers are ignored even though `itok` is true.
+        assert!(!has_real_token(&format!("{Snull}abc{Snull}")));
+        assert!(!has_real_token(&format!("{Dnull}abc{Dnull}")));
+        // c:1066-1069 — the `$'…'` introducer is skipped as a null pair.
+        assert!(!has_real_token(&format!("{Qstring}'abc'")));
+        assert!(!has_real_token(&format!("{Stringg}{Snull}abc{Snull}")));
     }
 
     // ---------- Real-port tests ------------------------------------------
