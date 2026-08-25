@@ -182,7 +182,9 @@ pub fn _expand_with(args: &[String]) -> i32 {
             // way that happens here is an unclosed `[` subscript — and `[`
             // is itself one of the metacharacters this test looks for, so
             // the untouched word is also the answer the test wants.
-            &substitute_params(&word).unwrap_or_else(|| word.clone()),
+            &eval_subst(&word, true)
+                .map(|v| v.join(" "))
+                .unwrap_or_else(|| word.clone()),
         )
     {
         return 1;
@@ -241,12 +243,27 @@ pub fn _expand_with(args: &[String]) -> i32 {
         // undone — `exp` keeps the value sh:56 gave it. `collect()` into an
         // `Option` reproduces that all-or-nothing shape: the first `None`
         // abandons the result.
-        if let Some(v) = exp
-            .iter()
-            .map(|e| substitute_params(e).map(|x| escape_whitespace(&x)))
-            .collect::<Option<Vec<String>>>()
-        {
-            exp = v;
+        //
+        // `(e)` is applied PER ELEMENT and each element may fan out into
+        // several words (`${(s.:.)PATH}`, `$(echo hi there)`), so the
+        // per-element results are spliced in order — the same shape the
+        // shell's `exp=( … )` array assignment produces.
+        let ((subst, parse_ok), errored) = eval_quietly(|| {
+            match exp
+                .iter()
+                .map(|e| eval_subst(e, false))
+                .collect::<Option<Vec<Vec<String>>>>()
+            {
+                Some(v) => (v, true),
+                None => (Vec::new(), false),
+            }
+        });
+        if parse_ok && !errored {
+            exp = subst
+                .into_iter()
+                .flatten()
+                .map(|x| escape_whitespace(&x))
+                .collect();
         }
     } else {
         // sh:95  exp=( ${exp:s/\\\$/\$} ) — `:s` replaces the FIRST match only.
@@ -352,8 +369,8 @@ pub fn _expand_with(args: &[String]) -> i32 {
         // eval as sh:110/116; on failure the assignment never runs, so
         // `epre` keeps the empty value `local` gave it at sh:14.
         let epre = match eval_quietly(|| {
-            substitute_params(&opre)
-                .map(|e| glob_subst(&e))
+            eval_subst(&opre, false)
+                .map(|v| v.iter().flat_map(|e| glob_subst(e)).collect::<Vec<String>>())
                 .unwrap_or_default()
         }) {
             (v, false) => v,
@@ -1015,74 +1032,46 @@ fn every_brace_double_escaped(seg: &[char]) -> bool {
     })
 }
 
-/// `${(e)s}` — parameter substitution only. `(e)` does NOT tilde-expand
-/// and does NOT glob, which is exactly why the sh:38 test can look at a
-/// leading `~` and still see it.
+/// `${(e)s}` — the shell's own re-evaluation of a value: parameter,
+/// command and arithmetic substitution, exactly as `(e)` performs them.
+/// Used at sh:38, sh:90 and sh:145.
 ///
-/// Command substitution and arithmetic expansion are not covered; a word
-/// carrying `$(…)` or `$((…))` comes back unchanged.
+/// This is `paramsubst`'s own `(e)` arm, not a re-implementation of it:
+/// `subst_parse_str` is C's parse half (`Src/subst.c:1460`, called from
+/// c:4383/4402/4422/4461), and the `multsub` that follows is the re-scan
+/// C gets from rewinding the stringsubst cursor at c:4469-4470. Running
+/// the real machinery is what makes the nested flags, modifiers and
+/// command substitutions of a live word work here: `${(s.:.)PATH}` fans
+/// out into one element per path entry, `$PATH:h` applies the modifier,
+/// and `$(echo hi there)` yields two words. A previous hand-rolled
+/// scanner recognised only `$NAME` and treated the whole `{…}` body of a
+/// `${…}` as a parameter NAME, so every one of those came back either
+/// unchanged or empty — and sh:128 ("the expansion equals the word")
+/// then handed the word straight to the next completer.
 ///
-/// `None` means "zsh could not have performed this substitution at all".
-/// The case that reaches here is a subscript that is opened and never
-/// closed (`$commands[`): `Src/params.c` `getindex` rejects it as
-/// `invalid subscript`, so the `${(e)…}` is a parse error rather than an
-/// expansion. sh:90 wraps the whole array assignment in
-/// `eval '…' 2>/dev/null`, which means the assignment simply does not
-/// happen and `exp` keeps the word — which sh:128 then recognises as
-/// "the expansion equals the word" and hands on to the next completer.
-/// Substituting `$commands` and dropping the orphan `[` instead made
-/// `echo $commands[<LEFT><TAB>` render three expansion groups where zsh
-/// renders nothing.
-fn substitute_params(s: &str) -> Option<String> {
-    let ch: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < ch.len() {
-        if ch[i] == '\\' && i + 1 < ch.len() {
-            out.push(ch[i]);
-            out.push(ch[i + 1]);
-            i += 2;
-            continue;
-        }
-        if ch[i] != '$' || i + 1 >= ch.len() {
-            out.push(ch[i]);
-            i += 1;
-            continue;
-        }
-        let (name, next) = if ch[i + 1] == '{' {
-            match ch[i + 2..].iter().position(|&c| c == '}') {
-                Some(rel) => (
-                    ch[i + 2..i + 2 + rel].iter().collect::<String>(),
-                    i + 3 + rel,
-                ),
-                None => {
-                    out.push('$');
-                    i += 1;
-                    continue;
-                }
-            }
-        } else {
-            let mut j = i + 1;
-            while j < ch.len() && is_param_name_char(ch[j]) {
-                j += 1;
-            }
-            if j == i + 1 {
-                out.push('$');
-                i += 1;
-                continue;
-            }
-            // `$name[` with no closing `]` — `invalid subscript`.
-            if ch.get(j) == Some(&'[') && !ch[j + 1..].contains(&']') {
-                return None;
-            }
-            (ch[i + 1..j].iter().collect::<String>(), j)
-        };
-        if let Some(v) = getsparam(&name).or_else(|| std::env::var(&name).ok()) {
-            out.push_str(&v);
-        }
-        i = next;
+/// `PREFORK_NOSHWORDSPLIT` is C's `(qt && !nojoin)`-free path: an
+/// ordinary multi-word VALUE stays one word, only a genuine fan-out
+/// splits. `single` is C's `single` argument to `subst_parse_str`, set
+/// for the QUOTED `"${(e)word}"` at sh:38.
+///
+/// `(e)` does NOT tilde-expand and does NOT glob, which is why the sh:38
+/// test can look at a leading `~` and still see it.
+///
+/// `None` means "zsh could not have parsed this at all" — sh:90 wraps
+/// the whole array assignment in `eval '…' 2>/dev/null`, so the
+/// assignment simply does not happen and `exp` keeps the word, which
+/// sh:128 then recognises as "the expansion equals the word".
+fn eval_subst(s: &str, single: bool) -> Option<Vec<String>> {
+    let parsed = crate::ported::subst::subst_parse_str(s, single, false)?;
+    let (joined, parts, isarr, _) = crate::ported::subst::multsub(
+        &parsed,
+        crate::ported::zsh_h::PREFORK_NOSHWORDSPLIT,
+    );
+    if single || !isarr || parts.is_empty() {
+        Some(vec![joined])
+    } else {
+        Some(parts)
     }
-    Some(out)
 }
 
 /// sh:90-92 — `${${(e)exp//\\[ \t\n]/ }//(#b)([ \t\n])/\\$match[1]}`.

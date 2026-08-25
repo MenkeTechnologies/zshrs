@@ -5246,6 +5246,23 @@ impl ZshCompiler {
         // `"\$..."` form via untokenize_preserve_quotes.
         let has_bnull = s.contains('\u{9f}');
 
+        // A Bnull escape that sits INSIDE the subscript brackets (after
+        // the `[`/Inbrack) is safe for the bare-subscript fast paths:
+        // `untokenize` restores it to a literal backslash, and the braced
+        // shape those paths rebuild (`${name[key]}` / `${+name[key]}`) is
+        // handled by paramsubst's subscript arm identically to the
+        // unbraced form. Only an escape BEFORE the `[` (an escaped
+        // `$`/name, e.g. `\$a[x]`, `$a\[x]`) must stay on the runtime
+        // path. Without this, escaped pattern metachars in unbraced
+        // subscripts (`$a[(i)\?]`) reached paramsubst in TOKENIZED form
+        // (Inpar / Bnull) that the array flag-parser couldn't read, so
+        // `\?` was globbed as `?` instead of literal-matched.
+        let bnull_in_subscript = {
+            let inbrack = s.find('\u{91}').or_else(|| s.find('[')); // Inbrack
+            let bnull = s.find('\u{9f}'); // Bnull
+            matches!((inbrack, bnull), (Some(ib), Some(bn)) if bn > ib)
+        };
+
         // A word that BEGINS with a single-quote (Snull `\u{9d}`) marker has
         // its leading `${` / `$name[` as LITERAL text: single quotes make
         // `$`, `{`, `[` ordinary chars. `untokenize(s)` strips the Snull
@@ -6037,7 +6054,21 @@ impl ZshCompiler {
         // `$#NAME` fast-path style: build the braced shape and call
         // BUILTIN_EXPAND_TEXT mode 4 so the runtime's chkset machinery
         // (already correct for `${+...}`) handles it.
-        if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$+") {
+        //
+        // c:Src/params.c:2289-2293 — `fetchvalue` consumes the trailing
+        // `[subscript]` through `getindex()` whatever the subscript text
+        // contains, so a backslash-escaped char inside the brackets
+        // (`$+parameters[a\$b]`, and `$+parameters[${word##*\$}]` from
+        // Completion/Base/Completer/_expand:29) must NOT push the word off
+        // this path: `untokenize` has already restored the Bnull to a
+        // literal `\`, and the braced shape rebuilt below expands it
+        // correctly. Without the `bnull_in_subscript` allowance the
+        // subscript was left as literal text — `$+parameters[a\$b]` gave
+        // `1[a$b]` instead of `0`, and inside `[[ … -eq 0 ]]` the leftover
+        // `[…]` reached the math lexer as an output-format directive
+        // ("bad output format specification", math.rs:2336), which made
+        // `_expand`'s line-29 guard abort mid-condition.
+        if (!has_bnull || bnull_in_subscript) && untoked.len() >= 3 && untoked.starts_with("$+") {
             let rest = &untoked[2..];
             let first = rest.chars().next();
             let bare = if let Some(lb) = rest.find('[') {
@@ -6195,23 +6226,6 @@ impl ZshCompiler {
                 return;
             }
         }
-
-        // A Bnull escape that sits INSIDE the subscript brackets (after
-        // the `[`/Inbrack) is safe for the bare-subscript fast paths:
-        // `untokenize` restores it to a literal backslash, and
-        // `array_index_lookup` rebuilds `${name[key]}` (raw ASCII) which
-        // paramsubst's subscript arm handles identically to the braced
-        // form. Only an escape BEFORE the `[` (an escaped `$`/name, e.g.
-        // `\$a[x]`, `$a\[x]`) must stay on the runtime path. Without
-        // this, escaped pattern metachars in unbraced subscripts
-        // (`$a[(i)\?]`) reached paramsubst in TOKENIZED form (Inpar /
-        // Bnull) that the array flag-parser couldn't read, so `\?` was
-        // globbed as `?` instead of literal-matched.
-        let bnull_in_subscript = {
-            let inbrack = s.find('\u{91}').or_else(|| s.find('[')); // Inbrack
-            let bnull = s.find('\u{9f}'); // Bnull
-            matches!((inbrack, bnull), (Some(ib), Some(bn)) if bn > ib)
-        };
 
         // Fast path: bare `$NAME[KEY]` — without braces, zsh lexes
         // `$NAME` as the variable name and `[KEY]` as a subscript that
