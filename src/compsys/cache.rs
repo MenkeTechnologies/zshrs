@@ -143,6 +143,7 @@ impl CompsysCache {
         // fds 3-9. See crate::lowfd.
         let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(path)?;
+        crate::lowfd::register_internal_fds(); // c:Src/utils.c:2009
         let cache = Self { conn };
         cache.configure_for_speed()?;
         cache.init_schema()?;

@@ -1963,6 +1963,16 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
 
     // fdtable_size = zopenmax(); fdtable[0..2] = FDT_EXTERNAL;              // c:1898-1900
     let _ = crate::ported::compat::zopenmax();
+    // c:1900 — `fdtable[0] = fdtable[1] = fdtable[2] = FDT_EXTERNAL;`.
+    // stdin/stdout/stderr belong to whoever invoked the shell, so they
+    // are marked as somebody else's: c:Src/exec.c:3892-3894 lets `>&N` /
+    // `<&N` duplicate an `FDT_EXTERNAL` descriptor and refuses every
+    // other classified one. The port called `zopenmax()` and stopped,
+    // leaving all three reading `FDT_UNUSED`.
+    for fd in 0..=2 {
+        crate::ported::utils::check_fd_table(fd);
+        crate::ported::utils::fdtable_set(fd, crate::ported::zsh_h::FDT_EXTERNAL);
+    }
 
     crate::ported::options::createoptiontable(); // c:1902
 
@@ -1979,6 +1989,16 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
     init_signals(); // c:1911
     init_bltinmods(); // c:1912
     crate::ported::builtin::init_builtins(); // c:1913
+
+    // `setupvals` above is what opens the shell's own long-lived files —
+    // the log, the history database, the plugin cache — and none of them
+    // arrives through `movefd`, so none of them registered itself the way
+    // c:Src/utils.c:2007-2010 does. Sweep once here, after those opens
+    // and before a single line of user code runs, so the gates that read
+    // the fdtable (c:Src/exec.c:3830-3835 for `exec N>&-`,
+    // c:Src/exec.c:3884-3897 for `>&N` / `<&N`) see the shell's own
+    // descriptors as the shell's.
+    crate::lowfd::register_internal_fds();
 
     // Initialize the ZLE line editor for interactive sessions BEFORE the
     // rc files are sourced, so a user's `bindkey` in .zshrc/.zshenv

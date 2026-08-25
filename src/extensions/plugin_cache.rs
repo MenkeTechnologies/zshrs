@@ -147,6 +147,7 @@ impl PluginCache {
         let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+        crate::lowfd::register_internal_fds(); // c:Src/utils.c:2009
         let cache = Self { conn };
         cache.init_schema()?;
         Ok(cache)

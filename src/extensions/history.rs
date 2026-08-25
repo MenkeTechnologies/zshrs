@@ -73,6 +73,11 @@ impl HistoryEngine {
         // it has to land high in the first place. See crate::lowfd.
         let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(&path)?;
+        // c:Src/utils.c:2007-2010 — every descriptor the shell takes for
+        // itself is recorded as `FDT_INTERNAL`. SQLite never hands back a
+        // descriptor, so the registration cannot ride along with the open
+        // the way `movefd` does; sweep for it instead.
+        crate::lowfd::register_internal_fds();
         let engine = Self { conn };
         engine.init_schema()?;
         let count = engine.count().unwrap_or(0);
