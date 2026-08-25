@@ -777,7 +777,8 @@ impl PersistentShell {
         fs::create_dir_all(&srcdir_stub)?;
         if let Ok(rd) = fs::read_dir(corpus) {
             for entry in rd.filter_map(|e| e.ok()) {
-                let _ = std::os::unix::fs::symlink(entry.path(), srcdir_stub.join(entry.file_name()));
+                let _ =
+                    std::os::unix::fs::symlink(entry.path(), srcdir_stub.join(entry.file_name()));
             }
         }
         if let Some(zsh_src) = ztst_zsh_source() {

@@ -4163,9 +4163,7 @@ mod assoc_search_subscript_assignment {
         assert_parity(r#"typeset -A h; h[a]=1; h[b]=2; print -rl -- ${(kv)h}"#);
         assert_parity(r#"typeset -A h=(a 1); h[a]+=X; print -r -- $h[a]"#);
         assert_parity(r#"typeset -A h; k=(p q); h[${k[2]}]=v; print -rl -- ${(k)h}"#);
-        assert_parity(
-            r#"typeset -A h=(a 1 b 2); print -r -- ${h[(r)2]} ${(k)h[(R)*]} ${h[(i)b]}"#,
-        );
+        assert_parity(r#"typeset -A h=(a 1 b 2); print -r -- ${h[(r)2]} ${(k)h[(R)*]} ${h[(i)b]}"#);
         assert_parity(r#"typeset -rA h=(k v); h[x]=1; print -r -- rc=$?"#);
         assert_parity(r#"typeset -A h; h[]=z; print -r -- rc=$?"#);
         assert_parity(r#"typeset -A h; k=; h[$k]=z; print -rl -- ${(k)h}"#);

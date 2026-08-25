@@ -78,12 +78,14 @@ pub mod tolerant_sort;
 // continue to resolve unchanged after the physical move into
 // `src/ported/`. New code should prefer `crate::ported::<name>`.
 pub use ported::*;
+/// `alias_input_frames` submodule — per-thread record of popped alias
+/// input-stack frames, restoring the reachability C's manually-indexed
+/// `instack` gives `input_hasalias`.
+#[path = "extensions/alias_input_frames.rs"]
+pub mod alias_input_frames;
 /// `aot` submodule.
 #[path = "extensions/aot.rs"]
 pub mod aot;
-/// `startup_signals` submodule.
-#[path = "extensions/startup_signals.rs"]
-pub mod startup_signals;
 /// `arith_compiler` submodule.
 #[path = "extensions/arith_compiler.rs"]
 pub mod arith_compiler;
@@ -123,11 +125,6 @@ pub mod cow_map;
 /// `daemon_presence` submodule.
 #[path = "extensions/daemon_presence.rs"]
 pub mod daemon_presence;
-/// `alias_input_frames` submodule — per-thread record of popped alias
-/// input-stack frames, restoring the reachability C's manually-indexed
-/// `instack` gives `input_hasalias`.
-#[path = "extensions/alias_input_frames.rs"]
-pub mod alias_input_frames;
 /// `errflag_cell` submodule — per-thread storage for `errflag`, restoring
 /// the copy-on-fork semantics C zsh gets for free.
 #[path = "extensions/errflag_cell.rs"]
@@ -155,6 +152,9 @@ pub mod script_cache;
 /// (the stdio buffering C gets from libc's `FILE *shout`).
 #[path = "extensions/shout.rs"]
 pub mod shout;
+/// `startup_signals` submodule.
+#[path = "extensions/startup_signals.rs"]
+pub mod startup_signals;
 /// `subexp_cleanup` submodule — RAII eviction of `__subexp_arr_*`
 /// paramtab scratch temps created during array sub-expression expansion.
 #[path = "extensions/subexp_cleanup.rs"]
@@ -200,9 +200,6 @@ pub mod ast_sexp;
 /// `bash_arrays` submodule — bash sparse-array holes tracker (Rust-only).
 #[path = "extensions/bash_arrays.rs"]
 pub mod bash_arrays;
-/// `ftime` submodule — TEMPORARY per-function timing scaffold (Rust-only).
-#[path = "extensions/ftime.rs"]
-pub mod ftime;
 /// `dap` submodule.
 #[path = "extensions/dap.rs"]
 pub mod dap;
@@ -215,10 +212,6 @@ pub mod dumpers;
 /// `ext_builtins` submodule.
 #[path = "extensions/ext_builtins.rs"]
 pub mod ext_builtins;
-/// `native_cmds` submodule — builtins contributed by the linking binary
-/// (the fat `zshrs-native` build registers `git` / `arb` / `stryke` here).
-#[path = "extensions/native_cmds.rs"]
-pub mod native_cmds;
 /// `fds` submodule.
 #[path = "extensions/fds.rs"]
 pub mod fds;
@@ -229,6 +222,9 @@ pub mod fish_features;
 /// `textDocument/formatting`).
 #[path = "extensions/fmt.rs"]
 pub mod fmt;
+/// `ftime` submodule — TEMPORARY per-function timing scaffold (Rust-only).
+#[path = "extensions/ftime.rs"]
+pub mod ftime;
 /// `func_body_fmt` submodule.
 #[path = "extensions/func_body_fmt.rs"]
 pub mod func_body_fmt;
@@ -250,6 +246,10 @@ pub mod lsp;
 /// `lsp_symbols` submodule.
 #[path = "extensions/lsp_symbols.rs"]
 pub mod lsp_symbols;
+/// `native_cmds` submodule — builtins contributed by the linking binary
+/// (the fat `zshrs-native` build registers `git` / `arb` / `stryke` here).
+#[path = "extensions/native_cmds.rs"]
+pub mod native_cmds;
 // Lexer + parser live in `src/ported/lex.rs` and `src/ported/parse.rs`.
 // Re-export the modules so existing call sites (`zsh::lex::…`,
 // `zsh::parse::…`, `zsh::tokens::…`) keep resolving.

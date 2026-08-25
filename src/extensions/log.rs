@@ -141,10 +141,7 @@ pub fn init_named(filename: &str) {
                 std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(
-                        std::path::Path::new(&tmp_dir)
-                            .join(format!("{filename}.{uid}")),
-                    )
+                    .open(std::path::Path::new(&tmp_dir).join(format!("{filename}.{uid}")))
             })
             .ok();
         // `None` => no file layer at all; the shell runs, just without a log.
@@ -165,7 +162,6 @@ pub fn init_named(filename: &str) {
         //   3. "info" hard default
         let env_filter = std::env::var("ZSHRS_LOG")
             .unwrap_or_else(|_| crate::daemon_presence::read_log_directive());
-
 
         // --- Chrome tracing layer (--features profiling) ---
         #[cfg(feature = "profiling")]

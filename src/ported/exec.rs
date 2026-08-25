@@ -682,8 +682,7 @@ pub fn loadautofn(
         let s = unsafe { &*shf };
         // c:5747 — the spec-path arm needs an ABSOLUTE filename, not just
         // PM_LOADDIR.
-        if s.filename.as_deref().is_some_and(|f| f.starts_with('/'))
-            && (fn_flags & PM_LOADDIR) != 0
+        if s.filename.as_deref().is_some_and(|f| f.starts_with('/')) && (fn_flags & PM_LOADDIR) != 0
         {
             s.filename.clone().map(|d| vec![d])
         } else {
@@ -697,13 +696,13 @@ pub fn loadautofn(
         0,
         &mut dump_hit,
     ); // c:5753 / c:5759
-    // c:5754-5756 — the explicit load directory missed; `-d` (PM_CUR_FPATH,
-    // set by `autoload -d`, c:3383) or an explicit `current_fpath` argument
-    // means "also try $fpath". The Rust port never retried, so
-    // `autoload -dUz $PWD/extra/def; def` and
-    // `def() { autoload -dXUz $PWD/extra; }; def` both reported
-    // "function definition file not found" where zsh loads ./def
-    // (C04funcdef:33,40).
+       // c:5754-5756 — the explicit load directory missed; `-d` (PM_CUR_FPATH,
+       // set by `autoload -d`, c:3383) or an explicit `current_fpath` argument
+       // means "also try $fpath". The Rust port never retried, so
+       // `autoload -dUz $PWD/extra/def; def` and
+       // `def() { autoload -dXUz $PWD/extra; }; def` both reported
+       // "function definition file not found" where zsh loads ./def
+       // (C04funcdef:33,40).
     if looked_up.is_none()
         && loaddir_spec.is_some()
         && (current_fpath != 0 || (fn_flags & crate::ported::zsh_h::PM_CUR_FPATH) != 0)
@@ -3850,7 +3849,7 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     // c:723
     let mut eno: i32 = 0;
     let mut ee: i32; // c:729
-    // c:737 — `arg0 = (char *) peekfirst(args);` — the COMMAND WORD.
+                     // c:737 — `arg0 = (char *) peekfirst(args);` — the COMMAND WORD.
     let arg0 = if args.is_empty() {
         return;
     } else {
@@ -4794,9 +4793,9 @@ impl SubshStateGuard {
         // asks, which is what keeps PRINT_EXIT_VALUE quiet inside
         // `x=$(false)` (c:4309 `&& !subsh`).
         subsh.store(1, Ordering::Relaxed); // c:1154
-        // `force = 1`: C assigns the `opts[]` slots directly, so the
-        // dosetopt gatekeeping (c:743-861, which only guards turning
-        // options ON) must not apply in either direction.
+                                           // `force = 1`: C assigns the `opts[]` slots directly, so the
+                                           // dosetopt gatekeeping (c:743-861, which only guards turning
+                                           // options ON) must not apply in either direction.
         dosetopt(MONITOR, 0, 1); // c:1097 / c:1207
         *shout.lock().unwrap() = 0; // c:1164
         dosetopt(USEZLE, 0, 1); // c:1208
@@ -5994,13 +5993,17 @@ pub fn doshfunc(
 
     let name = shfunc.node.nam.clone(); // c:5827
     let flags = shfunc.node.flags; // c:5828
-    // Lineage tap, before the funcstack frame goes on: the op must
-    // record where the *caller* stands, not the body about to run.
+                                   // Lineage tap, before the funcstack frame goes on: the op must
+                                   // record where the *caller* stands, not the body about to run.
     if crate::provenance::active() {
         // c:5978-5998 — doshargs[0] is the function name, doshargs[1..] the
         // positionals the body will see as $1, $2, …; the chain records those,
         // not the name again.
-        let prov_args: &[String] = if doshargs.len() > 1 { &doshargs[1..] } else { &[] };
+        let prov_args: &[String] = if doshargs.len() > 1 {
+            &doshargs[1..]
+        } else {
+            &[]
+        };
         crate::provenance::on_func_call(
             &name,
             prov_args,
@@ -6688,10 +6691,12 @@ pub fn doshfunc(
         //     if (contflag) zwarn("`continue' active at end of function scope");
         //     if (breaks)   zwarn("`break' active at end of function scope");
         if CONTFLAG.load(Ordering::SeqCst) != 0 {
-            crate::ported::utils::zwarn("`continue' active at end of function scope"); // c:6106
+            crate::ported::utils::zwarn("`continue' active at end of function scope");
+            // c:6106
         }
         if BREAKS.load(Ordering::SeqCst) != 0 {
-            crate::ported::utils::zwarn("`break' active at end of function scope"); // c:6107
+            crate::ported::utils::zwarn("`break' active at end of function scope");
+            // c:6107
         }
         BREAKS.store(funcsave_breaks, Ordering::SeqCst); // c:6109
         CONTFLAG.store(funcsave_contflag, Ordering::SeqCst); // c:6110
@@ -6929,8 +6934,7 @@ impl Drop for EvalFuncstackFrame {
     /// c:6209-6210 — `if (fpushed) funcstack = funcstack->prev;`
     /// c:6215 — `ineval = oineval;`
     fn drop(&mut self) {
-        crate::ported::builtin::ineval
-            .store(self.oineval, std::sync::atomic::Ordering::Relaxed); // c:6215
+        crate::ported::builtin::ineval.store(self.oineval, std::sync::atomic::Ordering::Relaxed); // c:6215
         if self.fpushed {
             crate::ported::modules::parameter::FUNCSTACK
                 .lock()
@@ -10365,8 +10369,7 @@ pub fn execcmd_exec(
                 // builtin this time. */  The `-p` word is consumed here,
                 // same reason as above: compile_head drops it from its own
                 // local list only.
-                if v
-                    .first()
+                if v.first()
                     .map(|w| {
                         let b = w.as_bytes();
                         b.len() >= 2

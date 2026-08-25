@@ -3429,10 +3429,16 @@ mod tests {
         // Order is load-bearing: `_postpatcomps` is tried in insertion order,
         // and compdump writes it in `${(ok)}` order (compdump:61-66).
         assert_eq!(
-            t.postpatcomps.keys().map(String::as_str).collect::<Vec<_>>(),
+            t.postpatcomps
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
             vec!["_*", "gcc-*"]
         );
-        assert_eq!(t.compautos.get("_call_program").map(String::as_str), Some("+X"));
+        assert_eq!(
+            t.compautos.get("_call_program").map(String::as_str),
+            Some("+X")
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -1096,7 +1096,12 @@ pub fn add_match_sub(
             wl,
             None,
             0,
-            flags | if m.is_some_and(|mat| mat.wlen == -2) { CLF_SKIP } else { 0 }, // c:479
+            flags
+                | if m.is_some_and(|mat| mat.wlen == -2) {
+                    CLF_SKIP
+                } else {
+                    0
+                }, // c:479
         );
 
         // c:480-484 — `if (matchlastsub) matchlastsub->next = n;
@@ -3325,25 +3330,25 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
         md.line = 0;
         md.len = next.wlen; // c:2168
         md.olen = next.wlen; // c:2168
-        // c:2169-2170 — `if ((md->str = md->cl->word) && sfx) md->str += md->len;`
-        //
-        // !!! RUST-ONLY REPRESENTATION NOTE !!!
-        // C's `md->str` is a `char *` CURSOR into the word, and `md->len` is how
-        // much of it is still unconsumed; the `+= md->len` under `sfx` parks that
-        // cursor on the RIGHT edge of the unconsumed span, because the suffix
-        // walk reads backwards from it (`q[ind]` with `ind == -1`, c:2326) and
-        // consumes with `md->str -= l` (c:2420). The span itself is identical in
-        // both directions: `[word, word + md->len)`.
-        //
-        // This port has no cursor — `md.str` OWNS the unconsumed span, and the
-        // direction lives in the consumers instead (sub_match trims the tail for
-        // sfx at c:2419-2423, the head otherwise; join_sub offsets by
-        // `nl - mp.wlen` for sfx). So the C bump must NOT be reproduced as a
-        // slice: `word[md.len..]` is the text AFTER the span — empty whenever
-        // `wlen` covers the whole word, which is every node bld_parts builds.
-        // That left every suffix-side sub_match/join_sub with an empty string to
-        // match against, so suffix sub-matching always came up empty.
-        // The ASSIGNMENT is unconditional in C (a NULL word stores NULL).
+                             // c:2169-2170 — `if ((md->str = md->cl->word) && sfx) md->str += md->len;`
+                             //
+                             // !!! RUST-ONLY REPRESENTATION NOTE !!!
+                             // C's `md->str` is a `char *` CURSOR into the word, and `md->len` is how
+                             // much of it is still unconsumed; the `+= md->len` under `sfx` parks that
+                             // cursor on the RIGHT edge of the unconsumed span, because the suffix
+                             // walk reads backwards from it (`q[ind]` with `ind == -1`, c:2326) and
+                             // consumes with `md->str -= l` (c:2420). The span itself is identical in
+                             // both directions: `[word, word + md->len)`.
+                             //
+                             // This port has no cursor — `md.str` OWNS the unconsumed span, and the
+                             // direction lives in the consumers instead (sub_match trims the tail for
+                             // sfx at c:2419-2423, the head otherwise; join_sub offsets by
+                             // `nl - mp.wlen` for sfx). So the C bump must NOT be reproduced as a
+                             // slice: `word[md.len..]` is the text AFTER the span — empty whenever
+                             // `wlen` covers the whole word, which is every node bld_parts builds.
+                             // That left every suffix-side sub_match/join_sub with an empty string to
+                             // match against, so suffix sub-matching always came up empty.
+                             // The ASSIGNMENT is unconditional in C (a NULL word stores NULL).
         md.str = next.word.clone().unwrap_or_default(); // c:2170
         md.alen = next.llen; // c:2173
                              // c:2174-2175 — same cursor/span reasoning for `astr`.
@@ -4348,12 +4353,12 @@ pub fn join_clines(
                     let tn_slot = slot_at_offset(oo_slot, steps);
                     let tn_taken = splice_take_at(tn_slot); // tn …
                     let x = splice_take_at(oo_slot); // c:2737 `x = o`
-                    // c:2740 reads `x`'s anchor after c:2736 `free_cline(o)`
-                    // (C's freed clines keep their fields on the free list).
-                    // The port hands `x` to sub_join, so keep a copy for it.
-                    // Anchor fields only: cmp_anchors reads flags/word/wlen/
-                    // line/llen, and Cline's derived Clone would deep-copy the
-                    // whole cut-out run (and its sub-lists) for nothing.
+                                                     // c:2740 reads `x`'s anchor after c:2736 `free_cline(o)`
+                                                     // (C's freed clines keep their fields on the free list).
+                                                     // The port hands `x` to sub_join, so keep a copy for it.
+                                                     // Anchor fields only: cmp_anchors reads flags/word/wlen/
+                                                     // line/llen, and Cline's derived Clone would deep-copy the
+                                                     // whole cut-out run (and its sub-lists) for nothing.
                     let mut x_head: Option<Cline> = x.as_deref().map(|h| Cline {
                         next: None,
                         flags: h.flags,
@@ -4370,7 +4375,7 @@ pub fn join_clines(
                         max: h.max,
                     });
                     *oo_slot = tn_taken; // c:2730-2733 + c:2738 `o = tn`
-                    // c:2728 — `diff = sub_join(n, o, tn, 1)`.
+                                         // c:2728 — `diff = sub_join(n, o, tn, 1)`.
                     let diff = {
                         let a_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
                         let e_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
@@ -4678,9 +4683,9 @@ pub fn join_clines(
                     let to_slot = slot_at_offset(oo_slot, steps);
                     let to_taken = splice_take_at(to_slot);
                     let x = splice_take_at(oo_slot); // c:2862 / c:2889 `x = o`
-                    // Anchor fields only: cmp_anchors reads flags/word/wlen/
-                    // line/llen, and Cline's derived Clone would deep-copy the
-                    // whole cut-out run (and its sub-lists) for nothing.
+                                                     // Anchor fields only: cmp_anchors reads flags/word/wlen/
+                                                     // line/llen, and Cline's derived Clone would deep-copy the
+                                                     // whole cut-out run (and its sub-lists) for nothing.
                     let mut x_head: Option<Cline> = x.as_deref().map(|h| Cline {
                         next: None,
                         flags: h.flags,
@@ -4697,7 +4702,7 @@ pub fn join_clines(
                         max: h.max,
                     });
                     *oo_slot = to_taken; // c:2863 / c:2890 `o = to`
-                    // c:2856 / c:2883 — `diff = sub_join(n, o, to, 1)`.
+                                         // c:2856 / c:2883 — `diff = sub_join(n, o, to, 1)`.
                     let diff = {
                         let a_ptr: *mut Cline = &mut **(*nn_slot).as_mut().unwrap();
                         let e_ptr: *mut Cline = &mut **(*oo_slot).as_mut().unwrap();
@@ -6491,7 +6496,10 @@ mod tests {
         let n = subs.as_ref().expect("one sub-cline");
         assert_eq!(n.line.as_deref(), Some("_"), "the line string is kept");
         assert_eq!(n.llen, 1);
-        assert!(n.word.is_none() && n.wlen == 0, "c:453 — the word is dropped");
+        assert!(
+            n.word.is_none() && n.wlen == 0,
+            "c:453 — the word is dropped"
+        );
         assert_ne!(n.flags & CLF_LINE, 0, "c:454 — CLF_LINE is stamped");
         assert_eq!(n.flags & CLF_NEW, 0, "CLF_NEW is bld_parts' flag, not this");
         drop(subs);
@@ -6519,7 +6527,11 @@ mod tests {
         let subs = MATCHSUBS.get().unwrap().lock().unwrap();
         let n = subs.as_ref().expect("one sub-cline");
         assert_ne!(n.flags & CLF_SKIP, 0, "c:479 — CLF_SKIP for a `**` matcher");
-        assert_eq!(n.flags & CLF_NEW, 0, "c:479 — CLF_NEW is not one of C's bits");
+        assert_eq!(
+            n.flags & CLF_NEW,
+            0,
+            "c:479 — CLF_NEW is not one of C's bits"
+        );
         drop(subs);
         start_match();
     }
@@ -6583,7 +6595,10 @@ mod tests {
         };
         assert_eq!(check_cmdata(&mut md, 1), 0, "c:2179 — chain not exhausted");
         assert_eq!(md.len, 3, "c:2167 — len is the whole word");
-        assert_eq!(md.str, "abc", "c:2169 — the span itself, not what follows it");
+        assert_eq!(
+            md.str, "abc",
+            "c:2169 — the span itself, not what follows it"
+        );
 
         // The consumer that the empty span broke: a two-character common
         // SUFFIX between the old string `xbc` and the new word `abc`.

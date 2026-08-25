@@ -567,7 +567,8 @@ impl cmdnam_table {
                     .unwrap_or_else(|| dir.to_string());
                 let _ = self
                     .table
-                    .addhashnode2(&name, cmdnam_unhashed(&name, vec![segment])); // c:168
+                    .addhashnode2(&name, cmdnam_unhashed(&name, vec![segment]));
+                // c:168
             }
         }
     }

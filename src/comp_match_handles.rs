@@ -145,30 +145,30 @@ pub struct CompArenaSnapshot {
 fn arena_counters() -> [&'static std::sync::atomic::AtomicI32; 24] {
     use crate::ported::zle::compcore as cc;
     [
-        &cc::mnum,           // c:202
-        &cc::nmatches,       // c:160
-        &cc::smatches,       // c:162
-        &cc::diffmatches,    // c:167
-        &cc::nmessages,      // c:172
-        &cc::onlyexpl,       // c:177
-        &cc::newmatches,     // c:150
-        &cc::hasmatched,     // c:192
-        &cc::hasunmatched,   // c:192
-        &cc::hasallmatch,    // c:145
-        &cc::haspattern,     // c:187
-        &cc::ispattern,      // c:187
-        &cc::maxmlen,        // c:212
-        &cc::minmlen,        // c:212
-        &cc::unambig_mnum,   // c:207
-        &cc::useexact,       // c:36
-        &cc::lenchanged,     // c:54
-        &cc::dolastprompt,   // c:44
-        &cc::hasoldlist,     // c:140
-        &cc::hasperm,        // c:140
-        &cc::permmnum,       // c:155
-        &cc::permgnum,       // c:155
-        &cc::lastpermmnum,   // c:155
-        &cc::lastpermgnum,   // c:155
+        &cc::mnum,         // c:202
+        &cc::nmatches,     // c:160
+        &cc::smatches,     // c:162
+        &cc::diffmatches,  // c:167
+        &cc::nmessages,    // c:172
+        &cc::onlyexpl,     // c:177
+        &cc::newmatches,   // c:150
+        &cc::hasmatched,   // c:192
+        &cc::hasunmatched, // c:192
+        &cc::hasallmatch,  // c:145
+        &cc::haspattern,   // c:187
+        &cc::ispattern,    // c:187
+        &cc::maxmlen,      // c:212
+        &cc::minmlen,      // c:212
+        &cc::unambig_mnum, // c:207
+        &cc::useexact,     // c:36
+        &cc::lenchanged,   // c:54
+        &cc::dolastprompt, // c:44
+        &cc::hasoldlist,   // c:140
+        &cc::hasperm,      // c:140
+        &cc::permmnum,     // c:155
+        &cc::permgnum,     // c:155
+        &cc::lastpermmnum, // c:155
+        &cc::lastpermgnum, // c:155
     ]
 }
 

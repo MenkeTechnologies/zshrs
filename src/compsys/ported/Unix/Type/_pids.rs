@@ -133,7 +133,9 @@ fn pid_column_end(desc: &str) -> usize {
             continue;
         }
         let (p, d, x) = (chars[i + 1], chars[i + 2], chars[i + 3]);
-        if p.eq_ignore_ascii_case(&'p') && d.eq_ignore_ascii_case(&'i') && x.eq_ignore_ascii_case(&'d')
+        if p.eq_ignore_ascii_case(&'p')
+            && d.eq_ignore_ascii_case(&'i')
+            && x.eq_ignore_ascii_case(&'d')
         {
             return i + 4;
         }
@@ -345,10 +347,13 @@ pub fn _pids(args: &[String]) -> i32 {
     if !all.is_empty() {
         // sh:49  zstyle -s … insert-ids out || out=menu
         let curcontext = getsparam("curcontext").unwrap_or_default();
-        let insert_ids = lookupstyle(&format!(":completion:{}:processes", curcontext), "insert-ids")
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "menu".to_string());
+        let insert_ids = lookupstyle(
+            &format!(":completion:{}:processes", curcontext),
+            "insert-ids",
+        )
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "menu".to_string());
         match insert_ids.as_str() {
             // sh:52  menu) compstate[insert]=menu
             "menu" => set_compstate_str("insert", "menu"),
@@ -358,9 +363,7 @@ pub fn _pids(args: &[String]) -> i32 {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0);
                 let prev: i64 = nm.parse().unwrap_or(0);
-                if nmatches != prev + 1
-                    && get_compstate_str("insert").as_deref() != Some("menu")
-                {
+                if nmatches != prev + 1 && get_compstate_str("insert").as_deref() != Some("menu") {
                     set_compstate_str("insert", "");
                 }
             }
@@ -408,7 +411,10 @@ mod tests {
         // sh:31 — n header chars plus the trailing non-blank run, then
         // everything up to the last blank is dropped.
         let n = pid_column_end("  UID   PID  PPID   C STIME TTY");
-        assert_eq!(pid_field_at_column("  501 12345     1   0 ttys000", n), "12345");
+        assert_eq!(
+            pid_field_at_column("  501 12345     1   0 ttys000", n),
+            "12345"
+        );
         // A row that ends inside the PID column cannot match the
         // pattern, so `(M)` yields the empty string.
         assert_eq!(pid_field_at_column("  501 7", n), "");

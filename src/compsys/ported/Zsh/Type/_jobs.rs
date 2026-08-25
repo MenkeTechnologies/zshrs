@@ -229,17 +229,19 @@ pub fn _jobs(args: &[String]) -> i32 {
                 let pat = format!("{}*", s);
                 texts
                     .iter()
-                    .filter(|t| match crate::ported::pattern::patcompile(
-                        &{
-                            let mut tok = pat.clone();
-                            crate::ported::glob::tokenize(&mut tok);
-                            tok
-                        },
-                        0,
-                        None,
-                    ) {
-                        Some(prog) => crate::ported::pattern::pattry(&prog, t),
-                        None => t.starts_with(s),
+                    .filter(|t| {
+                        match crate::ported::pattern::patcompile(
+                            &{
+                                let mut tok = pat.clone();
+                                crate::ported::glob::tokenize(&mut tok);
+                                tok
+                            },
+                            0,
+                            None,
+                        ) {
+                            Some(prog) => crate::ported::pattern::pattry(&prog, t),
+                            None => t.starts_with(s),
+                        }
                     })
                     .count()
             };

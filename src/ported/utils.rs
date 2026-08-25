@@ -2836,9 +2836,7 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> {
     let mut unique = String::with_capacity(6);
     for _ in 0..6 {
         let idx = (mix % 62) as usize;
-        unique.push(
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[idx] as char,
-        );
+        unique.push(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[idx] as char);
         mix /= 62;
     }
     let name = template.replace("XXXXXX", &unique);
@@ -7287,23 +7285,24 @@ pub fn mb_niceformat(
     // The `outstrp` shape (`nicedup`) is still excluded: its result is a Rust
     // `String` handed back to shell-visible code, which has no way to carry a
     // lone 0xe2 byte.
-    let mb_single_byte = outstrp.is_none() && unsafe {
-        // Rust never calls `setlocale` on its own, so run it once from
-        // the environment before asking `nl_langinfo` — otherwise the
-        // startup default ("C") would shadow the process's LC_CTYPE.
-        static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
-        SETLOCALE_DONE.call_once(|| {
-            let empty = std::ffi::CString::new("").unwrap();
-            libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
-        });
-        let cs_ptr = libc::nl_langinfo(libc::CODESET);
-        if cs_ptr.is_null() {
-            false
-        } else {
-            let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
-            !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
-        }
-    };
+    let mb_single_byte = outstrp.is_none()
+        && unsafe {
+            // Rust never calls `setlocale` on its own, so run it once from
+            // the environment before asking `nl_langinfo` — otherwise the
+            // startup default ("C") would shadow the process's LC_CTYPE.
+            static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
+            SETLOCALE_DONE.call_once(|| {
+                let empty = std::ffi::CString::new("").unwrap();
+                libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
+            });
+            let cs_ptr = libc::nl_langinfo(libc::CODESET);
+            if cs_ptr.is_null() {
+                false
+            } else {
+                let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
+                !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
+            }
+        };
 
     // c:5391 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
     while umlen > 0 {
@@ -8352,22 +8351,22 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // to the literal-emit path (c:6418-6434).
         let mut result = String::with_capacity(s.len() * 2);
         let mut prev: char = '\0'; // would-be u[-1]
-        // c:6392 — `if (itok(*u) || instring != QT_BACKSLASH)`: a parser TOKEN
-        // byte "needs to be passed straight through" — never backslashed and
-        // never printability-tested. That half of the test was missing from
-        // this arm, and `meta_chars` cannot express it: it demetafies, and a
-        // token is NOT a metafied pair (this port stores C's token bytes as
-        // the chars U+0080..U+00A2), so `unmetafy_str` re-encodes one as its
-        // two UTF-8 bytes. `Inbrace` therefore fell through to the c:6435
-        // not-printable arm and `quotename(Inbrace)` produced `$'\302\217'`
-        // where C produces the raw byte that `untokenize` then maps back to
-        // `{` — which is what the c:1931-2218 brace tail in zle_tricky.c
-        // stores in `brbeg` (`ls /usr/{b<TAB>`).
-        // Split the input at token chars, hand only the runs BETWEEN them to
-        // `meta_chars`, and remember which units were tokens. A `Meta` byte is
-        // deliberately NOT a split point (C gives it IMETA but not ITOK,
-        // utils.c:4196-4201), and its partner byte is skipped so a metafied
-        // pair whose second byte lands in the token range stays intact.
+                                   // c:6392 — `if (itok(*u) || instring != QT_BACKSLASH)`: a parser TOKEN
+                                   // byte "needs to be passed straight through" — never backslashed and
+                                   // never printability-tested. That half of the test was missing from
+                                   // this arm, and `meta_chars` cannot express it: it demetafies, and a
+                                   // token is NOT a metafied pair (this port stores C's token bytes as
+                                   // the chars U+0080..U+00A2), so `unmetafy_str` re-encodes one as its
+                                   // two UTF-8 bytes. `Inbrace` therefore fell through to the c:6435
+                                   // not-printable arm and `quotename(Inbrace)` produced `$'\302\217'`
+                                   // where C produces the raw byte that `untokenize` then maps back to
+                                   // `{` — which is what the c:1931-2218 brace tail in zle_tricky.c
+                                   // stores in `brbeg` (`ls /usr/{b<TAB>`).
+                                   // Split the input at token chars, hand only the runs BETWEEN them to
+                                   // `meta_chars`, and remember which units were tokens. A `Meta` byte is
+                                   // deliberately NOT a split point (C gives it IMETA but not ITOK,
+                                   // utils.c:4196-4201), and its partner byte is skipped so a metafied
+                                   // pair whose second byte lands in the token range stays intact.
         let (mcs, tokmask): (Vec<MetaChar>, Vec<bool>) = {
             let mut v: Vec<MetaChar> = Vec::with_capacity(s.len());
             let mut m: Vec<bool> = Vec::with_capacity(s.len());

@@ -72,7 +72,10 @@ where
 /// nor a ported builtin, so it must not allocate. A read lock on a `BTreeMap`
 /// of a handful of short keys is a few compares.
 pub fn is_registered(name: &str) -> bool {
-    table().read().map(|t| t.contains_key(name)).unwrap_or(false)
+    table()
+        .read()
+        .map(|t| t.contains_key(name))
+        .unwrap_or(false)
 }
 
 /// Registered *and* not masked by `disable NAME`.

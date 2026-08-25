@@ -57,13 +57,12 @@ use crate::ported::params::{gethkparam, gethparam, getsparam};
 use crate::ported::prompt::match_highlight;
 use crate::ported::utils::getshfunc;
 use crate::ported::zsh_h::{
-    isset, lextok, zattr, AMPER, AMPERBANG, AUTOCD, BAR_TOK, CASE, CLOBBER, DAMPER, DBAR, DINANG,
-    DINANGDASH, DINBRACK, DINPAR, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG, DOUTANGBANG, DOUTBRACK,
-    BANG_TOK, BARAMP, DOUTPAR, DSEMI, ENDINPUT, ENVARRAY, ENVSTRING, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG,
-    INOUTPAR, INPAR_TOK,
-    INTERACTIVECOMMENTS, IS_REDIROP, LEXERR, LEXFLAGS_ACTIVE, LEXFLAGS_ZLE, NEWLIN, OUTANGAMP,
-    OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, SEMI, SEMIAMP, SEMIBAR, SEPER,
-    STRING_LEX, TRINANG, TYPESET,
+    isset, lextok, zattr, AMPER, AMPERBANG, AUTOCD, BANG_TOK, BARAMP, BAR_TOK, CASE, CLOBBER,
+    DAMPER, DBAR, DINANG, DINANGDASH, DINBRACK, DINPAR, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
+    DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ENDINPUT, ENVARRAY, ENVSTRING, INANGAMP, INANG_TOK,
+    INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK, INTERACTIVECOMMENTS, IS_REDIROP, LEXERR,
+    LEXFLAGS_ACTIVE, LEXFLAGS_ZLE, NEWLIN, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK,
+    OUTBRACE_TOK, OUTPAR_TOK, SEMI, SEMIAMP, SEMIBAR, SEPER, STRING_LEX, TRINANG, TYPESET,
 };
 use crate::zle_file_tester::{
     expand_one_no_cmdsubst, FileTester, IsErr, IsFile, OperationContext, RedirectionMode,
@@ -157,46 +156,46 @@ pub enum HighlightRole {
     // f-sy-h is what this engine replaces on a daily-driver rc, so every
     // style key it paints needs a role here or the two cannot agree.
     // ------------------------------------------------------------------
-    precommand,          // fast-highlight:67  fg=green
-    alias_,              // fast-highlight:61  fg=green
-    suffix_alias,        // fast-highlight:62  fg=green
-    global_alias,        // fast-highlight:63  bg=blue
-    builtin_,            // fast-highlight:64  fg=green
-    function_,           // fast-highlight:65  fg=green
-    hashed_command,      // fast-highlight:69  fg=green
-    path,                // fast-highlight:70  fg=magenta
-    path_to_dir,         // fast-highlight:71  fg=magenta,underline
-    globbing,            // fast-highlight:73  fg=blue,bold
-    history_expansion,   // fast-highlight:75  fg=blue,bold
+    precommand,           // fast-highlight:67  fg=green
+    alias_,               // fast-highlight:61  fg=green
+    suffix_alias,         // fast-highlight:62  fg=green
+    global_alias,         // fast-highlight:63  bg=blue
+    builtin_,             // fast-highlight:64  fg=green
+    function_,            // fast-highlight:65  fg=green
+    hashed_command,       // fast-highlight:69  fg=green
+    path,                 // fast-highlight:70  fg=magenta
+    path_to_dir,          // fast-highlight:71  fg=magenta,underline
+    globbing,             // fast-highlight:73  fg=blue,bold
+    history_expansion,    // fast-highlight:75  fg=blue,bold
     double_hyphen_option, // fast-highlight:77 fg=cyan
-    dquoted,             // fast-highlight:80  fg=yellow (double-quoted-argument)
-    dollar_quoted,       // fast-highlight:81  fg=yellow (dollar-quoted-argument)
-    dollar_in_dquote,    // fast-highlight:82  fg=cyan
-    variable,            // fast-highlight:86  fg=113
-    mathvar,             // fast-highlight:87  fg=blue,bold
-    mathnum,             // fast-highlight:88  fg=magenta
-    matherr,             // fast-highlight:89  fg=red
-    assign,              // fast-highlight:84  none
+    dquoted,              // fast-highlight:80  fg=yellow (double-quoted-argument)
+    dollar_quoted,        // fast-highlight:81  fg=yellow (dollar-quoted-argument)
+    dollar_in_dquote,     // fast-highlight:82  fg=cyan
+    variable,             // fast-highlight:86  fg=113
+    mathvar,              // fast-highlight:87  fg=blue,bold
+    mathnum,              // fast-highlight:88  fg=magenta
+    matherr,              // fast-highlight:89  fg=red
+    assign,               // fast-highlight:84  none
     assign_array_bracket, // fast-highlight:90 fg=green
-    here_string_tri,     // fast-highlight:96  fg=yellow
-    here_string_text,    // fast-highlight:97  bg=18
-    single_sq_bracket,   // fast-highlight:106 fg=green
-    double_sq_bracket,   // fast-highlight:107 fg=green
-    double_paren,        // fast-highlight:108 fg=yellow
-    bracket_level_1,     // fast-highlight:103 fg=green,bold
-    bracket_level_2,     // fast-highlight:104 fg=yellow,bold
-    bracket_level_3,     // fast-highlight:105 fg=cyan,bold
-    case_input,          // fast-highlight:99  fg=green
-    case_parentheses,    // fast-highlight:100 fg=yellow
-    case_condition,      // fast-highlight:101 bg=blue
-    globbing_ext,        // fast-highlight:74  fg=13
-    here_string_var,     // fast-highlight:98  fg=cyan,bg=18
-    for_loop_variable,   // fast-highlight:92  none
-    for_loop_operator,   // fast-highlight:93  fg=yellow
-    for_loop_number,     // fast-highlight:94  fg=magenta
-    for_loop_separator,  // fast-highlight:95  fg=yellow,bold
-    correct_subtle,      // fast-highlight:109 fg=12
-    incorrect_subtle,    // fast-highlight:110 fg=red
+    here_string_tri,      // fast-highlight:96  fg=yellow
+    here_string_text,     // fast-highlight:97  bg=18
+    single_sq_bracket,    // fast-highlight:106 fg=green
+    double_sq_bracket,    // fast-highlight:107 fg=green
+    double_paren,         // fast-highlight:108 fg=yellow
+    bracket_level_1,      // fast-highlight:103 fg=green,bold
+    bracket_level_2,      // fast-highlight:104 fg=yellow,bold
+    bracket_level_3,      // fast-highlight:105 fg=cyan,bold
+    case_input,           // fast-highlight:99  fg=green
+    case_parentheses,     // fast-highlight:100 fg=yellow
+    case_condition,       // fast-highlight:101 bg=blue
+    globbing_ext,         // fast-highlight:74  fg=13
+    here_string_var,      // fast-highlight:98  fg=cyan,bg=18
+    for_loop_variable,    // fast-highlight:92  none
+    for_loop_operator,    // fast-highlight:93  fg=yellow
+    for_loop_number,      // fast-highlight:94  fg=magenta
+    for_loop_separator,   // fast-highlight:95  fg=yellow,bold
+    correct_subtle,       // fast-highlight:109 fg=12
+    incorrect_subtle,     // fast-highlight:110 fg=red
 }
 
 /// fish:692-693 — `ColorArray`: one `HighlightSpec` per character of the buffer.
@@ -303,7 +302,7 @@ fn get_default_style(role: HighlightRole) -> &'static str {
         // Anything still routed through the generic operator role paints like a
         // glob, which is what f-sy-h does for a word carrying one.
         HighlightRole::operat | HighlightRole::globbing => "fg=blue,bold", // fast-highlight:73
-        HighlightRole::escape => "fg=cyan",                               // fast-highlight:83
+        HighlightRole::escape => "fg=cyan",                                // fast-highlight:83
         HighlightRole::quote | HighlightRole::dquoted | HighlightRole::dollar_quoted => {
             "fg=yellow" // fast-highlight:79-81
         }
@@ -324,21 +323,21 @@ fn get_default_style(role: HighlightRole) -> &'static str {
         HighlightRole::here_string_tri => "fg=yellow",                            // :96
         HighlightRole::here_string_text => "bg=18",                               // :97
         HighlightRole::single_sq_bracket | HighlightRole::double_sq_bracket => "fg=green", // :106-107
-        HighlightRole::double_paren => "fg=yellow",                               // :108
-        HighlightRole::bracket_level_1 => "fg=green,bold",                        // :103
-        HighlightRole::bracket_level_2 => "fg=yellow,bold",                       // :104
-        HighlightRole::bracket_level_3 => "fg=cyan,bold",                         // :105
-        HighlightRole::case_input => "fg=green",                                  // :99
-        HighlightRole::case_parentheses => "fg=yellow",                           // :100
-        HighlightRole::case_condition => "bg=blue",                               // :101
-        HighlightRole::globbing_ext => "fg=13",                                   // :74
-        HighlightRole::here_string_var => "fg=cyan,bg=18",                        // :98
-        HighlightRole::for_loop_variable => "none",                               // :92
-        HighlightRole::for_loop_operator => "fg=yellow",                          // :93
-        HighlightRole::for_loop_number => "fg=magenta",                           // :94
-        HighlightRole::for_loop_separator => "fg=yellow,bold",                    // :95
-        HighlightRole::correct_subtle => "fg=12",                                 // :109
-        HighlightRole::incorrect_subtle => "fg=red",                              // :110
+        HighlightRole::double_paren => "fg=yellow",                                        // :108
+        HighlightRole::bracket_level_1 => "fg=green,bold",                                 // :103
+        HighlightRole::bracket_level_2 => "fg=yellow,bold",                                // :104
+        HighlightRole::bracket_level_3 => "fg=cyan,bold",                                  // :105
+        HighlightRole::case_input => "fg=green",                                           // :99
+        HighlightRole::case_parentheses => "fg=yellow",                                    // :100
+        HighlightRole::case_condition => "bg=blue",                                        // :101
+        HighlightRole::globbing_ext => "fg=13",                                            // :74
+        HighlightRole::here_string_var => "fg=cyan,bg=18",                                 // :98
+        HighlightRole::for_loop_variable => "none",                                        // :92
+        HighlightRole::for_loop_operator => "fg=yellow",                                   // :93
+        HighlightRole::for_loop_number => "fg=magenta",                                    // :94
+        HighlightRole::for_loop_separator => "fg=yellow,bold",                             // :95
+        HighlightRole::correct_subtle => "fg=12",                                          // :109
+        HighlightRole::incorrect_subtle => "fg=red",                                       // :110
         _ => "none",
     }
 }
@@ -989,7 +988,10 @@ fn fsh_has_quote(tokenized: &str) -> bool {
 /// fast-highlight:1045 — `*([^\\]##|"(#b)"|"(#B)"|"(#m)"|"(#c")*`: does the word
 /// carry an EXTENDED glob operator?
 fn fsh_is_globbing_ext(word: &str) -> bool {
-    if word.contains("(#b)") || word.contains("(#B)") || word.contains("(#m)") || word.contains("(#c")
+    if word.contains("(#b)")
+        || word.contains("(#B)")
+        || word.contains("(#m)")
+        || word.contains("(#c")
     {
         return true;
     }
@@ -1475,7 +1477,10 @@ pub fn color_string_internal(
                         // digit — and never the value, so `$'\U110000'` is a
                         // plain escape there and was red here.
                         let _ = max_val;
-                        if res == 0 && in_pos == first_digit && matches!(escaped_char, 'u' | 'U' | 'x' | 'X') {
+                        if res == 0
+                            && in_pos == first_digit
+                            && matches!(escaped_char, 'u' | 'U' | 'x' | 'X')
+                        {
                             fill_color = HighlightRole::error;
                         }
 
@@ -2070,7 +2075,8 @@ impl<'s> Highlighter<'s> {
                     after_decoration = true;
                 }
                 STRING_LEX
-                    if afp.as_deref() == Some("exec") && fsh_afp_option(&t.clean_text(), "cla-") =>
+                    if afp.as_deref() == Some("exec")
+                        && fsh_afp_option(&t.clean_text(), "cla-") =>
                 {
                     // fast-highlight:563 — `exec -c|-l|-a|-`
                     self.color_span(t.start, t.end, HighlightRole::option);
@@ -2169,7 +2175,8 @@ impl<'s> Highlighter<'s> {
                             }
                         }
                         if let Some(c) = chroma {
-                            if self.visit_chroma_argument(t, c, &mut chroma_words, &mut chroma_skip) {
+                            if self.visit_chroma_argument(t, c, &mut chroma_words, &mut chroma_skip)
+                            {
                                 i += 1;
                                 continue;
                             }
@@ -2435,7 +2442,8 @@ impl<'s> Highlighter<'s> {
         }
         // fast-highlight:327-335 — a directory is `dirpath`, styled
         // `path-to-dir` (fast-highlight:694).
-        let dir = crate::zle_file_tester::path_apply_working_directory(word, &self.working_directory);
+        let dir =
+            crate::zle_file_tester::path_apply_working_directory(word, &self.working_directory);
         if std::fs::metadata(&dir).map(|m| m.is_dir()).unwrap_or(false) {
             return Some(HighlightRole::path_to_dir);
         }
@@ -2761,7 +2769,10 @@ impl<'s> Highlighter<'s> {
                     &path,
                     &self.working_directory,
                 );
-                if std::fs::metadata(&abs).map(|m| m.is_file()).unwrap_or(false) {
+                if std::fs::metadata(&abs)
+                    .map(|m| m.is_file())
+                    .unwrap_or(false)
+                {
                     self.color_span(t.start, t.end, HighlightRole::correct_subtle);
                     return true;
                 }
@@ -2922,8 +2933,7 @@ impl<'s> Highlighter<'s> {
             return Some(HighlightRole::variable);
         }
         // fast-highlight:1062-1063 — history expansion (`!!`, `!ls`, `!$`).
-        let histchar =
-            crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
+        let histchar = crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
         if histchar != 0 {
             let mut it = clean.chars();
             if it.next() == char::from_u32(histchar as u32) && it.next().is_some() {
@@ -2948,8 +2958,10 @@ impl<'s> Highlighter<'s> {
             return None; // fish:935-937
         }
         let expanded = fsh_expand_for_path(src)?;
-        let abs =
-            crate::zle_file_tester::path_apply_working_directory(&expanded, &self.working_directory);
+        let abs = crate::zle_file_tester::path_apply_working_directory(
+            &expanded,
+            &self.working_directory,
+        );
         match std::fs::metadata(&abs) {
             Ok(md) if md.is_dir() => Some(HighlightRole::path_to_dir),
             Ok(_) => Some(HighlightRole::path),
@@ -2964,7 +2976,6 @@ impl<'s> Highlighter<'s> {
 
         let Some(target) = target else { return };
         let target_text = target.text.clone().unwrap_or_default();
-
 
         // fish:982-1013 validates the target and paints an unwritable / missing
         // one `unknown-token`.  f-sy-h has no such check: a redirection target
@@ -3039,7 +3050,8 @@ impl<'s> Highlighter<'s> {
             let c = self.buff_chars[i];
             if c.is_alphabetic() || c == '_' {
                 let mut j = i;
-                while j < hi && (self.buff_chars[j].is_alphanumeric() || self.buff_chars[j] == '_') {
+                while j < hi && (self.buff_chars[j].is_alphanumeric() || self.buff_chars[j] == '_')
+                {
                     j += 1;
                 }
                 self.color_span(i, j, HighlightRole::for_loop_variable);
@@ -3126,7 +3138,8 @@ impl<'s> Highlighter<'s> {
                 i = j;
             } else if c.is_alphabetic() || c == '_' {
                 let mut j = i;
-                while j < hi && (self.buff_chars[j].is_alphanumeric() || self.buff_chars[j] == '_') {
+                while j < hi && (self.buff_chars[j].is_alphanumeric() || self.buff_chars[j] == '_')
+                {
                     j += 1;
                 }
                 let name: String = self.buff_chars[i..j].iter().collect();
@@ -3144,7 +3157,8 @@ impl<'s> Highlighter<'s> {
                     j += 1;
                 }
                 let name_lo = j;
-                while j < hi && (self.buff_chars[j].is_alphanumeric() || self.buff_chars[j] == '_') {
+                while j < hi && (self.buff_chars[j].is_alphanumeric() || self.buff_chars[j] == '_')
+                {
                     j += 1;
                 }
                 let name: String = self.buff_chars[name_lo..j].iter().collect();
@@ -3207,7 +3221,11 @@ impl<'s> Highlighter<'s> {
             }
             match c {
                 '"' if quoting != Q::Single && quoting != Q::DollarSingle => {
-                    quoting = if quoting == Q::Double { Q::None_ } else { Q::Double };
+                    quoting = if quoting == Q::Double {
+                        Q::None_
+                    } else {
+                        Q::Double
+                    };
                 }
                 '\'' if quoting != Q::Double => {
                     quoting = match quoting {
@@ -3478,7 +3496,6 @@ mod tests {
         assert_eq!(words, vec!["echo", "hello", "world"], "spans {spans:?}");
     }
 
-
     // ======================================================================
     // fast-syntax-highlighting parity.
     //
@@ -3508,7 +3525,14 @@ mod tests {
     #[test]
     fn precommand_table_is_exact_membership() {
         for yes in [
-            "builtin", "command", "exec", "nocorrect", "noglob", "pkexec", "sudo", "doas",
+            "builtin",
+            "command",
+            "exec",
+            "nocorrect",
+            "noglob",
+            "pkexec",
+            "sudo",
+            "doas",
         ] {
             assert!(fsh_is_precommand(yes), "{yes} is a precommand");
         }
@@ -3525,8 +3549,14 @@ mod tests {
         assert!(fsh_afp_option("-pv", "pvV-"));
         assert!(fsh_afp_option("--", "pvV-"));
         assert!(fsh_afp_option("-a", "cla-"));
-        assert!(!fsh_afp_option("-x", "pvV-"), "-x is not a `command` option");
-        assert!(!fsh_afp_option("-", "pvV-"), "a bare - has no option letters");
+        assert!(
+            !fsh_afp_option("-x", "pvV-"),
+            "-x is not a `command` option"
+        );
+        assert!(
+            !fsh_afp_option("-", "pvV-"),
+            "a bare - has no option letters"
+        );
         assert!(!fsh_afp_option("v", "pvV-"), "no leading hyphen");
         assert!(!fsh_afp_option("", "pvV-"));
     }
@@ -3570,12 +3600,17 @@ mod tests {
     fn reserved_words_resolve_through_the_type_ladder() {
         let _g = lock();
         assert_eq!(role_of("if true; then :; fi", "if"), HighlightRole::keyword);
-        assert_eq!(role_of("while :; do :; done", "while"), HighlightRole::keyword);
+        assert_eq!(
+            role_of("while :; do :; done", "while"),
+            HighlightRole::keyword
+        );
         assert_eq!(
             role_of("nocorrect ls", "nocorrect"),
             HighlightRole::precommand
         );
-        for decl in ["typeset", "declare", "local", "export", "readonly", "integer"] {
+        for decl in [
+            "typeset", "declare", "local", "export", "readonly", "integer",
+        ] {
             let line = format!("{decl} x");
             assert_eq!(
                 role_of(&line, decl),
@@ -3682,7 +3717,12 @@ mod tests {
     #[test]
     fn every_separator_is_a_commandseparator() {
         let _g = lock();
-        for (line, at) in [("ls && ls", 3), ("ls || ls", 3), ("ls; ls", 2), ("ls | ls", 3)] {
+        for (line, at) in [
+            ("ls && ls", 3),
+            ("ls || ls", 3),
+            ("ls; ls", 2),
+            ("ls | ls", 3),
+        ] {
             let r = roles(line);
             assert_eq!(
                 r[at],
@@ -3700,10 +3740,7 @@ mod tests {
     #[test]
     fn paths_are_styled_only_when_they_exist() {
         let _g = lock();
-        assert_eq!(
-            role_of("cat /etc/hosts", "/etc/hosts"),
-            HighlightRole::path
-        );
+        assert_eq!(role_of("cat /etc/hosts", "/etc/hosts"), HighlightRole::path);
         assert_eq!(role_of("cat /tmp", "/tmp"), HighlightRole::path_to_dir);
         assert_eq!(
             role_of("cat /nonexistent_zzqwx", "/nonexistent_zzqwx"),
@@ -3750,10 +3787,7 @@ mod tests {
     #[test]
     fn history_expansion_needs_a_word_after_the_bang() {
         let _g = lock();
-        assert_eq!(
-            role_of("print !!", "!!"),
-            HighlightRole::history_expansion
-        );
+        assert_eq!(role_of("print !!", "!!"), HighlightRole::history_expansion);
         assert_eq!(
             role_of("sudo !!", "!!"),
             HighlightRole::history_expansion,
@@ -3818,10 +3852,7 @@ mod tests {
     fn here_string_operator_and_text() {
         let _g = lock();
         assert_eq!(role_of("cat <<< hi", "<<<"), HighlightRole::here_string_tri);
-        assert_eq!(
-            role_of("cat <<< hi", "hi"),
-            HighlightRole::here_string_text
-        );
+        assert_eq!(role_of("cat <<< hi", "hi"), HighlightRole::here_string_text);
         assert_eq!(
             role_of("cat <<< $HOME", "$HOME"),
             HighlightRole::here_string_var
@@ -4189,4 +4220,3 @@ mod tests {
         assert_eq!(c2, None);
     }
 }
-

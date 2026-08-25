@@ -29,8 +29,8 @@
 //! port out of compcore.rs (where it had been parked under the
 //! freeze).
 
-use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Mutex;
 
 use crate::ported::glob::{remnulargs, tokenize};
@@ -1510,21 +1510,21 @@ pub fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32)
         return 1;
     }
     dat.match_ = matcher; // c:856 `dat.match = match = cpcmatcher(match)`
-    // In-editor capture shadow (the LSP completion path — see
-    // `docs/IN_EDITOR_COMPSYS_COMPLETION.md` +
-    // `crate::compsys::in_editor::COMPADD_CAPTURE_BUFFER`). While the
-    // buffer is `Some`, the proposed matches go into it as
-    // `CompsysMatch` records and never reach ZLE state.
-    //
-    // The hook sits HERE, after the c:632-820 flag loop, rather than at
-    // the top of the builtin: `dat` + `matches` are the parsed result,
-    // so the capture inherits this port's flag semantics for free
-    // (bundled flags like `-2V-default-`, `-o order`'s argument, `-a`
-    // array mode, `-d` display array, the `-`/`--` terminators). An
-    // earlier version re-parsed `argv` on the in_editor side and had to
-    // track that table by hand; it silently mistook `-o nosort`'s
-    // argument for a match, so `git --<tab>` in the editor proposed
-    // `nosort`, `-J`, `-default-`, `_a_11`.
+                          // In-editor capture shadow (the LSP completion path — see
+                          // `docs/IN_EDITOR_COMPSYS_COMPLETION.md` +
+                          // `crate::compsys::in_editor::COMPADD_CAPTURE_BUFFER`). While the
+                          // buffer is `Some`, the proposed matches go into it as
+                          // `CompsysMatch` records and never reach ZLE state.
+                          //
+                          // The hook sits HERE, after the c:632-820 flag loop, rather than at
+                          // the top of the builtin: `dat` + `matches` are the parsed result,
+                          // so the capture inherits this port's flag semantics for free
+                          // (bundled flags like `-2V-default-`, `-o order`'s argument, `-a`
+                          // array mode, `-d` display array, the `-`/`--` terminators). An
+                          // earlier version re-parsed `argv` on the in_editor side and had to
+                          // track that table by hand; it silently mistook `-o nosort`'s
+                          // argument for a match, so `git --<tab>` in the editor proposed
+                          // `nosort`, `-J`, `-default-`, `_a_11`.
     if crate::compsys::in_editor::try_capture_compadd(&dat, matches) {
         return 0; // mimic "matches were added" status
     }
@@ -1706,13 +1706,13 @@ pub fn do_comp_vars(
                 return 0;
             } // c:965
               // c:968 — singsub(&sa); — caller already expanded.
-            // c:969 — the operand is compiled AS GIVEN. Both callers hand
-            // it over already tokenized: `bin_compset` runs
-            // `tokenize`/`remnulargs` in its own switch (c:1192-1196), and
-            // `cond_range` gets what `cond_str(a, n, 1)` (c:1688) kept from
-            // the lexer / `$~`'s GLOB_SUBST.
+              // c:969 — the operand is compiled AS GIVEN. Both callers hand
+              // it over already tokenized: `bin_compset` runs
+              // `tokenize`/`remnulargs` in its own switch (c:1192-1196), and
+              // `cond_range` gets what `cond_str(a, n, 1)` (c:1688) kept from
+              // the lexer / `$~`'s GLOB_SUBST.
             let pp = patcompile(sa, PAT_HEAPDUP, None); // c:969
-               // c:971-977 — walk compwords backward looking for sa match.
+                                                        // c:971-977 — walk compwords backward looking for sa match.
             i -= 1; // c:971
             while i >= 0 {
                 if let Some(ref prog) = pp {
@@ -1819,8 +1819,8 @@ pub fn do_comp_vars(
             if na == 0 {
                 return 0;
             } // c:1045
-            // c:1047 — compiled AS GIVEN; see the note at c:969 above for why
-            // this must NOT tokenize again.
+              // c:1047 — compiled AS GIVEN; see the note at c:969 above for why
+              // this must NOT tokenize again.
             let pp = match patcompile(sa, PAT_HEAPDUP, None) {
                 Some(p) => p,
                 None => return 0,
@@ -3149,18 +3149,18 @@ pub fn comp_wrapper(
         restore(&COMPQUOTE, oq); // c:1608
         restore(&COMPQUOTING, oqi); // c:1610
         restore(&COMPQSTACK, oqs); // c:1612
-        // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
-        // In C, `$compstate[all_quotes]` has NO storage of its own: its
-        // `compkparams` row is `{ "all_quotes", PM_SCALAR | PM_READONLY,
-        // NULL, GSU(compqstack_gsu) }` (c:1299) and `compqstack_gsu`
-        // (c:1242-1243) routes every read through `get_compqstack` (c:1479)
-        // against the live `compqstack` global — so c:1612's assignment IS
-        // the parameter update. zshrs splits the two: a single-key
-        // `${compstate[KEY]}` read comes straight out of
-        // `paramtab_hashed_storage` (`src/ported/subst.rs:7034-7044`), which
-        // special-cases only `nmatches`, so nothing ever published
-        // `all_quotes` and it read EMPTY where zsh gives `\`, `"`, `'`.
-        // Run the getter and store its result at each `compqstack` write.
+                                   // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
+                                   // In C, `$compstate[all_quotes]` has NO storage of its own: its
+                                   // `compkparams` row is `{ "all_quotes", PM_SCALAR | PM_READONLY,
+                                   // NULL, GSU(compqstack_gsu) }` (c:1299) and `compqstack_gsu`
+                                   // (c:1242-1243) routes every read through `get_compqstack` (c:1479)
+                                   // against the live `compqstack` global — so c:1612's assignment IS
+                                   // the parameter update. zshrs splits the two: a single-key
+                                   // `${compstate[KEY]}` read comes straight out of
+                                   // `paramtab_hashed_storage` (`src/ported/subst.rs:7034-7044`), which
+                                   // special-cases only `nmatches`, so nothing ever published
+                                   // `all_quotes` and it read EMPTY where zsh gives `\`, `"`, `'`.
+                                   // Run the getter and store its result at each `compqstack` write.
         compcore::set_compstate_str("all_quotes", &get_compqstack(std::ptr::null_mut()));
         restore(&AUTOQ, oaq); // c:1614
         if let Ok(mut g) = lock_vec(&COMPWORDS).lock() {
@@ -3417,7 +3417,9 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
         None => {
             let mut bits = vec![0i32; BN_SIZE];
             for c in cotab.iter() {
-                bits.push(i32::from((c.flags & crate::ported::module::CONDF_ADDED) != 0));
+                bits.push(i32::from(
+                    (c.flags & crate::ported::module::CONDF_ADDED) != 0,
+                ));
             }
             *enables = Some(bits);
             0
@@ -3580,9 +3582,7 @@ mod tests {
     /// `$compstate[all_quotes]` (c:1299 `compqstack_gsu`) serves.
     #[test]
     fn get_compqstack_translates_each_quoting_level() {
-        use crate::ported::zsh_h::{
-            QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_SINGLE,
-        };
+        use crate::ported::zsh_h::{QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_SINGLE};
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let put = |s: &str| {

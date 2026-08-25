@@ -2127,11 +2127,11 @@ fn par_if() -> Option<ZshCommand> {
         let cond = parse_program_until(Some(&[THEN]), false);
         COND_LIST_DEPTH.with(|d| d.set(d.get() - 1));
         set_incmdpos(true); // c:1438
-        // c:1440-1443 — `if (tok == ENDINPUT) { cmdpop();
-        // YYERRORV(oecused); }`. YYERRORV only sets LEXERR; the message
-        // ("parse error near `if'") comes from par_list's yyerror, so don't
-        // invent one here — `eval "if"` must print zsh's wording
-        // (A01grammar.ztst:505).
+                            // c:1440-1443 — `if (tok == ENDINPUT) { cmdpop();
+                            // YYERRORV(oecused); }`. YYERRORV only sets LEXERR; the message
+                            // ("parse error near `if'") comes from par_list's yyerror, so don't
+                            // invent one here — `eval "if"` must print zsh's wording
+                            // (A01grammar.ztst:505).
         if tok() == ENDINPUT {
             set_tok(LEXERR); // c:87 `tok = LEXERR`
             return None;
@@ -3037,9 +3037,9 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     && hasalias != crate::ported::input::input_hasalias()
                 {
                     crate::ported::utils::zwarn(&format!(
-                    // c:2063
-                    "defining function based on alias `{}'",
-                    hasalias.as_deref().unwrap_or("")
+                        // c:2063
+                        "defining function based on alias `{}'",
+                        hasalias.as_deref().unwrap_or("")
                     ));
                     // c:2064 — `herrflush();` — drop input queued for the
                     // aborted definition.
@@ -3049,7 +3049,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     // zwarn (Src/utils.c:220) returns early once errflag
                     // is set, so yyerror's own zwarn prints nothing.
                     if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
-                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::SeqCst);
+                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::SeqCst);
                     }
                     set_tok(LEXERR); // c:2067 YYERROR
                     return None;

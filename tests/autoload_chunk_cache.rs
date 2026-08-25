@@ -194,7 +194,12 @@ fn a_cached_chunk_that_defines_nothing_is_discarded_and_recompiled() {
     std::fs::write(fpath.join("zt_donor"), "print donor-ok\n").expect("write donor");
 
     // Warm both entries with chunks this binary really produced.
-    let warm = run(&bin, &home, &fpath, "autoload -Uz zt_victim zt_donor; zt_victim; zt_donor");
+    let warm = run(
+        &bin,
+        &home,
+        &fpath,
+        "autoload -Uz zt_victim zt_donor; zt_victim; zt_donor",
+    );
     assert!(
         warm.contains("victim-ok") && warm.contains("donor-ok"),
         "warm-up run misbehaved: {warm:?}",
@@ -243,8 +248,9 @@ fn a_cached_chunk_that_defines_nothing_is_discarded_and_recompiled() {
 
     // And the bad entry is gone rather than waiting to fail again.
     let after = std::fs::read(&shard_path).expect("shard still there");
-    let archived_after = rkyv::check_archived_root::<zsh::autoload_cache::AutoloadShard>(&after[..])
-        .expect("shard still a valid archive");
+    let archived_after =
+        rkyv::check_archived_root::<zsh::autoload_cache::AutoloadShard>(&after[..])
+            .expect("shard still a valid archive");
     let shard_after: zsh::autoload_cache::AutoloadShard =
         rkyv::Deserialize::deserialize(archived_after, &mut rkyv::Infallible)
             .expect("deserialize shard");

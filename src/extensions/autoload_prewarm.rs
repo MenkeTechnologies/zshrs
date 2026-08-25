@@ -166,7 +166,11 @@ fn muted<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
 /// caching one would be dead weight at best and wrong at worst.
 fn definition_source(name: &str, path: &Path) -> Option<String> {
     let body = std::fs::read_to_string(path).ok()?;
-    muted(|| Some(crate::vm_helper::autoload_definition_source(name, &body, false)))
+    muted(|| {
+        Some(crate::vm_helper::autoload_definition_source(
+            name, &body, false,
+        ))
+    })
 }
 
 /// Parse + compile one definition text into the chunk the loader installs.

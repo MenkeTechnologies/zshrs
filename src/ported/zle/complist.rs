@@ -5205,13 +5205,13 @@ pub fn domenuselect(
                     .lock()
                 {
                     mi.cur = Some(Box::new(c)); // c:2612 minfo.cur = *p
-                    // c:2613 minfo.group = *pg. `Menuinfo::group` owns its
-                    // group, so the mgtab handle is materialised here — once
-                    // per selection move, not once per painted cell.
+                                                // c:2613 minfo.group = *pg. `Menuinfo::group` owns its
+                                                // group, so the mgtab handle is materialised here — once
+                                                // per selection move, not once per painted cell.
                     mi.group = g.map(|grp| Box::new((*grp).clone()));
-                                                // The offsets half of the same assignment. Guarded: a cell
-                                                // whose match is not in `amatches` (stale mtab between
-                                                // rebuilds) must not reset the cursor to group 0 / match 0.
+                    // The offsets half of the same assignment. Guarded: a cell
+                    // whose match is not in `amatches` (stale mtab between
+                    // rebuilds) must not reset the cursor to group 0 / match 0.
                     if gidx >= 0 {
                         mi.group_idx = gidx;
                         mi.cur_idx = midx;
@@ -7772,10 +7772,8 @@ mod tests {
     /// _main_complete` (compinit sh:560) had no base widget to bind.
     #[test]
     fn boot_registers_menu_select_widget() {
-        use crate::ported::zle::zle_h::{
-            WIDGET_INT, ZLE_ISCOMP, ZLE_KEEPSUFFIX, ZLE_MENUCMP,
-        };
         use crate::ported::zle::zle_h::TH_IMMORTAL;
+        use crate::ported::zle::zle_h::{WIDGET_INT, ZLE_ISCOMP, ZLE_KEEPSUFFIX, ZLE_MENUCMP};
         use crate::ported::zle::zle_thingy::thingytab;
         let _g = crate::test_util::global_state_lock();
         // Start from a clean slate: a previous test's boot_ may have left the

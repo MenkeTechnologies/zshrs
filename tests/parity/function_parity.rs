@@ -377,9 +377,7 @@ mod round_ao_pins {
     /// `_ao` matches this module's convention (see `f_ao` above).
     #[test]
     fn alias_then_unalias() {
-        assert_parity(
-            r#"alias zt_ao='echo z'; zt_ao; unalias zt_ao 2>/dev/null; echo $?"#,
-        );
+        assert_parity(r#"alias zt_ao='echo z'; zt_ao; unalias zt_ao 2>/dev/null; echo $?"#);
     }
 
     #[test]

@@ -1120,30 +1120,30 @@ fn main() {
     // any dispatch path forks off — covers `-c`, script and interactive
     // alike. Must stay the first statement so shell init cannot skew it.
     let _ = zsh::ported::params::shtimer_lock(); // c:1121
-    // c:Src/params.c:893 createparamtable reads `environ` exactly as
-    // it was at process entry. Snapshot it as the first statement so
-    // nothing later in shell init (setenv from builtins, lazy crate
-    // init) skews the import.
-    //
-    // On macOS `std::env::vars()` is NOT the process-entry environment:
-    // zshrs links CoreFoundation (chrono -> iana-time-zone ->
-    // core-foundation-sys) and CoreServices (notify -> fsevent-sys), and
-    // CF's dyld initializer runs before `main` and `setenv`s
-    // __CF_USER_TEXT_ENCODING. zsh links neither, so it imports an
-    // environment without that variable. `initial_env::snapshot()`
-    // recovers the real one from the stack `envp` dyld hands to a
-    // `__mod_init_func` entry (see the module below); it returns None on
-    // non-macOS and on any capture failure, in which case the live
-    // environment is used exactly as before. The kernel's exec-image copy
-    // (sysctl KERN_PROCARGS2) was tried earlier and REJECTED: it silently
-    // truncates large environments (tail vars vanish).
+                                                 // c:Src/params.c:893 createparamtable reads `environ` exactly as
+                                                 // it was at process entry. Snapshot it as the first statement so
+                                                 // nothing later in shell init (setenv from builtins, lazy crate
+                                                 // init) skews the import.
+                                                 //
+                                                 // On macOS `std::env::vars()` is NOT the process-entry environment:
+                                                 // zshrs links CoreFoundation (chrono -> iana-time-zone ->
+                                                 // core-foundation-sys) and CoreServices (notify -> fsevent-sys), and
+                                                 // CF's dyld initializer runs before `main` and `setenv`s
+                                                 // __CF_USER_TEXT_ENCODING. zsh links neither, so it imports an
+                                                 // environment without that variable. `initial_env::snapshot()`
+                                                 // recovers the real one from the stack `envp` dyld hands to a
+                                                 // `__mod_init_func` entry (see the module below); it returns None on
+                                                 // non-macOS and on any capture failure, in which case the live
+                                                 // environment is used exactly as before. The kernel's exec-image copy
+                                                 // (sysctl KERN_PROCARGS2) was tried earlier and REJECTED: it silently
+                                                 // truncates large environments (tail vars vanish).
     let entry_env = initial_env::snapshot();
     #[cfg(target_os = "macos")]
     if let Some(entry) = entry_env.as_deref() {
         prune_preinit_env_injections(entry);
     }
-    let _ = zsh::ported::params::environ
-        .set(entry_env.unwrap_or_else(|| std::env::vars().collect()));
+    let _ =
+        zsh::ported::params::environ.set(entry_env.unwrap_or_else(|| std::env::vars().collect()));
     // Restore default SIGPIPE behavior before anything writes to
     // stdout/stderr. Rust runtime installs SIG_IGN on SIGPIPE in
     // some Linux builds and ignores it on macOS — either way,
@@ -2676,11 +2676,7 @@ pub fn zshrs_main() {
         // zerrmsg emits the bare "<argv0>: " prefix with no line number.
         let runscript = args[1].clone();
         // c:1385-1386 — `access(F_OK) == 0 && stat(…) >= 0 && !S_ISDIR(…)`
-        let is_readable_file = |p: &str| {
-            std::fs::metadata(p)
-                .map(|m| !m.is_dir())
-                .unwrap_or(false)
-        };
+        let is_readable_file = |p: &str| std::fs::metadata(p).map(|m| !m.is_dir()).unwrap_or(false);
         let mut sfname: Option<String> = None; // c:1375
         if is_readable_file(&runscript) {
             sfname = Some(runscript.clone()); // c:1387
@@ -2690,8 +2686,7 @@ pub fn zshrs_main() {
             // c:1388-1393 — `funmeta = pathprog(runscript, &sfname);`
             // c:Src/utils.c:757-781 pathprog — walk $path in order, first
             // `<dir>/<prog>` that exists and is not a directory wins.
-            let path_dirs: Vec<String> = zsh::ported::params::getaparam("path")
-                .unwrap_or_default();
+            let path_dirs: Vec<String> = zsh::ported::params::getaparam("path").unwrap_or_default();
             for pp in &path_dirs {
                 let buf = format!("{}/{}", pp, runscript); // c:770
                 if is_readable_file(&buf) {

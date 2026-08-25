@@ -360,14 +360,14 @@ pub fn getterminfo(
 static BOOLNAMES_FALLBACK: &[&str] = &[
     "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl", "eo", "gn", "hc",
     "chts", "km", "daisy", "hs", "hls", "in", "lpix", "da", "db", "mir", "msgr", "nxon", "xsb",
-    "npc", "ndscr", "nrrmc", "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon"
+    "npc", "ndscr", "nrrmc", "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon",
 ];
 
 /// c:206-211 — `#ifndef HAVE_NUMNAMES static char *numnames[] = {...}`
 static NUMNAMES_FALLBACK: &[&str] = &[
-    "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors", "pairs", "wnum", "ncv",
-    "nlab", "pb", "vt", "wsl", "bitwin", "bitype", "bufsz", "btns", "spinh", "spinv", "maddr",
-    "mjump", "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs"
+    "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors", "pairs", "wnum", "ncv", "nlab",
+    "pb", "vt", "wsl", "bitwin", "bitype", "bufsz", "btns", "spinh", "spinv", "maddr", "mjump",
+    "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs",
 ];
 
 /// c:215-264 — `#ifndef HAVE_STRNAMES static char *strnames[] = {...}`
@@ -382,31 +382,30 @@ static STRNAMES_FALLBACK: &[&str] = &[
     "pause", "hook", "flash", "ff", "fsl", "wingo", "hup", "is1", "is2", "is3", "if", "iprog",
     "initc", "initp", "ich1", "il1", "ip", "ka1", "ka3", "kb2", "kbs", "kbeg", "kcbt", "kc1",
     "kc3", "kcan", "ktbc", "kclr", "kclo", "kcmd", "kcpy", "kcrt", "kctab", "kdch1", "kdl1",
-    "kcud1", "krmir", "kend", "kent", "kel", "ked", "kext", "kf0", "kf1", "kf10", "kf11",
-    "kf12", "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf2", "kf20", "kf21",
-    "kf22", "kf23", "kf24", "kf25", "kf26", "kf27", "kf28", "kf29", "kf3", "kf30", "kf31",
-    "kf32", "kf33", "kf34", "kf35", "kf36", "kf37", "kf38", "kf39", "kf4", "kf40", "kf41",
-    "kf42", "kf43", "kf44", "kf45", "kf46", "kf47", "kf48", "kf49", "kf5", "kf50", "kf51",
-    "kf52", "kf53", "kf54", "kf55", "kf56", "kf57", "kf58", "kf59", "kf6", "kf60", "kf61",
-    "kf62", "kf63", "kf7", "kf8", "kf9", "kfnd", "khlp", "khome", "kich1", "kil1", "kcub1",
-    "kll", "kmrk", "kmsg", "kmov", "knxt", "knp", "kopn", "kopt", "kpp", "kprv", "kprt", "krdo",
-    "kref", "krfr", "krpl", "krst", "kres", "kcuf1", "ksav", "kBEG", "kCAN", "kCMD", "kCPY",
-    "kCRT", "kDC", "kDL", "kslt", "kEND", "kEOL", "kEXT", "kind", "kFND", "kHLP", "kHOM", "kIC",
-    "kLFT", "kMSG", "kMOV", "kNXT", "kOPT", "kPRV", "kPRT", "kri", "kRDO", "kRPL", "kRIT",
-    "kRES", "kSAV", "kSPD", "khts", "kUND", "kspd", "kund", "kcuu1", "rmkx", "smkx", "lf0",
-    "lf1", "lf10", "lf2", "lf3", "lf4", "lf5", "lf6", "lf7", "lf8", "lf9", "fln", "rmln",
-    "smln", "rmm", "smm", "mhpa", "mcud1", "mcub1", "mcuf1", "mvpa", "mcuu1", "nel", "porder",
-    "oc", "op", "pad", "dch", "dl", "cud", "mcud", "ich", "indn", "il", "cub", "mcub", "cuf",
-    "mcuf", "rin", "cuu", "mcuu", "pfkey", "pfloc", "pfx", "pln", "mc0", "mc5p", "mc4", "mc5",
-    "pulse", "qdial", "rmclk", "rep", "rfi", "rs1", "rs2", "rs3", "rf", "rc", "vpa", "sc",
+    "kcud1", "krmir", "kend", "kent", "kel", "ked", "kext", "kf0", "kf1", "kf10", "kf11", "kf12",
+    "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf2", "kf20", "kf21", "kf22", "kf23",
+    "kf24", "kf25", "kf26", "kf27", "kf28", "kf29", "kf3", "kf30", "kf31", "kf32", "kf33", "kf34",
+    "kf35", "kf36", "kf37", "kf38", "kf39", "kf4", "kf40", "kf41", "kf42", "kf43", "kf44", "kf45",
+    "kf46", "kf47", "kf48", "kf49", "kf5", "kf50", "kf51", "kf52", "kf53", "kf54", "kf55", "kf56",
+    "kf57", "kf58", "kf59", "kf6", "kf60", "kf61", "kf62", "kf63", "kf7", "kf8", "kf9", "kfnd",
+    "khlp", "khome", "kich1", "kil1", "kcub1", "kll", "kmrk", "kmsg", "kmov", "knxt", "knp",
+    "kopn", "kopt", "kpp", "kprv", "kprt", "krdo", "kref", "krfr", "krpl", "krst", "kres", "kcuf1",
+    "ksav", "kBEG", "kCAN", "kCMD", "kCPY", "kCRT", "kDC", "kDL", "kslt", "kEND", "kEOL", "kEXT",
+    "kind", "kFND", "kHLP", "kHOM", "kIC", "kLFT", "kMSG", "kMOV", "kNXT", "kOPT", "kPRV", "kPRT",
+    "kri", "kRDO", "kRPL", "kRIT", "kRES", "kSAV", "kSPD", "khts", "kUND", "kspd", "kund", "kcuu1",
+    "rmkx", "smkx", "lf0", "lf1", "lf10", "lf2", "lf3", "lf4", "lf5", "lf6", "lf7", "lf8", "lf9",
+    "fln", "rmln", "smln", "rmm", "smm", "mhpa", "mcud1", "mcub1", "mcuf1", "mvpa", "mcuu1", "nel",
+    "porder", "oc", "op", "pad", "dch", "dl", "cud", "mcud", "ich", "indn", "il", "cub", "mcub",
+    "cuf", "mcuf", "rin", "cuu", "mcuu", "pfkey", "pfloc", "pfx", "pln", "mc0", "mc5p", "mc4",
+    "mc5", "pulse", "qdial", "rmclk", "rep", "rfi", "rs1", "rs2", "rs3", "rf", "rc", "vpa", "sc",
     "ind", "ri", "scs", "sgr", "setb", "smgb", "smgbp", "sclk", "scp", "setf", "smgl", "smglp",
     "smgr", "smgrp", "hts", "smgt", "smgtp", "wind", "sbim", "scsd", "rbim", "rcsd", "subcs",
     "supcs", "ht", "docr", "tsl", "tone", "uc", "hu", "u0", "u1", "u2", "u3", "u4", "u5", "u6",
-    "u7", "u8", "u9", "wait", "xoffc", "xonc", "zerom", "scesa", "bicr", "binel", "birep",
-    "csnm", "csin", "colornm", "defbi", "devt", "dispc", "endbi", "smpch", "smsc", "rmpch",
-    "rmsc", "getm", "kmous", "minfo", "pctrm", "pfxl", "reqmp", "scesc", "s0ds", "s1ds", "s2ds",
-    "s3ds", "setab", "setaf", "setcolor", "smglr", "slines", "smgtb", "ehhlm", "elhlm",
-    "elohlm", "erhlm", "ethlm", "evhlm", "sgr1", "slength"
+    "u7", "u8", "u9", "wait", "xoffc", "xonc", "zerom", "scesa", "bicr", "binel", "birep", "csnm",
+    "csin", "colornm", "defbi", "devt", "dispc", "endbi", "smpch", "smsc", "rmpch", "rmsc", "getm",
+    "kmous", "minfo", "pctrm", "pfxl", "reqmp", "scesc", "s0ds", "s1ds", "s2ds", "s3ds", "setab",
+    "setaf", "setcolor", "smglr", "slines", "smgtb", "ehhlm", "elhlm", "elohlm", "erhlm", "ethlm",
+    "evhlm", "sgr1", "slength",
 ];
 
 // ncurses/libtinfo public capability-name arrays, declared exactly as
@@ -435,7 +434,11 @@ static BOOLNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
         }
         i += 1;
     }
-    if v.is_empty() { BOOLNAMES_FALLBACK.to_vec() } else { v }
+    if v.is_empty() {
+        BOOLNAMES_FALLBACK.to_vec()
+    } else {
+        v
+    }
 });
 
 /// `numnames[]` — library array (HAVE_NUMNAMES path) else c:206-211.
@@ -449,7 +452,11 @@ static NUMNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
         }
         i += 1;
     }
-    if v.is_empty() { NUMNAMES_FALLBACK.to_vec() } else { v }
+    if v.is_empty() {
+        NUMNAMES_FALLBACK.to_vec()
+    } else {
+        v
+    }
 });
 
 /// `strnames[]` — library array (HAVE_STRNAMES path) else c:215-264.
@@ -463,7 +470,11 @@ static STRNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
         }
         i += 1;
     }
-    if v.is_empty() { STRNAMES_FALLBACK.to_vec() } else { v }
+    if v.is_empty() {
+        STRNAMES_FALLBACK.to_vec()
+    } else {
+        v
+    }
 });
 
 /// Port of `static void scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)`

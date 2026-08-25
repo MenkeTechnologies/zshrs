@@ -1679,8 +1679,7 @@ pub fn createparamtable() {
 
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
-    let add_special = |ip: &special_paramdef,
-                       tab: &mut hashtable_nodes<Param>| {
+    let add_special = |ip: &special_paramdef, tab: &mut hashtable_nodes<Param>| {
         // c:840 — `paramdef->gsu` selects which gsu_scalar vtable the
         // new param gets. C uses the per-IPDEF macro's BR(...) field;
         // since the Rust special_paramdef doesn't carry a gsu slot
@@ -1727,7 +1726,11 @@ pub fn createparamtable() {
             // Hardcoding 0 here dropped the base for every special
             // integer on the createparamtable path (interactive/setupvals);
             // the `-fc` path seeds it separately, so only the REPL diverged.
-            base: if (ip.pm_type & PM_INTEGER) != 0 { 10 } else { 0 },
+            base: if (ip.pm_type & PM_INTEGER) != 0 {
+                10
+            } else {
+                0
+            },
             width: 0,
             env: None,
             // c:391/401 — IPDEF9/IPDEF8 pass the tied partner's name as
@@ -2370,8 +2373,8 @@ pub fn createparam(
                 } else {
                     // c:1120 — nameref pointing to an unset local
                     DPUTS!(
-                        (lf & PM_UNSET) == 0,                  // c:1121
-                        "BUG: local parameter is not unset"    // c:1122
+                        (lf & PM_UNSET) == 0,                // c:1121
+                        "BUG: local parameter is not unset"  // c:1122
                     );
                     name_owned = lastpm.node.nam.clone(); // Rust-only: name-keyed table
                     name = &name_owned;
@@ -4254,9 +4257,9 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
             // ---------------------------------------------------------
             let sf = v.scanflags as u32; // c:2175
             let start: i32 = 1; // c:2036 (getarg → c:1754 / c:1760)
-            // c:1747-1750 — `if ((ta = getvaluearr(v)) && (*ta ||
-            // ((v->scanflags & SCANPM_MATCHMANY) && (v->scanflags &
-            // (SCANPM_MATCHKEY|SCANPM_MATCHVAL|SCANPM_KEYMATCH)))))`.
+                                // c:1747-1750 — `if ((ta = getvaluearr(v)) && (*ta ||
+                                // ((v->scanflags & SCANPM_MATCHMANY) && (v->scanflags &
+                                // (SCANPM_MATCHKEY|SCANPM_MATCHVAL|SCANPM_KEYMATCH)))))`.
             let we: i32 = if !v.arr.is_empty()
                 || ((sf & SCANPM_MATCHMANY) != 0
                     && (sf & (SCANPM_MATCHKEY | SCANPM_MATCHVAL | SCANPM_KEYMATCH)) != 0)
@@ -4275,8 +4278,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
             if v.scanflags != 0
                 && !com
                 && ((v.scanflags as u32 & SCANPM_MATCHMANY) == 0
-                    || (v.scanflags as u32
-                        & (SCANPM_MATCHKEY | SCANPM_MATCHVAL | SCANPM_KEYMATCH))
+                    || (v.scanflags as u32 & (SCANPM_MATCHKEY | SCANPM_MATCHVAL | SCANPM_KEYMATCH))
                         == 0)
             {
                 v.scanflags = 0; // c:2179
@@ -5975,10 +5977,9 @@ pub fn getsparam(name: &str) -> Option<String> {
                         // Same module-getfn dispatch as above for a stub that
                         // carries neither string nor array storage.
                         if t == PM_ARRAY {
-                            needs_partab_dispatch =
-                                crate::ported::modules::parameter::PARTAB_ARRAY
-                                    .iter()
-                                    .any(|e| e.name == name); // c:2352
+                            needs_partab_dispatch = crate::ported::modules::parameter::PARTAB_ARRAY
+                                .iter()
+                                .any(|e| e.name == name); // c:2352
                         }
                         None
                     }
@@ -7125,7 +7126,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             && paramtab()
                 .read()
                 .ok()
-                .and_then(|t| t.get(name).map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED))
+                .and_then(|t| {
+                    t.get(name)
+                        .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED)
+                })
                 .unwrap_or(false)
         {
             let pm = paramtab().read().ok().and_then(|t| t.get(name).cloned());
@@ -7181,20 +7185,23 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             .any(|e| e.name == name)
         {
             crate::vm_helper::mark_module_param_used(name); // c:3155 getvalue → c:571 loadparamnode
-            // c:Src/params.c:3159-3165 — `if (v->pm->node.flags &
-            // PM_READONLY) { zerr("read-only variable: %s",
-            // v->pm->node.nam); … return NULL; }`. The check runs on the
-            // node getvalue just returned, BEFORE any element write, so
-            // `readonly commands; commands[x]=/y` is rejected in C. The
-            // magic dispatch below writes the real shell table directly
-            // and never consulted the node's flags, so a user
-            // `readonly`-ed magic assoc silently accepted element
-            // writes. Name-keyed `is_readonly_magic` further down only
-            // covers the PM_READONLY_SPECIAL rows, not user readonly.
+                                                            // c:Src/params.c:3159-3165 — `if (v->pm->node.flags &
+                                                            // PM_READONLY) { zerr("read-only variable: %s",
+                                                            // v->pm->node.nam); … return NULL; }`. The check runs on the
+                                                            // node getvalue just returned, BEFORE any element write, so
+                                                            // `readonly commands; commands[x]=/y` is rejected in C. The
+                                                            // magic dispatch below writes the real shell table directly
+                                                            // and never consulted the node's flags, so a user
+                                                            // `readonly`-ed magic assoc silently accepted element
+                                                            // writes. Name-keyed `is_readonly_magic` further down only
+                                                            // covers the PM_READONLY_SPECIAL rows, not user readonly.
             let ro = paramtab()
                 .read()
                 .ok()
-                .and_then(|t| t.get(name).map(|pm| (pm.node.flags as u32 & PM_READONLY) != 0))
+                .and_then(|t| {
+                    t.get(name)
+                        .map(|pm| (pm.node.flags as u32 & PM_READONLY) != 0)
+                })
                 .unwrap_or(false);
             if ro {
                 zerr(&format!("read-only variable: {}", name)); // c:3160
@@ -8159,8 +8166,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             gsu_f: None,
             gsu_a: None,
             gsu_h: None,
-            base: 0,      // c:1155
-            width: 0,     // c:1155
+            base: 0,  // c:1155
+            width: 0, // c:1155
             env: None,
             ename: None,
             old: reuse_old,     // c:1155 (same struct in C)
@@ -9923,10 +9930,10 @@ pub fn unsetparam(name: &str) -> i32 {
     // Src/builtin.c:2083-2085 — is unsettable. The by-name table walk ignored
     // the shadow and rejected it, which is what made B02typeset's
     // `typeset -h +g -m [[:alpha:]_]*; unset -m [[:alpha:]_]*` abort.
-    let live_readonly: Option<bool> = paramtab()
-        .read()
-        .ok()
-        .and_then(|t| t.get(name).map(|pm| (pm.node.flags as u32 & PM_READONLY) != 0));
+    let live_readonly: Option<bool> = paramtab().read().ok().and_then(|t| {
+        t.get(name)
+            .map(|pm| (pm.node.flags as u32 & PM_READONLY) != 0)
+    });
     let is_readonly_special = match live_readonly {
         Some(ro) => ro, // c:3850 — the node governs itself
         None => special_params
@@ -10077,10 +10084,7 @@ pub fn unsetparam(name: &str) -> i32 {
                     || (alt_pm.level > 0
                         && locallevel.load(Ordering::Relaxed) as i32 >= alt_pm.level);
                 if keep {
-                    paramtab()
-                        .write()
-                        .unwrap()
-                        .insert(alt.to_string(), alt_pm);
+                    paramtab().write().unwrap().insert(alt.to_string(), alt_pm);
                 } else {
                     // c:3874 `paramtab->removenode(paramtab, pm->node.nam)` —
                     // in C that is the only store the name lives in. zshrs
@@ -10137,22 +10141,22 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         return 1; // c:3854
     }
     pm.node.flags &= !(PM_DECLARED as i32); // c:3868
-    // c:3870 — WHICH unsetfn `pm->gsu.s->unsetfn` is comes from
-    // createspecialhash (c:1227-1228): a SPECIALPMDEF hash whose
-    // `partab[]` row supplies NO gsu keeps the default
-    // `nullsethash_gsu` unless it is PM_READONLY (which takes
-    // `stdhash_gsu`), and `nullsethash_gsu`'s unsetfn is `nullunsetfn`
-    // (c:196-197 → c:4143-4145), whose body is EMPTY. So `unset` on
-    // such a row does nothing at all: no PM_UNSET, node untouched,
-    // value still readable — `zmodload zsh/langinfo; unset langinfo`
-    // leaves `${#langinfo}` at 55 in zsh. Rows that DO carry a gsu get
-    // it stamped over the default by addparamdef
-    // (c:Src/module.c:1080-1110) and so unset through `stdunsetfn`.
-    // `langinfo` (c:Src/Modules/langinfo.c:447 `SPECIALPMDEF("langinfo",
-    // 0, NULL, getlanginfo, scanlanginfo)`) is the only `partab[]` row
-    // that is both gsu-less and non-readonly; every other gsu-less row
-    // is PM_READONLY_SPECIAL and is rejected at c:3786 above before
-    // reaching here.
+                                            // c:3870 — WHICH unsetfn `pm->gsu.s->unsetfn` is comes from
+                                            // createspecialhash (c:1227-1228): a SPECIALPMDEF hash whose
+                                            // `partab[]` row supplies NO gsu keeps the default
+                                            // `nullsethash_gsu` unless it is PM_READONLY (which takes
+                                            // `stdhash_gsu`), and `nullsethash_gsu`'s unsetfn is `nullunsetfn`
+                                            // (c:196-197 → c:4143-4145), whose body is EMPTY. So `unset` on
+                                            // such a row does nothing at all: no PM_UNSET, node untouched,
+                                            // value still readable — `zmodload zsh/langinfo; unset langinfo`
+                                            // leaves `${#langinfo}` at 55 in zsh. Rows that DO carry a gsu get
+                                            // it stamped over the default by addparamdef
+                                            // (c:Src/module.c:1080-1110) and so unset through `stdunsetfn`.
+                                            // `langinfo` (c:Src/Modules/langinfo.c:447 `SPECIALPMDEF("langinfo",
+                                            // 0, NULL, getlanginfo, scanlanginfo)`) is the only `partab[]` row
+                                            // that is both gsu-less and non-readonly; every other gsu-less row
+                                            // is PM_READONLY_SPECIAL and is rejected at c:3786 above before
+                                            // reaching here.
     let nullsethash_gsu = pm.node.nam == "langinfo"; // c:1227-1228
     if nullsethash_gsu {
         return 0; // c:3870 nullunsetfn — empty body
@@ -12375,7 +12379,10 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {
         paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get(s).and_then(|pm| pm.u_tied.as_deref().map(|td| td.joinchar)))
+            .and_then(|t| {
+                t.get(s)
+                    .and_then(|pm| pm.u_tied.as_deref().map(|td| td.joinchar))
+            })
             .map(|jc| jc as u8 as char)
             .unwrap_or(':')
     };
@@ -14178,18 +14185,14 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         && (f & PM_TIED) != 0
         && (hn.node.flags as u32 & PM_SPECIAL) == 0
     {
-        let joinchar: Option<i32> = hn
-            .u_tied
-            .as_deref()
-            .map(|td| td.joinchar)
-            .or_else(|| {
-                hn.ename.as_deref().and_then(|e| {
-                    paramtab()
-                        .read()
-                        .ok()
-                        .and_then(|t| t.get(e).and_then(|p| p.u_tied.as_deref().map(|td| td.joinchar)))
+        let joinchar: Option<i32> = hn.u_tied.as_deref().map(|td| td.joinchar).or_else(|| {
+            hn.ename.as_deref().and_then(|e| {
+                paramtab().read().ok().and_then(|t| {
+                    t.get(e)
+                        .and_then(|p| p.u_tied.as_deref().map(|td| td.joinchar))
                 })
-            });
+            })
+        });
         if let Some(jc) = joinchar {
             if jc != ':' as i32 {
                 // c:6313-6316 — one-char buf, space-separated, quoted.

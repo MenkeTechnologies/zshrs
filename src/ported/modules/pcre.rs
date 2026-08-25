@@ -164,9 +164,7 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) ->
     // c:94 — `pcre2_compile(target, …)`. PCRE2 reads `\0[0-7]{0,2}` as an
     // octal character code; the fancy_regex backend reads `\0` as a group-0
     // back-reference and refuses to compile. Rewrite just that escape.
-    pattern_str.push_str(&crate::extensions::regex_mod::pcre2_octal_escapes(
-        &target,
-    ));
+    pattern_str.push_str(&crate::extensions::regex_mod::pcre2_octal_escapes(&target));
 
     match Regex::new(&pattern_str) {
         Ok(re) => {

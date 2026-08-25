@@ -161,11 +161,9 @@ impl Site {
         // reports. Outside one, `$LINENO` already indexes the script.
         let frame = current_function();
         let (func, file, line) = match frame {
-            Some((name, file, flineno)) => (
-                Some(name),
-                file,
-                current_line() + flineno.max(0) as usize,
-            ),
+            Some((name, file, flineno)) => {
+                (Some(name), file, current_line() + flineno.max(0) as usize)
+            }
             None => (
                 None,
                 crate::ported::utils::scriptfilename_get(),
@@ -448,9 +446,7 @@ pub fn set_track_all(on: bool) -> bool {
 /// Whether [`track_all`] may arm `name` by itself: not one of the
 /// parameters the shell rewrites on its own, and not a positional.
 fn auto_armable(name: &str) -> bool {
-    !name.is_empty()
-        && !VOLATILE.contains(&name)
-        && !name.chars().all(|c| c.is_ascii_digit())
+    !name.is_empty() && !VOLATILE.contains(&name) && !name.chars().all(|c| c.is_ascii_digit())
 }
 
 /// The hot gate. `false` until something is tracked, so every hook site
@@ -487,7 +483,9 @@ pub fn current_line() -> usize {
 /// runs, and a lineage row is worth less than a deadlock against the
 /// frame push/pop that a blocking lock would risk.
 fn current_function() -> Option<(String, Option<String>, i64)> {
-    let stack = crate::ported::modules::parameter::FUNCSTACK.try_lock().ok()?;
+    let stack = crate::ported::modules::parameter::FUNCSTACK
+        .try_lock()
+        .ok()?;
     let frame = stack.last()?;
     (frame.tp == crate::ported::zsh_h::FS_FUNC)
         .then(|| (frame.name.clone(), frame.filename.clone(), frame.flineno))
@@ -1303,7 +1301,11 @@ mod tests {
         assert!(track_name("FOO", Some("bar")));
         let node = lookup_name("FOO").expect("tracked name has a node");
         assert_eq!(node.origin_site.line, 7);
-        assert!(node.origin.contains("param FOO"), "origin = {}", node.origin);
+        assert!(
+            node.origin.contains("param FOO"),
+            "origin = {}",
+            node.origin
+        );
         assert!(node.ops.is_empty(), "no ops at the origin");
         assert_eq!(tracked_names(), vec!["FOO".to_string()]);
     }
@@ -1539,7 +1541,12 @@ mod tests {
         on_param_write("X", "assign", "same");
         on_param_write("X", "assign", "same");
         let node = lookup_name("X").unwrap();
-        assert_eq!(node.ops.len(), 1, "immediate repeat collapses: {:?}", node.ops);
+        assert_eq!(
+            node.ops.len(),
+            1,
+            "immediate repeat collapses: {:?}",
+            node.ops
+        );
         note_line(9);
         on_param_write("X", "assign", "same");
         let node = lookup_name("X").unwrap();
@@ -1617,7 +1624,13 @@ mod tests {
     fn call_ops_record_the_arguments_they_were_called_with() {
         let _g = setup();
         assert!(track_func("deploy", None, Some("/tmp/d.zsh"), 1));
-        on_func_call("deploy", &["staging".to_string()], None, Some("/tmp/d.zsh"), 1);
+        on_func_call(
+            "deploy",
+            &["staging".to_string()],
+            None,
+            Some("/tmp/d.zsh"),
+            1,
+        );
         on_func_call("deploy", &["prod".to_string()], None, Some("/tmp/d.zsh"), 2);
         on_func_call("deploy", &[], None, Some("/tmp/d.zsh"), 3);
         let node = lookup_func("deploy").expect("armed");
@@ -1691,11 +1704,25 @@ mod tests {
         assert_eq!(node.origin_site.file.as_deref(), Some("/tmp/lib.zsh"));
         assert_eq!(node.origin_site.line, 12, "origin is the first definition");
         let ops: Vec<&str> = node.ops.iter().map(|o| o.op.as_str()).collect();
-        assert_eq!(ops, vec!["call", "redefine", "unfunction"], "{:?}", node.ops);
-        assert_eq!(node.ops[0].site.line, 40, "the call op is the caller's site");
-        assert_eq!(node.ops[1].site.line, 80, "the redefine op is the new body's");
+        assert_eq!(
+            ops,
+            vec!["call", "redefine", "unfunction"],
+            "{:?}",
+            node.ops
+        );
+        assert_eq!(
+            node.ops[0].site.line, 40,
+            "the call op is the caller's site"
+        );
+        assert_eq!(
+            node.ops[1].site.line, 80,
+            "the redefine op is the new body's"
+        );
         assert_eq!(tracked_func_names(), vec!["build".to_string()]);
-        assert!(lookup_name("build").is_none(), "the parameter namespace is separate");
+        assert!(
+            lookup_name("build").is_none(),
+            "the parameter namespace is separate"
+        );
     }
 
     // Arming a function BEFORE it is defined is the normal way to watch one get
@@ -1771,7 +1798,12 @@ mod tests {
         assert!(track_func("quiet", None, Some("/tmp/lib.zsh"), 1));
         on_func_call("quiet", &[], None, Some("/tmp/lib.zsh"), 1);
         let node = lookup_func("quiet").expect("armed by name");
-        assert_eq!(node.ops.len(), 1, "only the call after arming: {:?}", node.ops);
+        assert_eq!(
+            node.ops.len(),
+            1,
+            "only the call after arming: {:?}",
+            node.ops
+        );
         assert!(untrack_func("quiet"));
         assert!(!active(), "the last untrack disarms the hot gate");
     }

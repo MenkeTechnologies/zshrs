@@ -191,7 +191,10 @@ mod tests {
             .map(|e| e.file_name().into_string().unwrap())
             .filter(|n| n.contains(".tmp."))
             .collect();
-        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
     }
 
     #[test]

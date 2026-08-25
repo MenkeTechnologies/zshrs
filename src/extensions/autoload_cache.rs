@@ -527,11 +527,7 @@ pub fn try_load(name: &str) -> Option<Vec<u8>> {
 
 /// Execution-path lookup: the compiled definition program for `name`,
 /// valid only for this exact directory and definition text.
-pub fn try_load_for_source(
-    name: &str,
-    source_dir: &str,
-    source_sha: &[u8; 32],
-) -> Option<Vec<u8>> {
+pub fn try_load_for_source(name: &str, source_dir: &str, source_sha: &[u8; 32]) -> Option<Vec<u8>> {
     let cache = CACHE.as_ref()?;
     cache.get_for_source(name, source_dir, source_sha)
 }

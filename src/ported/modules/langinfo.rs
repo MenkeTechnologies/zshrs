@@ -9,7 +9,9 @@
 //! `nl_langinfo(3)`.
 
 use crate::ported::zsh_h::features;
-use crate::ported::zsh_h::{hashnode, param, HashTable, Param, ParamScanFunc, PM_READONLY, PM_SCALAR};
+use crate::ported::zsh_h::{
+    hashnode, param, HashTable, Param, ParamScanFunc, PM_READONLY, PM_SCALAR,
+};
 use crate::utils::unmetafy;
 use crate::zsh_h::module;
 /// `nl_names[]` — port of the static name-array at `langinfo.c:65`.

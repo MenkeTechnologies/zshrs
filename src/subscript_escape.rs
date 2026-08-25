@@ -125,9 +125,7 @@ pub fn subscript_unescape(s: &str, sub: bool, resolve_dollar: bool) -> (String, 
                 // c:Src/lex.c:1503-1506 (the `endchar == ']'` set) +
                 // c:Src/params.c:1541-1548 (marker kept) +
                 // c:Src/params.c:1584 remnulargs (marker deleted).
-                Some(n)
-                    if matches!(n, '[' | ']' | '(' | ')' | '{' | '}') || (sub && n == '"') =>
-                {
+                Some(n) if matches!(n, '[' | ']' | '(' | ')' | '{' | '}') || (sub && n == '"') => {
                     out.push(n);
                     it.next();
                 }
@@ -263,10 +261,7 @@ pub fn subscript_arg_split(s: &str, ishash: bool) -> Option<(String, String)> {
         // `++t`), so an escaped bracket never moves the nesting counters.
         // zshrs also sees the SOURCE-literal spelling of the escape (`\`)
         // because it has no `parse_subscript` re-lex; treat both alike.
-        if c == crate::ported::zsh_h::Bnull
-            || c == crate::ported::zsh_h::Bnullkeep
-            || c == '\\'
-        {
+        if c == crate::ported::zsh_h::Bnull || c == crate::ported::zsh_h::Bnullkeep || c == '\\' {
             if let Some(&n) = chars.get(k + 1) {
                 if matches!(n, '[' | ']' | '(' | ')' | '{' | '}')
                     || n == crate::ported::zsh_h::Inbrack
@@ -290,16 +285,13 @@ pub fn subscript_arg_split(s: &str, ishash: bool) -> Option<(String, String)> {
         // the ASCII form reported "one argument" for `${(A@)a[1,2]}` and every
         // downstream site then treated the slice as a single element.
         if (c == ',' || c == crate::ported::zsh_h::Comma) && !ishash && i == 0 && inpar == 0 {
-            return Some((
-                chars[..k].iter().collect(),
-                chars[k + 1..].iter().collect(),
-            ));
+            return Some((chars[..k].iter().collect(), chars[k + 1..].iter().collect()));
         }
         match c {
-            '[' | crate::ported::zsh_h::Inbrack => i += 1,      // c:1553
-            ']' | crate::ported::zsh_h::Outbrack => i -= 1,     // c:1555
-            '(' | crate::ported::zsh_h::Inpar => inpar += 1,    // c:1557
-            ')' | crate::ported::zsh_h::Outpar => inpar -= 1,   // c:1559
+            '[' | crate::ported::zsh_h::Inbrack => i += 1, // c:1553
+            ']' | crate::ported::zsh_h::Outbrack => i -= 1, // c:1555
+            '(' | crate::ported::zsh_h::Inpar => inpar += 1, // c:1557
+            ')' | crate::ported::zsh_h::Outpar => inpar -= 1, // c:1559
             _ => {}
         }
         k += 1;
@@ -337,16 +329,10 @@ pub fn subscript_range_bounds(
                 }
             }
             ',' if depth == 0 => {
-                return Some((
-                    bs[..k].iter().collect(),
-                    bs[k + 1..].iter().collect(),
-                ));
+                return Some((bs[..k].iter().collect(), bs[k + 1..].iter().collect()));
             }
             c if c == crate::ported::zsh_h::Comma && depth == 0 => {
-                return Some((
-                    bs[..k].iter().collect(),
-                    bs[k + 1..].iter().collect(),
-                ));
+                return Some((bs[..k].iter().collect(), bs[k + 1..].iter().collect()));
             }
             _ => {}
         }
@@ -380,12 +366,20 @@ pub fn subscript_requote_for_assign(k: &str) -> std::borrow::Cow<'_, str> {
         return std::borrow::Cow::Borrowed(k); // flag group: structural
     }
     // c:Src/lex.c:1501-1506 — the set that `dquote_parse(']')` marks.
-    if !k.contains(|c| matches!(c, '$' | '\\' | '`' | '[' | ']' | '(' | ')' | '{' | '}' | '"')) {
+    if !k.contains(|c| {
+        matches!(
+            c,
+            '$' | '\\' | '`' | '[' | ']' | '(' | ')' | '{' | '}' | '"'
+        )
+    }) {
         return std::borrow::Cow::Borrowed(k);
     }
     let mut out = String::with_capacity(k.len() * 2);
     for c in k.chars() {
-        if matches!(c, '$' | '\\' | '`' | '[' | ']' | '(' | ')' | '{' | '}' | '"') {
+        if matches!(
+            c,
+            '$' | '\\' | '`' | '[' | ']' | '(' | ')' | '{' | '}' | '"'
+        ) {
             out.push('\\');
         }
         out.push(c);

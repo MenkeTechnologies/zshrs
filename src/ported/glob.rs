@@ -767,8 +767,7 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
     let marker_c = crate::ported::zsh_h::Marker;
     let is_inpar =
         |c: char| c == inpar_c || (c == crate::ported::zsh_h::Inpar && inpar_c != marker_c);
-    let is_hash =
-        |c: char| c == hash_c || (c == crate::ported::zsh_h::Pound && hash_c != marker_c);
+    let is_hash = |c: char| c == hash_c || (c == crate::ported::zsh_h::Pound && hash_c != marker_c);
 
     // c:746-748 — `if (*(str = instr) == zpc_special[ZPC_INPAR] &&
     //               !skipparens(Inpar, Outpar, (char **)&str) &&
@@ -795,8 +794,8 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
     let parens_balanced = chars.first().copied().is_some_and(is_inpar) && skip_level == 0; // c:746-747 `!skipparens(...)`
     let after_paren_idx = str_after_parens.unwrap_or(0);
     let str_at_hash = parens_balanced && chars.get(after_paren_idx).copied().is_some_and(is_hash); // c:748 `*str == Pound`
-                                                                                      // c:748 `str[-2] == '/'` — `str` is past `)`, so `str[-2]` is char
-                                                                                      // before `)`. In chars, that's `chars[after_paren_idx - 2]`.
+                                                                                                   // c:748 `str[-2] == '/'` — `str` is past `)`, so `str[-2]` is char
+                                                                                                   // before `)`. In chars, that's `chars[after_paren_idx - 2]`.
     let preceded_by_slash =
         parens_balanced && after_paren_idx >= 2 && chars.get(after_paren_idx - 2) == Some(&'/');
 
@@ -1956,11 +1955,11 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
     // (mb_metacharlenconv, Src/utils.c:5613).
     let lb = crate::ported::utils::unmetafy_str(left); // c:2236
     let (l_len, cstart, _) = crate::ported::utils::mb_metacharlenconv(&lb); // c:2236
-    // c:2256-2257 — same decode for the last character of the range.
+                                                                            // c:2256-2257 — same decode for the last character of the range.
     let rb = crate::ported::utils::unmetafy_str(end_str); // c:2257
     let (r_len, cend, _) = crate::ported::utils::mb_metacharlenconv(&rb); // c:2257
-    // c:2239/2264 — `cstart == WEOF` / `*pnext != Outbrace`: the endpoint
-    // must decode AND consume exactly the whole endpoint text.
+                                                                          // c:2239/2264 — `cstart == WEOF` / `*pnext != Outbrace`: the endpoint
+                                                                          // must decode AND consume exactly the whole endpoint text.
     if l_len != 0 && l_len == lb.len() && r_len != 0 && r_len == rb.len() {
         if let (Some(c1), Some(c2)) = (cstart, cend) {
             return Some((c1, c2, incr)); // c:2266-2270
@@ -2862,7 +2861,8 @@ static ZSHTOK_TRIGGER: [bool; 256] = {
         t[i] = b >= 0x80
             || matches!(
                 b,
-                b'\\' | b'<'
+                b'\\'
+                    | b'<'
                     | b'>'
                     | b'^'
                     | b'#'
@@ -4450,7 +4450,11 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
             Some(v) if qualsfound != 0 => v,
             _ => return (pattern.to_string(), None),
         };
-        let body_start = if qualsfound == 2 { start + 3 } else { start + 1 };
+        let body_start = if qualsfound == 2 {
+            start + 3
+        } else {
+            start + 1
+        };
         let qual_content: String = cv[body_start..cv.len() - 1].iter().collect();
         let byte_start: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
         let qs = parse_qualifier_string(&qual_content);
@@ -5068,12 +5072,12 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 let os: String = std::iter::once(c).chain(chars.clone()).collect();
                 // c:1727-1732 — the Value getindex fills in.
                 let mut v = crate::ported::zsh_h::value {
-                    pm: None,                                                 // c:1728
-                    arr: Vec::new(),                                          // c:1732
-                    scanflags: crate::ported::zsh_h::SCANPM_WANTVALS as i32,  // c:1727
-                    valflags: 0,                                              // c:1731
-                    start: 0,                                                 // c:1729
-                    end: -1,                                                  // c:1730
+                    pm: None,                                                // c:1728
+                    arr: Vec::new(),                                         // c:1732
+                    scanflags: crate::ported::zsh_h::SCANPM_WANTVALS as i32, // c:1727
+                    valflags: 0,                                             // c:1731
+                    start: 0,                                                // c:1729
+                    end: -1,                                                 // c:1730
                 };
                 let mut s: &str = &os;
                 let rc = crate::ported::params::getindex(&mut s, &mut v, 0); // c:1735
@@ -5097,10 +5101,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 // return; }`. getindex returns 0 after `mathevalarg`
                 // rejects an empty operand (`*(N[1,])`), so the abort has
                 // to come off errflag exactly as it does in C.
-                if crate::ported::utils::errflag
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    != 0
-                {
+                if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
                     return qs; // c:1787
                 }
                 qs.first = Some(v.start); // c:1740
@@ -5134,13 +5135,13 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 // qualifiers too: `*(.NY99…)` reports `value too big: Y99…`
                 // exactly as spelled.
                 let s_saved: String = chars.clone().collect(); // c:1582
-                // c:1582-1583 — `shortcircuit = !(sense & 1); if
-                // (shortcircuit) { … }`. The NEGATED spelling `^Y` clears
-                // the limit and consumes NO argument, so the qgetnum call
-                // (and its "number expected" diagnostic) is skipped
-                // entirely — `*(Y1^Y)` is legal. `Some(0)` is the same
-                // "no limit" the apply sites read via their `n > 0` test,
-                // matching c:518's leading `shortcircuit &&`.
+                                                               // c:1582-1583 — `shortcircuit = !(sense & 1); if
+                                                               // (shortcircuit) { … }`. The NEGATED spelling `^Y` clears
+                                                               // the limit and consumes NO argument, so the qgetnum call
+                                                               // (and its "number expected" diagnostic) is skipped
+                                                               // entirely — `*(Y1^Y)` is legal. `Some(0)` is the same
+                                                               // "no limit" the apply sites read via their `n > 0` test,
+                                                               // matching c:518's leading `shortcircuit &&`.
                 if negated {
                     qs.short_circuit = Some(0); // c:1582
                     continue;

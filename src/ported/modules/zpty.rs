@@ -393,8 +393,7 @@ pub fn newptycmd(
                 // `dosetopt(..., force=1)` is this port's spelling of a
                 // direct `opts[]` store; options.rs:851 rejects an
                 // unforced INTERACTIVE change.
-                let _ =
-                    crate::ported::options::dosetopt(crate::ported::zsh_h::INTERACTIVE, 0, 1);
+                let _ = crate::ported::options::dosetopt(crate::ported::zsh_h::INTERACTIVE, 0, 1);
                 // c:434 — `execode(prog, 1, 0, "zpty");`
                 //
                 // The prior port called `execvp(args[0], args)` here,
@@ -420,8 +419,8 @@ pub fn newptycmd(
                     let _ = std::io::stdout().flush();
                     let _ = std::io::stderr().flush();
                 }
-                let lastval = crate::ported::builtin::LASTVAL
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                let lastval =
+                    crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
                 unsafe {
                     libc::_exit(lastval);
                 }

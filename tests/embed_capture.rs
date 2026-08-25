@@ -155,9 +155,15 @@ fn a_foreign_threads_fd1_write_lands_inside_the_capture() {
 
     let (wrote, opened) = writer.join().expect("writer thread");
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(wrote && opened, "handshake never completed: {wrote} {opened}");
+    assert!(
+        wrote && opened,
+        "handshake never completed: {wrote} {opened}"
+    );
 
-    assert!(out.contains("scripted"), "script's own output missing: {out:?}");
+    assert!(
+        out.contains("scripted"),
+        "script's own output missing: {out:?}"
+    );
     assert!(
         out.contains("FOREIGN"),
         "a foreign fd-1 write during the window belongs to the capture — if this \

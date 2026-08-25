@@ -1235,20 +1235,20 @@ pub fn docomplete(lst: i32) -> i32 {
         let ocs = ZLEMETACS.load(Ordering::SeqCst); // c:823
         let ne = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:839
         *crate::ported::utils::noerrs_lock().lock().unwrap() = 1; // c:840
-        // c:826 — `ret = doexpansion(origword, lst, olst, lincmd);`. C passes
-        // `origword`, the TOKENIZED word, NOT the `s` it passes to
-        // `docompletion` below. The port passed the untokenized `s_word`, so
-        // the quote tokens `prefork` needs were already gone: `echo "$PA<TAB>`
-        // arrived as `$PA` (an unquoted unset parameter, which expands to NO
-        // WORD and leaves the line alone) instead of `<Dnull>$PA` (an unset
-        // parameter INSIDE double quotes, which expands to an empty-but-present
-        // word — so zsh deletes `"$PA` and inserts nothing).
+                                                                  // c:826 — `ret = doexpansion(origword, lst, olst, lincmd);`. C passes
+                                                                  // `origword`, the TOKENIZED word, NOT the `s` it passes to
+                                                                  // `docompletion` below. The port passed the untokenized `s_word`, so
+                                                                  // the quote tokens `prefork` needs were already gone: `echo "$PA<TAB>`
+                                                                  // arrived as `$PA` (an unquoted unset parameter, which expands to NO
+                                                                  // WORD and leaves the line alone) instead of `<Dnull>$PA` (an unset
+                                                                  // parameter INSIDE double quotes, which expands to an empty-but-present
+                                                                  // word — so zsh deletes `"$PA` and inserts nothing).
         let mut ret_local = doexpansion(
             &ORIGWORD
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default(),
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default(),
             lst,
             olst,
             lincmd,
@@ -2378,8 +2378,8 @@ pub fn get_comp_string() -> Option<String> {
                     if let Some(m) = ZLEMETALINE.get() {
                         if let Ok(mut g) = m.lock() {
                             let mut bytes = g.as_bytes().to_vec();
-                            let cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize)
-                                .min(bytes.len());
+                            let cs =
+                                (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize).min(bytes.len());
                             let end = (cs + addedx as usize).min(bytes.len());
                             if cs < end {
                                 bytes.drain(cs..end);
@@ -2961,7 +2961,7 @@ pub fn get_comp_string() -> Option<String> {
                     } else if n1 != Some(snull) {
                         // c:1959 — paranoia: should be gone now
                         let mut tp = p + 1; // c:1960
-                        // c:1962-1966
+                                            // c:1962-1966
                         while let Some(&tc) = sv.get(tp) {
                             if tc == '^'
                                 || tc == Hat
@@ -3057,7 +3057,7 @@ pub fn get_comp_string() -> Option<String> {
                             i += (tp - p) as i32 - 1; // c:2016
                             dp += tp - p - 1; // c:2017
                             p = tp - 1; // c:2018
-                            // c:2019 `continue;` — the for-increments still run.
+                                        // c:2019 `continue;` — the for-increments still run.
                             p += 1;
                             dp += 1;
                             i += 1;
@@ -3068,9 +3068,9 @@ pub fn get_comp_string() -> Option<String> {
                             // c:2022-2048
                             let len = bend - bb; // c:2024
                             NBRBEG.fetch_add(1, Ordering::SeqCst); // c:2027
-                            // c:2037-2039 — `new->str = dupstrpfx(bbeg, len);
-                            //   new->str = ztrdup(quotename(new->str));
-                            //   untokenize(new->str);`
+                                                                   // c:2037-2039 — `new->str = dupstrpfx(bbeg, len);
+                                                                   //   new->str = ztrdup(quotename(new->str));
+                                                                   //   untokenize(new->str);`
                             let raw: String = sv[bb..bb + len].iter().collect();
                             let bstr = untokenize_ztokens(&quotename(&raw, instring));
                             // c:2041-2043 — `*dbeg = '\0';
@@ -3083,11 +3083,11 @@ pub fn get_comp_string() -> Option<String> {
                             let pre: String = predup[..dbeg].iter().collect();
                             let qpos = quotename(&pre, instring).chars().count() as i32;
                             brbeg_v.push(Brinfo {
-                                next: None,   // c:2029
-                                prev: None,   // see the prev note at c:2194
+                                next: None, // c:2029
+                                prev: None, // see the prev note at c:2194
                                 str: Some(bstr),
-                                pos: begi,    // c:2040
-                                qpos,         // c:2042
+                                pos: begi, // c:2040
+                                qpos,      // c:2042
                                 curpos: 0,
                             });
                             i -= len as i32; // c:2044
@@ -3177,7 +3177,7 @@ pub fn get_comp_string() -> Option<String> {
                         NBREND.fetch_add(1, Ordering::SeqCst); // c:2142
                         let raw: String = sv[bb..bb + len].iter().collect();
                         let bstr = untokenize_ztokens(&quotename(&raw, instring)); // c:2150-2152
-                        // c:2147-2148 — `new->next = brend; brend = new;`
+                                                                                   // c:2147-2148 — `new->next = brend; brend = new;`
                         brend_v.insert(
                             0,
                             Brinfo {
@@ -3560,11 +3560,11 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
         // and testing `is_empty()` returned early on it, leaving `echo "$PA`
         // on the line where zsh leaves `echo `.
         let _ = &first_item; // c:2292 (see above: the byte test has no faithful form here)
-        // c:2294-2299 — no-change check. If the first item still
-        // equals `ss` (no real expansion happened), OR the only
-        // change was tilde-expansion that `filesubstr` would do
-        // (and the caller asked for `COMP_EXPAND_COMPLETE`), fall
-        // through to completion.
+                             // c:2294-2299 — no-change check. If the first item still
+                             // equals `ss` (no real expansion happened), OR the only
+                             // change was tilde-expansion that `filesubstr` would do
+                             // (and the caller asked for `COMP_EXPAND_COMPLETE`), fall
+                             // through to completion.
         let len_vl = {
             let mut n = 0;
             let mut cur = vl.firstnode();
@@ -4550,7 +4550,8 @@ pub static QISUF: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(
 /// directly; the port needs the `OnceLock`/`Mutex` dance.
 pub fn qipre_get() -> String {
     // c:137
-    QIPRE.get_or_init(|| Mutex::new(String::new()))
+    QIPRE
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default()
@@ -4558,7 +4559,8 @@ pub fn qipre_get() -> String {
 /// Reads `qisuf` (c:137).
 pub fn qisuf_get() -> String {
     // c:137
-    QISUF.get_or_init(|| Mutex::new(String::new()))
+    QISUF
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default()

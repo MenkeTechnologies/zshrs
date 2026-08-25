@@ -701,7 +701,10 @@ mod nullcmd_redirect_only {
     fn readnullcmd_names_a_shell_function() {
         let d = tdir();
         std::fs::write(d.path().join("s.txt"), "alpha\n").unwrap();
-        assert_parity_in(d.path(), "f() { print FUNC; read v; print $v }\nREADNULLCMD=f; < s.txt");
+        assert_parity_in(
+            d.path(),
+            "f() { print FUNC; read v; print $v }\nREADNULLCMD=f; < s.txt",
+        );
     }
 
     /// c:3489 — a READNULLCMD naming a BUILTIN runs the builtin (`:` reads
