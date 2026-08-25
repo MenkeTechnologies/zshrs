@@ -5778,11 +5778,30 @@ pub fn equalsplit(s: &str) -> Option<(String, String)> {
 pub fn inittyptab() {
     // utils.c:4155
 
-    // c:4160 — `if (!(typtab_flags & ZTF_INIT))` one-off init.
+    // c:4160-4164 — `if (!(typtab_flags & ZTF_INIT))` one-off init:
+    //
+    //     typtab_flags = ZTF_INIT;
+    //     if (interact && isset(SHINSTDIN))
+    //         typtab_flags |= ZTF_INTERACT;
+    //
+    // The `ZTF_INTERACT` half was missing, and it is load-bearing: it is the
+    // ONLY writer of that bit, c:4257 reads it to decide `ZTF_BANGCHAR`, and
+    // c:4291 reads THAT to decide whether `bangchar` is `ISPECIAL`. Without
+    // it the chain never starts, so `!` was never a special character in an
+    // interactive shell and `${(q)v}` on `v='a!b'` published `a!b` where zsh
+    // publishes `a\!b`.
+    //
+    // C latches this ONCE, on the first call, and never revisits it — later
+    // calls keep whatever the first decided. Preserved exactly: the whole
+    // block is inside the `ZTF_INIT` guard.
     {
         let flags = TYPTAB_FLAGS.load(Ordering::Relaxed);
         if (flags & ZTF_INIT) == 0 {
-            TYPTAB_FLAGS.store(ZTF_INIT, Ordering::Relaxed);
+            let mut init = ZTF_INIT; // c:4161
+            if interact() && isset(crate::ported::zsh_h::SHINSTDIN) {
+                init |= ZTF_INTERACT; // c:4163
+            }
+            TYPTAB_FLAGS.store(init, Ordering::Relaxed);
         }
     }
 
@@ -10407,28 +10426,30 @@ pub fn qflag_quotetype(count: u32) -> i32 {
 ///   - `bangchar` (default `!`) when `BANGHIST` is set AND
 ///     `ZTF_INTERACT` is set (interactive shell)
 ///
-/// The Rust port enumerates `SPECCHARS` directly because the
-/// typtab is not lazily initialised — production `ispecial` calls
-/// happen after `init_typtab` runs at shell startup, but
-/// `quotestring` is unit-tested in isolation where the typtab is
-/// all-zero. Match the C SPECCHARS set byte-for-byte; the option-
-/// driven augments (`,` and bangchar) are still NOT wired through
-/// (a known gap — see the typtab-routing TODO at the param level).
+/// Reads the LIVE table, which is the whole point of the macro: the
+/// set is not a constant. `inittyptab` recomputes it from options on
+/// every relevant change, and two members exist only at runtime —
+/// `,` under `makecommaspecial` and `bangchar` under
+/// BANGHIST+interactive.
+///
+/// This used to enumerate `SPECCHARS` as a literal `matches!`, which
+/// made both runtime members unreachable: `quotestring` is the only
+/// caller, so `${(q)v}` on `v='a!b'` published `a!b` where an
+/// interactive zsh publishes `a\!b`, and `makecommaspecial` could not
+/// affect quoting at all. The bit was being computed correctly all
+/// along (utils.c:4257-4259, and `makebangspecial` at c:4283) — it
+/// just had no reader.
+///
+/// C indexes `typtab` by `unsigned char`, so anything outside 0..=255
+/// has no entry; return false rather than truncating a `char` into a
+/// byte that would alias an unrelated slot.
 fn ispecial(c: char) -> bool {
-    // c:59 (Src/ztype.h)
-    // c:228 (Src/zsh.h) `SPECCHARS` — exact byte set from the C
-    // string literal. `^` and `{`/`}` were already present; `!`
-    // is INTENTIONALLY OMITTED here because C only ISPECIAL-tags
-    // bangchar under BANGHIST + interactive. Including `!`
-    // unconditionally diverges from C for non-interactive scripts
-    // and unbang'd input.
-    matches!(
-        c,
-        '#' | '$' | '^' | '*' | '(' | ')' | '='  // c:228 first half
-            | '|' | '{' | '}' | '[' | ']' | '`'   // c:228 mid
-            | '<' | '>' | '?' | '~' | ';' | '&'   // c:228 specials
-            | '\n' | '\t' | ' ' | '\\' | '\'' | '"' // c:228 whitespace/backslash/quotes
-    )
+    // c:59 (Src/ztype.h) — `zistype(X, ISPECIAL)`.
+    let cp = c as u32;
+    if cp > 0xff {
+        return false;
+    }
+    crate::ported::ztype_h::ispecial(cp as u8)
 }
 
 /// Convert integer to string with specified base — re-export of
@@ -15503,6 +15524,10 @@ mod tests {
     /// Pattern chars like `*`, `?`, `$`, `(`, `)` should be backslashed.
     #[test]
     fn quotestring_corpus_qt_backslash_escapes_glob_chars() {
+        // `ispecial` reads the live typtab, as C's macro does, so the table
+        // has to be populated first — C guarantees it via the `inittyptab`
+        // call in `setupvals`. Same entry call the sibling typtab tests make.
+        inittyptab();
         let out = quotestring("a*b?c", QT_BACKSLASH);
         assert!(out.contains("\\*"), "* gets backslashed, got {out:?}");
         assert!(out.contains("\\?"), "? gets backslashed, got {out:?}");

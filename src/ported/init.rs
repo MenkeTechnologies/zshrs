@@ -1219,6 +1219,28 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
         std::env::set_var("OLDPWD", &cwd); // c:1256
     }
 
+    // c:1261 — `inittyptab();`. This is the FIRST call C makes, and it runs
+    // here for a reason: `parseargs` has already set INTERACTIVE/SHINSTDIN, so
+    // the one-shot `ZTF_INIT` latch inside (utils.c:4160-4164) sees the real
+    // values and can raise `ZTF_INTERACT`. That bit is the head of the chain
+    // c:4257 → `ZTF_BANGCHAR` → c:4291 → `bangchar` is `ISPECIAL`.
+    //
+    // zshrs reaches `inittyptab` EARLIER than C does — `ShellExecutor::new`
+    // (vm_helper.rs, C's `createparamtable`, which C runs at c:1286, AFTER
+    // this) and `lex_init` both seed the type table defensively because their
+    // callers need `isident`/`iblank` working. Those calls happen before
+    // options are parsed, so the latch was being decided with
+    // `interact=false, shinstdin=false` (measured) and `ZTF_INTERACT` could
+    // never be set — `!` was not a special character in ANY interactive
+    // zshrs, and `${(q)v}` on `v='a!b'` gave `a!b` where zsh gives `a\!b`.
+    //
+    // Re-arm the latch so it is decided HERE, at C's own call site, with C's
+    // inputs. The observable semantics are C's: computed once, from
+    // `interact && isset(SHINSTDIN)`, and never revisited afterwards.
+    crate::ported::ztype_h::TYPTAB_FLAGS.fetch_and(
+        !crate::ported::ztype_h::ZTF_INIT,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     crate::ported::utils::inittyptab(); // c:1261
     crate::ported::lex::initlextabs(); // c:1262
 
