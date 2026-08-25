@@ -11215,6 +11215,47 @@ pub fn bin_print(
         match argptr.parse::<i32>() {
             // c:4835 zstrtol
             Ok(fdarg) => {
+                // DELIBERATE DEVIATION from c:4843-4851, which has no
+                // fdtable check here: it just `dup()`s and `fdopen()`s,
+                // and reports "bad file number" only because the `dup`
+                // of a descriptor zsh does not have fails with EBADF.
+                //
+                // That is incidental safety. It holds in C because the
+                // descriptors zsh keeps for itself above 9 are read-only
+                // (its `/dev/null`, its sourced script), so `-u` on one
+                // fails at the `fdopen(fd, "w")` a line later instead —
+                // "bad mode on fd N". zshrs keeps something C never
+                // keeps: a long-lived READ-WRITE SQLite handle to the
+                // user's history database, plus an append handle to the
+                // log. `print -u 11` therefore returned 0 and wrote into
+                // the history database — measured, it overwrote the
+                // SQLite header of a 665 MB file, and `pragma
+                // quick_check` then reported it was not a database.
+                //
+                // So the fdtable is consulted here. This can only make
+                // zshrs stricter, never looser, and it moves toward zsh
+                // rather than away from it: the descriptors it refuses
+                // are ones a real zsh does not have open at all, where
+                // zsh answers `bad file number: N` with status 1 — which
+                // is exactly what is produced below. A descriptor the
+                // SCRIPT owns is `FDT_EXTERNAL` (c:Src/exec.c:2409) or
+                // one of 0/1/2 (c:Src/init.c:1900) and is unaffected, and
+                // anything past `max_zsh_fd` is left alone per
+                // c:Src/exec.c:3886-3891.
+                let shell_owned = fdarg > 9 && {
+                    let max_fd = crate::ported::utils::MAX_ZSH_FD
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    fdarg <= max_fd && {
+                        let kind = crate::ported::utils::fdtable_get(fdarg)
+                            & crate::ported::zsh_h::FDT_TYPE_MASK;
+                        kind != crate::ported::zsh_h::FDT_UNUSED
+                            && kind != crate::ported::zsh_h::FDT_EXTERNAL
+                    }
+                };
+                if shell_owned {
+                    zwarnnam(name, &format!("bad file number: {}", fdarg)); // c:4844
+                    return 1; // c:4845
+                }
                 // c:4843 — `dup(fdarg)` for an owned writer that
                 // close-on-drop doesn't close the user's original fd.
                 let dup_fd = unsafe { libc::dup(fdarg) };
@@ -14102,7 +14143,36 @@ pub fn bin_read(
         // `unwrap_or(0)`d, silently dropping `read -u abc v` errors.
         let argptr = OPT_ARG(ops, b'u').unwrap_or("");
         match argptr.parse::<i32>() {
-            Ok(n) => n,
+            Ok(n) => {
+                // Same deviation, and the same reason, as the `-u` arm of
+                // `print` above: c:Src/builtin.c:6494-6500 has no fdtable
+                // check, because in C a descriptor the shell keeps for
+                // itself above 9 is not readable by the script — there is
+                // nothing there to read. In zshrs there is: `read -u 11
+                // line` returned 0 and put `SQLite format 3` — the header
+                // of the user's history database — into a shell variable.
+                //
+                // Refusing yields status 1 and no diagnostic, which is
+                // byte-for-byte what zsh 5.9.2 does for a descriptor it
+                // does not have open. Script-owned descriptors are
+                // `FDT_EXTERNAL` (c:Src/exec.c:2409) or 0/1/2
+                // (c:Src/init.c:1900) and are untouched; anything past
+                // `max_zsh_fd` is left alone per c:Src/exec.c:3886-3891.
+                let shell_owned = n > 9 && {
+                    let max_fd = crate::ported::utils::MAX_ZSH_FD
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    n <= max_fd && {
+                        let kind = crate::ported::utils::fdtable_get(n)
+                            & crate::ported::zsh_h::FDT_TYPE_MASK;
+                        kind != crate::ported::zsh_h::FDT_UNUSED
+                            && kind != crate::ported::zsh_h::FDT_EXTERNAL
+                    }
+                };
+                if shell_owned {
+                    return 1;
+                }
+                n
+            }
             Err(_) => {
                 zwarnnam(name, &format!("number expected after -u: {}", argptr));
                 return 1;
