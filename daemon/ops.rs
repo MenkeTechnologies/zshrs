@@ -1687,6 +1687,9 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         slug: "recorder".to_string(),
         source_root: source_root.clone(),
         entry_count: total as u32,
+        binary_mtime_secs: super::shard::current_binary_identity().0,
+        binary_mtime_nsecs: super::shard::current_binary_identity().1,
+        binary_len: super::shard::current_binary_identity().2,
     };
     // Helpers: project the AttrRow-carrying maps/vecs into the
     // value-only shapes the shard format expects. The shard format

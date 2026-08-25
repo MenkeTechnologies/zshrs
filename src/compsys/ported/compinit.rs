@@ -2027,10 +2027,32 @@ pub fn compinit_lazy(cache: &crate::compsys::cache::CompsysCache) -> (bool, usiz
 /// `stamp_cache_complete` and `cache_is_valid`.
 pub const CACHE_COMPLETE_KEY: &str = "comps_rows_at_build_end";
 
+/// Metadata key holding `(mtime_secs, mtime_nsecs, len)` of the `zshrs`
+/// binary that built the cache &mdash; see
+/// `crate::compsys::cache::binary_identity_stamp`.
+///
+/// The row-count stamp above says a build FINISHED; it says nothing
+/// about WHICH build. The rows carry completer names, service names and
+/// pattern splits whose meaning is fixed by the code that wrote them,
+/// and the only guard against a cache outliving that code was a
+/// hand-bumped `COMPLETION_SCHEMA_GENERATION` constant, i.e. a human
+/// remembering. Stamping the producing binary makes every rebuilt
+/// `zshrs` reject its predecessor's rows without anyone remembering
+/// anything.
+pub const CACHE_BINARY_KEY: &str = "builder_binary_identity";
+
 /// Record that a freshly built cache is complete.
 ///
 /// Must be the final write of a build. Pairs with `cache_is_valid`.
 pub fn stamp_cache_complete(cache: &crate::compsys::cache::CompsysCache) -> bool {
+    let Some(binary) = crate::compsys::cache::binary_identity_stamp() else {
+        // No `current_exe()`: the cache cannot be attributed to a build,
+        // and an unattributable cache is never installed.
+        return false;
+    };
+    if cache.set_metadata(CACHE_BINARY_KEY, &binary).is_err() {
+        return false;
+    }
     match cache.comp_count() {
         Ok(n) => cache
             .set_metadata(CACHE_COMPLETE_KEY, &n.to_string())
@@ -2058,6 +2080,17 @@ pub fn cache_is_valid(cache: &crate::compsys::cache::CompsysCache) -> bool {
     let rows = cache.comp_count().unwrap_or(0);
     if rows <= 0 {
         return false;
+    }
+    // Built by THIS binary, exactly. A cache written by another build
+    // is rejected whether it is older or newer, so a downgrade is a
+    // miss rather than a silent hit on rows the running code no longer
+    // agrees with.
+    let Some(running) = crate::compsys::cache::binary_identity_stamp() else {
+        return false;
+    };
+    match cache.get_metadata(CACHE_BINARY_KEY) {
+        Ok(Some(built_by)) if built_by == running => {}
+        _ => return false,
     }
     match cache.get_metadata(CACHE_COMPLETE_KEY) {
         Ok(Some(stamp)) => stamp.parse::<i64>().map(|n| n == rows).unwrap_or(false),
@@ -3092,6 +3125,25 @@ mod tests {
         let comps = crate::ported::subst::assoc_get("_comps").expect("_comps must still be a hash");
         assert_eq!(comps.get("git").map(String::as_str), Some("_git"));
         assert_eq!(comps.get("man").map(String::as_str), Some("_man"));
+    }
+
+    #[test]
+    fn cache_is_valid_rejects_a_cache_another_build_wrote() {
+        let cache = crate::compsys::cache::CompsysCache::memory().expect("in-memory cache");
+        cache.set_comp("git", "_git").unwrap();
+        assert!(stamp_cache_complete(&cache));
+        assert!(cache_is_valid(&cache), "our own stamp must be accepted");
+
+        // Same rows, same count, stamped by a binary that is not this
+        // one. Equality, so it is rejected whether that binary is older
+        // or newer than the running one.
+        cache
+            .set_metadata(CACHE_BINARY_KEY, "1.2.3")
+            .expect("restamp");
+        assert!(
+            !cache_is_valid(&cache),
+            "a cache built by another zshrs must be rebuilt, not read"
+        );
     }
 
     #[test]

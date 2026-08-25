@@ -430,6 +430,9 @@ impl CanonicalEngine {
                 slug: PROMOTIONS_SLUG.to_string(),
                 source_root: PROMOTIONS_SOURCE_ROOT.to_string(),
                 entry_count: 0,
+                binary_mtime_secs: super::shard::current_binary_identity().0,
+                binary_mtime_nsecs: super::shard::current_binary_identity().1,
+                binary_len: super::shard::current_binary_identity().2,
             },
             ..Default::default()
         };

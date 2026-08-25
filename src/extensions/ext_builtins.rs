@@ -2674,6 +2674,49 @@ impl ShellExecutor {
             if let Some(parent) = cache_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
+            // Serialise the whole rebuild. The build-aside + `rename`
+            // below is atomic for a READER, but two BUILDERS still each
+            // install a complete database over the other's: whichever
+            // renames last wins and the loser's entire scan is thrown
+            // away, along with any registration only it had seen. Up to
+            // 16 of the user's shells share this file, so two of them
+            // starting cold at once is the ordinary case. Blocking and
+            // exclusive, on a side file the rename does not replace, the
+            // same shape `script_cache` and `autoload_cache` already use
+            // for their shards.
+            let _rebuild_lock = crate::compsys::cache::acquire_rebuild_lock();
+            // Whoever held the lock before us may have just installed a
+            // cache this binary can use. Re-check under the lock instead
+            // of rebuilding what is already there: the check that sent us
+            // down this branch ran before we waited.
+            //
+            // ONLY for `compinit -C`. Without `-C`, sh:504-528 scans
+            // `$fpath` unconditionally, and this one file is shared by
+            // every shell on the machine no matter what each one's
+            // `$fpath` holds — so accepting a neighbour's cache here
+            // publishes the NEIGHBOUR's registrations. Measured: eight
+            // shells rebuilding at once, each with one completion unique
+            // to its own `$fpath`, all eight came back holding shell 8's
+            // unique entry and none of their own.
+            if use_cache {
+            if let Ok(existing) = crate::compsys::cache::CompsysCache::open(&cache_path) {
+                if crate::compsys::cache_is_valid(&existing) {
+                    if let Ok(result) = crate::compsys::load_from_cache(&existing) {
+                        tracing::info!(
+                            path = %cache_path.display(),
+                            comps = result.comps.len(),
+                            "compinit: another shell installed a usable cache while we waited for the rebuild lock"
+                        );
+                        let _ = tx.send(CompInitBgResult {
+                            result,
+                            cache: existing,
+                        });
+                        return;
+                    }
+                }
+            }
+            }
+
             // Build into a private file and move it into place when it is
             // finished, the same crash-safe shape `compdump` already uses
             // for the dump (compdump.rs:175-188, sh:21-23).

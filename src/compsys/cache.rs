@@ -41,6 +41,80 @@ pub fn default_cache_path() -> PathBuf {
     root.join("compsys.db")
 }
 
+/// Advisory-lock file guarding a whole `compsys.db` rebuild:
+/// `$ZSHRS_HOME/compsys.db.lock`.
+///
+/// Separate from the database file because the rebuild replaces that
+/// file by `rename(2)`; a lock taken on the db inode would be dropped
+/// on the floor the moment the new inode landed.
+pub fn cache_lock_path() -> PathBuf {
+    let db = default_cache_path();
+    db.with_file_name(format!(
+        "{}.lock",
+        db.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "compsys.db".to_string())
+    ))
+}
+
+/// Take the blocking exclusive `flock` that serialises rebuilds of
+/// `compsys.db`, held across the validity re-check, the build and the
+/// `rename`.
+///
+/// The rebuild is a whole-database build-aside plus `rename`, so two
+/// shells rebuilding at once each install a complete database over the
+/// other's — whichever renames last wins and the loser's entire scan is
+/// discarded. Sixteen of the user's shells share this one file, so that
+/// is the ordinary case, not a corner. Same shape as
+/// `script_cache::acquire_lock` and `autoload_cache::acquire_lock`:
+/// exclusive, blocking, on a side file that no rename replaces.
+pub fn acquire_rebuild_lock() -> Option<nix::fcntl::Flock<std::fs::File>> {
+    let path = cache_lock_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let f = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .ok()?;
+    nix::fcntl::Flock::lock(f, nix::fcntl::FlockArg::LockExclusive).ok()
+}
+
+/// `(mtime_secs, mtime_nsecs, len)` of the running `zshrs` binary, in
+/// the exact form stamped into a built cache.
+///
+/// All three terms are load-bearing. `mtime` alone is whole seconds in
+/// the form most stat wrappers report, so a rebuild landing in the same
+/// second as the stamp compares equal; the nanoseconds field separates
+/// them. Length alone does not identify a build either &mdash; two debug
+/// binaries here measured byte-identical in size. And the comparison is
+/// EQUALITY, never `<`/`>=`: a binary whose mtime moves backwards (an
+/// older build restored over a newer one, a `cp -p`, a checkout of a
+/// previously built `target/`) passes any "not older than" test while
+/// being a different build, which is the same bug `script_cache` and
+/// `plugin_cache` carried until `autoload_cache`'s exact-equality shape
+/// was brought to them.
+pub fn current_binary_identity() -> Option<(i64, i64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    static BIN_ID: std::sync::OnceLock<Option<(i64, i64, u64)>> = std::sync::OnceLock::new();
+    *BIN_ID.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let meta = std::fs::metadata(&exe).ok()?;
+        Some((meta.mtime(), meta.mtime_nsec(), meta.len()))
+    })
+}
+
+/// The stamped form of `current_binary_identity`, or `None` when
+/// `current_exe()` cannot be read &mdash; in which case nothing can be
+/// proven about who built a cache, and every caller treats that as a
+/// miss rather than an unconditional accept.
+pub fn binary_identity_stamp() -> Option<String> {
+    current_binary_identity().map(|(secs, nsecs, len)| format!("{}.{}.{}", secs, nsecs, len))
+}
+
 impl CompsysCache {
     /// Access the underlying SQLite connection (for dbview etc.)
     pub fn conn(&self) -> &Connection {
