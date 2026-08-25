@@ -11682,6 +11682,23 @@ pub fn paramsubst(
                 // this fallback the (kv) arm produced empty for indexed
                 // arrays because `assoc_get` returned None and the
                 // magic-assoc tables didn't match.
+                //
+                // c:Src/params.c:385,386,423 — `*`, `@` and `argv` are
+                // IPDEF9 rows: PM_ARRAY parameters whose storage IS
+                // `pparams`, read through `vararray_gsu`. Since
+                // c:Src/params.c:714-715 `getvaluearr` hands back
+                // `pm->gsu.a->getfn(pm)` for ANY PM_ARRAY, they take the
+                // same values fallback a named array does. They must be
+                // resolved BEFORE `exec::array` (= `getaparam`), which
+                // reads paramtab's `u_arr`: the seeded `@` node holds an
+                // EMPTY vector, so it answers `Some([])` and terminates the
+                // chain on nothing. `arrays_get` is the reader that models
+                // the IPDEF9 rows (its `matches!(name, "@" | "*" | "argv")`
+                // arm reads the live executor positionals).
+                .or_else(|| match var_name.as_str() {
+                    "@" | "*" | "argv" => arrays_get(&var_name), // c:385,386,423
+                    _ => None,
+                })
                 .or_else(|| crate::ported::exec::array(&var_name));
             // c:Src/subst.c — `(kv)` on a plain SCALAR returns the
             // scalar's value (no-op), not empty (`x=hello; ${(kv)x}` →
@@ -11742,6 +11759,20 @@ pub fn paramsubst(
                 // via `arr=(a b c); ${(k)arr}` → "a b c"). The assoc
                 // and magic-assoc lookups above already failed; fall
                 // back to the array's values via array_get.
+                //
+                // c:Src/params.c:385,386,423 — same IPDEF9 rows as the
+                // `(kv)` arm above: `*`/`@`/`argv` are PM_ARRAY parameters
+                // over `pparams`, so c:Src/params.c:714-715 returns their
+                // values and `(k)` is the same no-op it is on a named
+                // array. They have to be resolved before `exec::array`
+                // (= `getaparam`), whose paramtab `u_arr` read answers
+                // `Some([])` for `@` and would end the chain empty — which
+                // is exactly why `"${(k)@}"`, `"${(k)*}"` and
+                // `"${(k)argv}"` expanded to nothing.
+                .or_else(|| match var_name.as_str() {
+                    "@" | "*" | "argv" => arrays_get(&var_name), // c:385,386,423
+                    _ => None,
+                })
                 .or_else(|| crate::ported::exec::array(&var_name));
             // c:2247 — derive the scalar-join value from the key list
             // ALREADY computed into magic_assoc_array above instead of
@@ -12141,7 +12172,25 @@ pub fn paramsubst(
         if let Some(ref keys) = magic_assoc_array {
             if !keys.is_empty() {
                 split_parts = Some(keys.clone());
-                isarr = 1;
+                // c:Src/subst.c:2916 — `(v->scanflags & SCANPM_ISVAR_AT)
+                // ? -1 : v->scanflags ? 1 : 0`: the ISVAR_AT test comes
+                // FIRST, so a `(k)`/`(v)`/`(kv)` flag (which only ever ADDS
+                // WANTKEYS/WANTVALS bits to scanflags) cannot turn a bare
+                // `@` into a positive isarr. c:Src/params.c:2231
+                // (`isvarat = (t[0] == '@' && !t[1])`) computes it from the
+                // NAME and c:Src/params.c:2278 stamps SCANPM_ISVAR_AT onto
+                // the Value for every array/hash-shaped parameter, flags
+                // included. isarr = -1 then survives the c:Src/subst.c:3032
+                // quoted sepjoin (gated `isarr > 0`), which is why
+                // `set -- a b c; print -rl -- "${(k)@}"` prints three words
+                // while `"${(k)*}"` / `"${(k)argv}"` print one joined word.
+                // Same resolved-name rule as the shape block below
+                // (c:2698-2718 name-splice for `(P)`).
+                let isvarat = subexp_aspar_name
+                    .as_deref()
+                    .unwrap_or(var_name.as_str())
+                    == "@"; // c:Src/params.c:2231
+                isarr = if isvarat { -1 } else { 1 };
             } else if is_at_splat_sub {
                 // c:Src/subst.c:2916 — an EMPTY `(k)/(v)/(kv)` enumeration
                 // under an `[@]`/`[*]` splat must keep ARRAY shape so the
@@ -20169,8 +20218,41 @@ pub fn paramsubst(
                     out
                 }
             };
+            // c:Src/subst.c:4383/4402/4422 — every array element goes through
+            // `subst_parse_str`, and c:4469-4470 then rewinds the stringsubst
+            // cursor onto the list so each parsed element is RE-SCANNED. An
+            // element whose text expands to several words therefore fans out
+            // into several elements: `arr=( '${(s.:.)P}' )` with `P=a:b:c`
+            // makes `${(e)arr}` three words, and `Completion/Base/Completer/
+            // _expand:90` relies on exactly that to turn its one-element
+            // `exp` into the expansion list. `esub` alone (singsub) collapses
+            // each element to ONE word, so the whole completer came back with
+            // the word unchanged. Mirror the scalar arm below: re-scan through
+            // `multsub(PREFORK_NOSHWORDSPLIT)` so an ordinary multi-word VALUE
+            // (`arr=( 'a b' )`) still stays one word while a genuine
+            // fan-out (nested split flags, `$(…)`) splices in place.
+            let esub_multi = |s: &str| -> Vec<String> {
+                let e_multi = !single_e && !s.contains(Snull) && !s.contains('\u{0}');
+                if e_multi {
+                    let (_j, ms_parts, ms_isarr, _ms) = ANSI_C_SNULL_STRICT.with(|flag| {
+                        let prev = flag.get();
+                        flag.set(true);
+                        let r = match subst_parse_str(s, single_e, quoteerr) {
+                            Some(parsed) => multsub(&parsed, PREFORK_NOSHWORDSPLIT),
+                            None => multsub(s, PREFORK_NOSHWORDSPLIT),
+                        };
+                        flag.set(prev);
+                        r
+                    });
+                    if ms_isarr && ms_parts.len() > 1 {
+                        return ms_parts;
+                    }
+                }
+                vec![esub(s)]
+            };
             if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> = parts.iter().map(|s| esub(s)).collect();
+                let new_parts: Vec<String> =
+                    parts.iter().flat_map(|s| esub_multi(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
             } else if isarr != 0 {
@@ -20186,7 +20268,8 @@ pub fn paramsubst(
                 // into unbounded recursion → stack overflow at interactive
                 // prompt time. zsh evals only the picked element and stops.
                 if let Some(arr) = arrays_get(&var_name) {
-                    let new_arr: Vec<String> = arr.iter().map(|s| esub(s)).collect();
+                    let new_arr: Vec<String> =
+                        arr.iter().flat_map(|s| esub_multi(s)).collect();
                     value = new_arr.join(" ");
                     split_parts = Some(new_arr);
                 } else {
@@ -23205,6 +23288,21 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 errflag_set_error();
                 return String::new();
             }
+            // c:Src/subst.c:4650-4651 — `if (!isset(HISTSUBSTPATTERN))
+            // untokenize(hsubl);`. The search text arrives from the lexer
+            // with its metachars still TOKENIZED: `${x:gs/\\{/…/}` reaches
+            // here as Bnull `\` Inbrace, so the loop above built `\` +
+            // U+008F while the haystack holds a plain ASCII `{` — no match,
+            // and `_expand`'s brace-expansion arm
+            // (Completion/Base/Completer/_expand:82) left its `\{`/`\}`
+            // untouched, so every expandable word came back unchanged.
+            // C untokenizes here for the literal (strstr) path and leaves
+            // the tokens for the pattern path, where patcompile wants them.
+            let pat = if isset(HISTSUBSTPATTERN) {
+                pat
+            } else {
+                untokenize(&pat)
+            };
             // Read replacement with `&` and `\X` handling.
             let mut repl = String::new(); // c:4625
             while let Some(&c) = chars.peek() {
