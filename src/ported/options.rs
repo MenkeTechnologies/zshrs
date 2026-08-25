@@ -2213,8 +2213,11 @@ mod tests {
                 name
             );
             // A `_` between every pair of chars exercises the filter arm.
-            let underscored: String =
-                name.chars().map(|c| c.to_string()).collect::<Vec<_>>().join("_");
+            let underscored: String = name
+                .chars()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("_");
             assert_eq!(
                 optlookup(&underscored),
                 want,

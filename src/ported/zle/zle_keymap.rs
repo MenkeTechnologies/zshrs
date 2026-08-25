@@ -1175,8 +1175,8 @@ pub fn bin_bindkey(
     // took the rest of the file down with the harness shell.
     if crate::ported::init::zle_load_state.load(std::sync::atomic::Ordering::SeqCst) == 0 {
         crate::ported::zle::zle_thingy::init_thingies(); // c:zle_main.c:2253
-        crate::ported::init::zle_load_state
-            .store(1, std::sync::atomic::Ordering::SeqCst); // c:zle_main.c:2250
+        crate::ported::init::zle_load_state.store(1, std::sync::atomic::Ordering::SeqCst);
+        // c:zle_main.c:2250
     }
     if keymapnamtab()
         .lock()

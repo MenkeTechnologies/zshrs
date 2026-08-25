@@ -115,10 +115,7 @@ pub fn _regex_words(args: &[String]) -> i32 {
             // sh:47 — `matches+=" ${(q)…}\\[${(q)…}\\]"`.
             matches.push_str(&format!(
                 " {}\\[{}\\]",
-                shell_quote(&backslash_escape(
-                    &w0.replace('*', ""),
-                    &[':', '[', ']']
-                )),
+                shell_quote(&backslash_escape(&w0.replace('*', ""), &[':', '[', ']'])),
                 shell_quote(&backslash_escape(w1, &[':', '[', ']'])),
             ));
         }

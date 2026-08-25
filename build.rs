@@ -274,9 +274,7 @@ fn link_term_lib() {
     // the ncurses headers were found (configure.ac:711-717); this port
     // always offers them and lets the link probe be the filter.
     let order: Vec<String> = match env::var("ZSHRS_TERM_LIB") {
-        Ok(v) if !v.trim().is_empty() => {
-            v.split_whitespace().map(|s| s.to_string()).collect()
-        }
+        Ok(v) if !v.trim().is_empty() => v.split_whitespace().map(|s| s.to_string()).collect(),
         _ => match target_os.as_str() {
             // configure.ac:734
             "solaris" | "illumos" => ["ncursesw", "ncurses", "curses", "termcap"]
@@ -285,10 +283,12 @@ fn link_term_lib() {
                 .collect(),
             // configure.ac:730/739 — the default everywhere else. (The
             // `hpux1[01].*` Hcurses branch at c:737 has no Rust target.)
-            _ => ["ncursesw", "ncurses", "tinfow", "tinfo", "termcap", "curses"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            _ => [
+                "ncursesw", "ncurses", "tinfow", "tinfo", "termcap", "curses",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         },
     };
 
@@ -499,7 +499,11 @@ fn config_guess_host_os(target: &str, host: &str, target_os: &str, target_env: &
         "macos" => {
             // `aarch64-apple-darwin23` → "darwin23"; `aarch64-apple-darwin`
             // (Rust's unversioned spelling) → fall through to the probe.
-            if let Some(rel) = target.rsplit('-').next().and_then(|f| f.strip_prefix("darwin")) {
+            if let Some(rel) = target
+                .rsplit('-')
+                .next()
+                .and_then(|f| f.strip_prefix("darwin"))
+            {
                 if !rel.is_empty() {
                     return format!("darwin{rel}");
                 }
@@ -601,7 +605,10 @@ fn cs_path() -> String {
 /// UNAME_RELEASE=unknown``. Returns `None` on the failure branch so the
 /// caller can decide what to emit instead.
 fn uname_release() -> Option<String> {
-    let out = std::process::Command::new("uname").arg("-r").output().ok()?;
+    let out = std::process::Command::new("uname")
+        .arg("-r")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }

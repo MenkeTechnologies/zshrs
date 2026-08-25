@@ -1523,8 +1523,7 @@ fn gettok() -> lextok {
                     // take C's INPAR. Found by parity-fuzz:
                     // `[[ hello == (hel*|wor*) ]]` returned 1 in `--ksh --zsh`
                     // where the zsh oracle errored.
-                    if LEX_INCOND.get() > 1
-                        && (unset(SHGLOB) || crate::dash_mode::posix_faithful())
+                    if LEX_INCOND.get() > 1 && (unset(SHGLOB) || crate::dash_mode::posix_faithful())
                     {
                         gettokstr('(', false)
                     } else if isset(SHGLOB) || LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() {
@@ -3628,9 +3627,8 @@ pub fn exalias() -> bool {
         // before the NEWLIN early return, so yyerror can name `)`,
         // `;`, `&&` … afterwards.
         let i = tok() as usize;
-        LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
-            *t = tokstrings.get(i).copied().flatten().map(|s| s.to_string())
-        });
+        LEX_ZSHLEXTEXT
+            .with_borrow_mut(|t| *t = tokstrings.get(i).copied().flatten().map(|s| s.to_string()));
         if tok() == NEWLIN {
             return false;
         }
@@ -4185,8 +4183,9 @@ fn skipcomm() -> Result<(), ()> {
                             let mut term = String::new();
                             while let Some(k) = ch {
                                 match k {
-                                    ' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')' | '<'
-                                    | '>' => break,
+                                    ' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>' => {
+                                        break
+                                    }
                                     '\\' => {
                                         add(k);
                                         match hgetc() {
@@ -4751,9 +4750,13 @@ pub(crate) fn hgetc() -> Option<char> {
         // c:360 guard here would re-evaluate `inbufflags` at a different
         // moment than `hungetc` did, which is the asymmetry
         // `LEX_UNGET_HPTR` exists to remove.
-        if LEX_UNGET_HPTR.with_borrow_mut(|b| b.pop_front()).unwrap_or(false) {
+        if LEX_UNGET_HPTR
+            .with_borrow_mut(|b| b.pop_front())
+            .unwrap_or(false)
+        {
             let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
-            crate::ported::hist::hptr.store(pos + c.len_utf8(), Ordering::SeqCst); // c:459
+            crate::ported::hist::hptr.store(pos + c.len_utf8(), Ordering::SeqCst);
+            // c:459
         }
         // c:input.c:360-361 — every char returned by ingetc feeds
         // the raw buffer when lex_add_raw is on. Re-reads from the
@@ -4978,8 +4981,8 @@ fn hungetc(c: char) {
             let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
             // c:1010 — `DPUTS(hptr <= chline, "BUG: hungetc attempted at
             // buffer start");` then c:1011 `hptr--`.
-            crate::ported::hist::hptr
-                .store(pos.saturating_sub(c.len_utf8()), Ordering::SeqCst); // c:1011
+            crate::ported::hist::hptr.store(pos.saturating_sub(c.len_utf8()), Ordering::SeqCst);
+            // c:1011
         }
         eligible
     };

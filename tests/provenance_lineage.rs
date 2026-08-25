@@ -165,7 +165,10 @@ F=$(echo alpha)
 provenance -j F";
     let (out, _, status) = run(script);
     assert_eq!(status, 0, "{out}");
-    assert!(out.starts_with(r#"{"name":"F","origin":"cmdsubst"#), "{out}");
+    assert!(
+        out.starts_with(r#"{"name":"F","origin":"cmdsubst"#),
+        "{out}"
+    );
     assert!(out.contains(r#""op":"assign""#), "{out}");
     assert!(out.contains(r#""origin_line":2"#), "{out}");
     assert!(out.trim_end().ends_with(r#""dropped_ops":0}"#), "{out}");
@@ -297,7 +300,10 @@ fn track_all_arms_every_parameter_and_function_without_a_single_m() {
         "the function's origin is its definition site:\n{out}"
     );
     assert!(
-        out.contains(&format!("call       greet()                                  {}:5", path)),
+        out.contains(&format!(
+            "call       greet()                                  {}:5",
+            path
+        )),
         "the call op stands at the caller's line:\n{out}"
     );
     let _ = std::fs::remove_file(&path);
@@ -342,7 +348,10 @@ fn a_function_and_a_parameter_of_the_same_name_keep_separate_chains() {
          provenance -f path_of\n\
          provenance REPLY\n",
     );
-    assert!(out.contains("path_of()\n  origin: function path_of"), "{out}");
+    assert!(
+        out.contains("path_of()\n  origin: function path_of"),
+        "{out}"
+    );
     assert!(out.contains("REPLY\n  origin: assign \"deep\""), "{out}");
     let _ = std::fs::remove_file(&path);
 }
@@ -360,10 +369,7 @@ fn track_all_can_be_switched_off_again() {
     assert!(out.contains("EARLY"), "what was recorded stays:\n{out}");
     // `LATE` is written only after `-ua`, so it never arms: the listing
     // shows `EARLY` and nothing else.
-    assert!(
-        !out.contains("LATE"),
-        "no name arms after -ua:\n{out}"
-    );
+    assert!(!out.contains("LATE"), "no name arms after -ua:\n{out}");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -391,7 +397,10 @@ fn every_redefinition_of_a_function_lands_on_its_chain() {
         "report was:\n{out}"
     );
     assert!(
-        out.contains(&format!("redefine   greet                                    {}:4", path)),
+        out.contains(&format!(
+            "redefine   greet                                    {}:4",
+            path
+        )),
         "the redefinition stands at the new body's line:\n{out}"
     );
     let _ = std::fs::remove_file(&path);

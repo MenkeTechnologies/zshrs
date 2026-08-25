@@ -33,6 +33,7 @@
 //! `compfiles -p$cfopt` emits the shell's exact option token (`-p` or
 //! `-p-`), matching C's accepted forms (computil.c:5011-5015).
 
+use crate::compsys::ported::shared::{PM_ARRAY, PM_UNIQUE};
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
@@ -40,7 +41,6 @@ use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setapar
 use crate::ported::subst::{filesubstr, singsub};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compadd_body, bin_compset};
-use crate::compsys::ported::shared::{PM_ARRAY, PM_UNIQUE};
 use crate::ported::zle::computil::{bin_compfiles, bin_compquote};
 use crate::ported::zsh_h::{isset, options, CASEGLOB, MAX_OPS};
 
@@ -534,12 +534,12 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     );
     _locals.also(&["ignore"], PM_ARRAY); // sh:46
     _locals.also(&["accex", "fake"], PM_ARRAY); // sh:47
-    // sh:48 `local listfiles listopts tmpdisp origtmp1 Uopt` — `_list_files`
-    // (Unix/Type/_list_files:15-16) assigns both without `local` and relies on
-    // this declaration. Without it `setaparam` created them at level 0 and they
-    // survived the completion, so `_parameters` — which keeps every name whose
-    // `$parameters` type string does NOT contain `local` — offered `listfiles`
-    // and `listopts` in the `parameters` group, two matches zsh never lists.
+                                                // sh:48 `local listfiles listopts tmpdisp origtmp1 Uopt` — `_list_files`
+                                                // (Unix/Type/_list_files:15-16) assigns both without `local` and relies on
+                                                // this declaration. Without it `setaparam` created them at level 0 and they
+                                                // survived the completion, so `_parameters` — which keeps every name whose
+                                                // `$parameters` type string does NOT contain `local` — offered `listfiles`
+                                                // and `listopts` in the `parameters` group, two matches zsh never lists.
     _locals.also(&["listfiles", "listopts"], PM_ARRAY);
     _locals.also(&["exppaths"], PM_ARRAY | PM_UNIQUE); // sh:53 `typeset -U … exppaths`
 

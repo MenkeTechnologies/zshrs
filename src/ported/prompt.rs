@@ -2142,8 +2142,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     pputc(bv, b'!'); // c:951
                 } else {
                     // c:954-955 — `convbase(bv->bp, curhist, 10)`
-                    let n =
-                        crate::ported::hist::curhist.load(std::sync::atomic::Ordering::SeqCst);
+                    let n = crate::ported::hist::curhist.load(std::sync::atomic::Ordering::SeqCst);
                     stradd(bv, &n.to_string());
                 }
             }
@@ -2390,9 +2389,9 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
                              // per-byte callback appends into the prompt buffer,
                              // so the `$<n>` delay specs are stripped here too.
             out.push_str(&String::from_utf8_lossy(&crate::shout::tputs(&cap_str))); // c:1099
-                                    // c:1101-1106 — glitch detection (sg / ug termcap nums).
-                                    // tgetnum() not yet ported as a free fn; assume 0 (no glitch)
-                                    // which matches modern terminals.
+                                                                                    // c:1101-1106 — glitch detection (sg / ug termcap nums).
+                                                                                    // tgetnum() not yet ported as a free fn; assume 0 (no glitch)
+                                                                                    // which matches modern terminals.
             out.push(Outpar); // c:1112 Outpar marker
         }
         _ => {

@@ -605,7 +605,12 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
     let bn = BINTAB.lock().unwrap();
     let pd = PATAB.lock().unwrap();
     *enables = Some(crate::ported::module::getfeatureenables(
-        m, &bn, &[], &[], &pd, 0,
+        m,
+        &bn,
+        &[],
+        &[],
+        &pd,
+        0,
     ));
     0 // c:3375
 }
@@ -671,7 +676,9 @@ fn setbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin], e: Option<
     let ret = 0;
     for (n, b) in binl.iter_mut().enumerate() {
         // c:505
-        let on = e.map(|a| a.get(n).copied().unwrap_or(0) != 0).unwrap_or(false); // c:507
+        let on = e
+            .map(|a| a.get(n).copied().unwrap_or(0) != 0)
+            .unwrap_or(false); // c:507
         if on {
             if (b.node.flags & BINF_ADDED as i32) != 0 {
                 continue; // c:508-509
@@ -718,7 +725,9 @@ fn setparamdefs(nam: &str, d: &mut [crate::ported::zsh_h::paramdef], e: Option<&
     let mut ret = 0; // c:1172
     for (n, def) in d.iter_mut().enumerate() {
         // c:1174 while (size--)
-        let on = e.map(|a| a.get(n).copied().unwrap_or(0) != 0).unwrap_or(false); // c:1175
+        let on = e
+            .map(|a| a.get(n).copied().unwrap_or(0) != 0)
+            .unwrap_or(false); // c:1175
         if on {
             if def.pm.is_some() {
                 continue; // c:1176-1179

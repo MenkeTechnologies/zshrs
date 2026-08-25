@@ -2206,7 +2206,9 @@ fn bash_set_o_accepts_bash_only_option_names() {
         Some("off")
     );
     // …and through the reusable `set +o` form.
-    assert!(bash("set -o errtrace; set +o").0.contains("set -o errtrace"));
+    assert!(bash("set -o errtrace; set +o")
+        .0
+        .contains("set -o errtrace"));
 
     // $SHELLOPTS is the colon-joined list of the enabled `set -o` options in
     // bash's (alphabetical) table order; it was empty before. These three are
@@ -2218,7 +2220,10 @@ fn bash_set_o_accepts_bash_only_option_names() {
     for want in ["braceexpand", "hashall", "interactive-comments"] {
         assert!(names.contains(&want), "$SHELLOPTS missing {want}: {opts:?}");
     }
-    assert!(!names.contains(&"posix"), "posix is off by default: {opts:?}");
+    assert!(
+        !names.contains(&"posix"),
+        "posix is off by default: {opts:?}"
+    );
     assert!(
         names.windows(2).all(|w| w[0] < w[1]),
         "$SHELLOPTS must keep bash's alphabetical order: {opts:?}"
@@ -2299,7 +2304,10 @@ fn posix_faithful_echo_interprets_escapes() {
     let run = |flags: &[&str], script: &str| -> String {
         let mut args: Vec<&str> = flags.to_vec();
         args.extend(["-f", "-c", script]);
-        let out = Command::new(zshrs_bin()).args(&args).output().expect("spawn");
+        let out = Command::new(zshrs_bin())
+            .args(&args)
+            .output()
+            .expect("spawn");
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     for mode in [["--sh"], ["--dash"], ["--ash"], ["--ksh"]] {
@@ -2529,7 +2537,10 @@ fn set_o_monitor_succeeds_in_posix_family_drop_ins() {
         );
         // Short form too, and the option must actually READ back as set.
         assert_eq!(
-            run_zshrs(flags, r#"set -m; printf '%d\n' $?; set +m; printf '%d\n' $?"#),
+            run_zshrs(
+                flags,
+                r#"set -m; printf '%d\n' $?; set +m; printf '%d\n' $?"#
+            ),
             ("0\n0\n".to_string(), 0),
             "{flags:?}: `set -m` must succeed"
         );
@@ -2566,7 +2577,11 @@ fn korn_drop_ins_have_sparse_arrays() {
         );
         // A full reassign clears the holes again.
         assert_eq!(
-            run_zshrs(flags, r#"a=(x y z); a[5]=q; a=(m n); print -r -- "${#a[@]}""#).0,
+            run_zshrs(
+                flags,
+                r#"a=(x y z); a[5]=q; a=(m n); print -r -- "${#a[@]}""#
+            )
+            .0,
             "2\n",
             "{flags:?}: reassign resets to dense"
         );
@@ -2586,13 +2601,21 @@ fn bash_case_double_semi_amp_continues_matching() {
     // to test the next pattern list in the statement, if any, and execute any
     // associated list on a successful match." That is zsh's `;|`.
     assert_eq!(
-        run_zshrs(&["--bash"], r#"case x in x) printf a;;& x) printf b;; esac"#).0,
+        run_zshrs(
+            &["--bash"],
+            r#"case x in x) printf a;;& x) printf b;; esac"#
+        )
+        .0,
         "ab",
         "--bash `;;&` must fall through to the next pattern test"
     );
     // A non-matching second pattern still stops the output at `a`.
     assert_eq!(
-        run_zshrs(&["--bash"], r#"case x in x) printf a;;& y) printf b;; esac"#).0,
+        run_zshrs(
+            &["--bash"],
+            r#"case x in x) printf a;;& y) printf b;; esac"#
+        )
+        .0,
         "a",
         "--bash `;;&` re-tests but only runs matching arms"
     );
@@ -2733,20 +2756,35 @@ fn dash_family_reports_two_for_a_fatal_shell_error() {
         "5\n"
     );
     assert_eq!(
-        run_zshrs(&["--dash"], r#"(exit 5; : "${nope:?}") 2>/dev/null; printf '%d\n' $?"#).0,
+        run_zshrs(
+            &["--dash"],
+            r#"(exit 5; : "${nope:?}") 2>/dev/null; printf '%d\n' $?"#
+        )
+        .0,
         "5\n",
         "`exit 5` runs first, so no error is ever raised"
     );
     // …but an error raised BEFORE the exit wins, because exraise assigns
     // exitstatus at the raise. dash agrees: this prints 2.
     assert_eq!(
-        run_zshrs(&["--dash"], r#"(: "${nope:?}"; exit 5) 2>/dev/null; printf '%d\n' $?"#).0,
+        run_zshrs(
+            &["--dash"],
+            r#"(: "${nope:?}"; exit 5) 2>/dev/null; printf '%d\n' $?"#
+        )
+        .0,
         "2\n"
     );
     // Ordinary non-zero statuses are untouched.
-    assert_eq!(run_zshrs(&["--dash"], r#"(false); printf '%d\n' $?"#).0, "1\n");
     assert_eq!(
-        run_zshrs(&["--dash"], r#"nonexistent_cmd_zz 2>/dev/null; printf '%d\n' $?"#).0,
+        run_zshrs(&["--dash"], r#"(false); printf '%d\n' $?"#).0,
+        "1\n"
+    );
+    assert_eq!(
+        run_zshrs(
+            &["--dash"],
+            r#"nonexistent_cmd_zz 2>/dev/null; printf '%d\n' $?"#
+        )
+        .0,
         "127\n"
     );
 }
@@ -2976,12 +3014,20 @@ fn pdksh_line_has_pipestatus_but_ksh93_does_not() {
     // this needs dash_mode::PDKSH_FAMILY to tell the two lines apart.
     for flags in [&["--mksh"][..], &["--pdksh"][..]] {
         assert_eq!(
-            run_zshrs(flags, r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#).0,
+            run_zshrs(
+                flags,
+                r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#
+            )
+            .0,
             "[0 1 0]\n",
             "{flags:?}: PIPESTATUS must carry every stage"
         );
         assert_eq!(
-            run_zshrs(flags, r#"(exit 3) | (exit 4); print -r -- "[${PIPESTATUS[*]}]""#).0,
+            run_zshrs(
+                flags,
+                r#"(exit 3) | (exit 4); print -r -- "[${PIPESTATUS[*]}]""#
+            )
+            .0,
             "[3 4]\n"
         );
         assert_eq!(
@@ -2996,18 +3042,30 @@ fn pdksh_line_has_pipestatus_but_ksh93_does_not() {
     }
     // ksh93 must stay empty.
     assert_eq!(
-        run_zshrs(&["--ksh"], r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#).0,
+        run_zshrs(
+            &["--ksh"],
+            r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#
+        )
+        .0,
         "[]\n",
         "--ksh (ksh93) has no PIPESTATUS"
     );
     // bash keeps it; zsh's own name is `$pipestatus`, and PIPESTATUS is an
     // ordinary (unset) parameter there.
     assert_eq!(
-        run_zshrs(&["--bash"], r#"true | false | true; printf '[%s]\n' "${PIPESTATUS[*]}""#).0,
+        run_zshrs(
+            &["--bash"],
+            r#"true | false | true; printf '[%s]\n' "${PIPESTATUS[*]}""#
+        )
+        .0,
         "[0 1 0]\n"
     );
     assert_eq!(
-        run_zshrs(&["--zsh"], r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#).0,
+        run_zshrs(
+            &["--zsh"],
+            r#"true | false | true; print -r -- "[${PIPESTATUS[*]}]""#
+        )
+        .0,
         "[]\n"
     );
 
@@ -3053,12 +3111,20 @@ fn korn_funsub_and_valsub_run_in_the_current_shell() {
         // THE distinguishing property: state survives, where `$( … )`
         // would discard it.
         assert_eq!(
-            run_zshrs(flags, r#"x=0; y=${ x=5; print -n out; }; print -r -- "x=$x y=$y""#).0,
+            run_zshrs(
+                flags,
+                r#"x=0; y=${ x=5; print -n out; }; print -r -- "x=$x y=$y""#
+            )
+            .0,
             "x=5 y=out\n",
             "{flags:?}: a funsub shares the current shell environment"
         );
         assert_eq!(
-            run_zshrs(flags, r#"x=0; y=$(x=5; print -n out); print -r -- "x=$x y=$y""#).0,
+            run_zshrs(
+                flags,
+                r#"x=0; y=$(x=5; print -n out); print -r -- "x=$x y=$y""#
+            )
+            .0,
             "x=0 y=out\n",
             "{flags:?}: `$( … )` must still isolate"
         );
@@ -3095,13 +3161,21 @@ fn korn_funsub_and_valsub_run_in_the_current_shell() {
         );
         // Shares state like the funsub …
         assert_eq!(
-            run_zshrs(flags, r#"x=0; y=${|x=5; REPLY=v;}; print -r -- "x=$x y=$y""#).0,
+            run_zshrs(
+                flags,
+                r#"x=0; y=${|x=5; REPLY=v;}; print -r -- "x=$x y=$y""#
+            )
+            .0,
             "x=5 y=v\n"
         );
         // … but REPLY itself is local to it: the outer value is neither
         // visible inside nor clobbered after.
         assert_eq!(
-            run_zshrs(flags, r#"REPLY=outer; y=${|:;}; print -r -- "[$y][$REPLY]""#).0,
+            run_zshrs(
+                flags,
+                r#"REPLY=outer; y=${|:;}; print -r -- "[$y][$REPLY]""#
+            )
+            .0,
             "[][outer]\n"
         );
         // stdout is NOT captured — it goes straight through.

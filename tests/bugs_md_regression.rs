@@ -1577,7 +1577,10 @@ fn funcdef_body_stdin_matches_file_and_dash_c() {
     if zshrs_bin().is_none() {
         return;
     }
-    assert_eq!(from_stdin, from_dash_c, "stdin and -c disagree on body text");
+    assert_eq!(
+        from_stdin, from_dash_c,
+        "stdin and -c disagree on body text"
+    );
     assert!(
         from_stdin.contains("print \"a b\"") && from_stdin.contains("print x"),
         "bodies missing: {from_stdin:?}"

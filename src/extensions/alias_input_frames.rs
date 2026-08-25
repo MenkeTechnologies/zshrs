@@ -69,4 +69,3 @@ pub fn clear() {
 pub fn outermost() -> Option<String> {
     ALCONT_ALIASES.with(|a| a.borrow().first().cloned())
 }
-

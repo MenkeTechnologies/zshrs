@@ -111,7 +111,10 @@ fn numeric_sort_places_digit_initial_elements_among_letters() {
 fn numeric_sort_one_sided_digit_run_mid_string_keeps_collation() {
     assert_parity_eq("a=(xa x1); print -r -- ${(n)a}", "x1 xa\n");
     assert_parity_eq("a=(a10 a9 ab); print -r -- ${(n)a}", "a9 a10 ab\n");
-    assert_parity_eq("a=(z3 z30 z300 zz); print -r -- ${(n)a}", "z3 z30 z300 zz\n");
+    assert_parity_eq(
+        "a=(z3 z30 z300 zz); print -r -- ${(n)a}",
+        "z3 z30 z300 zz\n",
+    );
 }
 
 /// `(O)` reverses the same comparator rather than reversing a lexical sort.
@@ -141,7 +144,10 @@ fn numeric_sort_compares_digit_runs_by_value_not_lexically() {
         "a=(f1 f10 f2 f100 f0 f01); print -r -- ${(n)a}",
         "f0 f01 f1 f2 f10 f100\n",
     );
-    assert_parity_eq("a=(v1.2 v1.10 v1.9); print -r -- ${(n)a}", "v1.2 v1.9 v1.10\n");
+    assert_parity_eq(
+        "a=(v1.2 v1.10 v1.9); print -r -- ${(n)a}",
+        "v1.2 v1.9 v1.10\n",
+    );
 }
 
 /// The glob-qualifier `(n)` and the `NUMERIC_GLOB_SORT` option route the
@@ -161,10 +167,7 @@ fn glob_numeric_sort_matches_zsh_for_digit_initial_names() {
     }
     let d = dir.to_str().expect("utf8 tmpdir");
     let expected = "9\n10\na\nf1\nf2\nf10\nz\n";
-    assert_parity_eq(
-        &format!("cd {d} && print -rl -- *(n)"),
-        expected,
-    );
+    assert_parity_eq(&format!("cd {d} && print -rl -- *(n)"), expected);
     assert_parity_eq(
         &format!("setopt numericglobsort; cd {d} && print -rl -- *"),
         expected,

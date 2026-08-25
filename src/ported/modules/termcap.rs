@@ -625,47 +625,45 @@ static TERMCAP_LOCK: Mutex<()> = Mutex::new(());
 
 /// c:45-49 — `#ifndef HAVE_BOOLCODES static char *boolcodes[] = {...}`
 static BOOLCODES_FALLBACK: &[&str] = &[
-    "bw", "am", "ut", "cc", "xs", "YA", "YF", "YB", "xt", "xn", "eo", "gn", "hc", "HC", "km",
-    "YC", "hs", "hl", "in", "YG", "da", "db", "mi", "ms", "nx", "xb", "NP", "ND", "NR", "os",
-    "5i", "YD", "YE", "es", "hz", "ul", "xo"
+    "bw", "am", "ut", "cc", "xs", "YA", "YF", "YB", "xt", "xn", "eo", "gn", "hc", "HC", "km", "YC",
+    "hs", "hl", "in", "YG", "da", "db", "mi", "ms", "nx", "xb", "NP", "ND", "NR", "os", "5i", "YD",
+    "YE", "es", "hz", "ul", "xo",
 ];
 
 /// c:220-224 — `#ifndef HAVE_NUMCODES static char *numcodes[] = {...}`
 static NUMCODES_FALLBACK: &[&str] = &[
-    "co", "it", "lh", "lw", "li", "lm", "sg", "ma", "Co", "pa", "MW", "NC", "Nl", "pb", "vt",
-    "ws", "Yo", "Yp", "Ya", "BT", "Yc", "Yb", "Yd", "Ye", "Yf", "Yg", "Yh", "Yi", "Yk", "Yj",
-    "Yl", "Ym", "Yn"
+    "co", "it", "lh", "lw", "li", "lm", "sg", "ma", "Co", "pa", "MW", "NC", "Nl", "pb", "vt", "ws",
+    "Yo", "Yp", "Ya", "BT", "Yc", "Yb", "Yd", "Ye", "Yf", "Yg", "Yh", "Yi", "Yk", "Yj", "Yl", "Ym",
+    "Yn",
 ];
 
 /// c:228-264 — `#ifndef HAVE_STRCODES static char *zstrcodes[] = {...}`
 static ZSTRCODES_FALLBACK: &[&str] = &[
-    "ac", "bt", "bl", "cr", "ZA", "ZB", "ZC", "ZD", "cs", "rP", "ct", "MC", "cl", "cb", "ce",
-    "cd", "ch", "CC", "CW", "cm", "do", "ho", "vi", "le", "CM", "ve", "nd", "ll", "up", "vs",
-    "ZE", "dc", "dl", "DI", "ds", "DK", "hd", "eA", "as", "SA", "mb", "md", "ti", "dm", "mh",
-    "ZF", "ZG", "im", "ZH", "ZI", "ZJ", "ZK", "ZL", "mp", "mr", "mk", "ZM", "so", "ZN", "ZO",
-    "us", "ZP", "SX", "ec", "ae", "RA", "me", "te", "ed", "ZQ", "ei", "ZR", "ZS", "ZT", "ZU",
-    "se", "ZV", "ZW", "ue", "ZX", "RX", "PA", "fh", "vb", "ff", "fs", "WG", "HU", "i1", "is",
-    "i3", "if", "iP", "Ic", "Ip", "ic", "al", "ip", "K1", "K3", "K2", "kb", "@1", "kB", "K4",
-    "K5", "@2", "ka", "kC", "@3", "@4", "@5", "@6", "kt", "kD", "kL", "kd", "kM", "@7", "@8",
-    "kE", "kS", "@9", "k0", "k1", "k;", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9",
-    "k2", "FA", "FB", "FC", "FD", "FE", "FF", "FG", "FH", "FI", "FJ", "k3", "FK", "FL", "FM",
-    "FN", "FO", "FP", "FQ", "FR", "FS", "FT", "k4", "FU", "FV", "FW", "FX", "FY", "FZ", "Fa",
-    "Fb", "Fc", "Fd", "k5", "Fe", "Ff", "Fg", "Fh", "Fi", "Fj", "Fk", "Fl", "Fm", "Fn", "k6",
-    "Fo", "Fp", "Fq", "Fr", "k7", "k8", "k9", "@0", "%1", "kh", "kI", "kA", "kl", "kH", "%2",
-    "%3", "%4", "%5", "kN", "%6", "%7", "kP", "%8", "%9", "%0", "&1", "&2", "&3", "&4", "&5",
-    "kr", "&6", "&9", "&0", "*1", "*2", "*3", "*4", "*5", "*6", "*7", "*8", "*9", "kF", "*0",
-    "#1", "#2", "#3", "#4", "%a", "%b", "%c", "%d", "%e", "%f", "kR", "%g", "%h", "%i", "%j",
-    "!1", "!2", "kT", "!3", "&7", "&8", "ku", "ke", "ks", "l0", "l1", "la", "l2", "l3", "l4",
-    "l5", "l6", "l7", "l8", "l9", "Lf", "LF", "LO", "mo", "mm", "ZY", "ZZ", "Za", "Zb", "Zc",
-    "Zd", "nw", "Ze", "oc", "op", "pc", "DC", "DL", "DO", "Zf", "IC", "SF", "AL", "LE", "Zg",
-    "RI", "Zh", "SR", "UP", "Zi", "pk", "pl", "px", "pn", "ps", "pO", "pf", "po", "PU", "QD",
-    "RC", "rp", "RF", "r1", "r2", "r3", "rf", "rc", "cv", "sc", "sf", "sr", "Zj", "sa", "Sb",
-    "Zk", "Zl", "SC", "sp", "Sf", "ML", "Zm", "MR", "Zn", "st", "Zo", "Zp", "wi", "Zq", "Zr",
-    "Zs", "Zt", "Zu", "Zv", "ta", "Zw", "ts", "TO", "uc", "hu", "u0", "u1", "u2", "u3", "u4",
-    "u5", "u6", "u7", "u8", "u9", "WA", "XF", "XN", "Zx", "S8", "Yv", "Zz", "Xy", "Zy", "ci",
-    "Yw", "Yx", "dv", "S1", "Yy", "S2", "S4", "S3", "S5", "Gm", "Km", "Mi", "S6", "xl", "RQ",
-    "S7", "s0", "s1", "s2", "s3", "AB", "AF", "Yz", "ML", "YZ", "MT", "Xh", "Xl", "Xo", "Xr",
-    "Xt", "Xv", "sA", "sL"
+    "ac", "bt", "bl", "cr", "ZA", "ZB", "ZC", "ZD", "cs", "rP", "ct", "MC", "cl", "cb", "ce", "cd",
+    "ch", "CC", "CW", "cm", "do", "ho", "vi", "le", "CM", "ve", "nd", "ll", "up", "vs", "ZE", "dc",
+    "dl", "DI", "ds", "DK", "hd", "eA", "as", "SA", "mb", "md", "ti", "dm", "mh", "ZF", "ZG", "im",
+    "ZH", "ZI", "ZJ", "ZK", "ZL", "mp", "mr", "mk", "ZM", "so", "ZN", "ZO", "us", "ZP", "SX", "ec",
+    "ae", "RA", "me", "te", "ed", "ZQ", "ei", "ZR", "ZS", "ZT", "ZU", "se", "ZV", "ZW", "ue", "ZX",
+    "RX", "PA", "fh", "vb", "ff", "fs", "WG", "HU", "i1", "is", "i3", "if", "iP", "Ic", "Ip", "ic",
+    "al", "ip", "K1", "K3", "K2", "kb", "@1", "kB", "K4", "K5", "@2", "ka", "kC", "@3", "@4", "@5",
+    "@6", "kt", "kD", "kL", "kd", "kM", "@7", "@8", "kE", "kS", "@9", "k0", "k1", "k;", "F1", "F2",
+    "F3", "F4", "F5", "F6", "F7", "F8", "F9", "k2", "FA", "FB", "FC", "FD", "FE", "FF", "FG", "FH",
+    "FI", "FJ", "k3", "FK", "FL", "FM", "FN", "FO", "FP", "FQ", "FR", "FS", "FT", "k4", "FU", "FV",
+    "FW", "FX", "FY", "FZ", "Fa", "Fb", "Fc", "Fd", "k5", "Fe", "Ff", "Fg", "Fh", "Fi", "Fj", "Fk",
+    "Fl", "Fm", "Fn", "k6", "Fo", "Fp", "Fq", "Fr", "k7", "k8", "k9", "@0", "%1", "kh", "kI", "kA",
+    "kl", "kH", "%2", "%3", "%4", "%5", "kN", "%6", "%7", "kP", "%8", "%9", "%0", "&1", "&2", "&3",
+    "&4", "&5", "kr", "&6", "&9", "&0", "*1", "*2", "*3", "*4", "*5", "*6", "*7", "*8", "*9", "kF",
+    "*0", "#1", "#2", "#3", "#4", "%a", "%b", "%c", "%d", "%e", "%f", "kR", "%g", "%h", "%i", "%j",
+    "!1", "!2", "kT", "!3", "&7", "&8", "ku", "ke", "ks", "l0", "l1", "la", "l2", "l3", "l4", "l5",
+    "l6", "l7", "l8", "l9", "Lf", "LF", "LO", "mo", "mm", "ZY", "ZZ", "Za", "Zb", "Zc", "Zd", "nw",
+    "Ze", "oc", "op", "pc", "DC", "DL", "DO", "Zf", "IC", "SF", "AL", "LE", "Zg", "RI", "Zh", "SR",
+    "UP", "Zi", "pk", "pl", "px", "pn", "ps", "pO", "pf", "po", "PU", "QD", "RC", "rp", "RF", "r1",
+    "r2", "r3", "rf", "rc", "cv", "sc", "sf", "sr", "Zj", "sa", "Sb", "Zk", "Zl", "SC", "sp", "Sf",
+    "ML", "Zm", "MR", "Zn", "st", "Zo", "Zp", "wi", "Zq", "Zr", "Zs", "Zt", "Zu", "Zv", "ta", "Zw",
+    "ts", "TO", "uc", "hu", "u0", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "WA", "XF",
+    "XN", "Zx", "S8", "Yv", "Zz", "Xy", "Zy", "ci", "Yw", "Yx", "dv", "S1", "Yy", "S2", "S4", "S3",
+    "S5", "Gm", "Km", "Mi", "S6", "xl", "RQ", "S7", "s0", "s1", "s2", "s3", "AB", "AF", "Yz", "ML",
+    "YZ", "MT", "Xh", "Xl", "Xo", "Xr", "Xt", "Xv", "sA", "sL",
 ];
 
 // libtermcap/ncurses public capability-code arrays, declared exactly
@@ -694,7 +692,11 @@ static BOOLCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
         }
         i += 1;
     }
-    if v.is_empty() { BOOLCODES_FALLBACK.to_vec() } else { v }
+    if v.is_empty() {
+        BOOLCODES_FALLBACK.to_vec()
+    } else {
+        v
+    }
 });
 
 /// `numcodes[]` — library array (HAVE_NUMCODES path) else c:220-224.
@@ -708,7 +710,11 @@ static NUMCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
         }
         i += 1;
     }
-    if v.is_empty() { NUMCODES_FALLBACK.to_vec() } else { v }
+    if v.is_empty() {
+        NUMCODES_FALLBACK.to_vec()
+    } else {
+        v
+    }
 });
 
 /// `strcodes[]` — library array (HAVE_STRCODES path) else c:228-264.
@@ -722,7 +728,11 @@ static STRCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
         }
         i += 1;
     }
-    if v.is_empty() { ZSTRCODES_FALLBACK.to_vec() } else { v }
+    if v.is_empty() {
+        ZSTRCODES_FALLBACK.to_vec()
+    } else {
+        v
+    }
 });
 
 /// WARNING: NOT IN TERMCAP.C — AtomicI32-guarded once-only wrapper

@@ -2231,13 +2231,10 @@ async fn op_autoload_prewarm(state: &Arc<DaemonState>, args: Value) -> OpResult 
     }
     cmd.stdin(std::process::Stdio::null());
     cmd.kill_on_drop(true);
-    let out = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        cmd.output(),
-    )
-    .await
-    .map_err(|_| ErrPayload::new("timeout", "prewarm exceeded timeout_secs"))?
-    .map_err(|e| ErrPayload::new("spawn_failed", format!("{e}")))?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), cmd.output())
+        .await
+        .map_err(|_| ErrPayload::new("timeout", "prewarm exceeded timeout_secs"))?
+        .map_err(|e| ErrPayload::new("spawn_failed", format!("{e}")))?;
 
     if !out.status.success() {
         return Err(ErrPayload::new(

@@ -48,7 +48,9 @@ fn scrubbed(extra: &[(&str, &str)], code: &str) -> String {
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string()
+    String::from_utf8_lossy(&out.stdout)
+        .trim_end_matches('\n')
+        .to_string()
 }
 
 /// The home directory `Src/init.c:1239-1248` would pick: `getpwuid(getuid())`'s

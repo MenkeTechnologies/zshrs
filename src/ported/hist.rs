@@ -15,7 +15,6 @@ use crate::ported::parse::init_parse_status;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::subst::equalsubstr;
 use crate::ported::utils::{errflag, zerr, zmonotime, zsleep_random, ERRFLAG_ERROR};
-use crate::ported::zsh_system_h::IS_DIRSEP;
 use crate::ported::zle::compcore::ZLEMETACS;
 use crate::ported::zsh_h::{
     hashnode, hist_stack, histent, isset, Pound, BANGHIST, CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE,
@@ -26,6 +25,7 @@ use crate::ported::zsh_h::{
     INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INP_ALIAS, INP_HIST, INTERACTIVE, SHAREHISTORY,
     SHINSTDIN,
 };
+use crate::ported::zsh_system_h::IS_DIRSEP;
 use crate::ported::ztype_h::itok;
 use crate::signals::queue_signals;
 use crate::{DPUTS, DPUTS1};
@@ -2971,7 +2971,11 @@ pub fn remtpath(s: &str, count: i32) -> String {
     };
     // c:2058 — `char *str = strend(*junkptr);` (last char, or the string
     // itself when empty — Src/string.c:196).
-    let mut str_: isize = if b.is_empty() { 0 } else { b.len() as isize - 1 };
+    let mut str_: isize = if b.is_empty() {
+        0
+    } else {
+        b.len() as isize - 1
+    };
 
     // c:2060 — /* ignore trailing slashes */
     while str_ >= 0 && IS_DIRSEP(byte(str_)) {
@@ -3033,10 +3037,10 @@ pub fn remtpath(s: &str, count: i32) -> String {
     if str_ == 0 {
         // c:2108
         str_ += 1; // c:2109
-        // c:2110-2112 — /* Leading doubled slashes (`//') have a special
-        //  meaning on cygwin and some old flavor of UNIX, so we do not
-        //  assimilate them to a single slash.  However a greater number
-        //  is ok to squeeze. */
+                   // c:2110-2112 — /* Leading doubled slashes (`//') have a special
+                   //  meaning on cygwin and some old flavor of UNIX, so we do not
+                   //  assimilate them to a single slash.  However a greater number
+                   //  is ok to squeeze. */
         if IS_DIRSEP(byte(str_)) && !IS_DIRSEP(byte(str_ + 1)) {
             str_ += 1; // c:2114
         }

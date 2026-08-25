@@ -665,7 +665,8 @@ pub fn inputline() -> i32 {
             crate::ported::zle::zle_thingy::init_thingies(); // c:2253
             crate::ported::zle::zle_keymap::createkeymapnamtab();
             crate::ported::zle::zle_keymap::default_bindings();
-            crate::ported::init::zle_load_state.store(1, std::sync::atomic::Ordering::SeqCst); // c:2250
+            crate::ported::init::zle_load_state.store(1, std::sync::atomic::Ordering::SeqCst);
+            // c:2250
         }
         let mut flags = crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY;
         if isset(crate::ported::zsh_h::IGNOREEOF) {

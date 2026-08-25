@@ -3384,13 +3384,7 @@ pub(crate) fn op(what: i32) {
         // mirrors `setmathvar` (math.rs) and C `mathevall`'s xyy* pattern
         // (c:367).
         let saved = save_state();
-        let idx = matheval(body).map(|n| {
-            if n.type_ == MN_FLOAT {
-                n.d as i64
-            } else {
-                n.l
-            }
-        });
+        let idx = matheval(body).map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l });
         restore_state(saved);
         match idx {
             Ok(i) => Some(format!("{}[{}]", base, i)),

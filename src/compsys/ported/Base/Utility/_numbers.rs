@@ -124,7 +124,14 @@ pub fn _numbers(args: &[String]) -> i32 {
     let src = "__compsys_argv";
     setaparam(src, args.to_vec());
     for name in &[
-        "opts_flat", "keep", "tags", "units", "min", "max", "default", "type",
+        "opts_flat",
+        "keep",
+        "tags",
+        "units",
+        "min",
+        "max",
+        "default",
+        "type",
     ] {
         // sh:42-43 — `local -a expl formats` / `local -a default max min
         // keep tags units` start every collector EMPTY, and `-K` (keep)
@@ -220,12 +227,7 @@ pub fn _numbers(args: &[String]) -> i32 {
 
     // sh:57  if (( $#argv )) && compset -P "$pat"; then
     if !argv.is_empty()
-        && bin_compset(
-            "compset",
-            &["-P".to_string(), pat.clone()],
-            &make_ops(),
-            0,
-        ) == 0
+        && bin_compset("compset", &["-P".to_string(), pat.clone()], &make_ops(), 0) == 0
     {
         // sh:58
         let sep = style_or(
@@ -366,10 +368,10 @@ pub fn _numbers(args: &[String]) -> i32 {
         specs.insert(')', ")".to_string()); // c:zutil.c:977
         specs.insert('x', before_first_colon(stripped).replace('%', "%%")); // sh:76
         specs.insert('X', after_first_colon(stripped).replace('%', "%%")); // sh:77
-        // sh:77 `d:${#${argv[i+1]}[1]#:}` — the length of the element's
-        // FIRST CHARACTER after stripping a leading `:` from it: 0 for a
-        // `:name:desc` default-unit spec, 1 otherwise. sh:74's default
-        // format underlines the `%(d.…)` == 0 case.
+                                                                           // sh:77 `d:${#${argv[i+1]}[1]#:}` — the length of the element's
+                                                                           // FIRST CHARACTER after stripping a leading `:` from it: 0 for a
+                                                                           // `:name:desc` default-unit spec, 1 otherwise. sh:74's default
+                                                                           // format underlines the `%(d.…)` == 0 case.
         let d = match elem.chars().next() {
             None | Some(':') => 0,
             Some(_) => 1,

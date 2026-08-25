@@ -929,8 +929,7 @@ pub fn bin_enable(
                 // arm below writes, so accepting the name here is all that is
                 // needed for `disable git` to fall the shell through to the
                 // `git` on `PATH`, and `enable git` to take it back.
-                if createbuiltintable().get(nm).is_none()
-                    && !crate::native_cmds::is_registered(nm)
+                if createbuiltintable().get(nm).is_none() && !crate::native_cmds::is_registered(nm)
                 {
                     return false;
                 }
@@ -1700,14 +1699,20 @@ pub fn set_pwd_env() {
     // `env::set_var`) skipped `addenv`'s `pm->flags |= PM_EXPORTED`
     // (params.c:5482-5484), so `${(t)PWD}` read `scalar` where zsh
     // reads `scalar-export`.
-    for (name, value) in [("PWD", &pwd), ("OLDPWD", &env::var("OLDPWD").unwrap_or_default())] {
+    for (name, value) in [
+        ("PWD", &pwd),
+        ("OLDPWD", &env::var("OLDPWD").unwrap_or_default()),
+    ] {
         if value.is_empty() && name == "OLDPWD" {
             continue;
         }
         let exported = crate::ported::params::paramtab()
             .read()
             .ok()
-            .and_then(|tab| tab.get(name).map(|pm| (pm.node.flags & PM_EXPORTED as i32) != 0))
+            .and_then(|tab| {
+                tab.get(name)
+                    .map(|pm| (pm.node.flags & PM_EXPORTED as i32) != 0)
+            })
             .unwrap_or(false);
         if !exported {
             crate::ported::params::addenv(name, value);
@@ -1912,7 +1917,8 @@ pub fn bin_cd(
                         if chase {
                             // c:1229-1232
                             if let Ok(c) = env::current_dir() {
-                                new_pwd_logical = c.to_string_lossy().into_owned(); // c:1232
+                                new_pwd_logical = c.to_string_lossy().into_owned();
+                                // c:1232
                             }
                         } else if env::set_current_dir(&new_pwd_logical).is_err() {
                             zwarn(&format!(
@@ -3031,12 +3037,12 @@ pub fn bin_fc(
         // c:1611-1668 — edit history range to a temp file, fcedit it,
         // then stuff() the result back as the next command.
         retval = 1; // c:1620
-        // c:1620 — `gettempfile(NULL, 1, &fil)`: a NULL prefix makes
-        // gettempfile fall back to `$TMPPREFIX` (c:2241-2242, default
-        // /tmp/zsh), so the editor buffer is `/tmp/zshXXXXXX`. Passing a
-        // bare "zshfc" prefix built a RELATIVE name instead, so `fc`
-        // wrote `zshfc.<hex>` into the CURRENT DIRECTORY — visible as
-        // stray untracked files in whatever repo you ran it from.
+                    // c:1620 — `gettempfile(NULL, 1, &fil)`: a NULL prefix makes
+                    // gettempfile fall back to `$TMPPREFIX` (c:2241-2242, default
+                    // /tmp/zsh), so the editor buffer is `/tmp/zshXXXXXX`. Passing a
+                    // bare "zshfc" prefix built a RELATIVE name instead, so `fc`
+                    // wrote `zshfc.<hex>` into the CURRENT DIRECTORY — visible as
+                    // stray untracked files in whatever repo you ran it from.
         let fil_opt = gettempfile(None); // c:1621 gettempfile
         match fil_opt {
             None => {
@@ -3113,16 +3119,16 @@ pub fn bin_fc(
                             // it. Without that call nothing consumed the
                             // stuffed line, so the edited command never ran.
                             crate::ported::init::r#loop(0, 1); // c:1663
-                            // C has ONE input source and one executor, so
-                            // loop(0,1) both consumes and RUNS what `stuff`
-                            // pushed. In zshrs the ported loop consumes the
-                            // pushed text (inbufct drops to 0) but its
-                            // AST-side execution is not the live path, so
-                            // outside an interactive shell — where the REPL
-                            // would have read and run the line itself —
-                            // `zsh -c 'fc -e ED 1'` echoed the edited
-                            // command and never ran it. Run it through the
-                            // same bridge `execstring` uses (exec.rs:1939).
+                                                               // C has ONE input source and one executor, so
+                                                               // loop(0,1) both consumes and RUNS what `stuff`
+                                                               // pushed. In zshrs the ported loop consumes the
+                                                               // pushed text (inbufct drops to 0) but its
+                                                               // AST-side execution is not the live path, so
+                                                               // outside an interactive shell — where the REPL
+                                                               // would have read and run the line itself —
+                                                               // `zsh -c 'fc -e ED 1'` echoed the edited
+                                                               // command and never ran it. Run it through the
+                                                               // same bridge `execstring` uses (exec.rs:1939).
                             if !isset(SHINSTDIN) {
                                 if let Ok(edited) = fs::read_to_string(&fil) {
                                     crate::ported::exec::execstring(&edited, 1, 0, "fc");
@@ -4237,8 +4243,7 @@ pub fn bin_typeset(
             let in_func = locallevel.load(Ordering::Relaxed) != 0;
             stubs.retain(|(n, _)| {
                 !tab.get(*n).is_some_and(|pm| {
-                    pm.level != 0
-                        || (in_func && (pm.node.flags as u32 & PM_UNSET) != 0)
+                    pm.level != 0 || (in_func && (pm.node.flags as u32 & PM_UNSET) != 0)
                 })
             });
         }
@@ -6030,9 +6035,7 @@ pub fn bin_typeset(
                     .ok()
                     .and_then(|t| t.get(arg_name).map(|pm| pm.node.flags as u32))
                     .is_some_and(|f| {
-                        (f & PM_SPECIAL) != 0
-                            && (on & PM_HIDE) == 0
-                            && (f & PM_HIDE & !off) == 0
+                        (f & PM_SPECIAL) != 0 && (on & PM_HIDE) == 0 && (f & PM_HIDE & !off) == 0
                     });
             // c:2475-2487 — C calls `assignsparam(pname, value, 0)`
             // which creates the pm via the assignsparam → createparam
@@ -6047,9 +6050,7 @@ pub fn bin_typeset(
             // createparam keys its accessor inheritance off it.
             let _ = createparam(
                 arg_name,
-                kind as i32
-                    | PM_LOCAL as i32
-                    | if keep_special { PM_SPECIAL as i32 } else { 0 },
+                kind as i32 | PM_LOCAL as i32 | if keep_special { PM_SPECIAL as i32 } else { 0 },
             );
             // c:2575 — `else if (on & PM_LOCAL) pm->level = locallevel;`
             // — stamp the just-created pm at the current scope so
@@ -6523,37 +6524,36 @@ pub fn bin_typeset(
                     // `alen` is always even and the gate cannot fire — which is why
                     // the test is scoped to the flat shape here.
                     let odd_pairs = !bracket_shape && elems.len() % 2 != 0; // c:4081
-                    // c:Src/params.c:3485-3502 — when the parser marked ANY
-                    // element as a `[key]=value` triad, EVERY element must be
-                    // one:
-                    //     /*
-                    //      * We strictly enforce [key]=value syntax for associative
-                    //      * arrays.  Marker can only indicate a Marker / key / value
-                    //      * triad; it cannot be there by accident.
-                    //      */
-                    //     for (aptr = val; *aptr; aptr += 3)
-                    //         if (**aptr != Marker) {
-                    //             ... zerr("bad [key]=value syntax for associative array");
-                    //             return NULL;
-                    //         }
-                    // So a MIXED list (`local -A h=(1 one [2]=two 3 three)`)
-                    // fails with THAT message, not with arrhashsetfn's
-                    // odd-element-count one (B02typeset.ztst:63). zshrs's
-                    // parser hands the elements down as plain strings, so the
-                    // `[k]=v` shape is recognised exactly the way
-                    // `bracket_shape` above recognises it.
-                    let any_bracket = elems
-                        .iter()
-                        .any(|e| e.starts_with('[') && e.contains("]=")); // c:3495
+                                                                            // c:Src/params.c:3485-3502 — when the parser marked ANY
+                                                                            // element as a `[key]=value` triad, EVERY element must be
+                                                                            // one:
+                                                                            //     /*
+                                                                            //      * We strictly enforce [key]=value syntax for associative
+                                                                            //      * arrays.  Marker can only indicate a Marker / key / value
+                                                                            //      * triad; it cannot be there by accident.
+                                                                            //      */
+                                                                            //     for (aptr = val; *aptr; aptr += 3)
+                                                                            //         if (**aptr != Marker) {
+                                                                            //             ... zerr("bad [key]=value syntax for associative array");
+                                                                            //             return NULL;
+                                                                            //         }
+                                                                            // So a MIXED list (`local -A h=(1 one [2]=two 3 three)`)
+                                                                            // fails with THAT message, not with arrhashsetfn's
+                                                                            // odd-element-count one (B02typeset.ztst:63). zshrs's
+                                                                            // parser hands the elements down as plain strings, so the
+                                                                            // `[k]=v` shape is recognised exactly the way
+                                                                            // `bracket_shape` above recognises it.
+                    let any_bracket = elems.iter().any(|e| e.starts_with('[') && e.contains("]=")); // c:3495
                     if any_bracket && !bracket_shape {
                         zerr("bad [key]=value syntax for associative array"); // c:3499
-                        // c:3500 `return NULL;` — the parameter is NOT set.
+                                                                              // c:3500 `return NULL;` — the parameter is NOT set.
                     } else if odd_pairs {
                         // c:4083 — `zerr(...)`; zshrs's zerr raises ERRFLAG_ERROR
                         // itself (c:Src/utils.c:194), so the shell aborts the rest
                         // of the input exactly as C does.
-                        zerr("bad set of key/value pairs for associative array"); // c:4083
-                        // c:4084 `return;` — the parameter is NOT set.
+                        zerr("bad set of key/value pairs for associative array");
+                    // c:4083
+                    // c:4084 `return;` — the parameter is NOT set.
                     } else {
                         let mut map: IndexMap<String, String> = IndexMap::new();
                         if bracket_shape {
@@ -7012,7 +7012,10 @@ pub fn bin_typeset(
                 let preserved_special_hash = paramtab()
                     .read()
                     .ok()
-                    .and_then(|t| t.get(arg).map(|pm| (pm.node.flags as u32 & PM_SPECIAL) != 0))
+                    .and_then(|t| {
+                        t.get(arg)
+                            .map(|pm| (pm.node.flags as u32 & PM_SPECIAL) != 0)
+                    })
                     .unwrap_or(false)
                     && crate::ported::modules::parameter::PARTAB
                         .iter()
@@ -7121,8 +7124,7 @@ pub fn bin_typeset(
                             .read()
                             .ok()
                             .and_then(|t| {
-                                t.get(&ename)
-                                    .map(|apm| (ename.clone(), apm.u_arr.clone()))
+                                t.get(&ename).map(|apm| (ename.clone(), apm.u_arr.clone()))
                             })
                             .and_then(|(n, a)| a.map(|a| (n, a))) // c:2266 getfn
                     });
@@ -9485,7 +9487,10 @@ pub fn bin_unset(
                             .iter()
                             .any(|e| e.name == nm))
                 {
-                    crate::ported::params::paramtab().write().ok().map(|mut t| t.remove(nm)); // c:3874
+                    crate::ported::params::paramtab()
+                        .write()
+                        .ok()
+                        .map(|mut t| t.remove(nm)); // c:3874
                     let _ = crate::ported::params::paramtab_hashed_storage()
                         .lock()
                         .ok()
@@ -10205,10 +10210,7 @@ pub fn bin_whence(
                 // PRINT_WHENCE_VERBOSE for `-p -V` (prints `echo is a shell
                 // builtin`). The `NAME: builtin` spelling is the
                 // PRINT_WHENCE_WORD form and belongs to `whence -w`.
-                printbuiltinnode(
-                    &b.node as *const hashnode as *mut hashnode,
-                    printflags,
-                ); // c:4163
+                printbuiltinnode(&b.node as *const hashnode as *mut hashnode, printflags); // c:4163
                 informed = 1; // c:4164
                 continue;
             }
@@ -11665,12 +11667,9 @@ pub fn bin_print(
     // requires `-e`, which is what BSDECHO already gives it. The `--X --zsh`
     // zsh-STYLE legs clear posix_faithful, so they keep zsh's BSDECHO
     // behavior and stay byte-identical to `zsh -c 'emulate sh; …'`.
-    let posix_faithful_echo =
-        crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode();
-    let bsd_echo_active = echo_mode
-        && isset(BSDECHO)
-        && !crate::dash_mode::dash_strict()
-        && !posix_faithful_echo;
+    let posix_faithful_echo = crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode();
+    let bsd_echo_active =
+        echo_mode && isset(BSDECHO) && !crate::dash_mode::dash_strict() && !posix_faithful_echo;
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
         || (echo_mode && OPT_ISSET(ops, b'E'))
@@ -13828,10 +13827,10 @@ pub fn bin_emulate(
                         } else {
                             0
                         }, // c:6346
-                    n_on_opts: on_opts.len() as i32,                            // c:6351
-                    n_off_opts: off_opts.len() as i32,                          // c:6353
-                    on_opts,                                                    // c:6356-6358
-                    off_opts,                                                   // c:6360-6362
+                    n_on_opts: on_opts.len() as i32,   // c:6351
+                    n_off_opts: off_opts.len() as i32, // c:6353
+                    on_opts,                           // c:6356-6358
+                    off_opts,                          // c:6360-6362
                 }));
         }
         let r = eval(&[body]); // c:6374 — `ret = eval(argv);`
@@ -15629,11 +15628,10 @@ pub fn bin_trap(
         // body-less entry, so those signals were invisible: `nohup zshrs -fc
         // trap` printed nothing where zsh printed `trap -- '' QUIT`.
         {
-            let states: Vec<(usize, i32)> =
-                match crate::ported::signals::sigtrapped.lock() {
-                    Ok(g) => g.iter().copied().enumerate().collect(),
-                    Err(_) => Vec::new(),
-                };
+            let states: Vec<(usize, i32)> = match crate::ported::signals::sigtrapped.lock() {
+                Ok(g) => g.iter().copied().enumerate().collect(),
+                Err(_) => Vec::new(),
+            };
             for (sig, state) in states {
                 // c:7358 `else if (sigtrapped[sig])`
                 if state == 0 || (state & crate::ported::zsh_h::ZSIG_FUNC) != 0 {
@@ -18486,7 +18484,8 @@ fn printf_format(
                         // digit (c:5416-5418 plants the NUL at `c[1]`).
                         let mut msg = raw[..raw_before_digits].to_string();
                         msg.push(digits.as_bytes()[0] as char);
-                        return Err((out, format!("{}: invalid directive", msg))); // c:5419
+                        return Err((out, format!("{}: invalid directive", msg)));
+                        // c:5419
                     }
                 }
                 // c:5232-5238 — `if (*argp) { width = mathevali(...); argp++;

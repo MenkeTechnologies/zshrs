@@ -1393,11 +1393,7 @@ pub fn endtrapscope() {
                 // c:930-931 — put the saved TRAP<SIG> function back.
                 let nam = format!("TRAP{}", getsigname(st.sig));
                 if let Some(f) = st.func {
-                    let nam = f
-                        .shf
-                        .as_ref()
-                        .map(|s| s.node.nam.clone())
-                        .unwrap_or(nam); // c:930 `((Shfunc)st->list)->node.nam`
+                    let nam = f.shf.as_ref().map(|s| s.node.nam.clone()).unwrap_or(nam); // c:930 `((Shfunc)st->list)->node.nam`
                     crate::fusevm_bridge::restore_function(&nam, f);
                 }
             } else if st.flags != 0 && st.list.is_some() {
@@ -2048,8 +2044,8 @@ pub fn dotrap(sig: i32) -> i32 {
     // captured at entry (c:1248). Now properly captured above; the
     // previous tail was a hardcoded `intrap.store(0)` only.
     crate::ported::signals_h::restore_queue_signals(q); // c:1280
-    // Paired with the string-form increment above only; the dotrapargs path
-    // balances its own (c:1123 / c:1236).
+                                                        // Paired with the string-form increment above only; the dotrapargs path
+                                                        // balances its own (c:1123 / c:1236).
     if string_form_intrap {
         intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
     }

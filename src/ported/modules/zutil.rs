@@ -3583,9 +3583,8 @@ pub fn bin_zparseopts(
         // -aaa`). The array is skipped only when it collected nothing AND
         // a spec of that name exists — a genuine array of the same name
         // that DID collect values is still emitted, as in C.
-        let is_map_target = flags_map & ZOF_MAP != 0
-            && out.is_empty()
-            && descs.iter().any(|d| d.name == name);
+        let is_map_target =
+            flags_map & ZOF_MAP != 0 && out.is_empty() && descs.iter().any(|d| d.name == name);
         if !is_map_target && (!keep || !out.is_empty()) {
             setaparam(&name, out);
         }

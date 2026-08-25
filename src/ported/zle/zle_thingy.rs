@@ -1042,8 +1042,7 @@ pub fn scanlistwidgets(list: i32) -> i32 {
                             quotedzputs(fn_name)
                         );
                     } else {
-                        let _ =
-                            writeln!(handle, "zle -{} {}{}", kind, dashdash, quotedzputs(name));
+                        let _ = writeln!(handle, "zle -{} {}{}", kind, dashdash, quotedzputs(name));
                     }
                 }
             }

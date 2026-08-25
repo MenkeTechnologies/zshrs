@@ -28,9 +28,9 @@ use crate::ported::zsh_h::{
     hashnode, hashtable, isset, module, nameddir, opt_name, param, value, HashNode, HashTable,
     Param, ParamScanFunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, FS_EVAL, FS_SOURCE, INTERACTIVE,
     ND_USERNAME, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
-    PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN,
-    PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNIQUE, PM_UNSET,
-    PM_UPPER, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE,
+    PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z,
+    PM_RO_BY_DESIGN, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNIQUE,
+    PM_UNSET, PM_UPPER, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE,
     STAT_NOPRINT, STAT_STOPPED,
 };
 use crate::zsh_h::{shfunc, HASHED};
@@ -1117,21 +1117,19 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                             std::collections::HashMap<String, String>,
                         > = std::cell::RefCell::new(std::collections::HashMap::new());
                     }
-                    let deparsed =
-                        if let Some(hit) = FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned())
-                        {
-                            hit
-                        } else {
-                            let out = match crate::ported::exec::parse_string(text, 0) {
-                                Some(prog) => {
-                                    crate::ported::text::getpermtext(Box::new(prog), None, 1)
-                                }
-                                None => text.to_string(),
-                            };
-                            FN_DEPARSE_CACHE
-                                .with(|c| c.borrow_mut().insert(text.to_string(), out.clone()));
-                            out
+                    let deparsed = if let Some(hit) =
+                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned())
+                    {
+                        hit
+                    } else {
+                        let out = match crate::ported::exec::parse_string(text, 0) {
+                            Some(prog) => crate::ported::text::getpermtext(Box::new(prog), None, 1),
+                            None => text.to_string(),
                         };
+                        FN_DEPARSE_CACHE
+                            .with(|c| c.borrow_mut().insert(text.to_string(), out.clone()));
+                        out
+                    };
                     // c:422-425 — `if (shf->redir) start = "{\n\t"; else
                     // start = "\t";`. A definition that carried trailing
                     // redirections prints its body BRACED, because the
@@ -3337,9 +3335,9 @@ pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {
 pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1385
     let (jtab, jmax) = selectjobtab(); // c:1397
-    // c:1399 — `job = strtol(name, &pend, 10);`. See getpmjobtext (c:1291) for
-    // why libc strtol's leading-blank / partial-digit semantics are spelled out
-    // here instead of using `str::parse`.
+                                       // c:1399 — `job = strtol(name, &pend, 10);`. See getpmjobtext (c:1291) for
+                                       // why libc strtol's leading-blank / partial-digit semantics are spelled out
+                                       // here instead of using `str::parse`.
     let n_bytes = name.as_bytes();
     let mut n_i = 0usize;
     while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_whitespace() {
@@ -3483,9 +3481,9 @@ pub fn pmjobdir(_jtab: *mut std::ffi::c_void, job: i32) -> String {
 pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1457
     let (jtab, jmax) = selectjobtab(); // c:1469
-    // c:1471 — `job = strtol(name, &pend, 10);`. See getpmjobtext (c:1291) for
-    // why libc strtol's leading-blank / partial-digit semantics are spelled out
-    // here instead of using `str::parse`.
+                                       // c:1471 — `job = strtol(name, &pend, 10);`. See getpmjobtext (c:1291) for
+                                       // why libc strtol's leading-blank / partial-digit semantics are spelled out
+                                       // here instead of using `str::parse`.
     let n_bytes = name.as_bytes();
     let mut n_i = 0usize;
     while n_i < n_bytes.len() && n_bytes[n_i].is_ascii_whitespace() {

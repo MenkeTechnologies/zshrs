@@ -408,7 +408,7 @@ fn values_impl(args: &[String]) -> i32 {
     // sh:88 — `->state` form.
     if action.starts_with("->") {
         compvalues(89, &["-v", "val_args"]); // sh:89
-                                         // sh:90 — state = action minus `->`, whitespace-trimmed.
+                                             // sh:90 — state = action minus `->`, whitespace-trimmed.
         let state = action[2..].trim().to_string();
         let _ = setsparam("state", &state);
         let _ = setsparam("state_descr", &descr); // sh:91

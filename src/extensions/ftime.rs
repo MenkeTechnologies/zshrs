@@ -18,9 +18,7 @@ use std::time::Instant;
 
 fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("ZSHRS_LOG").is_ok_and(|v| v.contains("ftime"))
-    })
+    *ON.get_or_init(|| std::env::var("ZSHRS_LOG").is_ok_and(|v| v.contains("ftime")))
 }
 
 static DIRTY: AtomicBool = AtomicBool::new(false);
@@ -58,8 +56,7 @@ pub fn dump_and_reset() {
         return;
     }
     let Ok(mut t) = table().lock() else { return };
-    let mut rows: Vec<(String, u128, u32)> =
-        t.iter().map(|(k, v)| (k.clone(), v.0, v.1)).collect();
+    let mut rows: Vec<(String, u128, u32)> = t.iter().map(|(k, v)| (k.clone(), v.0, v.1)).collect();
     rows.sort_by(|a, b| b.1.cmp(&a.1));
     let mut out = String::from("  total_ms   calls  name (inclusive)\n");
     for (name, ns, calls) in rows.iter().take(40) {

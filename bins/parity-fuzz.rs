@@ -9915,19 +9915,8 @@ const FLAGORDER_PER_ELEM: &[&str] = &[
 /// Stages that collapse the array into one string (join) or re-split it.
 /// `(F)` is `(pj:\n:)` (c:Doc/Zsh/expn.yo:1081-1084), so it is a join too.
 const FLAGORDER_WHOLE: &[&str] = &[
-    "j:,:",
-    "j:-:",
-    "j::",
-    "j: :",
-    "F",
-    "pj:\\n:",
-    "pj:\\t:",
-    "s:,:",
-    "s: :",
-    "ps:\\t:",
-    "l:6:",
-    "r:6:",
-    "l:6::.:",
+    "j:,:", "j:-:", "j::", "j: :", "F", "pj:\\n:", "pj:\\t:", "s:,:", "s: :", "ps:\\t:", "l:6:",
+    "r:6:", "l:6::.:",
 ];
 
 fn gen_flagorder(seed: u64) -> Vec<String> {
@@ -10509,17 +10498,13 @@ fn ksh_core_one(rng: &mut StdRng) -> String {
         // while + [ ] arithmetic test.
         6 => {
             let lim = *pick(rng, &["0", "1", "3", "5"]);
-            format!(
-                "i=0; while [ \"$i\" -lt {lim} ]; do i=$((i+1)); done; printf '%d\\n' \"$i\""
-            )
+            format!("i=0; while [ \"$i\" -lt {lim} ]; do i=$((i+1)); done; printf '%d\\n' \"$i\"")
         }
         // case with glob patterns.
         7 => {
             let w = *pick(rng, &["foo", "bar", "abc", "x"]);
             let pat = *pick(rng, &["f*", "*o", "a?c", "x", "*"]);
-            format!(
-                "case {w} in {pat}) printf match;; *) printf no;; esac; printf '\\n'"
-            )
+            format!("case {w} in {pat}) printf match;; *) printf no;; esac; printf '\\n'")
         }
         // command substitution.
         8 => {
@@ -10537,9 +10522,7 @@ fn ksh_core_one(rng: &mut StdRng) -> String {
         10 => {
             let a = *pick(rng, &ints);
             let b = *pick(rng, &["1", "2", "3", "5"]);
-            format!(
-                "typeset -i n=$(( {a} * {b} )); printf '%d\\n' \"$n\""
-            )
+            format!("typeset -i n=$(( {a} * {b} )); printf '%d\\n' \"$n\"")
         }
         // ksh array: set -A, index, count.
         11 => {
@@ -10561,10 +10544,7 @@ fn ksh_core_one(rng: &mut StdRng) -> String {
         }
         // arithmetic in a non-decimal base (`16#`, `2#`, C `0x`).
         13 => {
-            let n = *pick(
-                rng,
-                &["16#ff", "2#1010", "8#17", "16#a", "0x1f", "0x10"],
-            );
+            let n = *pick(rng, &["16#ff", "2#1010", "8#17", "16#a", "0x1f", "0x10"]);
             format!("printf '%d\\n' \"$(( {n} ))\"")
         }
         // bitwise operators.
@@ -10603,9 +10583,7 @@ fn ksh_core_one(rng: &mut StdRng) -> String {
             let pat = *pick(rng, &["a", "x", "b", "."]);
             let rep = *pick(rng, &["Q", "", "_"]);
             let slash = *pick(rng, &["/", "//"]);
-            format!(
-                "v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\""
-            )
+            format!("v={v}; printf '%s\\n' \"${{v{slash}{pat}/{rep}}}\"")
         }
         // `[[ … == pat ]]` pattern match → $?.
         20 => {
@@ -10644,10 +10622,7 @@ fn ksh_core_one(rng: &mut StdRng) -> String {
                 .map(|_| *pick(rng, &words))
                 .collect();
             let sub = *pick(rng, &["@", "*"]);
-            format!(
-                "set -A a {}; print -r -- \"${{!a[{sub}]}}\"",
-                ws.join(" ")
-            )
+            format!("set -A a {}; print -r -- \"${{!a[{sub}]}}\"", ws.join(" "))
         }
         // `${!name}` name form (plain var → its own name).
         _ => {
@@ -10866,7 +10841,10 @@ fn ksh_wide_one(rng: &mut StdRng) -> String {
         }
         // Compound arithmetic assignment / increment inside (( … )).
         18 => {
-            let op = *pick(rng, &["+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "|=", "&="]);
+            let op = *pick(
+                rng,
+                &["+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "|=", "&="],
+            );
             let b = *pick(rng, &["1", "2", "3", "4"]);
             format!("i=12; (( i {op} {b} )); print -r -- \"$i\"")
         }

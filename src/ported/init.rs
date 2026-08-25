@@ -1158,7 +1158,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     // would RE-stamp it on the `zsh_main` path, resetting $SECONDS after
     // the process-entry stamp in `bins/zshrs.rs::main` already ran.
     let _ = crate::ported::params::shtimer_lock(); // c:1121
-    // srand((unsigned)(shtimer.tv_sec + shtimer.tv_nsec));                  // c:1122
+                                                   // srand((unsigned)(shtimer.tv_sec + shtimer.tv_nsec));                  // c:1122
     #[cfg(unix)]
     unsafe {
         let mut ts: libc::timespec = std::mem::zeroed();

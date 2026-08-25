@@ -1462,12 +1462,12 @@ pub fn bin_compcall(
     let d_set = crate::ported::zsh_h::OPT_ISSET(ops, b'D') || argv.iter().any(|a| a == "-D");
     let flags = (if t_set { 0 } else { CFN_FIRST })      // c:1686
         | (if d_set { 0 } else { CFN_DEFAULT }); // c:1687
-    // c:1689 — `return ret`. The status is the CONTRACT: `compcall`
-    // reports non-zero when a compctl was found and used, and
-    // `_default` sh:12 (`compcall "$opt[@]" || return 0`) reads it to
-    // decide whether the compctl engine already answered or `_files`
-    // still has to run. Dropping it and returning a flat 0 made every
-    // caller take the "nothing was found" branch.
+                                                 // c:1689 — `return ret`. The status is the CONTRACT: `compcall`
+                                                 // reports non-zero when a compctl was found and used, and
+                                                 // `_default` sh:12 (`compcall "$opt[@]" || return 0`) reads it to
+                                                 // decide whether the compctl engine already answered or `_files`
+                                                 // still has to run. Dropping it and returning a flat 0 made every
+                                                 // caller take the "nothing was found" branch.
     makecomplistctl(flags) // c:1689
 }
 
@@ -2815,7 +2815,10 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                                 sv = untokenize(&sv); // c:2694
                                 if complete_in_word {
                                     // c:2695 — s[offs] = '\0'.
-                                    let off = crate::ported::zle::compcore::OFFS.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize;
+                                    let off = crate::ported::zle::compcore::OFFS
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                        .max(0)
+                                        as usize;
                                     if off <= sv.len() && sv.is_char_boundary(off) {
                                         sv.truncate(off);
                                     }
@@ -2836,7 +2839,10 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                             } else if let CompcondData::S { p, s } = &cc.u {
                                 let mut sv = untokenize(os); // c:2708-2709
                                 if complete_in_word {
-                                    let off = crate::ported::zle::compcore::OFFS.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize; // c:2710
+                                    let off = crate::ported::zle::compcore::OFFS
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                        .max(0)
+                                        as usize; // c:2710
                                     if off <= sv.len() && sv.is_char_boundary(off) {
                                         sv.truncate(off);
                                     }

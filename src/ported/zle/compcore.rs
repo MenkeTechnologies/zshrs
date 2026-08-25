@@ -274,21 +274,21 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         if useline.load(Ordering::Relaxed) < 0 {
             // c:352
             unmetafy_line(); // c:354
-            // zshrs bridge, no C counterpart: C has ONE line buffer —
-            // `zleline`/`zlecs`/`zlell` (zle_main.c:43,48) — which `doinsert`
-            // (zle_misc.c:37,51) writes and `metafy_line`/`unmetafy_line`
-            // (zle_tricky.c:978,995) convert, so C's sandwich round-trips
-            // through the same characters. This port splits it into the editor
-            // buffer (`zle_main::ZLELINE`, the Vec<char> `selfinsert` writes —
-            // zle_misc.rs:205) and the completion staging buffer
-            // (`compcore::ZLELINE`, the only one the two conversions read), so
-            // the two copies below hand the unmetafied line to the widget and
-            // take the edited line back. Without them the inserted character
-            // landed in a buffer `metafy_line` never reads and vanished: TAB on
-            // an all-blank line inserted nothing where zsh inserts a literal
-            // TAB (the `wouldinstab` path, zle_tricky.c:183-197 → c:311 →
-            // c:782 → `_main_complete`'s insert-tab early return → c:860).
-            // Same idiom as docomplete's entry bridge (zle_tricky.rs:857).
+                             // zshrs bridge, no C counterpart: C has ONE line buffer —
+                             // `zleline`/`zlecs`/`zlell` (zle_main.c:43,48) — which `doinsert`
+                             // (zle_misc.c:37,51) writes and `metafy_line`/`unmetafy_line`
+                             // (zle_tricky.c:978,995) convert, so C's sandwich round-trips
+                             // through the same characters. This port splits it into the editor
+                             // buffer (`zle_main::ZLELINE`, the Vec<char> `selfinsert` writes —
+                             // zle_misc.rs:205) and the completion staging buffer
+                             // (`compcore::ZLELINE`, the only one the two conversions read), so
+                             // the two copies below hand the unmetafied line to the widget and
+                             // take the edited line back. Without them the inserted character
+                             // landed in a buffer `metafy_line` never reads and vanished: TAB on
+                             // an all-blank line inserted nothing where zsh inserts a literal
+                             // TAB (the `wouldinstab` path, zle_tricky.c:183-197 → c:311 →
+                             // c:782 → `_main_complete`'s insert-tab early return → c:860).
+                             // Same idiom as docomplete's entry bridge (zle_tricky.rs:857).
             {
                 let comp_line: Vec<char> = ZLELINE
                     .get_or_init(|| Mutex::new(String::new()))
@@ -358,8 +358,8 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else if useline.load(Ordering::Relaxed) < 0 {
         // c:370
         unmetafy_line(); // c:372
-        // zshrs bridge, no C counterpart — same split-line-buffer copies as the
-        // c:352-357 arm above; see the comment there.
+                         // zshrs bridge, no C counterpart — same split-line-buffer copies as the
+                         // c:352-357 arm above; see the comment there.
         {
             let comp_line: Vec<char> = ZLELINE
                 .get_or_init(|| Mutex::new(String::new()))
@@ -856,8 +856,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         let (cq, cqg): (&str, &str) = if instring > QT_BACKSLASH {
             // c:669
             match instring {
-                QT_SINGLE => ("'", "single"),   // c:671-674
-                QT_DOUBLE => ("\"", "double"),  // c:676-679
+                QT_SINGLE => ("'", "single"),    // c:671-674
+                QT_DOUBLE => ("\"", "double"),   // c:676-679
                 QT_DOLLARS => ("$'", "dollars"), // c:681-684
                 _ => ("", ""),
             }
@@ -982,13 +982,13 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             "QISUFFIX",
             &crate::ported::zle::zle_tricky::qisuf_get(),
         ); // c:745
-        // c:complete.c:1235-1295 — in C these params ARE `compprefix`/
-        // `compsuffix`/`compiprefix`/`compisuffix` (gsu-bound, one
-        // storage), so the publish above resets the globals too. The Rust
-        // compparams have no gsu binding, so the globals kept the PREVIOUS
-        // call's values — and `expand-or-complete` calls this twice per
-        // TAB. Mirror the reset onto the globals. (Same block as
-        // addmatches below and bin_compfiles -p/-P in computil.rs.)
+           // c:complete.c:1235-1295 — in C these params ARE `compprefix`/
+           // `compsuffix`/`compiprefix`/`compisuffix` (gsu-bound, one
+           // storage), so the publish above resets the globals too. The Rust
+           // compparams have no gsu binding, so the globals kept the PREVIOUS
+           // call's values — and `expand-or-complete` calls this twice per
+           // TAB. Mirror the reset onto the globals. (Same block as
+           // addmatches below and bin_compfiles -p/-P in computil.rs.)
         for (param, global) in [
             ("PREFIX", &COMPPREFIX),
             ("SUFFIX", &COMPSUFFIX),
@@ -1387,7 +1387,7 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         match cur_gnum {
             // c:806 — `kset |= CP_OLDINS` only in the minfo.cur arm.
             Some(g) => set_compstate_str("old_insert", &g.to_string()), // c:804-805
-            None => kunset("old_insert"),                  // c:808
+            None => kunset("old_insert"),                               // c:808
         }
     } else {
         // c:810 — `compoldlist = compoldins = ""` with CP_OLDLIST /
@@ -3777,7 +3777,7 @@ pub fn addmatches(
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default(); // c:2084
-    // c:2085 — `char *oqp = qipre, *oqs = qisuf`, restored at c:2629-2630.
+                              // c:2085 — `char *oqp = qipre, *oqs = qisuf`, restored at c:2629-2630.
     let oqp = crate::ported::zle::zle_tricky::qipre_get(); // c:2085
     let oqs = crate::ported::zle::zle_tricky::qisuf_get(); // c:2085
 
@@ -3946,7 +3946,11 @@ pub fn addmatches(
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or_default();
-                let cq = if cq.starts_with('$') { &cq[1..] } else { &cq[..] };
+                let cq = if cq.starts_with('$') {
+                    &cq[1..]
+                } else {
+                    &cq[..]
+                };
                 autoq_set(&multiquote(cq, 1)); // c:2163
             }
         }
@@ -4762,7 +4766,7 @@ pub fn addmatches(
     instring_set(ois); // c:2624
     inbackt_set(oib); // c:2625
     autoq_set(&oaq); // c:2626
-    // c:2627-2630 — `zsfree(qipre); zsfree(qisuf); qipre = oqp; qisuf = oqs;`
+                     // c:2627-2630 — `zsfree(qipre); zsfree(qisuf); qipre = oqp; qisuf = oqs;`
     for (global, v) in [
         (&crate::ported::zle::zle_tricky::QIPRE, oqp), // c:2629
         (&crate::ported::zle::zle_tricky::QISUF, oqs), // c:2630
@@ -5620,13 +5624,13 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
     let sortdir = if (order & CGF_REVSORT) != 0 { -1 } else { 1 }; // c:3177
 
     let cmp = (b.disp.is_some() as i32) - (a.disp.is_some() as i32); // c:3176
-    // c:3175 — `const char *as, *bs;`. C assigns POINTERS here
-    // (c:3181-3182 / c:3191-3192); the comparator allocates nothing.
-    // The port used `.clone()`, so every one of the O(n log n)
-    // comparisons heap-allocated two Strings — 46765 matches
-    // (`compadd -k functions` under a real .zcompdump) means ~725k
-    // comparisons and ~1.45M allocations per sort. `as_deref()` is
-    // the direct analogue of C's `char *` assignment.
+                                                                     // c:3175 — `const char *as, *bs;`. C assigns POINTERS here
+                                                                     // (c:3181-3182 / c:3191-3192); the comparator allocates nothing.
+                                                                     // The port used `.clone()`, so every one of the O(n log n)
+                                                                     // comparisons heap-allocated two Strings — 46765 matches
+                                                                     // (`compadd -k functions` under a real .zcompdump) means ~725k
+                                                                     // comparisons and ~1.45M allocations per sort. `as_deref()` is
+                                                                     // the direct analogue of C's `char *` assignment.
     let (as_, bs) = if (order & CGF_MATSORT) != 0 || (cmp == 0 && a.disp.is_none()) {
         (
             a.str.as_deref().unwrap_or(""), // c:3181
@@ -7014,9 +7018,7 @@ pub fn get_compstate_str(key: &str) -> Option<String> {
             )
         }
         // c:1408-1420 — `get_listlines` → `list_lines()`.
-        "list_lines" => {
-            return Some(crate::ported::zle::complete::get_listlines(nil).to_string())
-        }
+        "list_lines" => return Some(crate::ported::zle::complete::get_listlines(nil).to_string()),
         // c:1469 — `get_compqstack`: one char per quoting level.
         "all_quotes" => return Some(crate::ported::zle::complete::get_compqstack(nil)),
         // c:1300 `VAL(compignored)` — matches dropped by `compadd -F`.
@@ -8601,10 +8603,7 @@ mod tests {
             (QT_DOLLARS, "QT_DOLLARS"),
             (QT_BACKSLASH, "QT_BACKSLASH"),
         ] {
-            if let Ok(mut g) = COMPQSTACK
-                .get_or_init(|| Mutex::new(String::new()))
-                .lock()
-            {
+            if let Ok(mut g) = COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock() {
                 *g = (qt as u8 as char).to_string(); // c:305-306
             }
             assert_eq!(

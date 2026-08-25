@@ -818,7 +818,8 @@ impl ShellExecutor {
         use crate::provenance;
 
         // ── flags, then names ───────────────────────────────────────
-        let (mut arm, mut disarm, mut json, mut list, mut clear) = (false, false, false, false, false);
+        let (mut arm, mut disarm, mut json, mut list, mut clear) =
+            (false, false, false, false, false);
         let (mut funcs, mut all) = (false, false);
         let mut names: Vec<&String> = Vec::new();
         let mut rest = args.iter();
@@ -2647,7 +2648,6 @@ impl ShellExecutor {
                             "_compautos".to_string(),
                             result.compautos.into_iter().collect(),
                         );
-
 
                         return 0;
                     }

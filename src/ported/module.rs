@@ -1202,29 +1202,29 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     // c:1157 — `pm->node.flags = (pm->node.flags & ~PM_READONLY) | PM_REMOVABLE;`
     pm.node.flags = (pm.node.flags & !(PM_READONLY as i32)) | (PM_REMOVABLE as i32); // c:1157
     unsetparam_pm(&mut pm, 0, 1); // c:1158
-    // !!! RUST-ONLY STEP — NO DIRECT C COUNTERPART !!!
-    // C's `unsetparam_pm` ends in the `paramtab->removenode` postlude
-    // (c:Src/params.c:3853-3935) that physically drops the node. The Rust
-    // `unsetparam_pm` stops short of it ("Tied alt-name removal +
-    // paramtab restore-from-old not yet possible without HashTable
-    // backend", params.rs:9807-9810) and only stamps PM_UNSET on the
-    // by-value COPY it was handed, so the paramtab entry survived intact:
-    // after `zmodload -u zsh/datetime` the name was still there and still
-    // PM_READONLY, so the next `zmodload zsh/datetime` failed with
-    // "parameter already exists" and a plain `EPOCHSECONDS=(...)` failed
-    // with "read-only variable". Do the removenode half here.
-    //
-    // KNOWN DIVERGENCE when a local shadows the name: C's c:1141-1153 walk
-    // splices `d->pm` out of the `pm->old` chain first, so it unsets the
-    // MODULE's binding and the local survives. zshrs has no `old` chain
-    // (`params.rs` never assigns `Param::old`) and the local's saved outer
-    // copy lives in the executor's own scope stack, so the node reached
-    // here is the local and the module's binding is unreachable. Removing
-    // it matches C on the three lasting observations — the module's claim
-    // is dropped, `${+NAME}` is 0 after the scope pops, and a later plain
-    // assignment works — and diverges only on the local's value for the
-    // remainder of the enclosing scope (V04features.ztst "Successfully
-    // unloaded a module despite a parameter being hidden" reads it back).
+                                  // !!! RUST-ONLY STEP — NO DIRECT C COUNTERPART !!!
+                                  // C's `unsetparam_pm` ends in the `paramtab->removenode` postlude
+                                  // (c:Src/params.c:3853-3935) that physically drops the node. The Rust
+                                  // `unsetparam_pm` stops short of it ("Tied alt-name removal +
+                                  // paramtab restore-from-old not yet possible without HashTable
+                                  // backend", params.rs:9807-9810) and only stamps PM_UNSET on the
+                                  // by-value COPY it was handed, so the paramtab entry survived intact:
+                                  // after `zmodload -u zsh/datetime` the name was still there and still
+                                  // PM_READONLY, so the next `zmodload zsh/datetime` failed with
+                                  // "parameter already exists" and a plain `EPOCHSECONDS=(...)` failed
+                                  // with "read-only variable". Do the removenode half here.
+                                  //
+                                  // KNOWN DIVERGENCE when a local shadows the name: C's c:1141-1153 walk
+                                  // splices `d->pm` out of the `pm->old` chain first, so it unsets the
+                                  // MODULE's binding and the local survives. zshrs has no `old` chain
+                                  // (`params.rs` never assigns `Param::old`) and the local's saved outer
+                                  // copy lives in the executor's own scope stack, so the node reached
+                                  // here is the local and the module's binding is unreachable. Removing
+                                  // it matches C on the three lasting observations — the module's claim
+                                  // is dropped, `${+NAME}` is 0 after the scope pops, and a later plain
+                                  // assignment works — and diverges only on the local's value for the
+                                  // remainder of the enclosing scope (V04features.ztst "Successfully
+                                  // unloaded a module despite a parameter being hidden" reads it back).
     if let Ok(mut tab) = paramtab().write() {
         tab.remove(&d.name); // c:Src/params.c:3900 paramtab->removenode
     }
@@ -1612,9 +1612,17 @@ impl modulestab {
         let bltinmods_list: &[(&str, &[&str], &[&str])] = &[
             // (module, `autofeatures=`, `moddeps=`)
             // Src/Builtins/rlimits.mdd:5
-            ("zsh/rlimits", &["b:limit", "b:ulimit", "b:unlimit"][..], &[][..]),
+            (
+                "zsh/rlimits",
+                &["b:limit", "b:ulimit", "b:unlimit"][..],
+                &[][..],
+            ),
             // Src/Builtins/sched.mdd:5
-            ("zsh/sched", &["b:sched", "p:zsh_scheduled_events"][..], &[][..]),
+            (
+                "zsh/sched",
+                &["b:sched", "p:zsh_scheduled_events"][..],
+                &[][..],
+            ),
             // Src/Modules/param_private.mdd:5
             ("zsh/param/private", &["b:private"][..], &[][..]),
             // Src/Modules/parameter.mdd:5
@@ -1870,7 +1878,6 @@ impl modulestab {
             //          defflags)` — cmdnam "zsh" per mkbltnmlst.sh:69.
             autofeatures(self, "zsh", Some(name), &features, 0, FEAT_IGNORE);
         }
-
 
         // The auto-load builtin→module bindings `zmodload -a` reports
         // used to be a hand-maintained 27-row `autoload_pairs` table
@@ -4455,7 +4462,7 @@ pub fn do_module_features(
                     for (i, f) in module_features.iter().enumerate() {
                         let hit = match pat.as_ref() {
                             Some(p) => crate::ported::pattern::pattry(p, f), // c:2093
-                            None => f == esp,                                    // c:2093
+                            None => f == esp,                                // c:2093
                         };
                         if hit {
                             enables_vec[i] = on; // c:2090
@@ -4773,10 +4780,7 @@ pub fn require_module(
                 // omitted). docs/BUGS.md #376 records the backquoted prefix as
                 // the FINAL intended state and the parity test pins it, so this
                 // site must not diverge from the other one.
-                crate::ported::utils::zwarn(&format!(
-                    "failed to load module `{}'",
-                    mname
-                ));
+                crate::ported::utils::zwarn(&format!("failed to load module `{}'", mname));
             }
             crate::ported::signals::unqueue_signals();
             return 1;

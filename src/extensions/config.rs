@@ -354,8 +354,7 @@ mod tests {
             ZshrsConfig::default().provenance.enabled,
             "the engine stays inert until armed, so the config default is on"
         );
-        let off: ZshrsConfig =
-            toml::from_str("[provenance]\nenabled = false\n").expect("parses");
+        let off: ZshrsConfig = toml::from_str("[provenance]\nenabled = false\n").expect("parses");
         assert!(!off.provenance.enabled);
         // An unrelated section must not disturb the default.
         let other: ZshrsConfig = toml::from_str("[log]\nlevel = \"debug\"\n").expect("parses");
