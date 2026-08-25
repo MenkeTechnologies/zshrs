@@ -389,4 +389,13 @@ jobs:
             exit 0
           fi
           git commit -m "zshrs: bump zshrs + zshrs-all + zshrs-daemon to ${{ github.ref_name }}"
-          git push
+          # The tap is shared by ~30 repos. When several releases land together
+          # a bare push loses a non-fast-forward race, so rebase and retry.
+          for attempt in 1 2 3 4 5; do
+            if git push; then exit 0; fi
+            echo "tap push rejected (concurrent update) — rebasing, attempt $attempt/5"
+            git pull --rebase --autostash origin main || exit 1
+            sleep $(( (RANDOM % 5) + 2 ))
+          done
+          echo "tap push failed after 5 attempts" >&2
+          exit 1
