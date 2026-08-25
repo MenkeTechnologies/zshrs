@@ -27,10 +27,24 @@
 //! builtin's stdout, this port queries the module feature tables
 //! directly via [`features_module`] + [`enables_module`] (the exact
 //! data `zmodload -Fl` would print) and applies the identical
-//! `+f:` filter. Enabled math features are found only for modules whose
-//! features are enabled (loaded) at completion time — matching upstream,
-//! where an unloaded module's `zmodload -Fl` (with stderr silenced)
-//! yields nothing and `funcs` stays empty.
+//! `+f:` filter.
+//!
+//! Going straight to the feature tables SKIPS the builtin's own
+//! not-yet-loaded gate, `Src/module.c:3109-3112`:
+//! ```c
+//! if (!m || !m->u.handle || (m->node.flags & MOD_UNLOAD)) {
+//!     if (!OPT_ISSET(ops,'e'))
+//!         zwarnnam(nam, "module `%s' is not yet loaded", modname);
+//!     return 1;
+//! }
+//! ```
+//! which C runs BEFORE `features_module` (c:3114). `features_module`
+//! answers from a static per-module table, so without that gate every
+//! module's math functions were listed whether or not it was loaded —
+//! `echo $((1+<TAB>` grew three groups (`zsh/example`, `zsh/mathfunc`,
+//! `zsh/system`) that zsh does not print, because in zsh the unloaded
+//! `zmodload -Fl` errors out and `funcs` stays empty. The gate is
+//! reproduced in [`module_math_funcs`].
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::module::{enables_module, features_module, MODULESTAB};
@@ -48,6 +62,22 @@ fn module_math_funcs(m: &str) -> Vec<String> {
         Err(_) => return Vec::new(),
     };
     let table = &mut *table;
+    // c:Src/module.c:3109-3112 — `if (!m || !m->u.handle ||
+    //   (m->node.flags & MOD_UNLOAD))` the builtin warns "module `%s'
+    //   is not yet loaded" and returns 1, so the `$(...)` captures
+    //   nothing. zshrs maps "u.handle installed" to MOD_INIT_B, the
+    //   same mapping bin_zmodload_features uses at module.rs:6241-6245.
+    let loaded = table
+        .modules
+        .get(&modname)
+        .map(|m| {
+            (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+        })
+        .unwrap_or(false);
+    if !loaded {
+        return Vec::new();
+    }
     let mut features: Vec<String> = Vec::new();
     // 2>/dev/null — a module that doesn't support features contributes
     //   nothing (features_module returns non-zero).

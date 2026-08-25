@@ -1683,8 +1683,192 @@ static SETEMULATE_OPTS: std::sync::OnceLock<
 // read-through cache of this map. !!!
 // =====================================================================
 
-static OPTS_LIVE: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, bool>>> =
+static OPTS_LIVE: std::sync::OnceLock<std::sync::RwLock<opt_state_store>> =
     std::sync::OnceLock::new();
+
+/// Port of C's option array — `mod_export char opts[OPT_SIZE];`
+/// (Src/options.c:43-46), indexed by `optno` and read through
+/// `#define isset(X) (opts[X])` (Src/zsh.h:2558-2560). Written by
+/// `dosetopt` as `new_opts[optno] = value` (Src/options.c:876).
+///
+/// The port held the same state as a `HashMap<String, bool>`, which
+/// turned C's `memcpy(funcsave->opts, opts, sizeof(opts))`
+/// (Src/exec.c:5911-5914) — one 186-byte copy, once per function call —
+/// into a clone of the entire table: a heap-allocated `String` for every
+/// option name plus the hash table itself, on every call of every
+/// function, whether or not the function touched an option.
+///
+/// `flat[optno] == -1` means the option has never been written. That is
+/// the third state the port's `opt_state_get -> Option<bool>` exposes
+/// and C has no need for, its array being all-zero from the start.
+///
+/// `extra` holds the keys that are not canonical option names: alias
+/// spellings stored literally (`noglob`), other spellings `optlookup`
+/// canonicalises away (`GLOB`, `no_glob`), and the ad-hoc keys
+/// `opt_state_set_via_alias` falls back to for a name no option table
+/// knows. Those are exactly the entries the HashMap held under those
+/// literal keys, and they are empty in every shell that has not been
+/// asked to store one — so cloning the store allocates nothing.
+#[derive(Clone)]
+pub struct opt_state_store {
+    /// One byte per option number, C's `opts[]`.
+    flat: [i8; OPT_SIZE as usize],
+    /// Keys that are not a canonical option name — see the type docs.
+    extra: std::collections::HashMap<String, bool>,
+}
+
+impl Default for opt_state_store {
+    fn default() -> Self {
+        Self {
+            flat: [-1; OPT_SIZE as usize],
+            extra: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl opt_state_store {
+    /// The `opts[]` index this name is stored at, or `None` when the
+    /// name is not the canonical spelling of an option and therefore
+    /// lives in `extra`.
+    ///
+    /// `optlookup` (c:684-715) strips `_`, lowercases, and maps a `no…`
+    /// prefix to the negated canonical number, so it answers for
+    /// spellings that are NOT the array's key. Requiring
+    /// `opt_name(o) == name` keeps every one of those in `extra` under
+    /// the literal string, which is where the HashMap had them.
+    fn slot(name: &str) -> Option<usize> {
+        let o = optlookup(name);
+        if o > 0 && o < OPT_SIZE && opt_name(o) == name {
+            Some(o as usize)
+        } else {
+            None
+        }
+    }
+
+    /// `opts[optno]`, or `None` for an option no write has reached.
+    fn get(&self, name: &str) -> Option<bool> {
+        match Self::slot(name) {
+            Some(i) => match self.flat[i] {
+                -1 => None,
+                v => Some(v == 1),
+            },
+            None => self.extra.get(name).copied(),
+        }
+    }
+
+    /// c:876 `new_opts[optno] = value`.
+    fn set(&mut self, name: &str, value: bool) {
+        match Self::slot(name) {
+            Some(i) => self.flat[i] = value as i8,
+            None => {
+                self.extra.insert(name.to_string(), value);
+            }
+        }
+    }
+
+    /// Back to "never written" — the state C's array cannot express.
+    fn remove(&mut self, name: &str) {
+        match Self::slot(name) {
+            Some(i) => self.flat[i] = -1,
+            None => {
+                self.extra.remove(name);
+            }
+        }
+    }
+
+    /// Options that have been written, canonical slots plus `extra`.
+    fn len(&self) -> usize {
+        self.flat.iter().filter(|&&v| v >= 0).count() + self.extra.len()
+    }
+
+    /// Materialise the name-keyed view `opt_state_snapshot` hands out.
+    fn to_map(&self) -> std::collections::HashMap<String, bool> {
+        let mut out = std::collections::HashMap::with_capacity(self.len());
+        for (i, &v) in self.flat.iter().enumerate() {
+            if v < 0 {
+                continue;
+            }
+            let name = opt_name(i as i32);
+            if !name.is_empty() {
+                out.insert(name.to_string(), v == 1);
+            }
+        }
+        for (k, v) in &self.extra {
+            out.insert(k.clone(), *v);
+        }
+        out
+    }
+
+    /// Rebuild the store from a name-keyed map.
+    fn from_map(map: &std::collections::HashMap<String, bool>) -> Self {
+        let mut store = Self::default();
+        for (k, v) in map {
+            store.set(k, *v);
+        }
+        store
+    }
+
+    /// c:Src/exec.c:5911-5914 — `memcpy(funcsave->opts, opts,
+    /// sizeof(opts))`. The whole point of the array: `doshfunc` saves
+    /// the option state on EVERY call, because LOCAL_OPTIONS may be
+    /// turned on inside the body and the original set has to be there
+    /// to restore.
+    pub fn save() -> Self {
+        let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
+        m.read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// c:Src/exec.c:6074 / c:6091 — `memcpy(opts, funcsave->opts,
+    /// sizeof(opts))`.
+    ///
+    /// Only the slots that actually differ drop out of the `isset()`
+    /// cache. `doshfunc` restores on every return and the body usually
+    /// changed nothing, so the common case invalidates nothing.
+    pub fn restore(self) {
+        let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
+        if let Ok(mut g) = m.write() {
+            let mut changed: Vec<i32> = Vec::new();
+            for (i, (&old, &new)) in g.flat.iter().zip(self.flat.iter()).enumerate() {
+                if old != new {
+                    changed.push(i as i32);
+                }
+            }
+            for (k, v) in g.extra.iter() {
+                if self.extra.get(k) != Some(v) {
+                    changed.push(optlookup(k));
+                }
+            }
+            for (k, v) in self.extra.iter() {
+                if g.extra.get(k) != Some(v) {
+                    changed.push(optlookup(k));
+                }
+            }
+            *g = self;
+            drop(g);
+            for optno in changed {
+                crate::opts_cache::invalidate_one(optno);
+            }
+        }
+    }
+
+    /// Read one option out of a saved store, for c:6097-6101's
+    /// always-restored subset.
+    pub fn saved_get(&self, name: &str) -> Option<bool> {
+        self.get(name)
+    }
+
+    /// c:Src/exec.c:6089 — `funcsave->opts[PRIVILEGED] =
+    /// opts[PRIVILEGED];`. PRIVILEGED is carved out of the restore: a
+    /// function that dropped privileges does not get them back when it
+    /// returns.
+    pub fn carry_privileged_from_live(&mut self) {
+        let live = opt_state_get(opt_name(crate::ported::zsh_h::PRIVILEGED));
+        match live {
+            Some(v) => self.set(opt_name(crate::ported::zsh_h::PRIVILEGED), v),
+            None => self.remove(opt_name(crate::ported::zsh_h::PRIVILEGED)),
+        }
+    }
+}
 
 // =====================================================================
 // `default_on_options` mirrors the `defset(on, emulation)` macro
@@ -1990,7 +2174,7 @@ fn optno_by_name(name: &str) -> Option<i32> {
 /// returned their static default (usually `false`) instead of the
 /// canonical option's runtime state.
 pub fn opt_state_get(name: &str) -> Option<bool> {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
     // Route through optlookup for canonicalisation. If the name
     // resolves to a different canonical, read THAT slot.
     let optno = optlookup(name);
@@ -2004,31 +2188,31 @@ pub fn opt_state_get(name: &str) -> Option<bool> {
         if !target_name.is_empty() && target_name != name {
             // Alias path — return canonical's state (negated for `no…` aliases).
             if let Ok(g) = m.read() {
-                if let Some(&v) = g.get(target_name) {
+                if let Some(v) = g.get(target_name) {
                     return Some(if negate { !v } else { v });
                 }
             }
         }
     }
     // Direct read for canonical names.
-    m.read().ok().and_then(|g| g.get(name).copied())
+    m.read().ok().and_then(|g| g.get(name))
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Write `value`
 /// into the process-wide option store.
 pub fn opt_state_set(name: &str, value: bool) {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
     // Skip no-op writes: `doshfunc` sets `printexitvalue=false` and restores
     // the whole option set on EVERY function call, almost always to values
     // that are already current. Detecting the no-op keeps the isset()
     // fast-path cache warm across calls instead of invalidating it per call.
     if let Ok(g) = m.read() {
-        if g.get(name) == Some(&value) {
+        if g.get(name) == Some(value) {
             return;
         }
     }
     if let Ok(mut g) = m.write() {
-        g.insert(name.to_string(), value);
+        g.set(name, value);
     }
     // Only the changed option's slot needs to drop; every other option's
     // cached value is still valid.
@@ -2038,9 +2222,9 @@ pub fn opt_state_set(name: &str, value: bool) {
 /// !!! RUST-ONLY HELPER — see WARNING block above. Remove an entry
 /// from the process-wide option store (`!= isset(opt)`).
 pub fn opt_state_unset(name: &str) {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
     if let Ok(g) = m.read() {
-        if !g.contains_key(name) {
+        if g.get(name).is_none() {
             return;
         }
     }
@@ -2053,15 +2237,15 @@ pub fn opt_state_unset(name: &str) {
 /// !!! RUST-ONLY HELPER — see WARNING block above. Snapshot the
 /// full option store. Caller gets a HashMap<String, bool>.
 pub fn opt_state_snapshot() -> std::collections::HashMap<String, bool> {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
-    m.read().map(|g| g.clone()).unwrap_or_default()
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
+    m.read().map(|g| g.to_map()).unwrap_or_default()
 }
 
 /// !!! RUST-ONLY HELPER. Replace the option store wholesale with a
 /// prior snapshot from `opt_state_snapshot`. Used by subshell exit to
 /// undo any `set -e` / `setopt …` modifications the subshell made.
 pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
     if let Ok(mut g) = m.write() {
         // Invalidate only the slots that actually differ between the
         // outgoing map and the restored snapshot. `doshfunc` restores the
@@ -2070,17 +2254,18 @@ pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
         // stays entirely warm. Names present in exactly one side, or with a
         // different value, are the only ones whose cached read must drop.
         let mut changed: Vec<i32> = Vec::new();
-        for (k, v) in g.iter() {
+        let live = g.to_map();
+        for (k, v) in live.iter() {
             if snap.get(k) != Some(v) {
                 changed.push(optlookup(k));
             }
         }
         for (k, v) in snap.iter() {
-            if g.get(k) != Some(v) {
+            if live.get(k) != Some(v) {
                 changed.push(optlookup(k));
             }
         }
-        *g = snap;
+        *g = opt_state_store::from_map(&snap);
         drop(g);
         for optno in changed {
             crate::opts_cache::invalidate_one(optno);
@@ -2132,7 +2317,7 @@ pub fn opt_state_set_via_alias(name: &str, on: bool) -> bool {
 /// currently in the option store (= count of options that have been
 /// touched by set/setopt/unset).
 pub fn opt_state_len() -> usize {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
     m.read().map(|g| g.len()).unwrap_or(0)
 }
 

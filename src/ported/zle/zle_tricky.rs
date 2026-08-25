@@ -1589,15 +1589,15 @@ pub fn has_real_token(s: &str) -> bool {
 /// command-substitution restart, and the `offs = zlemetacs - wb`
 /// prefix/suffix split.
 ///
-/// NOT YET PORTED (return the raw lexer-extracted word untokenized;
-/// see get_comp_string report):
-///   - c:1482–1706 IN_MATH / array-subscript word extraction —
-///     returns None for that context.
-///   - c:1709–1926 quote-form cleanup (`qipre`/`qisuf`/`autoq` have
-///     no writable shared globals; `getkeystring` lacks the `how`
-///     arg for the `$'...'` path).
-///   - c:1931–2218 IGNOREBRACES brace-expansion tail (`origword`
-///     global absent).
+/// The tail of the C function is ported too: c:1482–1706 (IN_MATH /
+/// array-subscript word extraction) at the two `INWHAT == IN_MATH`
+/// blocks below, c:1709–1726 (Dnull/Snull -> literal quotes) at the
+/// `parambeg(s)` rewrite, c:1728–1776 (quote-form detection feeding
+/// `qipre`/`qisuf`/`autoq`) after it, and c:1931–2218 (the
+/// brace-expansion tail) under `isset(IGNOREBRACES)`.
+///
+/// STILL UNPORTED in this function: c:1774–1776, the BANGHIST `\!`
+/// re-quote inside the quote-form block (flagged again at its site).
 ///
 /// PRECONDITION: the caller must have populated compcore's
 /// `ZLEMETALINE`/`ZLEMETACS`/`ZLEMETALL` (C does this via
