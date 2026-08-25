@@ -6158,7 +6158,7 @@ const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
     ("help", "Print help for a builtin. `help cd` shows the cd usage. zshrs-only."),
     ("hostname", "Print the system hostname. `-s` short, `-f` FQDN."),
     ("id", "Print user / group IDs. `-u` user only, `-g` group only, `-n` names. coreutils drop-in."),
-    ("intercept", "Register an AOP intercept. `intercept before|after|around <cmd> { body }` runs `body` around every invocation of `<cmd>`. Bytecode-compiled at registration; no per-call interpreter overhead. zshrs-only."),
+    ("intercept", "Register an AOP intercept. `intercept before|after|around <cmd> { body }` runs `body` around every invocation of `<cmd>`. The body is stored as source and compiled on each fire. `$INTERCEPT_NAME`, `$INTERCEPT_ARGS`, `$INTERCEPT_CMD` are bound; `after` adds `$INTERCEPT_MS`, `$INTERCEPT_US`, `$INTERCEPT_STATUS`. zshrs-only."),
     ("intercept_proceed", "Inside an `around` intercept body, invoke the underlying command. Required so the intercept doesn't shadow the call permanently."),
     ("link", "Create a hard link. `link src dst`. coreutils drop-in."),
     ("logname", "Print the user's login name. coreutils drop-in."),

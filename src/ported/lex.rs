@@ -2215,6 +2215,40 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // pre-switch `c = lextok2[c]` rewrite OR the post-switch
             // `add(c)` — both arms must be inlined per LX2 case.
             LX2_INBRACE => {
+                // !!! ZSHRS EXTENSION GATE (no C counterpart) !!! `intercept
+                // <kind> <pat> { code }` — the command word `intercept` armed
+                // the capture, so this `{` opens an advice body, not a brace
+                // expansion. Take the span up to the matching `}` off the
+                // input as RAW SOURCE and return it as one STRING token: the
+                // body's own `>>`, `;` and `|` would otherwise be lexed as
+                // operators of the OUTER command and never reach argv. Same
+                // hook shape as the dash_mode gate at lex.rs:1433. Off under
+                // `zshrs --zsh`, where zsh's own "parse error near `}'" is
+                // the correct answer.
+                if crate::intercepts::wants_block() {
+                    crate::intercepts::disarm();
+                    if let Some(body) = crate::intercepts::scan_block_body(hgetc) {
+                        // Frame the span the way LX2_QUOTE frames a
+                        // single-quoted string (lex.rs:2532). The body is
+                        // advice SOURCE, stored verbatim and run later by
+                        // `execute_advice`; without the markers the word
+                        // reaching argv would be globbed and
+                        // parameter-expanded at REGISTRATION time, so
+                        // `$INTERCEPT_ARGS` would resolve to empty before any
+                        // command was ever intercepted. Snull is a literal
+                        // section, so a `'` inside the body needs no escaping
+                        // the way real single-quote syntax would.
+                        set_tokstr(Some(format!("{}{}{}", Snull, body, Snull)));
+                        return STRING_LEX;
+                    }
+                    // Input ran out with the body still open. The scan
+                    // consumed to EOF, so there is nothing left for the
+                    // ordinary path to choke on and falling through would
+                    // register `{` as the advice. Raise the lexer error
+                    // instead — an unterminated body is a parse error, the
+                    // same as an unterminated `{ … }` block anywhere else.
+                    return LEXERR;
+                }
                 if (isset(IGNOREBRACES) && !cmdsubst) || sub {
                     add('{');
                 } else {
@@ -3972,6 +4006,13 @@ pub fn exalias() -> bool {
         } else {
             rw_tok
         };
+        // !!! ZSHRS EXTENSION GATE (no C counterpart) !!! Arm / disarm the
+        // `intercept … { … }` body capture. Every command word re-decides,
+        // so an `intercept` that never reached a `{` cannot leave the next
+        // command's brace expansion armed.
+        if LEX_INCMDPOS.get() {
+            crate::intercepts::note_command_word(&lextext, tokstr_has_quote_marker);
+        }
         if let Some(rwtok) = rw_tok {
             set_tok(rwtok);
             if rwtok == REPEAT {

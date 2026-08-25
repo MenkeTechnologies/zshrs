@@ -286,6 +286,17 @@ intercept around expensive_func {
 }
 ```
 
+The `{ … }` body is a zshrs syntax extension — zsh cannot parse a bare `}`
+as an argument. The lexer captures the span between the braces as raw
+source, so the body keeps its own redirections, pipelines and
+here-documents, and nothing in it is expanded until the advice fires.
+`zshrs --zsh` turns the extension off and rejects the form exactly as
+`/bin/zsh` does; `intercept before git 'code'` works in every mode.
+
+Bound while advice runs: `$INTERCEPT_NAME`, `$INTERCEPT_ARGS`,
+`$INTERCEPT_CMD`, plus `$INTERCEPT_MS`, `$INTERCEPT_US` and
+`$INTERCEPT_STATUS` for `after`.
+
 ---
 
 ## [0x06] WORKER THREAD POOL
