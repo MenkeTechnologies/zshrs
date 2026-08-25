@@ -470,6 +470,69 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 type_: MN_INTEGER,
             };
         }
+        // c:Src/params.c:2641-2645 getnumvalue — a param whose TYPE is
+        // integer or float is read through its typed getter
+        // (`v->pm->gsu.i->getfn(v->pm)` / `gsu.f->getfn`) and returned as
+        // an mnumber directly. Only c:2646-2647's default arm stringifies
+        // (`matheval(getstrvalue(v))`), which is the sole path where a
+        // scalar holding `0xff` or `3+2` gets re-lexed.
+        //
+        // The port inverted that: EVERY read went through `getsparam`,
+        // which for PM_INTEGER formats the value with `convbase`
+        // (params.rs:5930-5933) — so `typeset -i 16 x=255` produced the
+        // string "16#FF", which `parse::<i64>()` and `parse::<f64>()`
+        // both reject, and the value then went through a full recursive
+        // `matheval` of its own printed form. `pm->base` is an OUTPUT
+        // property in C (c:2370-2371, inside getstrvalue); it has no
+        // business in a numeric read, and `typeset -L`/`-Z` padding has
+        // none either.
+        //
+        // The gates below are getsparam's own, in getsparam's order, so
+        // this arm answers only for the plain visible param C's c:2641
+        // would have reached with an already-resolved Value; everything
+        // else falls through to the string path unchanged. They are
+        // predicates only — `lookup_special_var` is never called
+        // speculatively, because reading RANDOM advances its seed.
+        if let Ok(tab) = crate::ported::params::paramtab().read() {
+            if let Some(pm) = tab.get(base_name) {
+                let flags = pm.node.flags as u32;
+                // PM_SPECIAL: getsparam answers these from
+                // `lookup_special_var` (params.rs:5824), a name-keyed
+                // string dispatch with no integer counterpart.
+                // PM_NAMEREF: c:570-575 resolves the chain first
+                // (params.rs:5834). PM_UNSET: c:2335 reads as empty
+                // (params.rs:5913).
+                let plain = (flags
+                    & (crate::ported::zsh_h::PM_SPECIAL
+                        | crate::ported::zsh_h::PM_NAMEREF
+                        | crate::ported::zsh_h::PM_UNSET))
+                    == 0
+                    // c:Src/Modules/param_private.c:678 — a private param
+                    // belonging to an outer scope is invisible from a
+                    // deeper one; getsparam returns None (params.rs:5899).
+                    && !crate::ported::modules::param_private::getprivatenode(
+                        &**pm as *const crate::ported::zsh_h::param,
+                    )
+                    .is_null();
+                if plain {
+                    let t = PM_TYPE(flags);
+                    if t == PM_INTEGER {
+                        return mnumber {
+                            l: crate::ported::params::intgetfn(pm), // c:2642
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        };
+                    }
+                    if t == PM_EFLOAT || t == PM_FFLOAT {
+                        return mnumber {
+                            l: 0,
+                            d: crate::ported::params::floatgetfn(pm), // c:2645
+                            type_: MN_FLOAT,
+                        };
+                    }
+                }
+            }
+        }
         if let Some(raw) = getsparam(base_name) {
             if let Ok(n) = raw.parse::<i64>() {
                 return mnumber {
