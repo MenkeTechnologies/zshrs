@@ -468,8 +468,30 @@ pub fn zle_save_positions() {
     use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
     // c:621 — `newpos = zalloc(sizeof(*newpos));`
     let mk = MARK.load(Ordering::SeqCst); // c:625
-    let cs = ZLECS.load(Ordering::SeqCst); // c:634
-    let ll = ZLELL.load(Ordering::SeqCst); // c:635
+    // c:628-636 — C branches on `zlemetaline`: while the line is METAFIED
+    // (every completion runs under `metafy_line`, zle_tricky.c:978) the live
+    // cursor/length are `zlemetacs`/`zlemetall`, NOT `zlecs`/`zlell`. The port
+    // saved `zlecs`/`zlell` unconditionally, so `compset -q` — whose
+    // `set_comp_sep` (compcore.c:1558/1717) brackets a nested lexer run with
+    // this pair and moves `zlemetacs` into the temporary buffer — never got
+    // `zlemetacs` back. The result phase then read a cursor pointing at the
+    // start of the line: `trap <TAB>` generated its 3673 matches and displayed
+    // none of them.
+    //
+    // `zlemetaline != NULL` is spelled `ZLEMETALL > 0 && ZLEMETALINE.get()`
+    // here, the same predicate this file already uses at :75, :389 and :913 —
+    // `unmetafy_line` (compcore.rs) clears the buffer and zeroes ZLEMETALL to
+    // mark meta-mode inactive.
+    let (cs, ll) = if ZLEMETALL.load(Ordering::SeqCst) > 0 && ZLEMETALINE.get().is_some() {
+        // c:630-631 — metafied: `newpos->cs = zlemetacs; newpos->ll = zlemetall;`
+        (
+            ZLEMETACS.load(Ordering::SeqCst).max(0) as usize,
+            ZLEMETALL.load(Ordering::SeqCst).max(0) as usize,
+        )
+    } else {
+        // c:634-635 — unmetafied: `newpos->cs = zlecs; newpos->ll = zlell;`
+        (ZLECS.load(Ordering::SeqCst), ZLELL.load(Ordering::SeqCst))
+    };
 
     // c:641-664 — snapshot region_highlights past N_SPECIAL_HIGHLIGHTS
     //              so the user-driven (predisplay/normal) entries
@@ -504,13 +526,21 @@ pub fn zle_restore_positions() {
         Some(p) => p,
         None => return,
     };
-    // c:684-686 — restore mark + cursor + ll (clamp cs to ll for safety).
+    // c:686 — restore mark.
     MARK.store(oldpos.mk, Ordering::SeqCst); // c:686
-    ZLECS.store(
-        oldpos.cs.min(oldpos.ll), // c:693
-        Ordering::SeqCst,
-    );
-    ZLELL.store(oldpos.ll, Ordering::SeqCst); // c:694
+    // c:687-695 — and put the cursor/length back into whichever pair is live,
+    // matching the branch `zle_save_positions` took (see the note there).
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 && ZLEMETALINE.get().is_some() {
+        // c:689-690 — `zlemetacs = oldpos->cs; zlemetall = oldpos->ll;`
+        ZLEMETACS.store(oldpos.cs as i32, Ordering::SeqCst); // c:689
+        ZLEMETALL.store(oldpos.ll as i32, Ordering::SeqCst); // c:690
+    } else {
+        // c:693-694 — `zlecs = oldpos->cs; zlell = oldpos->ll;`. The `min`
+        // is a Rust-only guard: ZLECS is a usize index into ZLELINE and a
+        // saved cursor past the restored length would panic a later slice.
+        ZLECS.store(oldpos.cs.min(oldpos.ll), Ordering::SeqCst); // c:693
+        ZLELL.store(oldpos.ll, Ordering::SeqCst); // c:694
+    }
 
     // c:696-732 — restore region_highlights tail (everything past
     //              N_SPECIAL_HIGHLIGHTS). C grows the array and copies
@@ -901,6 +931,36 @@ pub fn forekill(ct: i32, flags: i32) {
 /// WARNING: param names don't match C — Rust=(zle, ct, _flags) vs C=(ct, flags)
 pub fn backdel(ct: i32, _flags: i32) {
     // c:1084
+    // c:1086-1088 — `if (flags & CUT_RAW) { if (zlemetaline != NULL)
+    //     shiftchars(zlemetacs -= ct, ct); ... }`. The metafied branch was
+    // missing entirely, so a CUT_RAW backdel taken while the line is metafied
+    // (`get_comp_string`'s quote cleanup, zle_tricky.c:1909) silently edited
+    // the unmetafied ZLELINE instead — or nothing at all.
+    // `zlemetaline != NULL` is spelled `ZLEMETALL > 0` here: ZLEMETALINE is a
+    // OnceLock that STAYS populated after `unmetafy_line`, so it is not the
+    // "currently metafied" test — ZLEMETALL is (zle_utils.rs:75, :389,
+    // zle_tricky.rs:1320).
+    if (_flags & CUT_RAW) != 0
+        && ZLEMETALL.load(Ordering::SeqCst) > 0
+        && ZLEMETALINE.get().is_some()
+    {
+        if ct <= 0 {
+            return;
+        }
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(mut g) = m.lock() {
+                let cs = ZLEMETACS.load(Ordering::Relaxed);
+                let start = (cs - ct).max(0) as usize; // c:1088 — `zlemetacs -= ct`
+                let end = (cs.max(0) as usize).min(g.len());
+                if start <= end && g.is_char_boundary(start) && g.is_char_boundary(end) {
+                    g.replace_range(start..end, ""); // c:1088 shiftchars
+                    ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
+                }
+                ZLEMETACS.store(start as i32, Ordering::Relaxed);
+            }
+        }
+        return;
+    }
     let ct = ct as usize;
     if ct == 0 || ZLECS.load(Ordering::SeqCst) == 0 {
         return;

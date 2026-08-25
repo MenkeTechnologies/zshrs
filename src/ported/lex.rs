@@ -5496,7 +5496,7 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
 /// `(decoded, end_idx)` where `end_idx` points at the terminating
 /// `Snull`. `Bnull \\` and `Bnull '` are user-literal `\` / `'`
 /// per Src/lex.c:1303.
-fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
+pub(crate) fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
     let mut out = String::new();
     let mut i = start;
     while i < chars.len() {

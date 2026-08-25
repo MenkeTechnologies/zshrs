@@ -1640,8 +1640,11 @@ pub fn has_real_token(s: &str) -> bool {
 /// array-subscript word extraction) at the two `INWHAT == IN_MATH`
 /// blocks below, c:1709–1726 (Dnull/Snull -> literal quotes) at the
 /// `parambeg(s)` rewrite, c:1728–1776 (quote-form detection feeding
-/// `qipre`/`qisuf`/`autoq`) after it, and c:1931–2218 (the
-/// brace-expansion tail) under `isset(IGNOREBRACES)`.
+/// `qipre`/`qisuf`/`autoq`) after it, c:1780–1786 (the leading `=`
+/// restore) and c:1787–1926 (the quote-marker cleanup that strips the
+/// markers from `s` and the quote characters they stand for from the
+/// LIVE line), and c:1931–2218 (the brace-expansion tail) under
+/// `isset(IGNOREBRACES)`.
 ///
 /// STILL UNPORTED in this function: c:1774–1776, the BANGHIST `\!`
 /// re-quote inside the quote-form block (flagged again at its site).
@@ -2891,8 +2894,15 @@ pub fn get_comp_string() -> Option<String> {
         // Completion/Zsh/Type/_vars) took the unquoted path.
         //
         // NOT ported from this hunk: c:1774-1776 (the BANGHIST `\!`
-        // sanitize, which rewrites `s` in place with `Bnull`) — that walk
-        // only changes bytes the untokenize at the return already drops.
+        // sanitize, which rewrites a `\` before a `!` inside double quotes
+        // as `Bnull`). The rationale that used to sit here — "that walk only
+        // changes bytes the untokenize at the return already drops" — no
+        // longer holds now that c:1787-1926 is ported below: that loop chucks
+        // a `Bnull` out of `s` while LEAVING the `\` on the line, so the two
+        // are not equivalent. `echo "\!x<TAB>` is byte-identical to zsh
+        // either way today, and porting it needs the history front-end's
+        // `\!` handling checked first, so it stays flagged rather than
+        // guessed at.
         //
         // c:1709-1726 IS now ported, immediately above. A previous revision
         // of this comment claimed it "only rewrites when the word is a
@@ -2965,6 +2975,237 @@ pub fn get_comp_string() -> Option<String> {
                     "get_comp_string quote-form"
                 );
             }
+        }
+
+        // c:1780-1786 — a leading `=` is tokenized unconditionally so that a
+        // later `setopt equals` still sees it; the option is fixed by now, so
+        // put the plain `=` back when it is unset.
+        {
+            use crate::ported::zsh_h::{Equals, EQUALSOPT};
+            if s.starts_with(Equals) && !isset(EQUALSOPT) {
+                // c:1785-1786 — `*s = '='`
+                s = format!("={}", &s[Equals.len_utf8()..]);
+            }
+        }
+
+        // c:1787-1926 — "While building the quoted form, we also clean up the
+        // command line."
+        //
+        // The lexer left one `inull` marker in `s` for every quote character
+        // the user typed: `Snull` for `'`, `Dnull` for `"`, `Bnull` for `\`,
+        // `String`/`Qstring` + `Snull` for `$'…'`. This loop walks `s` and the
+        // LIVE metafied line in lockstep and removes both sides at once — the
+        // marker from `s` (c:1919-1921 `chuck`) and the quote character it
+        // stands for from the line (c:1897 `foredel` / c:1909 `backdel`) —
+        // keeping `zlemetacs`, `we` and `offs` consistent as the line shrinks.
+        // The quotes come back later from `qipre`/`qisuf`/`autoq`, which the
+        // block above just published.
+        //
+        // Skipping it left the line untouched: for `echo "a<TAB>` zsh's
+        // `$BUFFER` inside the completer is `echo a` with `$CURSOR` 6, while
+        // this port reported `echo "a` / 7. Every completer that inspects the
+        // line rather than `$PREFIX` then saw a word that was still quoted.
+        //
+        // REPRESENTATION NOTE (Rust-only, no C counterpart): C walks `s` as
+        // BYTES and each parser token is exactly one byte, which is also the
+        // one line byte it stands for, so C's `p` and `i` advance together.
+        // Here the token chars live at U+0080..U+009F and take TWO UTF-8 bytes
+        // in `s` while still standing for ONE byte of the metafied line, so
+        // the scan runs over `Vec<char>` (`p` is a char index) and `i` stays a
+        // line BYTE offset — the same convention `WB`/`WE`/`ZLEMETACS` use.
+        {
+            use crate::ported::lex::getkeystring_dollar_quote;
+            use crate::ported::zsh_h::{Qstring, Stringg, RCQUOTES};
+            use crate::ported::ztype_h::inull;
+
+            /// `inull()` over a token char. The typtab predicate is byte-wide
+            /// (`Src/ztype.h:62`), and every INULL token is < U+0100.
+            fn inull_ch(c: char) -> bool {
+                (c as u32) < 0x100 && inull(c as u32 as u8)
+            }
+            /// C's `memcpy(zlemetaline + at, t, strlen(t))` (c:1852) — overwrite
+            /// the line bytes `t` is exactly as long as.
+            fn write_line(at: usize, t: &str) {
+                if let Some(m) = ZLEMETALINE.get() {
+                    if let Ok(mut g) = m.lock() {
+                        let end = at + t.len();
+                        if end <= g.len() && g.is_char_boundary(at) && g.is_char_boundary(end) {
+                            g.replace_range(at..end, t);
+                        }
+                    }
+                }
+            }
+
+            let wb = WB.load(Ordering::SeqCst);
+            let mut sc: Vec<char> = s.chars().collect();
+            // c:1788 — `for (p = s, i = wb, j = 0; *p; p++, i++)`
+            let mut p: usize = 0;
+            let mut i: i32 = wb;
+            let mut j: i32 = 0;
+            let mut offs = OFFS.load(Ordering::SeqCst);
+            let mut we = WE.load(Ordering::SeqCst);
+            while p < sc.len() {
+                let c = sc[p];
+                let mut skipchars: i32; // c:1789
+                if c == Stringg && sc.get(p + 1).copied() == Some(snull) {
+                    // c:1790 — an unsubstituted `$'…'`.
+                    // c:1792-1794 — scan for the closing `Snull`, but no
+                    // further than the cursor.
+                    let cs_now = ZLEMETACS.load(Ordering::SeqCst);
+                    let mut pe = p + 2;
+                    while pe < sc.len() && sc[pe] != snull && i + ((pe - p) as i32) < cs_now {
+                        pe += 1;
+                    }
+                    if pe >= sc.len() || sc[pe] != snull {
+                        // c:1795-1799 — no terminating Snull, can't substitute.
+                        skipchars = 2;
+                        if pe < sc.len() {
+                            j = 1; // c:1798-1799 — `if (*pe) j = 1;`
+                        }
+                    } else {
+                        // c:1800-1809 — decode the `$'…'` body.
+                        // `getkeystring(p + 2, &len, GETKEYS_DOLLARS_QUOTE, NULL)`
+                        // sets `*len` to "length to following character"
+                        // (Src/utils.c:7189-7191), i.e. body + closing Snull;
+                        // c:1807 then adds the 2 chars of the `$'` opener.
+                        let (t, snull_idx) = getkeystring_dollar_quote(&sc, p + 2);
+                        let len = (snull_idx - p + 1) as i32; // c:1807 — `len += 2`
+                        let tlen = t.chars().count() as i32; // c:1808
+                        skipchars = len - tlen; // c:1809
+                        if skipchars >= 0 {
+                            // c:1817-1864 — substitute in place.
+                            let tchars: Vec<char> = t.chars().collect();
+                            // c:1819 — `memcpy(p, t, tlen)`
+                            sc[p..p + tlen as usize].copy_from_slice(&tchars);
+                            // c:1821-1822 — `ocs = zlemetacs; zlemetacs = i;`.
+                            // Reproduced verbatim including the consequence
+                            // that a `skipchars == 0` substitution (decoded
+                            // text exactly as long as the source) never puts
+                            // `ocs` back — c:1823's `if (skipchars > 0)`
+                            // guards the only restore.
+                            let ocs = ZLEMETACS.load(Ordering::SeqCst);
+                            ZLEMETACS.store(i, Ordering::SeqCst);
+                            if skipchars > 0 {
+                                // c:1824-1828 — move the tail of `s` up.
+                                sc.drain(p + tlen as usize..p + len as usize);
+                                // c:1829-1836
+                                if i < ocs {
+                                    offs -= skipchars;
+                                }
+                                // c:1837-1838 — move the tail of the line up.
+                                foredel(skipchars, CUT_RAW);
+                                // c:1839-1844
+                                ZLEMETACS.store(ocs, Ordering::SeqCst);
+                                if ocs > i {
+                                    ZLEMETACS.store(ocs - skipchars, Ordering::SeqCst);
+                                }
+                                we -= skipchars; // c:1846
+                            }
+                            // c:1848-1852 — copy the unquoted string into place.
+                            write_line(i as usize, &t);
+                            // c:1854-1864 — `p += tlen - 1; i += tlen - 1;
+                            // continue;` plus the loop's own `p++, i++`.
+                            p += tlen as usize;
+                            i += tlen;
+                            continue;
+                        } else {
+                            // c:1865-1876 — the expansion is LONGER than the
+                            // original, so give up and treat it as a plain
+                            // single-quoted region.
+                            skipchars = 2;
+                            j = 1;
+                        }
+                    }
+                } else if c == Qstring && sc.get(p + 1).copied() == Some(snull) {
+                    skipchars = 2; // c:1879-1880
+                } else if inull_ch(c) {
+                    skipchars = 1; // c:1881-1882
+                } else {
+                    skipchars = 0; // c:1883-1884
+                }
+                if skipchars != 0 {
+                    // c:1885
+                    if i < ZLEMETACS.load(Ordering::SeqCst) {
+                        offs -= skipchars; // c:1886-1887
+                    }
+                    if c == snull && isset(RCQUOTES) {
+                        j = 1 - j; // c:1888-1889
+                    }
+                    if sc.get(p + 1).is_some() || c != bnull {
+                        // c:1890
+                        if c == bnull {
+                            // c:1891-1893 — the `\` stays on the LINE (it is
+                            // the escape for the next character); only the
+                            // marker leaves `s`.
+                            if ZLEMETACS.load(Ordering::SeqCst) == i + 1 {
+                                ZLEMETACS.fetch_add(1, Ordering::SeqCst);
+                                offs += 1;
+                            }
+                            // c:1922-1923 — `p--` cancels the loop's `p++`;
+                            // `i` is NOT decremented here, so it advances one
+                            // line byte past the surviving `\`.
+                            i += 1;
+                        } else {
+                            // c:1894-1905. In c:1898's
+                            // `if ((zlemetacs = ocs) > --i)` the `--i` fires
+                            // either way and cancels the loop's `i++`, since
+                            // `s` and the line lost the same number of units
+                            // at this position.
+                            let ocs = ZLEMETACS.load(Ordering::SeqCst); // c:1895
+                            ZLEMETACS.store(i, Ordering::SeqCst); // c:1896
+                            foredel(skipchars, CUT_RAW); // c:1897
+                            i -= 1; // c:1898
+                            ZLEMETACS.store(ocs, Ordering::SeqCst);
+                            if ocs > i {
+                                let mut cs = ocs - skipchars; // c:1899
+                                if wb > cs {
+                                    cs = wb; // c:1900-1902
+                                }
+                                ZLEMETACS.store(cs, Ordering::SeqCst);
+                            }
+                            we -= skipchars; // c:1904
+                            i += 1; // loop `i++`
+                        }
+                    } else {
+                        // c:1906-1918 — a trailing `\` at the very end of the
+                        // word: there is nothing after it to escape, so the
+                        // backslash itself comes off the END of the line.
+                        let ocs = ZLEMETACS.load(Ordering::SeqCst); // c:1907
+                        ZLEMETACS.store(we, Ordering::SeqCst); // c:1908
+                        backdel(skipchars, CUT_RAW); // c:1909
+                        let mut cs = if ocs == we { we - skipchars } else { ocs }; // c:1910-1913
+                        if wb > cs {
+                            cs = wb; // c:1914-1916
+                        }
+                        ZLEMETACS.store(cs, Ordering::SeqCst);
+                        we -= skipchars; // c:1917
+                        i += 1; // loop `i++`
+                    }
+                    // c:1919-1921 — "we need to get rid of all the quotation
+                    // bits..."
+                    for _ in 0..skipchars {
+                        if p < sc.len() {
+                            sc.remove(p);
+                        }
+                    }
+                    // c:1922-1923 — "but we only decrement once to confuse the
+                    // loop increment", i.e. `p` stays put.
+                    continue;
+                } else if j != 0 && c == '\'' && i < ZLEMETACS.load(Ordering::SeqCst) {
+                    offs -= 1; // c:1924-1925
+                }
+                p += 1;
+                i += 1;
+            }
+            s = sc.into_iter().collect();
+            OFFS.store(offs, Ordering::SeqCst);
+            WE.store(we, Ordering::SeqCst);
+            tracing::debug!(
+                target: "compsys_args",
+                s = %s, offs, we,
+                zlemetacs = ZLEMETACS.load(Ordering::SeqCst),
+                "get_comp_string quote cleanup"
+            );
         }
 
         // c:1928-1929 — `zsfree(origword); origword = ztrdup(s);`. C saves
@@ -3455,8 +3696,6 @@ pub fn get_comp_string() -> Option<String> {
         }
 
         // c:2219 — zcontext_restore(); return s.
-        // NOTE: quote-form cleanup (c:1709-1926) not fully ported; return the
-        // lexer word untokenized.
         //
         // C returns `s` TOKENIZED, and `docomplete`'s expand-vs-complete
         // decision (c:704-793) is written entirely in parser tokens —
@@ -4622,11 +4861,10 @@ pub static VARNAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::Once
 ///
 /// zshrs bridge, no C counterpart: C's `get_comp_string` returns the
 /// tokenized word and `docomplete` reads it directly (c:706 `char *q = s`).
-/// This port untokenizes at its c:2219 return (the quote-form cleanup at
-/// c:1709-1926 is not ported), which would leave the c:704-793
-/// expand-vs-complete decision unable to distinguish a glob `*` (`Star`)
-/// from a quoted `\*` (a plain `*`). The tokenized string is stashed here
-/// on the way out so that decision reads exactly what C reads.
+/// This port untokenizes at its c:2219 return, which would leave the
+/// c:704-793 expand-vs-complete decision unable to distinguish a glob `*`
+/// (`Star`) from a quoted `\*` (a plain `*`). The tokenized string is
+/// stashed here on the way out so that decision reads exactly what C reads.
 /// `static char *origword;` from `Src/Zle/zle_tricky.c:131`.
 ///
 /// The word `get_comp_string` extracted, in its TOKENIZED form, saved at
@@ -4634,10 +4872,11 @@ pub static VARNAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::Once
 /// brace-expansion tail may replace `s`. `docomplete` passes it — not the
 /// untokenized return value — to `doexpansion` (c:826) and to the
 /// spell-check path (c:802), because both hand the word to the expansion
-/// machinery, which reads the quote tokens: `echo "$PA<TAB>` is
-/// `<Dnull>$PA`, an unset parameter inside double quotes, and only the
-/// Dnull tells `prefork` to produce the empty-but-present word that makes
-/// zsh delete `"$PA` from the line.
+/// machinery, which reads the remaining parser tokens.
+///
+/// Like C, this is saved AFTER the c:1787-1926 quote cleanup, so the
+/// `inull` quote markers are already gone from it — `echo "$PA<TAB>` is
+/// `$PA` here (a `Qstring` and the name), not `<Dnull>$PA`.
 pub static ORIGWORD: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new();
 
 pub static COMP_STRING_TOK: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new();

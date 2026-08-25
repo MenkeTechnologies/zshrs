@@ -97,9 +97,15 @@ pub fn span(tok: &str, ubeg: usize, ulen: usize) -> Option<String> {
 /// LINE (`foredel`, adjusting `zlemetacs`/`we`/`offs`), and it `chuck`s the
 /// matching `inull` markers out of the word `s` (c:1919-1921, "we need to get
 /// rid of all the quotation bits"). Only the second is what `multiquote` at
-/// c:700 depends on, and it is the only one replayed here: this port does the
-/// line-side quote handling elsewhere, so replaying `foredel` would delete the
-/// quotes twice.
+/// c:700 depends on, and it is the only one replayed here: `get_comp_string`
+/// itself now ports the whole loop (`zle_tricky.rs`, the `c:1787-1926` block),
+/// so replaying `foredel` would delete the quotes from the line twice.
+///
+/// Because that block runs BEFORE the tokenized word is stashed in
+/// `zle_tricky::COMP_STRING_TOK`, the twin normally arrives here with its
+/// markers already chucked and this walk is a no-op — it is idempotent by
+/// construction and stays as the guard for twins that did not come through
+/// `get_comp_string`.
 ///
 /// A `$'…'` region is left intact. C substitutes its decoded value into `s`
 /// there (c:1805-1864); this port defers that to `untokenize`.
