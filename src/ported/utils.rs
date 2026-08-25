@@ -5856,7 +5856,8 @@ pub fn inittyptab() {
         t[Marker as usize] |= IMETA as u32;
     }
 
-    // c:4133-4134 — `for (t0 = Pound; t0 <= LAST_NORMAL_TOK; t0++)
+    // c:4198-4199 — `for (t0 = (int) (unsigned char) Pound;
+    //                     t0 <= (int) (unsigned char) LAST_NORMAL_TOK; t0++)
     //                    typtab[t0] |= ITOK | IMETA;`
     // Marks all char-rewrite token markers (Pound, Stringg, Hat,
     // Star, ...). Without this, `itok(Stringg)` returns false and
@@ -5871,7 +5872,8 @@ pub fn inittyptab() {
         }
     }
 
-    // c:4135-4136 — `for (t0 = Snull; t0 <= Nularg; t0++)
+    // c:4200-4201 — `for (t0 = (int) (unsigned char) Snull;
+    //                     t0 <= (int) (unsigned char) Nularg; t0++)
     //                    typtab[t0] |= ITOK | IMETA | INULL;`
     {
         let lo = Snull as usize;
