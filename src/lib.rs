@@ -109,6 +109,7 @@ pub mod canonical_apply;
 /// glue restoring C's `matches = mgroup->lmatches` pointer alias; see the module
 /// doc). Deliberately outside `src/ported/` — not a C-fn port.
 pub mod comp_match_handles;
+pub mod comp_word_tok;
 /// `compile_zsh` submodule.
 #[path = "extensions/compile_zsh.rs"]
 pub mod compile_zsh;

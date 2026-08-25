@@ -915,50 +915,73 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // site (`set_comp_sep`, c:1892-1906) already carries this branch —
         // compcore.rs:2861-2868.
         //
-        // Two steps of the C hunk are deliberately NOT replayed, because
-        // this port's `s` is not in the token state C's `s` is:
+        // c:700/711/715 wrap the word in `multiquote(s, 0)` before publishing
+        // it, and c:701/712/716 `untokenize` the result. That pair is NOT a
+        // no-op: `do_completion` seeds `$compqstack` with one element on every
+        // completion (c:301-308, compcore.rs:100-112) — the quote the word sits
+        // inside, or `QT_BACKSLASH` when it sits inside none — so every
+        // character the user QUOTED gets its quoting put back before the
+        // completion function sees `$PREFIX`.
         //
-        //   * `multiquote(s, 0)` (c:700/711/715). It is NOT a no-op —
-        //     `do_completion` seeds `$compqstack` with one QT_BACKSLASH
-        //     element on every single completion (c:301-308,
-        //     compcore.rs:100-112), so it backslash-escapes every
-        //     `ispecial()` character it is handed. C can afford that
-        //     because its word is still TOKENIZED here: an active glob `*`
-        //     is the token byte `Star`, which `ispecial()`
-        //     (utils.rs:9931-9946) does not match, while a `\*` the user
-        //     typed has had its `Bnull` marker chucked out of the word
-        //     already (zle_tricky.c:1885-1923) and is a plain `*` that
-        //     correctly gets its backslash back. This port's
-        //     `get_comp_string` returns the word ALREADY untokenized
-        //     (zle_tricky.rs:2578-2587) and does not port that inull
-        //     cleanup, so `multiquote` here sees plain ASCII and escapes
-        //     the LIVE metacharacters: it published `$PREFIX` as `\*` for
-        //     `ls *`, `\*\(` for `ls *(`, `\$\{\(` for `echo ${(` and
-        //     `\\\*` for `ls \*`. Measured against zsh 5.9 through
-        //     scripts/comptab_parity.py with a completer that prints
-        //     `${(qq)PREFIX}`, zsh publishes the bare word for all of them
-        //     (`'*('`, `'${('`, `'~/'`, `'../'`, `'\*'`) — which is exactly
-        //     the un-requoted `s` this port already has.
-        //   * `untokenize` (c:701/712/716) — already applied upstream at
-        //     `get_comp_string`'s return. Repeating it is a no-op on ASCII
-        //     but would silently drop a literal U+00A1 (`Nularg`) or
-        //     U+0084-U+00A1 character out of a non-ASCII word.
+        // It only comes out right on a TOKENIZED word: `quotestring` passes a
+        // parser token straight through (utils.c:6392), so a live glob `*` (the
+        // token `Star`) stays bare while a `*` the user escaped — a plain `*`
+        // in the word by then — gets its backslash back. Handing it the
+        // UNTOKENIZED word instead escapes the LIVE metacharacters and
+        // publishes `\*` for `ls *`, `\*\(` for `ls *(`, `\$\{\(` for
+        // `echo ${(`.
         //
-        // Reinstating either needs the tokenized word AND the unported
-        // c:1788-1926 line cleanup, not a local change here. The IN_MATH
-        // fork at c:700/711/715 (`dupstring` instead of `multiquote`)
-        // therefore collapses into the same expression too.
+        // This port untokenizes at `get_comp_string`'s return, so the tokenized
+        // twin travels separately in `crate::comp_word_tok` (published by
+        // `makecomplist`, narrowed the same way `s` is). Every accessor there
+        // is fallible: `None` means no usable twin and the untokenized word is
+        // published as before.
+        //
+        // Without this, `echo "$PATH <TAB>` published `$PATH ` where zsh
+        // publishes `$PATH\ `. The word holds a real token (the `$`), so
+        // `get_comp_string` leaves `instring` at `QT_NONE`
+        // (zle_tricky.c:1729-1731 — `has_real_token(s + 1)` fails the
+        // quote-form test), the qstack head is therefore `QT_BACKSLASH`, and
+        // the space inside the unterminated `"` is a literal that has to be
+        // re-quoted with a backslash. `_expand` rebuilt its expansion from the
+        // unescaped word and produced none, so the second TAB listed
+        // "No Matches" where zsh lists the expansions.
+        let word_tok = crate::comp_word_tok::get();
+        let in_math = linwhat.load(Ordering::Relaxed) == IN_MATH_LW;
         let (pre, suf) = if !isset(crate::ported::zsh_h::COMPLETEINWORD) {
             // c:699
-            (s.to_string(), String::new()) // c:700-703
+            // c:700-703 — `tmp = (linwhat == IN_MATH ? dupstring(s)
+            //                                        : multiquote(s, 0));`
+            let pre = if in_math {
+                s.to_string()
+            } else {
+                crate::comp_word_tok::multiquoted(word_tok.as_deref())
+                    .unwrap_or_else(|| s.to_string())
+            };
+            (pre, String::new())
         } else {
             // c:704
             let scs: Vec<char> = s.chars().collect();
             let off = (OFFS.load(Ordering::Relaxed).max(0) as usize).min(scs.len()); // c:707
-            (
-                scs[..off].iter().collect::<String>(), // c:709-713
-                scs[off..].iter().collect::<String>(), // c:714-717
-            )
+            let hd: String = scs[..off].iter().collect(); // c:709-713
+            let tl: String = scs[off..].iter().collect(); // c:714-717
+            if in_math {
+                // c:711 `dupstring_wlen(s, offs)` / c:715 `dupstring(ss)`.
+                (hd, tl)
+            } else {
+                // c:711/715 — the same split, each half through `multiquote`.
+                let (htok, ttok) = match word_tok.as_deref() {
+                    Some(t) => (
+                        crate::comp_word_tok::span(t, 0, hd.len()),
+                        crate::comp_word_tok::span(t, hd.len(), tl.len()),
+                    ),
+                    None => (None, None),
+                };
+                (
+                    crate::comp_word_tok::multiquoted(htok.as_deref()).unwrap_or(hd),
+                    crate::comp_word_tok::multiquoted(ttok.as_deref()).unwrap_or(tl),
+                )
+            }
         };
         let _ = crate::ported::params::setsparam("PREFIX", &pre);
         let _ = crate::ported::params::setsparam("SUFFIX", &suf);
@@ -1965,6 +1988,19 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
 
     // c:952-958 — `if (compfunc && (p = check_param(s, 0, 0)))`.
     let mut s_owned = s.to_string();
+    // The TOKENIZED twin of `s`, for `callcompfunc`'s `multiquote(s, 0)`
+    // (c:700/711/715) — see `crate::comp_word_tok`. C has no equivalent
+    // bookkeeping: its `s` is tokenized from `get_comp_string`
+    // (zle_tricky.c:2221) right through to `callcompfunc`, while this port
+    // untokenizes at the return and stashes the tokenized form in
+    // `COMP_STRING_TOK`. The twin is only usable when it still untokenizes
+    // back to the word actually being completed; a completion that did not
+    // come through `get_comp_string` leaves a stale value behind.
+    let mut s_tok = crate::ported::zle::zle_tricky::COMP_STRING_TOK
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|g| g.clone())
+        .filter(|t| crate::ported::lex::untokenize(t) == s_owned);
     if compfunc_active() {
         if let Some(p) = check_param(&s_owned, false, false) {
             // c:951
@@ -1977,7 +2013,11 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
             // `we - wb` is exactly `e - b`, set by check_param at c:1294-1295.
             let namelen = (WE.load(Ordering::Relaxed) - WB.load(Ordering::Relaxed)).max(0) as usize;
             let tail = &s_owned[p..];
-            s_owned = tail[..namelen.min(tail.len())].to_string(); // c:952 + c:1297
+            let cut = namelen.min(tail.len());
+            // c:952 — C's `p` points INTO the TOKENIZED `s`, so the twin has to
+            // be narrowed to the same span.
+            s_tok = s_tok.and_then(|t| crate::comp_word_tok::span(&t, p, cut));
+            s_owned = tail[..cut].to_string(); // c:952 + c:1297
             PARWB.store(owb, Ordering::Relaxed); // c:953
             PARWE.store(owe, Ordering::Relaxed); // c:955
             PAROFFS.store(ooffs, Ordering::Relaxed); // c:956
@@ -1987,6 +2027,9 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
     } else {
         PARWB.store(-1, Ordering::Relaxed); // c:958
     }
+
+    // Publish the narrowed twin for `callcompfunc` (c:700/711/715).
+    crate::comp_word_tok::set(s_tok);
 
     linwhat.store(INWHAT.load(Ordering::Relaxed), Ordering::Relaxed); // c:960
 
