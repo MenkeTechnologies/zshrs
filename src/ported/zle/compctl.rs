@@ -2143,7 +2143,9 @@ pub(crate) fn addmatch(s: &str, t: Option<&str>) {
     };
     let mflags_v = crate::ported::zle::compcore::mflags.load(Ordering::Relaxed);
 
-    add_match_data(
+    // c:2044 — C discards the return value; a NULL (a match rejected by the
+    // c:2999 brace filter) simply means nothing was registered.
+    let _ = add_match_data(
         isalt,             // c:2051 alt (fignore alternative)
         &ms,               // str — the matched string
         s,                 // orig
