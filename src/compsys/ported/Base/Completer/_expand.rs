@@ -23,7 +23,9 @@
 //! sh: 48    word is an AMBIGUOUS `~name` or `$name`                      -> continue=1
 //! sh: 51    [[ continue -eq 1 && "$tmp" != continue ]]                   -> return 1
 //! sh: 56  exp=("$word")
-//! sh: 62  substitute style -> `(e)`-expand each element, re-escape whitespace
+//! sh: 62  substitute style ->
+//! sh: 74    brace expansion of the quoted word (`eval exp=( … )`)
+//! sh: 90    `(e)`-expand each element, re-escape whitespace
 //! sh: 95  else exp=( ${exp:s/\$/$} )
 //! sh:100  [[ -z "$exp" ]] && exp=("$word")
 //! sh:102  subd=("$exp[@]")
@@ -53,10 +55,6 @@
 //!
 //! Deliberately NOT ported (each would be a lie to claim, so it is named
 //! here instead):
-//!   * sh:74-83 brace expansion inside the `substitute` arm. It needs the
-//!     `${(q)word}` → `${tmp//(#b)…}` fixpoint loop and an `eval` of the
-//!     rebuilt word list; there is no port-side `eval` of an array
-//!     assignment yet. `{a,b}` therefore does not expand here.
 //!   * sh:108/116 `local -a orig_exp=( $exp )` splits its UNQUOTED argument
 //!     on `$IFS`, so an element holding a backslash-escaped space is torn in
 //!     two. This port copies `exp` verbatim instead of reproducing that.
@@ -179,7 +177,13 @@ pub fn _expand_with(args: &[String]) -> i32 {
     // untouched.
     if style_true_or_unset(&ctx, "suffix")
         && looks_like_prefix(&word)
-        && !has_unescaped_glob_meta(&substitute_params(&word))
+        && !has_unescaped_glob_meta(
+            // A `(e)` zsh cannot parse leaves the word as typed. The only
+            // way that happens here is an unclosed `[` subscript — and `[`
+            // is itself one of the metacharacters this test looks for, so
+            // the untouched word is also the answer the test wants.
+            &substitute_params(&word).unwrap_or_else(|| word.clone()),
+        )
     {
         return 1;
     }
@@ -227,12 +231,23 @@ pub fn _expand_with(args: &[String]) -> i32 {
 
     // sh:62-96 — substitution.
     if force.contains('s') || style_true_or_unset(&ctx, "substitute") {
+        // sh:74-83  brace expansion, BEFORE the `(e)` pass below.
+        brace_expand_exp(&word, &mut exp);
         // sh:90-92  `(e)`-expand, then backslash-escape every space, tab and
         // newline so the array assignment cannot split on them.
-        exp = exp
+        //
+        // The whole line is one `eval '…' 2>/dev/null`, so an element whose
+        // `(e)` expansion zsh cannot parse leaves the ENTIRE assignment
+        // undone — `exp` keeps the value sh:56 gave it. `collect()` into an
+        // `Option` reproduces that all-or-nothing shape: the first `None`
+        // abandons the result.
+        if let Some(v) = exp
             .iter()
-            .map(|e| escape_whitespace(&substitute_params(e)))
-            .collect();
+            .map(|e| substitute_params(e).map(|x| escape_whitespace(&x)))
+            .collect::<Option<Vec<String>>>()
+        {
+            exp = v;
+        }
     } else {
         // sh:95  exp=( ${exp:s/\\\$/\$} ) — `:s` replaces the FIRST match only.
         exp = exp.iter().map(|e| e.replacen("\\$", "$", 1)).collect();
@@ -336,7 +351,11 @@ pub fn _expand_with(args: &[String]) -> i32 {
         // sh:145  eval 'epre=( ${(e)~opre} )' 2> /dev/null — same quiet
         // eval as sh:110/116; on failure the assignment never runs, so
         // `epre` keeps the empty value `local` gave it at sh:14.
-        let epre = match eval_quietly(|| glob_subst(&substitute_params(&opre))) {
+        let epre = match eval_quietly(|| {
+            substitute_params(&opre)
+                .map(|e| glob_subst(&e))
+                .unwrap_or_default()
+        }) {
             (v, false) => v,
             (_, true) => Vec::new(),
         };
@@ -832,13 +851,189 @@ fn eval_quietly<T>(f: impl FnOnce() -> T) -> (T, bool) {
     (value, failed)
 }
 
+/// sh:74-83 — brace expansion, the first half of the `substitute` arm.
+///
+/// ```text
+/// if [[ ! $_comp_caller_options[ignorebraces] == on &&
+///       "${#${exp}//[^\{]}" = "${#${exp}//[^\}]}" ]]; then
+///   local otmp
+///   tmp=${(q)word}
+///   while [[ $#tmp != $#otmp ]]; do
+///     otmp=$tmp
+///     tmp=${tmp//(#b)\\\$\\\{(([^\{\}]|\\\\{|\\\\})#)([^\\])\\\}/…}
+///   done
+///   eval exp\=\( ${tmp:gs/\\{/\{/:gs/\\}/\}/} \) 2>/dev/null
+/// fi
+/// ```
+///
+/// `${(q)word}` backslash-escapes every shell-special character in the
+/// word — braces and commas included — so the `eval` at sh:82 cannot do
+/// anything except what the `:gs` pass hands back to it. That pass strips
+/// the backslash off `\{` and `\}` only, which leaves brace EXPANSION as
+/// the single active piece of syntax in the evaluated word. The fixpoint
+/// loop is what keeps a `${…}` the user typed behind a literal backslash
+/// out of it, by doubling those two backslashes so `:gs` skips them.
+///
+/// The `else` at sh:65-72 in the source is a comment, not code: the
+/// commented-out one-liner it replaced expanded `${foo}` as a brace group
+/// too, which is the bug this loop exists to avoid.
+fn brace_expand_exp(word: &str, exp: &mut Vec<String>) {
+    // sh:74  `[[ ! $_comp_caller_options[ignorebraces] == on && … ]]`
+    if caller_option_on("ignorebraces") {
+        return;
+    }
+    // sh:74  `"${#${exp}//[^\{]}" = "${#${exp}//[^\}]}"` — the count of
+    // `{` and the count of `}` in the JOINED array must agree, so a
+    // half-typed `ls /usr/{b` is left for the file completer.
+    let joined = exp.join(" ");
+    if joined.matches('{').count() != joined.matches('}').count() {
+        return;
+    }
+
+    // sh:77  tmp=${(q)word}
+    let mut tmp = quotestring(word, QT_BACKSLASH);
+
+    // sh:78-81 — iterate until the length stops changing. The test is on
+    // `$#tmp` vs `$#otmp`, i.e. on LENGTH, and `otmp` starts out unset, so
+    // the body always runs at least once.
+    let mut otmp = String::new();
+    while tmp.chars().count() != otmp.chars().count() {
+        otmp = tmp.clone(); // sh:79
+        tmp = protect_quoted_param_braces(&tmp); // sh:80
+    }
+
+    // sh:82  `${tmp:gs/\{/\{/:gs/\}/\}/}` — two chained global string
+    // substitutions, `\{` -> `{` then `\}` -> `}`. Both are plain
+    // left-to-right non-overlapping replacements, which is exactly what
+    // `str::replace` does.
+    let unquoted_braces = tmp.replace("\\{", "{").replace("\\}", "}");
+
+    // sh:82  `eval exp\=\( … \) 2>/dev/null`. `exp` is the array
+    // `LocalScope::declare` created at sh:14, so the assignment lands on
+    // the same parameter the rest of this function publishes. sh:56 has
+    // already put `("$word")` in the Rust-side vector; mirror it onto the
+    // parameter first so a FAILING eval leaves that value in place, which
+    // is what the shell's `2>/dev/null`-swallowed parse error does.
+    setaparam("exp", exp.clone()); // sh:56
+    let (_, failed) = eval_quietly(|| {
+        crate::ported::exec::execute_script_zsh_pipeline(&format!("exp=( {} )", unquoted_braces))
+    });
+    if !failed {
+        *exp = getaparam("exp").unwrap_or_default();
+    }
+}
+
+/// `$_comp_caller_options[<key>] == on`. `_comp_caller_options` is
+/// PM_HASHED (`_main_complete` publishes it with `sethparam`), so it has
+/// to be read through `gethkparam`/`gethparam` rather than `getaparam`.
+fn caller_option_on(key: &str) -> bool {
+    use crate::ported::params::{gethkparam, gethparam};
+    let keys = gethkparam("_comp_caller_options").unwrap_or_default();
+    let vals = gethparam("_comp_caller_options").unwrap_or_default();
+    keys.iter()
+        .position(|k| k == key)
+        .and_then(|i| vals.get(i))
+        .map(|v| v == "on")
+        .unwrap_or(false)
+}
+
+/// sh:80 — one pass of
+/// `${tmp//(#b)\$\{(([^{}]|\\{|\\})#)([^\])\}/\$\\{$match[1]$match[3]\\}}`.
+///
+/// The pattern reaches the matcher AFTER the shell has removed its own
+/// quoting, so `\\` is a LITERAL backslash and `\$` a literal `$` — the
+/// head is the four-character sequence `\`, `$`, `\`, `{`, i.e. a `${`
+/// that `${(q)…}` has escaped. What follows is
+///
+///   * `(([^{}]|\\{|\\})#)`  — `$match[1]`: any run of characters in
+///     which every `{` / `}` is preceded by TWO backslashes (an
+///     already-protected brace from an earlier pass); a bare `{` or `}`
+///     ends the run.
+///   * `([^\])`               — `$match[3]`: one character that is not a
+///     backslash, so the `\}` below cannot be borrowed from it.
+///   * `\}`                    — the escaped closing brace.
+///
+/// `#` is greedy, so the closing `\}` is the LAST one that still leaves a
+/// well-formed body; `//` then continues scanning after the match.
+///
+/// The replacement re-emits the same text with `\{` -> `\\{` and
+/// `\}` -> `\\}`.
+fn protect_quoted_param_braces(s: &str) -> String {
+    let ch: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut i = 0usize;
+    while i < ch.len() {
+        match match_escaped_dollar_brace(&ch, i) {
+            Some((body, tail, end)) => {
+                out.push_str("\\$\\\\{"); // `\$\\{`
+                out.extend(body);
+                out.push(tail);
+                out.push_str("\\\\}"); // `\\}`
+                i = end;
+            }
+            None => {
+                out.push(ch[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// One match of the sh:80 pattern anchored at `i`. Returns
+/// `($match[1], $match[3], index just past the match)`.
+fn match_escaped_dollar_brace(ch: &[char], i: usize) -> Option<(&[char], char, usize)> {
+    // `\$\{` — the escaped `${`.
+    if i + 4 > ch.len() || ch[i] != '\\' || ch[i + 1] != '$' || ch[i + 2] != '\\' || ch[i + 3] != '{'
+    {
+        return None;
+    }
+    let body = i + 4;
+    // `#` is greedy: walk the candidate closing `\}` from the right.
+    let mut close = ch.len().saturating_sub(2);
+    while close >= body + 1 {
+        if ch[close] == '\\' && ch[close + 1] == '}' {
+            let tail = ch[close - 1]; // `([^\])`
+            if tail != '\\' && every_brace_double_escaped(&ch[body..close - 1]) {
+                return Some((&ch[body..close - 1], tail, close + 2));
+            }
+        }
+        close -= 1;
+    }
+    None
+}
+
+/// `(([^{}]|\\{|\\})#)` — the run is valid exactly when every `{` and
+/// `}` inside it is preceded by two backslashes. Any other character is
+/// admitted by the `[^{}]` alternative on its own.
+fn every_brace_double_escaped(seg: &[char]) -> bool {
+    seg.iter().enumerate().all(|(k, c)| {
+        if *c != '{' && *c != '}' {
+            return true;
+        }
+        k >= 2 && seg[k - 1] == '\\' && seg[k - 2] == '\\'
+    })
+}
+
 /// `${(e)s}` — parameter substitution only. `(e)` does NOT tilde-expand
 /// and does NOT glob, which is exactly why the sh:38 test can look at a
 /// leading `~` and still see it.
 ///
 /// Command substitution and arithmetic expansion are not covered; a word
 /// carrying `$(…)` or `$((…))` comes back unchanged.
-fn substitute_params(s: &str) -> String {
+///
+/// `None` means "zsh could not have performed this substitution at all".
+/// The case that reaches here is a subscript that is opened and never
+/// closed (`$commands[`): `Src/params.c` `getindex` rejects it as
+/// `invalid subscript`, so the `${(e)…}` is a parse error rather than an
+/// expansion. sh:90 wraps the whole array assignment in
+/// `eval '…' 2>/dev/null`, which means the assignment simply does not
+/// happen and `exp` keeps the word — which sh:128 then recognises as
+/// "the expansion equals the word" and hands on to the next completer.
+/// Substituting `$commands` and dropping the orphan `[` instead made
+/// `echo $commands[<LEFT><TAB>` render three expansion groups where zsh
+/// renders nothing.
+fn substitute_params(s: &str) -> Option<String> {
     let ch: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -876,6 +1071,10 @@ fn substitute_params(s: &str) -> String {
                 i += 1;
                 continue;
             }
+            // `$name[` with no closing `]` — `invalid subscript`.
+            if ch.get(j) == Some(&'[') && !ch[j + 1..].contains(&']') {
+                return None;
+            }
             (ch[i + 1..j].iter().collect::<String>(), j)
         };
         if let Some(v) = getsparam(&name).or_else(|| std::env::var(&name).ok()) {
@@ -883,7 +1082,7 @@ fn substitute_params(s: &str) -> String {
         }
         i = next;
     }
-    out
+    Some(out)
 }
 
 /// sh:90-92 — `${${(e)exp//\\[ \t\n]/ }//(#b)([ \t\n])/\\$match[1]}`.
