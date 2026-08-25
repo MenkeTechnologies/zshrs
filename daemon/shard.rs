@@ -28,7 +28,13 @@ use super::{paths::CachePaths, DaemonError, Result};
 pub const SHARD_MAGIC: u32 = 0x5A53_4853; // "ZSHS"
 
 /// Bumped on incompatible rkyv schema changes.
-pub const SHARD_FORMAT_VERSION: u32 = 1;
+///
+/// 2 &mdash; `ShardHeader` gained the producing binary's identity
+///     (`binary_mtime_secs` / `binary_mtime_nsecs` / `binary_len`). A
+///     version-1 header has no place to put it, so v1 shards are
+///     rejected wholesale rather than read with three zeroes that would
+///     never match a real binary anyway.
+pub const SHARD_FORMAT_VERSION: u32 = 2;
 
 /// One row in `index.rkyv` — points at a single shard. Per docs/DAEMON.md
 /// "Cache layout (locked)" line 192: `index.rkyv ← top-level fq_name →
@@ -108,6 +114,16 @@ pub struct ShardHeader {
     pub source_root: String,
     /// `entry_count` field.
     pub entry_count: u32,
+    /// `st_mtime` seconds of the `zshrs` binary that wrote this shard.
+    pub binary_mtime_secs: i64,
+    /// `st_mtime` nanoseconds of that binary. Seconds alone are not an
+    /// identity: a rebuild landing in the same second as the shard write
+    /// compares equal to its predecessor.
+    pub binary_mtime_nsecs: i64,
+    /// Length in bytes of that binary. Not sufficient alone either
+    /// &mdash; two debug builds here measured byte-identical in size
+    /// &mdash; but it separates same-mtime binaries of different content.
+    pub binary_len: u64,
 }
 
 /// Whole shard: header + entry map (fq_name → bytecode bytes).
@@ -193,6 +209,9 @@ impl Default for CanonicalShard {
                 slug: String::new(),
                 source_root: String::new(),
                 entry_count: 0,
+                binary_mtime_secs: current_binary_identity().0,
+                binary_mtime_nsecs: current_binary_identity().1,
+                binary_len: current_binary_identity().2,
             },
             aliases: HashMap::new(),
             global_aliases: HashMap::new(),
@@ -230,6 +249,9 @@ impl Shard {
                 slug: slug.into(),
                 source_root: source_root.into(),
                 entry_count: 0,
+                binary_mtime_secs: current_binary_identity().0,
+                binary_mtime_nsecs: current_binary_identity().1,
+                binary_len: current_binary_identity().2,
             },
             entries: HashMap::new(),
         }
@@ -277,10 +299,59 @@ pub fn shard_lock_path(paths: &CachePaths, source_root: &str, slug: &str) -> Pat
         .join(format!("{}-{}.rkyv.lock", hash8(source_root), slug))
 }
 
+/// Take the blocking exclusive `flock` on a shard's lock file, held
+/// across the serialize + `rename` below.
+///
+/// The lock path has existed since the shard layer was written and was
+/// never taken. Without it the writers are last-rename-wins: a shard is
+/// replaced WHOLE, so two processes that each built one from their own
+/// view of the source root silently discard the other's entries, and a
+/// reader between the two renames sees a generation that is about to
+/// vanish. The lock lives on a side file precisely because `rename`
+/// swaps the shard's inode &mdash; a lock on the shard itself would be
+/// released the moment the new file landed.
+fn lock_shard(paths: &CachePaths, source_root: &str, slug: &str) -> Option<nix::fcntl::Flock<std::fs::File>> {
+    let path = shard_lock_path(paths, source_root, slug);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let f = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .ok()?;
+    nix::fcntl::Flock::lock(f, nix::fcntl::FlockArg::LockExclusive).ok()
+}
+
+/// `(mtime_secs, mtime_nsecs, len)` of the running binary &mdash; the
+/// identity stamped into every shard header.
+///
+/// Equality, never ordering. A binary whose mtime moves BACKWARDS (an
+/// older build restored over a newer one, a `cp -p`, a checkout of a
+/// previously built `target/`) satisfies any "not older than" test while
+/// being a different build; the nanoseconds term separates two builds
+/// inside the same second, and the length separates two builds sharing
+/// an mtime.
+pub fn current_binary_identity() -> (i64, i64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    static BIN_ID: std::sync::OnceLock<(i64, i64, u64)> = std::sync::OnceLock::new();
+    *BIN_ID.get_or_init(|| {
+        std::env::current_exe()
+            .and_then(std::fs::metadata)
+            .map(|m| (m.mtime(), m.mtime_nsec(), m.len()))
+            // No `current_exe()`: an identity nothing can match, so every
+            // shard is a miss rather than an unconditional accept.
+            .unwrap_or((-1, -1, 0))
+    })
+}
+
 /// Atomic-rename writer for the canonical-state shard. Same crash-safety
 /// guarantees as `write_shard` (tmp + fsync + rename).
 pub fn write_canonical_shard(paths: &CachePaths, shard: &CanonicalShard) -> Result<PathBuf> {
     let final_path = shard_path(paths, &shard.header.source_root, &shard.header.slug);
+    let _lock = lock_shard(paths, &shard.header.source_root, &shard.header.slug);
     let pid = std::process::id();
     let nanos = now_ns();
     let tmp_path = paths.images.join(format!(
@@ -340,6 +411,7 @@ pub fn read_canonical_shard(path: &Path) -> Result<CanonicalShard> {
 /// the final path. The ticker sweeps orphaned `.tmp.*` files older than ~1 minute.
 pub fn write_shard(paths: &CachePaths, shard: &Shard) -> Result<PathBuf> {
     let final_path = shard_path(paths, &shard.header.source_root, &shard.header.slug);
+    let _lock = lock_shard(paths, &shard.header.source_root, &shard.header.slug);
 
     let pid = std::process::id();
     // Use thread id approximation — std::thread::current().id() doesn't expose a stable
@@ -428,6 +500,32 @@ impl MmappedShard {
         let archived = rkyv::check_archived_root::<Shard>(&mmap[..])
             .map_err(|e| DaemonError::other(format!("shard validation failed: {e}")))?;
 
+        // The bytes below this header are EXECUTED: `entries` maps a
+        // fq_name to fusevm bytecode a client replays. Bytecode is only
+        // meaningful to the build that emitted it — opcode numbering,
+        // builtin ids and chunk layout all move with the source tree —
+        // so a shard stamped by any other binary is a miss, exactly as
+        // `autoload_cache` and `script_cache` treat their chunks.
+        let (secs, nsecs, len) = current_binary_identity();
+        let h = &archived.header;
+        let stamped: (i64, i64, u64) = (
+            h.binary_mtime_secs.into(),
+            h.binary_mtime_nsecs.into(),
+            h.binary_len.into(),
+        );
+        let want_version: u32 = SHARD_FORMAT_VERSION;
+        let got_version: u32 = h.format_version.into();
+        if got_version != want_version || stamped != (secs, nsecs, len) {
+            return Err(DaemonError::other(format!(
+                "shard {} was built by a different zshrs (format v{}, binary {}.{}.{}); ignoring",
+                path.display(),
+                got_version,
+                stamped.0,
+                stamped.1,
+                stamped.2
+            )));
+        }
+
         let archived_ptr = archived as *const ArchivedShard;
 
         Ok(Self {
@@ -453,6 +551,31 @@ impl MmappedShard {
         let mmap = unsafe { memmap2::MmapOptions::new().map_copy_read_only(&file)? };
         let archived = rkyv::check_archived_root::<Shard>(&mmap[..])
             .map_err(|e| DaemonError::other(format!("shard validation failed: {e}")))?;
+        // The bytes below this header are EXECUTED: `entries` maps a
+        // fq_name to fusevm bytecode a client replays. Bytecode is only
+        // meaningful to the build that emitted it — opcode numbering,
+        // builtin ids and chunk layout all move with the source tree —
+        // so a shard stamped by any other binary is a miss, exactly as
+        // `autoload_cache` and `script_cache` treat their chunks.
+        let (secs, nsecs, len) = current_binary_identity();
+        let h = &archived.header;
+        let stamped: (i64, i64, u64) = (
+            h.binary_mtime_secs.into(),
+            h.binary_mtime_nsecs.into(),
+            h.binary_len.into(),
+        );
+        let want_version: u32 = SHARD_FORMAT_VERSION;
+        let got_version: u32 = h.format_version.into();
+        if got_version != want_version || stamped != (secs, nsecs, len) {
+            return Err(DaemonError::other(format!(
+                "shard {} was built by a different zshrs (format v{}, binary {}.{}.{}); ignoring",
+                path.display(),
+                got_version,
+                stamped.0,
+                stamped.1,
+                stamped.2
+            )));
+        }
         let archived_ptr = archived as *const ArchivedShard;
         Ok(Self {
             _mmap: mmap,

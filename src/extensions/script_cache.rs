@@ -431,11 +431,25 @@ fn current_binary_identity() -> Option<(i64, u64)> {
     })
 }
 
-/// Default shard path: `~/.zshrs/scripts.rkyv`.
+/// Default shard path: `$ZSHRS_HOME/scripts.rkyv` (default
+/// `~/.zshrs/scripts.rkyv`).
+///
+/// This was the one cache that ignored `$ZSHRS_HOME`. Every other
+/// store honours it — `autoload_cache::default_cache_path`,
+/// `compsys::cache::default_cache_path`, the daemon's `CachePaths`
+/// (daemon/paths.rs) — so a test or a session pointed at an isolated
+/// home still read and WROTE the real `~/.zshrs/scripts.rkyv`,
+/// which is both a leak out of the isolation and a writer the
+/// isolated run never accounted for.
 pub fn default_cache_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".zshrs/scripts.rkyv")
+    let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        PathBuf::from(custom)
+    } else {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".zshrs")
+    };
+    root.join("scripts.rkyv")
 }
 
 /// Process-local disable flag set by parity-mode flags (`--zsh` etc.)
