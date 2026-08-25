@@ -2570,6 +2570,15 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
     let (tab, max) = selectjobtab(); // c:2068
     myjobtab = tab;
     mymaxjob = max as i32;
+    // c:2107 tests `myjobtab == oldjobtab` by POINTER. `selectjobtab`
+    // returns a cloned Vec here, so record which table it picked using
+    // the same predicate the function itself uses (c:2044 `if
+    // (oldjobtab)` / Rust `!oldtab.is_empty()`).
+    let myjobtab_is_oldjobtab = !OLDJOBTAB
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .expect("oldjobtab poisoned")
+        .is_empty();
 
     let curjob = *CURJOB
         .get_or_init(|| Mutex::new(-1)) // c:2076
@@ -2638,17 +2647,7 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
             // c:2076
             if !prog.is_empty() && !posixbuiltins {
                 // c:2077
-                // c:2085 — `zwarnnam(prog, "%%%c: no such job", *s ? *s : '%')`.
-                // The `%c` is the character AFTER the leading `%` that c:2073's
-                // `s++` skipped, so `%%` reports "%%", `%+` reports "%+", and a
-                // bare `%` (no char left) reports "%%". The port carried the
-                // older "no current job" wording, which no longer matches.
-                let spec = if idx < s_bytes.len() {
-                    s_bytes[idx] as char
-                } else {
-                    '%'
-                };
-                zwarnnam(prog, &format!("%{}: no such job", spec)); // c:2085
+                zwarnnam(prog, "no current job"); // c:2078
             }
             return -1; // c:2079-2080
         }
@@ -2660,8 +2659,8 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
         if prevjob == -1 {
             // c:2087
             if !prog.is_empty() && !posixbuiltins {
-                // c:2095
-                zwarnnam(prog, "%-: no such job"); // c:2096
+                // c:2088
+                zwarnnam(prog, "no previous job"); // c:2089
             }
             return -1; // c:2090-2091
         }
@@ -2678,7 +2677,10 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
             if ju < myjobtab.len()
                 && myjobtab[ju].stat != 0
                 && (myjobtab[ju].stat & stat::SUBJOB) == 0                   // c:2100
-                && jobnum != thisjob
+                // If running jobs in a subshell, we are allowed to       // c:2102
+                // refer to the "current" job (it's not really the        // c:2103
+                // current job in the subshell).                          // c:2104
+                && (myjobtab_is_oldjobtab || jobnum != thisjob)
             // c:2107
             {
                 return jobnum; // c:2108-2109
