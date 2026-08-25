@@ -11886,9 +11886,14 @@ pub fn paramsubst(
             //   else if (scanflags)   → isarr =  1  (array-result)
             //   else                  → isarr =  0  (scalar pick)
             //
-            // c:2027-2029 sets SCANPM_ISVAR_AT for `[@]`/`[*]` subscript
-            // when the underlying var is array-shaped. Mirror by
-            // checking subscript == "@"/"*" + var is array/assoc.
+            // c:Src/params.c:2026-2029 getindex —
+            //     if ((s[0] == '*' || s[0] == '@') && s + 1 == tbrack) {
+            //         if ((v->scanflags || IS_UNSET_VALUE(v)) && s[0] == '@')
+            //             v->scanflags |= SCANPM_ISVAR_AT;
+            // so `[@]` and `[*]` share the whole-array start/end, but only
+            // `[@]` adds SCANPM_ISVAR_AT. Mirror by checking subscript ==
+            // "@"/"*" + var is array/assoc for the shape, and `[@]` alone
+            // for the -1.
             // isarr = -1 stays past the c:3029 transition (qt > 0
             // check is `isarr > 0` so -1 is preserved), so the
             // c:4245 `if (isarr)` sort/splat block fires in DQ for
@@ -11901,9 +11906,12 @@ pub fn paramsubst(
             let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
             // c:Src/subst.c:2916 — `(v->scanflags & SCANPM_ISVAR_AT)
             // ? -1 : v->scanflags ? 1 : 0`. SCANPM_ISVAR_AT is set
-            // ONLY for the `@` subscript (and the bare `@`/`*`
-            // pseudo-names which are positional-param splat forms).
-            // The `[*]` subscript clears SCANPM_ISVAR_AT — its
+            // ONLY for the `@` subscript (c:Src/params.c:2028) and the
+            // bare `@` NAME (c:Src/params.c:2231 `isvarat = (t[0] == '@'
+            // && !t[1])`). The bare `*` name does NOT get it — it is the
+            // plain `pparams` array (c:Src/params.c:385) and so joins in
+            // DQ like any other array.
+            // The `[*]` subscript never sets SCANPM_ISVAR_AT — its
             // scanflags are non-zero (so isarr=1, positive), which
             // means the c:3032 qt-sepjoin fires in DQ and the
             // array collapses to a single scalar. That's the
@@ -11940,25 +11948,36 @@ pub fn paramsubst(
                 .unwrap_or(var_name.as_str()); // c:2730-2745 / direct
             let is_strict_at_var = matches!(resolved_name, "@");
             let is_star_var = matches!(resolved_name, "*");
-            if (arrays_contains(&var_name) || assoc_contains(&var_name))
+            // c:Src/params.c:2231 — `isvarat = (t[0] == '@' && !t[1]);`.
+            // fetchvalue computes it from the NAME, before `getindex` has even
+            // been called, and c:2278 (`v->scanflags = scanflags | (isvarat ?
+            // SCANPM_ISVAR_AT : 0)`) stamps it on the Value for every
+            // array/hash-shaped parameter. getindex only ever ORs the bit IN
+            // (c:2027-2029, for an `[@]` subscript) — nothing takes it away —
+            // so a subscript never costs a bare `@` its splat shape:
+            // `"${@[1,2]}"` keeps two words exactly as `"${@}"` keeps three,
+            // while the same slice spelled on `*` (isvarat == 0 → isarr = 1)
+            // joins under the c:3032 quoted sepjoin. Verified against zsh:
+            //   set -- a b c; print -rl -- "X${@[1,2]}"  → `Xa` `b`
+            //   set -- a b c; print -rl -- "X${*[1,2]}"  → `Xa b`
+            if is_strict_at_var {
+                isarr = -1; // c:2231 → c:2278 → c:2916
+            } else if (arrays_contains(&var_name) || assoc_contains(&var_name))
                 && (subscript.is_none() || is_at_subscript)
             {
-                isarr = if is_strict_at_subscript || is_strict_at_var {
-                    -1
-                } else {
-                    1
-                };
-            } else if (is_strict_at_var || is_star_var) && subscript.is_none() {
-                // Bare `$@` / `$*` (no subscript) outside the
-                // array_contains gate — positional params don't
-                // always register as `arrays_contains("@")`. `$@`
-                // keeps splat shape for the auto-splat block; `$*`
-                // gets isarr=1 so c:3032 collapses it to a scalar
-                // in DQ. Gated on `subscript.is_none()` so slice
-                // forms like `${*[2,4]}` don't get re-shaped here
-                // — they own their own scanflags state per
-                // getarrvalue (Src/params.c:2922).
-                isarr = if is_strict_at_var { -1 } else { 1 };
+                isarr = if is_strict_at_subscript { -1 } else { 1 };
+            } else if is_star_var && subscript.is_none() {
+                // Bare `$*` (no subscript) outside the array_contains
+                // gate — positional params don't always register as
+                // `arrays_contains("*")`. c:Src/params.c:385
+                // (`IPDEF9("*", &pparams, …)`) makes `*` a plain
+                // `pparams` array, and c:Src/params.c:2231's `isvarat`
+                // tests `t[0] == '@'`, so `*` never carries
+                // SCANPM_ISVAR_AT: it gets isarr=1 and c:3032 collapses
+                // it to a scalar in DQ. Gated on `subscript.is_none()`
+                // because a subscripted `${*[2,4]}` already had its
+                // shape decided by the slice dispatch above.
+                isarr = 1;
             }
         }
         // subst.c:3885-3887 YUK — empty / empty-first array → scalar "" when !plan9
