@@ -1195,8 +1195,10 @@ pub fn herrflush() {
     // c:479 — `inpopalias();`
     crate::ported::input::inpopalias();
 
-    // c:481-482 — `if (lexstop) return;`
-    if LEX_LEXSTOP.with(|f| f.get()) {
+    // c:481-482 — `if (lexstop) return;`. Go through the `lexstop` handle
+    // (hist.rs, below) rather than one half of it, so this reads the same
+    // C variable that `ihgetc` writes.
+    if lexstop.load(SeqCst) {
         return;
     }
 
@@ -1225,7 +1227,7 @@ pub fn herrflush() {
         let c = ingetc() // c:495 ingetc()
             .map(|ch| ch as i32)
             .unwrap_or(-1);
-        if !LEX_LEXSTOP.with(|f| f.get()) {
+        if !lexstop.load(SeqCst) {
             // c:496 if (!lexstop)
             ihwaddc(c); // c:497 hwaddc(c)
             iaddtoline(c); // c:498 addtoline(c)
@@ -5359,8 +5361,49 @@ pub static histlinect: AtomicI64 = AtomicI64::new(0);
 /// lead character (`!` by default).
 pub static bangchar: AtomicI32 = AtomicI32::new(b'!' as i32);
 
-/// Port of `int lexstop` (extern from lex.c) — used by ihgetc/histsubchar.
-pub static lexstop: AtomicBool = AtomicBool::new(false);
+/// Port of `int lexstop` (declared `Src/lex.c:175`, extern in `zsh.h`) —
+/// used by `ihgetc`/`histsubchar`/`herrflush`/`ihungetc`.
+///
+/// C has exactly ONE `lexstop`. zshrs splits it into two halves that are
+/// reset in pairs (see the paired-global notes at `lex.rs:493-500` and
+/// `input.rs:993-996`):
+///   - `input::lexstop` — the input-side gate, `Src/input.c:322`
+///     `if (lexstop) return ' ';`
+///   - `lex::LEX_LEXSTOP` — the lexer-side gate on `gettok`.
+///
+/// `hist.rs` used to own a THIRD, private `AtomicBool` copy that nothing
+/// outside this file ever read. That made `ihgetc`'s bad-`!`-expansion
+/// stop (`Src/hist.c:434` `lexstop = 1;`) a write into a dead variable:
+/// the `hgetc` bridge at `lex.rs:5069` kept seeing `input::lexstop ==
+/// false`, accepted the `' '` that `Src/hist.c:436` returns as a real
+/// character, and on the next refill fell through to `inputline()`
+/// (`Src/input.c:354`) — so an interactive `print -r -- "a!b"` printed
+/// `event not found: b` and then sat at a `dquote>` PS2 continuation
+/// instead of discarding the line and reprompting PS1.
+///
+/// This zero-sized handle keeps the C spelling (`lexstop.load(…)` /
+/// `lexstop.store(…, …)`) at every call site while addressing the real
+/// pair: reads take the input-side half (every `lexstop` read in this
+/// file asks "is input exhausted?"), writes set both, exactly as C's
+/// single assignment does.
+pub struct Lexstop;
+
+impl Lexstop {
+    /// Read C's `lexstop`. The `Ordering` is accepted (and ignored) so
+    /// call sites read like the `AtomicBool` they replace.
+    pub fn load(&self, _order: Ordering) -> bool {
+        crate::ported::input::lexstop.with(|c| c.get())
+    }
+
+    /// Assign C's `lexstop`. One C assignment == both zshrs halves.
+    pub fn store(&self, v: bool, _order: Ordering) {
+        crate::ported::input::lexstop.with(|c| c.set(v));
+        LEX_LEXSTOP.with(|c| c.set(v));
+    }
+}
+
+/// The single `lexstop` handle for this module.
+pub static lexstop: Lexstop = Lexstop;
 
 /// Port of `int exit_pending` (extern). Set by SIGINT/`exit` builtin.
 pub static exit_pending: AtomicBool = AtomicBool::new(false);
