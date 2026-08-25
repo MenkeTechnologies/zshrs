@@ -1666,6 +1666,7 @@ pmap 'sha256sum {}' **/*.iso</code></pre>
     <section class="tutorial-section" id="ch-aop">
       <h2>AOP Intercept</h2>
       <p class="chapter-meta">3 topics · the first shell with aspect-oriented programming. <code>before</code>/<code>after</code>/<code>around</code> advice. Routes through <code>host_exec_external</code> → <code>run_intercepts</code>.</p>
+      <p>The <code>{ … }</code> body is a zshrs syntax extension: zsh cannot parse a bare <code>}</code> as an argument, so the lexer takes the span between the braces as raw source and stores it verbatim. The body is <em>not</em> expanded at registration — <code>$INTERCEPT_ARGS</code>, <code>$(…)</code> and globs resolve each time the advice fires — and it keeps its own redirections, pipelines and here-documents. Under <code>zshrs --zsh</code> the extension is off and the form is rejected exactly as <code>/bin/zsh</code> rejects it; the quoted equivalent, <code>intercept before git 'code'</code>, works in every mode.</p>
 
       <article class="doc-entry" id="doc-intercept-before">
         <h3><a class="doc-anchor" href="#doc-intercept-before">#</a> <code>intercept before pat { code }</code></h3>

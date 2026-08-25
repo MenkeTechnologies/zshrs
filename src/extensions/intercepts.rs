@@ -35,6 +35,363 @@ pub struct Intercept {
     pub id: u32,
 }
 
+// ===========================================================
+// Block-body syntax — `intercept <kind> <pat> { code }`
+//
+// zshrs-only; no C counterpart. `}` cannot be a bare argument in
+// zsh (`echo }` is "parse error near `}'"), so the documented brace
+// form is not reachable through ordinary word lexing. Worse, the
+// body's own operators would be eaten by the OUTER command: in
+// `intercept before git { echo hi >> ~/git.log }` the `>>` lexes as
+// a redirection of `intercept` itself and never reaches argv, so no
+// amount of re-joining the words downstream can rebuild the body.
+//
+// The lexer therefore captures the span between the braces as RAW
+// SOURCE and hands it over as a single STRING token, which is what
+// `builtin_intercept` wants anyway — it stores advice as text and
+// runs it through `execute_advice`. The parser and the grammar are
+// untouched: `intercept before git { … }` becomes an ordinary
+// four-word simple command.
+// ===========================================================
+
+thread_local! {
+    /// Raised when the command word just lexed was `intercept`, so the
+    /// next `{` in ARGUMENT position opens an advice body rather than
+    /// starting a brace expansion. Cleared by the next command word, and
+    /// by the capture itself.
+    static LEX_ININTERCEPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Note a token the lexer produced at command position, arming or
+/// disarming the block-body capture.
+///
+/// Assignment, not a one-way set: every command word re-decides, so an
+/// `intercept` that never reached a `{` cannot leave the capture armed
+/// for an unrelated later command.
+///
+/// `quoted` is true when the original token carried Snull/Dnull/Bnull
+/// quote markers — `'intercept' before git { … }` is a quoted word and
+/// gets no keyword treatment, the same rule the reserved-word table
+/// follows for `"if"` / `"}"` (lex.rs:3953).
+pub(crate) fn note_command_word(word: &str, quoted: bool) {
+    LEX_ININTERCEPT.set(word == "intercept" && !quoted);
+}
+
+/// True when the `{` the lexer is looking at opens an advice body.
+///
+/// False under `zshrs --zsh`: that mode promises identical behaviour to
+/// `/bin/zsh`, which rejects the construct outright, so the capture must
+/// stand down and let the normal path produce zsh's own diagnostic.
+pub(crate) fn wants_block() -> bool {
+    LEX_ININTERCEPT.get() && !crate::dash_mode::zsh_dropin()
+}
+
+/// Clear the armed state. Called once a body is captured, and whenever
+/// the lexer resets its context.
+pub(crate) fn disarm() {
+    LEX_ININTERCEPT.set(false);
+}
+
+/// Consume the raw source of an advice body, starting just past its
+/// opening `{`, and return the text between the braces.
+///
+/// `getc` is the lexer's own character source, so the body is taken off
+/// the real input stream — a body may span lines, and on the interactive
+/// REPL the continuation prompt appears exactly as it does inside `{ }`
+/// anywhere else.
+///
+/// Brace counting alone would be wrong: a `}` inside quotes, a comment, a
+/// command substitution, or a here-document is not a terminator. Each of
+/// those is tracked so the scan ends on the brace a reader would pick.
+///
+/// Returns `None` at end of input with the body still open. The consumed
+/// characters are NOT pushed back — there is nothing left to push them
+/// back in front of — and the caller falls through to the ordinary path,
+/// where the unterminated construct raises the usual parse error.
+pub(crate) fn scan_block_body<G>(mut getc: G) -> Option<String>
+where
+    G: FnMut() -> Option<char>,
+{
+    let mut body = String::new();
+    let mut depth: u32 = 1;
+    // Delimiters of here-documents opened on the line being scanned. A
+    // `<<EOF` body is arbitrary text — its braces, quotes and `#` are all
+    // literal — so it is skipped wholesale at the next newline.
+    let mut pending_heredocs: Vec<(String, bool)> = Vec::new();
+    // True while the scanner is between words, where `#` starts a comment.
+    let mut at_word_start = true;
+
+    loop {
+        let c = getc()?;
+
+        match c {
+            '\\' => {
+                // A backslash quotes the next character anywhere outside
+                // single quotes, including a brace and a newline.
+                body.push(c);
+                body.push(getc()?);
+                at_word_start = false;
+                continue;
+            }
+            '\'' => {
+                // Single quotes take everything literally — no escapes.
+                body.push(c);
+                loop {
+                    let q = getc()?;
+                    body.push(q);
+                    if q == '\'' {
+                        break;
+                    }
+                }
+                at_word_start = false;
+                continue;
+            }
+            '"' => {
+                body.push(c);
+                scan_double_quoted(&mut getc, &mut body)?;
+                at_word_start = false;
+                continue;
+            }
+            '`' => {
+                body.push(c);
+                loop {
+                    let q = getc()?;
+                    body.push(q);
+                    match q {
+                        '\\' => body.push(getc()?),
+                        '`' => break,
+                        _ => {}
+                    }
+                }
+                at_word_start = false;
+                continue;
+            }
+            '#' if at_word_start => {
+                // Comment to end of line. The newline itself is left for
+                // the heredoc check below.
+                body.push(c);
+                loop {
+                    match getc() {
+                        Some('\n') => {
+                            body.push('\n');
+                            break;
+                        }
+                        Some(ch) => body.push(ch),
+                        None => return None,
+                    }
+                }
+                at_word_start = true;
+                if !pending_heredocs.is_empty() {
+                    drain_heredocs(&mut getc, &mut body, &mut pending_heredocs)?;
+                }
+                continue;
+            }
+            '<' => {
+                body.push(c);
+                let (delim, stopped_at) = scan_heredoc_intro(&mut getc, &mut body)?;
+                if let Some(d) = delim {
+                    pending_heredocs.push(d);
+                }
+                at_word_start = false;
+                // Reading the delimiter word necessarily consumed the
+                // character that ended it, and for `cat <<EOF` that
+                // character IS the newline the here-document body starts
+                // after. The main loop will never see it, so the drain has
+                // to happen here or the body's text gets scanned as shell.
+                if stopped_at == Some('\n') {
+                    at_word_start = true;
+                    if !pending_heredocs.is_empty() {
+                        drain_heredocs(&mut getc, &mut body, &mut pending_heredocs)?;
+                    }
+                }
+                continue;
+            }
+            '\n' => {
+                body.push(c);
+                at_word_start = true;
+                if !pending_heredocs.is_empty() {
+                    drain_heredocs(&mut getc, &mut body, &mut pending_heredocs)?;
+                }
+                continue;
+            }
+            '{' => {
+                depth += 1;
+                body.push(c);
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(body);
+                }
+                body.push(c);
+            }
+            _ => body.push(c),
+        }
+        at_word_start = c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')');
+    }
+}
+
+/// Copy a double-quoted string, stopping after its closing quote.
+///
+/// Backslash still escapes inside double quotes, and `$( … )` may contain
+/// arbitrary shell — including more quotes and braces — so the nested
+/// command substitution is copied through by paren depth rather than
+/// scanned for a terminator.
+fn scan_double_quoted<G>(getc: &mut G, body: &mut String) -> Option<()>
+where
+    G: FnMut() -> Option<char>,
+{
+    loop {
+        let c = getc()?;
+        body.push(c);
+        match c {
+            '\\' => body.push(getc()?),
+            '"' => return Some(()),
+            '$' => {
+                let n = getc()?;
+                body.push(n);
+                if n == '(' {
+                    let mut depth = 1;
+                    while depth > 0 {
+                        let q = getc()?;
+                        body.push(q);
+                        match q {
+                            '\\' => body.push(getc()?),
+                            '(' => depth += 1,
+                            ')' => depth -= 1,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// After a `<`, decide whether this is a here-document and if so return
+/// its delimiter plus whether `<<-` tab-stripping is in effect.
+///
+/// `<<<` is a here-STRING: an ordinary word follows, with no body to skip.
+#[allow(clippy::type_complexity)]
+fn scan_heredoc_intro<G>(
+    getc: &mut G,
+    body: &mut String,
+) -> Option<(Option<(String, bool)>, Option<char>)>
+where
+    G: FnMut() -> Option<char>,
+{
+    let second = getc()?;
+    body.push(second);
+    if second != '<' {
+        return Some((None, Some(second)));
+    }
+    let mut third = getc()?;
+    body.push(third);
+    if third == '<' {
+        // here-string
+        return Some((None, Some(third)));
+    }
+    let strip_tabs = third == '-';
+    if strip_tabs {
+        third = getc()?;
+        body.push(third);
+    }
+    // Skip blanks between the operator and the delimiter word.
+    let mut c = third;
+    while c == ' ' || c == '\t' {
+        c = getc()?;
+        body.push(c);
+    }
+    // The delimiter may be quoted; the quotes are not part of it.
+    let mut delim = String::new();
+    // The character the delimiter word ended on, handed back so the caller
+    // knows whether the here-document body starts immediately.
+    let mut stopped_at: Option<char> = None;
+    loop {
+        match c {
+            '\'' | '"' => {
+                let close = c;
+                loop {
+                    let q = getc()?;
+                    body.push(q);
+                    if q == close {
+                        break;
+                    }
+                    delim.push(q);
+                }
+            }
+            '\\' => {
+                let q = getc()?;
+                body.push(q);
+                delim.push(q);
+            }
+            _ if c.is_whitespace() || c == ';' || c == '&' || c == '|' || c == ')' => {
+                stopped_at = Some(c);
+                break;
+            }
+            _ => delim.push(c),
+        }
+        match getc() {
+            Some(n) => {
+                c = n;
+                body.push(n);
+            }
+            None => break,
+        }
+    }
+    if delim.is_empty() {
+        Some((None, stopped_at))
+    } else {
+        Some((Some((delim, strip_tabs)), stopped_at))
+    }
+}
+
+/// Copy here-document bodies verbatim, one per pending delimiter.
+///
+/// Everything up to the terminator line is literal text: braces, quotes
+/// and `#` inside it must not steer the scan.
+fn drain_heredocs<G>(
+    getc: &mut G,
+    body: &mut String,
+    pending: &mut Vec<(String, bool)>,
+) -> Option<()>
+where
+    G: FnMut() -> Option<char>,
+{
+    for (delim, strip_tabs) in pending.drain(..) {
+        loop {
+            let mut line = String::new();
+            let mut hit_eof = true;
+            while let Some(c) = getc() {
+                if c == '\n' {
+                    hit_eof = false;
+                    break;
+                }
+                line.push(c);
+            }
+            body.push_str(&line);
+            if !hit_eof {
+                body.push('\n');
+            }
+            let candidate = if strip_tabs {
+                line.trim_start_matches('\t')
+            } else {
+                line.as_str()
+            };
+            if candidate == delim {
+                break;
+            }
+            if hit_eof {
+                // zsh warns and treats EOF as the terminator; the body ends
+                // here either way.
+                return Some(());
+            }
+        }
+    }
+    Some(())
+}
+
 /// Match an intercept pattern against a command name or full command string.
 /// Supports: exact match, glob ("git *", "_*", "*"), or "all".
 pub(crate) fn intercept_matches(pattern: &str, cmd_name: &str, full_cmd: &str) -> bool {
@@ -140,6 +497,18 @@ impl crate::ported::vm_helper::ShellExecutor {
         let ms = elapsed.as_secs_f64() * 1000.0;
         self.set_scalar("INTERCEPT_MS".to_string(), format!("{:.3}", ms));
         self.set_scalar("INTERCEPT_US".to_string(), format!("{:.0}", ms * 1000.0));
+        // The intercepted command's exit status, for `after` advice that
+        // wants to branch on success. `$?` alone is not enough: the advice
+        // body's own first command overwrites it, and a `before` advice that
+        // ran earlier has already moved it. An advice that failed to run at
+        // all reports 1, matching what the shell would have left behind.
+        self.set_scalar(
+            "INTERCEPT_STATUS".to_string(),
+            match &result {
+                Ok(st) => st.to_string(),
+                Err(_) => "1".to_string(),
+            },
+        );
 
         // Run after advice
         for advice in matching
@@ -155,6 +524,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         self.unset_scalar("INTERCEPT_CMD");
         self.unset_scalar("INTERCEPT_MS");
         self.unset_scalar("INTERCEPT_US");
+        self.unset_scalar("INTERCEPT_STATUS");
         self.unset_scalar("__intercept_proceed");
 
         Some(result)

@@ -1557,16 +1557,17 @@ impl ShellExecutor {
                     AdviceKind::After => "after",
                     AdviceKind::Around => "around",
                 };
-                println!(
-                    "intercept #{}: {} {} → {}",
+                // Registration is not user-requested output. A `.zshrc` that
+                // arms a handful of intercepts printed a banner line per
+                // registration on every shell start, which is exactly the
+                // startup chatter the project forbids. `intercept list` is
+                // the way to see what is registered.
+                tracing::info!(
                     id,
-                    kind_str,
-                    self.intercepts.last().unwrap().pattern,
-                    if code.len() > 50 {
-                        format!("{}...", &code[..47])
-                    } else {
-                        code
-                    }
+                    kind = kind_str,
+                    pattern = %self.intercepts.last().unwrap().pattern,
+                    code = %code,
+                    "intercept registered"
                 );
                 0
             }

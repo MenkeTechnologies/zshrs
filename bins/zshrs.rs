@@ -1428,6 +1428,11 @@ pub fn zshrs_main() {
         }
     }
     let has_zsh = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
+    // `--zsh` is the identical-behaviour drop-in, so the zshrs-only SYNTAX
+    // extensions go off with it — otherwise the compat entrypoint accepts
+    // input `/bin/zsh` rejects. Gates the `intercept … { … }` block body in
+    // the lexer; see `dash_mode::ZSH_DROPIN`.
+    zsh::extensions::dash_mode::set_zsh_dropin(has_zsh);
     let zsh_style_emu: Option<&str> = if has_zsh {
         if args.iter().any(|a| a == "--dash" || a == "--ash") {
             Some("dash")

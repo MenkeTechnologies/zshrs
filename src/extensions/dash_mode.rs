@@ -58,6 +58,23 @@ static POSIX_FAITHFUL: AtomicBool = AtomicBool::new(false);
 /// unaffected. Set from the binary's CLI mode-application; defaults `false`.
 static BASH_MODE: AtomicBool = AtomicBool::new(false);
 
+/// Process-global zsh drop-in flag (`zshrs --zsh` / `--zsh-compat`).
+///
+/// `--zsh` promises identical behaviour to `/bin/zsh`, which means the
+/// zshrs-only SYNTAX extensions have to be off — not just the caches and
+/// the daemon. A construct zsh's parser rejects must keep being rejected,
+/// with zsh's own diagnostic, or the compat-test entrypoint is measuring a
+/// different language than the one it claims to stand in for.
+///
+/// Currently gates the `intercept <kind> <pat> { … }` block body, whose
+/// raw-span capture in the lexer has no zsh counterpart: real zsh dies with
+/// "parse error near `}'" because `}` cannot be a bare argument, and under
+/// this flag zshrs does too.
+///
+/// Set only from the binary's CLI mode-application, so it defaults `false`
+/// in the library and in every embedder.
+static ZSH_DROPIN: AtomicBool = AtomicBool::new(false);
+
 /// bash `shopt -s nocasematch` — case-insensitive `[[ == ]]` / `[[ =~ ]]` /
 /// `case`. It is NOT a zsh option (opt_state can't store it), so it needs its
 /// own flag. Toggled by the `shopt` builtin; read by cond.rs / case matching.
@@ -224,6 +241,21 @@ pub fn bash_printf_empty_numeric_error(arg: Option<&String>) -> bool {
 #[inline]
 pub fn set_bash_mode(on: bool) {
     BASH_MODE.store(on, Ordering::Relaxed);
+}
+
+/// True in zsh drop-in mode (`zshrs --zsh` / `--zsh-compat`). Gates OFF the
+/// zshrs-only syntax extensions so the compat entrypoint parses exactly what
+/// `/bin/zsh` parses. See [`ZSH_DROPIN`].
+#[inline]
+pub fn zsh_dropin() -> bool {
+    ZSH_DROPIN.load(Ordering::Relaxed)
+}
+
+/// Set (or clear) zsh drop-in mode. Called from the binary's CLI mode
+/// application (raised for `--zsh` / `--zsh-compat`).
+#[inline]
+pub fn set_zsh_dropin(on: bool) {
+    ZSH_DROPIN.store(on, Ordering::Relaxed);
 }
 
 /// Set (or clear) real-shell-faithful mode. Called from the binary's CLI
