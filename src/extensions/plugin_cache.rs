@@ -134,6 +134,17 @@ pub struct PluginCache {
 impl PluginCache {
     /// `open` — see implementation.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
+        // Hold the script's fd range while SQLite opens the database and,
+        // via the WAL pragma below, its `-wal` and `-shm` side files, so
+        // none of the three land on fds 3-9. See `crate::lowfd`.
+        //
+        // This was the one SQLite open that never took the guard, and it
+        // is the FIRST database the shell opens, so it got the lowest
+        // descriptors of all: `plugins.db` at fd 3, `-wal` at 4, `-shm`
+        // at 5 — the descriptors `exec 3>out`, `print -u 3` and
+        // `read -u 4` address by number. `crate::compsys::cache::open`
+        // (cache.rs:144) and `history` (history.rs:74) already did this.
+        let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         let cache = Self { conn };
