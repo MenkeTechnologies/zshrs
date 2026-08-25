@@ -5459,14 +5459,6 @@ pub fn domenuselect(
                     Some(&mut modelen),
                 );
 
-                // c:2785-2786 — "if we are completing a quoted word, by this
-                // point we've lost track of this, so put we back where it
-                // should be". `menucomplete()` above left `we` at the end of
-                // the word it inserted; every later keystroke in this loop
-                // reads it as the word end, so without the restore a quoted
-                // word keeps growing against a stale boundary.
-                crate::ported::zle::compcore::WE.store(savecs, Ordering::SeqCst);
-
                 // zshrs bridge — `setmstatus` performs the same whole-line
                 // rewrite `set_zlemetaline` does (c:2228-2232), restoring
                 // `saveline` (the line as the user typed it) over the line
@@ -5488,20 +5480,20 @@ pub fn domenuselect(
                 push_line_to_editor();
             }
 
-            // c:2789-2810 — nothing left after filtering.
+            // c:2785-2810 — nothing left after filtering.
             let has_cur = MINFO
                 .get()
                 .and_then(|g| g.lock().ok())
                 .map(|g| g.cur.is_some())
                 .unwrap_or(false);
             if nmatches_g.load(Ordering::SeqCst) < 1 || !has_cur {
-                nolist = 1; // c:2787
+                nolist = 1; // c:2786
                 *STATUSLINE.lock().unwrap() = if mode == 1 {
-                    Some(status.clone()) // c:2790 statusline = status
+                    Some(status.clone()) // c:2788 statusline = status
                 } else {
-                    None // c:2793
+                    None // c:2791
                 };
-                // c:2798-2814 — TWO arms, and this port only ever ran the first.
+                // c:2793-2809 — TWO arms, and this port only ever ran the first.
                 // With messages pending the list is simply repainted; with NONE,
                 // C tells the user the filter matched nothing:
                 //     trashzle(); zsetterm(); tcout(TCCLEAREOD);
@@ -5513,13 +5505,13 @@ pub fn domenuselect(
                 // matches nothing left the status line alone where zsh prints
                 // `no matches` (`pr` + Tab Tab s).
                 if crate::ported::zle::compcore::nmessages.load(Ordering::SeqCst) != 0 {
-                    SHOWINGLIST.store(-2, Ordering::SeqCst); // c:2799
-                    zrefresh(); // c:2800
-                    NOSELECT.store(-1, Ordering::SeqCst); // c:2801
+                    SHOWINGLIST.store(-2, Ordering::SeqCst); // c:2794
+                    zrefresh(); // c:2795
+                    NOSELECT.store(-1, Ordering::SeqCst); // c:2796
                 } else {
-                    trashzle(); // c:2803
-                    let _ = crate::ported::zle::zle_main::zsetterm(); // c:2804
-                                                                      // c:2805-2806 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
+                    trashzle(); // c:2798
+                    let _ = crate::ported::zle::zle_main::zsetterm(); // c:2799
+                                                                      // c:2800-2801 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
                     let can_cleareod = crate::ported::init::tclen
                         .lock()
                         .map(|t| t[TCCLEAREOD as usize] != 0)
@@ -5527,37 +5519,37 @@ pub fn domenuselect(
                     if can_cleareod {
                         tcout(TCCLEAREOD);
                     }
-                    // c:2807-2808 — `fputs("no matches\r", shout); fflush(shout);`
+                    // c:2802-2803 — `fputs("no matches\r", shout); fflush(shout);`
                     let fd = SHTTY.load(Ordering::Relaxed);
                     let out = if fd >= 0 { fd } else { 1 };
                     let _ = crate::ported::utils::write_loop(out, b"no matches\r");
-                    // c:2809 — `tcmultout(TCUP, TCMULTUP, nlnct);`
+                    // c:2804 — `tcmultout(TCUP, TCMULTUP, nlnct);`
                     crate::ported::zle::zle_refresh::tcmultout(
                         crate::ported::zsh_h::TCUP,
                         crate::ported::zsh_h::TCMULTUP,
                         NLNCT.load(Ordering::SeqCst),
                     );
-                    SHOWINGLIST.store(0, Ordering::SeqCst); // c:2810
+                    SHOWINGLIST.store(0, Ordering::SeqCst); // c:2805
                     CLEARLIST.store(0, Ordering::SeqCst);
-                    CLEARFLAG.store(1, Ordering::SeqCst); // c:2811
-                    zrefresh(); // c:2812
-                    SHOWINGLIST.store(0, Ordering::SeqCst); // c:2813
+                    CLEARFLAG.store(1, Ordering::SeqCst); // c:2806
+                    zrefresh(); // c:2807
+                    SHOWINGLIST.store(0, Ordering::SeqCst); // c:2808
                     CLEARLIST.store(0, Ordering::SeqCst);
                 }
-                *STATUSLINE.lock().unwrap() = None; // c:2815
+                *STATUSLINE.lock().unwrap() = None; // c:2810
                 goto_getk = true;
-                continue; // c:2817 goto getk
+                continue; // c:2812 goto getk
             }
 
-            // c:2812-2818 — adopt the filtered match set.
-            CLEARLIST.store(1, Ordering::SeqCst); // c:2812
+            // c:2814-2819 — adopt the filtered match set.
+            CLEARLIST.store(1, Ordering::SeqCst); // c:2814
             LISTSHOWN.store(1, Ordering::SeqCst);
-            MSELECT.store(cur_gnum(), Ordering::SeqCst); // c:2813
-            setwish = 1; // c:2814 setwish = 1
-            wasnext = 1; // c:2814 wasnext = 1
-            MLINE.store(0, Ordering::SeqCst); // c:2815
-            MOLBEG.store(-42, Ordering::SeqCst); // c:2816
-            continue; // c:2817
+            MSELECT.store(cur_gnum(), Ordering::SeqCst); // c:2815
+            setwish = 1; // c:2816 setwish = 1
+            wasnext = 1; // c:2816 wasnext = 1
+            MLINE.store(0, Ordering::SeqCst); // c:2817
+            MOLBEG.store(-42, Ordering::SeqCst); // c:2818
+            continue; // c:2819
         } else if name == "accept-and-hold" || name == "accept-and-menu-complete" {
             // c:2688-2731
             if mode == 1 {
