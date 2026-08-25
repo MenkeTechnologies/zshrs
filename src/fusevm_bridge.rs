@@ -5385,30 +5385,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
-    // c:Src/math.c:337 — `getmathparam` for ArithCompiler pre-load.
-    // Pop a variable name, return its math-coerced value. Mirrors
-    // the routing in math::getmathparam: try i64, then f64, then
-    // recursive arith-eval, else 0. Bug #118 in docs/BUGS.md.
+    // c:Src/math.c:336-364 — `getmathparam` for ArithCompiler pre-load.
+    // Pop a variable name, return its math value.
+    //
+    // This used to be a second, smaller getmathparam: `getsparam` then
+    // `parse::<i64>` / `parse::<f64>` / `mathevali`. Two consequences,
+    // both invisible until you compared the two arithmetic backends on
+    // the same expression. It had no FORCEFLOAT coercion (c:359-362) and
+    // no `unset(UNSET)` diagnostic (c:345-346), so which of `setopt
+    // force_float` and `set -u` applied to `$(( x ))` depended on
+    // whether `compile_arith` had routed the expression to the
+    // ArithCompiler or to BUILTIN_ARITH_EVAL. And it re-derived a
+    // typed param's value from `getsparam`'s printed form, the same
+    // convbase round-trip c:2641 exists to avoid.
+    //
+    // There is one `getmathparam` in C; there is one here now.
     vm.register_builtin(BUILTIN_GET_MATH_VAR, |vm, _argc| {
         let name = vm.pop().to_str();
-        let raw = crate::ported::params::getsparam(&name).unwrap_or_default();
-        // Empty / unset → 0.
-        if raw.is_empty() {
-            return Value::Int(0);
-        }
-        // Direct int / float parse.
-        if let Ok(n) = raw.parse::<i64>() {
-            return Value::Int(n);
-        }
-        if let Ok(f) = raw.parse::<f64>() {
-            return Value::Float(f);
-        }
-        // Recursive arith eval (matches getmathparam fallback at
-        // Src/math.c:337). If that fails too, return 0 — C's
-        // mathevall returns 0 with errflag set on parse failure.
-        match crate::ported::math::mathevali(&raw) {
-            Ok(n) => Value::Int(n),
-            Err(_) => Value::Int(0),
+        let n = crate::ported::math::getmathparam(&name); // c:337
+        if n.type_ == crate::ported::zsh_h::MN_FLOAT {
+            Value::Float(n.d)
+        } else {
+            Value::Int(n.l)
         }
     });
 
