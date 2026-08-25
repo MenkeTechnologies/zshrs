@@ -2857,248 +2857,288 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 /// until `endchar` is seen at depth 0, handling escapes, `${...}`,
 /// `$(...)`, backtick, `$((...))`, and inner `"..."`.
 fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
-    let mut pct = 0; // parenthesis count
-    let mut brct = 0; // bracket count
-    let mut bct = 0; // brace count (for ${...})
-    let mut intick = false; // inside backtick
-    let is_math = endchar == ')' || endchar == ']' || LEX_INFOR.get() > 0;
-
-    // c:1643-1657 — on exit, drain matched-but-unpopped pushes:
-    // every CS_BQUOTE (if `intick`), CS_BRACEPAR + (CS_CURSH when
-    // it was set) (for each remaining bct level). Wrapped via
-    // closure so success + every early Err goes through cleanup.
-    let cleanup = |intick: bool, bct: i32| {
-        if intick {
-            cmdpop();
-        }
-        for _ in 0..bct {
-            cmdpop(); // CS_BRACEPAR for each remaining `{`.
-        }
+    // c:1490-1491 —
+    //     int math = endchar == ')' || endchar == ']' || infor;
+    //     int zlemath = math && zlemetacs > zlemetall + addedx - inbufct;
+    // Sampled BEFORE the first character is read: `zlemath` records that the
+    // ZLE cursor still lies AHEAD of the input read point, i.e. inside the
+    // math body this call is about to consume.
+    let zlemath = (endchar == ')' || endchar == ']' || LEX_INFOR.get() > 0) && {
+        let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+        crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst)
+            > crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst)
+                + crate::ported::zle::compcore::ADDEDX.load(Ordering::SeqCst)
+                - inbufct
     };
 
-    loop {
-        let c = hgetc();
-        let c = match c {
-            Some(c) if c == endchar && !intick && bct == 0 => {
-                if is_math && (pct > 0 || brct > 0) {
-                    add(c);
-                    if c == ')' {
-                        pct -= 1;
-                    } else if c == ']' {
-                        brct -= 1;
-                    }
-                    continue;
-                }
-                cleanup(intick, bct);
-                return Ok(());
+    // C has a single exit (`return err` at c:1676) so c:1674-1675 runs on
+    // EVERY way out, error paths included. This port grew ten early exits
+    // (eight `return`s plus two `?`s); holding the body in an immediately
+    // called closure funnels them all back here, and the build gate admits
+    // no second module-level `fn` to split it into.
+    let body = || -> Result<(), ()> {
+        let mut pct = 0; // parenthesis count
+        let mut brct = 0; // bracket count
+        let mut bct = 0; // brace count (for ${...})
+        let mut intick = false; // inside backtick
+        let is_math = endchar == ')' || endchar == ']' || LEX_INFOR.get() > 0;
+
+        // c:1643-1657 — on exit, drain matched-but-unpopped pushes:
+        // every CS_BQUOTE (if `intick`), CS_BRACEPAR + (CS_CURSH when
+        // it was set) (for each remaining bct level). Wrapped via
+        // closure so success + every early Err goes through cleanup.
+        let cleanup = |intick: bool, bct: i32| {
+            if intick {
+                cmdpop();
             }
-            Some(c) => c,
-            None => {
-                LEX_LEXSTOP.set(true);
-                cleanup(intick, bct);
-                return Err(());
+            for _ in 0..bct {
+                cmdpop(); // CS_BRACEPAR for each remaining `{`.
             }
         };
 
-        match c {
-            // c:1499 — `case '\\':`.
-            '\\' => {
-                let next = hgetc();
-                match next {
-                    Some('\n') => {
-                        // c:1515 — `else if (sub || unset(CSHJUNKIEQUOTES)
-                        // || endchar != '"') continue;` — under
-                        // CSHJUNKIEQUOTES inside `"..."`, `\<newline>`
-                        // is NOT line continuation; it falls through
-                        // to add literal `\n`.
-                        if sub || unset(CSHJUNKIEQUOTES) || endchar != '"' {
-                            continue;
-                        }
-                        add('\n');
-                    }
-                    Some(c)
-                        if c == '$'
-                            || c == '\\'
-                            || (c == '}' && !intick && bct > 0)
-                            || c == endchar
-                            || c == '`'
-                            || (endchar == ']'
-                                && (c == '['
-                                    || c == ']'
-                                    || c == '('
-                                    || c == ')'
-                                    || c == '{'
-                                    || c == '}'
-                                    || (c == '"' && sub))) =>
-                    {
-                        // c:Src/lex.c:1501-1513 — C's `\X` arm in
-                        // dquote_parse emits `Bnull X` exactly when
-                        // `X` is in the special-escape list. The
-                        // literal `{`/`}` that may follow `\$` is NOT
-                        // in C's list at 1501, so C emits a raw
-                        // `{`/`}` next. The subst-time scanner at
-                        // subst.rs:2920 already gates raw `{` count
-                        // by checking `prev2 != Bnull && prev2 != '\\'`
-                        // (a two-char look-back, not a one-char check),
-                        // so `Bnull $ {` reads as escaped and stays
-                        // uncounted. Symmetric for the closing `}`:
-                        // the `\}` immediately after `y` emits its
-                        // own `Bnull }` via THIS arm (since `}` is
-                        // in the special list when `!intick && bct > 0`),
-                        // and the scanner's `prev != Bnull` gate keeps
-                        // it uncounted. No extra Bnull insertion needed.
-                        add(Bnull);
+        loop {
+            let c = hgetc();
+            let c = match c {
+                Some(c) if c == endchar && !intick && bct == 0 => {
+                    if is_math && (pct > 0 || brct > 0) {
                         add(c);
-                    }
-                    Some(c) => {
-                        add('\\');
-                        hungetc(c);
+                        if c == ')' {
+                            pct -= 1;
+                        } else if c == ']' {
+                            brct -= 1;
+                        }
                         continue;
                     }
-                    None => {
-                        add('\\');
-                    }
+                    cleanup(intick, bct);
+                    return Ok(());
                 }
-            }
-
-            // c:1517 — `case '\n': err = !sub && isset(CSHJUNKIEQUOTES)
-            // && endchar == '"';` — under CSHJUNKIEQUOTES, a bare `\n`
-            // inside `"..."` is an error (unterminated string).
-            '\n' if !sub && isset(CSHJUNKIEQUOTES) && endchar == '"' => {
-                return Err(());
-            }
-
-            '$' => {
-                if intick {
-                    add(c);
-                    continue;
-                }
-                let next = hgetc();
-                match next {
-                    Some('(') => {
-                        add(Qstring);
-                        match cmd_or_math_sub() {
-                            CMD_OR_MATH_CMD => add(Outpar),
-                            CMD_OR_MATH_MATH => add(Outparmath),
-                            CMD_OR_MATH_ERR | _ => return Err(()),
-                        }
-                    }
-                    Some('[') => {
-                        // c:1541 — `cmdpush(CS_MATHSUBST); err =
-                        // dquote_parse(']', sub); cmdpop();`
-                        add(Stringg);
-                        add(Inbrack);
-                        cmdpush(CS_MATHSUBST as u8);
-                        let r = dquote_parse(']', sub);
-                        cmdpop();
-                        r?;
-                        add(Outbrack);
-                    }
-                    Some('{') => {
-                        // c:1548 — `cmdpush(CS_BRACEPAR); bct++;`
-                        add(Qstring);
-                        add(Inbrace);
-                        cmdpush(CS_BRACEPAR as u8);
-                        bct += 1;
-                    }
-                    Some('$') => {
-                        add(Qstring);
-                        add('$');
-                    }
-                    _ => {
-                        if let Some(next) = next {
-                            hungetc(next);
-                        }
-                        LEX_LEXSTOP.set(false);
-                        add(Qstring);
-                    }
-                }
-            }
-
-            '}' => {
-                if intick || bct == 0 {
-                    add(c);
-                } else {
-                    // c:1575/1577 — `cmdpop()` for inner brace, plus
-                    // matching CS_BRACEPAR pop on the outermost
-                    // closer.
-                    add(Outbrace);
-                    cmdpop();
-                    bct -= 1;
-                }
-            }
-
-            // c:1583 — `case '`':` — backtick toggle.
-            // c:1585 — `cmdpush(CS_BQUOTE)` on entry, c:1588
-            // `cmdpop()` on exit.
-            '`' => {
-                add(Qtick);
-                if intick {
-                    SETPAREND!(); // c:1587
-                    cmdpop();
-                } else {
-                    SETPARBEGIN!(); // c:1584
-                    cmdpush(CS_BQUOTE as u8);
-                }
-                intick = !intick;
-            }
-
-            '(' => {
-                if !is_math || bct == 0 {
-                    pct += 1;
-                }
-                add(c);
-            }
-
-            ')' => {
-                if !is_math || bct == 0 {
-                    if pct == 0 && is_math {
-                        return Err(());
-                    }
-                    pct -= 1;
-                }
-                add(c);
-            }
-
-            '[' => {
-                if !is_math || bct == 0 {
-                    brct += 1;
-                }
-                add(c);
-            }
-
-            ']' => {
-                if !is_math || bct == 0 {
-                    if brct == 0 && is_math {
-                        return Err(());
-                    }
-                    brct -= 1;
-                }
-                add(c);
-            }
-
-            '"' => {
-                if intick || (endchar != '"' && bct == 0) {
-                    add(c);
-                } else if bct > 0 {
-                    // c:1620 — `cmdpush(CS_DQUOTE); err =
-                    // dquote_parse('"', sub); cmdpop();`
-                    add(Dnull);
-                    cmdpush(CS_DQUOTE as u8);
-                    let r = dquote_parse('"', sub);
-                    cmdpop();
-                    r?;
-                    add(Dnull);
-                } else {
+                Some(c) => c,
+                None => {
+                    LEX_LEXSTOP.set(true);
+                    cleanup(intick, bct);
                     return Err(());
                 }
-            }
+            };
 
-            _ => {
-                add(c);
+            match c {
+                // c:1499 — `case '\\':`.
+                '\\' => {
+                    let next = hgetc();
+                    match next {
+                        Some('\n') => {
+                            // c:1515 — `else if (sub || unset(CSHJUNKIEQUOTES)
+                            // || endchar != '"') continue;` — under
+                            // CSHJUNKIEQUOTES inside `"..."`, `\<newline>`
+                            // is NOT line continuation; it falls through
+                            // to add literal `\n`.
+                            if sub || unset(CSHJUNKIEQUOTES) || endchar != '"' {
+                                continue;
+                            }
+                            add('\n');
+                        }
+                        Some(c)
+                            if c == '$'
+                                || c == '\\'
+                                || (c == '}' && !intick && bct > 0)
+                                || c == endchar
+                                || c == '`'
+                                || (endchar == ']'
+                                    && (c == '['
+                                        || c == ']'
+                                        || c == '('
+                                        || c == ')'
+                                        || c == '{'
+                                        || c == '}'
+                                        || (c == '"' && sub))) =>
+                        {
+                            // c:Src/lex.c:1501-1513 — C's `\X` arm in
+                            // dquote_parse emits `Bnull X` exactly when
+                            // `X` is in the special-escape list. The
+                            // literal `{`/`}` that may follow `\$` is NOT
+                            // in C's list at 1501, so C emits a raw
+                            // `{`/`}` next. The subst-time scanner at
+                            // subst.rs:2920 already gates raw `{` count
+                            // by checking `prev2 != Bnull && prev2 != '\\'`
+                            // (a two-char look-back, not a one-char check),
+                            // so `Bnull $ {` reads as escaped and stays
+                            // uncounted. Symmetric for the closing `}`:
+                            // the `\}` immediately after `y` emits its
+                            // own `Bnull }` via THIS arm (since `}` is
+                            // in the special list when `!intick && bct > 0`),
+                            // and the scanner's `prev != Bnull` gate keeps
+                            // it uncounted. No extra Bnull insertion needed.
+                            add(Bnull);
+                            add(c);
+                        }
+                        Some(c) => {
+                            add('\\');
+                            hungetc(c);
+                            continue;
+                        }
+                        None => {
+                            add('\\');
+                        }
+                    }
+                }
+
+                // c:1517 — `case '\n': err = !sub && isset(CSHJUNKIEQUOTES)
+                // && endchar == '"';` — under CSHJUNKIEQUOTES, a bare `\n`
+                // inside `"..."` is an error (unterminated string).
+                '\n' if !sub && isset(CSHJUNKIEQUOTES) && endchar == '"' => {
+                    return Err(());
+                }
+
+                '$' => {
+                    if intick {
+                        add(c);
+                        continue;
+                    }
+                    let next = hgetc();
+                    match next {
+                        Some('(') => {
+                            add(Qstring);
+                            match cmd_or_math_sub() {
+                                CMD_OR_MATH_CMD => add(Outpar),
+                                CMD_OR_MATH_MATH => add(Outparmath),
+                                CMD_OR_MATH_ERR | _ => return Err(()),
+                            }
+                        }
+                        Some('[') => {
+                            // c:1541 — `cmdpush(CS_MATHSUBST); err =
+                            // dquote_parse(']', sub); cmdpop();`
+                            add(Stringg);
+                            add(Inbrack);
+                            cmdpush(CS_MATHSUBST as u8);
+                            let r = dquote_parse(']', sub);
+                            cmdpop();
+                            r?;
+                            add(Outbrack);
+                        }
+                        Some('{') => {
+                            // c:1548 — `cmdpush(CS_BRACEPAR); bct++;`
+                            add(Qstring);
+                            add(Inbrace);
+                            cmdpush(CS_BRACEPAR as u8);
+                            bct += 1;
+                        }
+                        Some('$') => {
+                            add(Qstring);
+                            add('$');
+                        }
+                        _ => {
+                            if let Some(next) = next {
+                                hungetc(next);
+                            }
+                            LEX_LEXSTOP.set(false);
+                            add(Qstring);
+                        }
+                    }
+                }
+
+                '}' => {
+                    if intick || bct == 0 {
+                        add(c);
+                    } else {
+                        // c:1575/1577 — `cmdpop()` for inner brace, plus
+                        // matching CS_BRACEPAR pop on the outermost
+                        // closer.
+                        add(Outbrace);
+                        cmdpop();
+                        bct -= 1;
+                    }
+                }
+
+                // c:1583 — `case '`':` — backtick toggle.
+                // c:1585 — `cmdpush(CS_BQUOTE)` on entry, c:1588
+                // `cmdpop()` on exit.
+                '`' => {
+                    add(Qtick);
+                    if intick {
+                        SETPAREND!(); // c:1587
+                        cmdpop();
+                    } else {
+                        SETPARBEGIN!(); // c:1584
+                        cmdpush(CS_BQUOTE as u8);
+                    }
+                    intick = !intick;
+                }
+
+                '(' => {
+                    if !is_math || bct == 0 {
+                        pct += 1;
+                    }
+                    add(c);
+                }
+
+                ')' => {
+                    if !is_math || bct == 0 {
+                        if pct == 0 && is_math {
+                            return Err(());
+                        }
+                        pct -= 1;
+                    }
+                    add(c);
+                }
+
+                '[' => {
+                    if !is_math || bct == 0 {
+                        brct += 1;
+                    }
+                    add(c);
+                }
+
+                ']' => {
+                    if !is_math || bct == 0 {
+                        if brct == 0 && is_math {
+                            return Err(());
+                        }
+                        brct -= 1;
+                    }
+                    add(c);
+                }
+
+                '"' => {
+                    if intick || (endchar != '"' && bct == 0) {
+                        add(c);
+                    } else if bct > 0 {
+                        // c:1620 — `cmdpush(CS_DQUOTE); err =
+                        // dquote_parse('"', sub); cmdpop();`
+                        add(Dnull);
+                        cmdpush(CS_DQUOTE as u8);
+                        let r = dquote_parse('"', sub);
+                        cmdpop();
+                        r?;
+                        add(Dnull);
+                    } else {
+                        return Err(());
+                    }
+                }
+
+                _ => {
+                    add(c);
+                }
             }
         }
+    };
+    let err = body();
+
+    // c:1674-1675 —
+    //     if (zlemath && zlemetacs <= zlemetall + 1 - inbufct)
+    //         inwhat = IN_MATH;
+    // The read point has now passed the cursor, so the cursor was inside
+    // this math body: tell `get_comp_string` (c:1482/1549/1621) to rebuild
+    // the word out of the line as a math operand. Reached on the error exit
+    // too, which is what makes an UNTERMINATED `$((1+` still be IN_MATH.
+    if zlemath {
+        let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+        if crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst)
+            <= crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) + 1 - inbufct
+        {
+            crate::ported::zle::compcore::INWHAT
+                .store(crate::ported::zsh_h::IN_MATH, Ordering::SeqCst);
+        }
     }
+    err
 }
 
 /// Tokenize a string as if in double quotes (error-reporting variant).

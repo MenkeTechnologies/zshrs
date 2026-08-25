@@ -6157,10 +6157,13 @@ pub fn doshfunc(
         crate::ported::builtin::OPTCIND.store(0, Ordering::Relaxed); // c:5968 optcind = 0
     }
 
-    // c:5914 — `memcpy(funcsave->opts, opts, sizeof(opts));` — option
-    // snapshot. Port wraps opts in OPTS_LIVE; capture the live state
-    // here as a HashMap snapshot.
-    let funcsave_opts = crate::ported::options::opt_state_snapshot();
+    // c:5911-5914 — `memcpy(funcsave->opts, opts, sizeof(opts));`
+    //
+    // C copies 186 bytes. The port used to clone the whole option table
+    // as a `HashMap<String, bool>` — a heap allocation per option name,
+    // on every call of every function, whether or not the body touches
+    // an option. `opt_state_store` is C's array, so this is C's memcpy.
+    let funcsave_opts = crate::ported::options::opt_state_store::save();
 
     // c:5974-5975 — `funcsave->emulation = emulation;
     //                funcsave->sticky = sticky;`
@@ -6645,15 +6648,13 @@ pub fn doshfunc(
         || funcsave_restore_sticky != 0
     {
         // c:6091 memcpy(opts, funcsave->opts, sizeof(opts)) — full restore.
-        let current = crate::ported::options::opt_state_snapshot();
-        for (k, _) in &current {
-            if !funcsave_opts.contains_key(k) {
-                crate::ported::options::opt_state_unset(k);
-            }
-        }
-        for (k, v) in &funcsave_opts {
-            opt_state_set(k, *v);
-        }
+        let mut restore = funcsave_opts.clone();
+        // c:6089 — `funcsave->opts[PRIVILEGED] = opts[PRIVILEGED];`.
+        // PRIVILEGED is carved out of the restore in C: a function that
+        // dropped privileges does not get them back on return. The port
+        // restored it with everything else.
+        restore.carry_privileged_from_live();
+        restore.restore();
         // c:6136 / c:6153 — `emulation = funcsave->emulation;`
         crate::ported::options::emulation.store(funcsave_emulation, Ordering::Relaxed);
         crate::ported::options::EMULATION.store(funcsave_emulation_live, Ordering::Relaxed);
@@ -6673,8 +6674,8 @@ pub fn doshfunc(
             "localloops",
             "warnnestedvar",
         ] {
-            if let Some(v) = funcsave_opts.get(opt) {
-                opt_state_set(opt, *v);
+            if let Some(v) = funcsave_opts.saved_get(opt) {
+                opt_state_set(opt, v);
             }
         }
     }
