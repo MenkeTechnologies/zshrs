@@ -962,8 +962,58 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         };
         let _ = crate::ported::params::setsparam("PREFIX", &pre);
         let _ = crate::ported::params::setsparam("SUFFIX", &suf);
-        let _ = crate::ported::params::setsparam("IPREFIX", "");
-        let _ = crate::ported::params::setsparam("ISUFFIX", "");
+        // c:724-741 — `$IPREFIX` / `$ISUFFIX`.
+        //
+        //     zsfree(compiprefix); zsfree(compisuffix);
+        //     if (parwb < 0) { compiprefix = ztrdup(""); compisuffix = ztrdup(""); }
+        //     else {
+        //         compiprefix = zalloc((l = wb - parwb) + 1);
+        //         memcpy(compiprefix, zlemetaline + parwb, l);
+        //         compisuffix = zalloc((l = parwe - we) + 1);
+        //         memcpy(compisuffix, zlemetaline + we, l);
+        //         wb = parwb; we = parwe; offs = paroffs;
+        //     }
+        //
+        // `makecomplist` (c:952-957) parks the word's ORIGINAL boundaries in
+        // `parwb`/`parwe`/`paroffs` before `check_param` narrows `wb`/`we`/
+        // `offs` down to the parameter NAME, so the two spans differ by
+        // exactly the sigil (`$`, `${`, `${(flags)`) and by the `}` plus any
+        // modifiers on the other side. That difference IS `$IPREFIX` /
+        // `$ISUFFIX`.
+        //
+        // Both were hardcoded to the empty string here, which dropped the
+        // whole block: `echo $PATH<TAB>` published `IPREFIX=''` where zsh
+        // publishes `IPREFIX='$'`. Anything that rebuilds the word from
+        // `$IPREFIX$PREFIX$SUFFIX$ISUFFIX` then lost the sigil — `_expand`
+        // (Completion/Base/Completer/_expand:22) saw the word as `PATH`, its
+        // substitution step produced `PATH` again, and sh:128's
+        // "expansion equals the word" test returned 1, so the completer
+        // emitted no expansions at all.
+        let (ipre_v, isuf_v) = if PARWB.load(Ordering::Relaxed) < 0 {
+            (String::new(), String::new()) // c:727-728
+        } else {
+            let line = ZLEMETALINE
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            let parwb = PARWB.load(Ordering::Relaxed).max(0) as usize;
+            let parwe = PARWE.load(Ordering::Relaxed).max(0) as usize;
+            let wb = WB.load(Ordering::Relaxed).max(0) as usize;
+            let we = WE.load(Ordering::Relaxed).max(0) as usize;
+            // `get` returns None on an out-of-range or non-char-boundary
+            // span; C's memcpy cannot fail because it copies bytes out of a
+            // buffer it already sized, so the fallback here is the empty
+            // string — the same value the `parwb < 0` arm uses.
+            let ip = line.get(parwb..wb).unwrap_or("").to_string(); // c:732-734
+            let is = line.get(we..parwe).unwrap_or("").to_string(); // c:735-737
+            WB.store(PARWB.load(Ordering::Relaxed), Ordering::Relaxed); // c:739
+            WE.store(PARWE.load(Ordering::Relaxed), Ordering::Relaxed); // c:740
+            OFFS.store(PAROFFS.load(Ordering::Relaxed), Ordering::Relaxed); // c:741
+            (ip, is)
+        };
+        let _ = crate::ported::params::setsparam("IPREFIX", &ipre_v);
+        let _ = crate::ported::params::setsparam("ISUFFIX", &isuf_v);
         // c:742-745 — `compqiprefix = ztrdup(qipre ? qipre : "");
         //              compqisuffix = ztrdup(qisuf ? qisuf : "");`
         // `compqiprefix`/`compqisuffix` ARE `$QIPREFIX`/`$QISUFFIX`
