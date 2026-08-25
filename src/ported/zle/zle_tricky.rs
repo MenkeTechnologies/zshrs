@@ -579,9 +579,21 @@ pub fn cmphaswilds(str: &str) -> i32 {
 /// `$`, `${`, flag-parens, modifier chars), or `None` if no
 /// parameter expression brackets the cursor.
 ///
-/// Rust signature: `(s, offs)` returns `Option<usize>` byte offset
+/// Rust signature: `(s, offs)` returns `Option<usize>` CHAR index
 /// instead of C's `char *` to the same position. `offs` is C's
-/// `offs` global (zle_tricky.c) passed explicitly here.
+/// `offs` global (zle_tricky.c) passed explicitly here, and is also a
+/// char index.
+///
+/// REPRESENTATION NOTE (Rust-only, no C counterpart): C walks `s` as
+/// BYTES and every parser token (`String`, `Qstring`, `Dnull`, …) is
+/// exactly one byte, so C's pointer arithmetic and `offs` agree. In
+/// this port `s` is a metafied Rust `String` whose token chars live at
+/// U+0080..U+009F and therefore occupy TWO UTF-8 bytes each, so byte
+/// indices are NOT commensurate with `offs`. The whole scan runs over
+/// `Vec<char>` with CHAR indices — the same convention the brace tail
+/// of `get_comp_string` uses. `at()` returns `'\0'` past the end so
+/// the reads C makes at (and one past) the NUL terminator behave the
+/// same way.
 pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
     // c:521
     use crate::ported::zsh_h::{
@@ -589,142 +601,120 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
         Stringg, Tilde,
     };
     use crate::ported::ztype_h::{idigit, INAMESPC};
-    let bytes = s.as_bytes();
-    if offs > bytes.len() {
+
+    let sv: Vec<char> = s.chars().collect();
+    let slen = sv.len();
+    if offs > slen {
         return None;
     }
-    // c:526 — `for (p = s + offs; p > s && *p != Stringg && *p != Qstring; p--);`.
-    // Walk back to find a Stringg/Qstring token (the `$` marker).
-    let mut p = offs.min(bytes.len());
-    while p > 0 {
-        let b = bytes[p.saturating_sub(1)];
-        if p < bytes.len() && (bytes[p] == Stringg as u8 || bytes[p] == Qstring as u8) {
-            break;
-        }
-        if b == Stringg as u8 || b == Qstring as u8 {
-            p -= 1;
-            break;
-        }
+    // Char index -> byte index, with a sentinel entry for the end so
+    // `bidx[i]` is valid for `i == slen` (C's NUL position).
+    let mut bidx: Vec<usize> = Vec::with_capacity(slen + 1);
+    for (bi, _) in s.char_indices() {
+        bidx.push(bi);
+    }
+    bidx.push(s.len());
+    // C reads `*p` at (and past) the terminator; give those reads NUL.
+    let at = |i: usize| -> char { sv.get(i).copied().unwrap_or('\0') };
+    let is_str = |c: char| c == Stringg || c == Qstring;
+
+    // c:526 — `for (p = s + offs; p > s && *p != String && *p != Qstring; p--);`
+    let mut p = offs;
+    while p > 0 && !is_str(at(p)) {
         p -= 1;
     }
-    if p >= bytes.len() {
-        return None;
-    }
-    let pchar = bytes[p];
-    if pchar == Stringg as u8 || pchar == Qstring as u8 {
-        // c:529-532 — `$$` paired-marker walk.
-        while p > 0 && (bytes[p - 1] == Stringg as u8 || bytes[p - 1] == Qstring as u8) {
+    // c:527-533 — `if (*p == String || *p == Qstring)` then the `$$` walk.
+    if is_str(at(p)) {
+        // c:529-530 — `while (p > s && (p[-1] == String || p[-1] == Qstring)) p--;`
+        while p > 0 && is_str(at(p - 1)) {
             p -= 1;
         }
-        while p + 2 < bytes.len()
-            && (bytes[p + 1] == Stringg as u8 || bytes[p + 1] == Qstring as u8)
-            && (bytes[p + 2] == Stringg as u8 || bytes[p + 2] == Qstring as u8)
-        {
+        // c:531-532 — `while ((p[1] == ...) && (p[2] == ...)) p += 2;`
+        while is_str(at(p + 1)) && is_str(at(p + 2)) {
             p += 2;
         }
     }
-    // c:535-537 — confirm `$` followed by NOT `(` / `[` / `'` (those
-    // are `$(...)` / `$[...]` / `$'...'`, not parameter exprs).
-    if p >= bytes.len() {
+    // c:535-537 — `if ((*p == String || *p == Qstring) && p[1] != Inpar &&
+    //                 p[1] != Inbrack && p[1] != '\'')`: confirm `$` followed
+    // by NOT `(` / `[` / `'` (those are `$(...)` / `$[...]` / `$'...'`).
+    let after = at(p + 1);
+    if !is_str(at(p)) || after == Inpar || after == Inbrack || after == '\'' {
         return None;
     }
-    let pchar = bytes[p];
-    let after = bytes.get(p + 1).copied().unwrap_or(0);
-    if !(pchar == Stringg as u8 || pchar == Qstring as u8)
-        || after == Inpar as u8
-        || after == Inbrack as u8
-        || after == b'\''
-    {
-        return None;
-    }
-    // c:540-543 — `b = p + 1; n = 0; br = 1;`
+    // c:540-543 — `char *b = p + 1, *e = b; int n = 0, br = 1;`
     let mut b = p + 1;
     let mut br = 1;
     let mut n: i32 = 0;
-    // c:545-553 — `${...}` form: validate balanced braces, then skip
-    // possible `(...)` flag-prefix via skipparens.
-    if b < bytes.len() && bytes[b] == Inbrace as u8 {
-        // c:548 — `if (!skipparens(Inbrace, Outbrace, &tb)) return NULL;`
-        let tb_str = &s[b..];
-        let mut tb = tb_str;
-        if crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut tb) != 0 {
+    // c:545-553 — `${...}` form: `if (*b == Inbrace)`.
+    if at(b) == Inbrace {
+        // c:546-549 — `char *tb = b;
+        //               if (!skipparens(Inbrace, Outbrace, &tb)) return NULL;`
+        // skipparens returns 0 only when the matching `}` WAS found, and
+        // C returns NULL in exactly that case ("see if we are before the
+        // '}'"): a closed `${...}` is not an incomplete parameter name.
+        let mut tb: &str = &s[bidx[b]..];
+        if crate::ported::utils::skipparens(Inbrace, Outbrace, &mut tb) == 0 {
             return None;
         }
         // c:551-552 — `b++, br++;`.
         b += 1;
         br += 1;
-        let _ = br;
         // c:553 — `n = skipparens(Inpar, Outpar, &b);` skip `(flags)`.
-        let mut b_str: &str = &s[b..];
-        n = crate::ported::utils::skipparens(Inpar as char, Outpar as char, &mut b_str);
-        b = s.len() - b_str.len();
+        let mut b_str: &str = &s[bidx[b]..];
+        n = crate::ported::utils::skipparens(Inpar, Outpar, &mut b_str);
+        let b_byte = s.len() - b_str.len();
+        b = s[..b_byte].chars().count();
     }
     // c:556-560 — skip modifier prefix chars `^=~` (Hat/Equals/Tilde).
-    while b < bytes.len() {
-        let bb = bytes[b];
-        if bb != b'^'
-            && bb != Hat as u8
-            && bb != b'='
-            && bb != Equals as u8
-            && bb != b'~'
-            && bb != Tilde as u8
-        {
+    while at(b) != '\0' {
+        let bb = at(b);
+        if bb != '^' && bb != Hat && bb != '=' && bb != Equals && bb != '~' && bb != Tilde {
             break;
         }
         b += 1;
     }
-    // c:561-562 — `# ` modifier.
-    if b < bytes.len() && (bytes[b] == b'#' || bytes[b] == Pound as u8 || bytes[b] == b'+') {
+    // c:561-562 — `if (*b == '#' || *b == Pound || *b == '+') b++;`
+    if at(b) == '#' || at(b) == Pound || at(b) == '+' {
         b += 1;
     }
-    // c:564-569 — skip leading Dnull (`$'...'` delimiters) inside `${...}`.
+    // c:564-569 — `e = b; if (br) while (*e == Dnull) e++;`
     let mut e = b;
     if br != 0 {
-        while e < bytes.len() && bytes[e] == Dnull as u8 {
+        while at(e) == Dnull {
             e += 1;
         }
     }
-    // c:570-580 — find end of parameter name.
-    if e < bytes.len() {
-        let eb = bytes[e];
-        if eb == Quest as u8
-            || eb == Star as u8
-            || eb == Stringg as u8
-            || eb == Qstring as u8
-            || eb == b'?'
-            || eb == b'*'
-            || eb == b'$'
-            || eb == b'-'
-            || eb == b'!'
-            || eb == b'@'
-        {
+    // c:570-579 — find end of parameter name.
+    let ec = at(e);
+    if ec == Quest
+        || ec == Star
+        || ec == Stringg
+        || ec == Qstring
+        || ec == '?'
+        || ec == '*'
+        || ec == '$'
+        || ec == '-'
+        || ec == '!'
+        || ec == '@'
+    {
+        e += 1; // c:574
+    } else if ec.is_ascii() && idigit(ec as u8) {
+        // c:575-577
+        while at(e).is_ascii() && idigit(at(e) as u8) {
             e += 1;
-        } else if idigit(eb) {
-            while e < bytes.len() && idigit(bytes[e]) {
-                e += 1;
-            }
-        } else {
-            // c:579 — `e = itype_end(e, INAMESPC, 0);`. Rust port has
-            // a simpler signature; INAMESPC matches identifier-name
-            // chars (alpha/digit/_).
-            let _ = INAMESPC;
-            // c:zle_tricky.c:579 — `e = itype_end(e, INAMESPC, 0);`
-            let span =
-                crate::ported::utils::itype_end(&s[e..], crate::ported::ztype_h::INAMESPC, false);
-            e += span;
         }
+    } else if e < slen {
+        // c:579 — `e = itype_end(e, INAMESPC, 0);`. The Rust `itype_end`
+        // returns a BYTE span, so convert it back to a char count.
+        let span = crate::ported::utils::itype_end(&s[bidx[e]..], INAMESPC, false);
+        e += s[bidx[e]..bidx[e] + span].chars().count();
     }
-    // c:583-590 — confirm cursor falls inside the name AND `n <= 0`
-    // (skipparens didn't fail).
+    // c:582-589 — `if (offs <= e - s && offs >= b - s && n <= 0)`: confirm
+    // the cursor falls inside the name and skipparens didn't fail.
     if offs <= e && offs >= b && n <= 0 {
-        // c:585-588 — skip trailing Dnull when `br` is set.
-        if br != 0 {
-            let mut pp = e;
-            while pp < bytes.len() && bytes[pp] == Dnull as u8 {
-                pp += 1;
-            }
-            let _ = pp;
-        }
+        // c:584-587 — `if (br) { p = e; while (*p == Dnull) p++; }`. C
+        // reassigns `p` here but never reads it again before returning,
+        // so the walk has no observable effect; kept for provenance.
         return Some(b);
     }
     None
@@ -1771,7 +1761,9 @@ pub fn get_comp_string() -> Option<String> {
     if let Some(m) = ZLEMETALINE.get() {
         *m.lock().unwrap() = zml.clone();
     }
-    let zlemetall = meta_snap.len() as i32; // length excluding the injected x
+    // c:1473 — `zlemetall -= parend` on the parbegin restart mutates the
+    // global for the whole restarted lex, so this mirror has to move too.
+    let mut zlemetall = meta_snap.len() as i32; // length excluding the injected x
     ZLEMETALL.store(zlemetall, Ordering::SeqCst);
 
     // c:1154 — pushheap() (matching popheap deferred to caller, c:662).
@@ -2237,30 +2229,45 @@ pub fn get_comp_string() -> Option<String> {
         crate::ported::utils::errflag
             .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::SeqCst); // c:1463
 
-        // c:1464-1480 — parbegin command-substitution restart.
+        // c:1464-1480 — parbegin command-substitution restart. The lexer
+        // records where a `` ` ``/`$(`/`<(`/`>(` opened around the cursor
+        // (lex.c:1353/1584/2163 SETPARBEGIN); C then re-runs the whole
+        // scan over just the SUBSTITUTION BODY so its first word is a
+        // command position. `linptr` is C's `zlemetaline + <offset>` —
+        // a pointer INTO the line, i.e. the tail from `off` on, not the
+        // whole line.
         if LEX_PARBEGIN.get() != -1 {
             let parend = LEX_PAREND.get();
+            // c:1469 — `linptr = zlemetaline + zlemetall + addedx - parbegin + 1`
             let off = zlemetall + addedx - LEX_PARBEGIN.get() + 1;
             let ub = zml.as_bytes();
             let li = off as isize;
+            // c:1470-1471 — a `$((` is arithmetic, not a substitution: leave it.
             let is_dollar_dparen = li >= 3
                 && (li as usize) < ub.len()
                 && ub[li as usize] == b'('
                 && ub[(li - 1) as usize] == b'('
                 && ub[(li - 2) as usize] == b'$';
-            if !is_dollar_dparen {
+            if !is_dollar_dparen && li >= 0 && (li as usize) <= zml.len() {
                 if parend >= 0 {
-                    let new_ll = zlemetall - parend;
-                    if new_ll >= 0
-                        && (new_ll as usize) <= zml.len()
-                        && zml.is_char_boundary(new_ll as usize)
+                    // c:1473-1474 — `zlemetall -= parend;
+                    // zlemetaline[zlemetall + addedx] = '\0';` — cut the
+                    // line off at the end of the substitution body. C
+                    // NUL-terminates at `zlemetall + addedx`, not at
+                    // `zlemetall`, so the injected `x` survives the cut.
+                    zlemetall -= parend;
+                    ZLEMETALL.store(zlemetall, Ordering::SeqCst);
+                    let cut = zlemetall + addedx;
+                    if cut >= 0
+                        && (cut as usize) <= zml.len()
+                        && zml.is_char_boundary(cut as usize)
                     {
-                        zml.truncate(new_ll as usize);
+                        zml.truncate(cut as usize);
                     }
                 }
                 zcontext_restore(); // c:1476
                 tt = None; // c:1477
-                linptr = zml.clone();
+                linptr = zml[(li as usize).min(zml.len())..].to_string();
                 continue 's_restart; // c:1478 goto start
             }
         }
@@ -2399,6 +2406,13 @@ pub fn get_comp_string() -> Option<String> {
         if WE.load(Ordering::SeqCst) > zlemetall {
             WE.store(zlemetall, Ordering::SeqCst);
         }
+
+        // c:1545-1547 — `if (tmp) { zlemetaline = tmp;
+        // zlemetall = strlen(zlemetaline); }` — the lex ran against a
+        // scratch copy, so the length mirror goes back to the real line
+        // (the parbegin restart above may have shortened it).
+        zlemetall = meta_snap.len() as i32;
+        ZLEMETALL.store(zlemetall, Ordering::SeqCst);
 
         set_noaliases(ona); // c:1562
 
@@ -2745,6 +2759,72 @@ pub fn get_comp_string() -> Option<String> {
             ADDEDX.store(0, Ordering::SeqCst);
         }
 
+        // c:1709-1726 — `if ((p = parambeg(s))) { … } else { … }`. This runs
+        // BEFORE the quote-form block below and decides which of two ways the
+        // lexer's quote markers get resolved:
+        //
+        //   * the word contains a parameter expression bracketing the cursor
+        //     (`parambeg` non-NULL) — EVERY `Dnull`/`Snull` in the word is
+        //     rewritten to a LITERAL `"`/`'` (c:1710-1714);
+        //   * otherwise — only the markers nested inside a `${…}` are
+        //     rewritten, tracked by a brace `level` counter (c:1716-1725).
+        //
+        // The first branch is load-bearing for `echo "$PA<TAB>`: rewriting the
+        // leading `Dnull` to a literal `"` makes the `*s == Dnull` test at
+        // c:1728 FAIL, so the quote-form block is skipped, `instring` stays
+        // `QT_NONE` and `qipre` stays empty. The `"` then remains part of `s`,
+        // and `check_param` (compcore.c:1113) splits the word into
+        // `IPREFIX="$"` / `PREFIX="PA"` and sets `ispar`, which
+        // `callcompfunc` turns into `compstate[context]=parameter`
+        // (compcore.c:578-579).
+        //
+        // Without this hunk the port took the quote-form branch instead:
+        // `compstate[quote]="` / `QIPREFIX="` / `PREFIX=$PA`, `check_param`
+        // never fired, `compstate[context]` stayed `command`, `_parameters`
+        // was never reached, and `_main_complete` fell through to
+        // `_approximate`, offering FILENAMES for `echo "$PA<TAB>`.
+        {
+            use crate::ported::zsh_h::{Inbrace, Outbrace, Qstring, Stringg};
+            let offs_now = OFFS.load(Ordering::SeqCst).max(0) as usize; // c:1708
+            let sc: Vec<char> = s.chars().collect();
+            if parambeg(&s, offs_now.min(sc.len())).is_some() {
+                // c:1710-1714 — every Dnull/Snull becomes a literal quote.
+                s = sc
+                    .iter()
+                    .map(|&c| {
+                        if c == dnull {
+                            '"'
+                        } else if c == snull {
+                            '\''
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+            } else {
+                // c:1716-1725 — only the markers inside a `${…}` are rewritten.
+                let mut level: i32 = 0;
+                let mut out = String::with_capacity(s.len());
+                for (i, &c) in sc.iter().enumerate() {
+                    if level != 0 && c == snull {
+                        out.push('\''); // c:1719-1720
+                    } else if level != 0 && c == dnull {
+                        out.push('"'); // c:1721-1722
+                    } else {
+                        if (c == Stringg || c == Qstring)
+                            && sc.get(i + 1).copied() == Some(Inbrace)
+                        {
+                            level += 1; // c:1723-1724
+                        } else if c == Outbrace {
+                            level -= 1; // c:1725
+                        }
+                        out.push(c);
+                    }
+                }
+                s = out;
+            }
+        }
+
         // c:1728-1776 — quote-form detection. When the word being completed
         // is the INSIDE of a quoted string, the lexer left the opening
         // quote as an `inull` marker (`Snull` for `'`, `Dnull` for `"`,
@@ -2763,14 +2843,16 @@ pub fn get_comp_string() -> Option<String> {
         // that branch on `$QIPREFIX` (Completion/Unix/Type/_remote_files,
         // Completion/Zsh/Type/_vars) took the unquoted path.
         //
-        // NOT ported from this hunk: c:1709-1726 (the `parambeg`/`${…}`
-        // level walk that rewrites Snull/Dnull to literal quotes) and
-        // c:1774-1776 (the BANGHIST `\!` sanitize, which rewrites `s` in
-        // place with `Bnull`). Neither can fire for the words this block
-        // accepts: c:1709-1726 only rewrites when the word is a parameter
-        // expansion (whose first char is `String` + `Inbrace`, failing the
-        // test below), and the BANGHIST walk only changes bytes the
-        // untokenize at the return already drops.
+        // NOT ported from this hunk: c:1774-1776 (the BANGHIST `\!`
+        // sanitize, which rewrites `s` in place with `Bnull`) — that walk
+        // only changes bytes the untokenize at the return already drops.
+        //
+        // c:1709-1726 IS now ported, immediately above. A previous revision
+        // of this comment claimed it "only rewrites when the word is a
+        // parameter expansion (whose first char is `String` + `Inbrace`)";
+        // c:521-590 (`parambeg`) has no such restriction — it returns
+        // non-NULL for a bare `$name` at the cursor anywhere in the word,
+        // `"$PA` included, and that is exactly the case the omission broke.
         {
             use crate::ported::zsh_h::{Qstring, Stringg, QT_DOLLARS, QT_DOUBLE, QT_SINGLE};
             let sc: Vec<char> = s.chars().collect();
@@ -5471,6 +5553,44 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: Option<usize> = parambeg("", 0);
+    }
+
+    /// c:521-590 — the two verdicts `get_comp_string` c:1709 branches on,
+    /// checked against the metafied token form the lexer really produces.
+    ///
+    /// `echo "$PA<TAB>` reaches c:1709 as `Dnull Qstring 'P' 'A'` with
+    /// `offs == 4`: the cursor IS inside the name, so `parambeg` returns
+    /// the name start (char index 2) and c:1710-1714 rewrites the `Dnull`
+    /// to a literal `"`. That makes the `*s == Dnull` test at c:1728 fail,
+    /// which is what keeps `instring`/`qipre` empty and lets `check_param`
+    /// (compcore.c:1113) set `IPREFIX="$"` / `PREFIX="PA"` and `ispar`.
+    ///
+    /// `ls "$HOME/<TAB>` reaches it as `Dnull Qstring 'H' 'O' 'M' 'E' '/'`
+    /// with `offs == 7`: the cursor is PAST the name (`e == 6`), so
+    /// `parambeg` returns None (c:582 `offs <= e - s` fails) and the
+    /// `Dnull` survives into the quote-form block — the pre-existing
+    /// behaviour for a quoted path, unchanged by the c:1709 port.
+    #[test]
+    fn parambeg_cursor_inside_vs_past_name_in_double_quotes() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zsh_h::{Dnull, Qstring};
+
+        let inside: String = [Dnull, Qstring, 'P', 'A'].iter().collect();
+        assert_eq!(
+            parambeg(&inside, 4),
+            Some(2),
+            "cursor inside the name of `\"$PA` must report the name start"
+        );
+
+        let past: String = [Dnull, Qstring, 'H', 'O', 'M', 'E', '/']
+            .iter()
+            .collect();
+        assert_eq!(
+            parambeg(&past, 7),
+            None,
+            "cursor past the name of `\"$HOME/` is not a parameter completion"
+        );
     }
 
     /// c:1024 — `has_real_token("")` empty returns false (no tokens).
