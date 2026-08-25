@@ -807,12 +807,12 @@ pub fn instmatch(
     // c:585-587 — zsfree(lastprebr); zsfree(lastpostbr); = NULL.
     if let Some(mx) = LASTPREBR.get() {
         if let Ok(mut g) = mx.lock() {
-            g.clear();
+            *g = None;
         }
     }
     if let Some(mx) = LASTPOSTBR.get() {
         if let Ok(mut g) = mx.lock() {
-            g.clear();
+            *g = None;
         }
     }
 
@@ -902,11 +902,8 @@ pub fn instmatch(
                 })
                 .unwrap_or_default()
         };
-        if let Ok(mut g) = LASTPREBR
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-        {
-            *g = prebr;
+        if let Ok(mut g) = LASTPREBR.get_or_init(|| std::sync::Mutex::new(None)).lock() {
+            *g = Some(prebr);
         }
         set_cs(ocs); // c:629
     }
@@ -969,11 +966,8 @@ pub fn instmatch(
                 })
                 .unwrap_or_default()
         };
-        if let Ok(mut g) = LASTPOSTBR
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-        {
-            *g = postbr;
+        if let Ok(mut g) = LASTPOSTBR.get_or_init(|| std::sync::Mutex::new(None)).lock() {
+            *g = Some(postbr);
         }
     }
     lastend.store(cs(), Relaxed); // c:672
@@ -1002,16 +996,14 @@ pub fn hasbrpsfx(m: &Cmatch, pre: Option<&str>, suf: Option<&str>) -> bool {
     }
 
     // c:698-701 — save state.
-    let op = LASTPREBR
+    let op: Option<String> = LASTPREBR
         .get()
         .and_then(|m| m.lock().ok())
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let os = LASTPOSTBR
+        .and_then(|g| g.clone());
+    let os: Option<String> = LASTPOSTBR
         .get()
         .and_then(|m| m.lock().ok())
-        .map(|g| g.clone())
-        .unwrap_or_default();
+        .and_then(|g| g.clone());
     let oline = ZLEMETALINE
         .get()
         .and_then(|m| m.lock().ok())
@@ -1031,12 +1023,12 @@ pub fn hasbrpsfx(m: &Cmatch, pre: Option<&str>, suf: Option<&str>) -> bool {
     // c:706 — lastprebr = lastpostbr = NULL.
     if let Some(mx) = LASTPREBR.get() {
         if let Ok(mut g) = mx.lock() {
-            g.clear();
+            *g = None;
         }
     }
     if let Some(mx) = LASTPOSTBR.get() {
         if let Ok(mut g) = mx.lock() {
-            g.clear();
+            *g = None;
         }
     }
 
@@ -1057,38 +1049,37 @@ pub fn hasbrpsfx(m: &Cmatch, pre: Option<&str>, suf: Option<&str>) -> bool {
     brpcs.store(opcs, Relaxed); // c:719
     brscs.store(oscs, Relaxed); // c:720
 
-    // c:722-725 — compare captured braces against pre/suf.
-    let lpb = LASTPREBR
+    // c:724-727 — compare captured braces against pre/suf. Both halves
+    // are NULL-vs-set tests in C (`(!pre && !lastprebr) || (pre &&
+    // lastprebr && !strcmp(pre, lastprebr))`), so an EMPTY-but-set
+    // `lastprebr` — what `get_comp_string` records for `cmd {b,<TAB>`,
+    // where nothing precedes the brace — must compare equal to an
+    // empty `pre`, not be treated as absent.
+    let lpb: Option<String> = LASTPREBR
         .get()
         .and_then(|m| m.lock().ok())
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let lsb = LASTPOSTBR
+        .and_then(|g| g.clone());
+    let lsb: Option<String> = LASTPOSTBR
         .get()
         .and_then(|m| m.lock().ok())
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let pre_ok = match pre {
-        None => lpb.is_empty(),
-        Some(p) => !lpb.is_empty() && p == lpb,
+        .and_then(|g| g.clone());
+    let pre_ok = match (pre, lpb.as_deref()) {
+        (None, None) => true,
+        (Some(p), Some(l)) => p == l,
+        _ => false,
     };
-    let suf_ok = match suf {
-        None => lsb.is_empty(),
-        Some(s) => !lsb.is_empty() && s == lsb,
+    let suf_ok = match (suf, lsb.as_deref()) {
+        (None, None) => true,
+        (Some(s), Some(l)) => s == l,
+        _ => false,
     };
     let ret = pre_ok && suf_ok;
 
-    // c:727-730 — restore lastprebr/lastpostbr.
-    if let Ok(mut g) = LASTPREBR
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
-        .lock()
-    {
+    // c:729-732 — restore lastprebr/lastpostbr.
+    if let Ok(mut g) = LASTPREBR.get_or_init(|| std::sync::Mutex::new(None)).lock() {
         *g = op;
     }
-    if let Ok(mut g) = LASTPOSTBR
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
-        .lock()
-    {
+    if let Ok(mut g) = LASTPOSTBR.get_or_init(|| std::sync::Mutex::new(None)).lock() {
         *g = os;
     }
 
@@ -2259,36 +2250,28 @@ pub fn accept_last() -> i32 {
     // c:1295-1318 — first accept: snapshot lastprebr/lastpostbr into
     // minfo, and force a re-list if any match's braces differ.
     if menuacc.load(Relaxed) == 0 {
-        let lpb = LASTPREBR
+        // c:1301-1303 — `minfo.prebr = ztrdup(lastprebr);
+        //                minfo.postbr = ztrdup(lastpostbr);`. NULL stays
+        // NULL, an empty-but-set value stays set (see hasbrpsfx).
+        let prebr_opt: Option<String> = LASTPREBR
             .get()
             .and_then(|m| m.lock().ok())
-            .map(|g| g.clone())
-            .unwrap_or_default();
-        let lsb = LASTPOSTBR
+            .and_then(|g| g.clone());
+        let postbr_opt: Option<String> = LASTPOSTBR
             .get()
             .and_then(|m| m.lock().ok())
-            .map(|g| g.clone())
-            .unwrap_or_default();
-        // c:1296-1299 — empty string == C's NULL.
-        let prebr_opt = if lpb.is_empty() {
-            None
-        } else {
-            Some(lpb.clone())
-        };
-        let postbr_opt = if lsb.is_empty() {
-            None
-        } else {
-            Some(lsb.clone())
-        };
+            .and_then(|g| g.clone());
         if let Ok(mut m) = MINFO
             .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
         {
-            m.prebr = prebr_opt.clone(); // c:1297
-            m.postbr = postbr_opt.clone(); // c:1299
+            m.prebr = prebr_opt.clone(); // c:1301
+            m.postbr = postbr_opt.clone(); // c:1303
         }
-        if LISTSHOWN.load(Relaxed) != 0 && (!lpb.is_empty() || !lsb.is_empty()) {
-            // c:1305-1316 — scan every match for a brace mismatch.
+        // c:1305 — `if (listshown && (lastprebr || lastpostbr))`: a NULL
+        // test, not an emptiness test.
+        if LISTSHOWN.load(Relaxed) != 0 && (prebr_opt.is_some() || postbr_opt.is_some()) {
+            // c:1309-1319 — scan every match for a brace mismatch.
             let groups = amatches
                 .get_or_init(|| std::sync::Mutex::new(Vec::new()))
                 .lock()

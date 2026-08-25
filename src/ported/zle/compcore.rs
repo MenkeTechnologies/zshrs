@@ -322,9 +322,11 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         return goto_compend(ret); // c:358 goto compend
     }
 
-    // c:359-361 — clear lastprebr/lastpostbr.
-    lastprebr_set(""); // c:359
-    lastpostbr_set(""); // c:360
+    // c:360-362 — clear lastprebr/lastpostbr. Runs AFTER `makecomplist`,
+    // so the values `get_comp_string` recorded are still live for the
+    // c:2999 brace filter in `add_match_data`.
+    lastprebr_set(None); // c:360
+    lastpostbr_set(None); // c:361
 
     let curpm = comppatmatch
         .get_or_init(|| Mutex::new(None))
@@ -4770,7 +4772,11 @@ pub fn addmatches(
             // never reached the match: makesuffixstr got `s=None` and the
             // char-based auto-remove-suffix was inert. Patch them on the just-
             // pushed match copy (the port's add_match_data returns a value).
-            {
+            //
+            // c:2560 — the whole patch is inside `if ((cm = add_match_data(…)))`,
+            // so a match REJECTED by the c:2999 brace filter must not have the
+            // previous match's rems/remf/disp written over it.
+            if cm.is_some() {
                 if let Ok(mut g) = crate::comp_match_handles::matches_arc().lock() {
                     if let Some(last) = g.last_mut() {
                         last.rems = dat.rems.clone(); // c:2560
@@ -4780,9 +4786,8 @@ pub fn addmatches(
                         }
                     }
                 }
+                added += 1;
             }
-            let _ = cm;
-            added += 1;
         } else {
             // c:2566
             if dat.apar.is_some() {
@@ -4919,6 +4924,11 @@ pub fn addmatches(
 /// `cline_matched` so the CLF_MATCHED state-machine update fires the
 /// same way as C, then performs path-prefix/suffix splicing via
 /// `bld_parts` to extend the Cline chain at the appropriate anchor.
+///
+/// Returns `None` — C's NULL at c:3000 — when the match is rejected by the
+/// unfinished-brace filter (`lastprebr`/`lastpostbr` + `hasbrpsfx`). Nothing
+/// is registered in that case: `mnum`, `ai->count` and the match list are all
+/// left untouched.
 #[allow(clippy::too_many_arguments)]
 pub fn add_match_data(
     // c:2643
@@ -4938,7 +4948,7 @@ pub fn add_match_data(
     suf: Option<&str>,
     flags: i32,
     exact: i32,
-) -> Cmatch {
+) -> Option<Cmatch> {
     // c:2663 — DPUTS(!line, "BUG: add_match_data() without cline")
     DPUTS!(line.is_none(), "BUG: add_match_data() without cline"); // c:2663
                                                                    // c:2656 — `Aminfo ai = (alt ? fainfo : ainfo);` — EVERY `ai->…` below
@@ -5371,6 +5381,43 @@ pub fn add_match_data(
     cm.remf = None;
     cm.disp = None; // c:2997
 
+    // c:2999-3000 — `if ((lastprebr || lastpostbr) &&
+    //                    !hasbrpsfx(cm, lastprebr, lastpostbr)) return NULL;`
+    //
+    // The brace filter, absent from the port entirely. When the word being
+    // completed sits in an UNFINISHED brace list with a comma before the
+    // cursor (`echo a{b,<TAB>`), `get_comp_string` (zle_tricky.c:2203-2213)
+    // records the text ahead of the `{` in `lastprebr` and the text after
+    // the last `}` in `lastpostbr`. Every candidate is then trial-inserted
+    // by `hasbrpsfx` and DROPPED unless it reproduces exactly that
+    // surrounding text — which is what makes the brace element the only
+    // thing being completed. Without the filter every candidate survived,
+    // so `echo a{b,<TAB>` listed the whole fasd/file corpus where zsh
+    // reports "No Matches": the stripped word `a` was still the match
+    // prefix, but nothing checked that inserting a candidate leaves `a`
+    // in front of the brace.
+    //
+    // Both operands are NULL-vs-set tests in C, so this must not be
+    // written as an emptiness test: `cmd {b,<TAB>` records an EMPTY but
+    // non-NULL `lastprebr` and still has to run the filter.
+    {
+        let (lpb, lsb) = (
+            crate::ported::zle::zle_tricky::LASTPREBR
+                .get()
+                .and_then(|m| m.lock().ok())
+                .and_then(|g| g.clone()),
+            crate::ported::zle::zle_tricky::LASTPOSTBR
+                .get()
+                .and_then(|m| m.lock().ok())
+                .and_then(|g| g.clone()),
+        );
+        if (lpb.is_some() || lsb.is_some())
+            && !crate::ported::zle::compresult::hasbrpsfx(&cm, lpb.as_deref(), lsb.as_deref())
+        {
+            return None; // c:3000
+        }
+    }
+
     // c:3002 — ai->line = join_clines(ai->line, line).
     if let Ok(mut g) = ai_ref.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(a) = g.as_mut() {
@@ -5514,7 +5561,7 @@ pub fn add_match_data(
         g.push(cm.clone());
     }
 
-    cm // c:3067 return cm
+    Some(cm) // c:3067 return cm
 }
 
 // `lookup_complist_flags` deleted — Rust-only 8-line helper. Inlined
@@ -6872,16 +6919,16 @@ fn env_iparam(name: &str) -> i32 {
     // params.c:3044
     crate::ported::params::getiparam(name) as i32
 }
-fn lastprebr_set(s: &str) {
+fn lastprebr_set(s: Option<&str>) {
     // zle_tricky.c lastprebr
-    if let Ok(mut g) = LASTPREBR.get_or_init(|| Mutex::new(String::new())).lock() {
-        *g = s.to_string();
+    if let Ok(mut g) = LASTPREBR.get_or_init(|| Mutex::new(None)).lock() {
+        *g = s.map(str::to_string);
     }
 }
-fn lastpostbr_set(s: &str) {
+fn lastpostbr_set(s: Option<&str>) {
     // zle_tricky.c lastpostbr
-    if let Ok(mut g) = LASTPOSTBR.get_or_init(|| Mutex::new(String::new())).lock() {
-        *g = s.to_string();
+    if let Ok(mut g) = LASTPOSTBR.get_or_init(|| Mutex::new(None)).lock() {
+        *g = s.map(str::to_string);
     }
 }
 
@@ -8231,6 +8278,7 @@ mod tests {
             0,
             0,
         );
+        let cm = cm.expect("no unfinished brace is recorded, so c:2999 must not reject");
         assert_eq!(cm.str.as_deref(), Some("match"));
         assert_eq!(cm.orig.as_deref(), Some("match-orig"));
         assert_eq!(cm.pre.as_deref(), Some("pre"));

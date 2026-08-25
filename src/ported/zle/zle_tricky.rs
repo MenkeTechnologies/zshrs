@@ -774,10 +774,14 @@ pub fn docomplete(lst: i32) -> i32 {
     let _active_guard = ActiveGuard;
     // c:611 — `comprecursive = 0;`
     crate::ported::zle::complist::COMPRECURSIVE.store(0, std::sync::atomic::Ordering::Relaxed);
-    // c:612 — `makecommaspecial(0);`. Absent from the port. It clears the
-    // lexer's "comma is a word separator" flag that `_arguments` sets while
-    // parsing a `{a,b}` spec; leaving it latched from a previous completion
-    // makes the NEXT completion's lexer split words at every comma.
+    // c:612 — `makecommaspecial(0);`. Clears the ISPECIAL bit on `,`
+    // (utils.c:4275-4277) that the brace scan at c:2021/c:2074 raises when
+    // the word sits in an unfinished `{a,b`; leaving it latched from a
+    // previous completion makes the NEXT completion quote commas.
+    //
+    // C's fourth call site, `makecommaspecial(0)` at c:689, has no
+    // counterpart here because the code path around it — the `chline`
+    // history-prepend branch at c:640-653 / c:676-696 — is itself unported.
     crate::ported::utils::makecommaspecial(false);
     tracing::debug!(target: "compsys_args", lst, "docomplete ENTER");
 
@@ -3389,25 +3393,35 @@ pub fn get_comp_string() -> Option<String> {
                 if hascom != 0 {
                     // c:2203-2213
                     if let Some(lp) = lastp {
-                        // c:2204-2210 — `*lastp = '\0';
-                        //   untokenize(lastprebr = ztrdup(quotename(s)));`
+                        // c:2204-2209 — `char sav = *lastp;
+                        //   *lastp = '\0';
+                        //   untokenize(lastprebr = ztrdup(s));
+                        //   *lastp = sav;`
+                        //
+                        // NOT `quotename(s)`: the port applied `quotename`
+                        // here on a citation that quoted C which does not
+                        // exist at c:2208. `lastprebr` is compared verbatim
+                        // against the text `instmatch` puts on the line
+                        // (compresult.c:626-628), so quoting it here made
+                        // every candidate mismatch whenever the word ahead
+                        // of the `{` held a character `quotename` escapes.
                         let pre: String = sv[..lp].iter().collect();
-                        let v = untokenize_ztokens(&quotename(&pre, instring));
-                        if let Ok(mut g) =
-                            LASTPREBR.get_or_init(|| Mutex::new(String::new())).lock()
-                        {
-                            *g = v;
+                        let v = untokenize_ztokens(&pre);
+                        if let Ok(mut g) = LASTPREBR.get_or_init(|| Mutex::new(None)).lock() {
+                            *g = Some(v);
                         }
                     }
                     // c:2211-2212 — `if ((lastpostbr = ztrdup(firsts)))
                     //                    untokenize(lastpostbr);`
-                    if let Some(f) = firsts {
-                        let post: String = sv[f.min(slen)..].iter().collect();
-                        if let Ok(mut g) =
-                            LASTPOSTBR.get_or_init(|| Mutex::new(String::new())).lock()
-                        {
-                            *g = untokenize_ztokens(&post);
-                        }
+                    // The assignment is UNCONDITIONAL — `ztrdup(NULL)` is
+                    // NULL — only the `untokenize` is guarded. The port
+                    // skipped the whole statement when `firsts` was NULL,
+                    // which left the PREVIOUS completion's value in place.
+                    if let Ok(mut g) = LASTPOSTBR.get_or_init(|| Mutex::new(None)).lock() {
+                        *g = firsts.map(|f| {
+                            let post: String = sv[f.min(slen)..].iter().collect();
+                            untokenize_ztokens(&post)
+                        });
                     }
                 }
                 // c:2214-2216 — `zsfree(s); s = ztrdup(predup); offs = boffs;`
@@ -4639,9 +4653,9 @@ pub static INBACKT: AtomicI32 = AtomicI32::new(0); // c:419
 pub static ORIGLINE: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
 
 /// Port of `mod_export char *lastprebr` from `Src/Zle/zle_tricky.c`.
-pub static LASTPREBR: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+pub static LASTPREBR: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new(); // zle_tricky.c
 /// Port of `mod_export char *lastpostbr` from `Src/Zle/zle_tricky.c`.
-pub static LASTPOSTBR: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+pub static LASTPOSTBR: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new(); // zle_tricky.c
 
 /// Port of `mod_export char *compquote` from `Src/Zle/zle_tricky.c`.
 /// `$compstate[quote]` — current quoting context character.
