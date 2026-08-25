@@ -2512,6 +2512,22 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 // Single quoted string - everything literal until '
                 add(Snull);
                 loop {
+                    // c:1290 `STOPHIST` — `stophist += 4` (zsh.h:2267) for the
+                    // duration of the scan, paired with c:1316 `ALLOWHIST`
+                    // below. This is what makes `!` LITERAL inside `'...'`:
+                    // history expansion runs at the character-input layer, so
+                    // the lexer has to tell it to stand down while it consumes
+                    // a single-quoted string. `ihgetc` gates on it at
+                    // hist.c:429 (`if (!stophist && …) c = histsubchar(c)`),
+                    // ported at hist.rs:442.
+                    //
+                    // Unported, `print -r -- 'a!b'` expanded `!b` and died with
+                    // `event not found: b`, then left the line unterminated at
+                    // a `quote>` continuation prompt. Real zsh prints `a!b`.
+                    // C re-applies it per outer iteration, so the RCQUOTES
+                    // `''` re-entry below is covered too.
+                    crate::ported::hist::stophist
+                        .fetch_add(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst);
                     let inner_loop_done = loop {
                         let ch = hgetc();
                         match ch {
@@ -2577,6 +2593,11 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             }
                         }
                     };
+                    // c:1316 `ALLOWHIST` — `stophist -= 4`. Placed before the
+                    // c:1317 `if (c != '\'')` bail-out so every exit from the
+                    // scan restores the count, exactly as C does.
+                    crate::ported::hist::stophist
+                        .fetch_sub(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst);
                     if inner_loop_done || unmatched != '\0' {
                         break;
                     }
@@ -2638,6 +2659,11 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 add(Tick);
                 cmdpush(CS_BQUOTE as u8);
                 SETPARBEGIN!(); // c:1353
+                // c:1354 — `inquote = 0;`. Tracks whether the backtick body is
+                // currently inside a single-quoted string, so c:1369-1374 can
+                // suspend history expansion for exactly that span (`!` is
+                // literal inside `\`…'a!b'…\``, live outside it).
+                let mut inquote = false;
                 loop {
                     let ch = hgetc();
                     match ch {
@@ -2667,7 +2693,25 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             // CSHJUNKIEQUOTES: bare \n terminates.
                             break;
                         }
-                        Some(ch) => add(ch),
+                        Some(ch) => {
+                            add(ch); // c:1368
+                            // c:1369-1374 — a `'` toggles `inquote`; entering
+                            // the quote raises STOPHIST, leaving it lowers.
+                            if ch == '\'' {
+                                inquote = !inquote;
+                                if inquote {
+                                    crate::ported::hist::stophist.fetch_add(
+                                        crate::ported::zsh_h::STOPHIST_DELTA,
+                                        Ordering::SeqCst,
+                                    ); // c:1371
+                                } else {
+                                    crate::ported::hist::stophist.fetch_sub(
+                                        crate::ported::zsh_h::STOPHIST_DELTA,
+                                        Ordering::SeqCst,
+                                    ); // c:1373
+                                }
+                            }
+                        }
                         None => {
                             LEX_LEXSTOP.set(true);
                             unmatched = '`';
@@ -2679,6 +2723,14 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             break;
                         }
                     }
+                }
+                // c:1377-1378 — `if (inquote) ALLOWHIST` — an UNTERMINATED
+                // single quote inside the backticks still has to give the
+                // count back, or stophist leaks upward and silently disables
+                // history expansion for the rest of the session.
+                if inquote {
+                    crate::ported::hist::stophist
+                        .fetch_sub(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst);
                 }
                 // c:1379 — `cmdpop();` matches c:1352 push.
                 cmdpop();
@@ -2880,15 +2932,26 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
         let mut pct = 0; // parenthesis count
         let mut brct = 0; // bracket count
         let mut bct = 0; // brace count (for ${...})
-        let mut intick = false; // inside backtick
+        // c:1516 — `int intick = 0`. A TRISTATE, not a flag: 0 = outside
+        // backticks, 1 = inside backticks, 2 = inside backticks AND inside a
+        // single-quoted string within them. State 2 is what suspends history
+        // expansion (c:1595), so modelling this as a bool made `!` live inside
+        // `"\`…'a!b'…\`"`, where zsh keeps it literal.
+        let mut intick = 0i32; // inside backtick
         let is_math = endchar == ')' || endchar == ']' || LEX_INFOR.get() > 0;
 
         // c:1643-1657 — on exit, drain matched-but-unpopped pushes:
         // every CS_BQUOTE (if `intick`), CS_BRACEPAR + (CS_CURSH when
         // it was set) (for each remaining bct level). Wrapped via
         // closure so success + every early Err goes through cleanup.
-        let cleanup = |intick: bool, bct: i32| {
-            if intick {
+        let cleanup = |intick: i32, bct: i32| {
+            // c:1642-1643 — `if (intick == 2) ALLOWHIST` — an unterminated
+            // single quote inside backticks must still restore the count.
+            if intick == 2 {
+                crate::ported::hist::stophist
+                    .fetch_sub(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst);
+            }
+            if intick != 0 {
                 cmdpop();
             }
             for _ in 0..bct {
@@ -2899,7 +2962,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
         loop {
             let c = hgetc();
             let c = match c {
-                Some(c) if c == endchar && !intick && bct == 0 => {
+                Some(c) if c == endchar && intick == 0 && bct == 0 => {
                     if is_math && (pct > 0 || brct > 0) {
                         add(c);
                         if c == ')' {
@@ -2939,7 +3002,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                         Some(c)
                             if c == '$'
                                 || c == '\\'
-                                || (c == '}' && !intick && bct > 0)
+                                || (c == '}' && intick == 0 && bct > 0)
                                 || c == endchar
                                 || c == '`'
                                 || (endchar == ']'
@@ -2989,7 +3052,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 }
 
                 '$' => {
-                    if intick {
+                    if intick != 0 {
                         add(c);
                         continue;
                     }
@@ -3036,7 +3099,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 }
 
                 '}' => {
-                    if intick || bct == 0 {
+                    if intick != 0 || bct == 0 {
                         add(c);
                     } else {
                         // c:1575/1577 — `cmdpop()` for inner brace, plus
@@ -3053,14 +3116,42 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 // `cmdpop()` on exit.
                 '`' => {
                     add(Qtick);
-                    if intick {
-                        SETPAREND!(); // c:1587
-                        cmdpop();
-                    } else {
+                    // c:1581-1582 — `if (intick == 2) ALLOWHIST` — a backtick
+                    // closing while still inside a single quote gives the
+                    // count back before the state is dropped.
+                    if intick == 2 {
+                        crate::ported::hist::stophist
+                            .fetch_sub(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst);
+                    }
+                    // c:1583 — `if ((intick = !intick))`. C's `!` maps both 1
+                    // and 2 to 0, so a backtick always closes.
+                    intick = if intick != 0 { 0 } else { 1 };
+                    if intick != 0 {
                         SETPARBEGIN!(); // c:1584
                         cmdpush(CS_BQUOTE as u8);
+                    } else {
+                        SETPAREND!(); // c:1587
+                        cmdpop();
                     }
-                    intick = !intick;
+                }
+
+                // c:1591-1598 — `case '\'':` — a single quote INSIDE backticks
+                // toggles between state 1 and 2, raising/lowering STOPHIST.
+                // Outside backticks it falls through to the default `add(c)`,
+                // because dquote_parse only ever runs where `'` is literal.
+                '\'' if intick != 0 => {
+                    if intick == 1 {
+                        intick = 2;
+                        crate::ported::hist::stophist
+                            .fetch_add(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst);
+                        // c:1595
+                    } else {
+                        intick = 1;
+                        crate::ported::hist::stophist
+                            .fetch_sub(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst);
+                        // c:1597
+                    }
+                    add(c);
                 }
 
                 '(' => {
@@ -3098,7 +3189,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 }
 
                 '"' => {
-                    if intick || (endchar != '"' && bct == 0) {
+                    if intick != 0 || (endchar != '"' && bct == 0) {
                         add(c);
                     } else if bct > 0 {
                         // c:1620 — `cmdpush(CS_DQUOTE); err =
