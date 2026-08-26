@@ -60,12 +60,14 @@
 //!     two. This port copies `exp` verbatim instead of reproducing that.
 //!   * sh:89/93 `setopt aliases` / `setopt NO_aliases` around the `eval` —
 //!     no `eval` here, so nothing to guard.
-//!   * sh:10 `setopt localoptions nonomatch`. `NOMATCH` is read by
-//!     `zglob` (`glob.rs:1478`, the "no matches found: %s" arm at
-//!     `glob.rs:1597`); the entry this port globs through is
-//!     `glob_path` → `globdata_glob`, which never consults it. So the
-//!     option flip has no reader on this path and is left out rather
-//!     than faked. `glob_subst` reproduces the OBSERVABLE half —
+//!   * sh:10 `setopt localoptions nonomatch` — NOW PORTED, see the guard in
+//!     `_expand_with`. It was previously skipped on the rationale that
+//!     `NOMATCH`'s only reader here is `zglob` (`glob.rs:1478`, the
+//!     "no matches found: %s" arm at `glob.rs:1597`) and that this port globs
+//!     via `glob_path` → `globdata_glob`, which never consults it. That
+//!     reader enumeration was incomplete — `$-` also reads NOMATCH
+//!     (`zshletters[]`, Src/options.c:296, maps `3` to `-NOMATCH`) — so the
+//!     flip WAS observable. `glob_subst` still reproduces the other half:
 //!     a pattern matching nothing comes back as itself.
 
 use crate::compsys::ported::_description::_description;
@@ -106,6 +108,33 @@ pub fn _expand() -> i32 {
 /// `while getopts gsco opt; do force="$force$opt"; done`.
 pub fn _expand_with(args: &[String]) -> i32 {
     let _fn_scope = FnScope::enter("_expand");
+
+    // sh:10  `setopt localoptions nonomatch`.
+    //
+    // This WAS skipped, on the rationale that `NOMATCH`'s only reader on this
+    // path is `zglob` (which this port does not route through). That
+    // enumeration was incomplete: `$-` is a second reader. `zshletters[]`
+    // (Src/options.c:296) maps the letter `3` to `-NOMATCH`, i.e. `3` appears
+    // in `$-` exactly when NOMATCH is UNSET — so while zsh's `_expand` runs,
+    // `$-` legitimately gains a `3`, and a port that skips the flip reports a
+    // different `$-` than zsh for the duration.
+    //
+    // `localoptions` scopes EVERY option change to the function, restored by
+    // `doshfunc`. `FnScope` restores only the line number, and this port has no
+    // general scoped-option substrate. This function changes exactly ONE
+    // option, so a targeted save/restore is behaviourally equivalent here —
+    // deliberately narrower than `localoptions`, and noted as such so the next
+    // port that needs two options does not assume this covers it.
+    struct NomatchGuard(Option<bool>);
+    impl Drop for NomatchGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.0 {
+                crate::ported::options::opt_state_set("nomatch", prev);
+            }
+        }
+    }
+    let _nomatch = NomatchGuard(crate::ported::options::opt_state_get("nomatch"));
+    crate::ported::options::opt_state_set("nomatch", false);
 
     // sh:12  [[ _matcher_num -gt 1 ]] && return 1
     if getiparam("_matcher_num") > 1 {
