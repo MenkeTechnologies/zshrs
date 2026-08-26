@@ -1799,7 +1799,17 @@ pub fn get_comp_string() -> Option<String> {
                 nb.push(b' '); // c:945
             }
             nb.extend_from_slice(&bytes[cs..]);
-            zml = String::from_utf8_lossy(&nb).into_owned();
+            // `nb` is the METAFIED line (from ZLEMETALINE, produced by
+            // `metafy_line` → `zlelineasstring`, compcore.rs:6944) with one
+            // ASCII byte spliced in. A metafied line is not valid UTF-8 by
+            // construction — `Meta` is 0x83 and each escape is `Meta` plus
+            // `c ^ 32` — so `from_utf8_lossy` turned every escape into
+            // U+FFFD and, being 3 bytes wide, shifted every offset after it
+            // (`wb`/`we`/`zlemetacs` then indexed the wrong bytes and the
+            // `x` the epilogue at c:1385 chucks survived on the line).
+            // Same reasoning as `zlelineasstring` itself
+            // (zle_utils.rs:221-225): build the String from the bytes as-is.
+            zml = unsafe { String::from_utf8_unchecked(nb) };
             addedx = if addspace { 2 } else { 1 }; // c:947
         } else {
             addedx = 0; // c:949
@@ -2224,6 +2234,20 @@ pub fn get_comp_string() -> Option<String> {
                 clwords.push(String::new());
             }
             clwords[wordpos as usize] = word;
+            // c:1424 `sl = strlen(tokstr)` is a BYTE count and c:1444's
+            // `chuck_at` is a BYTE index into the same string. This port
+            // CANNOT use either directly: a token marker is one C byte but
+            // the port stores it as a `char` in U+0080..U+00A2, i.e. TWO
+            // UTF-8 bytes, so `zlemetacs - wb` (a metafied LINE byte offset)
+            // and a byte index into `tokstr` are not commensurate. Counting
+            // in chars keeps the two in step for a word whose only non-ASCII
+            // content is markers. It does NOT for a word carrying metafied
+            // multibyte text — `echo ★` (two `Meta` escapes) chucks in the
+            // wrong place — but converting this to bytes made the marker case
+            // (`echo "${(`) split a marker char and panic in `parambeg`. The
+            // real fix is a C-byte <-> port-byte index map (the shape
+            // `crate::comp_word_tok::tok_index` uses for `offs`), which is
+            // out of scope here; see the report.
             let sl = clwords[wordpos as usize].chars().count() as i32;
             // c:1433-1445 — cursor word: remove injected `x`.
             let prev_wordpos = wordpos;
@@ -2239,6 +2263,8 @@ pub fn get_comp_string() -> Option<String> {
                 } else {
                     word_diff
                 };
+                // c:1444 — `chuck(&clwords[wordpos-1][chuck_at])`. Char-indexed
+                // for the reason spelled out at the `sl` computation above.
                 let w = &mut clwords[prev_wordpos as usize];
                 if let Some((byte_at, _)) = w.char_indices().nth(chuck_at.max(0) as usize) {
                     w.remove(byte_at);
@@ -2450,7 +2476,9 @@ pub fn get_comp_string() -> Option<String> {
                             let end = (cs + addedx as usize).min(bytes.len());
                             if cs < end {
                                 bytes.drain(cs..end);
-                                *g = String::from_utf8_lossy(&bytes).into_owned();
+                                // Metafied line (see the addx splice above):
+                                // rebuild byte-for-byte, never lossily.
+                                *g = unsafe { String::from_utf8_unchecked(bytes) };
                             }
                         }
                     }
@@ -2812,7 +2840,9 @@ pub fn get_comp_string() -> Option<String> {
                     let end = (cs + addedx as usize).min(bytes.len());
                     if cs < end {
                         bytes.drain(cs..end);
-                        *g = String::from_utf8_lossy(&bytes).into_owned();
+                        // Metafied line (see the addx splice at c:1152):
+                        // rebuild byte-for-byte, never lossily.
+                        *g = unsafe { String::from_utf8_unchecked(bytes) };
                     }
                 }
             }
@@ -3749,26 +3779,16 @@ pub fn inststrlen(
     if len == -1 {
         len = str.len() as i32;
     }
-    // `len` is a BYTE count: C's `strncpy(zlemetaline + zlemetacs, str, len)`
-    // copies raw bytes off a metafied buffer and does not care whether it
-    // splits a multibyte character. A Rust `&str` cannot hold a partial
-    // character, and slicing at a non-boundary PANICS, so clamp DOWN to the
-    // nearest boundary — dropping the straddled character rather than
-    // corrupting the line or aborting the shell.
-    //
-    // Observed crash (release build, `productsign --keychain --<TAB>`):
-    //   zle_tricky.rs:2838 end byte index 1 is not a char boundary;
-    //   it is inside '\u{fffd}' (bytes 0..3 of string)
-    // — a caller handed len=1 for a string whose first character is a
-    // 3-byte replacement char. Both the meta and the wide path sliced
-    // `str` by this count; neither clamped.
-    fn safe_prefix_len(s: &str, n: usize) -> usize {
-        let mut n = n.min(s.len());
-        while n > 0 && !s.is_char_boundary(n) {
-            n -= 1;
-        }
-        n
-    }
+    // `len` is a BYTE count and both C paths are byte-exact:
+    // `strncpy(zlemetaline + zlemetacs, str, len)` on the meta side,
+    // `ztrduppfx(str, len)` on the wide side. `str` is a METAFIED string on
+    // every path (the wide side proves it — C hands the prefix straight to
+    // `stringaszleline`, which unmetafies), so it is not valid UTF-8 by
+    // construction and must never be sliced on a UTF-8 boundary: an earlier
+    // clamp-down-to-a-boundary silently dropped the straddled byte, and the
+    // `insert_str` boundary back-off moved the splice point off `zlemetacs`.
+    // Take exactly `len` bytes, clamped only by the string's own length.
+    let take = (len as usize).min(str.len());
     // c:2237 — `if (zlemetaline != NULL) { meta path } else { wide path }`
     let zml_active = ZLEMETALINE.get().is_some();
     if zml_active {
@@ -3777,23 +3797,21 @@ pub fn inststrlen(
         // we splice directly into ZLEMETALINE.
         if let Some(m) = ZLEMETALINE.get() {
             if let Ok(mut g) = m.lock() {
-                let mut cs = (ZLEMETACS.load(Ordering::SeqCst) as usize).min(g.len());
-                // C indexes `zlemetaline` by byte, but a Rust `String` can
-                // only be split on a char boundary, so back off to the
-                // nearest one. (The previous `from_utf8_lossy` split
-                // silently rewrote a straddled character as U+FFFD.)
-                while cs > 0 && !g.is_char_boundary(cs) {
-                    cs -= 1;
-                }
-                let take = safe_prefix_len(str, len as usize);
+                let cs = (ZLEMETACS.load(Ordering::SeqCst) as usize).min(g.len());
                 // c:2238-2239 — `spaceinline(len)` grows the line and shifts
                 // only the bytes from the cursor onwards; `strncpy` then
-                // drops `str` into the hole. `String::insert_str` is exactly
-                // that pair: amortised growth plus one memmove of the tail.
-                // Rebuilding the whole line instead made every insert copy
-                // the entire buffer, so splicing n expansions into the line
-                // (`ls **/<TAB>`) cost O(n^2) bytes copied.
-                g.insert_str(cs, &str[..take]);
+                // drops `str` into the hole. `Vec::splice` over the String's
+                // bytes is exactly that pair: amortised growth plus one
+                // memmove of the tail. Rebuilding the whole line instead made
+                // every insert copy the entire buffer, so splicing n
+                // expansions into the line (`ls **/<TAB>`) cost O(n^2) bytes
+                // copied. The byte view is required because the line is
+                // metafied — `String::insert_str` asserts a char boundary at
+                // `cs`, which a `Meta` escape does not satisfy.
+                unsafe {
+                    g.as_mut_vec()
+                        .splice(cs..cs, str.as_bytes()[..take].iter().copied());
+                }
                 ZLEMETALL.store(g.len() as i32, Ordering::SeqCst); // c:2239 spaceinline updates ZLEMETALL
                 if move_cursor {
                     // c:2240
@@ -3804,7 +3822,10 @@ pub fn inststrlen(
         return len;
     }
     // c:2244-2253 — non-meta wide path.
-    let instr = &str[..safe_prefix_len(str, len as usize)]; // c:2247 ztrduppfx(str, len)
+    // c:2247 `instr = ztrduppfx(str, len)` — the first `len` BYTES of the
+    // metafied string; `stringaszleline` below unmetafies them.
+    let instr_owned = unsafe { String::from_utf8_unchecked(str.as_bytes()[..take].to_vec()) };
+    let instr = instr_owned.as_str();
     let zlestr: Vec<char> = stringaszleline(instr, 0, None, None, None); // c:2248
     let zlelen = zlestr.len();
     spaceinline(zlelen as i32); // c:2249
