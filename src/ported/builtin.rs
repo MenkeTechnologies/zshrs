@@ -13214,11 +13214,27 @@ pub fn bin_dot(
         crate::ported::utils::zerr("job table full or recursion limit exceeded");
         128 - 2 // c:6143 — SOURCE_ERROR = 2 → 126
     } else {
+        // c:Src/init.c:1618-1641 — source() has TWO arms and they are not
+        // interchangeable:
+        //   * `if (prog) { … execode(prog, 1, 0, "filecode"); … }` (c:1618-1622)
+        //     — the file was ALREADY COMPILED (`try_source_file` found a
+        //     `.zwc` the user made with `zcompile`), so there is nothing left
+        //     to lex and the whole program runs at once.
+        //   * `else { /* loop through the file to be sourced */ switch
+        //     (loop(0, 0)) … }` (c:1625-1641) — a plain text file is parsed
+        //     and executed ONE EVENT AT A TIME.
+        // The second arm is load-bearing: `loop()` re-enters the lexer after
+        // every command, so an `alias` (or `setopt rcquotes`, c:Src/lex.c:1326)
+        // that a line INSTALLS is in force when the NEXT line is lexed.
+        // Compiling the whole file first — which is what `execute_script`
+        // does — lexes every line with the state the file started with, so
+        // `alias greet=…` on line 1 followed by `greet` on line 2 reported
+        // `command not found`. Bug #1087.
         match zwc_src {
-            Some(src) => crate::ported::exec::execute_script(&src).unwrap_or(1), // c:1566 prog path
+            Some(src) => crate::ported::exec::execute_script(&src).unwrap_or(1), // c:1621 prog path
             None => match fs::read_to_string(&path) {
-                // c:6140
-                Ok(src) => crate::ported::exec::execute_script(&src).unwrap_or(1),
+                // c:1626-1627 — `switch (loop(0, 0))`
+                Ok(src) => crate::fusevm_bridge::source_file_per_command(&src).unwrap_or(1),
                 // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
                 Err(_) => 128 - 2,
             },

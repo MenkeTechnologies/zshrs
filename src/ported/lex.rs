@@ -261,10 +261,17 @@ pub fn zshlex() {
     }
 
     // lex.c:307-310 — track whether we just saw a newline.
-    // C uses `inbufct` to distinguish "newline at EOF" (=1)
-    // from "newline mid-input" (=-1); zshrs reads `pos < len`.
+    // c:310 — `isnewlin = (inbufct) ? -1 : 1;`. `inbufct` is what is left
+    // in the CURRENT input buffer. zshrs's `LEX_INPUT` window stands in for
+    // that buffer, so "characters left" is `pos < len` — correct for a
+    // string, which `inpush` buffers whole. A FILE is line-buffered in C
+    // (`inputline`, c:Src/input.c:366), leaving `inbufct == 0` at every line
+    // end; zshrs holds the whole body in one window, so the file case is
+    // flagged instead (see `LEX_FILE_WINDOW_STRIN`).
     if tok() != NEWLIN {
         LEX_ISNEWLIN.set(0);
+    } else if LEX_FILE_WINDOW_STRIN.get() != 0 {
+        LEX_ISNEWLIN.set(1); // c:310 — one line per buffer ⇒ inbufct == 0
     } else {
         LEX_ISNEWLIN.set(if LEX_POS.get() < LEX_INPUT.with_borrow(|s| s.len()) {
             -1
@@ -1176,6 +1183,47 @@ thread_local! {
     )};
     /// `int isnewlin` (lex.c:119).
     pub static LEX_ISNEWLIN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// zshrs-only: `0` when the `LEX_INPUT` window holds a STRING unit;
+    /// otherwise the `input::strin` nesting depth at which a sourced FILE
+    /// was installed as the window.
+    ///
+    /// It supplies what C reads straight out of its input globals in two
+    /// places, both of which distinguish a file from a string:
+    ///
+    ///   * `c:Src/lex.c:310` — `isnewlin = (inbufct) ? -1 : 1;` — the
+    ///     top-level event boundary. `1` ends the event, `-1` chains the
+    ///     next sublist into it (`par_event`, c:Src/parse.c:657).
+    ///   * `c:Src/input.c:330` — `if (((inbufflags & INP_LINENO) || !strin)
+    ///     && lastc == '\n') lineno++;` — the line counter behind
+    ///     `$LINENO` and every `file:N:` diagnostic.
+    ///
+    /// C gets both for free because its two input sources are structurally
+    /// different. A STRING (`-c`, `eval`, a `$(…)` body) arrives via
+    /// `inpush` under `strinbeg` (`parse_string`, c:Src/exec.c:283-298), so
+    /// `inbufct` covers the whole remainder — every interior newline reads
+    /// as `-1`, one event for the lot — and `strin` is set, so nothing is
+    /// counted twice when the same text is re-lexed. A FILE is read through
+    /// `inputline` (c:Src/input.c:366) with `strin == 0`: `inbufct` is 0 at
+    /// every line end, so each line is its own event, and every newline
+    /// counts.
+    ///
+    /// zshrs has ONE window for both, sized to the whole body, and the
+    /// sourced-file driver has to set `strin` anyway — a drained window
+    /// must report EOF rather than fall through to `inputline` and steal
+    /// the outer reader's next line. So "characters left" and "strin" both
+    /// read as the string case, and this records the truth instead. The
+    /// depth (not a bool) is what keeps the `lineno` exemption honest: a
+    /// NESTED string push inside the file — `parsestrnoerr` re-lexing a
+    /// here-document body (c:Src/lex.c:1720), `parse_isolated` on a `$(…)`
+    /// body — runs one `strinbeg` deeper, so `strin != depth` there and C's
+    /// suppression still applies.
+    ///
+    /// `lex_init` zeroes it, so a freshly installed window is a string
+    /// until a caller says otherwise; the two sites that park and restore
+    /// the window — `parse_isolated` and
+    /// `ShellExecutor::execute_script_per_command` — save and restore it
+    /// alongside `LEX_INPUT` / `LEX_POS`.
+    pub static LEX_FILE_WINDOW_STRIN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int lex_add_raw` (lex.c:161).
     pub static LEX_LEX_ADD_RAW: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `static char *tokstr_raw` (lex.c:165).
@@ -4977,6 +5025,11 @@ pub fn lex_init(input: &str) {
         s.push_str(input);
     });
     LEX_POS.set(0);
+    // A freshly installed window is a STRING unit until a caller says
+    // otherwise — that is what `inpush` gives C for every nested parse
+    // (`parse_string`, c:Src/exec.c:283). The sourced-file driver re-arms
+    // this right after `parse_init`; see `LEX_FILE_WINDOW_STRIN`.
+    LEX_FILE_WINDOW_STRIN.set(0);
 }
 
 // Direct port of the anonymous enum at `Src/lex.c:483-487`:
@@ -5169,8 +5222,21 @@ pub(crate) fn hgetc() -> Option<char> {
     // length for the rest of the file.
     let counts_lineno = !via_inbuf || {
         let f = crate::ported::input::inbufflags.with(|f| f.get());
+        let strin_now = crate::ported::input::strin.with(|s| s.get());
         (f & crate::ported::zsh_h::INP_LINENO) != 0
-            || crate::ported::input::strin.with(|s| s.get()) == 0
+            || strin_now == 0
+            // A sourced FILE runs with `strin == 0` in C (`source` points
+            // SHIN at it, c:Src/init.c:1584), so every newline counts —
+            // including one that reaches the lexer through the inbuf stack
+            // because an alias expansion was in flight over it. zshrs's
+            // driver has to set `strin` to keep the drained window from
+            // stealing the outer reader's input, which would otherwise
+            // suppress that count and leave every line after the first
+            // alias expansion reporting one line short. Only the driver's
+            // OWN depth is exempt: a nested `strinbeg` (a here-document
+            // body re-lexed by `parsestrnoerr`, a `$(…)` body) is a real
+            // string push and stays suppressed. See `LEX_FILE_WINDOW_STRIN`.
+            || strin_now == LEX_FILE_WINDOW_STRIN.get()
     };
     if c == '\n' && counts_lineno {
         LEX_LINENO.set(LEX_LINENO.get() + 1);

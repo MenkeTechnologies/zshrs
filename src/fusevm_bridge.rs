@@ -555,6 +555,40 @@ pub fn drain_compinit_bg_hook() {
     }
 }
 
+/// Run the body of a PLAIN sourced file through the per-command loop —
+/// `ShellExecutor::execute_script_per_command`, the port of the
+/// `switch (loop(0, 0))` arm of C's `source()` (c:Src/init.c:1625-1641).
+///
+/// `bin_dot` (`src/ported/builtin.rs`, C's `Src/builtin.c:6118`
+/// `ret = source(enam = buf);`) is the only caller. It lives HERE rather
+/// than beside the other executor accessors in `src/ported/exec.rs`
+/// because everything under `src/ported/` is a line-by-line port and
+/// `build.rs` rejects a `fn` there with no C counterpart — this bridge
+/// shim has none, since C's `source()` reaches its interpreter through
+/// plain globals where Rust needs an explicit executor handle.
+///
+/// Executor ladder, in the order the sibling wrappers in `exec.rs` use:
+/// the innermost ACTIVE executor when one is in scope — inside
+/// `$(source f)` that is the sub-VM that owns the capture, which is why
+/// the substitution still collects the file's output — and the installed
+/// session executor otherwise, for a `source` that runs before the main
+/// loop's first `execode` has entered a context. `Ok(0)` with neither,
+/// matching `exec::execute_script`'s no-executor return.
+pub fn source_file_per_command(src: &str) -> Result<i32, String> {
+    if let Some(r) = try_with_executor(|exec| exec.execute_script_per_command(src)) {
+        return r;
+    }
+    let ptr = SESSION_EXECUTOR_PTR.with(|c| c.get());
+    match ptr {
+        // SAFETY: per with_session_context.
+        Some(ptr) => {
+            let _ctx = ExecutorContext::enter(unsafe { &mut *ptr });
+            unsafe { (*ptr).execute_script_per_command(src) }
+        }
+        None => Ok(0),
+    }
+}
+
 /// RAII guard that sets/clears the thread-local executor pointer.
 ///
 /// Idempotent: calling `enter` when a context is already active is a no-op

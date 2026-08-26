@@ -825,7 +825,9 @@ pub struct ShellExecutor {
 /// continuation. The `LEX_INPUT` window + `strin` flag is the working
 /// equivalent.
 pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
-    use crate::ported::lex::{tok, LEXERR, LEX_INPUT, LEX_LINENO, LEX_POS, LEX_UNGET_BUF};
+    use crate::ported::lex::{
+        tok, LEXERR, LEX_INPUT, LEX_LINENO, LEX_POS, LEX_UNGET_BUF, LEX_FILE_WINDOW_STRIN,
+    };
 
     // Inline Rust FFI: rewrite every `rust { ... }` block into a
     // `__rust_compile '<base64>' <line>` command before it reaches the lexer.
@@ -845,6 +847,9 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     let saved_pos = LEX_POS.get();
     let saved_unget = LEX_UNGET_BUF.with_borrow(|b| b.clone());
     let saved_lineno = LEX_LINENO.get(); // c:291 oldlineno
+    // The nested parse installs its own window; `lex_init` marks it a
+    // string unit. Put the outer window's kind back with the window.
+    let saved_file_window = LEX_FILE_WINDOW_STRIN.get();
                                          // input.rs `lexstop` is the input-side half of C's single `lexstop`;
                                          // draining the nested LEX_INPUT sets it true and zcontext only covers
                                          // the lex.rs half (LEX_LEXSTOP). Restore it so the outer reader isn't
@@ -867,6 +872,7 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     LEX_POS.set(saved_pos);
     LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
     LEX_LINENO.set(saved_lineno); // c:295
+    LEX_FILE_WINDOW_STRIN.set(saved_file_window);
     crate::ported::input::lexstop.with(|c| c.set(saved_in_lexstop));
     crate::ported::context::zcontext_restore(); // c:300
                                                 // zcontext_restore → parse_context_restore clears ERRFLAG_ERROR
@@ -3261,6 +3267,200 @@ impl ShellExecutor {
     pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
         let chunk = self.compile_script_isolated(script)?;
         self.run_chunk_with_exit_hooks(chunk, "execute_script_zsh_pipeline")
+    }
+
+    /// Run `script` the way C runs a PLAIN sourced file: parse ONE event,
+    /// execute it, parse the next — so lexer-time state that one line
+    /// establishes is in force when the next line is lexed.
+    ///
+    /// c:Src/init.c:1618-1641 — `source()` has two arms. A file that was
+    /// already compiled (`try_source_file` found a `.zwc`) runs whole, as one
+    /// program: `execode(prog, 1, 0, "filecode")` (c:1621). A plain file runs
+    /// through the per-command loop: `/* loop through the file to be sourced
+    /// */ switch (loop(0, 0))` (c:1626-1627), whose body is `lexinit();
+    /// parse_event(ENDINPUT); … execode(prog, 0, 0, "file")` (c:155-220).
+    /// This is the second arm.
+    ///
+    /// The difference is observable whenever a line changes something the
+    /// LEXER consults, because a whole-file compile lexes every line with the
+    /// state the file STARTED with:
+    ///
+    /// ```text
+    /// alias greet='print -r -- hello'   # takes effect at execution time
+    /// greet                             # …but this line is lexed after it
+    /// ```
+    ///
+    /// Same for `setopt rcquotes` (c:Src/lex.c:1326), `unsetopt aliases`, and
+    /// a syntax error late in the file (C has already run the good lines).
+    ///
+    /// **Re-entrancy.** Every nested context — `$(source f)`, `` `source f` ``,
+    /// `eval "source f"`, a pipe stage, a `( … )` subshell, a `source` inside
+    /// a sourced file — reaches here through the normal builtin path, so this
+    /// must be safe to enter while an outer instance of itself is parked
+    /// mid-file. Two properties make it so, and both are deliberate:
+    ///
+    ///   * It never touches the shell's INPUT STACK. C's `source` points
+    ///     `SHIN` at the file (c:1584) and lets `loop`'s `ingetc` pull from
+    ///     it; doing that here would fight the outer reader for the one
+    ///     global. Instead the file body is installed as the lexer's own
+    ///     `LEX_INPUT` window under `strinbeg` — the exact parking
+    ///     [`parse_isolated`] uses for a command-substitution body — and the
+    ///     outer window is saved on the Rust stack and restored on the way
+    ///     out. Nesting is then just stack discipline.
+    ///   * It never dispatches through `execode`. `execode`
+    ///     (`src/ported/exec.rs`) runs its program on the installed SESSION
+    ///     executor, which is the right one only for the top-level REPL; from
+    ///     inside a command substitution the live executor is the sub-VM that
+    ///     owns the capture. Each event is compiled and run here on `self` —
+    ///     the same executor `execute_script` would have used — via
+    ///     [`Self::run_chunk`]. `$(source f)` therefore captures exactly what
+    ///     `$(…)` captures from any other builtin.
+    ///
+    /// Returns the file's `$?`. `Err` only for a VM error, as
+    /// [`Self::run_chunk`] reports it.
+    pub fn execute_script_per_command(&mut self, script: &str) -> Result<i32, String> {
+        use crate::ported::lex::{
+            tok, ENDINPUT, LEXERR, LEX_FILE_WINDOW_STRIN, LEX_INPUT, LEX_LINENO, LEX_POS,
+            LEX_UNGET_BUF,
+        };
+
+        // Inline Rust FFI blocks are rewritten before the lexer sees them,
+        // as on every other source-string entry (see `parse_isolated`).
+        let ffi_desugared = script
+            .contains("rust")
+            .then(|| crate::rust_ffi::desugar(script));
+        let script: &str = ffi_desugared.as_deref().unwrap_or(script);
+
+        // c:Src/init.c:121 — `if (!toplevel) zcontext_save();`, plus the
+        // zshrs-only lexer window that `zcontext` doesn't cover (identical
+        // list to `parse_isolated`, which parks it for the same reason).
+        crate::ported::context::zcontext_save(); // c:121
+        let saved_input = LEX_INPUT.with_borrow(|s| s.clone());
+        let saved_pos = LEX_POS.get();
+        let saved_unget = LEX_UNGET_BUF.with_borrow(|b| b.clone());
+        let saved_lineno = LEX_LINENO.get();
+        let saved_in_lexstop = crate::ported::input::lexstop.with(|c| c.get());
+        let saved_file_window = LEX_FILE_WINDOW_STRIN.get();
+
+        // `strin` makes a drained window report EOF instead of falling
+        // through to `inputline()` and STEALING the outer reader's next line
+        // (input.rs:391). Without it a sourced file's last event swallows the
+        // caller's next stdin line.
+        crate::ported::hist::strinbeg(0);
+        // c:1588 — `lineno = 1;`. `lex_init` (called by `parse_init`)
+        // installs the body as the window and resets the line counter.
+        crate::ported::parse::parse_init(script);
+        // C reads this file through `inputline` (c:Src/input.c:366) with
+        // `strin == 0`: ONE LINE per buffer, which is what makes each line
+        // its own event (c:Src/lex.c:310 / c:Src/parse.c:657), and every
+        // newline counted (c:Src/input.c:330). zshrs installs the body as
+        // one window under one `strinbeg`, so the file kind is declared
+        // here, tagged with THIS strinbeg's depth — a nested string push
+        // inside the file is deeper and stays a string.
+        LEX_FILE_WINDOW_STRIN.set(crate::ported::input::strin.with(|s| s.get()));
+
+        // c:116 — `int err, non_empty = 0;`
+        let mut non_empty = false;
+        let mut vm_error: Option<String> = None;
+
+        loop {
+            // c:155 — `lexinit();` Resets `tok` and BOTH `lexstop` copies;
+            // it does NOT move the window, so the next event resumes where
+            // the last one stopped.
+            crate::ported::lex::lexinit(); // c:155
+            let prog = crate::ported::parse::parse_event(ENDINPUT); // c:156
+            let Some(prog) = prog else {
+                // c:159-174 — no event this pass. Break on clean EOF or on a
+                // parse error (`!toplevel` makes C's LEXERR arm
+                // unconditional here); a bare separator just goes round
+                // again, which is C's `continue` at c:174.
+                let tok_v = tok(); // c:159
+                let errflag_v = errflag.load(Ordering::Relaxed);
+                if (tok_v == ENDINPUT && errflag_v == 0) || tok_v == LEXERR {
+                    // c:159-162
+                    if tok_v == LEXERR
+                        && crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) == 0
+                    {
+                        crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:173
+                    }
+                    break;
+                }
+                if tok_v == ENDINPUT || errflag_v != 0 {
+                    // Drained (or aborted) with a flag set — nothing left to
+                    // read, so looping again would spin.
+                    break;
+                }
+                continue; // c:174
+            };
+            non_empty = true; // c:179
+
+            // c:220 — `execode(prog, 0, 0, "file")`. The eval-context entry
+            // C's `execode` pushes for this arm is already on the stack:
+            // `bin_dot` pushes it once around the whole file (builtin.rs), so
+            // pushing it per event would report `file:file:file:…`.
+            //
+            // `LEX_LINENO` is saved across execution for the same reason
+            // `loop()` does it (init.rs, c:Src/exec.c:1376/1640): each
+            // statement's `SET_LINENO` overwrites the counter while it runs,
+            // and the NEXT event must be lexed from the line the file is
+            // really on.
+            let chunk = crate::compile_zsh::ZshCompiler::new().compile(&prog);
+            let saved_lex_lineno = LEX_LINENO.get();
+            let run = self.run_chunk(chunk, "source");
+            LEX_LINENO.set(saved_lex_lineno);
+            if let Err(e) = run {
+                vm_error = Some(e);
+                break;
+            }
+
+            // c:234 — `if (((!interact || sourcelevel) && errflag) || retflag)
+            // break;`. A sourced file always runs with `sourcelevel` bumped
+            // (bin_dot, c:1606), so the errflag half is unconditional here.
+            if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0
+                || crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) != 0
+            {
+                break; // c:235
+            }
+            // C's `exit` inside a sourced file calls `zexit` → `realexit()`
+            // and the process is gone, so C never reaches the next event.
+            // zshrs defers the exit (EXIT_PENDING plus a jump to chunk end)
+            // and lets the caller unwind, so the loop has to stop on its own.
+            if crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) != 0 {
+                break;
+            }
+        }
+
+        // c:245 — `err = errflag;` is read BEFORE the context is restored,
+        // because `zcontext_restore` → `parse_context_restore` ends with
+        // `errflag &= ~ERRFLAG_ERROR` (c:Src/parse.c:354). C carries the
+        // answer out as the `LOOP_ERROR` return value; zshrs's `bin_dot`
+        // reads the flag itself (its c:1623-1624 + c:1663 block), so the bit
+        // is put back after the restore instead.
+        let err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0; // c:245
+
+        // c:246-249 — leave the loop's context exactly as it was found.
+        crate::ported::hist::strinend();
+        LEX_INPUT.with_borrow_mut(|s| *s = saved_input);
+        LEX_POS.set(saved_pos);
+        LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+        LEX_LINENO.set(saved_lineno);
+        crate::ported::input::lexstop.with(|c| c.set(saved_in_lexstop));
+        LEX_FILE_WINDOW_STRIN.set(saved_file_window);
+        crate::ported::context::zcontext_restore(); // c:247
+        if err {
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // see the c:245 note
+        }
+
+        if let Some(e) = vm_error {
+            return Err(e);
+        }
+        // c:1633-1636 — `case LOOP_EMPTY: /* Empty code resets status */
+        // lastval = 0;`. `source /dev/null` (or a comments-only file) clears
+        // `$?` rather than leaving the caller's.
+        if !non_empty {
+            self.set_last_status(0); // c:1635
+        }
+        Ok(self.last_status())
     }
 
     /// Install an autoloaded function by running its definition program,

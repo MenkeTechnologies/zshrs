@@ -56515,147 +56515,151 @@ five hundred and sixty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 370, 371, 372), and four were zsh-correct behavior misframed by
 demos (1, 2, 3, 6).
 
-## #1087 — a sourced FILE is compiled whole, so lexer-time state set by one line never reaches the next
+## #1087 — a sourced FILE is compiled whole, so lexer-time state set by one line never reaches the next — FIXED for `source`/`.`
 
-**Status:** `port-bug` — diagnosed 2026-08-21, fix NOT applied (needs a
-design decision, see below).
+**Status:** `fixed` 2026-08-25 for `source` / `.` (`bin_dot`). The sibling
+entry point `zshrs <file>` still compiles whole — see "What is still open"
+at the end.
 
-C parses and executes a sourced file ONE COMMAND AT A TIME
-(`c:Src/init.c:1658-1660` — `/* loop through the file to be sourced */
-switch (loop(0, 0))`). zshrs reads the whole file and compiles it in one
-pass (`bin_dot` → `exec::execute_script`), so every line is lexed with the
-state the file STARTED with. Anything that changes LEXER-time state
-mid-file is therefore invisible to the rest of that file.
-
-Two observable consequences, both real:
+C parses and executes a sourced file ONE COMMAND AT A TIME. `source()`
+has two arms (`c:Src/init.c:1618-1641`): an already-compiled file (a
+`.zwc` the user made with `zcompile`, found by `try_source_file`) runs
+whole via `execode(prog, 1, 0, "filecode")` (c:1621); a plain text file
+runs through `/* loop through the file to be sourced */ switch (loop(0,
+0))` (c:1626-1627). zshrs took the whole-file arm for BOTH, so every line
+was lexed with the state the file STARTED with and anything a line did to
+LEXER-time state was invisible to the rest of the file.
 
 ```
 $ cat al.zsh
 alias greet='print -r -- hello'
 greet
 
-$ zsh   -f al.zsh   →  hello
-$ zshrs -f al.zsh   →  al.zsh:2: command not found: greet
+$ zsh   -fc 'source ./al.zsh'   →  hello
+$ zshrs -fc 'source ./al.zsh'   →  ./al.zsh:2: command not found: greet   (before)
+                                →  hello                                  (after)
 ```
 
-```
-$ cat rq.zsh
-setopt rcquotes
-alias a1='x=''y'' z'
-alias a1
+Same for `setopt rcquotes` (`c:Src/lex.c:1326`), `unalias` / `unsetopt
+aliases` mid-file, and a syntax error late in a file (C has already run
+the good lines and exits 126; zshrs ran nothing and exited 1).
 
-$ zsh   -f rq.zsh   →  a1='x=''y'' z'      (RC_QUOTES applied: literal quote)
-$ zshrs -f rq.zsh   →  a1='x=y z'          (concatenation)
-```
+Only options the LEXER consults were affected. `extendedglob` and
+`shwordsplit` are read at expansion time and were already correct
+in-file.
 
-Scope, measured:
+### The fix
 
-| entry point | zsh | zshrs |
-| ----------- | --- | ----- |
-| `zsh file` / `source file` | per-command | whole-file — **diverges** |
-| stdin (`zsh < file`) | per-command | per-command — matches |
-| `-c 'alias g=…\ng'` | whole string | whole string — matches (BOTH fail) |
+`bin_dot`'s plain-file arm (`src/ported/builtin.rs:13237`) now calls
+`fusevm_bridge::source_file_per_command` →
+`ShellExecutor::execute_script_per_command` (`src/vm_helper.rs:3321`),
+the port of C's `loop(0, 0)` arm. The `.zwc` arm is untouched and still
+runs `execute_script` on the whole program, which is exactly C's c:1621.
 
-Only options consulted by the LEXER are affected. `extendedglob` and
-`shwordsplit` are read at expansion time and behave correctly in-file;
-`rcquotes` (`c:Src/lex.c:1328`) and alias expansion do not.
+The loop is C's: `lexinit()` (c:155) → `parse_event(ENDINPUT)` (c:156) →
+compile → run → repeat, breaking on `((!interact || sourcelevel) &&
+errflag) || retflag` (c:234) and resetting `$?` on `LOOP_EMPTY`
+(c:1635, which is why `false; source /dev/null` now leaves `$?` at 0).
 
-This is the root cause of the four openshift-alias divergences in
-`config_state_parity::real_all_installed_plugins_final_state`: the zpwr
-plugin chain has `zsh-learn.plugin.zsh:11 setopt rcquotes`, and a later
-plugin's alias body contains `''`.
+Two things had to be true for it to work, and both are why the earlier
+attempts (below) failed:
 
-**Why it is not fixed yet.** The faithful fix is C's: run a plain sourced
-file through the per-command loop, keeping the whole-program path only for
-input that was already compiled — which is exactly what C's `.zwc`
-`execode(prog)` arm at `c:1651-1654` is. zshrs already HAS a working
-per-command loop (`ported::init::r#loop`, which is what makes the stdin
-column above match). An attempt to route `bin_dot`'s plain-file arm
-through it via `inpush` + `r#loop(0, 0)` compiled but executed nothing:
-the loop needs the shell's input machinery pointed at the file (C sets
-`SHIN`), not just an `inpush` frame. That plumbing is the actual work.
+1. **It must be re-entrant.** `$(source f)`, `eval "source f"`, a pipe
+   stage, a `( … )` subshell and a nested `source` all reach it while an
+   outer instance may be parked mid-file. It never touches the shell's
+   input stack — where C points `SHIN` at the file (c:1584), this installs
+   the body as the lexer's own `LEX_INPUT` window under `strinbeg`, the
+   same parking `parse_isolated` (`src/vm_helper.rs:827`) already uses for
+   a command-substitution body, and restores the outer window on the way
+   out. And it never dispatches through `execode`, which runs on the
+   installed SESSION executor — from inside `$( … )` the live executor is
+   the sub-VM that owns the capture, so each event is compiled and run on
+   `self` via `run_chunk`, exactly as `execute_script` would have.
+   `parity-fuzz --mode cmdsub` stays at 0 divergences (the first attempt
+   took it 0 → 11).
 
-It also carries a decision, because zshrs's automatic script bytecode
-cache is the analogue of `.zwc`: taking the per-command path for plain
-files means sourced files stop being cached as one chunk. C only takes its
-whole-program path when the user explicitly `zcompile`d. Correctness-first
-argues for matching C and keeping the cache for genuinely precompiled
-input; that is a call to make deliberately rather than in passing.
+2. **The window has to admit it is a FILE.** C distinguishes its two
+   input sources structurally and reads the difference out of two
+   globals: `isnewlin = (inbufct) ? -1 : 1` (`c:Src/lex.c:310`), the
+   top-level event boundary, and `if (((inbufflags & INP_LINENO) ||
+   !strin) && lastc == '\n') lineno++` (`c:Src/input.c:330`). A string
+   arrives via `inpush` under `strinbeg` (`parse_string`,
+   c:Src/exec.c:283-298), so `inbufct` covers the whole remainder and
+   `strin` is set; a file is read by `inputline` (c:Src/input.c:366) ONE
+   LINE per buffer with `strin == 0`. zshrs has one window for both and
+   the driver must set `strin` anyway, so both globals read as "string" —
+   the whole file parsed as ONE event, and after the first alias
+   expansion every line reported one line short. `LEX_FILE_WINDOW_STRIN`
+   (`src/ported/lex.rs:1226`) records the truth: 0 for a string window,
+   otherwise the `strin` depth at which the file window was installed.
+   Storing the DEPTH rather than a flag is what keeps the `lineno`
+   exemption honest — a nested string push inside the file
+   (`parsestrnoerr` re-lexing a here-document body, c:Src/lex.c:1720; a
+   `$(…)` body) runs one `strinbeg` deeper, so C's suppression still
+   applies there and here-document bodies are not double-counted.
 
-**Attempted fix, 2026-08-21 — works for top-level `source`, blocked on
-command substitution. Reverted; details so it can be picked up.**
+Verified against zsh 5.9.2 on 25 shapes (alias/rcquotes/unalias/`unsetopt
+aliases` mid-file, `$(source f)`, backticks, `eval "source f"` context,
+`source` in a function/pipe/subshell, nested `source`, `source
+/dev/null`, `source =(echo false)`, positional args, a 2000-line file
+inside `$( … )`, multi-line for/while/if/case/function/brace/repeat,
+here-documents quoted and unquoted, `$LINENO`, `return`, `exit`,
+`errexit`, `set -u`, readonly-reassign abort, top-level `break` /
+`continue`, `source` inside a loop) plus 28 real plugin files from
+`test_corpus/` and `tests/recorder_corpus/`. The three plugin
+divergences that remain reproduce identically on the untouched `.zwc`
+whole-program arm, so they are pre-existing and unrelated.
 
-Three things are needed to make `bin_dot`'s plain-file arm run the
-per-command loop, and the first is why a naive attempt looks like a
-silent no-op:
+Cost, debug build, a 2000-line file of `print` statements: 0.100s
+per-command vs 0.090s whole-program on the same binary (~5 µs per
+event), against 0.020s for bare startup.
 
-1. `SESSION_EXECUTOR` is registered ONLY on the `zsh_main` path
-   (`bins/zshrs.rs`, one `install_session_executor` call). `execode`
-   (`src/ported/exec.rs`) dispatches through it and returns 0 when it is
-   `None`, so on the `-c` / script paths the loop parsed its input and
-   executed NOTHING — input drained, `loop` returned 0, no output.
-   Registering the executor that already drives those paths fixes it.
-2. The loop needs the lexer window parked the way `parsestrnoerr` does
-   it: save + clear `LEX_INPUT` / `LEX_POS`, `inpush(body)`,
-   `strinbeg(0)` … `strinend()` / `inpop()`, then restore.
-3. BOTH `lexstop` copies must be cleared — zshrs splits C's single
-   `lexstop` into a `lex.rs` and an `input.rs` global (same split as
-   `strin`), and `ingetc` checks the input.rs one (c:Src/input.c:322).
-   Missing it makes every read return EOF immediately.
+### The two earlier attempts, and why they failed
 
-With all three, top-level sourcing matched zsh on all eight shapes tried:
-the `alias greet=…` / `greet` case above, the rcquotes case, in-file
-`extendedglob` and `shwordsplit`, `source /dev/null` status, status
-propagation from `source =(echo false)`, positional args, and a nested
-`source`.
+Kept because the failure modes are the interesting part.
 
-What blocks it:
+**Attempt 1 (2026-08-21)** drove `ported::init::r#loop` from `bin_dot`.
+It needed three fixes just to execute anything — `SESSION_EXECUTOR` is
+registered only on the `zsh_main` path so `execode` returned 0 and ran
+nothing; the lexer window had to be parked as `parsestrnoerr` does; and
+BOTH `lexstop` copies had to be cleared, since zshrs splits C's single
+global and `ingetc` checks the `input.rs` one (c:Src/input.c:322). With
+those, top-level sourcing matched zsh — but `$(source f)` captured
+NOTHING and `eval "source f"` reported `cmdarg:eval:file:file` (the loop
+pushed a second `"file"` on top of `bin_dot`'s). Reverted.
 
-- **`$(source f)` and `` `source f` `` capture NOTHING** (`print -r --
-  $(source f)` printed an empty line where zsh prints the file's output).
-  Pipes and `( … )` subshells were fine, so it is specifically command
-  substitution's output capture that the loop-driven path bypasses.
-  `parity-fuzz --mode cmdsub` went 0 -> 11 on this alone.
-- The eval context gains a level: `eval "source f"` reported
-  `cmdarg:eval:file:file` against zsh's `cmdarg:eval:file`, because the
-  loop pushes its own `"file"` context on top of the one `bin_dot`
-  already established.
+**Attempt 2 (2026-08-21)** established that the command-substitution
+blocker was executor RE-ENTRANCY, not output capture: capture is at the
+fd level, and instrumenting showed `execode` was already reached with the
+correct innermost executor and still produced nothing. Its conclusion —
+"the remaining work is a re-entrant execution path for nested contexts,
+not a patch to the source path" — is what point 1 above builds.
 
-Breaking `$(source …)` is worse than the gap being fixed, so this is
-reverted until the capture path is understood. Perf was NOT a factor
-either way — an A/B on a 2000-line file was dominated by machine load
-(the same command measured 0.41s and 5.32s in different runs), so the
-earlier worry that per-command sourcing would cost startup time is
-unmeasured, not confirmed.
+The fix avoids both failure modes by construction: it does not call
+`execode` (so no SESSION-executor detour and no second `"file"` context —
+`bin_dot`'s existing push at c:220 is the only one), and it does not use
+the input stack (so no fight with the outer reader).
 
-**Second attempt, 2026-08-21 — the command-substitution blocker is
-re-entrancy, not output capture.**
+### What is still open
 
-The first attempt's guess was that `$(source f)` lost output because
-`execode` dispatched to the SESSION executor while the capture sink lived
-on a nested one. That is wrong. Making `execode` prefer the innermost
-active executor (`try_with_executor`, falling back to the session one)
-changed nothing, and instrumenting the dispatch showed why: inside
-`$( … )` execode is already reached with `current=true` — the right
-executor — and still produced no output.
+`zshrs <file>` — the script-as-argument entry — still compiles whole.
+It goes through `ShellExecutor::execute_script_file`
+(`src/vm_helper.rs:2962`), not `bin_dot`, so `zshrs -f al.zsh` still
+prints `command not found: greet` where `zsh -f al.zsh` prints `hello`.
+C runs that entry per-command too (`zsh_main` → `loop(1, 0)`, toplevel).
 
-Capture is not the mechanism either. It is done at the FD level
-(`vm_helper.rs`: "A shell cannot capture its output into an in-process
-buffer … The capture is therefore at fd" level), so any write to fd 1
-would be picked up. And it is not buffering: a 2000-line sourced file
-inside `$( … )` produced NOTHING, where the same file at top level works
-and zsh returns 16892 characters.
+It was left alone deliberately: `execute_script_file` is where the
+automatic script bytecode cache lives (`script_cache`, keyed on path +
+mtime + binary mtime), and that cache stores a WHOLE-FILE compile.
+Routing the entry through the per-command driver and still saving that
+chunk would persist the wrong program for exactly the files this bug is
+about, and a cache hit would then replay it. The per-command driver
+itself is ready; what is missing is a soundness bit for the cache — e.g.
+a generation counter bumped by alias-table and option mutations, with
+the chunk saved only when the file's own run did not move it. That is a
+deliberate design call, not a drive-by.
 
-What it actually is: re-entering the executor from inside a nested
-command substitution. `with_session_context`'s doc block already names
-this hazard from the other direction — it is deliberately not a global
-fallback in `execute_script_zsh_pipeline` because that "would re-enter
-the executor on nested command substitution and block on input". Driving
-`loop()` from `bin_dot` walks into the same re-entrancy from the other
-side.
-
-So the remaining work is a re-entrant execution path for nested contexts,
-not a patch to the source path. Until that exists, the whole-file compile
-stays: it is wrong for lexer-time state (the bug above) but correct
-everywhere else, whereas the loop-driven version silently breaks every
-`$(source …)`.
+Unrelated and pre-existing, surfaced by the new path because C reaches
+it: a syntax error names a different token. `if then` gives zsh `parse
+error near `\n'` and zshrs `parse error near `if'`. It reproduces on the
+untouched `-c` and stdin paths.
