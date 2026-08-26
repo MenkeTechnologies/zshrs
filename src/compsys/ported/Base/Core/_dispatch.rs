@@ -32,55 +32,10 @@
 
 use crate::ported::params::{getsparam, setsparam};
 
-/// sh:31 / sh:63 / sh:76 / sh:87 — `eval "$comp"`.
-///
-/// Upstream `_dispatch` never CALLS the completer by name; it `eval`s the
-/// `$_comps` / `$_patcomps` value as shell text. Two things follow, and the
-/// port needs both:
-///
-///   * the value can carry arguments (`compdef '_files -/' mycmd` stores
-///     `_files -/`), which a by-name dispatch cannot express; and
-///   * `eval` pushes an `FS_EVAL` funcstack frame named `(eval)`
-///     (`Src/builtin.c:6155-6193`), so every completer invoked through
-///     `_dispatch` runs one frame deeper than its caller.
-///
-/// The frame is not cosmetic. Completion code reads `$#funcstack` to decide
-/// nesting depth — `_all_labels`/`_alternative` compare it against
-/// `_tags_level` — so a missing frame silently changes completion behaviour.
-/// zshrs called `dispatch_function_call(&comp, &[])` here, which pushed only
-/// the completer's own `FS_FUNC` frame; `$funcstack` came back
-/// `_mytest _dispatch _normal …` where zsh reports
-/// `_mytest (eval) _dispatch _normal …`.
-///
-/// `line` is the upstream `Completion/Base/Core/_dispatch` line the `eval`
-/// sits on; publishing it is what makes `$functrace` read `_dispatch:63`
-/// instead of `_dispatch:0` (the caller's line is recorded by `doshfunc`
-/// c:6013 / `EvalFuncstackFrame::push` c:6161 at push time).
-/// The body mirrors `static int eval(char **argv)` (`Src/builtin.c:6143`)
-/// with `argv == { comp, NULL }`; the funcstack half is the shared canonical
-/// port `crate::ported::exec::EvalFuncstackFrame` (c:6155-6193), the same one
-/// the live `eval` builtin uses, so both entry points build an identical
-/// frame.
-fn eval_comp(comp: &str, line: u64) -> i32 {
-    crate::compsys::ported::shared::set_sh_lineno(line);
-    let oscriptname = crate::ported::utils::scriptname_get(); // c:6146
-    let fstack = crate::ported::exec::EvalFuncstackFrame::push(); // c:6155-6193
-    if fstack.pushed() {
-        // c:6157 — `scriptname = "(eval)";` (inside the `!ineval` arm).
-        crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
-    }
-    // c:6203 — `execode(prog, 1, 0, "eval");`. execode APPENDS its context
-    // argument to `zsh_eval_context` for the duration of the body
-    // (`Src/exec.c:1245-1266`).
-    let ctx = crate::ported::exec::EvalContextFrame::push("eval");
-    // c:6195-6207 — `prog = parse_string(...); … execode(prog, …)`; a NULL
-    // prog (parse failure) is `lastval = 1` at c:6206.
-    let lastval = crate::ported::exec::execute_script(comp).unwrap_or(1);
-    drop(ctx);
-    drop(fstack); // c:6209-6210 `if (fpushed) funcstack = funcstack->prev;`
-    crate::ported::utils::set_scriptname(oscriptname); // c:6222
-    lastval // c:6224
-}
+// sh:31 / sh:63 / sh:76 / sh:87 — `eval "$comp"`. The shared port of that
+// construct lives in `compsys::ported::shared` because `_normal` sh:32 runs
+// the identical statement; see its doc comment for the C citations.
+use crate::compsys::ported::shared::eval_comp;
 
 /// Helper: assoc lookup in flat key/value layout.
 /// sh:26 — zsh `(K)pat` key-pattern match. Uses the real

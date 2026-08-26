@@ -6369,37 +6369,53 @@ pub fn doshfunc(
     //
     // c:6019 — `funcsave->fstack.filename = getshfuncfile(shfunc);`, which
     // reads the shfunc's OWN `filename`, set by `loadautofnsetfile`
-    // (c:5713) when the function was autoloaded out of `$fpath`.
+    // (c:5657, called from `loadautofn` at c:5735 / c:5757) when the
+    // function was autoloaded out of `$fpath`.
     //
     // zshrs has no C counterpart for a function that exists ONLY as a Rust
     // port: `_main_complete`, `_normal`, `_dispatch`, … are dispatched from
     // `compsys::router::try_rust_dispatch` and the autoload prelude is
     // skipped entirely (vm_helper.rs — "no upstream shell function to
-    // load"), so no `shfunctab` node is ever created and the synthesized
-    // shfunc handed to us carries the caller's `scriptfilename` ("zsh") or
-    // nothing at all. `$funcsourcetrace` / `$funcfiletrace` then reported
-    // `zsh:1` for every completer frame where zsh names the `$fpath` file
-    // — and `funcfiletrace` is read by real completion code (`_git` derives
-    // its git-completion.bash search path from `${funcsourcetrace[1]%:*}`).
+    // load"), so nothing ever records a `$fpath` file for the name and the
+    // synthesized shfunc handed to us carries the caller's `scriptfilename`
+    // ("zsh") or nothing at all. `$funcsourcetrace` / `$funcfiletrace` then
+    // reported `zsh:1` for every completer frame where zsh names the
+    // `$fpath` file — and `funcfiletrace` is read by real completion code
+    // (`_git` derives its git-completion.bash search path from
+    // `${funcsourcetrace[1]%:*}`).
     //
-    // Stand in for `loadautofnsetfile` in exactly that case — the name has
-    // NO shfunctab node, so nothing shell-defined can be shadowed — by
-    // resolving the defining file out of `$fpath` the way `getfpfunc`
-    // (c:6219) does for a real autoload. An autoload-installed function
-    // gets `shf->lineno == 0` (c:5384-5388 only stamps a `name() { … }`
-    // STATEMENT), so the def line is 0, matching zsh's
-    // `<fpath-file>:0` in `$funcsourcetrace`.
+    // Stand in for `loadautofnsetfile` in exactly that case by resolving the
+    // defining file out of `$fpath` the way `getfpfunc` (c:6219) does for a
+    // real autoload. An autoload-installed function gets `shf->lineno == 0`
+    // (c:5384-5388 only stamps a `name() { … }` STATEMENT), so the def line
+    // is 0, matching zsh's `<fpath-file>:0` in `$funcsourcetrace`.
+    //
+    // The gate is `try_rust_dispatch` ALONE. That predicate is the same one
+    // `vm_helper::dispatch_function_call` and `compcore::callcompfunc` use to
+    // pick the body_runner, so `Some` means the frame being pushed IS the
+    // port standing in for the stock `$fpath` file — and the router has
+    // already refused every name a shell definition owns
+    // (`has_fpath_override` / `has_shfunc_override`, router.rs:53,62), so
+    // there is nothing left here to shadow.
+    //
+    // An additional "…and the name has no shfunctab node" clause used to
+    // guard this, which meant it never fired in practice: `compinit` writes
+    // one bare `autoload -Uz <every completer>` line into its dump
+    // (Completion/compdump:113), so EVERY completer has a
+    // PM_UNDEFINED stub by the time Tab is pressed. A bare-name stub records
+    // neither `filename` nor PM_LOADDIR (`add_autoload_function`,
+    // Src/builtin.c:3278-3334 — only the `/abs/dir/name` arm and the
+    // inherited-loaddir arm set them), so `getshfuncfile` returns NULL for
+    // it and the fallback chain in vm_helper landed on `scriptfilename`.
+    // That is how `$funcsourcetrace` read `zsh:1` for `_vars`, `_dispatch`,
+    // `_normal`, `_complete` where zsh reads `/usr/share/zsh/5.9/functions/
+    // _vars:0` etc.
     //
     // Memoised, and deliberately never invalidated: C stamps `shf->filename`
     // ONCE, at autoload time, and a later `fpath=(…)` does not restamp it —
     // so a permanent per-name answer is what matches zsh, not a re-scan. It
     // also keeps `doshfunc` off the filesystem on the completion hot path.
-    if crate::compsys::router::try_rust_dispatch(&name).is_some()
-        && crate::ported::hashtable::shfunctab_lock()
-            .read()
-            .map(|t| t.get_including_disabled(&name).is_none())
-            .unwrap_or(false)
-    {
+    if crate::compsys::router::try_rust_dispatch(&name).is_some() {
         static RUST_PORT_FILE: std::sync::OnceLock<
             std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
         > = std::sync::OnceLock::new();

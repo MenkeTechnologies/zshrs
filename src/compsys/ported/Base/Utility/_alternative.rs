@@ -212,6 +212,11 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                     "r:|[_-]=* r:|=*".to_string(),
                 ];
                 describe_argv.extend(subopts.iter().cloned());
+                // sh:41 — the line `_describe` is called FROM. `FnScope`
+                // zeroes `lineno` for a port body (shared.rs), so without
+                // this the frame `_describe` pushes records `_alternative:0`
+                // where zsh's `$functrace` reads `_alternative:41`.
+                crate::compsys::ported::shared::set_sh_lineno(41);
                 let _ = dispatch_function_call("_describe", &describe_argv);
             } else if action.starts_with('(') && action.ends_with(')') {
                 // sh:43  (literal list) → compadd direct
@@ -253,6 +258,10 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                     }
                     if let Some(cmd) = parts.first() {
                         let rest: Vec<String> = parts[1..].to_vec();
+                        // sh:63 — `"$action[@]"`, the line the callee's frame
+                        // records as its caller line (`$functrace` reads
+                        // `_alternative:63`).
+                        crate::compsys::ported::shared::set_sh_lineno(63);
                         let _ = dispatch_function_call(cmd, &rest);
                     }
                 }
@@ -269,6 +278,10 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                         let mut call_argv: Vec<String> = subopts.clone();
                         call_argv.extend(expl);
                         call_argv.extend(rest.iter().cloned());
+                        // sh:71 — `"$action[1]" "$subopts[@]" "$expl[@]"
+                        // "${(@)action[2,-1]}"`, the line the callee's frame
+                        // records as its caller line.
+                        crate::compsys::ported::shared::set_sh_lineno(71);
                         let _ = if cmd == "compadd" {
                             bin_compadd("compadd", &call_argv, &make_ops(), 0)
                         } else {

@@ -669,6 +669,58 @@ pub fn set_sh_lineno(line: u64) {
     crate::ported::lex::set_lineno(line);
 }
 
+/// `eval "$comp"` — the way every compsys dispatcher invokes the completer
+/// named by `$_comps` / `$_patcomps` (`_dispatch` sh:31/63/76/87,
+/// `_normal` sh:32).
+///
+/// Upstream never CALLS the completer by name; it `eval`s the registered
+/// value as shell text. Two things follow, and a port needs both:
+///
+///   * the value can carry arguments (`compdef '_files -/' mycmd` stores
+///     `_files -/`), which a by-name dispatch cannot express; and
+///   * `eval` pushes an `FS_EVAL` funcstack frame named `(eval)`
+///     (`Src/builtin.c:6164-6199`), so every completer invoked this way runs
+///     one frame deeper than its caller.
+///
+/// The frame is not cosmetic. Completion code reads `$#funcstack` to decide
+/// nesting depth — `_all_labels`/`_alternative` compare it against
+/// `_tags_level` — so a missing frame silently changes completion behaviour.
+/// A port calling `dispatch_function_call(&comp, &[])` pushes only the
+/// completer's own `FS_FUNC` frame; `$funcstack` then reads
+/// `_mytest _dispatch _normal …` where zsh reports
+/// `_mytest (eval) _dispatch _normal …`.
+///
+/// `line` is the upstream line the `eval` sits on; publishing it via
+/// [`set_sh_lineno`] is what makes `$functrace` read `_dispatch:63` instead
+/// of `_dispatch:0` (the caller's line is recorded at push time by `doshfunc`
+/// c:6013 / `EvalFuncstackFrame::push` c:6169).
+///
+/// The body mirrors `static int eval(char **argv)` (`Src/builtin.c:6151`)
+/// with `argv == { comp, NULL }`; the funcstack half is the shared canonical
+/// port [`crate::ported::exec::EvalFuncstackFrame`] (c:6164-6199), the same
+/// one the live `eval` builtin uses, so both entry points build an identical
+/// frame.
+pub fn eval_comp(comp: &str, line: u64) -> i32 {
+    set_sh_lineno(line);
+    let oscriptname = crate::ported::utils::scriptname_get(); // c:6154
+    let fstack = crate::ported::exec::EvalFuncstackFrame::push(); // c:6164-6199
+    if fstack.pushed() {
+        // c:6165 — `scriptname = "(eval)";` (inside the `!ineval` arm).
+        crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
+    }
+    // c:6209 — `execode(prog, 1, 0, "eval");`. execode APPENDS its context
+    // argument to `zsh_eval_context` for the duration of the body
+    // (`Src/exec.c:1245-1266`).
+    let ctx = crate::ported::exec::EvalContextFrame::push("eval");
+    // c:6203-6216 — `prog = parse_string(...); … execode(prog, …)`; a NULL
+    // prog (parse failure) is `lastval = 1` at c:6215.
+    let lastval = crate::ported::exec::execute_script(comp).unwrap_or(1);
+    drop(ctx);
+    drop(fstack); // c:6218-6219 `if (fpushed) funcstack = funcstack->prev;`
+    crate::ported::utils::set_scriptname(oscriptname); // c:6222
+    lastval // c:6225
+}
+
 #[cfg(test)]
 mod lineno_scope_tests {
     use super::*;

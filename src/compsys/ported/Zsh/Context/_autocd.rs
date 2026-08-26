@@ -32,6 +32,12 @@ pub fn _autocd() -> i32 {
     // failure left command-position completion dead for anyone shipping
     // their own `_command_names` — `pr<TAB>` produced nothing. Fall back to
     // the normal shell dispatch, which autoloads the file from `$fpath`.
+    //
+    // sh:3 — publish the line `_command_names` is called FROM. `FnScope`
+    // zeroes `lineno` for every port body (shared.rs), so without this the
+    // frame `_command_names` pushes recorded `_autocd:0` where zsh's
+    // `$functrace` reads `_autocd:3`.
+    crate::compsys::ported::shared::set_sh_lineno(3);
     let ret = crate::compsys::router::dispatch_compsys("_command_names", &[])
         .or_else(|| dispatch_function_call("_command_names", &[]))
         .unwrap_or(1);
