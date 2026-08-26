@@ -63,13 +63,21 @@ pub fn _vars(args: &[String]) -> i32 {
         let after = prefix.splitn(2, '[').nth(1).unwrap_or("");
         let _ = setsparam("PREFIX", after);
 
-        // sh:14
+        // sh:14 — publish the line `_subscript` is called FROM. `FnScope`
+        // zeroes `lineno` for every port body (shared.rs, mirroring
+        // `Src/exec.c:1429`), and the callee's frame records the caller's
+        // line at push time (`doshfunc`, `Src/exec.c:6013`), so without this
+        // `$functrace`/`$funcfiletrace` read `_vars:0`.
+        crate::compsys::ported::shared::set_sh_lineno(14);
         return dispatch_function_call("_subscript", &["-q".to_string()]).unwrap_or(1);
     }
 
     // sh:16
     let mut p_args: Vec<String> = vec!["-g".to_string(), "^a*".to_string()];
     p_args.extend(args.iter().cloned());
+    // sh:16 — the line the first `_parameters` call sits on; the frame it
+    // pushes records it as the caller line (`Src/exec.c:6013`).
+    crate::compsys::ported::shared::set_sh_lineno(16);
     if dispatch_function_call("_parameters", &p_args).unwrap_or(1) == 0 {
         ret = 0;
     }
@@ -97,6 +105,10 @@ pub fn _vars(args: &[String]) -> i32 {
     // sh:23
     let mut p2_args2: Vec<String> = vec!["-g".to_string(), "a*".to_string()];
     p2_args2.extend(p2_args);
+    // sh:23 — the line the second `_parameters` call sits on. Re-published
+    // because the sh:18-22 block ran in between; the callee's frame records
+    // this as its caller line.
+    crate::compsys::ported::shared::set_sh_lineno(23);
     if dispatch_function_call("_parameters", &p2_args2).unwrap_or(1) == 0 {
         ret = 0;
     }
