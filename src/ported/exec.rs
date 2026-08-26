@@ -1538,11 +1538,41 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
 /// `Eprog` (compiled wordcode). Used by `getoutput` for `$(cmd)`,
 /// `bin_eval` for `eval`, and the autoload path.
 pub fn parse_string(s: &str, reset_lineno: i32) -> Option<eprog> {
+    use crate::ported::lex::{LEX_FILE_WINDOW_STRIN, LEX_INPUT, LEX_POS, LEX_UNGET_BUF};
+
     // c:285-286
     let p: Option<eprog>;
     let oldlineno: i64;
 
     zcontext_save(); // c:288
+
+    // zshrs-only: park the `LEX_INPUT` window. C has ONE reader — the
+    // input stack — so `inpush` at c:289 is all the isolation `parse_list`
+    // needs. zshrs lexes from a second source as well, the `LEX_INPUT` /
+    // `LEX_POS` char window (lex.rs:5181), which `inpush` does not touch,
+    // so a nested parse ran on whatever text the OUTER lexer still had
+    // parked there. That was invisible while every caller's window was
+    // already drained at execution time, and became live when `bin_dot`
+    // started running a plain sourced file per command
+    // (`execute_script_per_command`, vm_helper.rs:3321): the file is now
+    // the lexer's own window WHILE its commands execute, so
+    // `zstyle -e ':x' lc 'reply=(1)'` (zutil.rs:856 → here) parsed the
+    // REST OF THE FILE as its eval body and everything after that line
+    // silently vanished. Draining the window makes `hgetc`'s two-input
+    // bridge read only the `inpush`ed frame — the same parking
+    // `parsestrnoerr` (lex.rs:3402-3444) and `parse_isolated`
+    // (vm_helper.rs:843-877) already do around their own nested parses.
+    let saved_input = LEX_INPUT.with_borrow(|w| w.clone());
+    let saved_pos = LEX_POS.get();
+    let saved_unget = LEX_UNGET_BUF.with_borrow(|b| b.clone());
+    let saved_file_window = LEX_FILE_WINDOW_STRIN.get();
+    let saved_in_lexstop = crate::ported::input::lexstop.with(|c| c.get());
+    LEX_INPUT.with_borrow_mut(|w| w.clear());
+    LEX_POS.set(0);
+    LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
+    // The pushed frame is a STRING unit, whatever the outer window was.
+    LEX_FILE_WINDOW_STRIN.set(0);
+
     inpush(s, INP_LINENO, None); // c:289
     strinbeg(0); // c:290
     oldlineno = LEX_LINENO.get() as i64; // c:291
@@ -1558,6 +1588,17 @@ pub fn parse_string(s: &str, reset_lineno: i32) -> Option<eprog> {
     }
     strinend(); // c:298
     inpop(); // c:299
+
+    // Put the outer window back where the nested parse found it. Draining
+    // it set the input-side `lexstop`, whose lex.rs half is the only one
+    // `zcontext` covers (parse_isolated, vm_helper.rs:857), so the outer
+    // reader would otherwise resume at EOF.
+    LEX_INPUT.with_borrow_mut(|w| *w = saved_input);
+    LEX_POS.set(saved_pos);
+    LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+    LEX_FILE_WINDOW_STRIN.set(saved_file_window);
+    crate::ported::input::lexstop.with(|c| c.set(saved_in_lexstop));
+
     zcontext_restore(); // c:300
     p // c:301
 }
