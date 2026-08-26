@@ -52,6 +52,9 @@ use crate::ported::zsh_h::{
     QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, RMSTARWAIT, SFC_SUBST, SHINSTDIN, SPECCHARS,
     XTRACE, ZLE_CMD_TRASH,
 };
+use crate::ported::zsh_h::{
+    Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Qstring, Qtick, Stringg, Tick,
+};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -8371,6 +8374,8 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // Without these conditions, mid-word `=`/`~` falls through
         // to the literal-emit path (c:6418-6434).
         let mut result = String::with_capacity(s.len() * 2);
+        // c:6304-6305 lookbehind `u[-1]`. The verbatim arms below advance `u`
+        // several bytes at a time, so they carry it forward themselves.
         let mut prev: char = '\0'; // would-be u[-1]
                                    // c:6392 — `if (itok(*u) || instring != QT_BACKSLASH)`: a parser TOKEN
                                    // byte "needs to be passed straight through" — never backslashed and
@@ -8416,7 +8421,95 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             }
             (v, m)
         };
-        for i in 0..mcs.len() {
+        // c:6262-6299 — before ANY quoting decision C copies three
+        // constructs through verbatim. Each `*u` C tests there is one BYTE,
+        // which is one element of `mcs` here. C can compare bytes directly
+        // because a metafied string never holds a bare token byte as data;
+        // `mcs` is DEMETAFIED, so a data byte in the token range does reach
+        // this loop as `Raw` — every test is therefore gated on `tokmask`,
+        // which marks the elements that really were tokens in `s`.
+        let cval = |k: usize| -> u32 {
+            match mcs[k] {
+                MetaChar::Raw(b) => b as u32,
+                MetaChar::Ch(c) => c as u32,
+            }
+        };
+        let is_tok = |k: usize, t: char| -> bool { tokmask[k] && cval(k) == t as u32 };
+        // c:6431-6433 / c:6414 — copy one element out unchanged.
+        let verbatim = |out: &mut String, k: usize| {
+            if tokmask[k] {
+                out.push(char::from_u32(cval(k)).unwrap_or('\0'));
+            } else {
+                push_metachar(out, mcs[k]);
+            }
+        };
+        let mut i = 0usize;
+        while i < mcs.len() {
+            // c:6262-6271 — a backtick group is copied whole, and C emits the
+            // closing tick even when the input ran out before one appeared.
+            if is_tok(i, Tick) || is_tok(i, Qtick) {
+                let tick = if is_tok(i, Tick) { Tick } else { Qtick };
+                result.push(tick);
+                i += 1;
+                while i < mcs.len() && !is_tok(i, tick) {
+                    verbatim(&mut result, i);
+                    prev = char::from_u32(cval(i)).unwrap_or('\0');
+                    i += 1;
+                }
+                result.push(tick); // c:6268
+                prev = tick;
+                if i < mcs.len() {
+                    i += 1; // c:6269-6270
+                }
+                continue;
+            }
+            // c:6281-6299 — `$(…)`, `$[…]`, `${…}` (and the `Qstring` forms
+            // they take inside double quotes) are already syntactically
+            // quoted, so the whole group goes through untouched. Without this
+            // the `(` of `echo "${(` reached the c:6301 ispecial arm and came
+            // out `${\(`, so `$PREFIX` was `${\(` where zsh publishes `${(`
+            // and `_brace_parameter` never saw a parameter-flag word.
+            let opener = if (is_tok(i, Stringg) || is_tok(i, Qstring)) && i + 1 < mcs.len() {
+                if is_tok(i + 1, Inpar) {
+                    Some((Inpar, Outpar))
+                } else if is_tok(i + 1, Inbrack) {
+                    Some((Inbrack, Outbrack))
+                } else if is_tok(i + 1, Inbrace) {
+                    Some((Inbrace, Outbrace))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some((open, close)) = opener {
+                // c:6283-6286 — `beg` is the `String`/`Qstring` byte, and it is
+                // what raises the nesting level, not the bracket itself.
+                let beg = if is_tok(i, Stringg) { Stringg } else { Qstring };
+                let mut level = 0i32;
+                result.push(beg); // c:6288
+                result.push(open); // c:6289
+                i += 2;
+                // c:6290-6296
+                prev = open;
+                while i < mcs.len() && (!is_tok(i, close) || level != 0) {
+                    if is_tok(i, beg) {
+                        level += 1;
+                    } else if is_tok(i, close) {
+                        level -= 1;
+                    }
+                    verbatim(&mut result, i);
+                    prev = char::from_u32(cval(i)).unwrap_or('\0');
+                    i += 1;
+                }
+                // c:6297-6298 — the closer, only when the input actually had one.
+                if i < mcs.len() {
+                    verbatim(&mut result, i);
+                    prev = char::from_u32(cval(i)).unwrap_or('\0');
+                    i += 1;
+                }
+                continue;
+            }
             let mc = mcs[i];
             let c = match mc {
                 MetaChar::Ch(c) => c,
@@ -8462,6 +8555,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 push_metachar(&mut result, mc);
             }
             prev = c;
+            i += 1;
         }
         result
     } else if quote_type == QT_SINGLE {

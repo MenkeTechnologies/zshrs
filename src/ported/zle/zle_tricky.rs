@@ -2365,7 +2365,17 @@ pub fn get_comp_string() -> Option<String> {
             let sp = crate::ported::utils::skipparens(Inbrack, Outbrack, &mut rest);
             let after_paren_off = ttv.len() - rest.len();
             let wb0 = WB.load(Ordering::SeqCst);
-            if sp > 0 || (after_paren_off as i32) > (zlemetacs_qsub - wb0) {
+            // c:1512 — `s > tt + zlemetacs_qsub - wb` compares POINTERS into
+            // the tokenized word, where every token (`Inbrack`, `Outbrack`) is
+            // ONE byte, so `s - tt` counts word POSITIONS. In this port a token
+            // is a multi-byte UTF-8 char, so the C pointer difference is a CHAR
+            // count, not `after_paren_off`. Using the byte offset made `a[1]=`
+            // read as 6 > 5 (`a` + 2-byte `Inbrack` + `1` + 2-byte `Outbrack`)
+            // and forced the c:1513-1519 subscript/IN_MATH branch, so `a[1]=`
+            // completed PARAMETERS with `PREFIX=[1]=` where zsh completes the
+            // assignment VALUE (`$compstate[context]` = `value`).
+            let after_paren_cpos = ttv[..after_paren_off].chars().count() as i32;
+            if sp > 0 || after_paren_cpos > (zlemetacs_qsub - wb0) {
                 // c:1513-1519 — cursor inside `NAME[…]` on the LHS of an
                 // assignment: `s = NULL`, complete the subscript as math.
                 // c:1513 — `s = NULL`; the IN_MATH block below rebuilds it.
