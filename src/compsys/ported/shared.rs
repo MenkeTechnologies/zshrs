@@ -708,14 +708,32 @@ pub fn eval_comp(comp: &str, line: u64) -> i32 {
         // c:6165 — `scriptname = "(eval)";` (inside the `!ineval` arm).
         crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
     }
-    // c:6209 — `execode(prog, 1, 0, "eval");`. execode APPENDS its context
-    // argument to `zsh_eval_context` for the duration of the body
-    // (`Src/exec.c:1245-1266`).
-    let ctx = crate::ported::exec::EvalContextFrame::push("eval");
+    // c:6209 — `execode(prog, 1, 0, "eval");` APPENDS its context argument to
+    // `zsh_eval_context` for the duration of the body (Src/exec.c:1245-1266).
+    //
+    // That push is DELIBERATELY NOT made here. `docs/COMPLETION_DISPATCH.md`
+    // "Divergence C" records the decision that compsys Rust ports do not
+    // synthesize `$zsh_eval_context` frames, and
+    // tests/zsh_eval_context_frames.rs::compsys_ports_synthesize_no_eval_context_frames
+    // pins it by scanning this tree for that constructor call. (The scan is a
+    // plain substring match, so naming the call verbatim here — even in prose —
+    // trips it; hence the circumlocution.)
+    //
+    // A push was added here in 9e55378587 and broke that test. It is left out
+    // rather than re-added, and the test is left alone, because the decision is
+    // documented and the test is its enforcement — not because the case is
+    // clear-cut. It is not: Divergence C reasons that the Rust chain "never
+    // evals", whereas this function genuinely does parse and execute a string
+    // below, so a frame here would arguably be truthful rather than fabricated.
+    // Resolving that tension is a design call for the maintainer; silently
+    // overriding a pinned decision from inside a bug fix is not.
+    //
+    // The funcstack half above is separate and IS pushed: it is a real frame
+    // for a call that really happens, and no invariant forbids it.
+    //
     // c:6203-6216 — `prog = parse_string(...); … execode(prog, …)`; a NULL
     // prog (parse failure) is `lastval = 1` at c:6215.
     let lastval = crate::ported::exec::execute_script(comp).unwrap_or(1);
-    drop(ctx);
     drop(fstack); // c:6218-6219 `if (fpushed) funcstack = funcstack->prev;`
     crate::ported::utils::set_scriptname(oscriptname); // c:6222
     lastval // c:6225
