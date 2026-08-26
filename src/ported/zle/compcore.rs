@@ -3561,8 +3561,22 @@ pub fn set_comp_sep() -> i32 {
             ("ISUFFIX", &COMPISUFFIX),
             ("QIPREFIX", &COMPQIPREFIX),
             ("QISUFFIX", &COMPQISUFFIX),
-            ("QUOTE", &COMPQUOTE),
-            ("QUOTING", &COMPQUOTING),
+            // NOTE: the list ENDS here, matching `comprparams[]`
+            // (Src/Zle/complete.c:1248-1258), whose last entry is QISUFFIX.
+            //
+            // `QUOTE` and `QUOTING` were previously published here as
+            // top-level parameters. They are NOT in comprparams — `compquote`
+            // and `compquoting` live in `compkparams`
+            // (Src/Zle/complete.c:1266-1267) and are therefore
+            // `$compstate[quote]` / `$compstate[quoting]` KEYS ONLY, never
+            // shell parameters. zsh's `callcompfunc` (c:1585-1610) restores
+            // the C globals, not any `$QUOTE`/`$QUOTING`.
+            //
+            // Publishing them created two real scalars that zsh does not have,
+            // which the user's `_parameters` then offered as completion
+            // matches — a stable +2 on any cell reaching this path.
+            // The compstate side is published correctly and separately at
+            // compcore.rs:886-890.
         ] {
             // Same gsu-setfn bypass as the restore in complete.rs:
             // QIPREFIX/QISUFFIX carry PM_READONLY (c:1256-1257).
