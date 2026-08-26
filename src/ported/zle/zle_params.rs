@@ -553,9 +553,47 @@ pub fn set_buffer(s: &str) {
     );
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
-/// `get_buffer` — see implementation.
+/// `$BUFFER` accessor — the full edited line.
+/// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c:258.
+///
+/// The `zlemetaline` branch (c:260-261) is shared by four getters —
+/// `get_buffer`, `get_cursor` (c:283), `get_lbuffer` (c:357) and
+/// `get_rbuffer` (c:386) — and is true exactly while the line is
+/// metafied, which is the whole of completion: `docomplete` metafies at
+/// `Src/Zle/zle_tricky.c:633` and unmetafies again at `:748`. Every
+/// completion function that reads `$BUFFER`/`$LBUFFER`/`$RBUFFER`/
+/// `$CURSOR` therefore goes through it, and without it these getters
+/// report the pre-`docomplete` line (`echo "a` instead of `echo a`).
+///
+/// Two deviations from the C text, both forced and both local:
+///
+/// * C spells the test `zlemetaline != NULL`. The Rust port cannot:
+///   `unmetafy_line` (compcore.rs:6851-6856) has no pointer to NULL out,
+///   it clears the `OnceLock<Mutex<String>>` buffer and zeroes
+///   `ZLEMETALL`, so `.get().is_some()` stays true for the rest of the
+///   session. `ZLEMETALL > 0 && ZLEMETALINE.get().is_some()` is the
+///   established spelling of "currently metafied" (zle_utils.rs:75,
+///   :389, :485, :913).
+/// * C returns the metafied text as-is, because a C `Param` stores
+///   metafied strings natively. A zshrs parameter stores a plain Rust
+///   `String`, so the unmetafy happens here — the same boundary
+///   conversion `makezleparams` already does for `$KEYS`
+///   (zle_params.rs:212-213).
 pub fn get_buffer() -> String {
     // c:258
+    use crate::ported::zle::compcore::{ZLEMETALINE, ZLEMETALL};
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 {
+        // c:260 — `if (zlemetaline != 0)`
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(g) = m.lock() {
+                // c:261 — `return dupstring(zlemetaline);`
+                let mut v = g.as_bytes().to_vec();
+                crate::ported::utils::unmetafy(&mut v);
+                return String::from_utf8_lossy(&v).into_owned();
+            }
+        }
+    }
+    // c:262 — `return zlelineasstring(zleline, zlell, 0, NULL, NULL, 1);`
     ZLELINE.lock().unwrap().iter().collect()
 }
 
@@ -573,6 +611,29 @@ pub fn set_cursor(pos: usize) {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_cursor() -> usize {
     // c:281
+    use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+    // c:283 — `if (zlemetaline != NULL)`; see `get_buffer` for why the
+    // Rust spelling of that test is ZLEMETALL > 0.
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 {
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(g) = m.lock() {
+                // c:284-292 — "A lot of work for one number, but
+                // still...": round-trip the metafied line through
+                // `stringaszleline` with `zlemetacs` so the BYTE offset
+                // comes back as the wide-character index $CURSOR reports.
+                let mut tmpcs: i32 = 0;
+                let _tmpline = crate::ported::zle::zle_utils::stringaszleline(
+                    &g,
+                    ZLEMETACS.load(Ordering::SeqCst),
+                    None,
+                    None,
+                    Some(&mut tmpcs),
+                );
+                return tmpcs.max(0) as usize; // c:292
+            }
+        }
+    }
+    // c:294 — `return zlecs;`
     ZLECS.load(Ordering::SeqCst)
 }
 
@@ -646,6 +707,21 @@ pub fn set_lbuffer(s: &str) {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_lbuffer() -> String {
     // c:355
+    use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+    // c:357 — `if (zlemetaline != NULL)`; see `get_buffer`.
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 {
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(g) = m.lock() {
+                // c:358 — `return dupstrpfx(zlemetaline, zlemetacs);`
+                // zlemetacs is a BYTE offset into the metafied line.
+                let cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize).min(g.len());
+                let mut v = g.as_bytes()[..cs].to_vec();
+                crate::ported::utils::unmetafy(&mut v);
+                return String::from_utf8_lossy(&v).into_owned();
+            }
+        }
+    }
+    // c:359 — `return zlelineasstring(zleline, zlecs, 0, NULL, NULL, 1);`
     ZLELINE.lock().unwrap()[..ZLECS.load(Ordering::SeqCst)]
         .iter()
         .collect()
@@ -669,6 +745,24 @@ pub fn set_rbuffer(s: &str) {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_rbuffer() -> String {
     // c:384
+    use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+    // c:386 — `if (zlemetaline != NULL)`; see `get_buffer`.
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 {
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(g) = m.lock() {
+                // c:387-388 — `return dupstrpfx((char *)zlemetaline + zlemetacs,
+                //                                zlemetall - zlemetacs);`
+                let cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize).min(g.len());
+                let ll = (ZLEMETALL.load(Ordering::SeqCst).max(0) as usize)
+                    .min(g.len())
+                    .max(cs);
+                let mut v = g.as_bytes()[cs..ll].to_vec();
+                crate::ported::utils::unmetafy(&mut v);
+                return String::from_utf8_lossy(&v).into_owned();
+            }
+        }
+    }
+    // c:389 — `return zlelineasstring(zleline + zlecs, zlell - zlecs, ...);`
     ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)..]
         .iter()
         .collect()
@@ -677,11 +771,23 @@ pub fn get_rbuffer() -> String {
 /// Port of `get_prebuffer(UNUSED(Param pm))` from Src/Zle/zle_params.c:394.
 pub fn get_prebuffer() -> String {
     // c:394
-    // C body c:396-410 — `if (!stackhist) return ztrdup("");
-    //                     dputs(...prepended buffer...)`. Returns the
-    //                     stacked-line buffer (multi-line input not
-    //                     yet committed to current zleline). Without
-    //                     stackhist tracking we return empty.
+    // C body c:401-409 — `if (zle_chline) return dupstring(zle_chline);
+    //                     if (chline) return dupstrpfx(chline, hptr - chline);
+    //                     return dupstring("");`
+    //
+    // (The previous version of this comment quoted `if (!stackhist)
+    // return ztrdup(""); dputs(...)` as the C body. No such code exists
+    // at zle_params.c:396-410 in zsh-5.7.1-1759-ge73499b372, or anywhere
+    // else in `get_prebuffer` — the citation was fabricated. The real
+    // body is the three lines above.)
+    //
+    // NOT PORTED — the body, not the substrate: `$PREBUFFER` is the text
+    // of the earlier lines of a multi-line input, either pushed onto the
+    // line stack (`zle_chline`) or already accepted into the history
+    // line being built (`chline`, up to `hptr`). All three globals DO
+    // exist in the Rust port (hist.rs:5277 `hptr`, :5280 `chline`, :5283
+    // `zle_chline`), so this is a body that can be written; until it is,
+    // `$PREBUFFER` reads empty where zsh has the accepted lines.
     String::new()
 }
 
@@ -2018,6 +2124,92 @@ mod widget_killring_tests {
         let _g = zle_test_setup();
         set_buffer("");
         assert_eq!(get_buffer(), "");
+    }
+
+    /// While the line is metafied — i.e. for the whole of completion,
+    /// `docomplete` metafies at `Src/Zle/zle_tricky.c:633` — the four
+    /// line getters must read ZLEMETALINE/ZLEMETACS, not ZLELINE
+    /// (`Src/Zle/zle_params.c:260`, `:283`, `:357`, `:386`).
+    ///
+    /// Without that branch every completion function saw the raw
+    /// pre-`docomplete` line: `echo "a<TAB>` reported `$BUFFER=echo "a`
+    /// `$CURSOR=7` where zsh reports `echo a` / `6`.
+    #[test]
+    fn metafied_line_getters_read_zlemetaline_not_zleline() {
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        // ZLELINE holds something DIFFERENT so a fallback read is visible.
+        set_buffer("zleline-must-not-be-read");
+        set_cursor(3);
+
+        *ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .unwrap() = "echo a".to_string();
+        ZLEMETALL.store(6, Ordering::SeqCst);
+        ZLEMETACS.store(6, Ordering::SeqCst);
+
+        let (buffer, cursor, lbuffer, rbuffer) =
+            (get_buffer(), get_cursor(), get_lbuffer(), get_rbuffer());
+
+        // Cursor in the middle: LBUFFER/RBUFFER split at zlemetacs.
+        ZLEMETACS.store(4, Ordering::SeqCst);
+        let (lbuf_mid, rbuf_mid, cs_mid) = (get_lbuffer(), get_rbuffer(), get_cursor());
+
+        // Meta mode off again — the getters fall back to ZLELINE.
+        ZLEMETALL.store(0, Ordering::SeqCst);
+        let fallback = get_buffer();
+
+        assert_eq!(buffer, "echo a");
+        assert_eq!(cursor, 6);
+        assert_eq!(lbuffer, "echo a");
+        assert_eq!(rbuffer, "");
+        assert_eq!(lbuf_mid, "echo");
+        assert_eq!(rbuf_mid, " a");
+        assert_eq!(cs_mid, 4);
+        assert_eq!(fallback, "zleline-must-not-be-read");
+    }
+
+    /// The metafied branch must be the exact inverse of `metafy_line`,
+    /// including for a codepoint whose UTF-8 encoding contains a byte
+    /// that metafies. `Ã` is U+00C3 = `C3 83`, and `83` is `Meta`
+    /// itself (`Src/utils.c:4196` sets IMETA for it), so
+    /// `zlelineasstring` expands it to the `Meta`/`0xA3` pair — a
+    /// getter that returned the metafied text verbatim would hand
+    /// `$BUFFER` a byte pair that is not the character the user typed.
+    #[test]
+    fn metafied_line_getters_undo_the_meta_escape() {
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let line: Vec<char> = "echo Ã".chars().collect();
+        let (mut ll, mut cs) = (0i32, 0i32);
+        let meta = crate::ported::zle::zle_utils::zlelineasstring(
+            &line,
+            line.len(),
+            line.len() as i32,
+            Some(&mut ll),
+            Some(&mut cs),
+            0,
+        );
+        // The escape really happened — otherwise the test proves nothing.
+        let expanded = meta.len() > "echo Ã".len();
+
+        *ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .unwrap() = meta;
+        ZLEMETALL.store(ll, Ordering::SeqCst);
+        ZLEMETACS.store(cs, Ordering::SeqCst);
+        let (buffer, cursor) = (get_buffer(), get_cursor());
+        ZLEMETALL.store(0, Ordering::SeqCst);
+
+        assert!(expanded, "zlelineasstring did not metafy the 0x83 byte");
+        assert_eq!(buffer, "echo Ã");
+        assert_eq!(cursor, 6, "cursor comes back as a codepoint index");
     }
 
     // ═══════════════════════════════════════════════════════════════════
