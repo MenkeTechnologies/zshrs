@@ -4843,7 +4843,9 @@ impl ZshCompiler {
             && (s.contains(crate::ported::zsh_h::Hat)
                 || s.contains('^')
                 || s.contains(crate::ported::zsh_h::Equals)
-                || s.contains('='))
+                || s.contains('=')
+                || s.contains(crate::ported::zsh_h::Tilde)
+                || s.contains('~'))
         {
             let ch: Vec<char> = s.chars().collect();
             let mut out = String::with_capacity(s.len() + 2);
@@ -4860,10 +4862,14 @@ impl ZshCompiler {
                 // char: C's loop re-reads `*s` each pass, but `$^=x` is not a
                 // shape either shell's fast paths accept, so keep it simple and
                 // only fold a homogeneous run.
+                //
+                // `~` (c:2596 globsubst) joins them for the SUBSCRIPTED shape
+                // only — see the gate on `sub_end` at the rewrite below.
                 let flag_char = if i + 1 < ch.len() {
                     match ch[i + 1] {
                         c if c == crate::ported::zsh_h::Hat || c == '^' => Some('^'),
                         c if c == crate::ported::zsh_h::Equals || c == '=' => Some('='),
+                        c if c == crate::ported::zsh_h::Tilde || c == '~' => Some('~'),
                         _ => None,
                     }
                 } else {
@@ -4876,6 +4882,7 @@ impl ZshCompiler {
                     let fc = flag_char.unwrap();
                     let is_flag = |c: char| match fc {
                         '^' => c == crate::ported::zsh_h::Hat || c == '^',
+                        '~' => c == crate::ported::zsh_h::Tilde || c == '~',
                         _ => c == crate::ported::zsh_h::Equals || c == '=',
                     };
                     let mut j = i + 1;
@@ -4953,7 +4960,19 @@ impl ZshCompiler {
                             sub_end = q + 1;
                         }
                     }
-                    if name_end > name_start {
+                    // `~` only folds when a subscript was actually consumed.
+                    // Bare `$~NAME` already has a dedicated whole-word fast
+                    // path (the `untoked.starts_with("$~")` arm, :6237) whose globbing is
+                    // gated on dq/scalar-assign/word-seg context; rewriting
+                    // every `$~NAME` into `${~NAME}` would divert all of them
+                    // off it. Only `$~NAME[SUB]` is unrepresentable there — the
+                    // fast path's name scan stops at the `[`, so the subscript
+                    // leaked out as literal text (`print $~a[i]` globbed
+                    // `z[i]`). c:Src/subst.c:2596-2602 runs the `~` flag arm in
+                    // the SAME loop as `^`/`=`, and c:2799-2803's fetchvalue
+                    // then consumes the subscript, so `$~a[i]` is `${~a[i]}`.
+                    let fold = name_end > name_start && (fc != '~' || sub_end > name_end);
+                    if fold {
                         out.push(ch[i]);
                         out.push(crate::ported::zsh_h::Inbrace);
                         for _ in 0..nflags {

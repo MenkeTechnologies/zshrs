@@ -893,90 +893,115 @@ pub fn getfullchar(do_keytmout: bool) -> Option<char> {
 }
 
 /// Port of `int getrestchar(int inchar, char *outstr, int *outcount)`
-/// from `Src/Zle/zle_main.c:990`. Given the first byte of a possibly
-/// multibyte UTF-8 sequence, reads continuation bytes via `getbyte`
-/// until the codepoint is complete, then writes it to `lastchar_wide`
-/// and returns it.
+/// from `Src/Zle/zle_main.c:990`. Given the first byte returned by
+/// `getbyte`, feeds bytes one at a time to `mbrtowc` until the
+/// character is complete, then writes it to `lastchar_wide` and
+/// returns it.
 ///
 /// ```c
-/// int
+/// mod_export ZLE_INT_T
 /// getrestchar(int inchar, char *outstr, int *outcount)
 /// {
+///     char c = inchar;
 ///     wchar_t outchar;
-///     int ret;
-///     mbstate_t mbs;
+///     int timeout;
+///     static mbstate_t mbs;
+///
 ///     lastchar_wide_valid = 1;
 ///     if (outcount) *outcount = 0;
-///     if (inchar == EOF) { lastchar_wide = WEOF; return WEOF; }
-///     memset(&mbs, 0, sizeof(mbs));
-///     for (;;) {
-///         char c = (char) inchar;
-///         if (outstr) { outstr[*outcount] = c; (*outcount)++; }
-///         ret = mbrtowc(&outchar, &c, 1, &mbs);
-///         if (ret != -2) {  /* not "incomplete" */
-///             if (ret < 0) outchar = WEOF;
-///             lastchar_wide = (ZLE_INT_T) outchar;
-///             return (int) outchar;
+///     if (inchar == EOF) { memset(&mbs, 0, sizeof mbs); return lastchar_wide = WEOF; }
+///
+///     while (1) {
+///         size_t cnt = mbrtowc(&outchar, &c, 1, &mbs);
+///         if (cnt == MB_INVALID) { memset(&mbs, 0, sizeof mbs); return lastchar_wide = WEOF; }
+///         if (cnt != MB_INCOMPLETE) break;
+///         inchar = getbyte(1L, &timeout, 1);
+///         lastchar_wide_valid = 1;
+///         if (inchar == EOF) {
+///             memset(&mbs, 0, sizeof mbs);
+///             if (timeout) { lastchar = '?'; return lastchar_wide = L'?'; }
+///             else return lastchar_wide = WEOF;
 ///         }
-///         if ((inchar = getbyte(...)) == EOF) {
-///             lastchar_wide = WEOF;
-///             return WEOF;
-///         }
+///         c = inchar;
+///         if (outstr) { *outstr++ = c; (*outcount)++; }
 ///     }
+///     return lastchar_wide = (ZLE_INT_T)outchar;
 /// }
 /// ```
+///
+/// The conversion is `mbrtowc` and therefore LOCALE-DRIVEN, which is the
+/// whole of zsh's byte-vs-multibyte behaviour on the input path: under
+/// `LC_ALL=C` (`MB_CUR_MAX == 1`) `mbrtowc` consumes exactly one byte and
+/// hands back that byte's value, so typing `Ã` (`c3 83`) puts TWO
+/// characters — U+00C3 and U+0083 — in the line, exactly as zsh does.
+/// Under a UTF-8 locale the same call assembles the full sequence into
+/// one character. An earlier port hard-coded the UTF-8 lead/continuation
+/// arithmetic here, so it produced one character in EVERY locale and
+/// every multibyte line diverged from zsh under `LC_ALL=C` — on the
+/// character count, on `$CURSOR`, and on the `<00xx>` rendering of the
+/// bytes the C locale leaves unprintable.
+///
+/// Two deliberate deviations, both forced by the surrounding port:
+///   - C's `static mbstate_t mbs` is a file-static; the Rust port uses a
+///     zeroed state per call. Equivalent: every exit path out of the C
+///     loop leaves `mbs` clean (a complete character consumes its own
+///     state; the `MB_INVALID`, EOF and timeout paths all `memset` it).
+///   - C's `getbyte(1L, &timeout, 1)` reports via `timeout` whether the
+///     rest of the character failed to arrive within `KEYTIMEOUT`, and
+///     returns `'?'` for that case (c:1039-1049). This port's `getbyte`
+///     has no `timeout` out-parameter, so a truncated character returns
+///     `WEOF` — the `timeout == 0` arm — rather than `'?'`.
+///
 /// WARNING: param names don't match C — Rust=(inchar) vs C=(inchar, outstr, outcount)
 pub fn getrestchar(inchar: i32) -> i32 {
     // c:990
-    LASTCHAR_WIDE_VALID.store(1, SeqCst); // c:994
+    use crate::ported::utils::{mbrtowc, MbStateBuf, MBSTATE_ZERO, MB_INCOMPLETE, MB_INVALID};
+
+    LASTCHAR_WIDE_VALID.store(1, SeqCst); // c:1002
     if inchar < 0 {
-        // c:998 inchar == EOF
-        LASTCHAR_WIDE.store(-1, SeqCst); // c:999 WEOF
+        // c:1006 — `if (inchar == EOF)`; the mbstate reset at c:1008 is
+        // implicit here since the state is per call.
+        LASTCHAR_WIDE.store(-1, SeqCst); // c:1009 — `lastchar_wide = WEOF`
         return -1;
     }
-    // c:1003-1050 — multibyte assembly. Rust's char type is UTF-32;
-    // walk continuation bytes (0x80-0xBF) until the codepoint is
-    // valid UTF-8, then decode.
-    let b0 = inchar as u8;
-    let expected = if b0 < 0x80 {
-        1
-    } else if b0 < 0xC0 {
-        1
-    }
-    // invalid start byte
-    else if b0 < 0xE0 {
-        2
-    } else if b0 < 0xF0 {
-        3
-    } else {
-        4
-    };
-    let mut bytes: Vec<u8> = vec![b0];
-    while bytes.len() < expected {
+
+    let mut mbs: MbStateBuf = MBSTATE_ZERO;
+    let mut c = inchar as u8; // c:992 — `char c = inchar;`
+    loop {
+        // c:1016
+        let mut outchar: libc::wchar_t = 0;
+        // c:1017 — `size_t cnt = mbrtowc(&outchar, &c, 1, &mbs);`
+        let cnt = unsafe {
+            mbrtowc(
+                &mut outchar,
+                &c as *const u8 as *const libc::c_char,
+                1,
+                &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+            )
+        };
+        if cnt == MB_INVALID {
+            // c:1018-1024 — invalid input: reset state, WEOF.
+            LASTCHAR_WIDE.store(-1, SeqCst); // c:1023
+            return -1;
+        }
+        if cnt != MB_INCOMPLETE {
+            // c:1025-1026 — complete (`cnt == 0` for a NUL lands here too).
+            // c:1059 — `return lastchar_wide = (ZLE_INT_T)outchar;`
+            LASTCHAR_WIDE.store(outchar as i32, SeqCst);
+            return outchar as i32;
+        }
+        // c:1034 — `inchar = getbyte(1L, &timeout, 1);`
         match getbyte(true) {
-            // c:1042 inchar = getbyte()
-            Some(n) if (n & 0xC0) == 0x80 => bytes.push(n), // continuation
             Some(n) => {
-                ungetbyte(n); // c:1042 unget non-continuation
-                break;
+                LASTCHAR_WIDE_VALID.store(1, SeqCst); // c:1036
+                c = n; // c:1053 — `c = inchar;`
             }
             None => {
-                LASTCHAR_WIDE.store(-1, SeqCst);
+                // c:1037-1051 — EOF mid-character. Without a `timeout`
+                // out-parameter this is always the `else` arm (WEOF).
+                LASTCHAR_WIDE.store(-1, SeqCst); // c:1051
                 return -1;
             }
-        }
-    }
-    let c_opt = std::str::from_utf8(&bytes)
-        .ok()
-        .and_then(|s| s.chars().next());
-    match c_opt {
-        Some(c) => {
-            LASTCHAR_WIDE.store(c as i32, SeqCst); // c:1027
-            c as i32
-        }
-        None => {
-            LASTCHAR_WIDE.store(b0 as i32, SeqCst); // c:1024 ret < 0 → WEOF
-            b0 as i32
         }
     }
 }

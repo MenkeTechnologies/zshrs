@@ -355,7 +355,7 @@ jobs:
           linux_blocks=$( { emit on_intel x86_64-unknown-linux-gnu "$SHA_X86_LINUX"; emit on_arm aarch64-unknown-linux-gnu "$SHA_ARM_LINUX"; } )
           {
             printf 'class ZshrsDaemon < Formula\n'
-            printf '  desc "zshrs daemon + zd client only — for users of other shells (bash/fish/zsh)"\n'
+            printf '  desc "Daemon and zd client from zshrs — for users of other shells (bash/fish/zsh)"\n'
             printf '  homepage "https://github.com/MenkeTechnologies/zshrs"\n'
             printf '  license "MIT"\n'
             printf '  conflicts_with "zshrs-all", because: "both install zd and zshrs-daemon"\n'

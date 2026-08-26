@@ -514,10 +514,40 @@ pub fn tcoutclear(cap: i32) {
 /// thread-local `NMWBUF` (length at `nmwbuf[c.chr]`, codepoints following)
 /// and emits each — the matching consumer for the already-ported producer.
 pub fn zwcputc(c: &REFRESH_ELEMENT) {
+    use crate::ported::utils::{wcrtomb, MbStateBuf, MBSTATE_ZERO, MB_LOCALE_READY};
     use std::sync::atomic::Ordering;
+
+    let _ = *MB_LOCALE_READY; // see `MB_LOCALE_READY` — locale-driven encode
+
+    // c:639-641 / c:645-647 — `memset(&mbstate, 0, ...); i = wcrtomb(mbtmp,
+    // wc, &mbstate); if (i > 0) fwrite(mbtmp, i, 1, shout);`. The encode is
+    // LOCALE-DRIVEN: under `LC_ALL=C` (`MB_CUR_MAX == 1`) a cell holding
+    // U+00C3 goes to the terminal as the single byte 0xC3, and anything
+    // above 0xFF is unrepresentable and written as nothing at all. An
+    // earlier port used `char::encode_utf8`, which emitted UTF-8 in every
+    // locale — so a C-locale line that zsh drew as raw bytes came out of
+    // zshrs as multibyte sequences. `mbtmp` is `MB_CUR_MAX + 1` bytes in C;
+    // MB_CUR_MAX is at most MB_LEN_MAX (16 on glibc, 6 on macOS).
+    let emit = |out: &mut Vec<u8>, ch: char| {
+        let mut mbtmp = [0u8; 32];
+        let mut mbstate: MbStateBuf = MBSTATE_ZERO;
+        let i = unsafe {
+            wcrtomb(
+                mbtmp.as_mut_ptr() as *mut libc::c_char,
+                ch as u32 as libc::wchar_t,
+                &mut mbstate as *mut MbStateBuf as *mut libc::c_void,
+            )
+        };
+        // `wcrtomb` reports failure as `(size_t)-1`, which the `i > 0` test
+        // in C rejects along with a zero-length result.
+        if i > 0 && i <= mbtmp.len() {
+            out.extend_from_slice(&mbtmp[..i]);
+        }
+    };
+
     // c:630-631 — make the cell's attrs pending, emit the SGR diff.
     crate::ported::prompt::treplaceattrs(c.atr);
-    let mut out = crate::ported::prompt::applytextattributes(0);
+    let mut out: Vec<u8> = crate::ported::prompt::applytextattributes(0).into_bytes();
     if c.atr & TXT_MULTIWORD_MASK != 0 {
         // c:633-643 — multiword glyph: the cell's chr is an index into
         // nmwbuf (set by addmultiword c:934); read the cluster length at
@@ -530,8 +560,7 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
                 for _ in 0..nchars {
                     // c:639-641 — `*wcptr++`, wcrtomb → fwrite each char.
                     if let Some(ch) = b.get(p).copied().and_then(char::from_u32) {
-                        let mut tmp = [0u8; 4];
-                        out.push_str(ch.encode_utf8(&mut tmp));
+                        emit(&mut out, ch);
                     }
                     p += 1;
                 }
@@ -542,13 +571,12 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
         // NUL chr is the empty/terminator cell; ZWC_WEOF is the trailing
         // column placeholder of a wide glyph — both are skipped (the leading
         // cell already drew the full-width character).
-        let mut buf = [0u8; 4];
-        out.push_str(c.chr.encode_utf8(&mut buf));
+        emit(&mut out, c.chr);
     }
     if !out.is_empty() {
         // c:646-651 — the cell's bytes go to `shout`, so a frame reaches
         // the terminal in one write instead of one per cell.
-        crate::shout::write(out.as_bytes());
+        crate::shout::write(&out);
     }
 }
 
@@ -1796,20 +1824,26 @@ pub fn zrefresh() {
                 // reduces to a single emit_cell — identical to the old emit.
                 let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                 if cw == 0 {
-                    // c:1474-1493 — a zero-width / non-printable orphan (combining
+                    // c:1358-1395 — a zero-width / non-printable orphan (combining
                     // marks following a base are absorbed above via
                     // skip_combining; with COMBININGCHARS off they fall here):
                     // render as the hex escape `<%.04x>` / `<%.08x>`, one cell
-                    // per character.
+                    // per character. Under `LC_ALL=C` this is the branch every
+                    // non-ASCII byte that the locale calls unprintable takes.
                     let hex = if (ch as u32) > 0xffff {
-                        format!("<{:08x}>", ch as u32) // c:1480
+                        format!("<{:08x}>", ch as u32) // c:1375
                     } else {
-                        format!("<{:04x}>", ch as u32) // c:1482
+                        format!("<{:04x}>", ch as u32) // c:1377
                     };
+                    // c:1383 — `rpms.s->atr = all_attr;` — like the `^X` cells
+                    // above, the escape carries the `special` highlight; without
+                    // the mix zshrs drew `<0083>` unhighlighted where zsh wraps
+                    // it in the standout SGR pair.
+                    let hatr = atr | special_zattr;
                     let mut bail = false;
                     for hc in hex.chars() {
-                        if emit(&mut rpms, hc, atr) {
-                            // c:1485-1491 — each cell, wrapping at the margin.
+                        if emit(&mut rpms, hc, hatr) {
+                            // c:1385-1389 — each cell, wrapping at the margin.
                             bail = true;
                             break;
                         }
@@ -1817,7 +1851,7 @@ pub fn zrefresh() {
                     if bail {
                         break;
                     }
-                    continue; // c:1493 — char fully rendered
+                    continue; // c:1394 — char fully rendered
                 }
                 let width = cw;
                 // c:1274-1287 — too wide for the columns left on this line: fill

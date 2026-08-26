@@ -1944,6 +1944,11 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
         let empty = std::ffi::CString::new("").unwrap();
         libc::setlocale(libc::LC_ALL, empty.as_ptr()); // c:1861
     }
+    // The process locale is now the environment's, so consume the lazy
+    // fallback that library consumers (unit tests, embedded entry points)
+    // rely on. Doing it here means it can never fire later and undo an
+    // `LC_*` parameter assignment made from an rc file.
+    let _ = *crate::ported::utils::MB_LOCALE_READY;
 
     // init_jobs(argv, environ);                                             // c:1864
     let env: Vec<String> = std::env::vars()
