@@ -781,13 +781,37 @@ pub fn get_prebuffer() -> String {
     // else in `get_prebuffer` — the citation was fabricated. The real
     // body is the three lines above.)
     //
-    // NOT PORTED — the body, not the substrate: `$PREBUFFER` is the text
-    // of the earlier lines of a multi-line input, either pushed onto the
-    // line stack (`zle_chline`) or already accepted into the history
-    // line being built (`chline`, up to `hptr`). All three globals DO
-    // exist in the Rust port (hist.rs:5277 `hptr`, :5280 `chline`, :5283
-    // `zle_chline`), so this is a body that can be written; until it is,
-    // `$PREBUFFER` reads empty where zsh has the accepted lines.
+    // `$PREBUFFER` is the text of the earlier lines of a multi-line
+    // input: either pushed onto the line stack (`zle_chline`, set by
+    // `hist_context_save(toplevel)` at hist.c:252) or still being
+    // accumulated into the history line by the lexer (`chline`, filled
+    // one byte at a time by `hwaddc` at hist.c:368, valid up to `hptr`).
+    use crate::ported::hist::{chline, hlinesz, hptr, zle_chline};
+
+    // c:401-404 — `if (zle_chline) { return dupstring(zle_chline); }`.
+    // C's NULL test is `Option::is_some` here (hist.rs:5283 types
+    // `zle_chline` as `Mutex<Option<String>>`, `None` == C's NULL).
+    if let Some(s) = zle_chline.lock().expect("zle_chline poisoned").as_ref() {
+        return s.clone();
+    }
+    // c:405 — `if (chline)`. Rust's `chline` is a `Mutex<String>`
+    // (hist.rs:5280) with no NULL state, so the port's stand-in for
+    // "chline is allocated" is `hlinesz != 0`, the same proxy `ihwaddc`
+    // uses for C's `if (chline && ...)` guard at hist.rs:196 (hbegin
+    // sets `hlinesz = 64` when it allocates the buffer).
+    if hlinesz.load(Ordering::SeqCst) != 0 {
+        // c:407 — `return dupstrpfx(chline, hptr - chline);`. The Rust
+        // `hptr` (hist.rs:5277) is the byte offset of C's pointer
+        // difference; clamp to the buffer and to a char boundary so a
+        // mid-UTF-8 `hptr` can never panic the slice.
+        let buf = chline.lock().expect("chline poisoned");
+        let mut end = hptr.load(Ordering::SeqCst).min(buf.len());
+        while end > 0 && !buf.is_char_boundary(end) {
+            end -= 1;
+        }
+        return buf[..end].to_string();
+    }
+    // c:409 — `return dupstring("");`
     String::new()
 }
 
