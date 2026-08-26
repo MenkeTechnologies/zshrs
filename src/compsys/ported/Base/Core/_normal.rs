@@ -193,8 +193,17 @@ pub fn _normal_impl(args: &[String]) -> i32 {
             .and_then(|t| t.get("_comps").and_then(|h| h.get("-command-").cloned()))
             .unwrap_or_default();
         if !comp.is_empty() {
-            // sh:32  eval "$comp" — dispatch via exec_hook
-            if dispatch_function_call(&comp, &[]).unwrap_or(1) == 0 {
+            // sh:32  `[[ -n "$comp" ]] && eval "$comp" && return`.
+            //
+            // `eval`, not a by-name call: the `$_comps[-command-]` value can
+            // carry arguments, and `eval` pushes the `(eval)` FS_EVAL frame
+            // that zsh's `$funcstack` shows between `_normal` and the
+            // completer (`_command_names (eval) _normal …`). Calling
+            // `dispatch_function_call(&comp, &[])` here pushed only the
+            // completer's own frame, so `$funcstack` lost the `(eval)` entry
+            // and `$functrace` read `_normal:0` where zsh reads `(eval):1`
+            // preceded by `_autocd:3`/`_normal:32`.
+            if crate::compsys::ported::shared::eval_comp(&comp, 32) == 0 {
                 return 0;
             }
         }
