@@ -564,6 +564,61 @@ pub fn mb_charinit() {
     // Rust handles UTF-8 natively
 }
 
+/// Scratch space for a libc `mbstate_t`.
+///
+/// C declares `mbstate_t mbs;` on the stack wherever it converts
+/// between the multibyte and wide representations (`Src/utils.c:543`
+/// `mb_shiftstate`, `Src/Zle/zle_utils.c:381`, `Src/Zle/zle_utils.c:202`,
+/// `Src/Zle/zle_refresh.c:625`, `Src/Zle/zle_main.c:995`). POSIX leaves
+/// the struct opaque and its size is platform-specific — 8 bytes on
+/// glibc/musl, 128 bytes on macOS and the BSDs — so the port hands libc
+/// an over-sized, 8-byte-aligned, zeroed buffer instead of restating the
+/// layout. `MBSTATE_ZERO` is the `memset(&mbs, 0, sizeof mbs)` those C
+/// sites perform before their first conversion.
+pub type MbStateBuf = [u64; 16];
+
+/// A zeroed [`MbStateBuf`] — the `memset(&mbs, '\0', sizeof mbs)` that
+/// precedes every C conversion loop (e.g. `Src/Zle/zle_utils.c:444`).
+pub const MBSTATE_ZERO: MbStateBuf = [0u64; 16];
+
+/// `(size_t)-2` — `mbrtowc` "the bytes so far are a valid but incomplete
+/// character". zsh spells this `MB_INCOMPLETE` (`Src/zsh.h:3313`).
+pub const MB_INCOMPLETE: usize = usize::MAX - 1;
+
+/// `(size_t)-1` — `mbrtowc` "invalid multibyte sequence". zsh spells this
+/// `MB_INVALID` (`Src/zsh.h:3314`).
+pub const MB_INVALID: usize = usize::MAX;
+
+// The libc conversion primitives themselves. The whole point of routing
+// through libc rather than Rust's native UTF-8 codecs is that these are
+// LOCALE-DRIVEN: under `LC_ALL=C` (`MB_CUR_MAX == 1`) `mbrtowc` consumes
+// exactly one byte and yields that byte's value as the wide character,
+// while under a UTF-8 locale it decodes the full sequence. zsh's
+// byte-vs-multibyte behaviour is entirely this distinction — no C caller
+// in `stringaszleline`/`zlelineasstring`/`getrestchar`/`zwcputc` tests
+// `MB_CUR_MAX` or `isset(MULTIBYTE)` itself. The `mbstate_t` argument is
+// typed as an opaque pointer; pass `&mut MBSTATE_ZERO`-initialised
+// [`MbStateBuf`]. The libc crate does not re-export these on unix.
+extern "C" {
+    /// libc `mbrtowc(3)`: decode one multibyte character from `s`
+    /// (at most `n` bytes) into `*pwc`, using restart state `ps`.
+    /// Returns the byte count consumed, `0` for a NUL,
+    /// [`MB_INCOMPLETE`] or [`MB_INVALID`].
+    pub fn mbrtowc(
+        pwc: *mut libc::wchar_t,
+        s: *const libc::c_char,
+        n: libc::size_t,
+        ps: *mut libc::c_void,
+    ) -> libc::size_t;
+
+    /// libc `wcrtomb(3)`: encode the wide character `wc` into `s`
+    /// (must hold `MB_CUR_MAX` bytes) using restart state `ps`.
+    /// Returns the byte count written, or [`MB_INVALID`] if the
+    /// character is not representable in the current locale.
+    pub fn wcrtomb(s: *mut libc::c_char, wc: libc::wchar_t, ps: *mut libc::c_void)
+        -> libc::size_t;
+}
+
 /// Port of `wcs_nicechar_sel(wchar_t c, size_t *widthp, char **swidep,
 /// int quotable)` from `Src/utils.c:593-705`. Four branches per C:
 ///   1. c < 0x80 and not printable: control-char escape (\n, \t, ^X, \C-X)

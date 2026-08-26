@@ -22342,9 +22342,45 @@ pub fn paramsubst(
                 } else {
                     chars[name_start..name_end].iter().collect()
                 };
+                // c:Src/subst.c:2570-2588 sets `getlen` for the `#` flag and
+                // then c:2799-2803 calls `fetchvalue`, which is what parses
+                // `[subscript]` — so the subscript belongs to the SAME
+                // reference: `$#fds[-1]` is `${#fds[-1]}` (length of the LAST
+                // element), not `${#fds}` followed by literal `[-1]`.
+                // Stopping the rewrite at the name left `3[-1]`, which reached
+                // `get_intarg`'s `mathevali` (subst.rs:2953) as garbage, so
+                // `${(r.$#fds[-1].)X:-Z}` padded to nothing —
+                // Completion/Zsh/Type/_file_descriptors:23 uses exactly that.
+                // Depth-tracked walk over both spellings of the brackets: DQ /
+                // lexer input carries Inbrack/Outbrack, direct calls carry
+                // ASCII (same walk as the `$@[SUB]` arm below and the `$^`/`$+`
+                // arms above).
+                let mut sub_end = name_end;
+                let nxt = chars.get(sub_end).copied();
+                if nxt == Some('[') || nxt == Some(Inbrack) {
+                    let mut depth = 1;
+                    let mut q = sub_end + 1;
+                    while q < chars.len() && depth > 0 {
+                        match chars[q] {
+                            c if c == '[' || c == Inbrack => depth += 1,
+                            c if c == ']' || c == Outbrack => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        q += 1;
+                    }
+                    if depth == 0 && q < chars.len() && (chars[q] == ']' || chars[q] == Outbrack) {
+                        sub_end = q + 1;
+                    }
+                }
+                let subscript: String = chars[name_end..sub_end].iter().collect();
                 let prefix: String = chars[..start_pos].iter().collect();
-                let suffix: String = chars[name_end..].iter().collect();
-                let rewritten = format!("{}${{#{}}}{}", prefix, name, suffix);
+                let suffix: String = chars[sub_end..].iter().collect();
+                let rewritten = format!("{}${{#{}{}}}{}", prefix, name, subscript, suffix);
                 return paramsubst(&rewritten, prefix.chars().count(), qt, pf_flags, ret_flags);
             }
             let value = arrays_get("@") // c:1625

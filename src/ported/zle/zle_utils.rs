@@ -106,20 +106,54 @@ pub fn zleaddtoline(chr: i32) {
 /// expanded to `Meta + (b^0x20)`, bumping the byte count). Returns
 /// the final byte length written to `buf`.
 ///
-/// Rust port: UTF-8 encode `inchar` via `char::encode_utf8`, then
-/// walk the bytes appending each one to `buf` and Meta-prefixing
-/// any byte that satisfies `imeta()`. Returns the total bytes
-/// pushed.
+/// Rust port: the encode step is libc's `wcrtomb`, so it is
+/// LOCALE-DRIVEN exactly as C's `wctomb` (c:130) is — under `LC_ALL=C`
+/// (`MB_CUR_MAX == 1`) a character in 0x00..0xFF becomes the single
+/// matching byte and anything above it is unrepresentable, while under a
+/// UTF-8 locale the full sequence is produced. An earlier port called
+/// `char::encode_utf8` unconditionally and so emitted UTF-8 in every
+/// locale. `wcrtomb` with a per-call zeroed state stands in for C's
+/// non-restartable `wctomb` (identical for stateless encodings such as
+/// UTF-8 and the single-byte locales; a stateful legacy encoding would
+/// see no shift-back sequence). The metafy walk (c:138-160) then
+/// Meta-prefixes any produced byte that satisfies `imeta()`.
 pub fn zlecharasstring(inchar: char, buf: &mut String) -> i32 {
     // c:117
+    use crate::ported::utils::{wcrtomb, MbStateBuf, MBSTATE_ZERO, MB_INVALID};
+    use crate::ported::zle::zle_h::{ZSH_INVALID_WCHAR_TEST, ZSH_INVALID_WCHAR_TO_CHAR};
     use crate::ported::zsh_h::Meta;
     use crate::ported::ztype_h::imeta;
 
     let start_len = buf.len();
-    let mut enc = [0u8; 4];
-    let bytes = inchar.encode_utf8(&mut enc).as_bytes().to_vec(); // c:131 wctomb
-                                                                  // c:138-160 — metafy each byte that needs escaping.
     let mut out_bytes = buf.as_bytes().to_vec();
+
+    let bytes: Vec<u8> = if ZSH_INVALID_WCHAR_TEST(inchar as u32) {
+        // c:123-127 — a byte that failed to decode was stashed in the
+        // ISO-10646 private range; hand back the original byte.
+        vec![ZSH_INVALID_WCHAR_TO_CHAR(inchar as u32)]
+    } else {
+        // c:130 — `ret = wctomb(buf, inchar);`
+        // MB_CUR_MAX is at most MB_LEN_MAX (16 on glibc, 6 on macOS).
+        let mut enc = [0u8; 32];
+        let mut mbs: MbStateBuf = MBSTATE_ZERO;
+        let n = unsafe {
+            wcrtomb(
+                enc.as_mut_ptr() as *mut libc::c_char,
+                inchar as u32 as libc::wchar_t,
+                &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+            )
+        };
+        if n == MB_INVALID || n == 0 {
+            // c:131-135 — `if (ret <= 0) { buf[0] = '?'; return 1; }`.
+            // Note C returns here WITHOUT the metafy walk; '?' is not an
+            // imeta byte, so the walk would be a no-op anyway.
+            out_bytes.push(b'?');
+            *buf = unsafe { String::from_utf8_unchecked(out_bytes) };
+            return 1;
+        }
+        enc[..n].to_vec()
+    };
+    // c:138-160 — metafy each byte that needs escaping.
     for b in bytes {
         if imeta(b) {
             out_bytes.push(Meta); // c:154
@@ -162,14 +196,26 @@ pub fn zlelineasstring(
     _useheap: i32,
 ) -> String {
     // c:192
+    use crate::ported::utils::{wcrtomb, MbStateBuf, MBSTATE_ZERO, MB_INVALID};
+    use crate::ported::zle::zle_h::{ZSH_INVALID_WCHAR_TEST, ZSH_INVALID_WCHAR_TO_CHAR};
     use crate::ported::zsh_h::Meta;
     use crate::ported::ztype_h::imeta;
 
-    // === Phase 1: MB encode (wcrtomb equivalent) ===
+    // === Phase 1: MB encode (c:204-243) ===
+    // The encode is libc `wcrtomb` (c:234) and therefore LOCALE-DRIVEN:
+    // under `LC_ALL=C` (`MB_CUR_MAX == 1`) each character in 0x00..0xFF
+    // becomes its single matching byte and anything above is
+    // unrepresentable (`'?'`, c:237), while under a UTF-8 locale the
+    // full sequence is produced. An earlier port called
+    // `char::encode_utf8` unconditionally, so `$BUFFER`/`$LBUFFER` and
+    // every metafied rebuild emitted UTF-8 even in the C locale.
     let mut s: Vec<u8> = Vec::with_capacity(inll * 4);
     let mut outcs: i32 = 0;
     let mut remaining = incs;
-    let mut buf4 = [0u8; 4];
+    // c:207 — `memset(&mbs, 0, sizeof(mbs));` once, before the loop; the
+    // shift state is carried across the whole line.
+    let mut mbs: MbStateBuf = MBSTATE_ZERO;
+    let mut encbuf = [0u8; 32];
     for ch in line.iter().take(inll) {
         // c:206-207 — `if (incs == 0) outcs = mb_len;`. Cursor
         // landing on this codepoint locks outcs to the byte length
@@ -178,8 +224,26 @@ pub fn zlelineasstring(
             outcs = s.len() as i32;
         }
         remaining -= 1; // c:208 — `incs--;`
-        let enc = ch.encode_utf8(&mut buf4);
-        s.extend_from_slice(enc.as_bytes()); // c:235-242 wcrtomb
+        if ZSH_INVALID_WCHAR_TEST(*ch as u32) {
+            // c:228-231 — a byte that never decoded round-trips as itself.
+            s.push(ZSH_INVALID_WCHAR_TO_CHAR(*ch as u32));
+            continue;
+        }
+        // c:234 — `j = wcrtomb(s + mb_len, instr[i], &mbs);`
+        let j = unsafe {
+            wcrtomb(
+                encbuf.as_mut_ptr() as *mut libc::c_char,
+                *ch as u32 as libc::wchar_t,
+                &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+            )
+        };
+        if j == MB_INVALID {
+            // c:235-238 — invalid char: '?' and reset the shift state.
+            s.push(b'?');
+            mbs = MBSTATE_ZERO;
+        } else {
+            s.extend_from_slice(&encbuf[..j]); // c:240
+        }
     }
     // c:248-250 — `if (incs == 0) outcs = mb_len;`. Cursor past EOL.
     if remaining == 0 {
@@ -264,6 +328,8 @@ pub fn stringaszleline(
     outcs: Option<&mut i32>,
 ) -> Vec<char> {
     // c:375
+    use crate::ported::utils::{mbrtowc, MbStateBuf, MBSTATE_ZERO, MB_INCOMPLETE, MB_INVALID};
+    use crate::ported::zle::zle_h::ZSH_INVALID_WCHAR_BASE;
     use crate::ported::zsh_h::Meta;
 
     let want_outcs = outcs.is_some();
@@ -313,42 +379,59 @@ pub fn stringaszleline(
     let mut outcs_val: i32 = 0;
     let mut outcs_set = false;
 
-    match std::str::from_utf8(&raw[..ll]) {
-        Ok(decoded) => {
-            // c:438-525 — `while (ll > 0) { cnt = mbrtowc(...) }`.
-            // Rust UTF-8 char_indices gives (byte_offset, char) pairs;
-            // each char is exactly `cnt = ch.len_utf8()` bytes wide.
-            for (byte_idx, ch) in decoded.char_indices() {
-                let cnt = ch.len_utf8();
-                // c:483-484 — `if (offs <= incs && incs < offs + cnt)
-                //               *outcs = outptr - outstr;`. The
-                // codepoint spanning the cursor takes the output
-                // index slot.
-                if want_outcs && (byte_idx as i32) <= incs && incs < (byte_idx + cnt) as i32 {
-                    outcs_val = line.len() as i32;
-                    outcs_set = true;
-                }
-                line.push(ch); // c:520-521 — `*outptr++ = ch; inptr += cnt;`
-            }
+    // c:444 — `memset(&mbs, '\0', sizeof mbs);` "Reset shift state to
+    // input complete string"; the state is carried across the loop.
+    let mut mbs: MbStateBuf = MBSTATE_ZERO;
+    let mut inptr = 0usize;
+    let mut rem = ll;
+    // c:446 — `while (ll > 0)`.
+    while rem > 0 {
+        let mut outchar: libc::wchar_t = 0;
+        // c:447 — `size_t cnt = mbrtowc(outptr, inptr, ll, &mbs);`. This
+        // is the locale gate: `MB_CUR_MAX == 1` (LC_ALL=C) makes it
+        // consume exactly one byte and return that byte's value, so
+        // `echo Ã` (`c3 83`) is TWO characters as it is in zsh.
+        let cnt = unsafe {
+            mbrtowc(
+                &mut outchar,
+                raw[inptr..].as_ptr() as *const libc::c_char,
+                rem,
+                &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+            )
+        };
+        let cnt = if cnt == MB_INCOMPLETE || cnt == MB_INVALID {
+            // c:449-454 — `__STDC_ISO_10646__` arm: stash the raw byte in
+            // the private range so it round-trips back out through
+            // `zlelineasstring` / `zlecharasstring`, and consume 1 byte.
+            outchar = (ZSH_INVALID_WCHAR_BASE + raw[inptr] as u32) as libc::wchar_t;
+            1
+        } else if cnt == 0 {
+            // c:465-470 — a converted '\0' returns 0 but is a real
+            // character for us, so consume one byte.
+            1
+        } else if cnt > rem {
+            // c:471-481 — paranoia: some implementations return the full
+            // length of a previous incomplete character.
+            rem
+        } else {
+            cnt
+        };
+
+        // c:483-486 — `if (offs <= incs && incs < offs + cnt)
+        //               *outcs = outptr - outstr;`. The character
+        // spanning the cursor takes the output index slot.
+        if want_outcs && (inptr as i32) <= incs && incs < (inptr + cnt) as i32 {
+            outcs_val = line.len() as i32;
+            outcs_set = true;
         }
-        Err(_) => {
-            // c:457-461 — `ZSH_CHAR_TO_INVALID_WCHAR(*inptr)` for
-            // bytes that fail decode. Rust analog: U+FFFD per bad
-            // byte. Walk bytes one at a time so we keep going.
-            for (i, &b) in raw[..ll].iter().enumerate() {
-                if want_outcs && (i as i32) == incs {
-                    outcs_val = line.len() as i32;
-                    outcs_set = true;
-                }
-                match std::str::from_utf8(std::slice::from_ref(&b)) {
-                    Ok(s) => line.extend(s.chars()),
-                    Err(_) => line.push('\u{FFFD}'),
-                }
-            }
-        }
+
+        // c:507-509 — `inptr += cnt; outptr++; ll -= cnt;`
+        line.push(char::from_u32(outchar as u32).unwrap_or('?'));
+        inptr += cnt;
+        rem -= cnt;
     }
 
-    // c:524-525 — `if (outcs && inptr <= instr + incs)
+    // c:511-512 — `if (outcs && inptr <= instr + incs)
     //               *outcs = outptr - outstr;`. Cursor past EOL → end.
     if want_outcs && !outcs_set {
         outcs_val = line.len() as i32;
