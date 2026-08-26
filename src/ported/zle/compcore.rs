@@ -2673,13 +2673,21 @@ pub fn check_param(s: &str, set: bool, test: bool, untok: bool) -> Option<usize>
                 }
             }
             // c:1280 — `isuf = dupstring(e); untokenize(isuf)`.
-            let mut tail = String::from_utf8_lossy(&bytes[e..]).into_owned();
+            // `s` is the word lifted off the METAFIED line, so its content
+            // bytes are metafied (`Meta` = 0x83 followed by `c ^ 32`) and are
+            // not valid UTF-8. `dupstring` copies bytes; `from_utf8_lossy`
+            // rewrote each escape as a 3-byte U+FFFD, which both destroyed
+            // the character and shifted every later offset. `b`/`e` are byte
+            // offsets into these same bytes, so the split stays byte-exact.
+            let mut tail = unsafe { String::from_utf8_unchecked(bytes[e..].to_vec()) };
             tail = strip_tokens(&tail); // crate::lex::untokenize substitute
             if let Ok(mut g) = isuf.get_or_init(|| Mutex::new(String::new())).lock() {
                 *g = tail;
             }
-            // c:1284 — `ripre = dyncat(ripre, s_through_b)`.
-            let head = String::from_utf8_lossy(&bytes[..b]).into_owned();
+            // c:1284 — `ripre = dyncat(ripre, s_through_b)` (the spec tree
+            // e73499b372 has it at c:1279). Metafied bytes, byte-exact (see
+            // the `isuf` split above).
+            let head = unsafe { String::from_utf8_unchecked(bytes[..b].to_vec()) };
             if let Ok(mut g) = ripre.get_or_init(|| Mutex::new(String::new())).lock() {
                 *g = format!("{}{}", *g, head);
             }
@@ -2702,7 +2710,9 @@ pub fn check_param(s: &str, set: bool, test: bool, untok: bool) -> Option<usize>
                 0
             };
             parflags.store(pf, Ordering::Relaxed); // c:1287
-            let head = String::from_utf8_lossy(&bytes[..b]).into_owned();
+            // c:1290 `untokenize(parpre = ztrdup(s))` — same metafied
+            // prefix as the `ripre` copy above, byte-exact.
+            let head = unsafe { String::from_utf8_unchecked(bytes[..b].to_vec()) };
             if let Ok(mut g) = parpre.get_or_init(|| Mutex::new(String::new())).lock() {
                 *g = strip_tokens(&head); // c:1290
             }
@@ -3641,7 +3651,15 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
                     if !buf.is_empty() && buf[0] == b'\n' {
                         start = 1;
                     } // c:1977
-                    let s = String::from_utf8_lossy(&buf[start..]).into_owned();
+                    // c:1979 `addlinknode(arrlist, s)` (c:1977-1978 is the
+                    // leading-newline skip this `start` reproduces). `buf`
+                    // is a byte-exact subsequence of the METAFIED `nam` (the
+                    // `Meta` skip below keeps each escape pair intact), so
+                    // it is not valid UTF-8 and `from_utf8_lossy` would have
+                    // replaced every escape with U+FFFD. Splits only ever
+                    // happen at the ASCII delimiters above, which can never
+                    // be a UTF-8 continuation byte, so the copy is exact.
+                    let s = unsafe { String::from_utf8_unchecked(buf[start..].to_vec()) };
                     arrlist.push(s); // c:1979
                 }
                 buf.clear(); // c:1981

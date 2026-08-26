@@ -710,7 +710,12 @@ pub fn cline_str(
                 let b = g.as_bytes();
                 let start = (ocs.max(0) as usize).min(b.len());
                 let end = (cur_cs.max(0) as usize).min(b.len()).max(start);
-                String::from_utf8_lossy(&b[start..end]).into_owned()
+                // c:469 `memcpy(r, zlemetaline + ocs, i)`. `Meta` is 0x83
+                // and an escape is `Meta` plus `c ^ 32`, so these bytes are
+                // not valid UTF-8 and `from_utf8_lossy` replaced each escape
+                // with a 3-byte U+FFFD — corrupting the text AND every
+                // offset after it. C copies bytes; so does this.
+                unsafe { String::from_utf8_unchecked(b[start..end].to_vec()) }
             })
             .unwrap_or_default();
         set_cs(ocs);
@@ -898,7 +903,9 @@ pub fn instmatch(
                     let b = g.as_bytes();
                     let s = (a0.max(0) as usize).min(b.len());
                     let e = (pcs.max(0) as usize).min(b.len()).max(s);
-                    String::from_utf8_lossy(&b[s..e]).into_owned()
+                    // c:629 `memcpy(lastprebr, zlemetaline + a, pcs - a)` —
+                    // a metafied byte copy, never a lossy UTF-8 rebuild.
+                    unsafe { String::from_utf8_unchecked(b[s..e].to_vec()) }
                 })
                 .unwrap_or_default()
         };
@@ -962,7 +969,9 @@ pub fn instmatch(
                     let b = g.as_bytes();
                     let s = (brb.max(0) as usize).min(b.len());
                     let e = (end.max(0) as usize).min(b.len()).max(s);
-                    String::from_utf8_lossy(&b[s..e]).into_owned()
+                    // c:671 `memcpy(lastpostbr, zlemetaline + brb, ...)` —
+                    // a metafied byte copy, never a lossy UTF-8 rebuild.
+                    unsafe { String::from_utf8_unchecked(b[s..e].to_vec()) }
                 })
                 .unwrap_or_default()
         };
@@ -1225,7 +1234,10 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
                 let b = g.as_bytes();
                 let s = (wb.max(0) as usize).min(b.len());
                 let e = (we.max(0) as usize).min(b.len()).max(s);
-                String::from_utf8_lossy(&b[s..e]).into_owned()
+                // c:786 `memcpy(old, zlemetaline + wb, we - wb)` — the BYTE
+                // copy the comment above promises: metafied bytes, never
+                // routed through a lossy UTF-8 rebuild.
+                unsafe { String::from_utf8_unchecked(b[s..e].to_vec()) }
             })
             .unwrap_or_default(); // c:784
         if we >= wb && wb >= 0 {
@@ -1986,7 +1998,10 @@ pub fn do_single(m: &Cmatch) {
                 let b = g.as_bytes();
                 let s = (parq_v.max(0) as usize).min(b.len());
                 let e = (s + take as usize).min(b.len());
-                String::from_utf8_lossy(&b[s..e]).into_owned()
+                // c:1168 `dupstrpfx(zlemetaline + parq, minfo.insc - parq)`
+                // — metafied bytes, and `stringaszleline` below unmetafies
+                // them, so a lossy rebuild corrupted the decode outright.
+                unsafe { String::from_utf8_unchecked(b[s..e].to_vec()) }
             })
             .unwrap_or_default();
         let mut outlen: i32 = 0;
@@ -2308,7 +2323,9 @@ pub fn accept_last() -> i32 {
                 let b = g.as_bytes();
                 let s = (brpcs_v.max(0) as usize).min(b.len());
                 let e = (s + l.max(0) as usize).min(b.len());
-                String::from_utf8_lossy(&b[s..e]).into_owned()
+                // c:1334 `memcpy(lastbrbeg->str, zlemetaline + brpcs, l)` —
+                // a metafied byte copy, never a lossy UTF-8 rebuild.
+                unsafe { String::from_utf8_unchecked(b[s..e].to_vec()) }
             })
             .unwrap_or_default();
         let newstr = format!("{},", slice); // c:1331
