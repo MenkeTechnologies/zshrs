@@ -2426,6 +2426,21 @@ pub fn createparam(
     // so the live value has to be carried over explicitly.
     let mut inherit_live_value = false;
 
+    // c:1137-1146 — the shadow arm removes the displaced node from the
+    // bucket chain BEFORE re-adding the fresh one:
+    //     if ((pm->old = oldpm)) {
+    //         if (oldpm->env) delenv(oldpm);
+    //         paramtab->removenode(paramtab, name);
+    //     }
+    //     paramtab->addnode(paramtab, ztrdup(name), pm);
+    // `addhashnode2` (Src/hashtable.c:189-213) replaces a key IN PLACE, so
+    // without the removenode the name keeps its old chain position; with it
+    // the name moves to the FRONT of its bucket (c:216-218). That position is
+    // observable — `${(k)parameters}` walks bucket 0..hsize-1, chain
+    // head→tail (`scanmatchtable`, Src/hashtable.c:426-435) — and drives the
+    // group/column layout `_parameters` produces.
+    let mut shadow_displaced = false;
+
     let mut pm: Param = if reuse {
         // c:1132-1134 — `pm = oldpm; pm->base = pm->width = 0;
         // oldpm = pm->old;` Reuse the entry already in paramtab.
@@ -2462,6 +2477,9 @@ pub fn createparam(
         // endparamscope unwinds the PM_HASHED stale entry it can pop
         // and restore. Bug #415.
         let oldpm = if let Some(mut op) = oldpm {
+            // c:1137 — `if ((pm->old = oldpm))` guards the c:1144
+            // `paramtab->removenode(paramtab, name)` applied below.
+            shadow_displaced = true;
             // c:Src/builtin.c:2394-2411 — the tied-pair NORESTORE test, run
             // BEFORE the copyparam snapshot because it REPLACES it:
             //     if (pm->ename &&
@@ -2805,7 +2823,28 @@ pub fn createparam(
     // displaced) old.
     if !name.is_empty() {
         let cloned = pm.clone();
-        paramtab().write().unwrap().insert(name.to_string(), pm);
+        // c:Src/builtin.c:2381-2451 — the `newspecial != NS_NONE` arm is an
+        // if-arm that RETURNS through c:2444-2451; it never falls through to
+        // the c:2519-2525 `createparam` call. C therefore keeps the special's
+        // own node — already installed in paramtab — exactly where it is and
+        // only pushes a copy of the old values down into `pm->old`
+        // ("For specials, we keep the same struct but zero everything",
+        // c:2390-2394). zshrs builds that shadow through createparam instead,
+        // so the removenode below has to be suppressed for it or the special
+        // would move to the head of its chain where zsh leaves it in place.
+        // `keep_special` (builtin.rs:6032, c:2087-2089) is the caller's
+        // newspecial signal; PM_REMOVABLE specials (zle/compsys params, whose
+        // C sites DO call createparam — Src/Zle/complete.c:1300,
+        // Src/Zle/zle_params.c:200) are not part of it.
+        let newspecial_shadow = caller_keeps_special
+            && (flags as u32 & PM_REMOVABLE) == 0
+            && (flags as u32 & PM_LOCAL) != 0;
+        let mut tab = paramtab().write().unwrap();
+        if shadow_displaced && !newspecial_shadow {
+            tab.remove(name); // c:1144
+        }
+        tab.insert(name.to_string(), pm); // c:1146
+        drop(tab);
         return Some(cloned);
     }
     Some(pm) // c:1159
@@ -12948,9 +12987,27 @@ pub fn endparamscope() {
             })
             .collect();
         for (n, was_assoc) in stale {
+            // c:5904 — `if ((pm->node.flags & (PM_SPECIAL|PM_REMOVABLE)) ==
+            // PM_SPECIAL)`: a non-removable special is restored THROUGH the
+            // node already in the table (c:5933-5937 assign straight into
+            // `pm`), so its bucket position never changes. Only the
+            // `else unsetparam_pm(pm, 0, 0)` arm (c:5966) unlinks the node
+            // and re-adds `pm->old` (c:3916-3920), which puts the revealed
+            // outer binding at the FRONT of its chain. Reproduce both: skip
+            // the remove for the special arm and let the `insert` below take
+            // `addhashnode2`'s replace-in-place path (Src/hashtable.c:189-203).
+            let restore_in_place = tab
+                .get(&n)
+                .map(|pm| (pm.node.flags as u32 & (PM_SPECIAL | PM_REMOVABLE)) == PM_SPECIAL)
+                .unwrap_or(false);
             // c:scanendscope:5903 — non-special path: restore pm.old
             // (or remove if no outer binding existed).
-            if let Some(pm) = tab.remove(&n) {
+            let popped = if restore_in_place {
+                tab.get(&n).cloned()
+            } else {
+                tab.remove(&n)
+            };
+            if let Some(pm) = popped {
                 let had_outer = pm.old.is_some();
                 let outer_is_assoc = pm
                     .old
@@ -13030,6 +13087,12 @@ pub fn endparamscope() {
                             deferred.push((n.clone(), restored_setfn, val));
                         }
                     }
+                } else if restore_in_place {
+                    // A non-removable special with no `pm->old` cannot be
+                    // restored in place (c:5930 DPUTS asserts `tpm` exists),
+                    // so fall back to the c:5966 arm and unlink the node —
+                    // the `tab.remove` above was skipped for this name.
+                    tab.remove(&n);
                 }
                 // else: c:5966 unsetparam_pm — name unset entirely
                 // RUST-ONLY: the assoc-storage shadow lives in a
