@@ -90,6 +90,50 @@ pub fn span(tok: &str, ubeg: usize, ulen: usize) -> Option<String> {
     }
 }
 
+/// Byte index in `tok` that corresponds to byte index `ubyte` of
+/// `untokenize(tok)`.
+///
+/// `check_param` (`Src/Zle/compcore.c:1113`) indexes its argument with the
+/// global `offs`, and in C that argument is the TOKENIZED word — so a port
+/// that hands it the tokenized twin has to hand it a tokenized `offs` too.
+/// Same positional mapping `span` relies on, and the same `$'…'` bail-out:
+/// `untokenize` decodes that region as a unit, so no per-char index exists.
+/// `None` also when `ubyte` lands inside a char rather than on its boundary.
+pub fn tok_index(tok: &str, ubyte: usize) -> Option<usize> {
+    let chars: Vec<(usize, char)> = tok.char_indices().collect();
+    let mut upos = 0usize;
+    for (n, &(bi, c)) in chars.iter().enumerate() {
+        let ulen = untokenize(&c.to_string()).len();
+        // A marker `untokenize` drops (`Snull`/`Dnull`/`Nularg`) occupies no
+        // untokenized byte, so it can never BE the answer — skip past it and
+        // land on the char that actually renders at `ubyte`.
+        if ulen == 0 {
+            continue;
+        }
+        if upos == ubyte {
+            return Some(bi);
+        }
+        if (c == Stringg || c == Qstring) && chars.get(n + 1).map(|x| x.1) == Some(Snull) {
+            return None;
+        }
+        upos += ulen;
+        if upos > ubyte {
+            return None;
+        }
+    }
+    if upos == ubyte {
+        Some(tok.len())
+    } else {
+        None
+    }
+}
+
+/// The inverse of [`tok_index`]: byte index in `untokenize(tok)` for byte
+/// index `tbyte` of `tok`. `None` when `tbyte` is not a char boundary.
+pub fn untok_index(tok: &str, tbyte: usize) -> Option<usize> {
+    tok.get(..tbyte).map(|head| untokenize(head).len())
+}
+
 /// The `s`-side effect of the quote-marker cleanup loop at
 /// `Src/Zle/zle_tricky.c:1788-1926`.
 ///
@@ -167,6 +211,34 @@ mod tests {
         assert_eq!(untokenize(&tok), "$PA");
         assert_eq!(span(&tok, 1, 2).as_deref(), Some("PA"));
         assert_eq!(span(&tok, 0, 3), Some(tok.clone()));
+    }
+
+    /// `check_param` indexes its argument with the global `offs`, so feeding
+    /// it the tokenized twin means feeding it a tokenized `offs` too: every
+    /// token char is 2 bytes here against the 1 byte it untokenizes to, and a
+    /// dropped `Dnull` costs a byte outright.
+    #[test]
+    fn tok_index_and_untok_index_are_inverses() {
+        let tok = format!("{Dnull}{Qstring}PA");
+        assert_eq!(untokenize(&tok), "$PA");
+        // untokenized byte 0 (`$`) is the Qstring, which follows the Dnull.
+        assert_eq!(tok_index(&tok, 0), Some(Dnull.len_utf8()));
+        assert_eq!(
+            tok_index(&tok, 1),
+            Some(Dnull.len_utf8() + Qstring.len_utf8())
+        );
+        assert_eq!(tok_index(&tok, 3), Some(tok.len()));
+        assert_eq!(tok_index(&tok, 4), None);
+        for u in 0..=3 {
+            let t = tok_index(&tok, u).unwrap();
+            assert_eq!(untok_index(&tok, t), Some(u));
+        }
+    }
+
+    #[test]
+    fn tok_index_refuses_a_dollar_quote_region() {
+        let tok = format!("{Stringg}{Snull}a{Snull}");
+        assert_eq!(tok_index(&tok, 1), None);
     }
 
     #[test]

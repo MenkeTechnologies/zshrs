@@ -3732,7 +3732,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     let param_cc: Option<Arc<Compctl>> = if incompfunc == 0 {
         let saved_wb = crate::ported::zle::compcore::WB.load(Ordering::Relaxed);
         crate::ported::zle::compcore::OFFS.store(offs, Ordering::Relaxed);
-        if let Some(p) = check_param(&s, true, false) {
+        if let Some(p) = check_param(&s, true, false, true) {
             let mut p = p.min(s.len());
             while p > 0 && !s.is_char_boundary(p) {
                 p -= 1;
