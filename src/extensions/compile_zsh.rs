@@ -4900,15 +4900,68 @@ impl ZshCompiler {
                             name_end += 1;
                         }
                     }
+                    // c:Src/subst.c:2799-2803 — after the flag loop C calls
+                    //     fetchvalue(&vbuf, &s,
+                    //                (wantt ? -1 : ((unset(KSHARRAYS) || inbrace) ? 1 : -1)),
+                    //                scanflags)
+                    // and it is fetchvalue that parses `[subscript]`. The flag
+                    // loop (c:2550-2632) has already consumed `^`/`=`, so the
+                    // subscript belongs to the SAME reference: `$=opts[tmp+1]`
+                    // is `${=opts[tmp+1]}`, not `${=opts}` followed by literal
+                    // `[tmp+1]`. Stopping the name scan at the bracket left the
+                    // subscript as trailing text, and the user's `_files`
+                    // (comp_utils/_files:56 `ignvars=($=opts[tmp+1])`) then read
+                    // the WHOLE `opts` array with a stray `[tmp+1]` glued to its
+                    // last word — under `nomatch` that is an error, `ignvars`
+                    // came out empty, `ign` with it, and `_path_files` never
+                    // re-added `-F _comp_ignore`, so the `ignored-patterns`
+                    // style silently stopped filtering.
+                    //
+                    // Walk depth-tracked over BOTH spellings of the brackets:
+                    // an unquoted `[` is tokenized to Inbrack by the lexer, a
+                    // double-quoted one can arrive either way (mirrors the walk
+                    // in subst.rs's bare `$name[sub]` arm).
+                    let mut sub_end = name_end;
+                    if name_end > name_start
+                        && matches!(ch.get(sub_end).copied(), Some('[') | Some(crate::ported::zsh_h::Inbrack))
+                    {
+                        let mut depth = 1usize;
+                        let mut q = sub_end + 1;
+                        while q < ch.len() && depth > 0 {
+                            let cq = ch[q];
+                            // A backslash-escaped bracket (either the Bnull
+                            // marker form or the source-literal one) is
+                            // subscript CONTENT, not a depth delimiter.
+                            if cq == crate::ported::zsh_h::Bnull
+                                || cq == crate::ported::zsh_h::Bnullkeep
+                                || cq == '\\'
+                            {
+                                q += 2;
+                                continue;
+                            }
+                            if cq == '[' || cq == crate::ported::zsh_h::Inbrack {
+                                depth += 1;
+                            } else if cq == ']' || cq == crate::ported::zsh_h::Outbrack {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            q += 1;
+                        }
+                        if depth == 0 && q < ch.len() {
+                            sub_end = q + 1;
+                        }
+                    }
                     if name_end > name_start {
                         out.push(ch[i]);
                         out.push(crate::ported::zsh_h::Inbrace);
                         for _ in 0..nflags {
                             out.push(fc);
                         }
-                        out.extend(&ch[name_start..name_end]);
+                        out.extend(&ch[name_start..sub_end]);
                         out.push(crate::ported::zsh_h::Outbrace);
-                        i = name_end;
+                        i = sub_end;
                         continue;
                     }
                 }
