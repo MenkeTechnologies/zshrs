@@ -53,7 +53,8 @@ use crate::ported::zsh_h::{
     XTRACE, ZLE_CMD_TRASH,
 };
 use crate::ported::zsh_h::{
-    Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Qstring, Qtick, Stringg, Tick,
+    Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Outbrack, Outpar, Outparmath, Qstring, Qtick,
+    Stringg, Tick,
 };
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
@@ -3017,27 +3018,27 @@ pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {
 pub fn skipparens(open: char, close: char, s: &mut &str) -> i32 {
     // c:2409
     let mut chars = s.char_indices();
-    // c:2412 — `if (**s != inpar) return -1;`
+    // c:2413-2414 — `if (**s != inpar) return -1;`
     match chars.next() {
         Some((_, c)) if c == open => {}
         _ => return -1,
     }
-    // c:2414 — `for (level = 1; *++*s && level;)`
+    // c:2416 — `for (level = 1; *++*s && level;)`
     let mut level: i32 = 1;
     let mut consumed = open.len_utf8();
     for (i, c) in chars {
         consumed = i + c.len_utf8();
         if c == open {
-            level += 1; // c:2416-2417
+            level += 1; // c:2417-2418
         } else if c == close {
-            level -= 1; // c:2418-2419
+            level -= 1; // c:2419-2420
         }
         if level == 0 {
             break;
         }
     }
     *s = &s[consumed..];
-    // c:2421 — `return level;`. 0 on balanced match, positive on
+    // c:2422 — `return level;`. 0 on balanced match, positive on
     // ran-off-end (unbalanced input).
     level
 }
@@ -8355,28 +8356,54 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             result.push(c);
         }
         result
-    } else if quote_type == QT_BACKSLASH || quote_type == QT_BACKSLASH_SHOWNULL {
-        // c:Src/utils.c:6260-6452 QT_BACKSLASH. Three sub-cases per
-        // input char (after the special-syntax handling above):
-        //   - `\n` → emit `$'\n'` literal 5 bytes (c:6366-6371)
-        //   - special-and-printable → emit `\<char>` (c:6385-6395)
-        //   - non-printable (ctrl, multibyte outside printable
-        //     range) → emit `$'<addunprintable>'` (c:6412-6422)
-        // Bug #144/#149 in docs/BUGS.md: previous port mapped ALL
-        // ispecial chars to `\<char>`, so `\n`/`\t`/etc. came out
-        // as `\<actual-byte>` instead of `$'\n'`/`$'\t'`.
+    } else if quote_type == QT_BACKSLASH
+        || quote_type == QT_BACKSLASH_SHOWNULL
+        || quote_type == QT_SINGLE
+        || quote_type == QT_SINGLE_OPTIONAL
+        || quote_type == QT_DOUBLE
+    {
+        // c:Src/utils.c:6248-6443 — the `else` arm of quotestring's three-way
+        // split, shared by EVERY style except QT_DOLLARS (c:6203) and
+        // QT_BACKSLASH_PATTERN (c:6242). C runs ONE loop here and branches on
+        // `instring` inside it. This port used to hold four separate loops —
+        // one per style — and the three non-BACKSLASH ones had each decayed
+        // into a plain per-character walk missing the c:6262-6299 verbatim-copy
+        // preludes, the c:6272-6280 `$'…'`-in-double-quotes arm, the
+        // c:6392-6416 token pass-through and the c:6396-6412 Inparmath group.
+        // They are one loop again, exactly as C has it, so a fix to a prelude
+        // cannot land in one style and miss the other three.
         //
-        // c:6301-6306 — `=` and `~` are NOT escaped unless one of:
-        //   (B) the char is at position 0 (u == s)
-        //   (C) MAGICEQUALSUBST is set AND the previous byte is `=`
-        //       or `:` (covers `var==val`, `var:=val`)
-        //   (D) the char is `~` AND EXTENDEDGLOB is set
-        // Without these conditions, mid-word `=`/`~` falls through
-        // to the literal-emit path (c:6418-6434).
+        // Per-style behaviour lives entirely in the c:6307-6313 subcondition
+        // and the two branches at c:6314 / c:6364:
+        //   QT_BACKSLASH        every ispecial char takes a `\` (c:6307); `\n`
+        //                       upgrades to `$'\n'` (c:6366-6371) and a
+        //                       non-printable char to `$'…'` (c:6435-6442).
+        //   QT_SINGLE           only `'` (c:6313), rewritten `'\''`, or `''`
+        //                       under RCQUOTES (c:6372-6379).
+        //   QT_DOUBLE           only `$`, `` ` ``, `"`, `\` (c:6311-6312), plus
+        //                       the history character under BANGHIST
+        //                       (c:6309-6310).
+        //   QT_SINGLE_OPTIONAL  every ispecial char (c:6308), but it opens
+        //                       `'…'` spans only where they are needed
+        //                       (c:6314-6363).
+        //
+        // c:6166 — QT_BACKSLASH_SHOWNULL sets `shownull` and FALLS THROUGH to
+        // QT_BACKSLASH, so from here the two are one style; `shownull` only
+        // changes the empty-input case, handled at c:6194 above.
+        let instring = if quote_type == QT_BACKSLASH_SHOWNULL {
+            QT_BACKSLASH
+        } else {
+            quote_type
+        };
         let mut result = String::with_capacity(s.len() * 2);
         // c:6304-6305 lookbehind `u[-1]`. The verbatim arms below advance `u`
         // several bytes at a time, so they carry it forward themselves.
         let mut prev: char = '\0'; // would-be u[-1]
+        // c:6149-6156 — `quotesub` drives QT_SINGLE_OPTIONAL and nothing else:
+        // 0 = mechanism off, 1 = pending (no `'` emitted yet; one belongs at
+        // `quotestart`), 2 = a `'…'` span is open and gets closed at c:6445.
+        let mut quotesub: u8 = if instring == QT_SINGLE_OPTIONAL { 1 } else { 0 }; // c:6187
+        let mut quotestart: usize = 0; // c:6197 — byte index into `result`
                                    // c:6392 — `if (itok(*u) || instring != QT_BACKSLASH)`: a parser TOKEN
                                    // byte "needs to be passed straight through" — never backslashed and
                                    // never printability-tested. That half of the test was missing from
@@ -8435,6 +8462,10 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             }
         };
         let is_tok = |k: usize, t: char| -> bool { tokmask[k] && cval(k) == t as u32 };
+        // The mirror of `is_tok`: element `k` is the literal character `ch` as
+        // DATA. Needed because c:6272 compares against `'$'` and `'\''`, which
+        // are ordinary bytes, not tokens.
+        let is_ch = |k: usize, ch: char| -> bool { !tokmask[k] && cval(k) == ch as u32 };
         // c:6431-6433 / c:6414 — copy one element out unchanged.
         let verbatim = |out: &mut String, k: usize| {
             if tokmask[k] {
@@ -8443,8 +8474,39 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 push_metachar(out, mcs[k]);
             }
         };
+        let bangchar_v = crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
         let mut i = 0usize;
         while i < mcs.len() {
+            // c:6261 — set by the c:6382-6389 arm, consumed at c:6394 or
+            // c:6428. It is deliberately DROPPED by the c:6435 not-printable
+            // arm, which emits `$'…'` instead of a backslash.
+            let mut dobackslash = false;
+            // c:6272-6280 has NO `continue`: it copies the sigil, advances,
+            // and falls through to the c:6392 pass-through with the `'` as the
+            // current element — so it must skip the c:6301 gate, not the tail.
+            let mut skip_special = false;
+            // c:6281-6299 — `$(…)`, `$[…]`, `${…}` (and the `Qstring` forms
+            // they take inside double quotes) are already syntactically
+            // quoted, so the whole group goes through untouched. Without this
+            // the `(` of `echo "${(` reached the c:6301 ispecial arm and came
+            // out `${\(`, so `$PREFIX` was `${\(` where zsh publishes `${(`
+            // and `_brace_parameter` never saw a parameter-flag word.
+            // (Computed up front only because Rust cannot take a block as an
+            // `else if let` scrutinee; it is side-effect free, and the chain
+            // below still consults it in C's order.)
+            let opener = if (is_tok(i, Stringg) || is_tok(i, Qstring)) && i + 1 < mcs.len() {
+                if is_tok(i + 1, Inpar) {
+                    Some((Inpar, Outpar))
+                } else if is_tok(i + 1, Inbrack) {
+                    Some((Inbrack, Outbrack))
+                } else if is_tok(i + 1, Inbrace) {
+                    Some((Inbrace, Outbrace))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             // c:6262-6271 — a backtick group is copied whole, and C emits the
             // closing tick even when the input ran out before one appeared.
             if is_tok(i, Tick) || is_tok(i, Qtick) {
@@ -8462,27 +8524,21 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                     i += 1; // c:6269-6270
                 }
                 continue;
-            }
-            // c:6281-6299 — `$(…)`, `$[…]`, `${…}` (and the `Qstring` forms
-            // they take inside double quotes) are already syntactically
-            // quoted, so the whole group goes through untouched. Without this
-            // the `(` of `echo "${(` reached the c:6301 ispecial arm and came
-            // out `${\(`, so `$PREFIX` was `${\(` where zsh publishes `${(`
-            // and `_brace_parameter` never saw a parameter-flag word.
-            let opener = if (is_tok(i, Stringg) || is_tok(i, Qstring)) && i + 1 < mcs.len() {
-                if is_tok(i + 1, Inpar) {
-                    Some((Inpar, Outpar))
-                } else if is_tok(i + 1, Inbrack) {
-                    Some((Inbrack, Outbrack))
-                } else if is_tok(i + 1, Inbrace) {
-                    Some((Inbrace, Outbrace))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            if let Some((open, close)) = opener {
+            } else if instring == QT_DOUBLE
+                && i + 1 < mcs.len()
+                && (is_tok(i, Qstring) || is_ch(i, '$'))
+                && is_ch(i + 1, '\'')
+            {
+                // c:6272-6280 — `$'…'` needs no quoting inside a double-quoted
+                // string, so the sigil goes through bare. C copies only the
+                // `$`/`Qstring` here; the `'` is handled by the c:6392
+                // pass-through on the next statement, which is why there is no
+                // `continue` and why the c:6301 gate has to be skipped.
+                verbatim(&mut result, i); // c:6280
+                prev = char::from_u32(cval(i)).unwrap_or('\0');
+                i += 1;
+                skip_special = true;
+            } else if let Some((open, close)) = opener {
                 // c:6283-6286 — `beg` is the `String`/`Qstring` byte, and it is
                 // what raises the nesting level, not the bracket itself.
                 let beg = if is_tok(i, Stringg) { Stringg } else { Qstring };
@@ -8518,164 +8574,178 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 // `=`/`~` lookbehind still advances correctly.
                 MetaChar::Raw(b) => b as char,
             };
-            // c:6301-6306 gate for `=`/`~` (condition A/B/C/D).
-            let eq_tilde_gate = if c == '=' || c == '~' {
-                i == 0 // c:6303 u == s
-                    || (isset(MAGICEQUALSUBST) && (prev == '=' || prev == ':')) // c:6304-6305
-                    || (c == '~' && isset(EXTENDEDGLOB)) // c:6306
+            if !skip_special {
+                // c:6301 — `ispecial(*u)`. A token is excluded because C's
+                // typtab carries ISPECIAL only for SPECCHARS (zsh.h:228), the
+                // comma (c:4256) and the history character (c:4259) — all
+                // ASCII — so `ispecial(Inbrace)` is false in C too.
+                let is_sp = matches!(mc, MetaChar::Ch(_)) && !tokmask[i] && ispecial(c);
+                // c:6302-6306 gate for `=`/`~` — mid-word they are left bare
+                // unless the char is at position 0 (c:6303), MAGICEQUALSUBST is
+                // on and the previous byte is `=` or `:` (c:6304-6305), or it
+                // is `~` under EXTENDEDGLOB (c:6306).
+                let eq_tilde_gate = if c == '=' || c == '~' {
+                    i == 0 // c:6303 u == s
+                        || (isset(MAGICEQUALSUBST) && (prev == '=' || prev == ':')) // c:6304-6305
+                        || (c == '~' && isset(EXTENDEDGLOB)) // c:6306
+                } else {
+                    true // c:6302 *u != '=' && *u != '~'
+                };
+                // c:6307-6313 — the per-style subcondition.
+                let style_gate = instring == QT_BACKSLASH // c:6307
+                    || instring == QT_SINGLE_OPTIONAL // c:6308
+                    || (isset(BANGHIST)
+                        && bangchar_v != 0
+                        && c as u32 == bangchar_v as u32
+                        && instring != QT_SINGLE) // c:6309-6310
+                    || (instring == QT_DOUBLE && matches!(c, '$' | '`' | '"' | '\\')) // c:6311-6312
+                    || (instring == QT_SINGLE && c == '\''); // c:6313
+                if is_sp && eq_tilde_gate && style_gate {
+                    if instring == QT_SINGLE_OPTIONAL {
+                        // c:6314-6363 — minimum quoting. `quotestart` is where
+                        // an opening `'` would be back-filled, so a run of
+                        // ordinary characters ends up INSIDE the span rather
+                        // than each special char getting its own `'…'`.
+                        if quotesub == 1 {
+                            if c == '\'' {
+                                // c:6319-6323 — a bare `'` is cheaper as `\'`
+                                // than as an opened-and-closed span, so no
+                                // span starts here and quotesub stays 1.
+                                result.push('\\');
+                            } else {
+                                // c:6328-6337 — time to quote: insert the
+                                // opening `'` at `quotestart`, shifting
+                                // everything after it right (C's addq loop).
+                                result.insert(quotestart, '\''); // c:6335
+                                quotesub = 2; // c:6337
+                            }
+                            verbatim(&mut result, i); // c:6339
+                            prev = c;
+                            i += 1;
+                            quotestart = result.len(); // c:6343
+                        } else if c == '\'' {
+                            if unset(RCQUOTES) {
+                                // c:6346-6348 — close the span, then `\'`.
+                                result.push('\''); // c:6346
+                                result.push('\\'); // c:6347
+                                result.push('\''); // c:6348
+                                quotesub = 1; // c:6350
+                                quotestart = result.len(); // c:6351
+                            } else {
+                                // c:6353-6355 — inside a span, `''` IS a
+                                // literal `'`, so the span never breaks.
+                                result.push('\''); // c:6354
+                                result.push('\''); // c:6355
+                            }
+                            prev = c;
+                            i += 1; // c:6358
+                        } else {
+                            // c:6360-6361 — already quoting, just add.
+                            verbatim(&mut result, i);
+                            prev = c;
+                            i += 1;
+                        }
+                        continue; // c:6363
+                    } else if c == '\n' || (instring == QT_SINGLE && c == '\'') {
+                        // c:6364-6381
+                        if c == '\n' {
+                            // c:6366-6371 — a newline cannot be backslashed,
+                            // so it is upgraded to a `$'\n'` island.
+                            result.push_str("$'\\n'");
+                        } else if unset(RCQUOTES) {
+                            // c:6372-6377 — `'` → `'\''`.
+                            result.push('\''); // c:6373
+                            if c == '\'' {
+                                result.push('\\'); // c:6374-6375
+                            }
+                            result.push(c); // c:6376
+                            result.push('\''); // c:6377
+                        } else {
+                            // c:6378-6379 — RCQUOTES: `''` is a literal `'`.
+                            result.push('\'');
+                            result.push('\'');
+                        }
+                        prev = c;
+                        i += 1; // c:6380
+                        continue; // c:6381
+                    } else {
+                        // c:6382-6388 — a backslash is owed, but it is not
+                        // emitted yet: if the character turns out not to be
+                        // printable the c:6435 arm upgrades it to `$'…'` and
+                        // drops the backslash entirely.
+                        dobackslash = true;
+                    }
+                }
+            }
+            // c:6392 — `if (itok(*u) || instring != QT_BACKSLASH)`. Everything
+            // that is not a plain QT_BACKSLASH character is passed straight
+            // through here; only QT_BACKSLASH reaches the printability test.
+            if tokmask[i] || instring != QT_BACKSLASH {
+                if dobackslash {
+                    result.push('\\'); // c:6394-6395
+                }
+                if is_tok(i, Inparmath) {
+                    // c:6396-6412 — `$((…))` is already syntactically quoted,
+                    // so the whole math group is copied out with no further
+                    // quoting. C counts nesting on Inparmath/Outparmath and
+                    // stops at the matching close or at end of string.
+                    let mut inmath = 1i32; // c:6401
+                    verbatim(&mut result, i); // c:6402
+                    prev = char::from_u32(cval(i)).unwrap_or('\0');
+                    i += 1;
+                    loop {
+                        // c:6404-6407 — C reads `uc = *u` and breaks AFTER
+                        // copying it; a NUL there is the end of the string,
+                        // which is `i == mcs.len()` here.
+                        if i >= mcs.len() {
+                            break;
+                        }
+                        let was_out = is_tok(i, Outparmath);
+                        let was_in = is_tok(i, Inparmath);
+                        verbatim(&mut result, i); // c:6405
+                        prev = char::from_u32(cval(i)).unwrap_or('\0');
+                        i += 1;
+                        if was_out {
+                            // c:6408-6409
+                            inmath -= 1;
+                            if inmath == 0 {
+                                break;
+                            }
+                        } else if was_in {
+                            inmath += 1; // c:6410-6411
+                        }
+                    }
+                } else {
+                    verbatim(&mut result, i); // c:6413-6414
+                    prev = c;
+                    i += 1;
+                }
+                continue; // c:6415
+            }
+            // c:6418-6427 — QT_BACKSLASH only: is the element printable in the
+            // current character set? (`uend = u + MB_METACHARLENCONV(u, &cc)`
+            // then `cc != WEOF && WC_ISPRINT(cc)`; `meta_chars` already did the
+            // decode, so the test is `mc_printable`.)
+            if mc_printable(mc) {
+                // c:6428-6433 — owed backslash, then the unit copied through
+                // still metafied.
+                if dobackslash {
+                    result.push('\\'); // c:6428-6429
+                }
+                push_metachar(&mut result, mc); // c:6430-6433
             } else {
-                true // c:6302 *u != '=' && *u != '~'
-            };
-            if mc == MetaChar::Ch('\n') {
-                // c:6366-6371 — newline gets dedicated `$'\n'` form.
-                result.push_str("$'\\n'");
-            } else if matches!(mc, MetaChar::Ch(_))
-                && ispecial(c)
-                && eq_tilde_gate
-                && c.is_ascii()
-                && !c.is_ascii_control()
-            {
-                // c:6385-6395 — printable special → `\<char>`.
-                result.push('\\');
-                result.push(c);
-            } else if tokmask[i] {
-                // c:6392-6395/6414 — token byte: pass straight through. C's
-                // `dobackslash` can never be set for one (`ispecial` is an
-                // ASCII-only table), so no `\\` is emitted here.
-                result.push(c);
-            } else if !mc_printable(mc) {
-                // c:6412-6422 — anything not printable (a control char, a
-                // non-printable multibyte char, or a raw undecodable byte) is
-                // wrapped one element at a time as `$'<addunprintable>'`.
-                result.push_str("$'");
-                push_unprintable(&mut result, mc, mcs.get(i + 1).copied());
-                result.push('\'');
-            } else {
-                // c:6431-6433 — printable unit copied through as-is.
-                push_metachar(&mut result, mc);
+                // c:6435-6442 — not printable: one `$'…'` island per element,
+                // built by addunprintable. The owed backslash is dropped.
+                result.push_str("$'"); // c:6437-6438
+                push_unprintable(&mut result, mc, mcs.get(i + 1).copied()); // c:6439
+                result.push('\''); // c:6440
             }
             prev = c;
             i += 1;
         }
-        result
-    } else if quote_type == QT_SINGLE {
-        // c:Src/utils.c:6300-6395 QT_SINGLE — `(qq)` flag.
-        //   The outer ispecial-gated branch at c:6301-6313 only
-        //   triggers special handling when the QT-specific
-        //   subcondition matches; for QT_SINGLE that's `*u == '\''`.
-        //   Newlines do NOT match, so they fall through to the
-        //   pass-through path at c:6394 and are emitted LITERALLY
-        //   inside the surrounding `'…'`. Bug #199 in docs/BUGS.md:
-        //   previous port emitted `'$'\n''` (split-quote with
-        //   `$'\n'` escape between segments) for newline, diverging
-        //   from zsh's literal-newline-in-single-quotes output.
-        //   c:6131-6134 — "Most quote styles other than backslash assume the
-        //   quotes are to be added OUTSIDE quotestring()." The port used to
-        //   push a leading and trailing `'` here, i.e. it returned `'abc'`
-        //   where C returns `abc`. Every caller that follows C and adds its
-        //   own pair (text.c:1086-1088 → text.rs:1273-1275) therefore doubled
-        //   them, and `multiquote` (compcore.c:1073) — which passes the raw
-        //   completion candidate through quotestring and expects the BODY —
-        //   turned `abcdef` into `'abcdef'`, so `comp_match` (compmatch.c:1172,
-        //   1178) matched it against $PREFIX `ab` and rejected every match
-        //   inside a quoted word. See the QT_DOUBLE arm below for the same fix.
-        let mut result = String::with_capacity(s.len() + 4);
-        for c in s.chars() {
-            if c == '\'' {
-                // c:6364-6379 — apostrophe close-reopen sequence.
-                result.push_str("'\\''");
-            } else {
-                // Newline + everything else: pass through literally.
-                result.push(c);
-            }
-        }
-        result
-    } else if quote_type == QT_SINGLE_OPTIONAL {
-        // c:Src/utils.c:6314-6385 QT_SINGLE_OPTIONAL — minimum
-        // quoting. Walks the string with two states:
-        //   quotesub=1 — not currently inside a quote span. Bare
-        //     apostrophes get `\'` (backslash form). Any OTHER
-        //     special char triggers back-filling: insert `'` at
-        //     `quotestart` (start of unquoted prefix), shifting
-        //     subsequent chars right, then push char, transition
-        //     to quotesub=2.
-        //   quotesub=2 — currently inside a `'…'` span. Bare
-        //     apostrophes break the span: push `'\\'`, transition
-        //     back to quotesub=1 with quotestart=position-after.
-        //     Other specials append in-place.
-        // End: if quotesub=2, close with `'`.
-        // For "hello world" this yields `'hello world'` (back-
-        // filled at start). For "it's" it yields `it\'s` (no quote
-        // span ever opens). The naive per-char approach without
-        // back-filling produced `hello' 'world` — parity bug.
-        //
-        // c:6301-6306 — the SAME `=`/`~` gate the QT_BACKSLASH arm applies.
-        // `ispecial` alone would open a quote span on any mid-word `=` or `~`,
-        // so `a=b` came out as `'a=b'` where zsh leaves it bare.
-        let chars: Vec<char> = s.chars().collect();
-        let forces_quote = |i: usize, c: char| -> bool {
-            if !ispecial(c) {
-                return false; // c:6301
-            }
-            if c == '=' || c == '~' {
-                i == 0 // c:6303 u == s
-                    || (isset(MAGICEQUALSUBST) && (chars[i - 1] == '=' || chars[i - 1] == ':')) // c:6304-6305
-                    || (c == '~' && isset(EXTENDEDGLOB)) // c:6306
-            } else {
-                true // c:6302
-            }
-        };
-        let needs_quoting = chars.iter().enumerate().any(|(i, &c)| forces_quote(i, c));
-        if !needs_quoting {
-            return s.to_string();
-        }
-        let mut result: Vec<char> = Vec::with_capacity(s.len() + 4);
-        let mut quotestart: usize = 0; // index in `result` where the next `'` would go
-        let mut quotesub: u8 = 1; // 1 = not quoting, 2 = inside `'…'`
-        for (i, &c) in chars.iter().enumerate() {
-            if c == '\'' {
-                if quotesub == 2 {
-                    // close current quote span, then `\'`, then
-                    // mark that we may need to reopen on next special
-                    result.push('\'');
-                    result.push('\\');
-                    result.push('\'');
-                    quotesub = 1;
-                    quotestart = result.len();
-                } else {
-                    result.push('\\');
-                    result.push('\'');
-                    quotestart = result.len();
-                }
-            } else if forces_quote(i, c) {
-                if quotesub == 1 {
-                    // Back-fill: insert `'` at quotestart, shifting
-                    // everything after right by 1.
-                    result.insert(quotestart, '\'');
-                    quotesub = 2;
-                }
-                result.push(c);
-            } else {
-                result.push(c);
-            }
-        }
+        // c:6445-6446 — QT_SINGLE_OPTIONAL left a span open.
         if quotesub == 2 {
             result.push('\'');
-        }
-        result.into_iter().collect()
-    } else if quote_type == QT_DOUBLE {
-        // c:6311-6312 — inside a double-quoted string only `$`, `` ` ``, `"`
-        // and `\` take a backslash. c:6131-6134 — the surrounding `"` pair is
-        // the CALLER's job (subst.c:4085-4087, text.c:1090-1092), so this
-        // returns the BODY only; pushing the pair here is what made
-        // `multiquote` hand `"abcdef"` to `comp_match` and lose every match in
-        // a double-quoted word.
-        let mut result = String::with_capacity(s.len() + 4);
-        for c in s.chars() {
-            if matches!(c, '$' | '`' | '"' | '\\') {
-                result.push('\\');
-            }
-            result.push(c);
         }
         result
     } else if quote_type == QT_DOLLARS {
@@ -15609,6 +15679,13 @@ mod tests {
     /// apostrophe by closing+escape+reopen: `it's` → `'it'\''s'`.
     #[test]
     fn quotestring_corpus_qt_single_escapes_apostrophe() {
+        // Same precondition the sibling QT_BACKSLASH test states: `'` only
+        // reaches the c:6313 `instring == QT_SINGLE && *u == '\''` arm after
+        // passing c:6301 `ispecial(*u)`, which reads the live typtab. C
+        // guarantees it is populated via the `inittyptab()` at init.c:1261
+        // (ported at init.rs:1244); a unit test that takes neither
+        // `global_state_lock()` nor this call sees a zeroed table.
+        inittyptab();
         let out = quotestring("it's", QT_SINGLE);
         assert!(
             out.contains("\\'") || out.contains("'\\''"),
