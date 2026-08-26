@@ -422,10 +422,16 @@ fn redir_block() {
 
 #[test]
 fn redir_dup_read_with_var_fd() {
+    // `$COPROC` is bash's name for the coprocess descriptors; zsh has no such
+    // parameter and names the coprocess `p` in a redirection. Written with the
+    // bash idiom, `<&${COPROC[1]}` expands to nothing in real zsh and the line
+    // is `file number expected`. Measured on zsh 5.9:
+    //   coproc { echo CL; }; sleep 0.2; read line <&p; echo "got=$line"
+    //     ->  got=CL
     ok_serial(
         r#"coproc { echo CL; }
 sleep 0.2
-read line <&${COPROC[1]}
+read line <&p
 echo "got=$line"
 "#,
         "got=CL\n",
@@ -612,7 +618,9 @@ fn zshflag_q_plus_unsafe() {
 }
 #[test]
 fn zshflag_g() {
-    ok(r#"s='a\nb'; echo "${(g)s}""#, "a\nb\n");
+    // `(g)` takes its options in delimiters — bare `(g)` is `error in flags
+    // near position 5` in real zsh, and `(g::)` is the plain form.
+    ok(r#"s='a\nb'; echo "${(g::)s}""#, "a\nb\n");
 }
 #[test]
 fn zshflag_n() {
@@ -898,15 +906,29 @@ fn assoc_values() {
 }
 #[test]
 fn assoc_append() {
-    ok("m[k]=hi; m[k]+=\" world\"; echo ${m[k]}", "hi world\n");
+    ok(
+        "typeset -A m; m[k]=hi; m[k]+=\" world\"; echo ${m[k]}",
+        "hi world\n",
+    );
+}
+
+/// Without the declaration the name is an ordinary array, where `k` is not an
+/// index: real zsh answers `m: assignment to invalid subscript range` and
+/// exit 1. Pinned so the declaration above cannot quietly become optional.
+#[test]
+fn assoc_subscript_without_typeset_is_an_invalid_range() {
+    ok_status("m[k]=hi; echo ${m[k]}", "", 1);
 }
 #[test]
 fn assoc_overwrite() {
-    ok("m[k]=first; m[k]=second; echo ${m[k]}", "second\n");
+    ok(
+        "typeset -A m; m[k]=first; m[k]=second; echo ${m[k]}",
+        "second\n",
+    );
 }
 #[test]
 fn assoc_missing_empty() {
-    ok("m[a]=1; echo \"[${m[nope]}]\"", "[]\n");
+    ok("typeset -A m; m[a]=1; echo \"[${m[nope]}]\"", "[]\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1058,7 +1080,7 @@ fn builtin_export() {
 }
 #[test]
 fn builtin_alias() {
-    ok("alias foo='echo expanded'; foo", "expanded\n");
+    ok("alias foo='echo expanded'; eval foo", "expanded\n");
 }
 #[test]
 fn builtin_unalias() {
@@ -1273,11 +1295,24 @@ fn proc_sub_input() {
 
 #[test]
 fn alias_simple() {
-    ok("alias g='echo hi'; g", "hi\n");
+    // `zsh -f -c` parses the WHOLE string before running any of it, and an
+    // alias is expanded at parse time — so an alias defined in a -c string is
+    // invisible everywhere in that same string. `eval` parses at run time,
+    // which is where the expansion happens. Measured on zsh 5.9:
+    //   zsh -f -c "alias g='echo hi'; eval g"  ->  hi
+    ok("alias g='echo hi'; eval g", "hi\n");
+}
+
+/// The other half of the same rule, pinned so it cannot drift back: using the
+/// alias in the string that defines it is `command not found`, exit 127, in
+/// real zsh — not an expansion.
+#[test]
+fn alias_defined_in_the_same_c_string_is_not_expanded() {
+    ok_status("alias g='echo hi'; g", "", 127);
 }
 #[test]
 fn alias_with_args() {
-    ok("alias h='echo prefix'; h end", "prefix end\n");
+    ok("alias h='echo prefix'; eval 'h end'", "prefix end\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1556,10 +1591,23 @@ fn dollar_zero_in_script() {
 }
 #[test]
 fn dollar_pipestatus() {
-    // pipestatus / PIPESTATUS array — exit codes of every pipeline stage
+    // zsh spells it `pipestatus`, lowercase — the exit codes of every stage of
+    // the last pipeline. `PIPESTATUS` is bash's name and no variable at all
+    // here, so the uppercase form this once used expands to nothing in real
+    // zsh and prints `--`, which is what zshrs printed too.
+    ok_serial(
+        "true | false | true; echo ${pipestatus[1]}-${pipestatus[2]}-${pipestatus[3]}",
+        "0-1-0\n",
+    );
+}
+
+/// The uppercase name is bash's, and pinned as absent: `${PIPESTATUS[1]}` is an
+/// unset parameter in zsh, so the line is bare separators.
+#[test]
+fn dollar_uppercase_pipestatus_is_not_a_zsh_parameter() {
     ok_serial(
         "true | false | true; echo ${PIPESTATUS[1]}-${PIPESTATUS[2]}-${PIPESTATUS[3]}",
-        "0-1-0\n",
+        "--\n",
     );
 }
 

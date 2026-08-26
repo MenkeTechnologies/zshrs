@@ -108,6 +108,28 @@ fn ok_serial(code: &str, expected_stdout: &str) {
     ok(code, expected_stdout);
 }
 
+/// Assert stdout with `wc`'s column padding taken out of the comparison.
+///
+/// BSD `wc` right-pads its counts to eight columns and GNU `wc` does not, so a
+/// literal expectation here pins the platform's `wc` rather than the pipeline
+/// these tests are about — which is how they passed on macOS and failed on the
+/// Linux runner. Spaces are removed from both sides; everything else, the
+/// ordering and the exit status included, is still exact.
+fn ok_unpadded(code: &str, expected_stdout: &str) {
+    let _guard = FORK_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let (status, stdout) = run(code);
+    assert_eq!(
+        status, 0,
+        "expected exit 0 from `{code}`, got {status} with stdout:\n{stdout}"
+    );
+    let squeeze = |s: &str| s.replace(' ', "");
+    assert_eq!(
+        squeeze(&stdout),
+        squeeze(expected_stdout),
+        "stdout mismatch for `{code}` (padding-insensitive)"
+    );
+}
+
 /// Assert exact stdout and exact exit status.
 fn ok_status(code: &str, expected_stdout: &str, expected_status: i32) {
     let (status, stdout) = run(code);
@@ -219,9 +241,7 @@ fn pipeline_three_stages() {
 
 #[test]
 fn pipeline_with_builtin_consumer() {
-    // BSD-style wc (what zsh's bundled wc emits on macOS) right-pads
-    // counts to 8 chars. Matches `/bin/zsh -f -c 'seq 5 | wc -l'`.
-    ok_serial("seq 5 | wc -l", "       5\n");
+    ok_unpadded("seq 5 | wc -l", "5\n");
 }
 
 #[test]
@@ -475,7 +495,7 @@ fn cmd_subst_strips_trailing_newlines() {
 #[test]
 fn cmd_subst_multiline_preserved_inside() {
     // BSD-style wc right-pads to 8 chars (matches zsh's bundled wc).
-    ok(r#"x=$(printf 'a\nb\nc'); echo "$x" | wc -l"#, "       3\n");
+    ok_unpadded(r#"x=$(printf 'a\nb\nc'); echo "$x" | wc -l"#, "3\n");
 }
 
 #[test]
@@ -488,10 +508,9 @@ fn cmd_subst_nested() {
 
 #[test]
 fn cmd_subst_with_pipeline_inside() {
-    // BSD-style wc right-pads to 8 chars (matches zsh's bundled wc).
-    // The cmd-subst then strips leading whitespace per zsh-defaults.
-    // Actually no — zsh keeps the padding in the cmd-subst result.
-    ok(r#"x=$(seq 5 | wc -l); echo "lines:$x""#, "lines:       5\n");
+    // The substitution keeps whatever `wc` wrote, padding included, so the
+    // comparison is the padding-insensitive one.
+    ok_unpadded(r#"x=$(seq 5 | wc -l); echo "lines:$x""#, "lines:5\n");
 }
 
 #[test]
@@ -925,9 +944,9 @@ fn array_splice_into_argv_for_external() {
     // Each array element becomes a separate argv slot to /bin/echo. We pipe
     // through `wc -w` to count words — proves N elements landed as N args
     // rather than one space-joined arg.
-    ok_serial(
+    ok_unpadded(
         r#"arr=(a b c d e); /bin/echo ${arr[@]} | /usr/bin/wc -w"#,
-        "       5\n",
+        "5\n",
     );
 }
 
@@ -1302,7 +1321,14 @@ fn zshflag_in_quoted_context_works() {
 
 #[test]
 fn assoc_set_and_get_single_entry() {
-    ok(r#"foo[key]=val; echo "${foo[key]}""#, "val\n");
+    // The declaration is load-bearing: without it the name is an ordinary
+    // array, where a word subscript is `assignment to invalid subscript range`
+    // in real zsh — which is what these asserted against before, and what
+    // zshrs answers too.
+    ok(
+        r#"typeset -A foo; foo[key]=val; echo "${foo[key]}""#,
+        "val\n",
+    );
 }
 
 #[test]
@@ -1320,7 +1346,10 @@ fn assoc_two_lookups_in_double_quoted_string() {
     // (treating `a]} ${foo[b` as the index). The fix rejects bodies
     // containing `${` or `}` so multi-group strings route to the runtime
     // string walker.
-    ok(r#"foo[a]=1; foo[b]=2; echo "${foo[a]} ${foo[b]}""#, "1 2\n");
+    ok(
+        r#"typeset -A foo; foo[a]=1; foo[b]=2; echo "${foo[a]} ${foo[b]}""#,
+        "1 2\n",
+    );
 }
 
 #[test]
@@ -1328,7 +1357,7 @@ fn assoc_append_concats_to_existing() {
     // `m[k]+=tail` appends to the existing value (string concat). Pre-fix,
     // is_append was ignored on the assoc compile branch.
     ok(
-        r#"m[k]=hello; m[k]+=" world"; echo "${m[k]}""#,
+        r#"typeset -A m; m[k]=hello; m[k]+=" world"; echo "${m[k]}""#,
         "hello world\n",
     );
 }
@@ -1336,17 +1365,26 @@ fn assoc_append_concats_to_existing() {
 #[test]
 fn assoc_append_creates_when_missing() {
     // First +=on a missing key behaves like a plain set, matching zsh/bash.
-    ok(r#"m[a]+=foo; m[a]+=bar; echo "${m[a]}""#, "foobar\n");
+    ok(
+        r#"typeset -A m; m[a]+=foo; m[a]+=bar; echo "${m[a]}""#,
+        "foobar\n",
+    );
 }
 
 #[test]
 fn assoc_overwrite_replaces_value() {
-    ok(r#"m[k]=first; m[k]=second; echo "${m[k]}""#, "second\n");
+    ok(
+        r#"typeset -A m; m[k]=first; m[k]=second; echo "${m[k]}""#,
+        "second\n",
+    );
 }
 
 #[test]
 fn assoc_missing_key_returns_empty() {
-    ok(r#"m[a]=1; echo "[${m[nonexistent]}]""#, "[]\n");
+    ok(
+        r#"typeset -A m; m[a]=1; echo "[${m[nonexistent]}]""#,
+        "[]\n",
+    );
 }
 
 #[test]
@@ -1447,32 +1485,25 @@ fn read_dup_fd_with_literal_number() {
     // instead of STDIN, and read blocked on the original terminal stdin.
     // Post-fix, DupRead joins the "read group" defaulting to fd 0.
     //
-    // The literal fd number depends on what was free when coproc forked
-    // (zsh historically uses fd>=10; our impl picks a kernel-assigned one
-    // around fd 13). Use the canonical `${COPROC[1]}` indirection — the
-    // test still proves DupRead defaults to fd 0 on the read side.
+    // A file opened on a literal fd, which is what the test name says and
+    // what real zsh accepts. `${COPROC[1]}` — which this used before — is
+    // BASH's name for the coprocess descriptors: zsh has no such parameter, so
+    // there the line reads `<&` with nothing after it and is `file number
+    // expected`. Measured on zsh 5.9, this form is `got=[CHILD_LINE]`.
     ok_serial(
-        r#"coproc { echo CHILD_LINE; }
-sleep 0.2
-read line <&${COPROC[1]}
-echo "got=[$line]"
-"#,
+        r#"f=$(mktemp); print CHILD_LINE > $f; exec 7< $f; read line <&7; echo "got=[$line]"; rm -f $f"#,
         "got=[CHILD_LINE]\n",
     );
 }
 
 #[test]
 fn read_dup_fd_with_variable_expansion() {
-    // `read line <&${COPROC[1]}` — same fix, plus the target word goes
-    // through array-index expansion (BUILTIN_ARRAY_INDEX) before redirect
-    // dispatch. Proves both the default-fd fix and the var-expansion path
-    // work together.
+    // `read line <&$myfd` — the same default-fd fix, plus the redirect target
+    // going through parameter expansion. `{myfd}<` is how zsh puts a
+    // kernel-assigned descriptor in a variable, so the pair is the zsh idiom
+    // end to end; measured on zsh 5.9 as `got=[VAR_PATH]`.
     ok_serial(
-        r#"coproc { echo VAR_PATH; }
-sleep 0.2
-read line <&${COPROC[1]}
-echo "got=[$line]"
-"#,
+        r#"f=$(mktemp); print VAR_PATH > $f; exec {myfd}< $f; read line <&$myfd; echo "got=[$line]"; rm -f $f"#,
         "got=[VAR_PATH]\n",
     );
 }
