@@ -2018,23 +2018,61 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         .and_then(|m| m.lock().ok())
         .map(|g| g.clone())
         .filter(|t| crate::ported::lex::untokenize(t) == s_owned);
+    // c:952 — C hands `check_param` the TOKENIZED `s`, and the test at
+    // c:1141 is written in parser tokens precisely so an escaped `\$` (a
+    // plain 0x24 by then, its `Bnull` chucked at zle_tricky.c:1920) is NOT a
+    // parameter context. Feed the twin, with `offs` remapped into its byte
+    // space; when there is no usable twin fall back to the untokenized word,
+    // which cannot tell `\$PATH` from `$PATH`.
+    let probe: Option<(String, usize)> = s_tok.as_ref().and_then(|t| {
+        crate::comp_word_tok::tok_index(t, ooffs.max(0) as usize).map(|ti| (t.clone(), ti))
+    });
     if compfunc_active() {
-        if let Some(p) = check_param(&s_owned, false, false) {
+        let found = match &probe {
+            Some((t, ti)) => {
+                OFFS.store(*ti as i32, Ordering::Relaxed);
+                let r = check_param(t, false, false, false);
+                if r.is_none() {
+                    OFFS.store(ooffs, Ordering::Relaxed);
+                }
+                r
+            }
+            None => check_param(&s_owned, false, false, true),
+        };
+        if let Some(p) = found {
             // c:951
             // c:952 — `s = p`, where C's `p` points at the parameter NAME and
             // check_param has already NUL-terminated it at the end of the
-            // name (`b[we-wb] = '\0'`, c:1297). Taking `s[p..]` alone kept
+            // name (`b[we-wb] = '\0'`, c:1298). Taking `s[p..]` alone kept
             // everything that followed the name (the `}` of a `${…}`, any
             // `:modifiers`, the ignored suffix), so `callcompfunc` received
             // e.g. `PA}` instead of `PA` and published that as `$PREFIX`.
-            // `we - wb` is exactly `e - b`, set by check_param at c:1294-1295.
+            // `we - wb` is exactly `e - b`, set by check_param at c:1295-1296.
             let namelen = (WE.load(Ordering::Relaxed) - WB.load(Ordering::Relaxed)).max(0) as usize;
-            let tail = &s_owned[p..];
-            let cut = namelen.min(tail.len());
-            // c:952 — C's `p` points INTO the TOKENIZED `s`, so the twin has to
-            // be narrowed to the same span.
-            s_tok = s_tok.and_then(|t| crate::comp_word_tok::span(&t, p, cut));
-            s_owned = tail[..cut].to_string(); // c:952 + c:1297
+            match &probe {
+                // `p` and `namelen` are byte counts in the TWIN. Convert the
+                // whole result back to the untokenized byte space the rest of
+                // this port indexes `wb`/`we`/`offs` in — the line the user
+                // typed, which the c:1788-1926 cleanup loop has already
+                // stripped of its quote characters.
+                Some((t, _)) => {
+                    let cut = namelen.min(t.len().saturating_sub(p));
+                    let name_tok = t.get(p..p + cut).unwrap_or("").to_string();
+                    s_owned = crate::ported::lex::untokenize(&name_tok); // c:952 + c:1298
+                    let pre_u = crate::comp_word_tok::untok_index(t, p).unwrap_or(0);
+                    OFFS.store(ooffs - pre_u as i32, Ordering::Relaxed); // c:1294
+                    let wb = ZLEMETACS.load(Ordering::Relaxed) - OFFS.load(Ordering::Relaxed);
+                    WB.store(wb, Ordering::Relaxed); // c:1295
+                    WE.store(wb + s_owned.len() as i32, Ordering::Relaxed); // c:1296
+                    s_tok = Some(name_tok);
+                }
+                None => {
+                    let tail = &s_owned[p..];
+                    let cut = namelen.min(tail.len());
+                    s_tok = s_tok.and_then(|t| crate::comp_word_tok::span(&t, p, cut));
+                    s_owned = tail[..cut].to_string(); // c:952 + c:1298
+                }
+            }
             PARWB.store(owb, Ordering::Relaxed); // c:953
             PARWE.store(owe, Ordering::Relaxed); // c:955
             PAROFFS.store(ooffs, Ordering::Relaxed); // c:956
@@ -2340,7 +2378,18 @@ pub fn tildequote(s: &str, ign: i32) -> String {
 /// `ispar`/`parq`/`eparq` (when `!test`) and `ipre`/`ripre`/`isuf`/
 /// `parpre`/`parflags`/`mflags`/`wb`/`we`/`offs` (when `set`).
 /// Returns `None` when there's no parameter expression at the cursor.
-pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
+///
+/// `untok` is the one parameter C does not have. Every C caller — compcore.c
+/// c:952 and c:1722, compctl.c:2889 and compctl.c:3161 — passes a TOKENIZED
+/// word, and the distinction is load-bearing: an escaped `\$` reaches c:1141
+/// as a plain 0x24 — never the `String` token, its `Bnull` having been
+/// chucked by the line-cleanup loop at zle_tricky.c:1881/1920 — so
+/// C reads `echo \$PATH` as no parameter context and `echo $PATH` as one.
+/// Pass `untok = false` (faithful) whenever the tokenized word is in hand.
+/// The legacy compctl caller has only the untokenized word and passes
+/// `true`, which lets the `$`/`{`/`(` literals stand in for their tokens at
+/// the cost of that one path not seeing the escape.
+pub fn check_param(s: &str, set: bool, test: bool, untok: bool) -> Option<usize> {
     // c:1113
 
     // c:1117-1118 — zsfree(parpre); parpre = NULL.
@@ -2362,12 +2411,12 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
     let mut qstring = false; // c:1115
     let mut p: usize = offs_v.min(bytes.len().saturating_sub(1)); // c:1140 p = s + offs
 
-    // get_comp_string returns the word untokenized, so the `$` sigil
-    // arrives as a literal 0x24 rather than the String token C scans for.
-    // Treat the literal `$` as equivalent to the String token here so
-    // `$VAR<Tab>` parameter completion fires; the len_utf8-based cursor
-    // math below already handles the 1-byte literal vs 2-byte token.
-    let is_str = |c: char| c == Stringg || c == '$';
+    // c:1141 — `if (*p == String || *p == Qstring)`. A plain 0x24 is NOT a
+    // hit: the lexer emits `String` for a live `$` and leaves an escaped
+    // `\$` as `Bnull` + 0x24, whose `Bnull` the line-cleanup loop chucks
+    // (zle_tricky.c:1881/1920) — so the bare byte reaching here means the
+    // user quoted it. Only `untok = true` widens the test.
+    let is_str = |c: char| c == Stringg || (untok && c == '$');
 
     // c:1140-1162 — scan backward for `String` or `Qstring`.
     loop {
@@ -2440,11 +2489,10 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
     let mut br: i32 = 1; // c:1182
     let mut nest: i32 = 0; // c:1182
 
-    // get_comp_string returns the word untokenized, so `${…}` arrives with a
-    // literal `{`/`}` rather than the Inbrace/Outbrace tokens C matches here;
-    // accept either so `${PA<Tab>` is recognized as a braced parameter.
+    // c:1182 — `if (*b == Inbrace)`. The `untok = true` caller also takes the
+    // literal `{`, which is how `${…}` reaches it.
     let brace_ch = char_at(bytes, b);
-    if brace_ch == Inbrace || brace_ch == '{' {
+    if brace_ch == Inbrace || (untok && brace_ch == '{') {
         let (ib, ob) = if brace_ch == '{' {
             ('{', '}')
         } else {
@@ -2466,17 +2514,15 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
         // — two source-level skipparens calls. Mirror that explicitly
         // so the call-coverage metric matches C.
         let mut b_str: &str = &s[b..];
-        // `get_comp_string` hands this port the word UNTOKENIZED
-        // (zle_tricky.c:2219), so the `(`/`)` of a `${(flags)name}` group
-        // arrive as literals in the non-qstring case as well. Pick the pair
-        // that is actually present — the same accommodation the
-        // `Inbrace`/`{` test above already makes. Without it `skipparens`
-        // was handed `Inpar` against a literal `(`, returned -1 (its
-        // "wrong opening char" code) instead of 0, `b` never advanced past
-        // the flags, the name scan then found `(` where a name should be
+        // The `untok = true` caller sees the `(`/`)` of a `${(flags)name}`
+        // group as literals in the non-qstring case too — the same
+        // accommodation the `Inbrace`/`{` test above makes. Without it
+        // `skipparens` was handed `Inpar` against a literal `(`, returned -1
+        // (its "wrong opening char" code) instead of 0, `b` never advanced
+        // past the flags, the name scan then found `(` where a name should be
         // and `check_param` bailed with `ispar == 0`: `${(k)<TAB>` never
         // reached the `-brace-parameter-` context at all.
-        let flag_ret: i32 = if qstring || char_at(bytes, b) == '(' {
+        let flag_ret: i32 = if qstring || (untok && char_at(bytes, b) == '(') {
             crate::ported::utils::skipparens('(', ')', &mut b_str)
         } else {
             crate::ported::utils::skipparens(Inpar, Outpar, &mut b_str)
@@ -2641,7 +2687,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
                 *g = strip_tokens(&format!("{}{}", *g, head));
             }
         }
-        // c:1295 — save prefix for compfunc.
+        // c:1285-1286 — save prefix for compfunc.
         let cf_active = compfunc
             .get_or_init(|| Mutex::new(None))
             .lock()
@@ -2655,24 +2701,24 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
             } else {
                 0
             };
-            parflags.store(pf, Ordering::Relaxed); // c:1298
+            parflags.store(pf, Ordering::Relaxed); // c:1287
             let head = String::from_utf8_lossy(&bytes[..b]).into_owned();
             if let Ok(mut g) = parpre.get_or_init(|| Mutex::new(String::new())).lock() {
-                *g = strip_tokens(&head); // c:1301
+                *g = strip_tokens(&head); // c:1290
             }
         }
-        // c:1306 — adjust wb/we/offs.
+        // c:1293 — adjust wb/we/offs.
         let off_delta = b as i32;
-        OFFS.fetch_sub(off_delta, Ordering::Relaxed); // c:1306
+        OFFS.fetch_sub(off_delta, Ordering::Relaxed); // c:1294
         let new_offs = OFFS.load(Ordering::Relaxed);
         let zlc = ZLEMETACS.load(Ordering::Relaxed);
-        WB.store(zlc - new_offs, Ordering::Relaxed); // c:1307
+        WB.store(zlc - new_offs, Ordering::Relaxed); // c:1295
         WE.store(
             WB.load(Ordering::Relaxed) + (e - b) as i32,
             Ordering::Relaxed,
-        ); // c:1308
-        ispar.store(if br >= 2 { 2 } else { 1 }, Ordering::Relaxed); // c:1309
-        return Some(b); // c:1311
+        ); // c:1296
+        ispar.store(if br >= 2 { 2 } else { 1 }, Ordering::Relaxed); // c:1297
+        return Some(b); // c:1299
     } else if offs_v > e && e < bytes.len() && char_at(bytes, e) == ':' {
         // c:1312
         // c:1313-1316 — colon-modifier guess.
@@ -3234,7 +3280,7 @@ pub fn set_comp_sep() -> i32 {
     // c:1723-1733 — check_param dispatch with offs temporarily = soffs.
     let o_offs = OFFS.load(Ordering::Relaxed);
     OFFS.store(soffs, Ordering::Relaxed);
-    if check_param(&from_sb(&ns_b), false, true).is_some() {
+    if check_param(&from_sb(&ns_b), false, true, false).is_some() {
         for b in ns_b.iter_mut() {
             if *b == dnull_b {
                 *b = b'"';
@@ -7897,7 +7943,7 @@ mod tests {
         let _g = zle_test_setup();
         // c:1316: no `$` in string → return None.
         OFFS.store(2, Ordering::Relaxed);
-        assert_eq!(check_param("abc", false, false), None);
+        assert_eq!(check_param("abc", false, false, false), None);
     }
 
     #[test]
@@ -7907,20 +7953,66 @@ mod tests {
         // c:1259-1311: `$FOO` with cursor inside the name → return b.
         OFFS.store(2, Ordering::Relaxed);
         let s = format!("{}FOO", Stringg);
-        let r = check_param(&s, false, true);
+        let r = check_param(&s, false, true, false);
         assert!(r.is_some(), "expected Some(b) inside $FOO");
     }
 
-    /// c:1194-1203 + c:1309 — `${(k)<cursor>` is a brace parameter: the
+    /// c:1141 — a live `$` is the `String` token; an escaped `\$` reaches
+    /// `check_param` as a plain 0x24, its `Bnull` chucked by the line-cleanup
+    /// loop (zle_tricky.c:1881/1920). So `echo \$PATH` has NO parameter
+    /// context while `echo $PATH` has one. Accepting the literal made the two
+    /// indistinguishable: `\$PATH` published `PREFIX=PATH` / `IPREFIX=\$`
+    /// where zsh publishes the whole `\$PATH` as the prefix.
+    #[test]
+    fn check_param_escaped_dollar_is_not_a_parameter() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        // `echo \$PATH` — the word as check_param sees it: literal `$`.
+        let escaped = "$PATH";
+        OFFS.store(escaped.len() as i32, Ordering::Relaxed);
+        assert_eq!(
+            check_param(escaped, false, true, false),
+            None,
+            "a bare 0x24 means the user escaped it"
+        );
+
+        // `echo $PATH` — the same five visible chars, but a `String` token.
+        let live = format!("{Stringg}PATH");
+        OFFS.store(live.len() as i32, Ordering::Relaxed);
+        assert_eq!(
+            check_param(&live, false, true, false),
+            Some(Stringg.len_utf8()),
+            "the String token opens a parameter name at b = p + 1"
+        );
+    }
+
+    /// c:1226-1229 — the end-of-name test lists the `Quest`/`Star` TOKENS but
+    /// only the literal `-`/`!`. `$-` lexes to `String` + `Dash`, which
+    /// matches neither, so `e` never leaves `b`, the c:1254 cursor-inside-name
+    /// test fails and C reports no parameter context at all. Reading the
+    /// untokenized `-` as a one-char name instead split the word and dropped
+    /// the `$` from what `_expand` echoed back.
+    #[test]
+    fn check_param_dollar_dash_is_not_a_one_char_name() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let dash = crate::ported::zsh_h::Dash;
+        let s = format!("{Stringg}{dash}");
+        OFFS.store(s.len() as i32, Ordering::Relaxed);
+        assert_eq!(check_param(&s, false, true, false), None);
+    }
+
+    /// c:1189-1202 + c:1297 — `${(k)<cursor>` is a brace parameter: the
     /// `(k)` flag group is skipped and `ispar` ends at 2, which is what
     /// `compcontext_for` turns into `brace_parameter`.
     ///
-    /// `get_comp_string` hands this port the word UNTOKENIZED, so the flag
-    /// group arrives as literal `(`/`)`. Handing those to
-    /// `skipparens(Inpar, Outpar, …)` returns -1 ("wrong opening char"),
-    /// `b` never moved past the flags, the name scan hit `(` and bailed —
-    /// `ispar` stayed 0, the context stayed `command`, and `echo ${(k)<TAB>`
-    /// produced nothing at all.
+    /// Exercises the `untok = true` arm — a caller holding only the
+    /// untokenized word, where the flag group arrives as literal `(`/`)`.
+    /// Handing those to `skipparens(Inpar, Outpar, …)` returns -1 ("wrong
+    /// opening char"), `b` never moved past the flags, the name scan hit `(`
+    /// and bailed — `ispar` stayed 0, the context stayed `command`, and
+    /// `echo ${(k)<TAB>` produced nothing at all.
     #[test]
     fn check_param_brace_with_flag_group_sets_ispar_two() {
         let _g = crate::test_util::global_state_lock();
@@ -7929,7 +8021,7 @@ mod tests {
         // `${(k)` with the cursor just past the `)`.
         let s = "${(k)";
         OFFS.store(s.len() as i32, Ordering::Relaxed);
-        let r = check_param(s, false, false);
+        let r = check_param(s, false, false, true);
         assert!(r.is_some(), "cursor sits at the (empty) parameter name");
         assert_eq!(
             ispar.load(Ordering::Relaxed),
@@ -9049,7 +9141,7 @@ mod tests {
     fn check_param_empty_returns_option_type() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _: Option<usize> = check_param("", false, false);
+        let _: Option<usize> = check_param("", false, false, false);
     }
 
     /// c:1014 — `check_param` is deterministic for empty input.
@@ -9057,9 +9149,9 @@ mod tests {
     fn check_param_empty_is_deterministic() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let first = check_param("", false, false);
+        let first = check_param("", false, false, false);
         for _ in 0..3 {
-            assert_eq!(check_param("", false, false), first);
+            assert_eq!(check_param("", false, false, false), first);
         }
     }
 
