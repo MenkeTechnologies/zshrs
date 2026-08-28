@@ -3294,17 +3294,14 @@ impl ShellExecutor {
     /// It is cleared for the COMPILE ONLY. A `.zwc` that does `setopt
     /// rcquotes` (zsh-expand's plugin entry does, at its line 39) must still
     /// set the option for real, and that setting must outlive the source — so
-    /// the previous value is restored before the chunk RUNS, not after.
+    /// the previous value is restored before the chunk RUNS, not after. The
+    /// same split applies to alias expansion: a function or `eval` body the
+    /// program runs is lexed at RUNTIME and must see the live alias table.
     pub fn execute_zwc_program(&mut self, script: &str) -> Result<i32, String> {
-        use crate::ported::zsh_h::{isset, RCQUOTES};
-        let saved = isset(RCQUOTES);
-        if saved {
-            crate::ported::options::opt_state_set("rcquotes", false);
-        }
-        let chunk = self.compile_script_isolated(script);
-        if saved {
-            crate::ported::options::opt_state_set("rcquotes", true);
-        }
+        let chunk = {
+            let _relex = ZwcRelexGuard::enter();
+            self.compile_script_isolated(script)
+        };
         self.run_chunk_with_exit_hooks(chunk?, "execute_zwc_program")
     }
 
@@ -6420,6 +6417,85 @@ fn autoload_source_key(name: &str, registered: &str) -> Option<(String, [u8; 32]
 
 fn autoload_register_source(name: &str, body: &str) -> String {
     autoload_definition_source(name, body, autoload_is_ksh_style(name))
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Pins the lexer to the spelling a `.zwc` deparse was written in, for the
+/// duration of one compile.
+///
+/// C never needs this: the compiled arm of `source()` is `execode(prog, 1,
+/// 0, "filecode")` (c:Src/init.c:1621) and the ksh-autoload arm is
+/// `execode(prog, 1, 0, "evalautofunc")` (c:Src/exec.c:5795) — the wordcode
+/// runs as it stands and NOTHING is lexed. A `.zwc` is resolved once, at
+/// `zcompile` time. zshrs has no execute-the-wordcode path: it deparses back
+/// to source with `getpermtext` and lexes that, so every piece of LEXER-TIME
+/// state that C bypassed has to be neutralised by hand, or the second lex
+/// resolves the text differently from the first.
+///
+/// Two such pieces are known to change the result:
+///
+///   * **RCQUOTES.** `untokenize` (c:Src/exec.c:2134) renders every quote
+///     null through `ztokens[Snull - Pound]`, and that entry is a bare
+///     single quote (c:Src/lex.c:38), so a closing null followed by an
+///     opening one deparses to two adjacent quotes. Under RCQUOTES the lexer
+///     reads that pair inside a quoted word as one LITERAL quote
+///     (c:Src/lex.c:1328) rather than as two delimiters. `zsh-expand`'s
+///     plugin entry does `setopt rcquotes` at its line 39, so every later
+///     `.zwc`-sourced alias with adjacent quoted segments — the whole
+///     `zsh-openshift-aliases` set — gained literal quotes zsh never had.
+///
+///   * **Aliases.** `checkalias` (c:Src/lex.c:1909) fires from the lexer, so
+///     an alias installed before the `source` rewrote words INSIDE the
+///     compiled program: with `alias mycmd=…` live, a `.zwc` whose second
+///     line is `mycmd` ran the alias where zsh runs the function. Global
+///     aliases are worse — they rewrite any word, so `print -r -- GA: x`
+///     became `print -r -- GA: LEAKED` under `alias -g x=LEAKED`. This is
+///     C's `noaliases` (c:Src/lex.c:135), the same switch `par_case` uses to
+///     keep `in` from being alias-expanded.
+///
+/// Both are restored on drop, so the restore survives a panic out of the
+/// compiler — and, more importantly, the program's own RUNTIME lexing is
+/// unaffected: a `setopt rcquotes` the `.zwc` performs still takes effect
+/// and still outlives the source, and a function or `eval` body it runs is
+/// lexed later, against the live alias table.
+///
+/// One residual case is out of reach here and needs a real
+/// execute-the-wordcode path: a `.zwc` COMPILED while RCQUOTES was set holds
+/// an unescaped literal quote in its tokenized word (c:Src/lex.c:1329 adds
+/// the character with no `Bnull` prefix), and `untokenize` cannot tell that
+/// apart from a quote null. No option state at re-lex time recovers it.
+///
+/// `noaliases` is a thread-local (`LEX_NOALIASES`), but the option store is
+/// process-wide, so the RCQUOTES window is visible to a worker thread that
+/// lexes concurrently. The window is one synchronous compile.
+pub(crate) struct ZwcRelexGuard {
+    rcquotes: bool,
+    noaliases: bool,
+}
+
+impl ZwcRelexGuard {
+    pub(crate) fn enter() -> Self {
+        let rcquotes = crate::ported::zsh_h::isset(crate::ported::zsh_h::RCQUOTES);
+        if rcquotes {
+            crate::ported::options::opt_state_set("rcquotes", false);
+        }
+        let noaliases = crate::ported::lex::noaliases();
+        crate::ported::lex::set_noaliases(true); // c:Src/lex.c:1909
+        Self {
+            rcquotes,
+            noaliases,
+        }
+    }
+}
+
+impl Drop for ZwcRelexGuard {
+    fn drop(&mut self) {
+        if self.rcquotes {
+            crate::ported::options::opt_state_set("rcquotes", true);
+        }
+        crate::ported::lex::set_noaliases(self.noaliases);
+    }
 }
 
 /// The exact source text an autoload of `name` installs — either the
