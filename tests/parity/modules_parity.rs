@@ -1331,7 +1331,7 @@ mod files_extra {
     /// `zf_mkdir -p` creates nested dirs idempotently.
     #[test]
     fn zf_mkdir_p_nested() {
-        let tmp = std::env::temp_dir().join("zshrs_zf_mkdir_p_test");
+        let tmp = std::env::temp_dir().join(format!("zshrs_zf_mkdir_p_test.{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let script = format!(
             "zmodload zsh/files 2>/dev/null; zf_mkdir -p {0}/a/b/c && [[ -d {0}/a/b/c ]] && echo ok",
@@ -1350,8 +1350,8 @@ mod files_extra {
         if !zsh_available() {
             return;
         }
-        let tmp_zsh = std::env::temp_dir().join("zshrs_zf_rm_zsh");
-        let tmp_rs = std::env::temp_dir().join("zshrs_zf_rm_rs");
+        let tmp_zsh = std::env::temp_dir().join(format!("zshrs_zf_rm_zsh.{}", std::process::id()));
+        let tmp_rs = std::env::temp_dir().join(format!("zshrs_zf_rm_rs.{}", std::process::id()));
         let _ = std::fs::remove_file(&tmp_zsh);
         let _ = std::fs::remove_file(&tmp_rs);
         let _ = std::fs::write(&tmp_zsh, "x");
@@ -1537,7 +1537,7 @@ mod mapfile_extra {
     /// must agree byte-for-byte.
     #[test]
     fn mapfile_read_temp_file() {
-        let tmp = std::env::temp_dir().join("zshrs_mapfile_read");
+        let tmp = std::env::temp_dir().join(format!("zshrs_mapfile_read.{}", std::process::id()));
         let _ = std::fs::write(&tmp, "alpha\nbeta\ngamma\n");
         let script = format!(
             "zmodload zsh/mapfile 2>/dev/null; print -r -- \"${{mapfile[{0}]}}\"",

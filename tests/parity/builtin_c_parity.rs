@@ -497,7 +497,7 @@ mod dot_builtin {
     /// must read the same file with the same effect.
     #[test]
     fn dot_runs_script() {
-        let tmp = std::env::temp_dir().join("zshrs_dot_test.sh");
+        let tmp = std::env::temp_dir().join(format!("zshrs_dot_test.sh.{}", std::process::id()));
         let _ = std::fs::write(&tmp, "echo from-dot\n");
         let script = format!(". {}", tmp.display());
         assert_parity(&script);
@@ -507,7 +507,7 @@ mod dot_builtin {
     /// `source` is a synonym in zsh.
     #[test]
     fn source_runs_script() {
-        let tmp = std::env::temp_dir().join("zshrs_source_test.sh");
+        let tmp = std::env::temp_dir().join(format!("zshrs_source_test.sh.{}", std::process::id()));
         let _ = std::fs::write(&tmp, "echo from-source\n");
         let script = format!("source {}", tmp.display());
         assert_parity(&script);
@@ -517,7 +517,7 @@ mod dot_builtin {
     /// Sourced file inherits caller's positionals.
     #[test]
     fn dot_inherits_positionals() {
-        let tmp = std::env::temp_dir().join("zshrs_dot_pos.sh");
+        let tmp = std::env::temp_dir().join(format!("zshrs_dot_pos.sh.{}", std::process::id()));
         let _ = std::fs::write(&tmp, "echo \"args:$@\"\n");
         let script = format!(r#"set -- a b; . {}"#, tmp.display());
         assert_parity(&script);
@@ -1069,7 +1069,7 @@ mod read_builtin {
     /// behaviors are documented; pin to "doesn't crash" only.
     #[test]
     fn read_dash_k_one_char_smoke() {
-        let tmp = std::env::temp_dir().join("zshrs_read_k_test");
+        let tmp = std::env::temp_dir().join(format!("zshrs_read_k_test.{}", std::process::id()));
         let _ = std::fs::write(&tmp, "X");
         let script = format!(r#"read -k 1 v < {} 2>/dev/null; echo done"#, tmp.display());
         let _ = run_zsh(&script);

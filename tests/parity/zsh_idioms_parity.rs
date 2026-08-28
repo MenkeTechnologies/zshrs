@@ -84,7 +84,7 @@ mod cmd_subst_read {
     /// Heavily used in plugins for reading config files.
     #[test]
     fn read_file_via_cmd_subst() {
-        let tmp = std::env::temp_dir().join("zshrs_read_subst_test");
+        let tmp = std::env::temp_dir().join(format!("zshrs_read_subst_test.{}", std::process::id()));
         let _ = std::fs::write(&tmp, "hello world\n");
         let script = format!(r#"x=$(< {0}); echo "[$x]""#, tmp.display());
         assert_parity(&script);
@@ -94,7 +94,7 @@ mod cmd_subst_read {
     /// `$(<file)` no-space form.
     #[test]
     fn read_file_no_space() {
-        let tmp = std::env::temp_dir().join("zshrs_read_subst_nospace");
+        let tmp = std::env::temp_dir().join(format!("zshrs_read_subst_nospace.{}", std::process::id()));
         let _ = std::fs::write(&tmp, "abc\n");
         let script = format!(r#"x=$(<{0}); echo "$x""#, tmp.display());
         assert_parity(&script);
@@ -108,7 +108,10 @@ mod glob_quals {
     use super::*;
 
     fn setup_glob_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(name);
+        // Per-process name: several instances of this suite run against the
+        // one shared /tmp, and a fixed name lets one run's `remove_dir_all`
+        // delete the tree another run is mid-glob over.
+        let dir = std::env::temp_dir().join(format!("{name}.{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join("regular.txt"), "");

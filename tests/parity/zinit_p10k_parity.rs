@@ -434,7 +434,7 @@ mod zinit_glob {
     /// Glob qualifier `(.)` — regular files only.
     #[test]
     fn glob_qual_regular_files() {
-        let tmp = std::env::temp_dir().join("zshrs_glob_qual_test");
+        let tmp = std::env::temp_dir().join(format!("zshrs_glob_qual_test.{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::write(tmp.join("a.txt"), "");
@@ -450,7 +450,7 @@ mod zinit_glob {
     /// Glob qualifier `(/)` — directories only.
     #[test]
     fn glob_qual_directories_only() {
-        let tmp = std::env::temp_dir().join("zshrs_glob_qual_dir_test");
+        let tmp = std::env::temp_dir().join(format!("zshrs_glob_qual_dir_test.{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::write(tmp.join("a.txt"), "");
@@ -470,7 +470,7 @@ mod zinit_glob {
     /// Smoke the path; pin behavior once the walker is reworked.
     #[test]
     fn double_star_recursive_smoke() {
-        let tmp = std::env::temp_dir().join("zshrs_glob_recursive_test");
+        let tmp = std::env::temp_dir().join(format!("zshrs_glob_recursive_test.{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = std::fs::create_dir_all(tmp.join("a/b"));
         let _ = std::fs::write(tmp.join("a/b/file.txt"), "");
