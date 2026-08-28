@@ -1529,6 +1529,18 @@ pub fn bin_set(
         if let Ok(mut pp) = PPARAMS.lock() {
             *pp = sorted; // c:712
         }
+        // !!! EMULATION-ONLY (no C counterpart) !!! dash and ash reset the
+        // `getopts` cursor whenever the positional parameters are replaced
+        // (`setparam()` clears shellparam.optind/optoff), so `getopts "ab" o
+        // -a; set -- -b -a; getopts "ab" o` yields `b` there and `a` in
+        // bash / ksh93 / mksh / zsh. See
+        // dash_mode::getopts_reset_on_set_positional — false in --zsh.
+        if crate::dash_mode::getopts_reset_on_set_positional() {
+            ZOPTIND.store(1, Relaxed);
+            OPTCIND.store(0, Relaxed);
+            crate::dash_mode::getopts_forget_reported();
+            setiparam("OPTIND", 1);
+        }
     }
     unqueue_signals(); // c:714
     0 // c:715
@@ -9998,7 +10010,40 @@ pub fn bin_whence(
             // _VERBOSE branches per Src/hashtable.c:1340-1404.
             let shfunc_node = getshfunc(arg);
             if let Some(ref f) = shfunc_node {
-                printshfuncexpand(f, printflags, expand); // c:4117
+                // !!! EMULATION-ONLY (no C counterpart) !!! zsh's verbose
+                // form names the file the function came from — for a `-c`
+                // script that is the shell itself, so `type f` ends in
+                // "is a shell function from zsh". No real Bourne shell says
+                // that: bash / ksh93 / mksh print "f is a function" and
+                // dash / ash print "f is a shell function", and bash alone
+                // follows the header with the definition. Measured on the
+                // real binaries; see dash_mode::function_whence_verbose.
+                // Only the VERBOSE form (`type` / `whence -v` /
+                // `command -V`) is affected — `-w`, `-c` and the plain
+                // simple form already match.
+                let verbose_only = (printflags & PRINT_WHENCE_VERBOSE) != 0
+                    && (printflags & PRINT_WHENCE_FUNCDEF) == 0;
+                match crate::dash_mode::function_whence_verbose(arg).filter(|_| verbose_only) {
+                    Some(line) => {
+                        println!("{}", line);
+                        if crate::dash_mode::function_whence_prints_body() {
+                            // Same rendering bin_trap uses for a trap body:
+                            // the stored source re-parsed and deparsed, one
+                            // statement per line.
+                            let rendered = f
+                                .body
+                                .as_deref()
+                                .filter(|b| !b.is_empty())
+                                .and_then(|b| crate::ported::exec::parse_string(b, 1))
+                                .map(|prog| {
+                                    crate::ported::text::getpermtext(Box::new(prog), None, 0)
+                                })
+                                .unwrap_or_default();
+                            print!("{}", crate::dash_mode::bash_function_body(arg, &rendered));
+                        }
+                    }
+                    None => printshfuncexpand(f, printflags, expand), // c:4117
+                }
                 informed = 1; // c:4118
                 if !all {
                     continue;
@@ -12168,7 +12213,13 @@ pub fn bin_getopts(
     // that was the AUTHORITY (writes to $OPTIND didn't propagate
     // back), so `OPTIND=1` between two getopts loops left zoptind at
     // the post-loop value and the second pass returned immediately.
-    let paramtab_oi = getiparam("OPTIND");
+    // !!! EMULATION-ONLY (no C counterpart) !!! In the real-shell drop-in
+    // modes the value written to $OPTIND carries a bias over zsh's internal
+    // `zoptind` (see extensions::dash_mode::getopts_optind_report); undo it
+    // here so the argument index below is zsh's own. Identity in --zsh and
+    // in native zshrs, and a script's own `OPTIND=1` still passes through.
+    let raw_optind = getiparam("OPTIND");
+    let paramtab_oi = crate::dash_mode::getopts_optind_internal(raw_optind);
     let mut zoptind = if paramtab_oi >= 1 {
         paramtab_oi as i32
     } else {
@@ -12184,7 +12235,14 @@ pub fn bin_getopts(
     // user-visible param disagrees with the previous internal
     // pointer), reset optcind so the new pass starts at byte 0 of
     // the first option arg.
-    let mut optcind = if paramtab_oi == 1 && ZOPTIND.load(Relaxed) != 1 {
+    // !!! EMULATION-ONLY second disjunct (no C counterpart) !!! bash, ksh93,
+    // mksh and /bin/sh rewind the within-argument cursor on ANY script write
+    // to $OPTIND, not just on a write of 1 from elsewhere; dash and ash never
+    // do. See dash_mode::getopts_optind_user_reset — false in --zsh, so the
+    // c:5681-5685 rule on the left stands alone there.
+    let mut optcind = if (paramtab_oi == 1 && ZOPTIND.load(Relaxed) != 1)
+        || crate::dash_mode::getopts_optind_user_reset(raw_optind)
+    {
         0
     } else {
         OPTCIND.load(Relaxed)
@@ -12194,6 +12252,11 @@ pub fn bin_getopts(
     if (args.len() as i32) < zoptind {
         // c:5686
         ZOPTIND.store(zoptind, Relaxed);
+        // !!! EMULATION-ONLY (no C counterpart) !!! XCU getopts requires
+        // `name` to be set to `?` (and, in bash/ksh93/mksh, $OPTARG to be
+        // cleared) on the end-of-options return; zsh leaves both alone.
+        // See dash_mode::getopts_end_of_options. No-op in --zsh.
+        crate::dash_mode::getopts_end_of_options(&var);
         return 1;
     }
 
@@ -12209,6 +12272,11 @@ pub fn bin_getopts(
     let mut str_buf = args[(zoptind - 1) as usize].clone();
     let mut lenstr = str_buf.len() as i32;
     if lenstr == 0 {
+        // !!! EMULATION-ONLY (no C counterpart) !!! XCU getopts requires
+        // `name` to be set to `?` (and, in bash/ksh93/mksh, $OPTARG to be
+        // cleared) on the end-of-options return; zsh leaves both alone.
+        // See dash_mode::getopts_end_of_options. No-op in --zsh.
+        crate::dash_mode::getopts_end_of_options(&var);
         return 1;
     } // c:5697
 
@@ -12221,7 +12289,15 @@ pub fn bin_getopts(
             // c:5701
             ZOPTIND.store(zoptind, Relaxed);
             OPTCIND.store(optcind, Relaxed);
-            setiparam("OPTIND", zoptind as i64); // c:5702
+            // !!! EMULATION-ONLY (no C counterpart) !!! XCU getopts requires
+            // `name` to be set to `?` (and, in bash/ksh93/mksh, $OPTARG to be
+            // cleared) on the end-of-options return; zsh leaves both alone.
+            // See dash_mode::getopts_end_of_options. No-op in --zsh.
+            crate::dash_mode::getopts_end_of_options(&var);
+            setiparam(
+                "OPTIND",
+                crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
+            ); // c:5702
             return 1;
         }
         str_buf = args[(zoptind - 1) as usize].clone();
@@ -12238,7 +12314,15 @@ pub fn bin_getopts(
             // pointer. Previous Rust port skipped this write on the
             // "no more options" exit; OPTIND stayed at the last
             // option arg index (-b) instead of advancing past it.
-            setiparam("OPTIND", zoptind as i64);
+            setiparam(
+                "OPTIND",
+                crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
+            );
+            // !!! EMULATION-ONLY (no C counterpart) !!! XCU getopts requires
+            // `name` to be set to `?` (and, in bash/ksh93/mksh, $OPTARG to be
+            // cleared) on the end-of-options return; zsh leaves both alone.
+            // See dash_mode::getopts_end_of_options. No-op in --zsh.
+            crate::dash_mode::getopts_end_of_options(&var);
             return 1;
         }
         if lenstr == 2 && &str_buf[..2] == "--" {
@@ -12246,7 +12330,15 @@ pub fn bin_getopts(
             zoptind += 1;
             ZOPTIND.store(zoptind, Relaxed);
             OPTCIND.store(0, Relaxed);
-            setiparam("OPTIND", zoptind as i64); // c:5711
+            // !!! EMULATION-ONLY (no C counterpart) !!! XCU getopts requires
+            // `name` to be set to `?` (and, in bash/ksh93/mksh, $OPTARG to be
+            // cleared) on the end-of-options return; zsh leaves both alone.
+            // See dash_mode::getopts_end_of_options. No-op in --zsh.
+            crate::dash_mode::getopts_end_of_options(&var);
+            setiparam(
+                "OPTIND",
+                crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
+            ); // c:5711
             return 1;
         }
         optcind += 1;
@@ -12286,7 +12378,10 @@ pub fn bin_getopts(
         ZOPTIND.store(zoptind, Relaxed);
         OPTCIND.store(optcind, Relaxed);
         // Sync OPTIND env var so callers can read.
-        setiparam("OPTIND", zoptind as i64);
+        setiparam(
+            "OPTIND",
+            crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
+        );
         return 0;
     }
 
@@ -12319,7 +12414,10 @@ pub fn bin_getopts(
                 }
                 ZOPTIND.store(zoptind, Relaxed);
                 OPTCIND.store(optcind, Relaxed);
-                setiparam("OPTIND", zoptind as i64);
+                setiparam(
+                    "OPTIND",
+                    crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
+                );
                 return 0;
             }
             // c:5763 — `p = ztrdup(args[zoptind++]);` — read args[zoptind]
@@ -12351,7 +12449,10 @@ pub fn bin_getopts(
     setsparam(&var, &optbuf);
     ZOPTIND.store(zoptind, Relaxed);
     OPTCIND.store(optcind, Relaxed);
-    setiparam("OPTIND", zoptind as i64);
+    setiparam(
+        "OPTIND",
+        crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
+    );
     0 // c:5790
 }
 
@@ -15743,6 +15844,12 @@ pub fn bin_trap(
             }
         }
         combined.sort_by_key(|(idx, _)| *idx);
+        // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 walks the trap
+        // table downwards; c:7358 and every other shell walk it upwards.
+        // See dash_mode::trap_listing_descending (false in --zsh).
+        if crate::dash_mode::trap_listing_descending() {
+            combined.reverse();
+        }
         for (_idx, entry) in &combined {
             match entry {
                 TrapEntry::Func(fname) => {
@@ -15753,6 +15860,16 @@ pub fn bin_trap(
                     }
                 }
                 TrapEntry::Str(sig, body) => {
+                    // !!! EMULATION-ONLY (no C counterpart) !!! bash, dash,
+                    // ash, /bin/sh, ksh93 and mksh all echo the RAW trap body
+                    // instead of re-rendering the compiled Eprog, quote it
+                    // unconditionally (except the Korn pair), and — bash only
+                    // — print the signal name with a `SIG` prefix. Measured on
+                    // the real binaries; see dash_mode::trap_listing_line.
+                    if let Some(line) = crate::dash_mode::trap_listing_line(sig, body) {
+                        println!("{}", line);
+                        continue;
+                    }
                     // c:7371 — `s = getpermtext(siglists[sig], NULL, 0);`. C
                     // holds the body as a compiled Eprog and renders it back
                     // to source for the listing, so what prints is CANONICAL
@@ -16238,6 +16355,13 @@ pub fn bin_umask(
                     println!();
                 } // c:7518
             }
+        } else if crate::dash_mode::umask_four_digit() {
+            // !!! EMULATION-ONLY (no C counterpart) !!! bash/ksh93/dash/ash
+            // and /bin/sh print a FIXED four-digit mask; zsh's conditional
+            // leading zero below is a zsh-ism. mksh keeps zsh's form, which
+            // is why `umask_four_digit` excludes the pdksh line. Measured on
+            // the real binaries — see extensions::dash_mode::umask_four_digit.
+            println!("{:04o}", um);
         } else {
             // c:7522-7524 — `if (um & 0700) putchar('0'); printf("%03o\n", um);`
             if (um & 0o700) != 0 {
