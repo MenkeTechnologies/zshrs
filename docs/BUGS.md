@@ -19,6 +19,49 @@ CI green pending the underlying fix.
 
 ---
 
+## #1108 — `shopt -u globstar` does not disable `**` in `--bash` mode — open
+
+**Status:** `port-bug`, found 2026-08-28 while wiring `shopt`/`$BASHOPTS`. The option now
+round-trips through `$BASHOPTS` correctly; what is missing is the BEHAVIOUR when it is OFF.
+
+**Reproducer:**
+
+```
+$ mkdir -p /tmp/gs/a/b && touch /tmp/gs/a/b/deep
+
+$ bash  -c "shopt -u globstar; printf '[%s]\n' /tmp/gs/**/deep"
+[/tmp/gs/**/deep]                 # unmatched -> the word stays literal
+
+$ zshrs --bash -c "shopt -u globstar; printf '[%s]\n' /tmp/gs/**/deep"
+[/tmp/gs/a/b/deep]                # still recursed  -- WRONG
+```
+
+With `shopt -s globstar` both agree (`[/tmp/gs/a/b/deep]`), so only the OFF direction diverges.
+
+**Cause.** In bash, `**` is an ordinary pair of `*`s unless `globstar` is set, i.e. `a/**/b`
+matches only one level. zsh has no option that turns recursive `**/` off — it is always on — so
+there is nothing for the `shopt` table to mirror to, and the glob engine recurses regardless of
+the recorded bash option. The other direction works only because zsh's default happens to agree
+with `globstar` ON.
+
+**Fix shape.** A gate in the glob engine (`src/ported/glob.rs`) consulted only in `--bash` mode,
+not a new zsh option — adding a real zsh option would be a divergence from the C in the other
+direction.
+
+**Related, and deliberately NOT conflated:** a large set of `shopt` names are recorded-only —
+they list correctly in `shopt`/`$BASHOPTS` but toggle nothing: `array_expand_once`,
+`assoc_expand_once`, `bash_source_fullpath`, `cdspell`, `checkhash`, `checkwinsize`, `cmdhist`,
+`compat31`-`compat44`, `complete_fullquote`, `direxpand`, `dirspell`, `execfail`,
+`expand_aliases`, `extdebug`, `extquote`, `force_fignore`, `globasciiranges`, `globskipdots`,
+`gnu_errfmt`, `histreedit`, `hostcomplete`, `huponexit`, `inherit_errexit`, `lastpipe`,
+`lithist`, `localvar_inherit`, `localvar_unset`, `no_empty_cmd_completion`,
+`noexpand_translation`, `patsub_replacement`, `progcomp`, `progcomp_alias`, `shift_verbose`,
+`sourcepath`, `varredir_close`. Several are harmless because zshrs's default already matches
+bash's (`expand_aliases`, `execfail`, `gnu_errfmt` probe identically today) — but the TOGGLE is
+inert in every one of them, and that is a gap, not a feature.
+
+---
+
 ## #1106 — a function body stores SOURCE, so aliases live at definition time are not baked in — open
 
 **Status:** `port-bug`, found 2026-08-28 while fixing [#1105](#1105). Same substrate, but this
