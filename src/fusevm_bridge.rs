@@ -2530,6 +2530,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SHOPT, |vm, argc| {
         let args = pop_args(vm, argc);
+        // `shopt` is a BASH builtin; no shell in the zsh family has it
+        // (c:Src/builtin.c:40-137 `builtins[]` has no `shopt` row), so
+        // outside bash drop-in mode the name must resolve through PATH
+        // like any other unknown command — `zsh -fc shopt` →
+        // `zsh:1: command not found: shopt`, rc 127.
+        //
+        // compile_zsh:3109 already forces `builtin_id = None` for the
+        // literal name so the compile-time `CallBuiltin` fast path is
+        // skipped, but that guard alone stopped working: the emitted
+        // `Op::CallFunction` reaches fusevm's run-time
+        // `VM::run_builtin_by_name` (fusevm-0.23.0/src/vm.rs:3348 →
+        // :979) once the host's `call_function` answers None, and THAT
+        // resolves the name straight back to this registered handler.
+        // mapfile / readarray / compopt survive only because their
+        // opcodes gate on the mode inside the handler; do the same
+        // here. Mirrors the BUILTIN_COMPGEN / BUILTIN_COMPLETE gates
+        // below, including their user-function precedence: a shell
+        // function named `shopt` (bashcompinit-style shims define one)
+        // still wins over the fall-through.
+        if !crate::extensions::dash_mode::bash_mode() {
+            if crate::ported::utils::getshfunc("shopt").is_some() {
+                let status = with_executor(|exec| exec.dispatch_function_call("shopt", &args))
+                    .unwrap_or(127);
+                return Value::Status(status);
+            }
+            // PATH lookup with the literal name, so the diagnostic and
+            // the status are the shell's own external-miss ones
+            // (`zsh:1:` under --zsh, `zshrs:1:` natively) rather than a
+            // second hand-rolled spelling of them.
+            let status =
+                with_executor(|exec| exec.execute_external("shopt", &args, &[])).unwrap_or(127);
+            return Value::Status(status);
+        }
         let status = crate::extensions::ext_builtins::shopt(&args);
         Value::Status(status)
     });

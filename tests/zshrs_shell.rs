@@ -3235,15 +3235,27 @@ fn test_export_p_lists_var() {
 // `zmv` / `zcp` / `zln` / `zcalc` native bundled functions
 // ---------------------------------------------------------------------------
 
+// `zmv` / `zcp` / `zln` / `zcalc` are zsh CONTRIB FUNCTIONS, not builtins:
+// they exist only once `autoload -Uz <name>` has created the function entry.
+//   $ zsh -fc 'zmv -n "(*).txt" "\$1.bak"'
+//   zsh:1: command not found: zmv                                  (rc 127)
+//   $ zsh -fc 'autoload -Uz zmv; cd d && zmv -n "(*).txt" "\$1.bak"'
+//   mv -- a.txt a.bak
+//   mv -- b.txt b.bak                                              (rc 0)
+// zshrs ships native Rust implementations but gates them on the same
+// autoload (src/fusevm_bridge.rs:15928), so every script below autoloads
+// first exactly as a user of the real shell has to.
 #[test]
 fn test_zmv_dry_run_capture_substitution() {
     use std::fs;
-    let dir = "/tmp/zshrs_zmv_dry";
-    let _ = fs::remove_dir_all(dir);
-    fs::create_dir_all(dir).unwrap();
+    let dir = tempdir_for_test();
+    let dir = dir.as_str();
     fs::write(format!("{}/a.txt", dir), "x").unwrap();
     fs::write(format!("{}/b.txt", dir), "y").unwrap();
-    let (_, output, _) = run_zshrs(&format!("cd {} && zmv -n '(*).txt' '$1.bak'", dir));
+    let (_, output, _) = run_zshrs(&format!(
+        "autoload -Uz zmv; cd {} && zmv -n '(*).txt' '$1.bak'",
+        dir
+    ));
     let _ = fs::remove_dir_all(dir);
     let mut lines: Vec<&str> = output.lines().collect();
     lines.sort();
@@ -3257,11 +3269,13 @@ fn test_zmv_dry_run_capture_substitution() {
 #[test]
 fn test_zmv_real_renames() {
     use std::fs;
-    let dir = "/tmp/zshrs_zmv_real";
-    let _ = fs::remove_dir_all(dir);
-    fs::create_dir_all(dir).unwrap();
+    let dir = tempdir_for_test();
+    let dir = dir.as_str();
     fs::write(format!("{}/foo.txt", dir), "x").unwrap();
-    let (_, _, _) = run_zshrs(&format!("cd {} && zmv '(*).txt' '$1.bak'", dir));
+    let (_, _, _) = run_zshrs(&format!(
+        "autoload -Uz zmv; cd {} && zmv '(*).txt' '$1.bak'",
+        dir
+    ));
     let exists_bak = std::path::Path::new(&format!("{}/foo.bak", dir)).exists();
     let exists_orig = std::path::Path::new(&format!("{}/foo.txt", dir)).exists();
     let _ = fs::remove_dir_all(dir);
@@ -3276,13 +3290,18 @@ fn test_zmv_real_renames() {
 #[test]
 fn test_zmv_collision_detection() {
     // Two files mapping to the same dest should error before any rename.
+    // `zsh -fc 'autoload -Uz zmv; cd d && zmv "*.txt" "merged.bak"'`
+    //   zmv: error(s) in substitution:
+    //   b.txt and a.txt both map to merged.bak                     (rc 1)
     use std::fs;
-    let dir = "/tmp/zshrs_zmv_clash";
-    let _ = fs::remove_dir_all(dir);
-    fs::create_dir_all(dir).unwrap();
+    let dir = tempdir_for_test();
+    let dir = dir.as_str();
     fs::write(format!("{}/a.txt", dir), "1").unwrap();
     fs::write(format!("{}/b.txt", dir), "2").unwrap();
-    let (status, _, stderr) = run_zshrs(&format!("cd {} && zmv '*.txt' 'merged.bak'", dir));
+    let (status, _, stderr) = run_zshrs(&format!(
+        "autoload -Uz zmv; cd {} && zmv '*.txt' 'merged.bak'",
+        dir
+    ));
     let _ = fs::remove_dir_all(dir);
     assert_eq!(status, 1, "should exit 1 on collision");
     assert!(
@@ -3293,7 +3312,16 @@ fn test_zmv_collision_detection() {
 
 #[test]
 fn test_zcalc_evaluates_expression() {
-    let (_, output, _) = run_zshrs("zcalc -e '2+3*4'");
+    // Bare `zcalc` is command-not-found in the real shell too
+    // (`zsh -fc "zcalc -e '2+3*4'"` → `command not found: zcalc`, rc 127);
+    // `autoload -Uz zcalc` makes it a function and then prints 14.
+    let (status, _, stderr) = run_zshrs("zcalc -e '2+3*4'");
+    assert_eq!(status, 127, "bare zcalc must not resolve: {stderr:?}");
+    assert!(
+        stderr.contains("command not found: zcalc"),
+        "got: {stderr:?}"
+    );
+    let (_, output, _) = run_zshrs("autoload -Uz zcalc; zcalc -e '2+3*4'");
     assert_eq!(output.trim(), "14", "got: {output:?}");
 }
 
@@ -5179,8 +5207,18 @@ fn test_param_flag_pound_arith_to_char() {
     // character(s). 65 → "A", 97 → "a".
     let (_, output, _) = run_zshrs(r#"a=65; echo "${(#)a}""#);
     assert_eq!(output.trim(), "A", "got: {output:?}");
-    let (_, output, _) = run_zshrs(r#"a=(65 66 67); echo "${(#)a}""#);
+    // An ARRAY maps element-wise — but only when the expansion is
+    // unquoted, because `"…"` joins first and the join is then one
+    // (invalid) math expression. Both forms verified against the real
+    // shell (`env -i /opt/homebrew/bin/zsh -fc …`, zsh 5.9.2):
+    //   a=(65 66 67); echo ${(#)a}      → `A B C`
+    //   a=(65 66 67); echo "[${(#)a}]"  → `[]`
+    // The test asserted `A B C` for the QUOTED form, which no zsh
+    // prints; pin both shapes instead.
+    let (_, output, _) = run_zshrs(r#"a=(65 66 67); echo ${(#)a}"#);
     assert_eq!(output.trim(), "A B C", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"a=(65 66 67); echo "[${(#)a}]""#);
+    assert_eq!(output.trim(), "[]", "got: {output:?}");
 }
 
 #[test]
@@ -5615,9 +5653,27 @@ fn test_cond_nt_uses_nanosecond_precision() {
 
 #[test]
 fn test_integer_dash_r_sets_readonly_attr() {
-    // `integer -r I=42` should produce "${(t)I}" == "integer-readonly".
-    // builtin_integer was ignoring all flags; now parses -r and -x.
-    let (_, output, _) = run_zshrs(r#"integer -r I=42; echo "${(t)I}""#);
+    // `integer -r NAME=42` should produce "${(t)NAME}" ==
+    // "integer-readonly". builtin_integer was ignoring all flags; now
+    // parses -r and -x.
+    //
+    // The NAME must not be one the AMBIENT ENVIRONMENT already exports:
+    // c:Src/builtin.c:2208-2209 `if (usepm && (pm->node.flags &
+    // PM_EXPORTED) && !(off & PM_EXPORTED)) on |= PM_EXPORTED;` keeps
+    // the export attribute of a parameter that already exists, and an
+    // inherited environment entry is such a parameter. This test used
+    // `I`, and this developer's environment exports `I`, so BOTH shells
+    // answered `integer-readonly-export`:
+    //   $ printenv I
+    //   /Users/…/installers
+    //   $ zsh -fc 'integer -r I=42; echo "${(t)I}"'
+    //   integer-readonly-export
+    //   $ env -i /opt/homebrew/bin/zsh -fc 'integer -r I=42; echo "${(t)I}"'
+    //   integer-readonly
+    // A name no environment plausibly carries keeps the assertion about
+    // the ATTRIBUTES (which is the point) instead of about the test
+    // machine's exports.
+    let (_, output, _) = run_zshrs(r#"integer -r zshrs_ro_int=42; echo "${(t)zshrs_ro_int}""#);
     assert_eq!(output.trim(), "integer-readonly", "got: {output:?}");
 }
 
@@ -6014,6 +6070,14 @@ fn test_shopt_is_command_not_found() {
     // zsh has no `shopt` builtin — that's bash-only. Should fall through
     // to PATH lookup and produce "command not found". Regression: zshrs
     // shipped a bash-compat shopt builtin that listed all options.
+    //   $ zsh -fc 'shopt'; echo $?
+    //   zsh:1: command not found: shopt
+    //   127
+    // The compile-time guard (compile_zsh.rs:3109, "force external
+    // lookup") stopped being sufficient once fusevm gained the run-time
+    // by-name builtin fallback (`VM::run_builtin_by_name`), which
+    // re-resolved the name to the registered BUILTIN_SHOPT handler; the
+    // mode gate now lives in that handler (fusevm_bridge.rs).
     let (status, _, stderr) = run_zshrs(r#"shopt"#);
     assert_eq!(status, 127, "expected exit 127");
     assert!(
@@ -10273,11 +10337,26 @@ fn test_let_orphan_mul_at_op() {
     // orphan-at-start expressions like pure-binary ops with no
     // unary form (Mul, Div, Mod, Power).
     let (status, _, stderr) = run_zshrs("let \"*\"");
-    // c:Src/builtin.c:7478 (commit 54285 "'let' builtin should
-    // return 2 if error occurred") — math errors return 2. Older
-    // /bin/zsh 5.9 pre-commit shows 1; the bundled source post-commit
-    // says 2; we follow the bundled C source.
-    assert_eq!(status, 2);
+    // Math-error STATUS. Every RELEASED zsh returns 1:
+    //   $ /bin/zsh -fc 'let "*"'; echo $?           (zsh 5.9)
+    //   zsh:1: bad math expression: operand expected at `*'
+    //   1
+    //   $ /opt/homebrew/bin/zsh -fc 'let "*"'; echo $?   (zsh 5.9.2)
+    //   zsh:1: bad math expression: operand expected at `*'
+    //   1
+    // The UNRELEASED dev source returns 2 — c:Src/builtin.c:7470
+    // `errflag &= ~ERRFLAG_ERROR; return 2;`, from upstream commit
+    // 9429940b7b ("54285: 'let' builtin should return 2 if error
+    // occurred", 2026-04-07), which is in ~/forkedRepos/zsh
+    // (5.9.999.3-test) but in no shipped zsh. zshrs deliberately
+    // follows the released binary (src/ported/builtin.rs bin_let,
+    // commits dbb891e9a0 / f33ebaa0a3) because the differential
+    // parity suite diffs zshrs against the LOCAL zsh
+    // (tests/parity/zsh_compat_parity_gaps.rs `let_division_by_zero`
+    // compares `print ex:$?` between the two shells), so 2 here would
+    // fail against every zsh that exists. Flip both sides together
+    // when a zsh carrying 54285 ships.
+    assert_eq!(status, 1);
     assert!(stderr.contains("operand expected at `*'"), "got: {stderr}");
 }
 
@@ -10285,8 +10364,9 @@ fn test_let_orphan_mul_at_op() {
 fn test_let_orphan_div_at_op() {
     // Same orphan-binary case for Div.
     let (status, _, stderr) = run_zshrs("let \"/\"");
-    // c:Src/builtin.c:7478 — math errors return 2 (commit 54285).
-    assert_eq!(status, 2);
+    // Released zsh returns 1 here; see the note on
+    // `test_let_orphan_mul_at_op` for the 54285-dev-source divergence.
+    assert_eq!(status, 1);
     assert!(stderr.contains("operand expected at `/'"), "got: {stderr}");
 }
 
@@ -10297,8 +10377,9 @@ fn test_let_orphan_mul_with_right_includes_remaining() {
     // input (operator + everything after) becomes the error
     // context.
     let (status, _, stderr) = run_zshrs("let \"*5\"");
-    // c:Src/builtin.c:7478 — math errors return 2 (commit 54285).
-    assert_eq!(status, 2);
+    // Released zsh returns 1 here; see the note on
+    // `test_let_orphan_mul_at_op` for the 54285-dev-source divergence.
+    assert_eq!(status, 1);
     assert!(stderr.contains("operand expected at `*5'"), "got: {stderr}");
 }
 
@@ -10309,8 +10390,9 @@ fn test_let_trailing_mul_still_end_of_string() {
     // input has been exhausted. Our orphan-at-start check
     // explicitly only fires when stack.is_empty().
     let (status, _, stderr) = run_zshrs("let \"5*\"");
-    // c:Src/builtin.c:7478 — math errors return 2 (commit 54285).
-    assert_eq!(status, 2);
+    // Released zsh returns 1 here; see the note on
+    // `test_let_orphan_mul_at_op` for the 54285-dev-source divergence.
+    assert_eq!(status, 1);
     assert!(
         stderr.contains("operand expected at end of string"),
         "got: {stderr}"
@@ -11300,35 +11382,66 @@ fn test_fc_lr_session_reverse() {
 }
 
 #[test]
-fn test_fc_W_writes_session_entries_only_in_minus_c() {
-    // zsh: `fc -W FILE` in non-interactive `-c` mode writes ONLY
-    // session-added entries (typically empty when no `print -s`
-    // ran). zshrs previously dumped the entire on-disk persistent
-    // history into FILE, leaking prior runs' commands. Now scopes
-    // to session_history_ids when atty is absent.
+fn test_fc_W_writes_nothing_when_non_interactive() {
+    // (was `test_fc_W_writes_session_entries_only_in_minus_c`, which
+    // asserted that session entries DO land in FILE — no zsh does that.)
+    //
+    // c:Src/hist.c:2929 savehistfile — `if (!interact || savehistsiz <= 0
+    // || !hist_ring || (!fn && !(fn = getsparam("HISTFILE")))) return;`.
+    // `fc -W FILE` routes straight into savehistfile, so in a
+    // non-interactive `-c` shell it is a SILENT NO-OP: the target is not
+    // even created, whatever the history list holds. Verified against
+    // the real shell (zsh 5.9.2), which is byte-identical to zshrs:
+    //   $ zsh   -fc 'fc -R seed; print -s AAA; fc -W out; fc -l'
+    //       1  SEEDED_PRIOR_RUN_CMD
+    //       2  AAA
+    //   $ zshrs -f -c 'fc -R seed; print -s AAA; fc -W out; fc -l'
+    //       1  SEEDED_PRIOR_RUN_CMD
+    //       2  AAA
+    //   $ ls out            ->  No such file or directory   (both)
+    //
+    // The regression this guards is still the original one: zshrs once
+    // dumped the whole on-disk persistent history into FILE, leaking
+    // prior runs' commands. The seeded entry below makes that leak
+    // detectable — history really is populated when `fc -W` runs, so an
+    // empty/absent target is a fact about `fc -W`, not about an empty
+    // ring.
     use std::fs;
-    let path = std::env::temp_dir().join(format!("zshrs_fcW_test_{}", std::process::id()));
-    let _ = fs::remove_file(&path);
-    let cmd = format!(r#"fc -W {}"#, path.to_string_lossy());
-    let (_, _, _) = run_zshrs(&cmd);
-    let body = fs::read_to_string(&path).unwrap_or_default();
-    let _ = fs::remove_file(&path);
-    assert_eq!(body, "", "got: {body:?}");
-    // With session entries via `print -s`, only those land in FILE.
-    let path2 = std::env::temp_dir().join(format!("zshrs_fcW_test2_{}", std::process::id()));
-    let _ = fs::remove_file(&path2);
-    let cmd = format!(
-        r#"print -s "AAA"; print -s "BBB"; fc -W {}"#,
-        path2.to_string_lossy()
+    let dir = tempdir_for_test();
+    let seed = format!("{}/seed_hist", dir);
+    fs::write(&seed, "SEEDED_PRIOR_RUN_CMD\n").unwrap();
+
+    // No session entries.
+    let out = format!("{}/out_empty", dir);
+    let (status, _, _) = run_zshrs(&format!("fc -R {seed}; fc -W {out}"));
+    assert_eq!(status, 0, "fc -W must still exit 0");
+    assert!(
+        !std::path::Path::new(&out).exists(),
+        "non-interactive fc -W must not create the file: {:?}",
+        fs::read_to_string(&out).unwrap_or_default()
     );
-    let (_, _, _) = run_zshrs(&cmd);
-    let body = fs::read_to_string(&path2).unwrap_or_default();
-    let _ = fs::remove_file(&path2);
-    assert!(body.contains("AAA"), "got: {body:?}");
-    assert!(body.contains("BBB"), "got: {body:?}");
-    // Just two session entries (both lines containing those tokens).
-    let lines = body.lines().count();
-    assert_eq!(lines, 2, "got {lines} lines: {body:?}");
+
+    // With loaded history AND session entries via `print -s`: still
+    // nothing written, and in particular nothing leaked from the
+    // persistent store.
+    let out2 = format!("{}/out_full", dir);
+    let (status, listing, _) = run_zshrs(&format!(
+        r#"fc -R {seed}; print -s "AAA"; print -s "BBB"; fc -W {out2}; fc -l"#
+    ));
+    assert_eq!(status, 0, "fc -W must still exit 0");
+    // The ring really did hold the seeded + session entries.
+    assert!(listing.contains("SEEDED_PRIOR_RUN_CMD"), "got: {listing:?}");
+    assert!(
+        listing.contains("AAA") && listing.contains("BBB"),
+        "got: {listing:?}"
+    );
+    let body = fs::read_to_string(&out2).unwrap_or_default();
+    assert_eq!(body, "", "non-interactive fc -W must write nothing");
+    assert!(
+        !body.contains("SEEDED_PRIOR_RUN_CMD"),
+        "persistent history must never leak into fc -W's target: {body:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

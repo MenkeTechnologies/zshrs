@@ -5314,7 +5314,19 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // rc=0. `\0` still terminates the C loop, and `)` cannot
             // appear because it was already overwritten.
             ch if ch != '\0' && ch != ')' => {
-                crate::ported::utils::zerr(&format!("unknown file attribute: {}", ch));
+                // c:1758-1760 — `untokenize(--s); convchar_t attr =
+                // unmeta_one(s, NULL); zerr("unknown file attribute:
+                // %c", attr);`. C rewinds onto the offending char,
+                // UNTOKENIZES it (Src/lex.c:2080 `ztokens[c - Pound]`)
+                // and reports the source character. The port printed
+                // the raw token instead, so `echo *(#q.)` without
+                // EXTENDEDGLOB — where the lexer has already turned `#`
+                // into Pound (U+0084) — said `unknown file attribute:
+                // \u{84}` where zsh says `unknown file attribute: #`.
+                // `unmeta_one` is a no-op here: zshrs holds characters,
+                // not metafied bytes.
+                let attr = crate::ported::lex::untokenize_ztokens(&ch.to_string()); // c:1758
+                crate::ported::utils::zerr(&format!("unknown file attribute: {}", attr));
                 crate::ported::utils::errflag.fetch_or(
                     crate::ported::utils::ERRFLAG_ERROR,
                     std::sync::atomic::Ordering::Relaxed,
