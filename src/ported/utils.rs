@@ -581,6 +581,30 @@ pub type MbStateBuf = [u64; 16];
 /// precedes every C conversion loop (e.g. `Src/Zle/zle_utils.c:444`).
 pub const MBSTATE_ZERO: MbStateBuf = [0u64; 16];
 
+// !!! WARNING: RUST-ONLY HELPER !!!
+//
+// C has no counterpart: `zsh_main` calls `setlocale(LC_ALL, "")` at
+// `Src/init.c:1861` before anything else runs, so by the time any
+// conversion happens the process locale is already the environment's.
+// A Rust binary never calls `setlocale`, and a library consumer of this
+// crate (unit tests, embedded entry points, the daemon) may reach the
+// `mbrtowc`/`wcrtomb` wrappers above without ever going through
+// `zsh_main`. Under the startup default ("C") those are single-byte
+// codecs, so a UTF-8 terminal line would be shredded into raw bytes.
+//
+// Forcing the locale once, lazily, from the environment restores the C
+// precondition for those consumers. `zsh_main` touches it right after
+// its own `setlocale` (`Src/init.c:1861`) so the lazy path can never
+// fire later and undo an `LC_*` parameter assignment made from an rc
+// file.
+pub static MB_LOCALE_READY: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
+    #[cfg(unix)]
+    unsafe {
+        let empty = std::ffi::CString::new("").unwrap();
+        libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
+    }
+});
+
 /// `(size_t)-2` — `mbrtowc` "the bytes so far are a valid but incomplete
 /// character". zsh spells this `MB_INCOMPLETE` (`Src/zsh.h:3313`).
 pub const MB_INCOMPLETE: usize = usize::MAX - 1;
@@ -7370,11 +7394,7 @@ pub fn mb_niceformat(
             // Rust never calls `setlocale` on its own, so run it once from
             // the environment before asking `nl_langinfo` — otherwise the
             // startup default ("C") would shadow the process's LC_CTYPE.
-            static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
-            SETLOCALE_DONE.call_once(|| {
-                let empty = std::ffi::CString::new("").unwrap();
-                libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
-            });
+            let _ = *MB_LOCALE_READY;
             let cs_ptr = libc::nl_langinfo(libc::CODESET);
             if cs_ptr.is_null() {
                 false
