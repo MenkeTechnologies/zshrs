@@ -16424,15 +16424,25 @@ mod tests {
 
     #[test]
     fn compile_here_doc_lowers_to_herestring_or_heredoc() {
-        // Observation: zshrs lowers here-docs to a HereString op wrapped
-        // in WithRedirectsBegin/End — i.e. the body is captured at
-        // compile time as a single string and applied as a here-string
-        // at runtime. Pin EITHER the legacy HereDoc(idx) form OR the
-        // observed HereString lowering.
+        // zshrs lowers a here-doc to a body-staging op wrapped in
+        // WithRedirectsBegin/End — the body is captured at compile time
+        // and applied at runtime. Three spellings are valid:
+        //   * `Op::HereDoc(idx)` — quoted delimiter, body is a constant.
+        //   * `BUILTIN_HEREDOC_BODY_SINK` — unquoted delimiter, so the
+        //     body runs through BUILTIN_EXPAND_TEXT first and needs a
+        //     stack-consuming sink. This one does NOT append a newline,
+        //     per c:Src/exec.c:4671-4672 (a here-string derived from a
+        //     here-doc gets none). It replaced `Op::HereString` on this
+        //     path in 8c8eb4f3c2: HereString appends unconditionally
+        //     because `<<<` must, and compensating with
+        //     `trim_end_matches('\n')` was lossy both ways.
+        //   * `Op::HereString` — still the lowering for a real `<<<`.
         let chunk = compile_src("cat <<EOF\nhello\nEOF\n");
         assert!(
-            has_op(&chunk, |op| matches!(op, Op::HereDoc(..) | Op::HereString)),
-            "here-doc should lower to HereDoc or HereString"
+            has_op(&chunk, |op| matches!(op, Op::HereDoc(..) | Op::HereString)
+                || matches!(op, Op::CallBuiltin(b, _)
+                    if *b == crate::fusevm_bridge::BUILTIN_HEREDOC_BODY_SINK)),
+            "here-doc should lower to HereDoc, HereString, or the here-doc body sink"
         );
         assert!(
             has_op(&chunk, |op| matches!(op, Op::WithRedirectsBegin(..))),
