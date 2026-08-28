@@ -5580,7 +5580,21 @@ impl ZshCompiler {
             // through filesubstr's equalsubstr arm. Route the word
             // through the bridge so filesub fires at runtime; the
             // runtime checks `isset(EQUALS)` before expanding.
-            || untoked.starts_with('=');
+            || untoked.starts_with('=')
+            // c:Src/subst.c:680 — filesub's PREFORK_TYPESET arm fires on
+            // `sub[1] == Tilde || sub[1] == Equals`, where `sub` is the
+            // first `Equals` at index >= 1 (c:678). The `Tilde` half is
+            // the `"=~"` test above; this is the `Equals` half, which was
+            // missing, so `a==ls` was emitted as a plain `LoadConst` and
+            // never reached `filesub` at all — no `=cmd` expansion ran.
+            || untoked.contains("==")
+            // c:Src/subst.c:688-698 — the `:`-component walk applies the
+            // same trigger pair to each `:` after `eql`, so a `=cmd` in a
+            // path-list component qualifies too. This one needs no
+            // MAGIC_EQUAL_SUBST: a real assignment is always assign
+            // context (`addvars` → prefork(PREFORK_ASSIGN)), which is why
+            // `kv=a:=ls` diverged as well.
+            || untoked.contains(":=");
         // Brace expansion: `{a,b,c}` and `{1..5}` need expansion. Detect
         // matched-brace forms with comma or `..` inside.
         //
