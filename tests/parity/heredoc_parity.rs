@@ -164,12 +164,16 @@ mod indented_heredoc {
         assert_parity("cat <<-EOF\n\thello\n\tEOF");
     }
 
-    /// `<<-EOF` does NOT strip leading SPACES — terminator on a
-    /// space-indented line isn't matched, both shells hang waiting
-    /// for EOF. Disable to keep the test suite responsive; the
-    /// behavior is "both shells hang the same way" anyway.
+    /// `<<-EOF` strips leading TABS only, so a SPACE-indented `EOF`
+    /// is not the terminator. Neither shell hangs: `-c` input runs
+    /// out, `gethere` takes the `lexstop` arm (c:Src/exec.c:4684-4686)
+    /// and both exit 0 immediately.
+    ///
+    /// Still ignored, but for the REAL reason: the body it produces
+    /// ends WITHOUT a newline, and zshrs's unquoted-here-doc lowering
+    /// appends one. See `unterminated_body_newline` below for the
+    /// minimal shapes and the root cause.
     #[test]
-    #[ignore = "BOTH SHELLS HANG: <<-EOF with space-indented EOF terminator never matches"]
     fn dash_form_preserves_leading_spaces() {
         assert_parity("cat <<-EOF\n    hello\n    EOF");
     }
@@ -177,6 +181,79 @@ mod indented_heredoc {
     #[test]
     fn dash_form_mixed_tab_and_text() {
         assert_parity("cat <<-EOF\n\t\thello\n\tworld\n\tEOF");
+    }
+}
+
+/// When a here-document's input runs out BEFORE the delimiter line
+/// matches, `gethere` keeps the partial last line and deliberately does
+/// NOT append a newline:
+///
+/// ```c
+/// *bptr = '\0';
+/// if (!strcmp(t, str))
+///     break;
+/// if (lexstop) {          /* c:4684 — input exhausted */
+///     t = bptr;           /* c:4685 — keep the partial line ... */
+///     break;              /* c:4686 — ... and DO NOT append '\n' */
+/// }
+/// *bptr++ = '\n';        /* c:4688 — only on a real line break */
+/// ```
+/// (`Src/exec.c:4681-4688`; `ingetc` at EOF does `return lexstop = 1`
+/// without synthesizing a newline — `Src/input.c:426`, `:431`.)
+///
+/// zshrs's `gethere` port (`src/ported/exec.rs:356`) gets this right —
+/// it returns `"hello"` for `cat <<EOF\nhello`. The divergence is in
+/// the fusevm lowering of an UNQUOTED here-doc
+/// (`src/extensions/compile_zsh.rs:3728-3734`), which does
+/// `hd.content.trim_end_matches('\n')` and then emits `Op::HereString`,
+/// whose handler unconditionally `s.push('\n')`
+/// (`src/fusevm_bridge.rs:15543-15544`). That round-trip is lossy in
+/// both directions: it ADDS a newline to a body that has none, and
+/// COLLAPSES several trailing newlines down to one.
+///
+/// The QUOTED form (`<<'EOF'`) is byte-correct today because it takes
+/// the verbatim `Op::HereDoc` path instead, which appends nothing.
+mod unterminated_body_newline {
+    use super::*;
+
+    /// Unterminated body, no trailing newline: zsh emits `hello`
+    /// (5 bytes), zshrs emits `hello\n` (6 bytes).
+    #[test]
+    fn unterminated_body_gains_no_newline() {
+        assert_parity("cat <<EOF\nhello");
+    }
+
+    /// Same shape with a non-matching final line, to show it is the
+    /// missing NEWLINE and not the missing delimiter that matters.
+    #[test]
+    fn unterminated_multiline_body_gains_no_newline() {
+        assert_parity("cat <<EOF\nhello\nNOPE");
+    }
+
+    /// The quoted form already matches — pins the working path so a
+    /// fix to the unquoted path cannot regress it.
+    #[test]
+    fn unterminated_quoted_body_gains_no_newline() {
+        assert_parity("cat <<'EOF'\nhello");
+    }
+
+    /// A properly terminated body whose last content lines are blank
+    /// must keep every one of them.
+    #[test]
+    fn trailing_blank_lines_are_all_kept() {
+        assert_parity("cat <<EOF\nhello\n\n\nEOF\n");
+    }
+
+    /// Quoted twin of the above — already correct, pinned so it stays.
+    #[test]
+    fn trailing_blank_lines_are_all_kept_quoted() {
+        assert_parity("cat <<'EOF'\nhello\n\n\nEOF\n");
+    }
+
+    /// An empty body stays empty on both sides (no newline added).
+    #[test]
+    fn empty_unterminated_body_stays_empty() {
+        assert_parity("cat <<EOF\n");
     }
 }
 

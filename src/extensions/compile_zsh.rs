@@ -3725,13 +3725,28 @@ impl ZshCompiler {
                     // (`\$N` was expanding to the variable's value
                     // because untokenize stripped the Bnull marker
                     // before mode-4 expansion).
-                    let trimmed = hd.content.trim_end_matches('\n').to_string();
-                    let text_const = self.builder.add_constant(Value::str(trimmed));
+                    // c:Src/exec.c:4671-4672 — the body goes to the
+                    // consumer EXACTLY as `gethere` produced it. It used
+                    // to be `trim_end_matches('\n')` here plus the
+                    // unconditional append inside `Op::HereString`, and
+                    // strip-all-then-append-one is lossy both ways: a
+                    // body with NO final newline gained one (`cat <<EOF`
+                    // + `hello` printed `hello\n`, zsh prints `hello`)
+                    // and N trailing newlines collapsed to one
+                    // (`hello\n\n\n` printed as `hello\n`). The quoted
+                    // arm above never had the bug because `Op::HereDoc`
+                    // appends nothing; this is the same sink for the
+                    // post-expansion form.
+                    let text_const = self.builder.add_constant(Value::str(hd.content.as_str()));
                     self.builder.emit(Op::LoadConst(text_const), 0);
                     self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
-                    self.builder.emit(Op::HereString, 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_HEREDOC_BODY_SINK, 1),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
                 }
             }
             return;
