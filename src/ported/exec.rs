@@ -798,6 +798,12 @@ pub fn loadautofn(
     // fold a decisive dump flag into the PM bits so the downstream
     // decision sees the same precedence.
     let dump_ksh = dump_hit.as_ref().map(|(_, k)| *k);
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // C installs the dump's wordcode itself (c:5753-5755) and never lexes it
+    // again; zshrs installs a `getpermtext` deparse whose real compile happens
+    // at the call that defines the function, so the provenance has to be
+    // recorded for that later compile. See vm_helper::autoload_note_wordcode_body.
+    let from_wordcode = dump_hit.is_some();
     let body = match dump_hit {
         // The wordcode C executes carries a line number on every pipe
         // (`WCB_PIPE(type, toklineno + 1)`, c:Src/parse.c:911/935/944, read
@@ -832,6 +838,18 @@ pub fn loadautofn(
         // ran FRESH where zsh runs the compiled body.
         Some((prog, _ksh)) => {
             let dump_text = crate::ported::text::getpermtext(Box::new(prog), None, 0); // c:5753
+            // The equality test below LEXES the source file, and it is asking
+            // whether that file is the text the dump's wordcode was compiled
+            // from. `zcompile` resolved the dump with the lexer state C uses
+            // for a compile, so the comparison has to be made in that same
+            // state or it answers a different question: under RCQUOTES an
+            // adjacent quote pair re-lexes as one literal quote
+            // (c:Src/lex.c:1328) and a live alias rewrites words from inside
+            // the lexer (c:Src/lex.c:1909), so a source that IS the dump's
+            // original compared unequal and the deparse was taken instead —
+            // losing the original line numbering for no reason. Same pin the
+            // `source` leg uses (vm_helper::execute_zwc_program).
+            let _relex = crate::vm_helper::ZwcRelexGuard::enter();
             match std::fs::read_to_string(&path) {
                 // Both sides go through the SAME renderer, so a `.zwc` written
                 // by C zsh (metafied string pool) still compares equal to a
@@ -881,6 +899,14 @@ pub fn loadautofn(
     unsafe {
         (*shf).node.flags = ((*shf).node.flags | ksh_on) & !ksh_off;
     }
+    // c:5753-5755 — C's `shf->funcdef = stripkshdef(prog, …)` installs the
+    // dump's own wordcode; zshrs installs TEXT and compiles it later, so mark
+    // (or, on a plain-file load, un-mark) the name so the compile that finally
+    // lexes this text knows it is a deparse and pins the lexer accordingly.
+    crate::vm_helper::autoload_note_wordcode_body(
+        &name,
+        if from_wordcode { Some(&body[..]) } else { None },
+    );
     // Sync the body string into the Rust-side ShFunc table so the
     // lazy-parse path can find it later.
     if let Ok(mut tab) = shfunctab_lock().write() {

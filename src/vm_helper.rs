@@ -3526,11 +3526,22 @@ impl ShellExecutor {
     /// is a fact the loader can check for itself rather than leaving the
     /// caller to report `function not defined by file` for what is
     /// actually a bad cache line.
+    ///
+    /// `from_wordcode` says the text is a `.zwc` deparse rather than file
+    /// bytes. C never re-lexes such a body at all — `shf->funcdef =
+    /// stripkshdef(prog, …)` (c:Src/exec.c:5753-5755) installs the dump's own
+    /// wordcode and the ksh arm runs it with `execode(prog, 1, 0,
+    /// "evalautofunc")` (c:5795) — so the compile here, which is zshrs's
+    /// stand-in for that install, runs under [`ZwcRelexGuard`]. The guard
+    /// covers the COMPILE only: a ksh-style body executes real user code, and
+    /// an `eval` or function body IT reaches is lexed at runtime against the
+    /// live alias table and the live RCQUOTES, exactly as in C.
     fn run_autoload_definition(
         &mut self,
         name: &str,
         registered: &str,
         ksh_style: bool,
+        from_wordcode: bool,
     ) -> Result<i32, String> {
         let unaliased = crate::ported::utils::getshfunc(name)
             .map(|f| (f.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0)
@@ -3538,7 +3549,7 @@ impl ShellExecutor {
         let key = if ksh_style || !unaliased {
             None
         } else {
-            autoload_source_key(name, registered)
+            autoload_source_key(name, registered, from_wordcode)
         };
         if let Some((dir, sha)) = key.as_ref() {
             if let Some(blob) = crate::autoload_cache::try_load_for_source(name, dir, sha) {
@@ -3569,7 +3580,15 @@ impl ShellExecutor {
                 }
             }
         }
-        let chunk = self.compile_script_isolated(registered)?;
+        let chunk = {
+            // c:Src/exec.c:5753-5755 / c:5795 — the dump's wordcode is
+            // installed/executed as it stands, so nothing about the live
+            // option or alias state can reach it. zshrs lexes the deparse
+            // instead; pin the lexer to the spelling the deparse was written
+            // in for the duration of that compile, and only that compile.
+            let _relex = from_wordcode.then(ZwcRelexGuard::enter);
+            self.compile_script_isolated(registered)?
+        };
         if let Some((dir, sha)) = key.as_ref() {
             match bincode::serialize(&chunk) {
                 Ok(blob) => {
@@ -3875,7 +3894,7 @@ impl ShellExecutor {
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                        let registered = autoload_register_source(name, &body);
+                        let (registered, from_wordcode) = autoload_register_source(name, &body);
                         {
                             // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
                             // as the function body; it executes nothing at load
@@ -3900,7 +3919,12 @@ impl ShellExecutor {
                             // synthesized wrapper here stamps line 1 instead, so
                             // put the stub's value back when the wrapper was ours.
                             let synthesized = registered != body;
-                            let _ = self.run_autoload_definition(name, &registered, ksh_style);
+                            let _ = self.run_autoload_definition(
+                                name,
+                                &registered,
+                                ksh_style,
+                                from_wordcode,
+                            );
                             crate::ported::lex::set_lineno(caller_lineno);
                             if synthesized {
                                 // c:5384-5388 sets `shf->lineno` only where a
@@ -3942,7 +3966,7 @@ impl ShellExecutor {
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                    let registered = autoload_register_source(name, &body);
+                    let (registered, from_wordcode) = autoload_register_source(name, &body);
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
                         // as the function body; it executes nothing at load
@@ -3967,7 +3991,12 @@ impl ShellExecutor {
                         // synthesized wrapper here stamps line 1 instead, so
                         // put the stub's value back when the wrapper was ours.
                         let synthesized = registered != body;
-                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
+                        let _ = self.run_autoload_definition(
+                            name,
+                            &registered,
+                            ksh_style,
+                            from_wordcode,
+                        );
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
                             // c:5384-5388 sets `shf->lineno` only where a
@@ -4193,7 +4222,7 @@ impl ShellExecutor {
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                         _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                        let registered = autoload_register_source(name, &body);
+                        let (registered, from_wordcode) = autoload_register_source(name, &body);
                         // c:Src/exec.c:5739 — the ksh-autoload body runs via
                         // `execode(prog, 1, 0, "evalautofunc")` at the function
                         // invocation's locallevel, so a `return`/`break`/
@@ -4265,8 +4294,12 @@ impl ShellExecutor {
                                     // synthesized wrapper here stamps line 1 instead, so
                                     // put the stub's value back when the wrapper was ours.
                                     let synthesized = registered != body;
-                                    let _ =
-                                        self.run_autoload_definition(name, &registered, ksh_style);
+                                    let _ = self.run_autoload_definition(
+                                        name,
+                                        &registered,
+                                        ksh_style,
+                                        from_wordcode,
+                                    );
                                     crate::ported::lex::set_lineno(caller_lineno);
                                     if synthesized {
                                         // c:5384-5388 sets `shf->lineno` only where a
@@ -4351,7 +4384,7 @@ impl ShellExecutor {
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                    let registered = autoload_register_source(name, &body);
+                    let (registered, from_wordcode) = autoload_register_source(name, &body);
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
                         // as the function body; it executes nothing at load
@@ -4376,7 +4409,12 @@ impl ShellExecutor {
                         // synthesized wrapper here stamps line 1 instead, so
                         // put the stub's value back when the wrapper was ours.
                         let synthesized = registered != body;
-                        let _ = self.run_autoload_definition(name, &registered, ksh_style);
+                        let _ = self.run_autoload_definition(
+                            name,
+                            &registered,
+                            ksh_style,
+                            from_wordcode,
+                        );
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
                             // c:5384-5388 sets `shf->lineno` only where a
@@ -6408,15 +6446,41 @@ fn autoload_is_ksh_style(name: &str) -> bool {
 /// body being installed may have no relationship to the bytes of the
 /// file that path names. Stamping the path let a chunk built from one
 /// text be served for another.
-fn autoload_source_key(name: &str, registered: &str) -> Option<(String, [u8; 32])> {
+///
+/// `from_wordcode` salts the digest because it changes what the same bytes
+/// COMPILE TO: a wordcode-derived body is compiled under [`ZwcRelexGuard`],
+/// so it resolves quotes and aliases the way `zcompile` did, while a
+/// plain-file body of those same bytes resolves them against the live
+/// RCQUOTES / alias state. One cache line must never be served for both.
+fn autoload_source_key(
+    name: &str,
+    registered: &str,
+    from_wordcode: bool,
+) -> Option<(String, [u8; 32])> {
     let dir = crate::ported::utils::getshfunc(name)
         .and_then(|f| f.filename)
         .filter(|d| d != "zsh")?;
-    Some((dir, crate::autoload_cache::source_digest(registered)))
+    let sha = if from_wordcode {
+        crate::autoload_cache::source_digest(&format!("\0zwc\0{registered}"))
+    } else {
+        crate::autoload_cache::source_digest(registered)
+    };
+    Some((dir, sha))
 }
 
-fn autoload_register_source(name: &str, body: &str) -> String {
-    autoload_definition_source(name, body, autoload_is_ksh_style(name))
+/// Returns the text to run to install `name`, plus whether that text came out
+/// of a `.zwc` (see [`autoload_note_wordcode_body`]) and therefore has to be
+/// lexed under [`ZwcRelexGuard`] wherever it is lexed.
+fn autoload_register_source(name: &str, body: &str) -> (String, bool) {
+    // c:Src/exec.c:5725 `stripkshdef(prog, …)` — the ksh-vs-zsh wrap decision
+    // below PARSES `body`, so it is itself a second lex of the deparse and
+    // needs the same pin as the compile that follows it.
+    let from_wordcode = autoload_body_from_wordcode(name, body);
+    let _relex = from_wordcode.then(ZwcRelexGuard::enter);
+    (
+        autoload_definition_source(name, body, autoload_is_ksh_style(name)),
+        from_wordcode,
+    )
 }
 
 /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
@@ -6496,6 +6560,64 @@ impl Drop for ZwcRelexGuard {
         }
         crate::ported::lex::set_noaliases(self.noaliases);
     }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Names whose installed autoload body was rendered back from WORDCODE
+/// (`getpermtext` over a `.zwc` program) rather than read from a source file,
+/// each mapped to a digest of that body.
+///
+/// C has no such fact to carry. `loadautofn` hands the dump's program
+/// straight to `shf->funcdef = stripkshdef(prog, …)` (c:Src/exec.c:5753-5755),
+/// and the ksh-style arm runs it with `execode(prog, 1, 0, "evalautofunc")`
+/// (c:Src/exec.c:5795): a dump-loaded funcdef is never lexed again, at load
+/// time or ever. zshrs executes function bodies as TEXT, so `loadautofn`
+/// deparses the program and the REAL compile happens later — at the call that
+/// installs the function, through [`ShellExecutor::run_autoload_definition`].
+/// The two are separated by arbitrary user code, so "this text came from
+/// wordcode" has to survive the gap or the deparse is re-lexed against
+/// whatever RCQUOTES / alias state is live at call time. See
+/// [`ZwcRelexGuard`] for exactly what that costs; the `source` leg of the same
+/// bug is fixed by [`ShellExecutor::execute_zwc_program`].
+///
+/// The mark is a DIGEST of the body, not a bare flag, so it self-invalidates.
+/// `functions[name]=…` (c:Src/Modules/parameter.c setpmfunction) and a later
+/// load of the same name from a plain file both install different text, and
+/// the digest simply stops matching — no writer anywhere else has to know this
+/// table exists, and a stale entry cannot pin the lexer for a body that was
+/// never wordcode.
+static AUTOLOAD_WORDCODE_BODY: Mutex<Option<HashMap<String, [u8; 32]>>> = Mutex::new(None);
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Record (`Some`) or drop (`None`) the "body came from wordcode" mark for
+/// `name`. Called from `loadautofn` (c:Src/exec.c:5682) on every load, so a
+/// plain-file load clears a mark an earlier dump load left.
+pub(crate) fn autoload_note_wordcode_body(name: &str, body: Option<&str>) {
+    let mut slot = AUTOLOAD_WORDCODE_BODY.lock();
+    match body {
+        Some(text) => {
+            slot.get_or_insert_with(HashMap::new)
+                .insert(name.to_string(), crate::autoload_cache::source_digest(text));
+        }
+        None => {
+            if let Some(map) = slot.as_mut() {
+                map.remove(name);
+            }
+        }
+    }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// True when `body` is the exact text [`autoload_note_wordcode_body`] recorded
+/// for `name` — i.e. this is a `.zwc` deparse about to be lexed a second time.
+pub(crate) fn autoload_body_from_wordcode(name: &str, body: &str) -> bool {
+    let slot = AUTOLOAD_WORDCODE_BODY.lock();
+    slot.as_ref()
+        .and_then(|map| map.get(name))
+        .is_some_and(|sha| *sha == crate::autoload_cache::source_digest(body))
 }
 
 /// The exact source text an autoload of `name` installs — either the
