@@ -9239,6 +9239,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `addfd(forked, save, mfds, fn->fd1, fil, 0, ...)` at c:3766-
     // 3780 for the nullexec=1 bare-exec-redir path. Bug #205 in
     // docs/BUGS.md.
+    // c:Src/exec.c:4671-4672 — a here-string DERIVED FROM a here-doc
+    // gets no appended newline. See BUILTIN_HEREDOC_BODY_SINK.
+    vm.register_builtin(BUILTIN_HEREDOC_BODY_SINK, |vm, _argc| {
+        let body = vm.pop().to_str();
+        if crate::provenance::active() {
+            crate::provenance::on_heredoc("heredoc", &body);
+        }
+        with_executor(|exec| exec.host_set_pending_stdin(body));
+        Value::Int(0)
+    });
+
     vm.register_builtin(BUILTIN_EXEC_HERESTR_FD, |vm, _argc| {
         let fd = vm.pop().to_int() as i32;
         let content = vm.pop().to_str();
@@ -14119,6 +14130,25 @@ pub const BUILTIN_GLOB_SUBST_GUARD: u16 = 528;
 ///
 /// Stack: pops one string, pushes the respelled result. argc = 1.
 pub const BUILTIN_PAT_DATA_BACKSLASH: u16 = 668;
+/// Stage an ALREADY-EXPANDED here-document body as pending stdin,
+/// verbatim — no trailing newline appended.
+///
+/// c:Src/exec.c:4671-4672 — `getherestr` appends the newline only when
+/// the here-string did NOT come from a here-document:
+///     if (!(fn->flags & REDIRF_FROM_HEREDOC))
+///         t[len++] = '\n';
+/// The quoted form already had a non-appending sink (`Op::HereDoc`),
+/// but the UNQUOTED form has to run `BUILTIN_EXPAND_TEXT` first, and
+/// the only stack-consuming sink available afterwards was
+/// `Op::HereString` — which appends unconditionally, because `<<<`
+/// genuinely must. The lowering compensated with
+/// `trim_end_matches('\n')`, and strip-all-then-append-one is lossy in
+/// both directions: it ADDED a newline to a body that ended without one
+/// (`cat <<EOF` + `hello` with no final newline printed `hello\n` where
+/// zsh prints `hello`), and COLLAPSED N trailing newlines to one
+/// (`hello\n\n\n` printed as `hello\n`). argc = 1.
+pub const BUILTIN_HEREDOC_BODY_SINK: u16 = 669;
+
 
 /// Coerce a string parameter value to a math number (Int or Float)
 /// for arithmetic-context reads, mirroring C-zsh's `getmathparam`
