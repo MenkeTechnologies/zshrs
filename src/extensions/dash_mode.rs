@@ -26,7 +26,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 /// Process-global strict-dash flag. Raised by `emulate dash` (via
 /// [`set_dash_strict`]) and cleared by any `emulate` to another
@@ -113,9 +113,79 @@ pub fn nocasematch() -> bool {
 }
 
 /// Set/clear bash `nocasematch`.
+///
+/// !!! WARNING: RUST-ONLY HELPER — BASH IS THE REFERENCE, NOT zsh's C !!!
+/// bash(1), The Shopt Builtin: "nocasematch — If set, bash matches patterns
+/// in a case-insensitive fashion when performing matching while executing
+/// case or [[ conditional commands". Three consumers, two mechanisms:
+///
+///   * `[[ … == … ]]` / `[[ … != … ]]` and `case` arms case-fold both sides
+///     at their match sites, reading the [`NOCASEMATCH`] flag directly
+///     (fusevm_bridge's BUILTIN_COND_STRMATCH and `str_match`, cond.rs:462).
+///   * `[[ … =~ … ]]` goes through zsh's regex module, which already has the
+///     exact knob bash wants: `Src/Modules/regex.c:74` builds its regcomp
+///     flags as `REG_EXTENDED | (isset(CASEMATCH) ? 0 : REG_ICASE)`. Rather
+///     than bolt a second case-folding path onto the regex engine, mirror
+///     the bash flag onto zsh's CASE_MATCH with the sense inverted —
+///     `nocasematch` ON means CASE_MATCH OFF means REG_ICASE. CASE_MATCH has
+///     exactly one reader in the tree (`src/ported/modules/regex.rs:87/109`),
+///     so the mirror cannot leak into any other construct.
+///
+/// Under `--zsh` nothing calls this, so zsh's own CASE_MATCH is untouched.
 #[inline]
 pub fn set_nocasematch(on: bool) {
     NOCASEMATCH.store(on, Ordering::Relaxed);
+    // Inverted mirror onto zsh CASE_MATCH — see the doc comment above.
+    crate::ported::options::opt_state_set_via_alias("casematch", !on);
+}
+
+/// The bash shopt names whose behavior is carried by a zsh option with the
+/// OPPOSITE sense: the shopt is ON exactly when the zsh option is OFF.
+///
+/// !!! WARNING: RUST-ONLY TABLE — BASH IS THE REFERENCE, NOT zsh's C !!!
+/// [`BASH_SHOPTS`]'s middle column can only express a same-sense mapping,
+/// and the name(s) below are negations of the zsh option that implements
+/// them, so they are resolved here instead of there.
+///
+///   * `xpg_echo` — bash(1): "If set, the echo builtin expands
+///     backslash-escape sequences by default." That is precisely zsh's
+///     `NO_BSD_ECHO`: `Src/builtin.c:4754` picks escape processing unless
+///     BSD_ECHO is set and `-e` was not given, and `--bash` boots with
+///     BSD_ECHO on (so `echo 'a\tb'` prints the backslash, as bash does).
+///     Verified against bash 5.3 for `\t`, `\n`, `\c`, `\\`, `\e`, `\0101`
+///     and for the `-e` / `-E` overrides, which win over the shopt in both
+///     shells.
+///   * `nocaseglob` is NOT here — zsh spells it `NO_CASE_GLOB` in the
+///     negative too, so `optlookup` resolves the bash spelling directly and
+///     the same-sense column already works.
+const BASH_SHOPTS_INVERTED_ZSH_OPT: &[(&str, &str)] = &[("xpg_echo", "bsdecho")];
+
+/// The `shopt` rows bash treats as READ-ONLY state, not as settable flags.
+///
+/// !!! WARNING: RUST-ONLY TABLE — BASH IS THE REFERENCE, NOT zsh's C !!!
+/// Both report a fact about how the shell was started, so bash accepts
+/// `shopt -s`/`-u` on them silently — status 0, no diagnostic — and simply
+/// does not change the value:
+///
+///     $ bash -c  'shopt -s login_shell; echo rc=$?; shopt -p login_shell'
+///     rc=0
+///     shopt -u login_shell
+///     $ bash -lc 'shopt -u login_shell; shopt -p login_shell'
+///     shopt -s login_shell
+///
+/// zshrs let both be written, so `shopt -s login_shell` made `$BASHOPTS`
+/// claim a login shell in a non-login one. Their VALUES come from the zsh
+/// options that already carry the same state (`LOGIN_SHELL` / `RESTRICTED`,
+/// `src/ported/options.rs:108` and `:1527`), which is why `zshrs --bash -l`
+/// now reports `shopt -s login_shell` as bash does.
+const BASH_SHOPTS_READONLY: &[&str] = &["login_shell", "restricted_shell"];
+
+/// The zsh option carrying `name`'s behavior with an inverted sense, if any.
+fn bash_shopt_inverted_zsh_opt(name: &str) -> Option<&'static str> {
+    BASH_SHOPTS_INVERTED_ZSH_OPT
+        .iter()
+        .find(|(b, _)| *b == name)
+        .map(|(_, z)| *z)
 }
 
 /// True when the shell is running in strict-dash mode (`emulate dash` or
@@ -426,7 +496,7 @@ pub const BASH_SHOPTS: &[(&str, Option<&str>, bool)] = &[
     ("lithist", None, false),
     ("localvar_inherit", None, false),
     ("localvar_unset", None, false),
-    ("login_shell", None, false),
+    ("login_shell", Some("loginshell"), false),
     ("mailwarn", Some("mailwarn"), false),
     ("no_empty_cmd_completion", None, false),
     ("nocaseglob", Some("nocaseglob"), false),
@@ -437,7 +507,7 @@ pub const BASH_SHOPTS: &[(&str, Option<&str>, bool)] = &[
     ("progcomp", None, true),
     ("progcomp_alias", None, false),
     ("promptvars", Some("promptvars"), true),
-    ("restricted_shell", None, false),
+    ("restricted_shell", Some("restricted"), false),
     ("shift_verbose", None, false),
     ("sourcepath", None, true),
     ("varredir_close", None, false),
@@ -465,6 +535,11 @@ pub fn bash_shopt_get(name: &str) -> Option<bool> {
     if canon == "nocasematch" {
         return Some(nocasematch());
     }
+    // Inverted-sense rows (`xpg_echo` ↔ zsh BSD_ECHO) — see
+    // BASH_SHOPTS_INVERTED_ZSH_OPT.
+    if let Some(zopt) = bash_shopt_inverted_zsh_opt(canon) {
+        return Some(!crate::ported::options::opt_state_get(zopt).unwrap_or(!default_on));
+    }
     Some(match zsh_opt {
         Some(opt) => crate::ported::options::opt_state_get(opt).unwrap_or(default_on),
         None => BASH_ONLY_SHOPTS
@@ -479,8 +554,19 @@ pub fn bash_shopt_set(name: &str, on: bool) -> bool {
     let Some((canon, zsh_opt, _)) = bash_shopt_row(name) else {
         return false;
     };
+    // Read-only state rows — accepted and ignored, as bash does. See
+    // BASH_SHOPTS_READONLY.
+    if BASH_SHOPTS_READONLY.contains(&canon) {
+        return true;
+    }
     if canon == "nocasematch" {
         set_nocasematch(on);
+        return true;
+    }
+    // Inverted-sense rows (`xpg_echo` ↔ zsh BSD_ECHO) — see
+    // BASH_SHOPTS_INVERTED_ZSH_OPT.
+    if let Some(zopt) = bash_shopt_inverted_zsh_opt(canon) {
+        crate::ported::options::opt_state_set_via_alias(zopt, !on);
         return true;
     }
     match zsh_opt {
@@ -514,7 +600,9 @@ pub fn bash_shopt_set(name: &str, on: bool) -> bool {
 /// code runs, so a script's own `setopt`/`shopt` still wins.
 pub fn bash_shopt_apply_defaults() {
     for (name, zsh_opt, default_on) in BASH_SHOPTS {
-        if zsh_opt.is_some() {
+        // Inverted rows (`xpg_echo`) live in a zsh option too, so they need
+        // the same seeding even though the middle column is `None`.
+        if zsh_opt.is_some() || bash_shopt_inverted_zsh_opt(name).is_some() {
             bash_shopt_set(name, *default_on);
         }
     }
@@ -655,4 +743,388 @@ pub fn bash_shellopts() -> String {
         .map(|(b, _)| *b)
         .collect::<Vec<_>>()
         .join(":")
+}
+
+// ===========================================================================
+// !!! WARNING: RUST-ONLY HELPERS — NO zsh C COUNTERPART !!!
+//
+// Output-format and bookkeeping deltas between zsh and the REAL Bourne-family
+// shells that `zshrs --bash` / `--ksh` / `--mksh` / `--pdksh` / `--sh` /
+// `--dash` / `--ash` stand in for. zsh's C source is NOT the spec for any of
+// these — each was measured against the actual reference binary and the
+// observed output is quoted at the definition.
+//
+// Every predicate below hangs off `posix_faithful()`, which the binary raises
+// only for a BARE drop-in flag, so all of them are false in native zshrs, in
+// `--zsh`, under a runtime `emulate sh`, and in the zsh-STYLE cross-emulation
+// legs (`--sh --zsh` / `--ksh --zsh`). zsh's own formats cannot regress.
+// ===========================================================================
+
+/// `umask` with no arguments prints a FIXED four-octal-digit mask in the real
+/// Bourne-family shells; zsh prints three digits and emits the leading `0`
+/// only when the owner field is non-zero (`Src/builtin.c:7522-7524` —
+/// `if (um & 0700) putchar('0'); printf("%03o\n", um);`).
+///
+/// Measured (`<shell> -c 'umask 022; umask'`):
+///
+/// ```text
+/// bash 5.3 → 0022    dash → 0022    ksh93 → 0022    ash → 0022
+/// /bin/sh  → 0022    mksh → 022     zsh   → 022
+/// ```
+///
+/// mksh is the outlier — it uses zsh's conditional-zero form — so the pdksh
+/// line is excluded. Confirmed across the range: `000`/`007`/`022`/`077` gain
+/// the zero, `0700`/`0777` already have it, and `umask -S` is byte-identical
+/// in every shell, so the `-S` arm is untouched.
+#[inline]
+pub fn umask_four_digit() -> bool {
+    posix_faithful() && !pdksh_family()
+}
+
+// ---------------------------------------------------------------------------
+// getopts: $OPTIND reporting, the end-of-options contract, and reset detection
+// ---------------------------------------------------------------------------
+
+/// Last value zshrs wrote to `$OPTIND`, and the internal `zoptind` it came
+/// from. `bin_getopts` re-reads `$OPTIND` at entry (scripts reset it to start
+/// a new parse), so a reported value carrying the emulation bias has to be
+/// translated back before it is used as an argument index. Both start at -1,
+/// which no report can produce, so the first call always looks like a script
+/// assignment.
+static GETOPTS_REPORTED: AtomicI32 = AtomicI32::new(-1);
+/// Internal `zoptind` matching [`GETOPTS_REPORTED`].
+static GETOPTS_INTERNAL: AtomicI32 = AtomicI32::new(-1);
+
+/// The value the emulated shell would show in `$OPTIND`, given zsh's internal
+/// parse state — and the point where the two families disagree.
+///
+/// zsh advances `zoptind` LAZILY: it names the argument currently being
+/// scanned and is bumped only on the NEXT `getopts` call, when the cursor
+/// `optcind` is found past the end of that argument
+/// (`Src/builtin.c:5699-5703`). Every real Bourne shell instead reports the
+/// index of the next argument as soon as the current one is finished. zsh's
+/// own answer is 1 where all of them say 2 — a genuine zsh-vs-POSIX semantic
+/// difference, not a port bug, so it is corrected only in the drop-in modes:
+///
+/// ```text
+/// $ for s in bash dash ksh mksh ash zsh; do $s -c \
+///     'OPTIND=1; getopts "ab" o -b; printf "%s\n" "$OPTIND"'; done
+/// 2  2  2  2  2  1
+/// ```
+///
+/// The families split mid-CLUSTER (`-ab`). bash and ksh93 keep reporting the
+/// cluster's own index until it is exhausted; dash, ash and mksh report the
+/// next index as soon as any character has been consumed:
+///
+/// ```text
+/// $ for s in bash ksh dash ash mksh; do $s -c \
+///     'OPTIND=1; getopts "ab" o -ab; printf "%s\n" "$OPTIND"'; done
+/// 1  1  2  2  2
+/// ```
+///
+/// `optcind == 0` means "positioned at an argument boundary" — nothing was
+/// taken from the current word (a fresh call, an exhausted-and-advanced
+/// cursor, or the post-`OPTARG` reset at `Src/builtin.c:5771-5772`) — and
+/// every shell, zsh included, reports `zoptind` unchanged there.
+///
+/// `--sh` follows the bash rule: `/bin/sh` is bash on this platform (and on
+/// the RHEL-family Linuxes), and the two rules differ only mid-cluster.
+///
+/// Records the pair so [`getopts_optind_internal`] can undo the bias on the
+/// next call. Outside the drop-in modes it returns `zoptind` untouched and
+/// records nothing.
+pub fn getopts_optind_report(zoptind: i32, optcind: i32, lenstr: i32) -> i32 {
+    if !posix_faithful() || optcind == 0 {
+        return zoptind;
+    }
+    let eager = dash_strict() || pdksh_family();
+    let reported = if eager || optcind >= lenstr {
+        zoptind + 1
+    } else {
+        zoptind
+    };
+    GETOPTS_REPORTED.store(reported, Ordering::Relaxed);
+    GETOPTS_INTERNAL.store(zoptind, Ordering::Relaxed);
+    reported
+}
+
+/// Translate the `$OPTIND` a script can see back into the internal `zoptind`
+/// `bin_getopts` left off at. Only the exact value zshrs itself last reported
+/// is translated; anything else is a script assignment (`OPTIND=1`) and is
+/// passed through so the reset still works. Identity outside the drop-in modes.
+pub fn getopts_optind_internal(param_value: i64) -> i64 {
+    if !posix_faithful() {
+        return param_value;
+    }
+    let reported = GETOPTS_REPORTED.load(Ordering::Relaxed);
+    if reported >= 0 && param_value == reported as i64 {
+        return GETOPTS_INTERNAL.load(Ordering::Relaxed) as i64;
+    }
+    param_value
+}
+
+/// True when a script's own write to `$OPTIND` must ALSO rewind the
+/// within-argument cursor, so the next `getopts` re-scans that argument from
+/// its first character.
+///
+/// bash, ksh93, mksh and `/bin/sh` treat a changed `$OPTIND` as a full reset;
+/// dash and ash keep their character pointer regardless; zsh rewinds only when
+/// the new value is 1 AND its internal index was elsewhere:
+///
+/// ```text
+/// $ <shell> -c 'OPTIND=1; getopts "ab" o -b; OPTIND=1; getopts "ab" o -b;
+///               printf "%s/%s\n" "$o" "$OPTIND"'
+/// bash/ksh/mksh//bin/sh → b/2        dash/ash → ?/2
+/// ```
+///
+/// `raw_param` is `$OPTIND` exactly as the parameter table holds it, BEFORE
+/// [`getopts_optind_internal`] removes the reporting bias; anything other than
+/// the value zshrs last wrote is a script assignment. False outside the
+/// drop-in modes and in the dash family, so zsh's own rule
+/// (`Src/builtin.c:5681-5685`) stands alone there.
+///
+/// KNOWN GAP: bash hooks the ASSIGNMENT rather than comparing values, so it
+/// also resets when the assigned value equals the one it last reported —
+/// visible only mid-cluster (`getopts ab o -ab; OPTIND=1; getopts ab o -ab`
+/// → bash `a`, here `b`). Catching that needs an `$OPTIND` assignment hook in
+/// the parameter table; pinned by an ignored parity test rather than faked.
+pub fn getopts_optind_user_reset(raw_param: i64) -> bool {
+    if !posix_faithful() || dash_strict() {
+        return false;
+    }
+    raw_param != GETOPTS_REPORTED.load(Ordering::Relaxed) as i64
+}
+
+/// POSIX end-of-options bookkeeping for `getopts`, which zsh does not do.
+///
+/// XCU `getopts`: "When the end of options is encountered, the getopts utility
+/// shall exit with a return value greater than zero; … and *name* shall be set
+/// to the question-mark character." zsh leaves *name* holding whatever it held
+/// before:
+///
+/// ```text
+/// $ <shell> -c 'o=INIT; OPTIND=1; getopts "ab" o --; printf "[%s]\n" "$o"'
+/// bash/ksh/mksh/dash/ash → [?]        zsh → [INIT]
+/// ```
+///
+/// bash, ksh93 and mksh also CLEAR `$OPTARG` on that return; dash and ash
+/// leave the last option's argument in place, and so does zsh:
+///
+/// ```text
+/// $ <shell> -c 'OPTIND=1; for i in 1 2 3; do getopts "a:b" o -b -a W; done;
+///               printf "[%s]\n" "$OPTARG"'
+/// bash/ksh/mksh → []      dash/ash → [W]      zsh → [W]
+/// ```
+///
+/// Call at every "no more options" (`return 1`) exit of `bin_getopts`. No-op
+/// outside the drop-in modes.
+pub fn getopts_end_of_options(var: &str) {
+    if !posix_faithful() {
+        return;
+    }
+    crate::ported::params::setsparam(var, "?");
+    if !dash_strict() {
+        crate::ported::params::setsparam("OPTARG", "");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `trap` with no arguments — the listing format
+// ---------------------------------------------------------------------------
+
+/// One `trap -- <body> <SIG>` listing line in the emulated shell's own format,
+/// or `None` when zsh's format (`Src/builtin.c:7370-7375`) applies unchanged.
+///
+/// Three deltas, each measured rather than derived from zsh's C:
+///
+/// 1. **Raw body, not a re-deparse.** zsh compiles the trap body to an Eprog
+///    and renders THAT back for the listing (`getpermtext`), so the text is
+///    canonicalised. Every other shell echoes the string it was given:
+///
+///    ```text
+///    $ trap 'printf a; printf b' INT; trap
+///    zsh                    → trap -- $'printf a\nprintf b' INT
+///    bash/dash/ash/ksh/mksh → trap -- 'printf a; printf b' <SIG>
+///    ```
+///
+/// 2. **Quoting.** zsh and the Korn pair quote only when the body needs it, so
+///    `trap ':' HUP` lists as `trap -- : HUP` there and as `trap -- ':' HUP`
+///    in bash, dash, ash and `/bin/sh`. The escapes differ too — measured with
+///    the bodies `printf 'a b'`, `'x`, `x'`, `a'b'c` and `a\b'`:
+///
+///    ```text
+///    body        bash / /bin/sh   dash / ash        ksh93          mksh
+///    printf 'a b' 'printf '\''a b'\''' 'printf '"'"'a b'"'" $'printf \'a b\'' 'printf '\''a b'\'
+///    'x           ''\''x'         ''"'"'x'          $'\'x'         \''x'
+///    x'           'x'\'''         'x'"'"            $'x\''         'x'\'
+///    a\b'         'a\b'\'''       'a\b'"'"          $'a\\b\''      'a\b'\'
+///    ```
+///
+///    bash keeps empty runs at BOTH ends; dash and ash drop a trailing empty
+///    one but keep a leading one; ksh93 switches to ANSI-C `$'…'` as soon as
+///    the body holds an apostrophe; mksh is byte-identical to zsh's
+///    `quotedzputs`, empty-run trimming included.
+///
+/// 3. **`SIG`-prefixed names in bash only.** `bash -c "trap ':' HUP; trap"`
+///    prints `trap -- ':' SIGHUP`, while dash, ash, `/bin/sh`, ksh93 and mksh
+///    all print the bare `HUP`. bash leaves the pseudo-signals alone —
+///    `EXIT`, `DEBUG`, `ERR` and `RETURN` print unprefixed — so only names
+///    resolving to a real signal number are prefixed.
+///
+/// An empty body is `''` in every shell including zsh, so it needs no special
+/// case beyond forcing the quotes.
+pub fn trap_listing_line(signame: &str, body: &str) -> Option<String> {
+    if !posix_faithful() {
+        return None;
+    }
+    let quoted = if korn_mode() && !pdksh_family() && body.contains('\'') {
+        // ksh93's ANSI-C form: backslash doubles, apostrophe is escaped.
+        format!("$'{}'", body.replace('\\', "\\\\").replace('\'', "\\'"))
+    } else if korn_mode() {
+        // ksh93 without an apostrophe, and mksh always: quote only when
+        // needed, exactly like zsh — but over the RAW body.
+        crate::ported::utils::quotedzputs(body)
+    } else if dash_strict() {
+        // dash / ash close the quote, emit `"'"`, reopen — then drop a
+        // TRAILING empty reopened run (a leading one is kept).
+        let mut q = format!("'{}'", body.replace('\'', "'\"'\"'"));
+        // An IGNORED trap has an empty body and lists as `trap -- '' SIG` in
+        // every shell, so the trim must not eat the whole quoted string.
+        if q.len() > 2 && q.ends_with("''") {
+            q.truncate(q.len() - 2);
+        }
+        q
+    } else {
+        // bash and /bin/sh: `'` → `'\''`, no empty-run trimming at either end.
+        format!("'{}'", body.replace('\'', "'\\''"))
+    };
+    let name = if bash_mode() && real_signal_name(signame) {
+        format!("SIG{}", signame)
+    } else {
+        signame.to_string()
+    };
+    Some(format!("trap -- {} {}", quoted, name))
+}
+
+/// True when `name` is a real signal (1..=SIGCOUNT) rather than one of the
+/// pseudo-signals zsh keeps in the same table (`EXIT` at index 0, `ZERR` and
+/// `DEBUG` above `SIGCOUNT` — `Src/signals.h:34-46`). Only real signals take
+/// bash's `SIG` prefix.
+fn real_signal_name(name: &str) -> bool {
+    match crate::ported::jobs::getsigidx(name) {
+        Some(idx) => idx >= 1 && idx <= crate::ported::signals_h::SIGCOUNT,
+        None => false,
+    }
+}
+
+/// ksh93 lists `trap` entries in DESCENDING signal-number order, where zsh,
+/// bash, dash, ash and mksh all walk the table upwards:
+///
+/// ```text
+/// $ <shell> -c "trap ':' EXIT INT HUP USR1 TERM QUIT; trap"
+/// ksh93                 zsh / bash / dash / ash / mksh
+///   trap -- : USR1        trap -- : EXIT
+///   trap -- : TERM        trap -- : HUP     (bash: SIGHUP, …)
+///   trap -- : QUIT        trap -- : INT
+///   trap -- : INT         trap -- : QUIT
+///   trap -- : HUP         trap -- : TERM
+///   trap -- : EXIT        trap -- : USR1
+/// ```
+///
+/// True only for a bare `--ksh`; the pdksh line (`--mksh` / `--pdksh`) matches
+/// zsh's ascending walk (`Src/builtin.c:7358` — `for (sig = 0;
+/// sig < TRAPCOUNT; sig++)`), and so does every other mode.
+#[inline]
+pub fn trap_listing_descending() -> bool {
+    korn_mode() && !pdksh_family()
+}
+
+// ---------------------------------------------------------------------------
+// `type` / `command -V` / `whence -v` on a shell function
+// ---------------------------------------------------------------------------
+
+/// The verbose one-line description of a shell function in the emulated
+/// shell's wording, or `None` to keep zsh's.
+///
+/// zsh appends the file the function was loaded from
+/// (`Src/hashtable.c:927-941` — `" is a shell function"` then `" from "` and
+/// the filename), which for a `-c` script is the shell's own name, so
+/// `zsh -fc 'f() { :; }; type f'` prints `f is a shell function from zsh`.
+/// No other shell says anything of the kind:
+///
+/// ```text
+/// bash 5.3 → f is a function          (then the definition, see below)
+/// /bin/sh  → f is a function          (then the definition)
+/// ksh93    → f is a function
+/// mksh     → f is a function
+/// dash     → f is a shell function
+/// ash      → f is a shell function
+/// ```
+pub fn function_whence_verbose(name: &str) -> Option<String> {
+    if !posix_faithful() {
+        return None;
+    }
+    if dash_strict() {
+        Some(format!("{} is a shell function", name))
+    } else {
+        Some(format!("{} is a function", name))
+    }
+}
+
+/// True when the emulated shell follows its `type` / `command -V` header line
+/// with the function's DEFINITION. bash does; ksh93, mksh, dash and ash do not:
+///
+/// ```text
+/// $ bash -c 'f() { :; }; type f'      $ ksh -c 'f() { :; }; type f'
+/// f is a function                     f is a function
+/// f ()
+/// {
+///     :
+/// }
+/// ```
+///
+/// `/bin/sh` is bash on this platform and behaves the same, so it is included.
+#[inline]
+pub fn function_whence_prints_body() -> bool {
+    posix_faithful() && !korn_mode() && !dash_strict()
+}
+
+/// Re-lay a deparsed function body in bash's `type` format.
+///
+/// bash re-prints the parsed function from its own AST (`make_command_string`):
+/// the header is `NAME () ` then `{ ` — each with ONE trailing space —
+/// statements are indented four spaces per level, and every line but the last
+/// carries a trailing `;`.
+///
+/// ```text
+/// $ bash -c 'f() { echo a; echo b; }; type f' | cat -e
+/// f is a function$
+/// f () $
+/// { $
+///     echo a;$
+///     echo b$
+/// }$
+/// ```
+///
+/// `body_lines` is zsh's own rendering of the body (one statement per line,
+/// one leading TAB per nesting level), which agrees with bash's line split for
+/// a flat list of simple commands — the shape `type` is asked about in
+/// practice. It does NOT agree for COMPOUND commands: bash keeps `if true;
+/// then` on one line where zsh's deparse splits `if true` / `then`, so those
+/// bodies still differ in layout. That gap is pinned by an ignored parity test
+/// rather than papered over here; closing it needs a bash-flavoured deparser,
+/// which is separate work.
+pub fn bash_function_body(name: &str, body_lines: &str) -> String {
+    let mut out = format!("{} () \n{{ \n", name);
+    let lines: Vec<&str> = body_lines.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let depth = line.chars().take_while(|c| *c == '\t').count();
+        let text = line.trim_start_matches('\t');
+        let last = i + 1 == lines.len();
+        out.push_str(&" ".repeat(4 * (depth + 1)));
+        out.push_str(text);
+        out.push_str(if last { "\n" } else { ";\n" });
+    }
+    out.push_str("}\n");
+    out
 }

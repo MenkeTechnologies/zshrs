@@ -9000,15 +9000,46 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
     let mut set_o = false; // `-o`: restrict names to the `set -o` table
     let mut opts: Vec<String> = Vec::new();
 
+    // bash groups short flags: `shopt -so errexit`, `shopt -ps`, `shopt -qs`
+    // are all real spellings (`bash -c 'shopt -so'` lists the enabled
+    // `set -o` options; `bash -c 'shopt -ps'` prints the enabled shopts in
+    // re-inputtable form). Parsing each argv word as ONE flag rejected them
+    // as option NAMES: `shopt -so` printed
+    // "shopt: -so: invalid shell option name" and exited 1.
+    let mut bad_flag: Option<String> = None;
+    // `--` ends flag parsing (`bash -c 'shopt -- dotglob'` queries dotglob).
+    let mut end_of_flags = false;
     for arg in args {
-        match arg.as_str() {
-            "-s" => set = Some(true),
-            "-u" => set = Some(false),
-            "-p" => print_p = true,
-            "-q" => quiet = true,
-            "-o" => set_o = true,
-            _ => opts.push(arg.clone()),
+        let is_flag = !end_of_flags && arg.len() > 1 && arg.starts_with('-');
+        if arg.as_str() == "--" && !end_of_flags {
+            end_of_flags = true;
+            continue;
         }
+        if !is_flag {
+            opts.push(arg.clone());
+            continue;
+        }
+        for c in arg.chars().skip(1) {
+            match c {
+                's' => set = Some(true),
+                'u' => set = Some(false),
+                'p' => print_p = true,
+                'q' => quiet = true,
+                'o' => set_o = true,
+                _ => {
+                    if bad_flag.is_none() {
+                        bad_flag = Some(format!("-{c}"));
+                    }
+                }
+            }
+        }
+    }
+    // bash: `shopt -Z` → "shopt: -Z: invalid option" + the usage line,
+    // status 2 (`bash -c 'shopt -Z'; echo $?`).
+    if let Some(f) = bad_flag {
+        eprintln!("zshrs: shopt: {f}: invalid option");
+        eprintln!("shopt: usage: shopt [-pqsu] [-o] [optname ...]");
+        return 2;
     }
 
     // `-o` names come from bash's `set -o` table, not the shopt table.
@@ -9018,18 +9049,27 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
         return shopt_o(set, print_p, quiet, &opts);
     }
 
-    // No names: list every option. bash prints the whole table in its
-    // (alphabetical) order, in whichever of the two shapes was asked for,
-    // and returns 0.
+    // No names: list the table in its (alphabetical) order, in whichever of
+    // the two shapes was asked for, and return 0.
+    //
+    // `-s` / `-u` FILTER that listing rather than suppressing it — bash(1):
+    // "If either -s or -u is used with no optname arguments, shopt shows
+    // only those options which are set or unset, respectively."
+    //   bash -c 'shopt -s'   → the 13 default-on rows, `NAME<TAB>on`
+    //   bash -c 'shopt -ps'  → `shopt -s NAME` for those same 13
+    //   bash -c 'shopt -q'   → nothing at all, status 0
+    // zshrs printed nothing for `-s`/`-u` and printed the FULL table for
+    // `-q`; both are fixed here.
     if opts.is_empty() {
-        if set.is_none() {
-            for (name, _, _) in BASH_SHOPTS {
-                let on = bash_shopt_get(name).unwrap_or(false);
-                if print_p {
-                    println!("shopt {} {}", if on { "-s" } else { "-u" }, name);
-                } else {
-                    println!("{:<20}\t{}", name, if on { "on" } else { "off" });
-                }
+        for (name, _, _) in BASH_SHOPTS {
+            let on = bash_shopt_get(name).unwrap_or(false);
+            if set.is_some_and(|want| want != on) || quiet {
+                continue;
+            }
+            if print_p {
+                println!("shopt {} {}", if on { "-s" } else { "-u" }, name);
+            } else {
+                println!("{:<20}\t{}", name, if on { "on" } else { "off" });
             }
         }
         return 0;
@@ -9087,15 +9127,35 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
 fn shopt_o(set: Option<bool>, print_p: bool, quiet: bool, opts: &[String]) -> i32 {
     use crate::dash_mode::{bash_set_o, bash_set_o_get, BASH_SET_O};
     let known = |n: &str| BASH_SET_O.iter().any(|(b, _)| *b == n);
+    // `-p` under `-o` prints in the `set` builtin's re-inputtable form, not
+    // shopt's: `bash -c 'shopt -po errexit'` → `set +o errexit`. zshrs
+    // printed `shopt -uo errexit`, which is not a spelling bash emits at all.
+    let print_line = |on: bool, name: &str| {
+        println!("set {}o {}", if on { '-' } else { '+' }, name);
+    };
+    // The two `-o` shapes pad DIFFERENTLY in bash, so they cannot share one
+    // width. The no-name listing goes through bash's `set -o` lister and
+    // pads to 15 (`allexport      \toff`); a NAMED query goes through
+    // shopt's own printer and pads to 20 (`errexit             \toff`).
+    // Names longer than the width print unpadded, exactly as `{:<w$}` does.
+    const O_LIST_WIDTH: usize = 15;
+    const O_NAMED_WIDTH: usize = 20;
     if opts.is_empty() {
-        if set.is_none() {
-            for (name, _) in BASH_SET_O {
-                let on = bash_set_o_get(name);
-                if print_p {
-                    println!("shopt -{}o {}", if on { 's' } else { 'u' }, name);
-                } else {
-                    println!("{:<20}\t{}", name, if on { "on" } else { "off" });
-                }
+        // Same `-s`/`-u` filter and `-q` silence as the shopt table above.
+        for (name, _) in BASH_SET_O {
+            let on = bash_set_o_get(name);
+            if set.is_some_and(|want| want != on) || quiet {
+                continue;
+            }
+            if print_p {
+                print_line(on, name);
+            } else {
+                println!(
+                    "{:<w$}\t{}",
+                    name,
+                    if on { "on" } else { "off" },
+                    w = O_LIST_WIDTH
+                );
             }
         }
         return 0;
@@ -9125,9 +9185,14 @@ fn shopt_o(set: Option<bool>, print_p: bool, quiet: bool, opts: &[String]) -> i3
         }
         if !quiet {
             if print_p {
-                println!("shopt -{}o {}", if on { 's' } else { 'u' }, opt);
+                print_line(on, opt);
             } else {
-                println!("{:<20}\t{}", opt, if on { "on" } else { "off" });
+                println!(
+                    "{:<w$}\t{}",
+                    opt,
+                    if on { "on" } else { "off" },
+                    w = O_NAMED_WIDTH
+                );
             }
         }
     }

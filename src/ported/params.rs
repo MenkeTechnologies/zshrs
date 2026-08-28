@@ -15037,6 +15037,19 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // list of the `set -o` options currently enabled. Built from the
             // same table `set -o` lists and `set -o NAME` writes.
             "SHELLOPTS" => return Some(crate::dash_mode::bash_shellopts()),
+            // bash(1) "Shell Variables": BASHOPTS is "a colon-separated list
+            // of enabled shell options. Each word in the list is a valid
+            // argument for the -s option to the shopt builtin." Twin of
+            // SHELLOPTS one line up, over the OTHER option namespace — built
+            // from the same table `shopt` lists and `shopt -s|-u` writes, so
+            // the parameter and the builtin can never disagree.
+            //
+            // Missing until now: `shopt -s dotglob` recorded the flag and
+            // `shopt -p dotglob` reported it, but `$BASHOPTS` expanded empty,
+            // so every `case ":$BASHOPTS:" in *:NAME:*)` probe — the shape
+            // scripts use to test for an option — answered "not set" for all
+            // 59 names.
+            "BASHOPTS" => return Some(crate::dash_mode::bash_shoptsopts()),
             // bash BASH_SUBSHELL ≈ zsh ZSH_SUBSHELL — the subshell nesting
             // depth, 0 in the top-level shell. bash(1): "Incremented by one
             // within each subshell or subshell environment when the shell
