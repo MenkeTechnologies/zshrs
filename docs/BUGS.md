@@ -19,6 +19,56 @@ CI green pending the underlying fix.
 
 ---
 
+## #1105 — `functions NAME` re-parses the body at PRINT time, so its output changes with the live options — open
+
+**Status:** `port-bug`, found 2026-08-28 while fixing the `.zwc` re-lex legs
+(#1090's neighbours — see the `ZwcRelexGuard` commits). NOT the same root
+cause as those: it needs no `.zwc`, no autoload, and no dump.
+
+**Reproducer.** One function, printed twice; only the option changes between
+the two prints:
+
+```
+$ zsh   -f -c "myfn() { local v='a=''{b}'''; }; functions myfn; setopt rcquotes; functions myfn"
+myfn () {
+	local v='a=''{b}'''
+}
+myfn () {
+	local v='a=''{b}'''          # unchanged
+}
+
+$ zshrs --zsh -f -c "<same>"
+myfn () {
+	local v='a=''{b}'''          # correct
+}
+myfn () {
+	local v='a='{b}''            # WRONG — same function, only the option changed
+}
+```
+
+**Cause.** C stores the function as wordcode at definition time and prints it
+with `getpermtext(fd, NULL, 1)` (c:Src/hashtable.c:954) — the quote resolution
+was settled by the lexer when the function was DEFINED and printing cannot
+revisit it. zshrs's `printshfuncnode` (`src/ported/hashtable.rs:2371-2377`) has
+no `Eprog` for a shell-defined function, so its stand-in re-parses `hn.body`
+at print time (`parse_string(source.trim(), 1)` then `getpermtext`) against
+whatever options are live *then*. Under RCQUOTES an adjacent quote pair
+re-lexes as one literal quote (c:Src/lex.c:1328) and the deparse comes back
+different.
+
+**Why the fix is not "pin the parse to defaults".** That is wrong in the other
+direction: a function DEFINED while RCQUOTES is set must print the RCQUOTES
+resolution, and pinning would misprint it. The honest fix records the
+definition-time lexer state (or the compiled program) alongside `shfunc.body`
+and prints from that, which touches `hashtable.rs` and the funcdef-capture
+path.
+
+**Scope.** Any lexer-time state that survives into a deparse: RCQUOTES is the
+demonstrated one; `checkalias` (c:Src/lex.c:1909) is the other candidate, since
+an alias installed after the definition is live at print time.
+
+---
+
 ## #1095 — `chflags` offered six root-only flags to an ordinary user — fixed
 
 **Status:** `fixed` 2026-08-24. Two independent engine bugs met on one line of

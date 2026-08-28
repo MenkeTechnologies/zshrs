@@ -426,3 +426,150 @@ fn autoload_zwc_open_paren_case_arms() {
         assert_eq!(z.exit, r.exit);
     }
 }
+
+/// A `.zwc`-loaded function body must NOT be re-resolved against the
+/// lexer state that happens to be live when the function is loaded.
+///
+/// C never re-lexes it: `loadautofn` installs the dump's own wordcode
+/// (`shf->funcdef = stripkshdef(prog, …)`, c:Src/exec.c:5753-5755) and the
+/// ksh-style arm runs it with `execode(prog, 1, 0, "evalautofunc")`
+/// (c:5795). A `.zwc` is quote- and alias-resolved exactly once, at
+/// `zcompile` time.
+///
+/// zshrs has no execute-the-wordcode path — it deparses with `getpermtext`
+/// and lexes the text again — so both pieces of lexer-time state C bypassed
+/// leaked into the body:
+///
+///   * RCQUOTES. `untokenize` renders every quote null through
+///     `ztokens[Snull - Pound]`, a bare `'` (c:Src/lex.c:38), so a
+///     close-then-open null pair deparses to `''`; under RCQUOTES the lexer
+///     reads that as one LITERAL quote (c:Src/lex.c:1328). `local
+///     v='a=''{b}'''` compiled to the value `a={b}` came back as `a='{b}'`.
+///   * Aliases. `checkalias` fires from the lexer (c:Src/lex.c:1909), so an
+///     alias live at CALL time rewrote words inside the compiled program —
+///     including global aliases, which rewrite any word.
+///
+/// The controls in the second half are the point: a body read from a PLAIN
+/// file is lexed for real in both shells, so it must stay fully sensitive to
+/// both.
+#[test]
+fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let fns = d.path().join("fns");
+    std::fs::create_dir(&fns).unwrap();
+    // Compiled with RCQUOTES unset, so `''` is a quote-null pair and the
+    // value is `a={b}` with no literal quotes in it at all.
+    std::fs::write(
+        fns.join("qfn"),
+        "local v='a=''{b}'''\nprint -r -- \"Q:[$v]\"\nprint -r -- GA: ga\n",
+    )
+    .unwrap();
+    let z = run_zsh_in(&fns, "zcompile qfn");
+    assert_eq!(z.exit, 0, "zsh zcompile sanity: {}", z.stdout);
+
+    // `-Uz` (aliases already suppressed by PM_UNALIASED) and `-z` (they are
+    // not) must both come out of the dump unmodified.
+    for flags in ["-Uz", "-z"] {
+        let script = format!(
+            "fpath=({}); setopt rcquotes; alias -g ga=LEAKED; \
+             alias print='print -r -- REALIAS'; autoload {} qfn; qfn",
+            fns.display(),
+            flags
+        );
+        let z = run_zsh_in(d.path(), &script);
+        let r = run_zshrs_in(d.path(), &script);
+        assert_eq!(
+            z.stdout, "Q:[a={b}]\nGA: ga\n",
+            "zsh sanity (autoload {flags} from .zwc): {:?}",
+            z.stdout
+        );
+        assert_eq!(
+            r.stdout, z.stdout,
+            "zshrs re-lexed the .zwc deparse (autoload {flags})"
+        );
+        assert_eq!(z.exit, r.exit);
+    }
+
+    // Same function, same bytes, no dump: now the lexer really does run over
+    // the file, so RCQUOTES collapses the quote pairs and a non-`-U` autoload
+    // expands the aliases. Both shells must show it.
+    let plain = d.path().join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    std::fs::copy(fns.join("qfn"), plain.join("qfn")).unwrap();
+    let script = format!(
+        "fpath=({}); setopt rcquotes; alias -g ga=LEAKED; \
+         alias print='print -r -- REALIAS'; autoload -z qfn; qfn",
+        plain.display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(
+        z.stdout, "REALIAS -r -- Q:[a='{b}']\nREALIAS -r -- GA: LEAKED\n",
+        "zsh sanity (plain file, no dump): {:?}",
+        z.stdout
+    );
+    assert_eq!(
+        r.stdout, z.stdout,
+        "zshrs stopped lexing a PLAIN autoload body against the live state"
+    );
+    assert_eq!(z.exit, r.exit);
+}
+
+/// The same pin for the two remaining ways a dump reaches an autoload: a
+/// directory digest `<dir>.zwc` (c:Src/parse.c:3766 `dig = dyncat(path,
+/// FD_EXT)`) and a ksh-style load, whose body runs at top level via
+/// `execode(prog, 1, 0, "evalautofunc")` (c:Src/exec.c:5795) instead of
+/// being wrapped.
+#[test]
+fn autoload_zwc_digest_and_ksh_body_ignore_rcquotes() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let fns = d.path().join("fns");
+    std::fs::create_dir(&fns).unwrap();
+    std::fs::write(
+        fns.join("dfn"),
+        "local v='a=''{b}'''\nprint -r -- \"D:[$v]\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        fns.join("kfn"),
+        "kfn() { local v='a=''{b}'''; print -r -- \"K:[$v]\"; }\n",
+    )
+    .unwrap();
+    let z = run_zsh_in(d.path(), "zcompile fns.zwc fns/dfn fns/kfn");
+    assert_eq!(z.exit, 0, "zsh digest zcompile sanity: {}", z.stdout);
+    std::fs::remove_file(fns.join("dfn")).unwrap();
+    std::fs::remove_file(fns.join("kfn")).unwrap();
+
+    let script = format!(
+        "fpath=({}); setopt rcquotes; autoload -Uz dfn; dfn",
+        fns.display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout, "D:[a={b}]\n", "zsh digest sanity: {:?}", z.stdout);
+    assert_eq!(r.stdout, z.stdout, "zshrs re-lexed a digest-loaded body");
+    assert_eq!(z.exit, r.exit);
+
+    let script = format!(
+        "fpath=({}); setopt rcquotes ksh_autoload; autoload -U kfn; kfn",
+        fns.display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(
+        z.stdout, "K:[a={b}]\n",
+        "zsh ksh_autoload sanity: {:?}",
+        z.stdout
+    );
+    assert_eq!(
+        r.stdout, z.stdout,
+        "zshrs re-lexed a ksh-style .zwc body (c:5795 execode evalautofunc)"
+    );
+    assert_eq!(z.exit, r.exit);
+}
