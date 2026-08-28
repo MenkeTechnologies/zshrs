@@ -778,22 +778,23 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 //
                 // The provenance is therefore settled UPSTREAM instead: a
                 // pattern built from a VALUE spells a data backslash `\\`
-                // (this arm's literal-backslash form) before it gets here.
-                // `escape_data_backslashes` in `ported::subst`'s paramsubst
-                // does that for the search-subscript patterns
-                // (`${a[(I)…]}` / `(i)` / `(r)` / `(R)` / `(K)`), which is
-                // the whole set that reaches `patcompile` through
-                // `zshtokenize` alone (c:Src/params.c:1727).
-                //
-                // STILL OPEN (#1090, globsubst leg): `${~spec}` in a `[[ ]]`
-                // RHS or `case` arm. That value is emitted as a bare variable
-                // read and tokenized by the cond/case matcher, so nothing in
-                // `ported::subst` sees it and the escape would have to happen
-                // at that matcher. Doing it inside paramsubst instead is
-                // wrong: the doubled backslash then leaks into NON-pattern
-                // uses of `${~arr[i]}`, which nothing untokenizes back.
-                // Pinned by the `#[ignore]`d globsubst cases in
-                // `tests/parity/cond_parity.rs`.
+                // (this arm's literal-backslash form) before it gets here,
+                // via `crate::pattern_data_escape::escape_data_backslashes`.
+                // Two families of caller do that:
+                //   * `ported::subst`'s paramsubst, for the search-subscript
+                //     patterns (`${a[(I)…]}` / `(i)` / `(r)` / `(R)` / `(K)`)
+                //     — the whole set that reaches `patcompile` through
+                //     `zshtokenize` alone (c:Src/params.c:1727).
+                //   * the cond/case pattern builder
+                //     (`extensions::compile_zsh::emit_glob_subst_pattern`),
+                //     for a `${~spec}` / `$~spec` segment and for
+                //     `setopt globsubst` — the `strcatsub` `shtokenize` C
+                //     runs at c:Src/subst.c:822/830. The escape is emitted
+                //     ONLY on that pattern path, so a NON-pattern use of
+                //     `${~arr[i]}` (which nothing untokenizes back) still
+                //     prints its single backslash.
+                // Covered by `tests/parity/cond_parity.rs`'s
+                // `backslash_provenance_in_patterns`.
                 opush!('\\');
                 if i + 1 < chars.len() {
                     opush!(chars[i + 1]);

@@ -897,34 +897,16 @@ mod backslash_provenance_in_patterns {
     }
 
     #[test]
-    #[ignore = "BUGS.md #1090 (globsubst leg) — the subscript legs are fixed; `${~spec}` is not. The value reaches the matcher as a bare variable read, so \
-the port of C's `strcatsub` shtokenize (c:Src/subst.c:822/4464) never runs on it \
-and a data backslash is spelled the same way a source-level quote is. Escaping it \
-inside paramsubst instead doubles the backslash in NON-pattern uses of `${~arr[i]}` \
-(nothing untokenizes it back), so the escape has to happen where the pattern is \
-compiled — in the cond/case matcher, not in the value."]
     fn globsubst_cond_data_backslash_does_not_match_plain_space() {
         assert_fix(r#"[[ 'a b' == ${~p} ]] && print T1match || print T1no"#);
     }
 
     #[test]
-    #[ignore = "BUGS.md #1090 (globsubst leg) — the subscript legs are fixed; `${~spec}` is not. The value reaches the matcher as a bare variable read, so \
-the port of C's `strcatsub` shtokenize (c:Src/subst.c:822/4464) never runs on it \
-and a data backslash is spelled the same way a source-level quote is. Escaping it \
-inside paramsubst instead doubles the backslash in NON-pattern uses of `${~arr[i]}` \
-(nothing untokenizes it back), so the escape has to happen where the pattern is \
-compiled — in the cond/case matcher, not in the value."]
     fn globsubst_cond_data_backslash_matches_literal_backslash() {
         assert_fix(r#"[[ 'a\ b' == ${~p} ]] && print T2match || print T2no"#);
     }
 
     #[test]
-    #[ignore = "BUGS.md #1090 (globsubst leg) — the subscript legs are fixed; `${~spec}` is not. The value reaches the matcher as a bare variable read, so \
-the port of C's `strcatsub` shtokenize (c:Src/subst.c:822/4464) never runs on it \
-and a data backslash is spelled the same way a source-level quote is. Escaping it \
-inside paramsubst instead doubles the backslash in NON-pattern uses of `${~arr[i]}` \
-(nothing untokenizes it back), so the escape has to happen where the pattern is \
-compiled — in the cond/case matcher, not in the value."]
     fn globsubst_case_data_backslash() {
         assert_fix(
             r#"case 'a b'  in ${~p}) print C1match;; *) print C1no;; esac

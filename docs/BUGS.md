@@ -561,10 +561,28 @@ Patching the two known laundering sites was not enough.
 **Fix.** Settle the provenance UPSTREAM instead of at the matcher. A pattern
 built from a VALUE now spells a data backslash as `\\` — the normalizer's
 literal-backslash form — before it reaches the compiler, via
-`escape_data_backslashes` in `ported::subst`'s `paramsubst`, applied to
-search-subscript patterns and to the `${~spec}` value at the `strcatsub` site
-(c:Src/subst.c:822/4464). Source paths are untouched, so the raw form keeps
-meaning "quote" at the normalizer and both provenances are correct at once.
+`pattern_data_escape::escape_data_backslashes` (a Rust-only encoding adapter;
+it has no C counterpart, because C's `patcompile` input always came out of the
+lexer and a raw backslash there can only be data). Source paths are untouched,
+so the raw form keeps meaning "quote" at the normalizer and both provenances
+are correct at once. Two legs call it:
+
+* **subscript leg** (2026-08-24) — `ported::subst`'s `paramsubst`, for the
+  search-subscript patterns `${a[(I)…]}` / `(i)` / `(r)` / `(R)` / `(K)`,
+  the set that reaches `patcompile` through `zshtokenize` alone
+  (c:Src/params.c:1727).
+* **globsubst leg** (2026-08-28) — the cond/case pattern builder,
+  `extensions::compile_zsh::emit_glob_subst_pattern`. That is where C runs
+  `strcatsub`'s `if (glbsub) shtokenize(dest)` (c:Src/subst.c:822/830) on a
+  `${~spec}` / `$~spec` value or, with `setopt globsubst`, on any substituted
+  segment. The value had been reaching `patcompile` as raw bytes: `${~spec}`
+  forces the metas active so `BUILTIN_GLOB_SUBST_GUARD` was deliberately NOT
+  emitted, and the guard's `GLOB_SUBST` on branch returned the string
+  unchanged. New `BUILTIN_PAT_DATA_BACKSLASH` (668) covers the flag form and
+  the guard's on branch now escapes too. It is emitted ONLY on the pattern
+  path, so a NON-pattern `${~arr[i]}` (`print -r -- ${~p}`) still prints its
+  single backslash — that leak is what ruled out doing this inside
+  `paramsubst`.
 
 **Verified.** All nine shapes byte-identical to zsh — the four data cases, the
 two source cases (`[[ "man ls" = man\ * ]]`, `case … in man\ *)`), and
@@ -572,8 +590,7 @@ two source cases (`[[ "man ls" = man\ * ]]`, `case … in man\ *)`), and
 regressed corpus tests plus `omz_snippet_corpus_parity::omzp_man::glob_equality_guard`
 all pass. `tests/parity/cond_parity.rs::backslash_provenance_in_patterns` — 12
 tests covering both provenances, escapes before real metacharacters, and a
-trailing lone backslash — is fully live; its 8 data-provenance cases were
-`#[ignore]`d against this entry and the attributes are now removed.
+trailing lone backslash — is fully live with no `#[ignore]` left on it.
 
 ---
 

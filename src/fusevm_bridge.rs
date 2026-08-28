@@ -5468,17 +5468,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // c:Src/subst.c:822/830 `if (glbsub) shtokenize(dest)` for the
+    // `${~spec}` / `$~spec` FLAG, where the compiler emits no
+    // GLOB_SUBST guard because the metas are meant to be active. Only
+    // the value's backslashes still need settling — c:Src/glob.c:3651
+    // leaves the ones before a non-`ztokens` char as data.
+    // See BUILTIN_PAT_DATA_BACKSLASH docs below for full rationale.
+    vm.register_builtin(BUILTIN_PAT_DATA_BACKSLASH, |vm, _argc| {
+        let p = vm.pop().to_str();
+        Value::str(crate::pattern_data_escape::escape_data_backslashes(&p))
+    });
+
     // c:Src/options.c GLOB_SUBST + Src/cond.c:552 cond_match.
     // Pop pattern string; when GLOB_SUBST is OFF, escape every glob
     // metachar with `\` so the downstream StrMatch + patcompile
     // treat them as literals (matching C's tokenization-based
-    // gate). When GLOB_SUBST is ON, pass through unchanged.
-    // See BUILTIN_GLOB_SUBST_GUARD docs above for full rationale.
+    // gate). When GLOB_SUBST is ON, only the data-backslash respelling
+    // runs and the metas stay active.
+    // See BUILTIN_GLOB_SUBST_GUARD docs below for full rationale.
     vm.register_builtin(BUILTIN_GLOB_SUBST_GUARD, |vm, _argc| {
         let p = vm.pop().to_str();
         let glob_subst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         if glob_subst {
-            return Value::str(p);
+            // c:Src/subst.c:822/830 `if (glbsub) shtokenize(dest)` — the
+            // value's metas go ACTIVE, but c:Src/glob.c:3651 still leaves a
+            // backslash before a non-`ztokens` char as ordinary data. Respell
+            // those in the normalizer's literal-backslash form; the ones
+            // `zshtokenize` WOULD fold into a quote are left alone.
+            // docs/BUGS.md #1090.
+            return Value::str(crate::pattern_data_escape::escape_data_backslashes(&p));
         }
         let mut out = String::with_capacity(p.len() * 2);
         for c in p.chars() {
@@ -14041,6 +14059,26 @@ pub const BUILTIN_REDIR_NO_CMD: u16 = 616;
 /// Stack: pops one string, pushes the (possibly escaped) result.
 /// argc = 1.
 pub const BUILTIN_GLOB_SUBST_GUARD: u16 = 528;
+
+/// `${~spec}` / `$~spec` pattern-data guard — the `strcatsub`
+/// `if (glbsub) shtokenize(dest)` step (c:Src/subst.c:822/830) applied
+/// to a value that is about to become a `[[ … == pat ]]` RHS or a
+/// `case` arm pattern.
+///
+/// `BUILTIN_GLOB_SUBST_GUARD` covers the option-driven leg (GLOB_SUBST
+/// off → escape the value's metas). It cannot cover the FLAG leg,
+/// because `${~spec}` forces the substitution's metachars ACTIVE and
+/// the compiler therefore emits no guard at all — the value reached
+/// `patcompile` as raw bytes, which made a DATA backslash
+/// indistinguishable from a SOURCE-level quote. c:Src/glob.c:3651
+/// leaves a backslash before a non-`ztokens` char in the string as
+/// ordinary data (`p='a\ b'; [[ 'a b' == ${~p} ]]` must NOT match,
+/// `[[ 'a\ b' == ${~p} ]]` must), so the value has to be respelled in
+/// the normalizer's literal-backslash form before it is compiled.
+/// docs/BUGS.md #1090, globsubst leg.
+///
+/// Stack: pops one string, pushes the respelled result. argc = 1.
+pub const BUILTIN_PAT_DATA_BACKSLASH: u16 = 668;
 
 /// Coerce a string parameter value to a math number (Int or Float)
 /// for arithmetic-context reads, mirroring C-zsh's `getmathparam`
