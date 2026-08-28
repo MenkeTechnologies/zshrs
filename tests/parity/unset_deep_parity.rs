@@ -197,8 +197,12 @@ mod special_params {
     }
 
     /// Unsetting RANDOM removes the magic.
+    /// Not seed-dependent, despite what the `#[ignore]` here used to claim:
+    /// `RANDOM=foo` arithmetic-evaluates to 0, so both shells `srand(0)` and
+    /// the first draw is fixed. Measured 2026-08-28 — 20034 from both shells
+    /// on 5 consecutive runs each, and the test passed 5/5 under `--ignored`.
+    /// The ignore was hiding a passing test, so it guarded nothing.
     #[test]
-    #[ignore = "RANDOM PRNG seed differs between shells — test verifies seed-control diverges"]
     fn unset_random_then_set_literal() {
         assert_parity(r#"unset RANDOM; RANDOM=foo; echo "$RANDOM""#);
     }

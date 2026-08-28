@@ -2368,7 +2368,20 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             // narrower than the AST parser that executes these bodies, so
             // fall back to canonicalize_body when it can't take the source
             // rather than losing the listing entirely.
+            //
+            // That re-parse is a SECOND lex of text C never lexes twice, so
+            // every lexer-time option the deparse depends on has to be put
+            // back the way it was when the function was defined, or the same
+            // function prints two different ways across a `setopt`. RCQUOTES
+            // is the one that does it: an adjacent quote pair inside a quoted
+            // word lexes as one literal quote (c:Src/lex.c:1328) rather than
+            // as two delimiters, so `f() { local v='it''s' }` came back as
+            // `local v='it's'` once RCQUOTES was set — docs/BUGS.md #1105.
+            // `funcdef_lex_pin` restores the value recorded when the
+            // definition installed, and pins nothing when this body has no
+            // record.
             let deparse_body = |source: &str| -> String {
+                let _pin = crate::vm_helper::funcdef_lex_pin(&hn.node.nam, source);
                 match crate::ported::exec::parse_string(source.trim(), 1) {
                     Some(p) => crate::ported::text::getpermtext(Box::new(p), None, 1), // c:954
                     None => canonicalize_body(source),

@@ -497,3 +497,153 @@ mod function_keyword_short_body {
         assert_parity("foo() print bar; foo");
     }
 }
+
+/// `functions NAME` must print the resolution the LEXER settled when the
+/// function was defined, not the one the live options would settle now.
+///
+/// C stores the definition as wordcode (`Src/exec.c:5389` —
+/// `shf->funcdef = dupeprog(…)`) and prints it back with
+/// `getpermtext(f->funcdef, NULL, 1)` (`Src/hashtable.c:954`), so the
+/// listing is fixed at definition time. zshrs keeps the raw source and
+/// re-lexes it to print, and RCQUOTES changes that lex: inside a quoted
+/// word an adjacent quote pair is ONE literal quote (`Src/lex.c:1328`)
+/// instead of two delimiters. `local v='it''s'` therefore deparses as
+/// `'it''s'` with the option off and `'it's'` with it on, and before
+/// docs/BUGS.md #1105 was fixed a single unchanged function printed both
+/// ways across a `setopt rcquotes`.
+///
+/// Every case runs from a script FILE, not `-c`: both shells parse a `-c`
+/// argument in full before running any of it, so a `setopt rcquotes` in a
+/// `-c` string is never in force for a definition later in that same
+/// string and the "defined with RCQUOTES" half of the table cannot be
+/// reached there.
+mod rcquotes_deparse {
+    use super::*;
+    use std::io::Write;
+
+    /// `local v='it''s'` — the body whose deparse the option changes.
+    const BODY: &str = r"f() { local v='it''s' }";
+
+    fn run_file(script: &str, runner: impl Fn(&std::path::Path) -> String) -> String {
+        let dir = std::env::temp_dir().join(format!(
+            "zshrs-rcq-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("case.zsh");
+        let mut f = std::fs::File::create(&path).expect("script");
+        f.write_all(script.as_bytes()).expect("write");
+        drop(f);
+        let out = runner(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    }
+
+    fn zsh_file(script: &str) -> String {
+        run_file(script, |p| {
+            let o = Command::new(zsh_path()).arg("-f").arg(p).output().expect("zsh");
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        })
+    }
+
+    fn zshrs_file(script: &str) -> String {
+        run_file(script, |p| {
+            let o = Command::new(zshrs_bin())
+                .args(["--zsh", "-f"])
+                .arg(p)
+                .env_remove("ZSHRS_CACHE")
+                .output()
+                .expect("zshrs");
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        })
+    }
+
+    fn assert_file_parity(case: &str, script: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = zsh_file(script);
+        let r = zshrs_file(script);
+        assert_eq!(
+            z, r,
+            "[{case}] deparse divergence on:\n{script}\n--- zsh ---\n{z:?}\n--- zshrs ---\n{r:?}"
+        );
+        // A test that passed because BOTH shells printed nothing would pin
+        // nothing at all.
+        assert!(
+            z.contains("local "),
+            "[{case}] zsh printed no function body: {z:?}"
+        );
+    }
+
+    /// Defined with RCQUOTES unset, printed with it unset — `'it''s'`.
+    #[test]
+    fn defined_off_printed_off() {
+        assert_file_parity("off/off", &format!("{BODY}\nfunctions f\n"));
+    }
+
+    /// Defined with RCQUOTES unset, printed with it SET. The option was not
+    /// in force for the definition, so setting it afterwards must not
+    /// rewrite the listing.
+    #[test]
+    fn defined_off_printed_on() {
+        assert_file_parity(
+            "off/on",
+            &format!("{BODY}\nsetopt rcquotes\nfunctions f\n"),
+        );
+    }
+
+    /// Defined with RCQUOTES set, printed with it set — `'it's'`, the
+    /// RCQUOTES resolution. Pinning the print-time lex to defaults would
+    /// fail exactly here.
+    #[test]
+    fn defined_on_printed_on() {
+        assert_file_parity(
+            "on/on",
+            &format!("setopt rcquotes\n{BODY}\nfunctions f\n"),
+        );
+    }
+
+    /// Defined with RCQUOTES set, printed with it unset — still the
+    /// RCQUOTES resolution.
+    #[test]
+    fn defined_on_printed_off() {
+        assert_file_parity(
+            "on/off",
+            &format!("setopt rcquotes\n{BODY}\nunsetopt rcquotes\nfunctions f\n"),
+        );
+    }
+
+    /// Calling the function between definition and listing must not
+    /// re-stamp it: zshrs re-registers a function when its chunk is
+    /// (re)compiled at call time, and that pass runs under the CALLER's
+    /// options.
+    #[test]
+    fn call_between_define_and_print_does_not_restamp() {
+        assert_file_parity(
+            "call-then-print",
+            "f() { local v='it''s'; print -r -- ran }\nf\nsetopt rcquotes\nf\nfunctions f\n",
+        );
+    }
+
+    /// A redefinition is a NEW definition and takes the option state in
+    /// force at ITS definition, not the first one's.
+    #[test]
+    fn redefinition_takes_the_new_definition_state() {
+        assert_file_parity(
+            "redefine-under-rcquotes",
+            "f() { local v='it''s' }\nsetopt rcquotes\nf() { local w='x''y' }\nunsetopt rcquotes\nfunctions f\n",
+        );
+    }
+
+    /// `whence -f` prints through the same `printshfuncnode`
+    /// (`Src/hashtable.c:914`), so it carries the same pin.
+    #[test]
+    fn whence_f_prints_the_definition_time_spelling() {
+        assert_file_parity(
+            "whence-f",
+            &format!("setopt rcquotes\n{BODY}\nunsetopt rcquotes\nwhence -f f\n"),
+        );
+    }
+}

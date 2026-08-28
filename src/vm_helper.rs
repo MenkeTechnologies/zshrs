@@ -6564,6 +6564,114 @@ impl Drop for ZwcRelexGuard {
 
 /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
 ///
+/// The RCQUOTES state each shell-defined function's body was resolved
+/// under at DEFINITION time, keyed by name and digested body text.
+///
+/// C has no such fact to carry. `execfuncdef` compiles the body into
+/// wordcode when the definition runs (c:Src/exec.c:5389-5391 —
+/// `shf->funcdef = dupeprog(...)`), and `printshfuncnode` renders THAT
+/// program back with `getpermtext(f->funcdef, NULL, 1)`
+/// (c:Src/hashtable.c:954). Every lexer-time decision is already settled
+/// in the wordcode, so printing cannot revisit it — `functions f` gives
+/// the same text no matter which options are set when it runs.
+///
+/// zshrs has no `Eprog` for a shell-defined function: `shfunc::body` keeps
+/// the raw source and `printshfuncnode`'s stand-in RE-LEXES it at print
+/// time. Under RCQUOTES an adjacent quote pair inside a quoted word lexes
+/// as one LITERAL quote (c:Src/lex.c:1328) instead of as two delimiters,
+/// so one unchanged function deparsed two different ways across a
+/// `setopt rcquotes` — docs/BUGS.md #1105. Pinning the print-time lex to
+/// defaults is wrong in the other direction: a function defined WHILE
+/// RCQUOTES was set has to keep printing the RCQUOTES resolution, which is
+/// why the state has to be recorded rather than assumed.
+///
+/// The state is sampled where the definition INSTALLS (the
+/// `BUILTIN_REGISTER_COMPILED_FN` handler), not where its body was lexed.
+/// In C those are the same instant, because zsh lexes one command list at
+/// a time as it runs it; zshrs compiles a whole script ahead of running
+/// it, so a runtime `setopt rcquotes` on an earlier line of the same file
+/// is already in force at install time but was NOT in force at the ahead
+/// -of-time lex. Install time is the one that matches zsh's printed
+/// output (`setopt rcquotes` on line 1, `f() { … }` on line 2 →
+/// C prints the RCQUOTES resolution), and it collapses onto lex time the
+/// day the compiler stops running ahead of execution.
+///
+/// The mark is a DIGEST of the body rather than a bare flag, exactly like
+/// [`AUTOLOAD_WORDCODE_BODY`]: `functions[name]=…`, an autoload, and a
+/// plain redefinition all install different text, and a stale entry
+/// simply stops matching instead of pinning the lexer for a body it never
+/// described.
+static FUNCDEF_LEX_RCQUOTES: Mutex<Option<HashMap<String, ([u8; 32], bool)>>> = Mutex::new(None);
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Record the RCQUOTES state `name`'s definition was installed under.
+/// See [`FUNCDEF_LEX_RCQUOTES`]; called from the funcdef install path
+/// (c:Src/exec.c:5389 `shf->funcdef = …`, where C bakes the same fact
+/// into the wordcode instead).
+pub(crate) fn funcdef_note_rcquotes(name: &str, body: &str, rcquotes: bool) {
+    FUNCDEF_LEX_RCQUOTES
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(
+            name.to_string(),
+            (crate::autoload_cache::source_digest(body), rcquotes),
+        );
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Pin RCQUOTES to the value `name`'s body was defined under, for the
+/// duration of one deparse of that body.
+///
+/// This is [`ZwcRelexGuard`]'s sibling: same problem (zshrs lexes text
+/// where C runs wordcode), same RAII shape, but the target value is the
+/// RECORDED one rather than "off" — the definition may itself have been
+/// made under RCQUOTES, and then the RCQUOTES resolution is the correct
+/// one to print. With no record for this exact body (a function installed
+/// through a path that does not record — `functions[f]=…`, the ported
+/// walker, an autoload stub) nothing is pinned and the live option stands,
+/// which is the behaviour that predates the record.
+///
+/// The option store is process-wide, so the pin is visible to a worker
+/// thread that lexes concurrently; the window is one synchronous deparse,
+/// as it is for [`ZwcRelexGuard`].
+pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
+    let want = {
+        let slot = FUNCDEF_LEX_RCQUOTES.lock();
+        slot.as_ref()
+            .and_then(|map| map.get(name))
+            .filter(|(sha, _)| *sha == crate::autoload_cache::source_digest(body))
+            .map(|(_, rcquotes)| *rcquotes)
+    };
+    let live = crate::ported::zsh_h::isset(crate::ported::zsh_h::RCQUOTES);
+    match want {
+        Some(w) if w != live => {
+            crate::ported::options::opt_state_set("rcquotes", w);
+            FuncdefLexPin { restore: Some(live) }
+        }
+        _ => FuncdefLexPin { restore: None },
+    }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// RAII half of [`funcdef_lex_pin`]. `restore` is `None` when nothing was
+/// changed, so the common path costs one hash lookup and no option write.
+pub(crate) struct FuncdefLexPin {
+    restore: Option<bool>,
+}
+
+impl Drop for FuncdefLexPin {
+    fn drop(&mut self) {
+        if let Some(live) = self.restore {
+            crate::ported::options::opt_state_set("rcquotes", live);
+        }
+    }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
 /// Names whose installed autoload body was rendered back from WORDCODE
 /// (`getpermtext` over a `.zwc` program) rather than read from a source file,
 /// each mapped to a digest of that body.
