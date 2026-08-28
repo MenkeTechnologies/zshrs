@@ -9071,34 +9071,59 @@ impl ZshCompiler {
         // Src/math.c). Every section is therefore routed through
         // BUILTIN_ARITH_EVAL (→ ported::subst::arithsubst → matheval).
         //
-        // This used to keep an ArithCompiler "fast path" for sections
-        // with neither `,` nor `$`, compiling them to VM slot ops with
-        // a BUILTIN_GET_MATH_VAR pre-load / BUILTIN_SET_VAR post-sync.
-        // That is a SECOND engine with a SECOND store, and the two
-        // desynchronised: `getmathparam` (src/ported/math.rs:222)
-        // consults the Rust-only `M_VARIABLES` shadow map BEFORE the
-        // parameter table, and `matheval` (src/ported/math.rs:4272)
-        // leaves that map populated after it returns — `new()` only
-        // clears it on the NEXT evaluation. So any preceding `(( … ))`
-        // that ASSIGNED the loop variable left a stale entry, the
-        // loop's pre-load read that entry instead of the parameter the
-        // loop itself had just written, and the counter froze:
+        // `compile_arith_str` compiles a section straight to VM slot
+        // ops instead, reading each name once through
+        // BUILTIN_GET_MATH_VAR (→ `getmathparam`, c:Src/math.c:337) and
+        // writing it back through BUILTIN_SET_VAR. That is the same
+        // read and the same write C's math evaluator performs — one
+        // store, the parameter table — PROVIDED nothing caches a value
+        // across the boundary. It did: the Rust port's counterpart of
+        // C's per-mathvalue `mptr->pval` cache (c:340-343) is the
+        // `M_VARIABLES` thread_local, and it used to outlive its
+        // evaluation, so a preceding `(( i = … ))` left a stale `i`
+        // that this path's pre-load then read in preference to the
+        // parameter the loop had just written:
         //
         //     i=0; (( i++ )); for ((i=1; i<=3; i++)); do echo $i; done
         //
-        // printed `1` forever. Same for a `(( i = … ))` in the loop's
-        // own BODY. Routing every section through the one evaluator
-        // removes the second store from the loop entirely, which is
-        // what c:Src/loop.c does.
+        // printed `1` forever. That is fixed at the root, in
+        // src/ported/math.rs: `matheval` now saves and restores the
+        // cache around its frame the way C restores `stack` (c:406
+        // `stack = nstack` / c:455 `stack = xstack`), so the cache's
+        // lifetime is one evaluation and `getmathparam` outside an
+        // evaluation can only reach the parameter table. With that in
+        // place the slot path reads and writes the SAME store the
+        // evaluator does, and is measurably faster, so it is used
+        // again.
+        //
+        // The gate below is NOT about the store. It is about what
+        // `ArithCompiler` can LEX AND PARSE:
+        //   * `,` — it compiles one operation per call and drops the
+        //     rest of a comma list, so `for ((i=0,j=10; …))` would
+        //     silently lose `j=10`.
+        //   * `$` — its lexer has no token for `$`, so
+        //     `for ((i=1; i<=$#a; i++))` never iterated.
+        // Either one in ANY section routes ALL THREE sections through
+        // BUILTIN_ARITH_EVAL, so a single loop never mixes the two
+        // compilations (the sections share `i` and are far easier to
+        // reason about when they are compiled alike).
         let untoked_init = crate::lex::untokenize(init);
         let untoked_cond = crate::lex::untokenize(cond);
         let untoked_step = crate::lex::untokenize(step);
+        let arith_compiler_cannot_lex = |s: &str| s.contains(',') || s.contains('$');
+        let needs_eval_global = arith_compiler_cannot_lex(&untoked_init)
+            || arith_compiler_cannot_lex(&untoked_cond)
+            || arith_compiler_cannot_lex(&untoked_step);
         let emit_arith = |this: &mut Self, s: &str| {
-            let untoked = crate::lex::untokenize(s);
-            let idx = this.builder.add_constant(Value::str(untoked.as_str()));
-            this.builder.emit(Op::LoadConst(idx), 0);
-            this.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
+            if needs_eval_global {
+                let untoked = crate::lex::untokenize(s);
+                let idx = this.builder.add_constant(Value::str(untoked.as_str()));
+                this.builder.emit(Op::LoadConst(idx), 0);
+                this.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
+            } else {
+                this.compile_arith_str(s);
+            }
         };
 
         // c:Src/loop.c::execfor — for arith form, init / cond / step
@@ -9151,18 +9176,16 @@ impl ZshCompiler {
         if !cond.is_empty() {
             // c:Src/loop.c:135 — `val = mathevali(str);`, then
             // c:Src/loop.c:143 `if (!val) break;`.
-            let untoked = crate::lex::untokenize(cond);
-            let idx = self.builder.add_constant(Value::str(untoked.as_str()));
-            self.builder.emit(Op::LoadConst(idx), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
-            // ARITH_EVAL hands back the printed value as Value::Str.
+            emit_arith(self, cond);
             // c:Src/math.c:1505-1509 `mathevali` COERCES the mnumber
             // to zlong (`(zlong)x.u.d` for a float) before c:143
             // tests it, so a fractional condition truncates toward
             // zero first: `for ((;0.5;))` does not iterate, and
             // `f=2.5; for ((;f;f-=1))` stops once f reaches 0.5.
-            // Testing the printed string against "0" instead (the old
+            // Applied to BOTH compilations — the slot path leaves a
+            // Float on the stack and BUILTIN_ARITH_EVAL leaves the
+            // printed value as a Str; `TruncFloat` coerces either.
+            // Testing the printed string against "0" instead (an older
             // spelling here) made every fractional value truthy and
             // turned that countdown into an infinite loop.
             self.builder.emit(Op::TruncFloat, 0);
@@ -11431,27 +11454,31 @@ impl ZshCompiler {
     /// ArithCompiler against this compiler's builder + slot table,
     /// then post-syncs slots back to vars.
     ///
-    /// NOT CURRENTLY WIRED. `compile_repeat` (c:Src/loop.c:516-517) and
-    /// `compile_for_arith` (c:Src/loop.c:77/135/191) both used to call
-    /// this and now both route through BUILTIN_ARITH_EVAL, because zsh
-    /// has ONE arithmetic evaluator and ONE store (the parameter table).
-    /// This path is a second engine over a second store (VM slots,
-    /// seeded by BUILTIN_GET_MATH_VAR and flushed by BUILTIN_SET_VAR),
-    /// and the two desynchronise: `getmathparam`
-    /// (src/ported/math.rs:222) reads the Rust-only `M_VARIABLES`
-    /// shadow map BEFORE the parameter table, while `matheval`
-    /// (src/ported/math.rs:4272) leaves that map populated after it
-    /// returns — it is only cleared by the NEXT evaluation's `new()`.
-    /// So a `(( i = … ))` anywhere before (or inside) a `for ((…))`
-    /// left a stale `i`, the pre-load here read it instead of the
-    /// parameter the loop had just written, and the counter froze.
+    /// The slots are a per-expression scratch space, not a store: the
+    /// pre-load reads through BUILTIN_GET_MATH_VAR (→ `getmathparam`,
+    /// c:Src/math.c:337, i.e. the parameter table) and the post-sync
+    /// writes back through BUILTIN_SET_VAR, so the values this path
+    /// reads and writes are the ones C's evaluator reads and writes.
     ///
-    /// DO NOT re-wire this without first making the shadow map's
-    /// lifetime match one evaluation (i.e. having `matheval` restore
-    /// `M_VARIABLES` the way `restore_state` already does for nested
-    /// evals, src/ported/math.rs:4790). It is measurably faster than
-    /// BUILTIN_ARITH_EVAL — ~20-40% on a tight `for ((i=0;i<200000;i++))`
-    /// — so it is worth reviving once the store is single.
+    /// That only holds while nothing caches a value ACROSS the
+    /// boundary. It did not hold once: the Rust counterpart of C's
+    /// per-mathvalue `mptr->pval` cache (c:340-343) is the
+    /// `M_VARIABLES` thread_local in src/ported/math.rs, and it used to
+    /// outlive its evaluation instead of dying with the frame the way
+    /// C's `stack` does (c:406 `stack = nstack` / c:455
+    /// `stack = xstack`). A preceding `(( i = … ))` therefore left a
+    /// stale `i` for the pre-load here to find, the loop's own
+    /// BUILTIN_SET_VAR went to the parameter table that
+    /// `getmathparam` never reached, and `for ((i=1; i<=3; i++))`
+    /// froze. `matheval` / `mathevali_noeval` now save and restore that
+    /// cache around their frame, so it cannot be read from outside an
+    /// evaluation at all. Callers: `compile_for_arith`
+    /// (c:Src/loop.c:77/135/191), for sections `ArithCompiler` can lex.
+    ///
+    /// If a THIRD store is ever introduced on either side of
+    /// BUILTIN_GET_MATH_VAR / BUILTIN_SET_VAR, this path becomes
+    /// unsound again — the correctness precondition is one store, not
+    /// one engine.
     fn compile_arith_str(&mut self, expr: &str) {
         // The lexer tokenizes operator chars (`<`, `>`, `=`, `&`, `|`,
         // `*`, `?`, etc.) into the META range. ArithCompiler can't parse
