@@ -19,11 +19,131 @@ CI green pending the underlying fix.
 
 ---
 
-## #1105 — `functions NAME` re-parses the body at PRINT time, so its output changes with the live options — open
+## #1106 — a function body stores SOURCE, so aliases live at definition time are not baked in — open
 
-**Status:** `port-bug`, found 2026-08-28 while fixing the `.zwc` re-lex legs
-(#1090's neighbours — see the `ZwcRelexGuard` commits). NOT the same root
-cause as those: it needs no `.zwc`, no autoload, and no dump.
+**Status:** `port-bug`, found 2026-08-28 while fixing [#1105](#1105). Same substrate, but this
+one breaks EXECUTION, not just the listing.
+
+**Reproducer** (script file, `zsh -f` vs `zshrs --zsh -f`):
+
+```
+alias e='print -r -- EXPANDED'
+f() { e hi }
+unalias e
+f
+```
+```
+zsh  :  EXPANDED hi
+zshrs:  f: command not found: e
+```
+
+**Cause.** C lexes a function body at DEFINITION and stores the resulting wordcode
+(`execfuncdef`, c:Src/exec.c:5389); `checkalias` (c:Src/lex.c:1909) fires from that lex, so the
+alias is resolved into the stored program and surviving the alias's removal is automatic. zshrs
+stores the body as raw SOURCE and lexes it when the function is called, so alias state is baked
+in nowhere — the definition-time table is gone and the call-time table is consulted instead.
+
+**Also visible in the listing.** An alias installed AFTER the definition corrupts what
+`functions f` prints, because the same re-lex feeds the deparse:
+
+```
+f() { echo hello world }
+alias echo='print -r --'; alias -g world=LEAKED
+functions f
+```
+zsh prints `echo hello world`; zshrs prints `print -r -- hello LEAKED`.
+
+**Why pinning the print with `noaliases` is the WRONG fix.** It would silence the listing while
+leaving execution broken, and would make the listing disagree with what the function actually
+runs — strictly worse than the current honest breakage. It would also break the opposite
+direction, where an alias live at definition time is supposed to be visible in the body.
+[#1105](#1105)'s `FuncdefLexPin` deliberately covers RCQUOTES only for this reason.
+
+**The real fix** is a stored, alias-resolved program for shell-defined functions
+(`shfunc.funcdef`), which is exactly the substrate whose absence `printshfuncnode`'s re-parse
+stand-in exists to work around. That also subsumes [#1105](#1105) and [#1107](#1107).
+
+---
+
+## #1107 — a script FILE is compiled whole, so lexer-time state set by one line never reaches the next — open
+
+**Status:** `port-bug`, found 2026-08-28. This is [#1087](#1087) at an entry point that was
+never fixed: `source`/`.` got the per-event loop, a top-level script file did not.
+
+**Reproducer.** `t.zsh`:
+```
+setopt rcquotes
+print -r -- 'it''s'
+```
+```
+$ zsh   -f t.zsh                     ->  it's
+$ zshrs --zsh -f t.zsh               ->  its          # WRONG
+
+$ zsh   -f -c 'source t.zsh'         ->  it's
+$ zshrs --zsh -f -c 'source t.zsh'   ->  it's         # correct — source already fixed
+```
+
+The `source` path is right and the direct-script path is wrong, which pins it precisely.
+
+**Cause.** C runs a script through `loop()`, which re-enters the lexer after every event, so a
+line that changes lexer-time state is in force when the NEXT line is lexed (c:Src/init.c:155-220).
+`ShellExecutor::execute_script_file` (src/vm_helper.rs) instead calls
+`execute_script_zsh_pipeline`, which compiles the whole file first — every line is lexed with
+the state the file STARTED with. `bin_dot` already routes to
+`fusevm_bridge::source_file_per_command` for exactly this reason ([#1087](#1087)).
+
+**Not just missing — actively cached wrong.** `execute_script_file` also snapshots the
+whole-file compile into the script bytecode cache, so a script that sets lexer state has its
+INCORRECT compile persisted and replayed on every later run.
+
+**Why this is not a trivial swap.** Per-command execution is incompatible with the whole-file
+bytecode cache, which is a deliberate perf feature (script-AOT). The options are (a) per-command
+always, dropping the cache for scripts, matching `source`; (b) a conservative detector that
+falls back to per-command when the file could touch lexer state — but a false NEGATIVE is a
+correctness bug, and `source other.zsh` on line 1 setting an option is exactly such a case, so
+the detector would have to be broad enough to cover most real scripts anyway. Needs a decision,
+not a quiet patch.
+
+**Scope.** Any lexer-time state: RCQUOTES (demonstrated), `alias`/`unalias`
+(`checkalias`, c:Src/lex.c:1909), `unsetopt aliases`, `emulate`, and a syntax error late in a
+file (C has already run the good lines).
+
+---
+
+## #1105 — `functions NAME` re-parses the body at PRINT time, so its output changes with the live options — FIXED
+
+**Status:** `fixed` 2026-08-28 (commit 5fa3e84ba8). Found while fixing the
+`.zwc` re-lex legs (#1090's neighbours — see the `ZwcRelexGuard` commits).
+NOT the same root cause as those: it needs no `.zwc`, no autoload, and no
+dump.
+
+**Fix.** The definition-time RCQUOTES state is recorded where the definition
+installs (`BUILTIN_REGISTER_COMPILED_FN`) and restored for the duration of one
+deparse — `FUNCDEF_LEX_RCQUOTES` / `funcdef_lex_pin` / `FuncdefLexPin` in
+`vm_helper`, digest-keyed and self-invalidating like `AUTOLOAD_WORDCODE_BODY`.
+Pinning the print to DEFAULTS would have been wrong in the other direction: a
+function defined WHILE RCQUOTES is set must print the RCQUOTES resolution.
+Recording at install time rather than lex time is deliberate — zshrs compiles a
+script ahead of running it, so the ahead-of-time lex never sees a runtime
+`setopt`, while install time does, and install time is what matches zsh.
+
+There were TWO print sites: `printshfuncnode` (`hashtable.rs`) and
+`${functions[f]}` (`modules/parameter.rs:1125`, c:Src/Modules/parameter.c:419).
+Fixing only the first made the two disagree with EACH OTHER for one function —
+`whence -f f` printing `'it's'` while `${functions[f]}` printed `'it''s'`.
+Both are pinned, and the latter's memo cache is now keyed by name+body rather
+than body alone, since the deparse is no longer a pure function of the text.
+
+Rejected: deparsing eagerly at definition time, which would also fix
+[#1106](#1106) and the execution leg of [#1107](#1107). Measured ~49us per
+deparse in the debug build, ~150ms added to a 3000-function startup — the wrong
+direction for this project.
+
+Still open in the same substrate: the ALIAS leg is [#1106](#1106), and the
+execution-time RCQUOTES leg is [#1107](#1107). This fix corrects the printed
+listing only; a function defined under a `setopt rcquotes` that the
+ahead-of-time compile never saw will print one resolution while running the
+other until [#1107](#1107) lands.
 
 **Reproducer.** One function, printed twice; only the option changes between
 the two prints:
