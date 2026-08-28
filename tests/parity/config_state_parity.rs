@@ -157,16 +157,25 @@ fn run_with_timeout(cmd: &str, args: &[&str], secs: u64) -> Option<String> {
         let _ = tx.send(s);
     });
     let id = child.id();
+    // The killer waits on `donerx` rather than sleeping outright: an
+    // unconditional `sleep(secs)` made the join below block for the whole
+    // timeout even when the child had already exited, so each of these
+    // tests cost its full 45/90/120s budget twice over on the happy path.
+    // Waiting on a channel keeps the kill deadline identical while letting
+    // a finished child release the thread immediately.
+    let (donetx, donerx) = mpsc::channel::<()>();
     let killer = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(secs));
-        // SIGKILL by pid if still alive; harmless if already gone.
-        unsafe {
-            libc::kill(id as libc::pid_t, libc::SIGKILL);
+        if donerx.recv_timeout(Duration::from_secs(secs)).is_err() {
+            // SIGKILL by pid if still alive; harmless if already gone.
+            unsafe {
+                libc::kill(id as libc::pid_t, libc::SIGKILL);
+            }
         }
     });
     let status = child.wait().ok();
     let stdout = rx.recv_timeout(Duration::from_secs(1)).ok();
     let _ = reader.join();
+    let _ = donetx.send(());
     let _ = killer.join();
     // If the process was killed by our timeout, treat as timeout.
     let killed = status
