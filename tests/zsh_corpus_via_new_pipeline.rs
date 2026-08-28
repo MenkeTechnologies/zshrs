@@ -615,7 +615,17 @@ fn np_cond_var_expand() {
 // Aliases
 #[test]
 fn np_alias_simple() {
-    ok("alias g='echo greeted'; g", "greeted\n");
+    // NOT `alias g=...; g` — an alias does not apply to a use in the SAME
+    // parse unit, because `checkalias` fires from the lexer
+    // (c:Src/lex.c:1909) and the whole `-c` argument is lexed before any of
+    // it runs. Real zsh agrees, so the old expectation was asserting
+    // behaviour zsh does not have:
+    //   $ zsh   -fc "alias g='echo greeted'; g"  -> zsh:1: command not found: g  (127)
+    //   $ zshrs --zsh -f -c "<same>"             -> identical
+    // A newline instead of `;` changes nothing (both say line 2, 127).
+    // `eval` re-lexes at RUNTIME, so it is the shape that actually
+    // exercises alias expansion; verified `greeted` from both shells.
+    ok("alias g='echo greeted'; eval g", "greeted\n");
 }
 
 // Compound assignment in for
