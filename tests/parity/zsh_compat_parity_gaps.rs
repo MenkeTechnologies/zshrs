@@ -2353,7 +2353,15 @@ mod corpus_dash_fc_bulk_u {
         bulk_u_fc_arith_binary_radix_2 => (r#"2\#"#, r##"print -r "$(( 2#101 ))""##);
         bulk_u_fc_getopts_minus_a => (r#"getopts a"#, r##"set -- -a; OPTIND=1; getopts "a" go_u; print -r "o=$go_u""##);
         bulk_u_fc_array_sort_on_numeric => (r#"(on)"#, r##"typeset -a nu_u=(3 1 2); print -r "${(on)nu_u}""##);
-        bulk_u_fc_cond_newer_than_devnull => (r#"-nt"#, r##"tf_u=$(mktemp); print -r x >$tf_u; [[ $tf_u -nt /dev/null ]]; print -r "nt=$?"; command rm -f $tf_u"##);
+        // The temp file is BACK-DATED before the comparison. Without the
+        // touch this case is a coin flip in BOTH shells: /dev/null's mtime is
+        // bumped by every write on the machine, so whether a just-created file
+        // is newer than it comes down to sub-second timing. Measured over 40
+        // runs of the original script: zsh 39x nt=0 / 1x nt=1, zshrs 37x nt=0
+        // / 3x nt=1 — the ORACLE flips, so the assertion could not be a parity
+        // signal. Back-dating pins the answer (nt=1, 25/25 in both shells)
+        // while keeping /dev/null as the operand this case exists to cover.
+        bulk_u_fc_cond_newer_than_devnull => (r#"-nt"#, r##"tf_u=$(mktemp); print -r x >$tf_u; touch -t 200001010000 $tf_u; [[ $tf_u -nt /dev/null ]]; print -r "nt=$?"; command rm -f $tf_u"##);
     }
 }
 
