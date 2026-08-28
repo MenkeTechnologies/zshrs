@@ -1128,3 +1128,31 @@ pub fn bash_function_body(name: &str, body_lines: &str) -> String {
     out.push_str("}\n");
     out
 }
+
+/// True when replacing the positional parameters (`set -- …`) must also
+/// rewind `getopts`, and when a write to `$OPTIND` must NOT.
+///
+/// dash and ash key `getopts` off `shellparam.optind` / `shellparam.optoff`,
+/// which `setparam()` resets and an `$OPTIND` assignment does not reach — the
+/// exact opposite of bash and the Korn shells:
+///
+/// ```text
+/// $ <shell> -c 'getopts "ab" o -a; set -- -b -a; getopts "ab" o;
+///               printf "%s %s\n" "$o" "$OPTIND"'
+/// dash/ash → b 2        bash/ksh/mksh → a 3        zsh → a 2
+/// ```
+///
+/// Only the `set --` half is acted on here; the `$OPTIND`-write half stays a
+/// pinned gap (see the ignored parity test) because zsh routes the parse
+/// index through the parameter itself.
+#[inline]
+pub fn getopts_reset_on_set_positional() -> bool {
+    posix_faithful() && dash_strict()
+}
+
+/// Rewind the `getopts` cursor recorded by [`getopts_optind_report`], so a
+/// later `$OPTIND` read is not translated against a stale pair.
+pub fn getopts_forget_reported() {
+    GETOPTS_REPORTED.store(-1, Ordering::Relaxed);
+    GETOPTS_INTERNAL.store(-1, Ordering::Relaxed);
+}
