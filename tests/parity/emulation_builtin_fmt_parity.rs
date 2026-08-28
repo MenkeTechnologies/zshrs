@@ -113,6 +113,32 @@ fn run(bin: &str, pre: &[&str], script: &str) -> Out {
 /// Run every `script` in both `zshrs <flag>` and the real shell for each
 /// installed target, asserting byte-identical stdout and exit status.
 /// Panics if not one reference shell of the matrix is installed.
+/// Drop `trap -- '' SIG` lines for a signal the SCRIPT never names.
+///
+/// Cargo's harness ignores SIGINT/SIGQUIT and the shell under test inherits
+/// that `SIG_IGN`. POSIX requires a shell to KEEP an inherited ignore — `trap
+/// - INT QUIT` cannot clear it — and bash lists such an entry while zshrs
+/// `--bash` does not. That divergence is real and pinned by
+/// `inherited_sig_ign_is_listed_by_bash`; here it is ambient noise that
+/// depends on how the test binary was launched, so it is removed from BOTH
+/// sides before comparing. Only the empty-body (`''`) form is dropped, and
+/// only for a signal the script does not mention — a script that sets `trap ''
+/// INT` still has its own entry compared.
+fn strip_inherited_ignores(out: &str, script: &str) -> String {
+    out.lines()
+        .filter(|line| {
+            let Some(rest) = line.strip_prefix("trap -- '' ") else {
+                return true;
+            };
+            let sig = rest.trim();
+            let bare = sig.strip_prefix("SIG").unwrap_or(sig);
+            // Keep it when the script asked for this signal by name or number.
+            !(!script.contains(bare) && !script.contains(sig))
+        })
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
 fn assert_matrix(scripts: &[&str]) {
     let zbin = zshrs_bin();
     let z = zbin.to_str().expect("zshrs path is UTF-8");
@@ -126,11 +152,15 @@ fn assert_matrix(scripts: &[&str]) {
         for script in scripts {
             let r = run(&refbin, &["-c"], script);
             let g = run(z, &[flag, "-f", "-c"], script);
+            let (r_out, g_out) = (
+                strip_inherited_ignores(&r.stdout, script),
+                strip_inherited_ignores(&g.stdout, script),
+            );
             assert_eq!(
-                r.stdout, g.stdout,
+                r_out, g_out,
                 "stdout divergence, {label} vs zshrs {flag}\n  script: {script}\n\
                  --- {label} ---\n{:?}\n--- zshrs ---\n{:?}",
-                r.stdout, g.stdout
+                r_out, g_out
             );
             assert_eq!(
                 r.exit, g.exit,
@@ -288,26 +318,79 @@ fn dash_ignores_optind_writes_is_a_known_gap() {
 /// out on purpose: zsh parses a trap body at install time and rejects those
 /// (`Src/builtin.c:7405-7409`), so they never reach the listing at all — a
 /// separate divergence from this family.
+///
+/// Compared through `strip_inherited_ignores`. Cargo's test harness ignores
+/// SIGINT/SIGQUIT; the shell under test inherits that `SIG_IGN`, POSIX forbids
+/// resetting an inherited ignore (so a `trap - INT QUIT` prefix is a no-op),
+/// and bash LISTS the inherited entry while zshrs does not. Without the filter
+/// these scripts measured THAT divergence instead of the formatting they exist
+/// to pin — passing standalone and failing under the harness. The inherited
+/// case is a real gap, pinned on its own by
+/// `inherited_sig_ign_is_listed_by_bash` (docs/BUGS.md #1109), not swept up
+/// here.
 const TRAP_SCRIPTS: &[&str] = &[
     "trap ':' HUP; trap",
     "trap ':' EXIT; trap",
-    "trap ':' 2; trap",
-    "trap ':' EXIT INT HUP USR1 TERM QUIT; trap",
-    "trap '' INT; trap",
-    "trap '' INT HUP TERM; trap",
+    "trap ':' 1; trap",
+    "trap ':' EXIT HUP USR1 TERM; trap",
+    "trap '' USR2; trap",
+    "trap '' USR2 HUP TERM; trap",
     "trap 'printf x' TERM USR1; trap",
-    "trap 'printf a; printf b' INT; trap",
+    "trap 'printf a; printf b' USR2; trap",
     "trap 'if true; then printf x; fi' HUP; trap",
-    r#"trap "printf 'a b'" INT; trap"#,
-    r#"trap "a'b'c" INT; trap"#,
+    r#"trap "printf 'a b'" USR2; trap"#,
+    r#"trap "a'b'c" USR2; trap"#,
     r"trap 'printf %s\n' TERM; trap",
-    r#"trap 'printf "a b"' INT; trap"#,
-    "trap ':' INT; trap - INT; trap",
+    r#"trap 'printf "a b"' USR2; trap"#,
+    "trap ':' USR2; trap - USR2; trap",
 ];
 
 #[test]
 fn trap_listing_matches_reference_shells() {
     assert_matrix(TRAP_SCRIPTS);
+}
+
+/// An inherited `SIG_IGN` disposition is LISTED by `trap` in bash but not by
+/// zshrs `--bash`. docs/BUGS.md #1109.
+///
+/// Not a test artefact: it is exactly what cargo's harness produces, since it
+/// ignores SIGINT/SIGQUIT and the shell under test inherits that. Reproduced
+/// by hand outside any harness:
+///
+/// ```text
+/// $ (trap '' INT QUIT; bash -c "trap ':' HUP; trap")
+/// trap -- ':' SIGHUP
+/// trap -- '' SIGINT
+/// trap -- '' SIGQUIT
+/// $ (trap '' INT QUIT; zshrs --bash -c "trap ':' HUP; trap")
+/// trap -- ':' SIGHUP
+/// ```
+///
+/// zsh mode is NOT affected and needs no fix — zsh lists the inherited ignore
+/// for QUIT (and not INT), and zshrs `--zsh` reproduces that exactly:
+///
+/// ```text
+/// $ (trap '' INT QUIT; zsh -fc "trap ':' HUP; trap")      -> : HUP  /  '' QUIT
+/// $ (trap '' INT QUIT; zshrs --zsh -f -c "trap ':' HUP; trap") -> identical
+/// ```
+///
+/// dash lists neither, and `--dash` matches. So the gap is the bash leg alone.
+#[test]
+#[ignore = "BUGS.md #1109 — an inherited SIG_IGN is listed by bash's `trap` but not by zshrs --bash; zsh and dash legs already match"]
+fn inherited_sig_ign_is_listed_by_bash() {
+    // Only meaningful when the PARENT ignores these — under cargo's harness it
+    // does. Standalone (no inherited ignore) both shells agree and this passes
+    // vacuously, which is why the format matrix uses signals cargo leaves
+    // alone (HUP/TERM/USR1/USR2/EXIT) instead of carrying these.
+    assert_matrix(&[
+        "trap ':' HUP; trap",
+        // bash REFUSES to trap a signal inherited as SIG_IGN and prints
+        // nothing; zshrs traps it and lists `trap -- ':' SIGINT`.
+        "trap ':' 2; trap",
+        "trap ':' INT; trap",
+        "trap '' INT; trap",
+        "trap ':' EXIT INT HUP USR1 TERM QUIT; trap",
+    ]);
 }
 
 #[test]

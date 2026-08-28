@@ -19,6 +19,61 @@ CI green pending the underlying fix.
 
 ---
 
+## #1109 — an inherited `SIG_IGN` is not honoured in `--bash` mode — open
+
+**Status:** `port-bug`, found 2026-08-28. Surfaced by a new emulation test that passed
+standalone and failed under cargo's harness — the harness ignores SIGINT/SIGQUIT, and the shell
+under test inherits that disposition.
+
+**Two symptoms, one cause.** POSIX requires a shell to keep a signal it inherited as `SIG_IGN`:
+it stays ignored and cannot be trapped, and `trap` reports it.
+
+```
+$ (trap '' INT QUIT; bash -c "trap ':' HUP; trap")
+trap -- ':' SIGHUP
+trap -- '' SIGINT            # inherited ignore is LISTED
+trap -- '' SIGQUIT
+$ (trap '' INT QUIT; zshrs --bash -c "trap ':' HUP; trap")
+trap -- ':' SIGHUP           # inherited entries missing
+
+$ (trap '' INT QUIT; bash -c "trap ':' 2; trap")
+                             # bash REFUSES to trap it — no output at all
+$ (trap '' INT QUIT; zshrs --bash -c "trap ':' 2; trap")
+trap -- ':' SIGINT           # zshrs traps it anyway
+```
+
+**zsh mode is already correct and needs no change.** zsh lists the inherited ignore for QUIT
+(and not INT), and zshrs `--zsh` reproduces that byte-for-byte:
+
+```
+$ (trap '' INT QUIT; zsh   -fc      "trap ':' HUP; trap")   -> : HUP  /  '' QUIT
+$ (trap '' INT QUIT; zshrs --zsh -f -c "trap ':' HUP; trap") -> identical
+```
+
+dash lists neither and `--dash` matches. **So the gap is the bash leg alone**, which is why the
+fix belongs behind the emulation gate rather than in the shared trap machinery.
+
+**Test arrangement.** `emulation_builtin_fmt_parity::trap_listing_matches_reference_shells`
+covers the LISTING FORMAT and now uses only signals cargo leaves alone (HUP/TERM/USR1/USR2/
+EXIT), plus a `strip_inherited_ignores` filter for ambient `trap -- '' SIG` lines naming a
+signal the script never mentions. The INT/QUIT-sensitive shapes moved to
+`inherited_sig_ign_is_listed_by_bash`, `#[ignore]`d against this entry. That test is only
+meaningful when the parent ignores those signals — standalone it passes vacuously — so it is
+pinned, not deleted, and it reproduces on demand:
+
+```
+$ (trap '' INT QUIT; cargo test --test parity inherited_sig_ign -- --ignored)
+    script: trap ':' 2; trap
+    --- bash ---  ""
+    --- zshrs --- "trap -- ':' SIGINT\n"
+```
+
+**Do NOT "fix" this by widening the filter.** Dropping the divergent lines from the format test
+would make both symptoms invisible; the filter deliberately removes only the empty-body form
+for a signal the script does not name.
+
+---
+
 ## #1108 — `shopt -u globstar` does not disable `**` in `--bash` mode — open
 
 **Status:** `port-bug`, found 2026-08-28 while wiring `shopt`/`$BASHOPTS`. The option now
