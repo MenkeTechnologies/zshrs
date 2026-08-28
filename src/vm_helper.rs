@@ -3269,6 +3269,45 @@ impl ShellExecutor {
         self.run_chunk_with_exit_hooks(chunk, "execute_script_zsh_pipeline")
     }
 
+    /// Run the TEXT that `getpermtext` reconstructed from an already-compiled
+    /// `.zwc` program.
+    ///
+    /// c:Src/init.c:1618-1622 — the compiled arm of `source()` is
+    /// `execode(prog, 1, 0, "filecode")`. The wordcode runs as it stands and
+    /// NOTHING is lexed; a `.zwc` is quote-resolved once, at `zcompile` time.
+    ///
+    /// !!! WARNING: RUST-ONLY HELPER !!!
+    /// zshrs has no execute-the-wordcode path — it deparses the program back
+    /// to source (`getpermtext`) and lexes it again — so the round trip is
+    /// lossless only while the lexer reads quotes the way the deparse writes
+    /// them. `untokenize` (c:Src/exec.c:2134) renders EVERY quote null through
+    /// `ztokens[Snull - Pound]`, and that entry is a bare single quote
+    /// (c:Src/lex.c:38), so a closing null followed by an opening one comes
+    /// back out as two adjacent quotes. Under RCQUOTES the lexer reads that
+    /// pair inside a quoted word as one LITERAL quote (c:Src/lex.c:1328)
+    /// instead of as two delimiters, so the openshift-aliases plugin's
+    /// `alias opodr='oc …=''{…}'''` — which `zcompile` resolved with no
+    /// literal quotes at all — re-lexed with two of them. The deparse
+    /// spelling is by construction the DEFAULT-option spelling, so the option
+    /// is cleared for the compile to restore C's "not lexed at all" property.
+    ///
+    /// It is cleared for the COMPILE ONLY. A `.zwc` that does `setopt
+    /// rcquotes` (zsh-expand's plugin entry does, at its line 39) must still
+    /// set the option for real, and that setting must outlive the source — so
+    /// the previous value is restored before the chunk RUNS, not after.
+    pub fn execute_zwc_program(&mut self, script: &str) -> Result<i32, String> {
+        use crate::ported::zsh_h::{isset, RCQUOTES};
+        let saved = isset(RCQUOTES);
+        if saved {
+            crate::ported::options::opt_state_set("rcquotes", false);
+        }
+        let chunk = self.compile_script_isolated(script);
+        if saved {
+            crate::ported::options::opt_state_set("rcquotes", true);
+        }
+        self.run_chunk_with_exit_hooks(chunk?, "execute_zwc_program")
+    }
+
     /// Run `script` the way C runs a PLAIN sourced file: parse ONE event,
     /// execute it, parse the next — so lexer-time state that one line
     /// establishes is in force when the next line is lexed.

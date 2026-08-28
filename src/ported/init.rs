@@ -1700,6 +1700,7 @@ pub fn source(s: &str) -> i32 {
     // `.zwc`) supplies the compiled wordcode instead of the plain
     // read. Bridge wordcode → text via getpermtext (same as the
     // `.zwc` autoload path in exec.rs::loadautofn).
+    let from_zwc = zwc_prog.is_some();
     let contents = match zwc_prog {
         Some(prog) => Ok(crate::ported::text::getpermtext(Box::new(prog), None, 0)),
         None => std::fs::read_to_string(path),
@@ -1725,6 +1726,12 @@ pub fn source(s: &str) -> i32 {
         if over_limit {
             crate::ported::utils::zerr("job table full or recursion limit exceeded");
             crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
+        } else if from_zwc {
+            // c:1621 — `execode(prog, 1, 0, "filecode")`. The deparse of an
+            // already-compiled program is re-lexed here, so it needs the
+            // lexer pinned to the spelling `untokenize` writes; see
+            // ShellExecutor::execute_zwc_program.
+            let _ = crate::fusevm_bridge::execute_zwc_program(&body);
         } else {
             let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
         }
