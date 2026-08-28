@@ -986,3 +986,98 @@ mod length_with_padding {
         assert_parity("s='a b c'; print -r -- \"${(wl:5:)#s}\"");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// `=cmd` on the RHS of a magic-equals word.
+//
+// c:Src/subst.c:667 `filesub` — after the leading `filesubstr` pass, the
+// PREFORK_TYPESET arm finds `strchr(*namptr + 1, Equals)` (c:678) and at
+// c:680 tests `(sub[1] == Tilde || sub[1] == Equals) && filesubstr(&str,
+// assign)`. The `Tilde` half gives `print -r -- a=~/x`; the `Equals` half
+// gives `print -r -- a==ls`, which routes through
+// c:Src/subst.c:799 (`*str == Equals && isset(EQUALS)`) → c:715
+// `equalsubstr` → `findcmd`. The `:`-walk at c:688-698 applies the same
+// pair of triggers to every `:`-separated component, which is what makes
+// `a=x:=ls` and the plain assignment `kv=a:=ls` expand too.
+//
+// The `~` spellings already pass; the `=` spellings are the gap. Kept as
+// live parity assertions (not `#[ignore]`) so the divergence stays visible.
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod magic_equals_cmd {
+    use super::*;
+
+    // c:Src/subst.c:680 — `sub[1] == Equals` half of the trigger pair.
+    #[test]
+    fn magicequals_rhs_equals_cmd() {
+        assert_parity("setopt magicequalsubst; print -r -- a==ls");
+    }
+
+    // c:Src/subst.c:678 — `strchr(*namptr + 1, Equals)` has NO identifier
+    // test, so a non-identifier LHS (`x:y`) still qualifies.
+    #[test]
+    fn magicequals_nonident_lhs_rhs_equals_cmd() {
+        assert_parity("setopt magicequalsubst; print -r -- x:y==ls");
+    }
+
+    // c:Src/subst.c:688-698 — the `:`-component walk, `=` flavour.
+    #[test]
+    fn magicequals_colon_component_equals_cmd() {
+        assert_parity("setopt magicequalsubst; print -r -- a=x:=ls");
+    }
+
+    // c:Src/exec.c addvars → prefork(PREFORK_ASSIGN) → filesub's `:`-walk.
+    // No MAGIC_EQUAL_SUBST needed: a real assignment is always assign-context.
+    #[test]
+    fn assign_colon_component_equals_cmd() {
+        assert_parity("kv=a:=ls; print -r -- $kv");
+    }
+
+    // ── controls that already agree; they must not regress ──────────────
+
+    // c:Src/subst.c:680 — `sub[1] == Tilde` half.
+    #[test]
+    fn magicequals_rhs_tilde() {
+        assert_parity("setopt magicequalsubst; print -r -- a=~/x");
+    }
+
+    // c:Src/subst.c:799 — leading `=cmd`, no assignment shape.
+    #[test]
+    fn leading_equals_cmd() {
+        assert_parity("print -r -- =ls");
+    }
+
+    // c:Src/exec.c:3353 — without MAGIC_EQUAL_SUBST there is no
+    // PREFORK_TYPESET, so the RHS stays literal.
+    #[test]
+    fn no_magicequals_rhs_stays_literal() {
+        assert_parity("print -r -- a==ls");
+    }
+
+    // c:Src/subst.c:799 — `isset(EQUALS)` gate.
+    #[test]
+    fn noequals_option_leaves_literal() {
+        assert_parity("unsetopt equals; print -r -- =ls");
+    }
+
+    // ── over-firing regression (see src/ported/subst.rs:2375-2390) ───────
+    //
+    // c:Src/subst.c:799 keys on the Equals TOKEN (`\u{8d}`), which only the
+    // LEXER writes for a source-level `=`. A `=` that arrives from a
+    // parameter substitution is a raw byte and must stay literal — else
+    // `${kv#a}` of `a=1` is read as `=1` → "1: not found".
+    #[test]
+    fn substituted_leading_equals_is_literal() {
+        assert_parity("setopt magicequalsubst; kv=a=1; print -r -- ${kv#a}");
+    }
+
+    #[test]
+    fn substituted_inner_equals_is_literal() {
+        assert_parity("setopt magicequalsubst; kv=a=1=2; print -r -- ${kv#a}");
+    }
+
+    #[test]
+    fn quoted_word_never_equals_expands() {
+        assert_parity("setopt magicequalsubst; v=\"a==ls\"; print -r -- $v");
+    }
+}
