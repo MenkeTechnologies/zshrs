@@ -146,13 +146,16 @@ fn do_completion(
 ///       GREEN indented code block GREEN  (code-fence or 4-sp indent)
 /// ```
 ///
-/// Inline backticks → cyan; `**bold**` → ANSI bold (kept readable when
-/// `color=false`, which strips all escapes and leaves plain markdown).
+/// Inline backticks → cyan; `**bold**` → ANSI bold. With `color=false`
+/// the escapes are empty strings, so the markers are consumed and the
+/// result is plain unstyled text — NOT markdown (the `**` / `_` markers
+/// are gone and the heading has been rewritten into a banner).
 ///
-/// Called only from `--docs NAME`. The IntelliJ tool window passes
-/// `--color never` (or just consumes the raw `lsp::lookup_doc` output
-/// directly via Bash's `output.stdout`), so the popup keeps its native
-/// rendering — coloring is exclusively for terminal users.
+/// Called only from `--docs NAME`, and only on the coloured path.
+/// `--color never` / `NO_COLOR` / a non-TTY stdout without
+/// FORCE_COLOR bypasses this function entirely and prints the raw
+/// `lsp::lookup_doc` markdown, which is what a markdown-rendering
+/// consumer needs.
 fn render_doc_card(name: &str, card: &str, color: bool) -> String {
     let (cyan, green, dim, bold, reset) = if color {
         ("\x1b[36m", "\x1b[32m", "\x1b[2m", "\x1b[1m", "\x1b[0m")
@@ -1943,21 +1946,47 @@ pub fn zshrs_main() {
                 }
                 std::process::exit(1);
             }
-            // Colorize only when stdout is a real TTY — keep machine
-            // pipelines (IntelliJ tool window's docs popup, scripts,
-            // `zshrs --docs X | jq`) on the raw markdown. Toggle with
-            // `--color always` / `--color never` if needed.
+            // Render the terminal card only when the output is going
+            // somewhere that can show ANSI; otherwise emit the RAW
+            // markdown `lsp::lookup_doc` produced. Machine consumers
+            // (an editor popup that renders markdown itself, scripts,
+            // `zshrs --docs X | glow`) need the `**name**` heading and
+            // the `_kind_` label intact — `render_doc_card` rewrites
+            // the heading into an indented plain-text banner and, with
+            // colour off, deletes the `**`/`_` markers outright, so the
+            // uncoloured card was neither styled text NOR markdown.
+            //
+            // Colour is on when: `--color always`, or FORCE_COLOR /
+            // CLICOLOR_FORCE is set (how the IntelliJ docs popup asks
+            // for ANSI — it pipes stdout into an ANSI ConsoleView, so
+            // is_terminal() is false there), or stdout is a real TTY.
+            // Off when: `--color never`, or NO_COLOR is set
+            // (no-color.org), which outranks the TTY check.
             use std::io::IsTerminal;
             let color_flag = args
                 .iter()
                 .position(|a| a == "--color")
                 .and_then(|j| args.get(j + 1).map(String::as_str));
+            let env_set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
             let want_color = match color_flag {
                 Some("always") => true,
                 Some("never") => false,
-                _ => std::io::stdout().is_terminal(),
+                _ if env_set("NO_COLOR") => false,
+                _ => {
+                    env_set("FORCE_COLOR")
+                        || env_set("CLICOLOR_FORCE")
+                        || std::io::stdout().is_terminal()
+                }
             };
-            print!("{}", render_doc_card(name, &card, want_color));
+            if want_color {
+                print!("{}", render_doc_card(name, &card, true));
+            } else {
+                // Raw markdown, exactly as the LSP hover would return it.
+                print!("{}", card);
+                if !card.ends_with('\n') {
+                    println!();
+                }
+            }
             return;
         }
     }

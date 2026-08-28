@@ -89,6 +89,13 @@ pub struct DapShared {
     pub configuration_done: AtomicBool,
     /// `disconnected` field.
     pub disconnected: AtomicBool,
+    /// Set once the executor has been handed the launched program.
+    /// `disconnect` / `terminate` consult it: before launch the reader
+    /// thread simply exits and the main thread falls out of
+    /// `launch_rx.recv()`, but afterwards the executor owns the thread
+    /// and may be blocked in a `waitpid` on a long-running child, so
+    /// the adapter needs the watchdog in `terminate_debuggee`.
+    pub launched: AtomicBool,
     /// Absolute path of the launched program — set on `launch`, read
     /// by `check_line` to know which file's breakpoint set to check.
     pub program: Mutex<String>,
@@ -108,6 +115,7 @@ impl DapShared {
             writer: Mutex::new(writer),
             configuration_done: AtomicBool::new(false),
             disconnected: AtomicBool::new(false),
+            launched: AtomicBool::new(false),
             program: Mutex::new(String::new()),
         })
     }
@@ -318,7 +326,8 @@ pub fn check_line(line: u32) {
 ///   3. Block on the channel until `launch` arrives.
 ///   4. Install DAP_SHARED + DAP_BREAKPOINTS globals (the BUILTIN_SET_LINENO
 ///      hook in fusevm_bridge.rs consults them on every statement).
-///   5. Run the script IN-PROCESS via `ShellExecutor::execute_script_file`.
+///   5. Redirect fd 1 / fd 2 into `output` events, then run the script
+///      IN-PROCESS via `ShellExecutor::execute_script_file`.
 ///      The executor blocks inside `check_line → pause()` whenever a
 ///      breakpoint hits; the reader thread sends `continue` to resume.
 ///   6. After execution: emit `exited` + `terminated`, drop globals.
@@ -330,12 +339,20 @@ pub fn run_dap(addr: Option<&str>) -> i32 {
         "starting --dap",
     );
 
+    // Own the process group before anything is forked, so every
+    // descendant of the debugged script lands in it and `disconnect`
+    // with `terminateDebuggee` can take them all down.
+    #[cfg(unix)]
+    claim_process_group();
+
     // Two transports. Both run the identical DAP server below — only the
     // reader/writer differ.
     let (reader, writer): (Box<dyn Read + Send>, Box<dyn Write + Send>) = match addr {
         // TCP connect-back: dial the IDE's DAP listener (the path JetBrains
-        // uses). stdin/stdout are left free so the script's own output reaches
-        // the console.
+        // uses). The protocol has its own socket, so the script's stdout /
+        // stderr stay separate from it — they are captured at the fd level
+        // during `launch` and re-emitted as `output` events (see
+        // `install_output_capture`), which is what a DAP client reads.
         Some(addr) => {
             let stream = match TcpStream::connect(addr) {
                 Ok(s) => s,
@@ -365,7 +382,27 @@ pub fn run_dap(addr: Option<&str>) -> i32 {
         // OSProcessHandler reads stdout and would steal DAP bytes — use TCP there.
         None => {
             tracing::info!(target: "zshrs::dap", "stdio mode");
-            (Box::new(io::stdin()), Box::new(io::stdout()))
+            // Take a PRIVATE dup of fd 1 for the protocol before
+            // `install_output_capture` re-points fd 1 at a pipe. Without
+            // it the launched script's own `echo` would land in the
+            // middle of a `Content-Length` frame and desync the client
+            // — and with it, that output correctly arrives as `output`
+            // events instead.
+            #[cfg(unix)]
+            let writer: Box<dyn Write + Send> = {
+                use std::os::unix::io::FromRawFd;
+                // SAFETY: dup(2) on the process's own stdout; the
+                // returned fd is owned solely by this File.
+                let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+                if fd >= 0 {
+                    Box::new(unsafe { std::fs::File::from_raw_fd(fd) })
+                } else {
+                    Box::new(io::stdout())
+                }
+            };
+            #[cfg(not(unix))]
+            let writer: Box<dyn Write + Send> = Box::new(io::stdout());
+            (Box::new(io::stdin()), writer)
         }
     };
 
@@ -444,10 +481,21 @@ pub fn run_dap(addr: Option<&str>) -> i32 {
         let _ = std::env::set_current_dir(cwd);
     }
 
+    // Everything the script writes to fd 1 / fd 2 from here on becomes
+    // a DAP `output` event (see `install_output_capture`). Installed
+    // BEFORE the executor starts so the very first `echo` is captured.
+    let capture = install_output_capture(&shared);
+
     // Run the script in-process. The BUILTIN_SET_LINENO hook will
     // block on `shared.pause()` whenever a breakpoint matches.
     tracing::info!(target: "zshrs::dap", "entering executor (in-process)");
     let mut exec = crate::vm_helper::ShellExecutor::new();
+    // `launch.args` → the script's positional parameters. DAP spec:
+    // "arguments: Command line arguments passed to the program". They
+    // were parsed into `LaunchParams` but never handed to the executor,
+    // so `$1` / `$@` were empty for every debugged script no matter
+    // what the launch config said.
+    exec.set_pparams(lp.args.clone());
     let exit_code = match exec.execute_script_file(&lp.program) {
         Ok(status) => status,
         Err(e) => {
@@ -462,6 +510,12 @@ pub fn run_dap(addr: Option<&str>) -> i32 {
             1
         }
     };
+    // Restore fd 1 / fd 2 and drain the capture threads before the
+    // `exited` / `terminated` events so the IDE has every line of the
+    // program's output before it tears the session down.
+    if let Some(c) = capture {
+        c.restore();
+    }
     tracing::info!(target: "zshrs::dap", exit_code, "executor exited");
 
     let _ = shared.emit_event("exited", json!({ "exitCode": exit_code }));
@@ -584,6 +638,15 @@ fn handle_request(
                 })
                 .unwrap_or_default();
             let stop_on_entry = args["stopOnEntry"].as_bool().unwrap_or(false);
+            // Mark launched HERE, not on the executor thread: from the
+            // moment this send happens the main thread is committed to
+            // running the script and will never come back to
+            // `launch_rx.recv()`, so a `disconnect` racing the executor
+            // startup still needs the watchdog. Setting the flag next to
+            // `execute_script_file` left a window (ShellExecutor::new,
+            // fd capture install) in which disconnect saw `false` and
+            // spawned nothing.
+            shared.launched.store(true, Ordering::SeqCst);
             let _ = shared.emit_response(req_seq, &cmd, true, json!({}));
             let _ = launch_tx.send(LaunchParams {
                 program,
@@ -693,6 +756,23 @@ fn handle_request(
             let _ = shared.emit_response(req_seq, &cmd, true, json!({}));
             shared.disconnected.store(true, Ordering::SeqCst);
             shared.resume_with(DebugAction::Quit);
+            // Before `launch`, that is enough: the reader loop breaks on
+            // `disconnected`, drops `launch_tx`, and the main thread
+            // falls out of `launch_rx.recv()` and returns.
+            //
+            // After `launch` the script owns the main thread. Setting
+            // `errflag` only halts it at the next VM safe point, and the
+            // executor may be parked in `waitpid` on an external command
+            // (`sleep 30`) that will not return for a long time — so the
+            // adapter would sit there long after the IDE let go, holding
+            // the debuggee alive with it. DAP requires the adapter to
+            // shut down promptly on `disconnect`, and with
+            // `terminateDebuggee` (the default for `launch` sessions) to
+            // take the debuggee with it. Hand that to a watchdog.
+            if shared.launched.load(Ordering::SeqCst) {
+                let terminate_debuggee = args["terminateDebuggee"].as_bool().unwrap_or(true);
+                thread::spawn(move || terminate_debuggee_watchdog(terminate_debuggee));
+            }
         }
         "source" => {
             let _ = shared.emit_response(req_seq, &cmd, true, json!({}));
@@ -702,6 +782,292 @@ fn handle_request(
             let _ = shared.emit_response(req_seq, &cmd, false, json!({ "error": "unsupported" }));
         }
     }
+}
+
+/// Grace period between `disconnect` and the hard exit. Long enough for
+/// an executor parked at a `check_line` cv-wait to observe `Quit` and
+/// unwind on its own (the tidy path, which still runs `always` blocks
+/// and EXIT traps), short enough that an IDE never waits on us.
+const DISCONNECT_GRACE: Duration = Duration::from_millis(300);
+
+/// Watchdog spawned by `disconnect` / `terminate` once the script is
+/// running. Waits [`DISCONNECT_GRACE`] for the executor to unwind by
+/// itself; if the process is still here after that (the executor may be
+/// blocked in a `waitpid` on a child, or anywhere else the `errflag`
+/// signal cannot reach), takes the debuggee down and exits the adapter.
+///
+/// The takedown is two-part because the two kinds of child live in
+/// different places: [`kill_live_jobs`] SIGKILLs the pids the shell's
+/// job table knows about, and [`terminate_process_group`] SIGTERMs the
+/// process group for the foreground children that never reach the job
+/// table.
+///
+/// `terminate_debuggee` mirrors the request's `terminateDebuggee`
+/// field: false leaves the children running (DAP "detach" semantics)
+/// but still shuts the adapter down, because a disconnected adapter
+/// has nobody to talk to either way.
+#[cfg(unix)]
+fn terminate_debuggee_watchdog(terminate_debuggee: bool) {
+    thread::sleep(DISCONNECT_GRACE);
+    if terminate_debuggee {
+        kill_live_jobs();
+        terminate_process_group();
+    }
+    tracing::info!(
+        target: "zshrs::dap",
+        terminate_debuggee,
+        "disconnect watchdog: grace period elapsed, exiting adapter",
+    );
+    let _ = io::Write::flush(&mut io::stdout());
+    let _ = io::Write::flush(&mut io::stderr());
+    std::process::exit(0);
+}
+
+#[cfg(not(unix))]
+fn terminate_debuggee_watchdog(_terminate_debuggee: bool) {
+    thread::sleep(DISCONNECT_GRACE);
+    std::process::exit(0);
+}
+
+/// True when [`claim_process_group`] succeeded, i.e. every process the
+/// debuggee forks is in a process group this adapter leads and nothing
+/// else is.
+static OWN_PROCESS_GROUP: AtomicBool = AtomicBool::new(false);
+
+/// Put the adapter (and therefore everything the debugged script forks)
+/// into its own process group, so `terminateDebuggee` can take the whole
+/// tree down with one `killpg`.
+///
+/// Needed because the shell's job table only records pids for jobs that
+/// went through `addproc` — a foreground external command in a
+/// non-interactive script does not, so `kill_live_jobs` alone cannot see
+/// a `sleep 30` the script is sitting in, and the debuggee would outlive
+/// the session.
+///
+/// Skipped when stdin is a terminal: moving out of the terminal's
+/// foreground process group would make any read from it raise SIGTTIN.
+/// Under an IDE (and in the tests) stdin is a pipe or /dev/null, so the
+/// group is claimed; a human running `zshrs --dap` by hand at a terminal
+/// keeps the old behaviour and falls back to the job-table walk.
+#[cfg(unix)]
+fn claim_process_group() {
+    use std::io::IsTerminal;
+    if io::stdin().is_terminal() {
+        tracing::debug!(target: "zshrs::dap", "stdin is a tty; not claiming a process group");
+        return;
+    }
+    // SAFETY: setpgid(0, 0) on ourselves; fails only with EPERM when we
+    // are already a session leader, which is reported, not fatal.
+    if unsafe { libc::setpgid(0, 0) } == 0 {
+        OWN_PROCESS_GROUP.store(true, Ordering::SeqCst);
+        tracing::info!(target: "zshrs::dap", pgid = std::process::id(), "own process group claimed");
+    } else {
+        tracing::warn!(
+            target: "zshrs::dap",
+            err = %io::Error::last_os_error(),
+            "setpgid failed; terminateDebuggee limited to job-table pids",
+        );
+    }
+}
+
+/// SIGTERM the debuggee's process group.
+///
+/// Only runs when [`claim_process_group`] took ownership, so the group
+/// contains exactly this adapter and the processes the debugged script
+/// forked — never the IDE or the shell that launched us.
+///
+/// SIGTERM (not SIGKILL) because the signal necessarily reaches this
+/// process too and SIGKILL cannot be ignored: the adapter ignores
+/// SIGTERM for the instant it takes to deliver, and children — which
+/// inherited the DEFAULT disposition when they were forked, before this
+/// ignore was installed — die from it.
+#[cfg(unix)]
+fn terminate_process_group() {
+    if !OWN_PROCESS_GROUP.load(Ordering::SeqCst) {
+        return;
+    }
+    // SAFETY: signal(2) + killpg(2) on our own process group.
+    unsafe {
+        libc::signal(libc::SIGTERM, libc::SIG_IGN);
+        let pgid = libc::getpgrp();
+        tracing::info!(target: "zshrs::dap", pgid, "SIGTERM debuggee process group");
+        libc::killpg(pgid, libc::SIGTERM);
+    }
+}
+
+/// SIGKILL every process the shell's job table still lists as ours.
+///
+/// This is the DAP `terminateDebuggee` action for the in-process model:
+/// the "debuggee" is this process plus whatever external commands the
+/// script has forked, and the background ones among those are the pids
+/// recorded in `ported::jobs::JOBTAB` (`Src/jobs.c` `addproc`). A job
+/// already marked DONE is skipped, and our own pid is never signalled.
+/// Foreground children never reach `addproc`, which is what
+/// [`terminate_process_group`] covers.
+///
+/// SIGKILL rather than the SIGHUP that `signals::killrunjobs` sends:
+/// that walk is gated on the HUP option and on STAT_LOCKED background
+/// jobs, neither of which holds for the foreground child of a
+/// non-interactive debug session.
+#[cfg(unix)]
+fn kill_live_jobs() {
+    let my_pid = unsafe { libc::getpid() };
+    let Some(tab) = crate::ported::jobs::JOBTAB.get() else {
+        return;
+    };
+    let Ok(tab) = tab.lock() else {
+        return;
+    };
+    for job in tab.iter() {
+        if (job.stat & crate::ported::jobs::stat::DONE) != 0 {
+            continue;
+        }
+        for proc_ in job.procs.iter().chain(job.auxprocs.iter()) {
+            if proc_.pid > 0 && proc_.pid != my_pid {
+                tracing::info!(target: "zshrs::dap", pid = proc_.pid, "SIGKILL debuggee child");
+                unsafe { libc::kill(proc_.pid, libc::SIGKILL) };
+            }
+        }
+    }
+}
+
+/// Redirect fd 1 / fd 2 into pipes and re-emit everything written to
+/// them as DAP `output` events (`category: "stdout"` / `"stderr"`).
+///
+/// The adapter runs the script IN-PROCESS, so "the program's output" is
+/// literally this process's stdout/stderr plus that of any command it
+/// forks — and a DAP client has no other way to see it. Per the DAP
+/// spec, `output` events are how a debug adapter reports program output
+/// unless `runInTerminal` is used, and a client attached over TCP (VS
+/// Code, or anything that is not also reading our pipes) shows nothing
+/// at all without them.
+///
+/// fd-level (`dup2`) rather than capturing Rust's `io::stdout` so that
+/// forked children — external commands the script runs — are captured
+/// too: they inherit fd 1 / fd 2, not a Rust handle.
+///
+/// Returns `None` if the pipes cannot be created, in which case output
+/// keeps going straight to the adapter's own stdout/stderr (the old
+/// behaviour) rather than being lost.
+#[cfg(unix)]
+fn install_output_capture(shared: &Arc<DapShared>) -> Option<OutputCapture> {
+    use std::os::unix::io::FromRawFd;
+
+    fn make_pipe() -> Option<(i32, i32)> {
+        let mut fds = [0i32; 2];
+        // SAFETY: `fds` is a valid 2-element array, the only contract pipe(2) has.
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        Some((fds[0], fds[1]))
+    }
+
+    let (out_r, out_w) = make_pipe()?;
+    let (err_r, err_w) = make_pipe()?;
+
+    // SAFETY: plain fd bookkeeping on fds we own.
+    let (saved_out, saved_err) = unsafe {
+        let saved_out = libc::dup(libc::STDOUT_FILENO);
+        let saved_err = libc::dup(libc::STDERR_FILENO);
+        libc::dup2(out_w, libc::STDOUT_FILENO);
+        libc::dup2(err_w, libc::STDERR_FILENO);
+        // fd 1 / fd 2 are now the only references to the write ends;
+        // restore() closing them is what gives the readers their EOF.
+        libc::close(out_w);
+        libc::close(err_w);
+        (saved_out, saved_err)
+    };
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let mut pump = |fd: i32, category: &'static str| {
+        let shared = Arc::clone(shared);
+        let done = done_tx.clone();
+        thread::spawn(move || {
+            // SAFETY: `fd` is a pipe read end this function just created
+            // and hands to exactly one thread.
+            let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+            let mut buf = [0u8; 8192];
+            loop {
+                match file.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+                        // `write_message`, NOT `emit_event`: emit_event
+                        // logs through `tracing`, and if a subscriber is
+                        // ever pointed at stderr that log line lands back
+                        // in the pipe this thread is draining — one
+                        // chunk in, one log line out, forever. Framing
+                        // the event by hand keeps the pump free of any
+                        // path that can write to fd 1 / fd 2.
+                        let _ = shared.write_message(json!({
+                            "seq": shared.next_seq(),
+                            "type": "event",
+                            "event": "output",
+                            "body": { "category": category, "output": text },
+                        }));
+                    }
+                }
+            }
+            let _ = done.send(());
+        })
+    };
+    pump(out_r, "stdout");
+    pump(err_r, "stderr");
+    drop(done_tx);
+
+    Some(OutputCapture {
+        saved_out,
+        saved_err,
+        done_rx,
+    })
+}
+
+#[cfg(not(unix))]
+fn install_output_capture(_shared: &Arc<DapShared>) -> Option<OutputCapture> {
+    None
+}
+
+/// Live fd-redirection installed by [`install_output_capture`].
+struct OutputCapture {
+    /// dup of the original fd 1, restored by [`OutputCapture::restore`].
+    saved_out: i32,
+    /// dup of the original fd 2.
+    saved_err: i32,
+    /// Both pump threads send on this when they hit EOF.
+    done_rx: std::sync::mpsc::Receiver<()>,
+}
+
+impl OutputCapture {
+    /// Put fd 1 / fd 2 back and wait for the pump threads to drain.
+    ///
+    /// Restoring closes the last write-end reference, which is what ends
+    /// the pumps — unless a background child of the script still holds
+    /// an inherited copy, so the drain wait is bounded and the threads
+    /// are left detached if it expires.
+    #[cfg(unix)]
+    fn restore(self) {
+        let _ = io::Write::flush(&mut io::stdout());
+        let _ = io::Write::flush(&mut io::stderr());
+        // SAFETY: both saved fds came from `dup` in install_output_capture.
+        unsafe {
+            libc::dup2(self.saved_out, libc::STDOUT_FILENO);
+            libc::dup2(self.saved_err, libc::STDERR_FILENO);
+            libc::close(self.saved_out);
+            libc::close(self.saved_err);
+        }
+        for _ in 0..2 {
+            if self
+                .done_rx
+                .recv_timeout(Duration::from_millis(250))
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn restore(self) {}
 }
 
 /// Read the current `$LINENO` via paramtab — same path BUILTIN_SET_LINENO

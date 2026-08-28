@@ -1322,6 +1322,31 @@ fn completion(state: &State, params: &Value) -> Value {
             // ── Command-position contexts ─────────────────────────────
             LspCompletionContext::OptionOnly => {
                 let mut items = Vec::new();
+                // Canonical UPPERCASE_WITH_UNDERSCORES form first —
+                // `EXTENDED_GLOB`, the spelling `man zshoptions` and
+                // `setopt` output use, and the one the user reads in
+                // the docs. `ZSH_OPTIONS_SET` stores the normalized
+                // lookup form (lowercase, underscores stripped), which
+                // is right for option RESOLUTION but is not a name any
+                // reader recognises. `dump_reflection_json` already
+                // sources OPTION_DOCS for exactly this reason (see the
+                // comment there); completion was still emitting only
+                // the normalized form, so `setopt EXTENDED<TAB>` never
+                // offered the canonical name.
+                for (name, _doc) in crate::zsh_option_docs::OPTION_DOCS {
+                    items.push(json!({
+                        "label": name,
+                        "kind": 21, // Constant
+                        "detail": "zsh option (setopt / unsetopt)",
+                    }));
+                }
+                for (alias, _canon) in crate::zsh_option_docs::OPTION_ALIASES {
+                    items.push(json!({
+                        "label": alias,
+                        "kind": 21, // Constant
+                        "detail": "zsh option (setopt / unsetopt)",
+                    }));
+                }
                 for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
                     items.push(json!({
                         "label": o,
@@ -1719,6 +1744,23 @@ fn completion(state: &State, params: &Value) -> Value {
     for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
         if want(o) {
             push(&mut items, o, 21, "option");
+        }
+    }
+    // …and the canonical UPPERCASE_WITH_UNDERSCORES spelling from
+    // `man zshoptions` (`EXTENDED_GLOB`). `ZSH_OPTIONS_SET` holds the
+    // normalized lookup form only (`extendedglob`), and the hand
+    // `OPTIONS` list above holds a caps-no-underscore form
+    // (`EXTENDEDGLOB`); neither is the name the docs print, so the
+    // documented spelling was completable from nowhere. Same source
+    // and same reasoning as `dump_reflection_json`'s options key.
+    for (name, _doc) in crate::zsh_option_docs::OPTION_DOCS {
+        if want(name) {
+            push(&mut items, name, 21, "option");
+        }
+    }
+    for (alias, _canon) in crate::zsh_option_docs::OPTION_ALIASES {
+        if want(alias) {
+            push(&mut items, alias, 21, "option");
         }
     }
     // Canonical special-param names from zsh's `params.yo` + every
@@ -5805,7 +5847,7 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     ("--lsp",      "Run the Language Server on stdio. Serves completion / hover / definition / references / rename / documentSymbol / foldingRange / semanticTokens / formatting / diagnostics. Consumed by the IntelliJ plugin, Helix, Neovim, VS Code, etc."),
     ("--dap",      "`--dap HOST:PORT` — Debug Adapter Protocol server. Connects back to the IDE's listener at HOST:PORT and drives breakpoints / step / variables / evaluate."),
     ("--dump-reflection", "Emit the JSON blob the IntelliJ \"zshrs\" reflection tool window consumes: builtins / keywords / options / special_vars, each tagged by category."),
-    ("--docs",     "`--docs NAME` — render the same hover card the LSP would return for NAME. Used by the IntelliJ tool window's docs popup; handy for previewing doc output from the CLI."),
+    ("--docs",     "`--docs NAME` — render the same hover card the LSP would return for NAME. Used by the IntelliJ tool window's docs popup; handy for previewing doc output from the CLI. Prints a coloured terminal card on a TTY (or under `--color always` / `$FORCE_COLOR` / `$CLICOLOR_FORCE`) and the raw markdown otherwise, so piping into a markdown renderer works."),
     // Parser / VM dumpers
     ("--dump-tokens",   "`--dump-tokens FILE|-` — one TOKNAME<tab>TOKSTR line per lexer token. Use `-` to read from stdin."),
     ("--dump-ast",      "`--dump-ast FILE|-` — parser AST as a canonical S-expression. Use `-` to read from stdin."),
@@ -5819,7 +5861,7 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     ("--names",         "With `--dump-reflection` or `--gen-docs`, restrict the dump / walk to a comma-separated list of NAMES instead of the full set."),
     // Daemon / interactive runtime
     ("--daemon",        "Run as the persistent zshrs daemon (used by the IDE / multi-shell scenarios). Holds the rkyv script cache + worker pool warm so subsequent script launches are sub-millisecond."),
-    ("--color",         "`--color WHEN` — control coloured output (`auto` / `always` / `never`). Default `auto`: respect `$TERM`, `$NO_COLOR`, and stdout TTY status."),
+    ("--color",         "`--color WHEN` — control coloured output (`auto` / `always` / `never`). Default `auto`: `$NO_COLOR` forces off, `$FORCE_COLOR` / `$CLICOLOR_FORCE` force on, otherwise follow `$TERM` and stdout TTY status."),
     // Parity modes (drop-in shell emulation)
     ("--zsh",       "Identical-behaviour drop-in for `/bin/zsh`. Caches OFF, daemon OFF — every `source` re-runs the file fresh. Used as the compat-test entrypoint."),
     ("--bash",      "Identical-behaviour drop-in for `/bin/bash`. Caches / daemon OFF; every echo / source re-fires byte-for-byte against reference bash."),
@@ -6124,6 +6166,11 @@ const COMPSYS_FN_DOCS: &[(&str, &str)] = &[
 /// (`tests/doc_coverage_audit::every_canonical_extension_has_real_doc`)
 /// fails.
 const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
+    // Sorts first: `_` (0x5F) precedes every letter. This is the one
+    // entry in `ported::builtin::BUILTINS` with no upstream zsh C
+    // counterpart (src/ported/builtin.rs, `!!! RUST-ONLY — NO C
+    // COUNTERPART !!!`), so no yodl table can ever cover it.
+    ("__rust_compile", "Compile and register an inline `rust { … }` block. Internal — emitted by the desugar pass, not meant to be typed by hand.\n\nUsage: `__rust_compile '<base64>' [<line>]`\n\nBefore lexing, `zsh::rust_ffi::desugar` rewrites every `rust { … }` block that starts at a command boundary into a call to this builtin, carrying the block body base64-encoded (argv[0]) plus the block's source line (argv[1], kept for diagnostics). The handler passes the body to `fusevm::ffi::compile_and_register`, which compiles it into a cached cdylib and registers each exported `extern \"C\"` function.\n\nA registered export then runs as an ordinary command word, resolved by `ShellExecutor::try_registered_ffi_command` — consulted only AFTER builtins, shell functions, `$PATH`, and `command_not_found_handler` all miss, so a real command of the same name always wins.\n\nReturns 0 on success; 1 with a `zshrs: <error>` diagnostic on stderr when the block fails to compile or the body argument is missing."),
     ("add_zsh_hook", "Add a function to a zsh hook array (chpwd / precmd / preexec / periodic / zshaddhistory / zshexit). `add-zsh-hook chpwd my_chpwd_fn`. Idempotent — re-adding the same function is a no-op."),
     ("arch", "Print the machine architecture (uname -m equivalent): `x86_64`, `arm64`, `aarch64`, etc."),
     ("async", "Spawn a background task on the persistent worker pool. `async name { body }` queues the body for parallel execution. Pair with `await name` to join."),
@@ -9221,17 +9268,36 @@ pub fn dump_reflection_json() -> String {
     // subset was missing `$PS2` / `$PS3` / `$PS4` / `$psvar` /
     // `$PROMPT2` / hundreds more, so the tool window showed a tiny
     // slice of zsh's actual special-param surface.
+    //
+    // Emitted `$`-prefixed — `$PATH`, `$?`, `$$` — which is both the
+    // form the user types and, for the symbolic ones, the ONLY thing
+    // that keeps them distinct. `SPECIAL_VAR_DOCS` stores bare keys
+    // (`PATH`, `?`, `$`), and inserting those bare collided head-on
+    // with the other registries inside this one blob: bare `?` / `*` /
+    // `!` are also `OPERATOR_DOCS` entries and bare `-` is also the
+    // `-` builtin, so in the `all` map whichever loop ran last simply
+    // overwrote the other's tag, and in the panel a `special_vars` leaf
+    // reading `?` sent `--docs ?` — which resolves through
+    // `OPERATOR_DOCS` first (see `lookup_doc`) and showed the user the
+    // glob-operator card instead of the parameter. `$?` resolves to
+    // the parameter, so the sigil is what makes the panel correct, not
+    // decoration. `lookup_doc` accepts either form.
     let mut special_vars = serde_json::Map::new();
+    let mut add_special = |name: &str,
+                           special_vars: &mut serde_json::Map<String, Value>,
+                           all: &mut serde_json::Map<String, Value>| {
+        let key = format!("${}", name);
+        special_vars.insert(key.clone(), Value::String("special".into()));
+        all.insert(key, Value::String("special".into()));
+    };
     for (name, _doc) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
-        special_vars.insert((*name).to_string(), Value::String("special".into()));
-        all.insert((*name).to_string(), Value::String("special".into()));
+        add_special(name, &mut special_vars, &mut all);
     }
     // Also surface alias surface names (`PROMPT` / `PROMPT2` /
     // `PROMPT3` → PS1/PS2/PS3, `NULLCMD` etc) so the tool window
     // shows every name the user might type.
     for (alias, _canon) in crate::zsh_special_var_docs::SPECIAL_VAR_ALIASES {
-        special_vars.insert((*alias).to_string(), Value::String("special".into()));
-        all.insert((*alias).to_string(), Value::String("special".into()));
+        add_special(alias, &mut special_vars, &mut all);
     }
     // ── Compsys completion functions ────────────────────────────────
     // The `_arguments` / `_files` / `_describe` family — Rust-native
@@ -9272,7 +9338,19 @@ pub fn dump_reflection_json() -> String {
     // ported + extension. Equals `compat ∪ extensions`. Kept as the
     // `builtins` key so older tool-window UIs (pre-compat-split) still
     // see something familiar.
-    let mut builtins = compat.clone();
+    //
+    // Every entry is tagged `"builtin"` — the tag is what a pre-split
+    // consumer read, and it is what this key means. The finer
+    // compat-vs-extension split is what the separate `compat` /
+    // `extensions` keys are for; mixing the two tags inside `builtins`
+    // (which is what `compat.clone()` alone produced) both broke the
+    // backwards-compat contract this key exists to honour and made the
+    // aggregate internally inconsistent — `cd` read as `"compat"` while
+    // `zwhere` read as `"builtin"` in the SAME map.
+    let mut builtins = serde_json::Map::new();
+    for k in compat.keys() {
+        builtins.insert(k.clone(), Value::String("builtin".into()));
+    }
     for (k, _) in &extensions {
         builtins.insert(k.clone(), Value::String("builtin".into()));
     }
@@ -10925,10 +11003,29 @@ foo() { echo second }\n\
         assert!(v["keywords"]["if"].is_string());
         assert!(v["options"]["EXTENDED_GLOB"].is_string());
         // PS2/PS3/PS4/psvar/PROMPT2 must surface (user-reported gap).
-        for want in ["PS1", "PS2", "PS3", "PS4", "psvar", "PROMPT2"] {
+        // Keys carry the `$` sigil — the form the user types, and what
+        // keeps the symbolic specials (`$?`, `$*`, `$-`) from colliding
+        // with the identically-spelled operator / builtin entries in the
+        // same blob. See the `special_vars` loop in dump_reflection_json.
+        for want in ["$PS1", "$PS2", "$PS3", "$PS4", "$psvar", "$PROMPT2"] {
             assert!(
                 v["special_vars"][want].is_string(),
                 "special_vars missing `{}` — reflection should source from SPECIAL_VAR_DOCS",
+                want,
+            );
+        }
+        // Symbolic specials keep their own entries rather than being
+        // overwritten by the `?` / `*` operator rows.
+        for want in ["$?", "$*", "$#", "$@", "$-", "$_", "$!", "$$"] {
+            assert!(
+                v["special_vars"][want].is_string(),
+                "special_vars missing symbolic `{}`",
+                want,
+            );
+            assert_eq!(
+                v["all"][want].as_str(),
+                Some("special"),
+                "`all` lost the special-var tag for `{}` to another registry",
                 want,
             );
         }
