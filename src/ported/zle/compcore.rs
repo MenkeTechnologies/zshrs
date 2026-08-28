@@ -8074,7 +8074,7 @@ mod tests {
     fn callcompfunc_sets_compstate_context() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:619: context selection — verified via the pure
         // compcontext_for helper (callcompfunc calls it and writes
         // to paramtab via setsparam, but paramtab read-back in a
@@ -8101,7 +8101,7 @@ mod tests {
     fn callcompfunc_republishes_word_split_onto_comp_globals() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Leftovers from the previous completion pass.
         *COMPPREFIX
             .get_or_init(|| Mutex::new(String::new()))
@@ -8154,7 +8154,7 @@ mod tests {
     fn callcompfunc_publishes_and_tears_down_zle_params() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         // `$FUNCNEST` is unset in a bare unit-test paramtab, and
         // `getiparam` reports 0 for unset — which trips doshfunc's
@@ -8196,13 +8196,23 @@ mod tests {
     }
 
     /// Test-only serializer for tests that mutate file-scope globals.
+    ///
+    /// Every acquisition is poison-tolerant
+    /// (`.unwrap_or_else(|e| e.into_inner())`, the same recovery
+    /// `zle_test_setup()` and `test_util::global_state_lock()` use). A
+    /// plain `.unwrap()` turned ONE failing test into sixteen: the first
+    /// panic while the guard was held poisoned the mutex, and every later
+    /// compcore test died on `PoisonError` before running a single
+    /// assertion, hiding whether it would have passed. Recovery here does
+    /// not weaken any test — each one still resets the globals it touches
+    /// via `zle_test_setup()`.
     static GLOBAL_MUT_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn compcontext_for_routes_ispar_first() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:583/593 — the subscript arms key off `insubscr`; pin it off so
         // the non-subscript routing below is deterministic (`zle_reset`
         // does not clear it).
@@ -8240,7 +8250,7 @@ mod tests {
     fn compcontext_for_redirect_array_value_and_cmdstr_arms() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::ported::zle::zle_tricky::{CMDSTR, INSUBSCR, LINARR, LINCMD, LINREDIR};
         ispar.store(0, Ordering::Relaxed);
         INSUBSCR.store(0, Ordering::Relaxed);
@@ -8281,7 +8291,7 @@ mod tests {
     fn compcontext_for_routes_subscript_when_insubscr_set() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::ported::zle::zle_tricky::{CMDSTR, INSUBSCR, LINCMD, LINREDIR};
         ispar.store(0, Ordering::Relaxed);
         LINCMD.store(0, Ordering::Relaxed);
@@ -8322,7 +8332,7 @@ mod tests {
     fn addmatches_appends_argv_to_default_group() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:2200 simplified body: each argv entry → addmatch into "default" group.
         amatches
             .get_or_init(|| Mutex::new(Vec::new()))
@@ -8353,7 +8363,7 @@ mod tests {
     fn addmatches_restores_mstack_after_the_call() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fn mstack_depth() -> usize {
             let g = mstack.get_or_init(|| Mutex::new(None)).lock().unwrap();
             let mut n = 0;
@@ -8377,7 +8387,7 @@ mod tests {
     fn add_match_data_returns_populated_cmatch() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:3052-3067: cm.str/orig/pre/suf populated; mnum bumps by 1.
         crate::comp_match_handles::matches_arc()
             .lock()
@@ -8414,7 +8424,7 @@ mod tests {
     fn add_match_data_exact_records_into_ainfo() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:3037-3058: exact != 0 writes `ai->exact = useexact` and
         // `ai->exactm = cm`. The test sets useexact=1 to exercise the
         // accept-exact path.
@@ -8555,7 +8565,7 @@ mod tests {
     fn foredel_deletes_forward_from_zlemetacs() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // zle_utils.c:1105 — delete `ct` chars forward from ZLEMETACS.
         if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
             *g = "abcdef".to_string();
@@ -8572,7 +8582,7 @@ mod tests {
     fn inststr_inserts_at_zlemetacs() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // zle_tricky.c:278 — insert at cursor.
         if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
             *g = "hello".to_string();
@@ -8589,7 +8599,7 @@ mod tests {
     fn metafy_and_unmetafy_roundtrip_globals() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // zle_tricky.c:978,995 — meta/unmeta operate on the global pair.
         if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
             *g = "plain ascii".to_string();
@@ -8614,7 +8624,7 @@ mod tests {
     fn selfinsert_appends_lastchar_at_zlecs() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // zle_misc.c:112-141 — insert one char at cursor, bump zlecs.
         //
         // `selfinsert()` (zle_misc.rs:180) writes through
@@ -8657,7 +8667,7 @@ mod tests {
     fn minfo_clear_and_asked_zero_mutate_state() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             let mut cm = Cmatch::default();
             cm.str = Some("x".into());
@@ -8692,7 +8702,7 @@ mod tests {
     fn permmatches_returns_fi_zero_when_count_present() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:3444-3447: if ainfo->count is non-zero, fi stays 0.
         amatches
             .get_or_init(|| Mutex::new(Vec::new()))
@@ -8735,7 +8745,7 @@ mod tests {
     fn mgroup_new_flag_is_shared_with_the_amatches_entry() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         amatches
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()

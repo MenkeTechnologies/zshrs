@@ -2733,6 +2733,63 @@ pub fn zle_test_setup() -> std::sync::MutexGuard<'static, ()> {
     // lock, recover the guard rather than poisoning every subsequent
     // test. Tests reset state via zle_reset() anyway.
     let guard = ZLE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Drop the poison flag from every `complete.c` string global before
+    // the test body runs.
+    //
+    // The C originals (`char *compprefix` et al, `Src/Zle/complete.c:
+    // 47-73`) are plain pointers; the port wraps each in a `Mutex` so the
+    // same process-wide storage is shared safely. That wrapper adds a
+    // failure mode C does not have: a test that panics INSIDE
+    // `assert_eq!(*X.lock().unwrap(), …)` still holds the guard while the
+    // assertion unwinds, so the mutex stays poisoned for the rest of the
+    // test binary and every later `.lock().unwrap()` panics with
+    // `PoisonError` before reaching a single assertion.
+    //
+    // Observed: one failing `compcore` test poisoned `COMPPREFIX` and
+    // nine unrelated `compcore`/`complete`/`computil` tests then reported
+    // `PoisonError` instead of running. Clearing the flag bounds the
+    // damage to the test that actually failed. It cannot mask a bug — the
+    // guarded data is a `String` that each of these tests seeds before
+    // use, and the test that failed still fails.
+    //
+    // Inlined here rather than factored into a helper: `src/ported/` is a
+    // port and build.rs rejects functions with no C counterpart.
+    {
+        use crate::ported::zle::complete::{
+            COMPCONTEXT, COMPIPREFIX, COMPISUFFIX, COMPLASTPREFIX, COMPLASTSUFFIX, COMPLIST,
+            COMPPARAMETER, COMPPATINSERT, COMPPREFIX, COMPQIPREFIX, COMPQISUFFIX, COMPQSTACK,
+            COMPQUOTE, COMPQUOTING, COMPREDIRECT, COMPSUFFIX, COMPVARED, COMPWORDS,
+        };
+        for g in [
+            &COMPPREFIX,
+            &COMPSUFFIX,
+            &COMPLASTPREFIX,
+            &COMPLASTSUFFIX,
+            &COMPIPREFIX,
+            &COMPISUFFIX,
+            &COMPQIPREFIX,
+            &COMPQISUFFIX,
+            &COMPQUOTE,
+            &COMPQUOTING,
+            &COMPQSTACK,
+            &COMPLIST,
+            &COMPCONTEXT,
+            &COMPPARAMETER,
+            &COMPREDIRECT,
+            &COMPPATINSERT,
+            &COMPVARED,
+        ] {
+            // An un-initialised OnceLock holds no mutex, so nothing to clear.
+            if let Some(m) = g.get() {
+                m.clear_poison();
+            }
+        }
+        if let Some(m) = COMPWORDS.get() {
+            m.clear_poison();
+        }
+    }
+
     zle_reset();
     guard
 }

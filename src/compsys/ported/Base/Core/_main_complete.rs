@@ -1387,11 +1387,26 @@ mod tests {
     /// Run `body` one function scope deep, so `declare_locals` takes its
     /// `pm->level < locallevel` branch (`Src/builtin.c:2469`) instead of
     /// the `locallevel == 0` early return.
+    /// The unwind runs even when `body` panics. An assertion failure
+    /// inside the scope used to skip `endparamscope()` outright, leaving
+    /// `locallevel` incremented and the half-built local shadows in
+    /// `paramtab` for the REST OF THE TEST BINARY. Every later test that
+    /// depends on a clean parameter scope then failed too — concretely
+    /// `ported::zle::compcore::tests::callcompfunc_publishes_and_tears_
+    /// down_zle_params` saw `makezleparams`/`endparamscope` operate at
+    /// the leaked level and panicked while holding the compcore test
+    /// mutex, poisoning it and taking another ~20 tests down with it.
+    /// Catching the unwind here bounds the damage to the one test that
+    /// actually failed; the panic is re-raised unchanged so the failure
+    /// is still reported.
     fn in_function_scope<T>(body: impl FnOnce() -> T) -> T {
         crate::ported::utils::inc_locallevel();
-        let out = body();
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
         crate::ported::params::endparamscope();
-        out
+        match out {
+            Ok(v) => v,
+            Err(p) => std::panic::resume_unwind(p),
+        }
     }
 
     /// sh:52 — `local -ar builtin_precommands=(- builtin eval exec

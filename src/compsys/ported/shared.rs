@@ -47,7 +47,7 @@ pub use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_INTEGER, PM_READONLY, PM_
 /// when run outside a function (unit tests, `--doctor`).
 pub fn declare_locals(names: &[&str], kind: u32) {
     use crate::ported::params::{createparam, locallevel, paramtab};
-    use crate::ported::zsh_h::PM_LOCAL;
+    use crate::ported::zsh_h::{PM_HIDE, PM_LOCAL, PM_SPECIAL};
     use std::sync::atomic::Ordering;
 
     let cur = locallevel.load(Ordering::Relaxed); // c:2469 locallevel
@@ -56,11 +56,25 @@ pub fn declare_locals(names: &[&str], kind: u32) {
     }
     for name in names {
         // c:2469 — `(!pm || pm->level < locallevel)`.
-        let needs_shadow = paramtab()
+        //
+        // The same table read also settles `newspecial`. c:2083-2085:
+        //   if ((pm->node.flags & PM_SPECIAL)
+        //       && !(on & PM_HIDE) && !(pm->node.flags & PM_HIDE & ~off))
+        //       newspecial = NS_NORMAL;
+        // i.e. localizing a PM_SPECIAL parameter keeps it special unless
+        // `-h` hides it, on either the special itself or this statement.
+        let (needs_shadow, newspecial) = paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get(*name).map(|pm| pm.level < cur))
-            .unwrap_or(true);
+            .and_then(|t| {
+                t.get(*name).map(|pm| {
+                    let special = (pm.node.flags as u32 & PM_SPECIAL) != 0
+                        && (kind & PM_HIDE) == 0
+                        && (pm.node.flags as u32 & PM_HIDE) == 0;
+                    (pm.level < cur, special)
+                })
+            })
+            .unwrap_or((true, false));
         if !needs_shadow {
             continue;
         }
@@ -72,6 +86,19 @@ pub fn declare_locals(names: &[&str], kind: u32) {
             if let Some(pm) = tab.get_mut(*name) {
                 pm.level = cur;
                 pm.node.flags |= (kind & PM_UNIQUE) as i32;
+                // c:2425 — `pm->node.flags = (PM_TYPE(pm->node.flags) | on
+                // | PM_SPECIAL) & ~off;`. `createparam` deliberately drops
+                // the bit (`Src/params.c:1174` stores `flags & ~PM_LOCAL`
+                // on the fresh struct), so the special-ness of the shadowed
+                // parameter has to be re-stamped here the way the
+                // `newspecial` arm of `typeset_single` does. Without it
+                // `integer SECONDS=0` (_main_complete sh:162) read
+                // `integer-local` where zsh reads `integer-local-special`,
+                // and `_parameters` — which drops every candidate whose
+                // type matches `*local*` — mis-classified the shadow.
+                if newspecial {
+                    pm.node.flags |= PM_SPECIAL as i32;
+                }
             }
         }
     }
