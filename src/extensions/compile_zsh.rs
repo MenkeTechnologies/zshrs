@@ -3643,8 +3643,15 @@ impl ZshCompiler {
                             .add_constant(Value::str(content_clean.as_str()));
                         self.builder.emit(Op::LoadConst(idx), 0);
                     } else {
-                        let trimmed = hd.content.trim_end_matches('\n').to_string();
-                        let text_const = self.builder.add_constant(Value::str(trimmed));
+                        // c:Src/exec.c:4671-4672 — same non-append
+                        // contract as the fd-0 arm below: the body
+                        // reaches the consumer exactly as `gethere`
+                        // produced it. Marker 255 tells
+                        // BUILTIN_OPEN_NAMED_FD this is the here-DOC
+                        // spelling (REDIRF_FROM_HEREDOC), so it must
+                        // not append; the trim here plus that append
+                        // collapsed N trailing blank lines to one.
+                        let text_const = self.builder.add_constant(Value::str(hd.content.as_str()));
                         self.builder.emit(Op::LoadConst(text_const), 0);
                         self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
                         self.builder
@@ -3667,25 +3674,38 @@ impl ZshCompiler {
                 // fd-aware helper as `exec 3<<<str` (writes a temp file,
                 // dup2's to fd N). Content handling mirrors the fd=0
                 // arms below (quoted → verbatim, unquoted → mode-4
-                // expand); the helper appends the single trailing
-                // newline that trim_end_matches removes, matching the
-                // fd=0 HereString behaviour. c:Src/exec.c:3766-3780.
-                if fd > 0 && !content_clean.is_empty() {
+                // expand). c:Src/exec.c:3766-3780.
+                //
+                // c:Src/exec.c:4671-4672 — the trailing `1` marks
+                // REDIRF_FROM_HEREDOC (c:Src/parse.c:2970-2971) so the
+                // helper does NOT append a newline; the trim that used
+                // to compensate for its unconditional append collapsed
+                // N trailing blank lines to one and added a newline to
+                // a body that ended without one.
+                //
+                // An EMPTY body still belongs on fd N: `exec 3<<EOF`
+                // with nothing before the terminator leaves fd 3 open
+                // on a zero-byte file in zsh (`cat <&3` prints nothing,
+                // status 0). Routing it to the fd-0 `Op::HereDoc` arm
+                // instead staged it as pending stdin and left fd 3
+                // closed, so `cat <&3` reported "bad file descriptor".
+                if fd > 0 {
                     if hd.quoted {
-                        let trimmed = content_clean.trim_end_matches('\n').to_string();
-                        let idx = self.builder.add_constant(Value::str(trimmed.as_str()));
+                        let idx = self
+                            .builder
+                            .add_constant(Value::str(content_clean.as_str()));
                         self.builder.emit(Op::LoadConst(idx), 0);
                     } else {
-                        let trimmed = hd.content.trim_end_matches('\n').to_string();
-                        let text_const = self.builder.add_constant(Value::str(trimmed));
+                        let text_const = self.builder.add_constant(Value::str(hd.content.as_str()));
                         self.builder.emit(Op::LoadConst(text_const), 0);
                         self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
                         self.builder
                             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
                     }
                     self.builder.emit(Op::LoadInt(fd as i64), 0);
+                    self.builder.emit(Op::LoadInt(1), 0); // REDIRF_FROM_HEREDOC
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_HERESTR_FD, 2),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_HERESTR_FD, 3),
                         0,
                     );
                     self.builder.emit(Op::Pop, 0); // discard Status
@@ -3762,11 +3782,35 @@ impl ZshCompiler {
             // C `Src/exec.c:3766-3780 REDIR_HERESTR + addfd` via
             // a new runtime helper that writes to a temp file and
             // dup2's to the target fd. Bug #205 in docs/BUGS.md.
+            // `{varid}<<<str` — c:Src/exec.c:3779 passes `fn->varid`
+            // to addfd for REDIR_HERESTR exactly as it does for
+            // REDIR_READ, so the varid arm (c:2402-2412: movefd above
+            // 10, FDT_EXTERNAL, setiparam) applies here too. Without
+            // this the redirection fell through to the fd-0
+            // pending-stdin path, $varid was never set, and
+            // `exec {f}<<<hello; cat <&$f` died with "file number
+            // expected". Marker 254 = genuine here-string, so
+            // BUILTIN_OPEN_NAMED_FD appends the newline of c:4671-4672.
+            if let Some(ref vid) = redir.varid {
+                self.compile_word_str(&redir.name);
+                let vid_const = self.builder.add_constant(Value::str(vid.as_str()));
+                self.builder.emit(Op::LoadConst(vid_const), 0);
+                self.builder.emit(Op::LoadInt(254), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_OPEN_NAMED_FD, 3),
+                    0,
+                );
+                self.builder.emit(Op::SetStatus, 0);
+                return;
+            }
             if redir.fd > 0 {
                 self.compile_word_str(&redir.name);
                 self.builder.emit(Op::LoadInt(fd as i64), 0);
+                // c:4671-4672 — NOT from a here-document, so the
+                // helper appends the trailing newline.
+                self.builder.emit(Op::LoadInt(0), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_HERESTR_FD, 2),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_HERESTR_FD, 3),
                     0,
                 );
                 self.builder.emit(Op::Pop, 0); // discard Status

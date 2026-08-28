@@ -318,6 +318,146 @@ EOF
 "#,
         );
     }
+
+    /// `exec N<<<str` must leave fd N OPEN for the rest of the script,
+    /// exactly like `exec N<file` does (c:Src/exec.c:3978-3986,
+    /// nullexec==1: "we specifically *don't* restore the original
+    /// fd's"). It did not: the helper behind it closed the descriptor
+    /// it had just installed, so every later `<&N` said "N: bad file
+    /// descriptor".
+    ///
+    /// The cause was a missing arm of `redup` (c:Src/utils.c:2049-2065)
+    /// — `zclose(x)` is inside `else if (x != y)`, i.e. a no-op when
+    /// the source and target descriptors are the same number. They ARE
+    /// the same here: `mkstemp` takes the lowest free fd (3 for
+    /// `exec 3<<<…`), closes it at c:4676, and the `open` at c:4677
+    /// reclaims that very number.
+    #[test]
+    fn exec_herestring_to_fd_persists() {
+        assert_parity_in(Path::new("/tmp"), "exec 3<<< hello\ncat <&3\n");
+    }
+
+    /// Same persistence contract for the here-DOCUMENT spelling.
+    #[test]
+    fn exec_heredoc_to_fd_persists() {
+        assert_parity_in(Path::new("/tmp"), "exec 3<<EOF\nhello\nEOF\ncat <&3\n");
+    }
+
+    /// A shell builtin reading the persisted fd, not just an external
+    /// command — `read -u3` returned status 1 with an empty line.
+    #[test]
+    fn exec_heredoc_to_fd_readable_by_read_u() {
+        assert_parity_in(
+            Path::new("/tmp"),
+            "exec 3<<EOF\nhello\nEOF\nread -u3 line\nr=$?\nprint -r -- \"rc=$r [$line]\"\n",
+        );
+    }
+
+    /// `{varid}<<<str` — c:Src/exec.c:3779 hands `fn->varid` to `addfd`
+    /// for REDIR_HERESTR just as it does for REDIR_READ, so the varid
+    /// arm (c:2402-2412: `movefd` above 10, FDT_EXTERNAL, `setiparam`)
+    /// applies. zshrs ignored the varid on this form, fell through to
+    /// the fd-0 pending-stdin path and left $f unset, so `cat <&$f`
+    /// died with "file number expected".
+    #[test]
+    fn exec_named_fd_herestring() {
+        assert_parity_in(Path::new("/tmp"), "exec {f}<<< hello\ncat <&$f\n");
+    }
+
+    /// `exec {v}<<EOF` already allocated the fd; the body it carried was
+    /// the lossy part.
+    #[test]
+    fn exec_named_fd_heredoc() {
+        assert_parity_in(Path::new("/tmp"), "exec {f}<<EOF\nhello\nEOF\ncat <&$f\n");
+    }
+
+    /// c:Src/exec.c:4671-4672 — `getherestr` appends the newline only
+    /// when `!(fn->flags & REDIRF_FROM_HEREDOC)`. A here-DOCUMENT body
+    /// therefore reaches the fd byte-for-byte, trailing blank lines
+    /// included. Both fd-bearing arms used to
+    /// `trim_end_matches('\n')` and let the helper append one back,
+    /// collapsing "hello\n\n\n" to "hello\n".
+    #[test]
+    fn exec_heredoc_to_fd_keeps_trailing_blank_lines() {
+        assert_parity_in(Path::new("/tmp"), "exec 3<<EOF\nhello\n\n\nEOF\ncat <&3\n");
+    }
+
+    #[test]
+    fn exec_named_fd_heredoc_keeps_trailing_blank_lines() {
+        assert_parity_in(
+            Path::new("/tmp"),
+            "exec {f}<<EOF\nhello\n\n\nEOF\ncat <&$f\n",
+        );
+    }
+
+    /// The quoted-terminator spelling takes the other branch of both
+    /// arms and has the same contract.
+    #[test]
+    fn exec_quoted_heredoc_to_fd_keeps_trailing_blank_lines() {
+        assert_parity_in(Path::new("/tmp"), "exec 3<<'EOF'\nhello\n\n\nEOF\ncat <&3\n");
+    }
+
+    #[test]
+    fn exec_quoted_named_fd_heredoc_keeps_trailing_blank_lines() {
+        assert_parity_in(
+            Path::new("/tmp"),
+            "exec {f}<<'EOF'\nhello\n\n\nEOF\ncat <&$f\n",
+        );
+    }
+
+    /// NEGATIVE CONTROL for the flag being threaded rather than the
+    /// append being deleted: a GENUINE here-string still gains its
+    /// trailing newline (c:4665-4666 "as if the string given was a
+    /// complete command line").
+    #[test]
+    fn exec_herestring_to_fd_still_appends_newline() {
+        assert_parity_in(
+            Path::new("/tmp"),
+            "exec 3<<< hello\ncat <&3 | od -An -c | tr -s ' '\n",
+        );
+    }
+
+    /// An empty here-document body still OPENS fd N on a zero-byte
+    /// file; it must not be diverted to the pending-stdin path (which
+    /// left fd N closed and made `cat <&3` fail).
+    #[test]
+    fn exec_empty_heredoc_to_fd_still_opens_it() {
+        assert_parity_in(Path::new("/tmp"), "exec 3<<EOF\nEOF\ncat <&3\nprint rc=$?\n");
+    }
+
+    /// The mirror image of the persistence contract: WITHOUT a bare
+    /// `exec`, the fd belongs to that one command only. c:Src/exec.c:
+    /// 2421-2443 parks the old contents in `save[]` — `-1` when the fd
+    /// was closed beforehand (c:2422-2423) — and c:4530 `redup(save[i],
+    /// i)` restores it, closing the fd again for the `-1` case
+    /// (c:Src/utils.c:2047-2048).
+    #[test]
+    fn non_exec_heredoc_fd_does_not_leak() {
+        assert_parity_in(
+            Path::new("/tmp"),
+            "print -r -- start 3<<EOF\nhi\nEOF\ncat <&3\nprint rc=$?\n",
+        );
+    }
+
+    #[test]
+    fn non_exec_herestring_fd_does_not_leak() {
+        assert_parity_in(
+            Path::new("/tmp"),
+            "print -r -- start 3<<< hi\ncat <&3\nprint rc=$?\n",
+        );
+    }
+
+    /// …and when the fd DID hold something before the command, the
+    /// command-scoped here-document must hand it back, not close it.
+    #[test]
+    fn non_exec_heredoc_fd_restores_previous_contents() {
+        let d = tdir();
+        std::fs::write(d.path().join("outer.txt"), "outer\n").expect("write");
+        assert_parity_in(
+            d.path(),
+            "exec 3< outer.txt\nprint -r -- start 3<<EOF\nhi\nEOF\ncat <&3\n",
+        );
+    }
 }
 
 /// A `return` out of a compound command that carries a redirection must

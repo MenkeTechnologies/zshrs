@@ -7170,13 +7170,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             return Value::Status(1);
         }
-        // `{varid}<<HERE` / `{varid}<<<str` — op byte 255 (zshrs-side
-        // contract with compile_redir; fusevm's redirect_op stops at
-        // 8). C path: gethere/getherestr write the body to a temp
-        // file (Src/exec.c:4660-4682), then addfd's varid arm moves
-        // the read fd >= 10, marks FDT_EXTERNAL and sets the param
-        // (c:2402-2412). `path` carries the BODY text here.
-        if op_byte == 255 {
+        // `{varid}<<HERE` (op byte 255) / `{varid}<<<str` (op byte
+        // 254) — zshrs-side contract with compile_redir; fusevm's
+        // redirect_op stops at 8. C path: gethere/getherestr write the
+        // body to a temp file (Src/exec.c:4660-4682), then addfd's
+        // varid arm moves the read fd >= 10, marks FDT_EXTERNAL and
+        // sets the param (c:2402-2412). `path` carries the BODY text
+        // here.
+        //
+        // The two markers ARE the `REDIRF_FROM_HEREDOC` distinction of
+        // c:Src/exec.c:4671-4672 (flag set at c:Src/parse.c:2970-2971):
+        // 255 is the here-DOCUMENT spelling, whose body reaches the
+        // consumer byte-for-byte, and 254 the genuine here-STRING,
+        // which gains one trailing newline "as if the string given was
+        // a complete command line" (c:4665-4666).
+        if op_byte == 255 || op_byte == 254 {
+            let from_heredoc = op_byte == 255;
             if param_readonly {
                 crate::ported::utils::zwarn(&format!(
                     "can't allocate file descriptor to readonly parameter {}",
@@ -7185,7 +7194,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 with_executor(|exec| exec.redirect_failed = true);
                 return Value::Status(1);
             }
-            let body = format!("{}\n", path.trim_end_matches('\n'));
+            // c:4671-4672 — `trim_end_matches('\n')` + unconditional
+            // append was lossy in both directions: `exec {f}<<EOF`
+            // with two trailing blank lines produced "hello\n" where
+            // zsh produces "hello\n\n\n".
+            let body = if from_heredoc {
+                path
+            } else {
+                format!("{}\n", path)
+            };
             let mut tmpl: Vec<u8> = b"/tmp/zshrs_hd_XXXXXX\0".to_vec();
             let write_fd = unsafe { libc::mkstemp(tmpl.as_mut_ptr() as *mut libc::c_char) };
             if write_fd < 0 {
@@ -9251,12 +9268,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_EXEC_HERESTR_FD, |vm, _argc| {
+        // Stack (pushed by compile_redir): [content, fd, from_heredoc].
+        let from_heredoc = vm.pop().to_int() != 0;
         let fd = vm.pop().to_int() as i32;
         let content = vm.pop().to_str();
-        // c:4671-4672 — append `\n` for "real" herestrings (not
-        // heredoc-derived). zshrs's bare-exec path only fires for
-        // the `<<<` syntax (REDIR_HERESTR), so always append.
-        let body = format!("{}\n", content);
+        // c:Src/exec.c:4671-4672 — `getherestr` appends the newline
+        // only for a REAL here-string:
+        //     if (!(fn->flags & REDIRF_FROM_HEREDOC))
+        //         t[len++] = '\n';
+        // The `REDIRF_FROM_HEREDOC` flag is set by
+        // c:Src/parse.c:2970-2971 when the redirection was written as
+        // `<<WORD` and the parser turned the collected body into a
+        // here-string. This helper serves BOTH spellings — `exec
+        // 3<<<str` (append) and `exec 3<<EOF` (verbatim) — so the flag
+        // has to be threaded in rather than assumed. It used to
+        // unconditionally append, and the here-doc call site
+        // compensated with `trim_end_matches('\n')`, which collapsed
+        // N trailing blank lines to one and added a newline to a body
+        // that ended without one.
+        let body = if from_heredoc {
+            content
+        } else {
+            format!("{}\n", content)
+        };
+        // c:Src/exec.c:3779 `addfd(forked, save, mfds, fn->fd1, fil, 0,
+        // NULL)` → c:2421-2443: park the OLD contents of fd1 so
+        // `fixfds` (c:4530) can put them back at the end of the
+        // command; a bare `exec` (nullexec==1, c:3978-3986) skips it
+        // and the redirection persists. This runs BEFORE the temp
+        // file is opened on purpose: C reads fd1's pre-redirect state
+        // too, and taking it afterwards would dup the here-document
+        // itself and "restore" fd N to the body at scope end.
+        with_executor(|exec| exec.save_fd_for_scope(fd));
         // c:4673-4679 — gettempfile → write_loop → close → reopen
         // read-only → unlink. Rust equivalent via tempfile crate or
         // explicit O_TMPFILE; use mkstemp + unlink-immediately to
@@ -9297,11 +9340,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if read_fd < 0 {
             return Value::Status(1);
         }
-        // c:3779 addfd → dup2 to target fd, close intermediate.
-        let r = unsafe { libc::dup2(read_fd, fd) };
-        unsafe { libc::close(read_fd) };
-        if r < 0 {
-            return Value::Status(1);
+        // c:Src/utils.c:2047-2065 `redup(x, y)` — the `zclose(x)` lives
+        // INSIDE the `else if (x != y)` arm:
+        //     if(x < 0)        zclose(y);
+        //     else if (x != y) { dup2(x, y); …; zclose(x); }
+        // When x == y, redup is a NO-OP. This helper closed `read_fd`
+        // unconditionally, and `read_fd == fd` is the COMMON case for
+        // `exec 3<<…`: mkstemp takes the lowest free fd (3), closes it
+        // at c:4676, then `open` reclaims the same 3, so `dup2(3, 3)`
+        // returned 3 and the very next `close(3)` threw the redirect
+        // away. Every `exec N<<…` / `exec N<<<…` left N closed, and
+        // `cat <&N` reported "N: bad file descriptor".
+        if read_fd != fd {
+            let r = unsafe { libc::dup2(read_fd, fd) };
+            unsafe { libc::close(read_fd) };
+            if r < 0 {
+                return Value::Status(1);
+            }
         }
         Value::Status(0)
     });
@@ -13922,17 +13977,24 @@ pub const BUILTIN_COND_STR_EMPTY: u16 = 613;
 /// BUILTIN_COND_STR_EMPTY).
 pub const BUILTIN_COND_STR_NONEMPTY: u16 = 614;
 
-/// `exec N<<<"str"` — herestring redirect to explicit fd, applied
-/// permanently to the shell (no scope restoration). Pops `[content,
-/// fd]` from the stack; creates a temp file, writes
-/// `content + "\n"`, reopens read-only, dup2's to `fd`, unlinks the
-/// temp path so it disappears on close. Mirrors C `Src/exec.c:4655
-/// getherestr` + `addfd(forked, save, mfds, fn->fd1, fil, 0, ...)`
-/// at c:3766-3780 for the bare-exec-redir code path (nullexec=1).
-/// Bug #205 in docs/BUGS.md.
+/// `N<<<"str"` / `N<<HERE` — here-string or here-document redirect to
+/// an explicit fd. Pops `[content, fd, from_heredoc]` from the stack;
+/// creates a temp file, writes the body, reopens read-only, dup2's to
+/// `fd`, unlinks the temp path so it disappears on close. Mirrors C
+/// `Src/exec.c:4655 getherestr` + `addfd(forked, save, mfds, fn->fd1,
+/// fil, 0, NULL)` at c:3766-3780. Bug #205 in docs/BUGS.md.
+///
+/// `from_heredoc` is C's `REDIRF_FROM_HEREDOC` (set at
+/// c:Src/parse.c:2970-2971): 0 appends the trailing newline of
+/// c:4671-4672, 1 passes the body through byte-for-byte.
+///
+/// The fd itself is parked in the enclosing redirect scope via
+/// `save_fd_for_scope` unless a bare `exec` is being applied
+/// (c:3978-3986 nullexec==1), so `cmd N<<E` is undone at the end of
+/// the command while `exec N<<E` persists.
 ///
 /// Stack: pushes `Value::Status(0)` on success, `Status(1)` on
-/// failure. argc = 2.
+/// failure. argc = 3.
 pub const BUILTIN_EXEC_HERESTR_FD: u16 = 615;
 
 /// MULTIOS write/append fan-out for `cmd > a > b` / `cmd > a >> b`
@@ -14371,6 +14433,23 @@ impl fusevm::ShellHost for ZshrsHost {
 
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
         let pattern: &str = &pattern_filesub(pattern);
+        // bash `shopt -s nocasematch` — bash(1): "bash matches patterns in a
+        // case-insensitive fashion when performing matching while executing
+        // CASE or [[ conditional commands". This host method is the `case`
+        // arm dispatch, the half BUILTIN_COND_STRMATCH (which already does
+        // this, ~4.4k lines up) does not cover, so `shopt -s nocasematch;
+        // case ABC in abc)` wrongly took the `*)` arm. Same treatment: fold
+        // BOTH sides for the match decision — glob metacharacters are not
+        // letters, so `*` / `?` / `[…]` structure survives `to_lowercase`.
+        // No-op unless the bash shopt is active; --zsh unaffected.
+        let (folded_s, folded_pat);
+        let (s, pattern): (&str, &str) = if crate::dash_mode::nocasematch() {
+            folded_s = s.to_lowercase();
+            folded_pat = pattern.to_lowercase();
+            (&folded_s, &folded_pat)
+        } else {
+            (s, pattern)
+        };
         // Shell glob match — `*`, `?`, `[...]`, alternation. After the
         // cond path moved to BUILTIN_COND_STRMATCH, the consumer here
         // is the `case` arm dispatch, whose bad-pattern semantics are
@@ -16128,6 +16207,55 @@ impl ShellExecutor {
     /// Apply a single redirection. The current scope's saved-fd vec gets a
     /// dup of the original fd so it can be restored by `host_redirect_scope_end`.
     /// `op_byte` matches `fusevm::op::redirect_op::*`.
+    /// Park the CURRENT contents of `fd` in the enclosing redirect
+    /// scope so `host_redirect_scope_end` can restore them.
+    ///
+    /// c:Src/exec.c:2421-2443 — `addfd`'s "starting a new multio" arm:
+    ///
+    /// ```c
+    /// if (!forked && save[fd1] == -2) {
+    ///     if (fd1 == fd2) save[fd1] = -1;
+    ///     else {
+    ///         int fdN = movefd(fd1);
+    ///         /* fd1 may already be closed here, so
+    ///          * ignore bad file descriptor error */
+    ///         if (fdN < 0) { if (errno != EBADF) { … } }
+    ///         …
+    ///         save[fd1] = fdN;
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// A `save[]` slot of -1 therefore means "fd1 was CLOSED before
+    /// this redirection", and `fixfds` (c:4522-4532) feeds it to
+    /// `redup(-1, i)`, whose first arm is `zclose(y)` (c:Src/utils.c:
+    /// 2047-2048). So zsh CLOSES the fd again at teardown rather than
+    /// leaving the redirection behind — `print x 3<file; cat <&3`
+    /// reports "3: bad file descriptor" in zsh.
+    ///
+    /// c:Src/exec.c:3978-3986 — a bare `exec` (nullexec==1)
+    /// "specifically *doesn't* restore the original fd's", so nothing
+    /// is parked for it.
+    pub fn save_fd_for_scope(&mut self, fd: i32) {
+        if self.exec_redirs_permanent {
+            return;
+        }
+        // c:2425 `movefd(fd1)` — zshrs keeps the original fd open and
+        // dups it aside instead (the caller's dup2 overwrites it), so
+        // F_DUPFD stands in for movefd's dup-then-close.
+        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+        // c:2422-2423 / c:2430-2436 — a closed fd1 parks -1, not a dup.
+        let slot = if saved >= 0 { saved } else { -1 };
+        if let Some(top) = self.redirect_scope_stack.last_mut() {
+            top.push((fd, slot));
+        } else if saved >= 0 {
+            // No scope — leave saved fd open and let the next scope
+            // reclaim it. (Caller without a scope leaks the dup; this
+            // matches `WithRedirects` parser construction always wrapping.)
+            unsafe { libc::close(saved) };
+        }
+    }
+
     /// Apply a file-open result to a redirect fd; on error, emit
     /// zsh-format diagnostic, set redirect_failed, sink fd to /dev/null.
     /// Shared between WRITE/APPEND/READ/CLOBBER arms in
@@ -16278,28 +16406,11 @@ impl ShellExecutor {
         // stdout at group end — diverging from zsh, which keeps fd 1
         // closed for the rest of the script.
         if !self.exec_redirs_permanent {
-            let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
-            if saved >= 0 {
-                if let Some(top) = self.redirect_scope_stack.last_mut() {
-                    top.push((fd, saved));
-                } else {
-                    // No scope — leave saved fd open and let the next scope
-                    // reclaim it. (Caller without a scope leaks the dup; this
-                    // matches `WithRedirects` parser construction always wrapping.)
-                    unsafe { libc::close(saved) };
-                }
-            }
+            self.save_fd_for_scope(fd);
             // For `&>` / `&>>` also save fd 2 so the scope restores it after
             // the body. Otherwise stderr stays redirected past the command.
             if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
-                let saved2 = unsafe { libc::fcntl(2, libc::F_DUPFD, 10) };
-                if saved2 >= 0 {
-                    if let Some(top) = self.redirect_scope_stack.last_mut() {
-                        top.push((2, saved2));
-                    } else {
-                        unsafe { libc::close(saved2) };
-                    }
-                }
+                self.save_fd_for_scope(2);
             }
         }
         // c:Src/exec.c:3722-3724 + 2447-2480 — MULTIOS split when this
@@ -16721,6 +16832,18 @@ impl ShellExecutor {
         // the thread would block forever waiting for EOF.
         if let Some(saved) = self.redirect_scope_stack.pop() {
             for (fd, saved_fd) in saved.into_iter().rev() {
+                // c:Src/exec.c:4530 `redup(save[i], i)` →
+                // c:Src/utils.c:2047-2048 `if (x < 0) zclose(y);`.
+                // A -1 slot means the fd was CLOSED before the
+                // redirection (c:2422-2423, c:2430-2436), so the
+                // restore is a close, not a dup2 — otherwise the
+                // redirection outlives the command it was written on
+                // (`print x 3<file; cat <&3` printed the file instead
+                // of "3: bad file descriptor").
+                if saved_fd < 0 {
+                    unsafe { libc::close(fd) };
+                    continue;
+                }
                 unsafe {
                     libc::dup2(saved_fd, fd);
                     libc::close(saved_fd);
