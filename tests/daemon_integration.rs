@@ -25,14 +25,56 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Path to the built zshrs-daemon binary. The daemon is now its own
 /// binary (the `--daemon` arg on the shell was removed); spawn it
-/// directly. Fallback to walking the workspace target dir if the
-/// standard `CARGO_BIN_EXE_zshrs-daemon` env isn't set.
+/// directly.
+///
+/// `zshrs-daemon` lives in the `zshrs-daemon` package, not this one, so
+/// cargo sets `CARGO_BIN_EXE_zshrs-daemon` only when the tests are run
+/// from that package — running `cargo test --test daemon_integration`
+/// here does NOT rebuild it, and the fallback path below happily picks
+/// up whatever `target/debug/zshrs-daemon` was left by some earlier
+/// build. That is how this suite ended up asserting against an 8-day-old
+/// daemon: 27 of its 29 tests passed against a binary that predated the
+/// code under test, and only the two `CARGO_PKG_VERSION` assertions
+/// noticed (`0.12.36` vs `0.12.40`).
+///
+/// So build it. `cargo build -p zshrs-daemon` is a no-op when the binary
+/// is current, and cargo's target-directory lock is not held while test
+/// binaries run, so the nested invocation does not deadlock. Done once
+/// per process via `OnceLock`.
 fn zshrs_daemon_binary() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs-daemon") {
         return PathBuf::from(p);
     }
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.join("target").join("debug").join("zshrs-daemon")
+    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+            let out = Command::new(cargo)
+                .current_dir(&manifest)
+                .args(["build", "-p", "zshrs-daemon", "--bin", "zshrs-daemon"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .expect("spawn cargo build -p zshrs-daemon");
+            assert!(
+                out.status.success(),
+                "cargo build -p zshrs-daemon failed:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let target = std::env::var_os("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| manifest.join("target"));
+            let bin = target.join("debug").join("zshrs-daemon");
+            assert!(
+                bin.exists(),
+                "zshrs-daemon missing after build: {}",
+                bin.display()
+            );
+            bin
+        })
+        .clone()
 }
 
 struct DaemonHandle {
@@ -49,6 +91,20 @@ impl DaemonHandle {
         let child = Command::new(zshrs_daemon_binary())
             .env("ZSHRS_HOME", &zshrs_home)
             .env("ZSHRS_QUIET_FIRST_RUN", "1")
+            // Point every "where does the user keep shell state" env var
+            // at the tempdir too. `ZSHRS_HOME` alone does NOT isolate the
+            // daemon: `ops::legacy_scope_dirs` (daemon/ops.rs) adds
+            // `dirs::home_dir()` + `$ZDOTDIR` / `$XDG_CACHE_HOME` /
+            // `$ZPWR_LOCAL` / `$ZSH` to the scope that `verify` walks
+            // (depth 4) hunting stale `.zwc` / `.zcompdump`. On a real
+            // developer's account that walk is enormous, so `verify`
+            // outran the client's 5s read timeout and the test failed
+            // with EAGAIN — a pure property of whose $HOME it ran in.
+            .env("HOME", &zshrs_home)
+            .env("ZDOTDIR", &zshrs_home)
+            .env("XDG_CACHE_HOME", &zshrs_home)
+            .env("ZPWR_LOCAL", &zshrs_home)
+            .env("ZSH", &zshrs_home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -57,17 +113,24 @@ impl DaemonHandle {
 
         let paths = CachePaths::with_root(zshrs_home);
 
-        // Wait for the socket to appear.
+        // Wait until the daemon ACCEPTS a connection, not merely until
+        // the socket file appears. `UnixListener::bind` creates the file
+        // before `listen(2)` runs, and a connect landing in that window
+        // gets ECONNREFUSED — invisible on an idle machine, reproducible
+        // as soon as several test binaries run at once (6 concurrent runs
+        // of this file produced 2-6 spurious "Connection refused" panics
+        // each). `is_daemon_alive` is the daemon crate's own probe: it
+        // connects and drops without doing the handshake.
         let start = Instant::now();
         while start.elapsed() < SPAWN_GRACE {
-            if paths.socket.exists() {
+            if Client::is_daemon_alive(&paths) {
                 break;
             }
             std::thread::sleep(POLL_INTERVAL);
         }
         assert!(
-            paths.socket.exists(),
-            "daemon failed to bind socket at {}",
+            Client::is_daemon_alive(&paths),
+            "daemon failed to accept on socket at {}",
             paths.socket.display()
         );
 

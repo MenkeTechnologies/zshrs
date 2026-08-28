@@ -247,8 +247,18 @@ fn hover_returns_markdown_for_builtin() {
     );
     assert_eq!(r["contents"]["kind"], json!("markdown"));
     let v = r["contents"]["value"].as_str().expect("value");
-    assert!(v.contains("**cd**"));
-    assert!(v.contains("working directory"));
+    assert!(v.contains("**cd**"), "no bold header: {}", v);
+    // Upstream `Doc/Zsh/builtins.yo` opens the `cd` entry with
+    // "Change the current directory." — that prose is what
+    // `zsh_builtin_docs::BUILTIN_DOCS` carries and what the hover card
+    // renders. "working directory" appears nowhere in it; the same
+    // wording is pinned by
+    // `lsp::tests::lookup_doc_returns_markdown_for_known_builtin`.
+    assert!(
+        v.contains("Change the current directory"),
+        "no upstream cd prose: {}",
+        v
+    );
     lsp.shutdown();
 }
 

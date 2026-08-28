@@ -302,9 +302,29 @@ fn lsp_documenthighlight_marks_every_occurrence() {
         }),
     );
     let arr = r.as_array().expect("array");
-    // 4 occurrences of bare token `f`: decl + 2 calls + the `f` after `foo `.
-    // Word-boundary rule excludes the inner `f` of `function`.
-    assert_eq!(arr.len(), 4, "expected 4 highlights, got: {:?}", arr);
+    // 3 occurrences of the SYMBOL `f`: the `function f` decl (line 0)
+    // plus the two call sites in command position (lines 1 and 2).
+    //
+    // Line 3's `foo f` is NOT one of them: there `f` is an argument
+    // word passed to `foo`, not a call of the function. documentHighlight
+    // shares the AST-backed `references` walk, which for a Func symbol
+    // records only command-position uses (`lsp_symbols::OccurrenceFinder`
+    // walk_simple, `s.words.first()`); the textual fallback that would
+    // have matched a bare argument was removed on purpose, see
+    // `references` in src/extensions/lsp.rs — "the fallback turned Find
+    // Usages into a glorified `grep -w`". The word-boundary rule
+    // separately excludes the `f` inside `function`.
+    assert_eq!(arr.len(), 3, "expected 3 highlights, got: {:?}", arr);
+    let lines: Vec<u64> = arr
+        .iter()
+        .filter_map(|h| h["range"]["start"]["line"].as_u64())
+        .collect();
+    assert_eq!(lines, vec![0, 1, 2], "wrong highlight lines: {:?}", arr);
+    assert!(
+        !lines.contains(&3),
+        "argument occurrence in `foo f` must not be highlighted: {:?}",
+        arr
+    );
     for h in arr {
         assert_eq!(h["kind"], json!(1));
     } // text
@@ -617,30 +637,100 @@ fn dump_reflection_every_entry_value_is_a_string() {
 
 #[test]
 fn dump_reflection_has_no_duplicate_names_across_categories() {
-    // The IntelliJ tool window groups by category, but a name appearing
-    // in two categories with different tags makes the tree ambiguous.
-    // Strykelang collapses these via the %all bucket; for zshrs we just
-    // enforce no overlap.
+    // The IntelliJ tool window groups by category, so a name landing in
+    // two LEAF categories has to be a name zsh genuinely gives two
+    // roles — otherwise it is a registry leaking into the wrong tab.
+    //
+    // `all` and `builtins` are excluded because they are unions BY
+    // CONSTRUCTION (`dump_reflection_json`: `all` is every registry
+    // merged, `builtins` is `compat ∪ extensions`), so every single
+    // name in the blob "duplicates" into them. Including them made the
+    // check fire on the first key it saw and say nothing about
+    // registry hygiene.
+    //
+    // The expected set is pinned exactly — a NEW overlap fails, and so
+    // does an overlap that silently disappears.
     let out = Command::new(zshrs_binary())
         .arg("--dump-reflection")
         .output()
         .expect("spawn");
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let mut where_seen: std::collections::HashMap<String, String> = Default::default();
+    const AGGREGATES: [&str; 2] = ["all", "builtins"];
+    let mut where_seen: std::collections::HashMap<String, Vec<String>> = Default::default();
     for (cat, m) in v.as_object().unwrap() {
+        if AGGREGATES.contains(&cat.as_str()) {
+            continue;
+        }
         for name in m.as_object().unwrap().keys() {
-            if let Some(prev) = where_seen.insert(name.clone(), cat.clone()) {
-                // `time` is allowed in both keywords and builtins per zsh
-                // history (it's a reserved word AND there's an external
-                // command of the same name). Exempt the known duplicates.
-                let allowed = matches!(
-                    name.as_str(),
-                    "time" | ":" | "." | "[" | "[[" | "]]" | "true" | "false"
-                );
-                if !allowed {
-                    panic!("name `{}` appears in both `{}` and `{}`", name, prev, cat);
-                }
-            }
+            where_seen
+                .entry(name.clone())
+                .or_default()
+                .push(cat.clone());
+        }
+    }
+    let mut overlaps: Vec<(String, Vec<String>)> = where_seen
+        .into_iter()
+        .filter(|(_, cats)| cats.len() > 1)
+        .map(|(n, mut cats)| {
+            cats.sort();
+            (n, cats)
+        })
+        .collect();
+    overlaps.sort();
+
+    // Every one of these is a zsh name with two real roles:
+    //   `!`    — reserved word (pipeline negation, `Src/hashtable.c`
+    //            reswds[]) and an operator (history expansion, `man
+    //            zshexpn`).
+    //   `[`    — the `[` builtin (`Doc/Zsh/builtins.yo`) and the
+    //            conditional/subscript operator.
+    //   `[[`   — reserved word and the conditional operator.
+    //   declare / export / float / integer / local / readonly / typeset
+    //          — listed as reserved words by `man zshmisc` "Reserved
+    //            Words" (`Doc/Zsh/grammar.yo:501-504`) AND present as
+    //            builtins; the parser folds them into `typeset` via the
+    //            TYPESET lextok. `dump_reflection_json` documents the
+    //            deliberate both-tabs listing at its `keywords` loop.
+    let expected: Vec<(String, Vec<String>)> = [
+        ("!", vec!["keywords", "operators"]),
+        ("[", vec!["compat", "operators"]),
+        ("[[", vec!["keywords", "operators"]),
+        ("declare", vec!["compat", "keywords"]),
+        ("export", vec!["compat", "keywords"]),
+        ("float", vec!["compat", "keywords"]),
+        ("integer", vec!["compat", "keywords"]),
+        ("local", vec!["compat", "keywords"]),
+        ("readonly", vec!["compat", "keywords"]),
+        ("typeset", vec!["compat", "keywords"]),
+    ]
+    .into_iter()
+    .map(|(n, cats)| {
+        (
+            n.to_string(),
+            cats.into_iter().map(str::to_string).collect::<Vec<_>>(),
+        )
+    })
+    .collect();
+    assert_eq!(
+        overlaps, expected,
+        "cross-category name overlap changed; every entry must be a name \
+         zsh really gives two roles, not a registry leaking into the wrong tab"
+    );
+
+    // The aggregates must still be exactly that — supersets of the
+    // leaves, not independent lists that can drift.
+    let all = v["all"].as_object().unwrap();
+    for (cat, m) in v.as_object().unwrap() {
+        if AGGREGATES.contains(&cat.as_str()) {
+            continue;
+        }
+        for name in m.as_object().unwrap().keys() {
+            assert!(
+                all.contains_key(name),
+                "`all` is missing `{}` from category `{}`",
+                name,
+                cat
+            );
         }
     }
 }

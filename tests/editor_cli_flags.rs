@@ -67,7 +67,17 @@ fn docs_known_builtin_returns_markdown_card_and_exit_0() {
     );
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("**cd**"), "no bold header: {}", s);
-    assert!(s.contains("working directory"), "no description: {}", s);
+    // Upstream `Doc/Zsh/builtins.yo` opens the `cd` entry with this
+    // sentence, and that prose is what `zsh_builtin_docs::BUILTIN_DOCS`
+    // carries (src/extensions/zsh_builtin_docs.rs). The card never said
+    // "working directory" — the same assertion in
+    // `lsp::tests::lookup_doc_returns_markdown_for_known_builtin`
+    // (src/extensions/lsp.rs) already pins the real wording.
+    assert!(
+        s.contains("Change the current directory"),
+        "no upstream cd prose: {}",
+        s
+    );
 }
 
 #[test]
@@ -83,8 +93,17 @@ fn docs_known_keyword_returns_card() {
         String::from_utf8_lossy(&out.stderr)
     );
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("**if**"));
-    assert!(s.contains("Conditional"));
+    assert!(s.contains("**if**"), "no bold header: {}", s);
+    // Upstream `Doc/Zsh/grammar.yo` `if` prose, carried verbatim by
+    // `zsh_keyword_docs::KEYWORD_DOCS` (src/extensions/zsh_keyword_docs.rs:18):
+    // "The `if` _list_ is executed, and if it returns a zero exit
+    // status, the `then` _list_ is executed." There is no "Conditional"
+    // anywhere in it — that was a guess at the wording.
+    assert!(
+        s.contains("zero exit status"),
+        "no upstream if prose: {}",
+        s
+    );
 }
 
 #[test]
@@ -96,7 +115,13 @@ fn docs_known_special_var_returns_card() {
         .expect("spawn");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("Exit status"), "got: {}", s);
+    assert!(s.contains("**$?**"), "no bold header: {}", s);
+    // `Doc/Zsh/params.yo` — "The exit status returned by the last
+    // command", stored under the bare `?` key in
+    // `zsh_special_var_docs::SPECIAL_VAR_DOCS`
+    // (src/extensions/zsh_special_var_docs.rs:20). Lower-case `e`:
+    // the sentence starts with "The".
+    assert!(s.contains("exit status"), "got: {}", s);
 }
 
 #[test]
