@@ -1416,8 +1416,25 @@ thread_local! {
     static M_FORCE_FLOAT: Cell<bool> = const { Cell::new(false) };
     /// `setopt OCTALZEROES` mirror.
     static M_OCTAL_ZEROES: Cell<bool> = const { Cell::new(false) };
-    /// In-memory params table (zshrs uses this instead of the C param
-    /// table). Carries float/integer mnumber results.
+    /// Counterpart of C's per-`struct mathvalue` value cache,
+    /// `mptr->pval` (math.c:340-343) — a within-expression read cache
+    /// keyed by name, so a second reference to `i` in one expression
+    /// does not re-walk the parameter table.
+    ///
+    /// NOT a store. The canonical store is the parameter table, exactly
+    /// as in C: `getmathparam` falls through to `getsparam`/paramtab on
+    /// a miss (c:343 `getvalue`), and `setmathvar` always writes through
+    /// `setnparam`/`assignsparam` (c:1005).
+    ///
+    /// Its lifetime is ONE evaluation, because in C the mathvalues that
+    /// hold `pval` live on `stack`, which is the local `nstack[]` for
+    /// the duration of a `mathevall` frame (c:406) and is put back to
+    /// the caller's on exit (c:455). `matheval` / `mathevali_noeval`
+    /// save and restore it around their frame for that reason; nested
+    /// evaluations get the same from `restore_state`. Widening that
+    /// lifetime lets a reader outside any evaluation (the VM's
+    /// BUILTIN_GET_MATH_VAR) see a stale entry in preference to the
+    /// real parameter.
     static M_VARIABLES: RefCell<HashMap<String, mnumber>> = RefCell::new(HashMap::new());
     /// Raw string values for variables whose contents aren't a plain
     /// number — recursively re-eval'd by `getmathparam` for
@@ -4302,8 +4319,44 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
             type_: MN_INTEGER,
         }); // c:1493-1494
     }
+    // c:Src/math.c:406 `stack = nstack;` / c:455 `stack = xstack;`.
+    //
+    // C's per-name value cache is `mptr->pval` (c:340-343), and every
+    // `struct mathvalue` holding one lives on `stack`, which at
+    // c:406 is pointed at the LOCAL array `nstack[STACKSZ]` (c:374) and at
+    // c:455 is put back to the caller's `xstack` (saved at c:395). So the
+    // lifetime is exactly one `mathevall` frame — after the evaluation
+    // returns there is nothing left to consult but the parameter table
+    // (`getvalue`, c:343 / `setnparam`, c:1005).
+    //
+    // The Rust port's counterpart of `mptr->pval` is the `M_VARIABLES`
+    // (+ `M_STRING_VARIABLES`) thread_local, which is NOT a local: it
+    // outlived the evaluation, because it was only ever cleared lazily
+    // by the NEXT evaluation's `new()` (c.f. `new`, below). Anything
+    // calling `getmathparam` outside a `mathevall` — the VM's
+    // BUILTIN_GET_MATH_VAR does exactly that — therefore read a stale
+    // cache entry in preference to the real parameter, and the two
+    // stores could disagree for an unbounded window (`i=0; (( i=5 ));`
+    // then a slot-compiled `for ((i=1; i<=3; i++))` saw 5, not 1).
+    // Nested evaluations never had the problem because
+    // `restore_state` (Rust-only, mirroring c:446-457) already puts the
+    // caller's map back. Give the top-level evaluation the same
+    // discipline so the cache dies with its frame, as `nstack` does.
+    //
+    // Safe to drop on exit because `setmathvar` (c:1005) writes the
+    // canonical store — `setnparam` / `assignsparam` — on every
+    // assignment; the map entry it also fills is only a within-
+    // expression read cache (see setmathvar's `m_variables_insert`).
+    let xvariables = m_variables_clone(); // c:395 `xstack = stack;`
+    let xstring_variables = m_string_variables_clone();
     new(s);
     let result = mathevall();
+    // c:455 — `stack = xstack;`, the cache goes out of scope with the
+    // frame that owns it. At top level both maps were empty on entry,
+    // so this is a clear; under a nested `matheval` it restores the
+    // parent's, exactly as C restores the parent's `stack`.
+    m_variables_set(xvariables);
+    m_string_variables_set(xstring_variables);
     // c:1496 — `mtok = xmtok;` restore. Done even on error path.
     M_MTOK.with(|c| c.set(xmtok)); // c:1496
                                    // c:Src/math.c:1500 — `lastmathval = z;` records the result of this
@@ -4357,10 +4410,17 @@ pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
     if s_skip.is_empty() {
         return Ok(0);
     }
+    // Same `stack = nstack` / `stack = xstack` cache lifetime as
+    // `matheval` above (c:406 / c:455) — this entry point runs a full
+    // evaluator frame too, so its value cache must not outlive it.
+    let xvariables = m_variables_clone();
+    let xstring_variables = m_string_variables_clone();
     new(s_skip);
     m_noeval_set(1); // bump AFTER new() reset
     let result = mathevall();
     m_noeval_set(0);
+    m_variables_set(xvariables); // c:455
+    m_string_variables_set(xstring_variables);
     M_MTOK.with(|c| c.set(xmtok));
     result.map(|n| {
         if (n.type_ & MN_FLOAT) != 0 {
@@ -5275,6 +5335,63 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The per-name value cache (`M_VARIABLES`, the port's counterpart
+    /// of C's `mptr->pval`, math.c:340-343) must not outlive the
+    /// evaluation that filled it. In C it cannot: the mathvalues that
+    /// hold `pval` live on `stack`, which is the frame-local `nstack[]`
+    /// for the duration of a `mathevall` (c:406) and is put back to the
+    /// caller's on exit (c:455). The Rust cache is a thread_local, so
+    /// `matheval` has to restore it by hand.
+    ///
+    /// The failure this pins is NOT "the assignment did not persist" —
+    /// it did, `setmathvar` writes through `setnparam` (c:1005). It is
+    /// that a reader OUTSIDE any evaluation (the VM's
+    /// BUILTIN_GET_MATH_VAR, which calls `getmathparam` directly) saw
+    /// the leftover cache entry in preference to the parameter, so the
+    /// two could report different values for the same name for an
+    /// unbounded window. That froze the counter of a slot-compiled
+    /// `for ((i=1; i<=3; i++))` after any preceding `(( i = … ))`.
+    #[test]
+    fn math_value_cache_does_not_outlive_its_evaluation() {
+        let _g = crate::test_util::global_state_lock();
+        // setnparam early-returns under `unset(EXECOPT)`.
+        opt_state_set("exec", true);
+        let name = "mcache_lifetime_probe";
+        unsetparam(name);
+
+        // An assignment inside `(( … ))` — the shape that populated the
+        // cache. It must reach the parameter table (c:1005).
+        assert_eq!(mathevali(&format!("{name} = 5")).unwrap(), 5);
+        assert_eq!(
+            crate::ported::params::getsparam(name).as_deref(),
+            Some("5"),
+            "setmathvar must write through to the parameter table"
+        );
+
+        // Nothing may be left behind for a later reader to find.
+        assert!(
+            m_variables_get(name).is_none(),
+            "the value cache outlived its evaluation: {:?}",
+            m_variables_get(name)
+        );
+
+        // Decisive check: move the parameter WITHOUT going through the
+        // evaluator, exactly as the loop's BUILTIN_SET_VAR does, then
+        // read it back the way BUILTIN_GET_MATH_VAR does. A surviving
+        // cache entry would answer 5 here and the two stores would be
+        // visibly disagreeing.
+        crate::ported::params::setsparam(name, "7");
+        let seen = getmathparam(name);
+        assert_eq!(seen.type_, MN_INTEGER);
+        assert_eq!(
+            seen.l, 7,
+            "getmathparam outside an evaluation must read the parameter \
+             table, not a leftover cache entry"
+        );
+
+        unsetparam(name);
+    }
 
     /// `setmathvar` writes through to paramtab via `setnparam`.
     /// After the call, `getsparam(name)` should return the value.
