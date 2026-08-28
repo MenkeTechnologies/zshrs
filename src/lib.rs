@@ -63,6 +63,8 @@ pub mod exec_jobs;
 pub mod extensions;
 /// `ported` submodule.
 pub mod ported;
+/// `pattern_data_escape` submodule (Rust-only; see the module docs).
+pub mod pattern_data_escape;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
 /// `test_util` submodule.

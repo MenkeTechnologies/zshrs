@@ -9245,6 +9245,15 @@ impl ZshCompiler {
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
                     0,
                 );
+            } else {
+                // `${~spec}` forces the metas ACTIVE, so no guard runs — but
+                // c:Src/subst.c:822/830's `shtokenize` still has to settle the
+                // value's BACKSLASHES, which c:Src/glob.c:3651 leaves as data
+                // before any non-`ztokens` char. docs/BUGS.md #1090.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PAT_DATA_BACKSLASH, 1),
+                    0,
+                );
             }
             return;
         }
@@ -9257,6 +9266,12 @@ impl ZshCompiler {
                     if !Self::seg_forces_glob_subst(text) {
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
+                            0,
+                        );
+                    } else {
+                        // See the single-segment arm above — docs/BUGS.md #1090.
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_PAT_DATA_BACKSLASH, 1),
                             0,
                         );
                     }

@@ -3446,65 +3446,11 @@ pub fn paramsubst(
     // BEFORE `glob::tokenize` so the tokenizer still sees each escape in its
     // original position: `\` + metachar is left alone and becomes `Bnull` +
     // char there, exactly as in C. docs/BUGS.md #1090.
-    let escape_data_backslashes = |v: &str| -> String {
-        if !v.contains('\\') {
-            return v.to_string();
-        }
-        let cs: Vec<char> = v.chars().collect();
-        let mut out = String::with_capacity(v.len() + 4);
-        let mut i = 0;
-        while i < cs.len() {
-            let c = cs[i];
-            if c != '\\' {
-                out.push(c);
-                i += 1;
-                continue;
-            }
-            // The escape is honored only when the next character reaches
-            // `zshtokenize`'s ztokens scan, which is the exact `switch` label
-            // set at c:Src/glob.c:3596 (`<`), c:3613-3615 (`(`/`|`/`)`) and
-            // c:3619-3631 (`>`/`^`/`#`/`~`/`[`/`]`/`*`/`?`/`=`/`-`/`!`), plus
-            // the `\` case at c:3589. A char that is in the `ztokens` TABLE
-            // but has no switch label — `$`, `{`, `}`, `` ` ``, `,`, `'`, `"` —
-            // never reaches the scan, so its backslash stays data: zsh answers
-            // 2, not 1, for
-            //     a=('a$b' 'a\$b'); q='a\$b'; print ${a[(I)$q]}
-            // Such a pair is left for `zshtokenize` to fold into `Bnull` +
-            // char and is copied through untouched here.
-            let quotes_meta = cs.get(i + 1).map_or(false, |&n| {
-                matches!(
-                    n,
-                    '<' | '('
-                        | '|'
-                        | ')'
-                        | '>'
-                        | '^'
-                        | '#'
-                        | '~'
-                        | '['
-                        | ']'
-                        | '*'
-                        | '?'
-                        | '='
-                        | '-'
-                        | '!'
-                        | '\\'
-                )
-            });
-            if quotes_meta {
-                out.push(c);
-                out.push(cs[i + 1]);
-                i += 2;
-            } else {
-                // c:3641 `bslash = 0` with nothing rewritten — a data
-                // backslash. `\\` is the normalizer's literal-backslash form.
-                out.push('\\');
-                out.push('\\');
-                i += 1;
-            }
-        }
-        out
-    };
+    // The transform itself is a Rust-only encoding adapter with no C
+    // counterpart, so it lives outside `src/ported/` — see
+    // `crate::pattern_data_escape` for the full c:Src/glob.c:3585-3653
+    // derivation. The `${~spec}` / GLOB_SUBST leg shares it.
+    let escape_data_backslashes = crate::pattern_data_escape::escape_data_backslashes;
     // c:Src/glob.c:2687-2688 — `singsub(replstrp); untokenize(*replstrp);`:
     // the `${x/pat/REPL}` replacement word is expanded with `singsub` and then
     // UNTOKENIZED, so anything the replacement's own expansion tokenized is
