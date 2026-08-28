@@ -11489,14 +11489,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // level `*.toml` carries Star token so globs;
                         // `$'…'`-decoded `[abc]` carries bare `[` so
                         // stays literal. Bug #625.
+                        // c:Src/subst.c:677-678 — `filesub`'s own precondition
+                        // for the PREFORK_TYPESET arm is `(*namptr)[1] &&
+                        // strchr(*namptr + 1, Equals)`: an `=` anywhere but
+                        // position 0. There is NO identifier test. Gating the
+                        // arm below on `is_assignment_shape` — which demands a
+                        // leading `[A-Za-z_][A-Za-z0-9_]*` — therefore lost every
+                        // word whose `=` is not preceded by a bare identifier:
+                        //   setopt magicequalsubst; print -r -- x:y=~/z
+                        //   zsh: x:y=/home/u/z      zshrs: x:y=~/z
+                        // Same for `ME:a=~/x`, `1abc=~/x` and `-o=~/x`, the last
+                        // of which is the common `--prefix=~/dir` shape.
+                        // `is_assignment_shape` stays on the GLOB arm, where the
+                        // identifier test is the right one (that arm is about
+                        // not path-globbing an assignment RHS without
+                        // GLOB_ASSIGN).
+                        let has_nonleading_equals =
+                            s.as_bytes().iter().skip(1).any(|&b| b == b'=');
                         if is_glob_pre && !is_assignment_shape {
                             exec.expand_glob(&s_tok)
-                        } else if is_assignment_shape
+                        } else if has_nonleading_equals
                             && crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
                         {
                             // c:Src/exec.c:3353 — when MAGIC_EQUAL_SUBST is set
                             // on a non-typeset command, esprefork = PREFORK_TYPESET,
-                            // so every NAME=value arg runs through
+                            // so every arg runs through
                             // filesub(PREFORK_TYPESET): the `~`/`=` after the
                             // first `=` (and after each `:`) undergo filename
                             // expansion. `print foo=~/bar` → `foo=$HOME/bar`.
