@@ -9063,37 +9063,42 @@ impl ZshCompiler {
         step: &str,
         body: &crate::parse::ZshProgram,
     ) {
-        // For multi-statement comma init/step (`i=0,j=10`,
-        // `i++,j--`), ArithCompiler only handles ONE op per call,
-        // dropping the rest. Route through MathEval (via
-        // BUILTIN_ARITH_EVAL) which evaluates the comma list in
-        // order and writes back through extract_string_variables.
-        // Same routing for any `$`-bearing expr — ArithCompiler's
-        // lexer treats `$` as unknown so `for ((i=1; i<=$#a; i++))`
-        // never iterated. The two arith engines use different
-        // storage (ArithCompiler→slots, MathEval→variables); when ANY
-        // section needs MathEval, route ALL sections so the value of
-        // `i` survives across init/cond/step in the same backing store.
+        // c:Src/loop.c:77 `matheval(str)` (init), c:135
+        // `val = mathevali(str)` (cond), c:191 `matheval(str)` (advance).
+        // ALL THREE sections go through THE math evaluator — zsh has
+        // exactly one arithmetic engine and exactly one backing store
+        // (the parameter table, reached via getvalue/setvar in
+        // Src/math.c). Every section is therefore routed through
+        // BUILTIN_ARITH_EVAL (→ ported::subst::arithsubst → matheval).
+        //
+        // This used to keep an ArithCompiler "fast path" for sections
+        // with neither `,` nor `$`, compiling them to VM slot ops with
+        // a BUILTIN_GET_MATH_VAR pre-load / BUILTIN_SET_VAR post-sync.
+        // That is a SECOND engine with a SECOND store, and the two
+        // desynchronised: `getmathparam` (src/ported/math.rs:222)
+        // consults the Rust-only `M_VARIABLES` shadow map BEFORE the
+        // parameter table, and `matheval` (src/ported/math.rs:4272)
+        // leaves that map populated after it returns — `new()` only
+        // clears it on the NEXT evaluation. So any preceding `(( … ))`
+        // that ASSIGNED the loop variable left a stale entry, the
+        // loop's pre-load read that entry instead of the parameter the
+        // loop itself had just written, and the counter froze:
+        //
+        //     i=0; (( i++ )); for ((i=1; i<=3; i++)); do echo $i; done
+        //
+        // printed `1` forever. Same for a `(( i = … ))` in the loop's
+        // own BODY. Routing every section through the one evaluator
+        // removes the second store from the loop entirely, which is
+        // what c:Src/loop.c does.
         let untoked_init = crate::lex::untokenize(init);
         let untoked_cond = crate::lex::untokenize(cond);
         let untoked_step = crate::lex::untokenize(step);
-        let needs_eval_global = untoked_init.contains(',')
-            || untoked_init.contains('$')
-            || untoked_cond.contains(',')
-            || untoked_cond.contains('$')
-            || untoked_step.contains(',')
-            || untoked_step.contains('$');
-        let route_through_eval = move |_s: &str| -> bool { needs_eval_global };
         let emit_arith = |this: &mut Self, s: &str| {
             let untoked = crate::lex::untokenize(s);
-            if route_through_eval(&untoked) {
-                let idx = this.builder.add_constant(Value::str(untoked.as_str()));
-                this.builder.emit(Op::LoadConst(idx), 0);
-                this.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
-            } else {
-                this.compile_arith_str(s);
-            }
+            let idx = this.builder.add_constant(Value::str(untoked.as_str()));
+            this.builder.emit(Op::LoadConst(idx), 0);
+            this.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
         };
 
         // c:Src/loop.c::execfor — for arith form, init / cond / step
@@ -9144,25 +9149,27 @@ impl ZshCompiler {
             self.builder.emit(Op::Pop, 0);
         }
         if !cond.is_empty() {
-            // Cond is evaluated for truthiness — keep simple
-            // ArithCompiler path unless comma OR a `$`-bearing
-            // expansion is present (ArithCompiler can't lex `$`).
-            if needs_eval_global {
-                let untoked = crate::lex::untokenize(cond);
-                let idx = self.builder.add_constant(Value::str(untoked.as_str()));
-                self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
-                // ARITH_EVAL returns Value::Str ("0" / "1" / etc.).
-                // Convert to bool: non-zero → true.
-                let zero_const = self.builder.add_constant(Value::str("0"));
-                self.builder.emit(Op::LoadConst(zero_const), 0);
-                self.builder.emit(Op::StrEq, 0);
-                self.builder.emit(Op::LogNot, 0);
-            } else {
-                self.compile_arith_str(cond);
-            }
+            // c:Src/loop.c:135 — `val = mathevali(str);`, then
+            // c:Src/loop.c:143 `if (!val) break;`.
+            let untoked = crate::lex::untokenize(cond);
+            let idx = self.builder.add_constant(Value::str(untoked.as_str()));
+            self.builder.emit(Op::LoadConst(idx), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
+            // ARITH_EVAL hands back the printed value as Value::Str.
+            // c:Src/math.c:1505-1509 `mathevali` COERCES the mnumber
+            // to zlong (`(zlong)x.u.d` for a float) before c:143
+            // tests it, so a fractional condition truncates toward
+            // zero first: `for ((;0.5;))` does not iterate, and
+            // `f=2.5; for ((;f;f-=1))` stops once f reaches 0.5.
+            // Testing the printed string against "0" instead (the old
+            // spelling here) made every fractional value truthy and
+            // turned that countdown into an infinite loop.
+            self.builder.emit(Op::TruncFloat, 0);
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(Op::NumNe, 0);
         } else {
+            // c:Src/loop.c:137 — `else val = 1;` (blank cond is always true).
             self.builder.emit(Op::LoadTrue, 0);
         }
         let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
@@ -11423,6 +11430,28 @@ impl ZshCompiler {
     /// as Value::Int. Pre-loads variable slots, emits arith ops via
     /// ArithCompiler against this compiler's builder + slot table,
     /// then post-syncs slots back to vars.
+    ///
+    /// NOT CURRENTLY WIRED. `compile_repeat` (c:Src/loop.c:516-517) and
+    /// `compile_for_arith` (c:Src/loop.c:77/135/191) both used to call
+    /// this and now both route through BUILTIN_ARITH_EVAL, because zsh
+    /// has ONE arithmetic evaluator and ONE store (the parameter table).
+    /// This path is a second engine over a second store (VM slots,
+    /// seeded by BUILTIN_GET_MATH_VAR and flushed by BUILTIN_SET_VAR),
+    /// and the two desynchronise: `getmathparam`
+    /// (src/ported/math.rs:222) reads the Rust-only `M_VARIABLES`
+    /// shadow map BEFORE the parameter table, while `matheval`
+    /// (src/ported/math.rs:4272) leaves that map populated after it
+    /// returns — it is only cleared by the NEXT evaluation's `new()`.
+    /// So a `(( i = … ))` anywhere before (or inside) a `for ((…))`
+    /// left a stale `i`, the pre-load here read it instead of the
+    /// parameter the loop had just written, and the counter froze.
+    ///
+    /// DO NOT re-wire this without first making the shadow map's
+    /// lifetime match one evaluation (i.e. having `matheval` restore
+    /// `M_VARIABLES` the way `restore_state` already does for nested
+    /// evals, src/ported/math.rs:4790). It is measurably faster than
+    /// BUILTIN_ARITH_EVAL — ~20-40% on a tight `for ((i=0;i<200000;i++))`
+    /// — so it is worth reviving once the store is single.
     fn compile_arith_str(&mut self, expr: &str) {
         // The lexer tokenizes operator chars (`<`, `>`, `=`, `&`, `|`,
         // `*`, `?`, etc.) into the META range. ArithCompiler can't parse
