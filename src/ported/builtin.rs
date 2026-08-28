@@ -13231,7 +13231,10 @@ pub fn bin_dot(
         // `alias greet=…` on line 1 followed by `greet` on line 2 reported
         // `command not found`. Bug #1087.
         match zwc_src {
-            Some(src) => crate::ported::exec::execute_script(&src).unwrap_or(1), // c:1621 prog path
+            // c:1621 prog path — `execode(prog, 1, 0, "filecode")`. The
+            // deparse is re-lexed, so it goes through the zwc entry point
+            // that pins the lexer to the spelling `untokenize` produced.
+            Some(src) => crate::fusevm_bridge::execute_zwc_program(&src).unwrap_or(1),
             None => match fs::read_to_string(&path) {
                 // c:1626-1627 — `switch (loop(0, 0))`
                 Ok(src) => crate::fusevm_bridge::source_file_per_command(&src).unwrap_or(1),

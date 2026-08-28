@@ -589,6 +589,30 @@ pub fn source_file_per_command(src: &str) -> Result<i32, String> {
     }
 }
 
+/// Run the deparsed text of an ALREADY-COMPILED `.zwc` program on the live
+/// executor — the compiled arm of `source()`, `execode(prog, 1, 0,
+/// "filecode")` (c:Src/init.c:1621).
+///
+/// Same executor resolution as [`source_file_per_command`]: the live
+/// executor when one is in scope, the installed session executor otherwise,
+/// `Ok(0)` with neither. See
+/// [`crate::vm_helper::ShellExecutor::execute_zwc_program`] for why the plain
+/// script entry point is wrong here.
+pub fn execute_zwc_program(src: &str) -> Result<i32, String> {
+    if let Some(r) = try_with_executor(|exec| exec.execute_zwc_program(src)) {
+        return r;
+    }
+    let ptr = SESSION_EXECUTOR_PTR.with(|c| c.get());
+    match ptr {
+        // SAFETY: per with_session_context.
+        Some(ptr) => {
+            let _ctx = ExecutorContext::enter(unsafe { &mut *ptr });
+            unsafe { (*ptr).execute_zwc_program(src) }
+        }
+        None => Ok(0),
+    }
+}
+
 /// RAII guard that sets/clears the thread-local executor pointer.
 ///
 /// Idempotent: calling `enter` when a context is already active is a no-op
