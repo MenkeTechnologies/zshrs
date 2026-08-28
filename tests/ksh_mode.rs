@@ -10,6 +10,32 @@ fn zshrs_bin() -> String {
     env!("CARGO_BIN_EXE_zshrs").to_string()
 }
 
+/// Assert an option's state under `--ksh` the way the shell itself reports it.
+///
+/// These tests used to grep `setopt`'s listing. That cannot work: `emulate ksh`
+/// sets KSH_OPTION_PRINT, which switches `setopt` from bare names to a
+/// two-column `name<pad>on|off` table — real zsh does exactly the same, and
+/// zshrs matches it byte-for-byte:
+///
+/// ```text
+/// $ zsh   -fc 'emulate ksh; setopt' | head -1   ->  noaliases             off
+/// $ zshrs --ksh -c 'setopt'         | head -1   ->  noaliases             off
+/// ```
+///
+/// So `setopt | grep -x ksharrays` could never match, and the five "sets"
+/// tests failed against correct behaviour. Worse, the two "unsets" tests
+/// PASSED for the wrong reason — grep matched nothing for any option, so
+/// `|| echo absent` fired regardless of the real state and they asserted
+/// nothing at all.
+///
+/// `[[ -o NAME ]]` reads the option state itself, so it is independent of the
+/// listing format and strictly stronger than the grep it replaces. Every
+/// expectation below was verified against `zsh -fc 'emulate ksh; [[ -o X ]]'`.
+fn ksh_opt(name: &str) -> String {
+    let (out, _, _) = run_ksh(&format!("[[ -o {name} ]] && echo on || echo off"));
+    out.trim().to_string()
+}
+
 fn run_ksh(script: &str) -> (String, String, i32) {
     let out = Command::new(zshrs_bin())
         .args(["--ksh", "-c", script])
@@ -25,48 +51,48 @@ fn run_ksh(script: &str) -> (String, String, i32) {
 #[test]
 fn ksh_mode_sets_ksharrays() {
     // ksharrays makes arrays 0-indexed (vs zsh's default 1).
-    let (out, _, _) = run_ksh("setopt | grep -x ksharrays");
-    assert_eq!(out.trim(), "ksharrays");
+    assert_eq!(ksh_opt("ksharrays"), "on", "--ksh must set ksharrays");
 }
 
 #[test]
 fn ksh_mode_sets_kshglob() {
-    let (out, _, _) = run_ksh("setopt | grep -x kshglob");
-    assert_eq!(out.trim(), "kshglob");
+    assert_eq!(ksh_opt("kshglob"), "on", "--ksh must set kshglob");
 }
 
 #[test]
 fn ksh_mode_sets_posixbuiltins() {
-    let (out, _, _) = run_ksh("setopt | grep -x posixbuiltins");
-    assert_eq!(out.trim(), "posixbuiltins");
+    assert_eq!(ksh_opt("posixbuiltins"), "on", "--ksh must set posixbuiltins");
 }
 
 #[test]
 fn ksh_mode_sets_shwordsplit() {
-    let (out, _, _) = run_ksh("setopt | grep -x shwordsplit");
-    assert_eq!(out.trim(), "shwordsplit");
+    assert_eq!(ksh_opt("shwordsplit"), "on", "--ksh must set shwordsplit");
 }
 
 #[test]
 fn ksh_mode_unsets_nomatch() {
     // Per emulate_mode_options("ksh"): nomatch is in the unset list.
-    let (out, _, _) = run_ksh("setopt | grep -x nomatch || echo absent");
-    assert_eq!(out.trim(), "absent");
+    assert_eq!(ksh_opt("nomatch"), "off", "--ksh must unset nomatch");
 }
 
 #[test]
 fn ksh_mode_unsets_multios() {
-    let (out, _, _) = run_ksh("setopt | grep -x multios || echo absent");
-    assert_eq!(out.trim(), "absent");
+    assert_eq!(ksh_opt("multios"), "off", "--ksh must unset multios");
 }
 
 #[test]
 fn ksh_mode_zero_indexed_arrays() {
-    // With ksharrays, the option is set; underlying paramsubst array
-    // indexing rewiring is tracked separately. For now verify the
-    // option is observable via setopt.
-    let (out, _, _) = run_ksh("setopt | grep -x ksharrays");
-    assert_eq!(out.trim(), "ksharrays");
+    // Now a REAL behavioural check, not just the option bit. Under
+    // KSH_ARRAYS `${a[0]}` is the first element, where zsh's default is
+    // 1-based. Verified against `zsh -fc 'emulate ksh; ...'`:
+    //   ${a[0]} -> x    ${a[1]} -> y    ${#a[@]} -> 3
+    assert_eq!(ksh_opt("ksharrays"), "on");
+    let (out, _, _) = run_ksh(r#"a=(x y z); print -r -- "${a[0]}|${a[1]}|${#a[@]}""#);
+    assert_eq!(
+        out.trim(),
+        "x|y|3",
+        "ksharrays must make subscript 0 the first element"
+    );
 }
 
 #[test]
