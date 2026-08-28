@@ -1117,17 +1117,27 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                             std::collections::HashMap<String, String>,
                         > = std::cell::RefCell::new(std::collections::HashMap::new());
                     }
+                    // The re-parse above is a LEX, so it resolves quotes
+                    // against whatever options are live NOW — but C deparses
+                    // wordcode baked at definition time (c:Src/exec.c:5389
+                    // execfuncdef), which cannot be revisited. Pin the lexer
+                    // to the state the definition was installed under, the
+                    // same way `printshfuncnode` does for `functions NAME`.
+                    // Without it `${functions[f]}` and `whence -f f`
+                    // disagreed with EACH OTHER for one function.
+                    // docs/BUGS.md #1105.
+                    let cache_key = format!("{}\0{}", shf.node.nam, text);
                     let deparsed = if let Some(hit) =
-                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned())
+                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(&cache_key).cloned())
                     {
                         hit
                     } else {
+                        let _pin = crate::vm_helper::funcdef_lex_pin(&shf.node.nam, text);
                         let out = match crate::ported::exec::parse_string(text, 0) {
                             Some(prog) => crate::ported::text::getpermtext(Box::new(prog), None, 1),
                             None => text.to_string(),
                         };
-                        FN_DEPARSE_CACHE
-                            .with(|c| c.borrow_mut().insert(text.to_string(), out.clone()));
+                        FN_DEPARSE_CACHE.with(|c| c.borrow_mut().insert(cache_key, out.clone()));
                         out
                     };
                     // c:422-425 — `if (shf->redir) start = "{\n\t"; else

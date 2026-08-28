@@ -11942,6 +11942,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                         }
                     }
+                    // docs/BUGS.md #1105 — C settles every lexer-time
+                    // decision when the definition runs (c:Src/exec.c:5389
+                    // `shf->funcdef = dupeprog(…)`) and prints that wordcode
+                    // back unchanged (c:Src/hashtable.c:954). zshrs stores
+                    // the raw source and re-lexes it to print, so the one
+                    // lexer-time option that survives into a deparse —
+                    // RCQUOTES, c:Src/lex.c:1328 — has to be recorded here
+                    // or a later `setopt rcquotes` rewrites the listing of a
+                    // function defined long before it. Skipped for the
+                    // re-registration of an unchanged body (the same test
+                    // the filename and sticky stamps above use): that second
+                    // pass runs at CALL time, whose option state is not the
+                    // definition's.
+                    if tab
+                        .get(&name)
+                        .is_none_or(|prev| prev.body.as_deref() != Some(body_source.as_str()))
+                    {
+                        crate::vm_helper::funcdef_note_rcquotes(
+                            &name,
+                            &body_source,
+                            crate::ported::zsh_h::isset(crate::ported::zsh_h::RCQUOTES),
+                        );
+                    }
                     tab.add(shf);
                 }
                 // Lineage tap: this is where a `name() { … }` actually
