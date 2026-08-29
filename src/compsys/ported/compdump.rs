@@ -147,7 +147,7 @@
 
 use rayon::prelude::*;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use super::compinit::{CompFileDef, CompInitResult};
@@ -187,7 +187,12 @@ pub fn compdump(
         pid
     ));
     {
-        let mut file = File::create(&tmp)?;
+        // The dump is ~5,000 short lines (five assoc blocks plus one
+        // `autoload` continuation line per completer). Writing them to a raw
+        // `File` cost one `write(2)` per line; a `BufWriter` collapses that
+        // into a handful of syscalls. `compinit` over zsh's own Completion
+        // tree spent ~24s of its ~37s here. docs/BUGS.md #1122.
+        let mut file = BufWriter::new(File::create(&tmp)?);
 
         // sh:37  header — TAB-separated key:value pairs
         writeln!(
@@ -242,7 +247,12 @@ pub fn compdump(
             };
             writeln!(file, "autoload {} {}", opt_str, name)?;
         }
-        file.sync_all()?;
+        // Flush the buffer, then fsync the FILE underneath it — the dump is
+        // renamed into place next, so it has to be on disk first.
+        file.flush()?;
+        file.into_inner()
+            .map_err(|e| std::io::Error::other(e.to_string()))?
+            .sync_all()?;
     }
 
     // sh:138  atomic rename
