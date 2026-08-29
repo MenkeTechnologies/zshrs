@@ -186,6 +186,19 @@
       <section class="tutorial-section">
         <h2><span class="section-num">[0x00a]</span> INVENTIONS &mdash; THE LIST</h2>
 
+        <p>Sixty-four candidates, filtered by three tests that all have to
+        pass: <strong>it exists</strong> (something in the tree does this,
+        with a name you can type), <strong>nobody else has it</strong> (not
+        &ldquo;ours is compiled&rdquo; &mdash; no other shell does the thing
+        at all, and the near misses are named), and <strong>it is an idea,
+        not a decision</strong> (a file layout, a default or a command name
+        is a choice; an idea is something another project could inherit and
+        be changed by). Twenty-nine survive. The cuts &mdash; filing
+        conventions, flags, mechanisms of other entries, and one claim that
+        was simply false &mdash; are listed with reasons in
+        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/INVENTIONS.md"><code>docs/INVENTIONS.md</code></a>,
+        which is the canonical register.</p>
+
         <p>This is a legacy, not a battle. Every item below originated in
         zshrs and is offered as <strong>prior art for the shell-design
         commons</strong> under the MIT grant. Future shells (bash, fish,
@@ -197,350 +210,151 @@
         <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/MAINTAINERS.md"><code>MAINTAINERS.md</code></a>
         guard upstream identity, not the ideas.</p>
 
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">Execution</h3>
+                <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Bytecode, JIT, and persistence across processes</h4>
+            <p>Every command, script, function and sourced file lowers to fusevm bytecode; hot blocks go through Cranelift to x86-64/aarch64. Nushell reached bytecode first (IR in 0.96.0, default in 0.98.0) but interprets it, rebuilds per parse, and drops it at exit; zsh&rsquo;s <code>.zwc</code> is wordcode for zsh&rsquo;s own interpreter. What is left after subtracting both: <strong>first shell to emit native machine code, first to persist general bytecode across processes.</strong></p>
+          </div>
+          <div class="cat-card">
+            <h4>Native code persisted across launches</h4>
+            <p>The <code>.fjit</code> disk cache keeps JIT output warm between invocations, so hot chunks are not recompiled per process. Android ART&rsquo;s <code>.oat</code>, .NET ReadyToRun and JVM AppCDS have done this for years &mdash; its absence from every shell is the notable part.</p>
+          </div>
+          <div class="cat-card">
+            <h4>AOT completion corpus keyed on compiler identity</h4>
+            <p><code>--prewarm-autoloads</code> compiles every <code>$fpath</code> directory so a fresh install&rsquo;s first <code>&lt;TAB&gt;</code> is a shard probe, not a parse. Entries are stamped with the fpath directory, a SHA-256 of the definition text, and <em>the identity of the binary that compiled it</em> &mdash; standard in Nix, ccache and Bazel, absent from every shell cache. Deliberately bypassed for <code>ksh_autoload</code> and <code>autoload</code> without <code>-U</code>, where the compiled program is not a function of the file&rsquo;s bytes alone.</p>
+          </div>
+          <div class="cat-card">
+            <h4>JIT tier introspection as a diagnosis</h4>
+            <p><code>--tiers</code> runs a script, asks fusevm&rsquo;s own predicates which tier took each chunk, and for chunks that reached neither, lists the op kinds responsible. Compilers have had optimization remarks for years; a shell telling you <em>why</em> your loop stayed interpreted is new.</p>
+          </div>
+          <div class="cat-card">
+            <h4>The anti-fork architecture</h4>
+            <p>A persistent pool of 2&ndash;18 threads takes command substitution, process substitution, globbing, completion and autoloading; 23 coreutils commands run in-process so a <code>cat</code> in a pipeline never leaves the shell. Baumann, Appavoo, Krieger and Roscoe&rsquo;s &ldquo;A fork() in the road&rdquo; (HotOS 2019), applied to a shell. The 2000&ndash;5000x figure is fork overhead divided by a function call &mdash; a fixed cost disappearing, not a benchmark.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Parallelism as grammar rather than library</h4>
+            <p><code>pmap</code>, <code>pgrep</code>, <code>peach</code>, <code>barrier</code>, <code>async</code> and <code>await</code> are VM-dispatched builtins (fusevm IDs 210&ndash;215), not library calls: the body compiles once and runs on pooled VMs with zero forks. <code>make -j</code>, <code>xargs -P</code> and GNU parallel all sit outside the shell language. This is inside it.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">State</h3>
         <div class="cat-grid">
           <div class="cat-card">
-            <h4>JIT-compiled Unix shell</h4>
-            <p>First Unix shell to JIT-compile to native machine code.
-            Every command (interactive, script, function, sourced file)
-            compiles to fusevm bytecode; hot blocks go through Cranelift
-            to x86-64/aarch64. Nushell reached bytecode first (IR in
-            0.96.0, default in 0.98.0) but interprets it, per parse,
-            with no on-disk cache.</p>
+            <h4>Recorder-owns-rebuild</h4>
+            <p>A separate binary sources your real login chain while AOP interception sits on every state-mutating dispatcher &mdash; <code>alias</code>, function definition, <code>export</code>, fpath edit, <code>hash -d</code>, <code>zstyle</code>, <code>bindkey</code>, <code>compdef</code>, <code>zmodload</code>, <code>setopt</code>, <code>trap</code>, <code>sched</code>, <code>source</code>, assignment &mdash; recording kind, name, value, file, line and call chain. Every other shell discovers your config by static walking and hoping its parse matches the shell&rsquo;s. The DTrace insight applied to configuration: watch what runs instead of reasoning about the source. It is why <code>zwhere</code> can name the file and line that defined any alias you have.</p>
           </div>
           <div class="cat-card">
-            <h4>fusevm bytecode VM</h4>
-            <p>NaN-boxed register VM with fused superinstructions and a
-            Cranelift JIT for hot blocks. Shared substrate with stryke
-            so a shell and a scripting language ride the same value
-            representation.</p>
+            <h4>Cacheable configuration vs. configuration that must be replayed</h4>
+            <p><code>replay/</code> holds the non-deterministic <code>.zshrc</code> fragments. Everything the recorder can prove is a pure function of your dotfiles folds into the canonical shard and is skipped at startup; the rest is replayed. Purity analysis on shell configuration is the load-bearing idea under the cold-start number.</p>
           </div>
           <div class="cat-card">
-            <h4>Zsh grammar introspection to stdout</h4>
-            <p>First shell to emit, in canonical diffable formats, zsh&rsquo;s
-            lexer token stream, wordcode (<code>Eprog</code>) layout, and a
-            structured parser AST (S-expression) &mdash; the <code>zshrs</code>
-            binary (<code>--dump-tokens</code>, <code>--dump-wordcode</code>,
-            <code>--dump-ast</code>) and the matching <code>zshrs_dump</code>
-            loadable module (<code>dumptokens</code>, <code>dumpwordcode</code>).
-            Stock zsh does not ship this trio as a user-facing pipeline.</p>
+            <h4>Singleton daemon owning every mutation</h4>
+            <p>Canonical state, fsnotify, scheduling, jobs, locks, cache, history &mdash; one writer, stateless forkable clients, no auto-spawn. The pattern is emacsclient, Nailgun and LSP; the application to a shell&rsquo;s own state is new.</p>
           </div>
           <div class="cat-card">
-            <h4>Fusevm bytecode on argv (<code>--disasm</code>)</h4>
-            <p>The <code>zshrs</code> binary prints the fusevm op listing
-            (name pool, subroutine entries, each opcode, nested
-            <code>sub_chunks</code>) to stdout before every VM run &mdash;
-            the IR the shell actually executes, next to the lexer/AST/wordcode
-            dump trio. Stock zsh does not expose its internal wordcode VM stream
-            on <code>argv</code> this way.</p>
+            <h4>Session-persistent jobs with bidirectional ptmx attach</h4>
+            <p><code>zjob submit --pty</code> opens a pseudo-terminal and runs the child under the daemon. Attaching later puts your terminal in raw mode, pumps stdin in, drains output back, forwards <code>SIGWINCH</code>, detaches on <code>Ctrl-]</code>. Collapses <code>nohup</code> + <code>screen</code> + <code>pueue</code> + <code>disown</code>, and solves what none of them solve cleanly: a background job blocking on a prompt you cannot see.</p>
           </div>
           <div class="cat-card">
-            <h4>Persistent worker thread pool</h4>
-            <p>18 (configurable [2-18]) tokio threads owned by the shell.
-            <code>$(cmd)</code>, <code>&lt;(cmd)</code>, <code>&amp;</code>,
-            globbing, completion, autoloading all dispatch to the pool
-            instead of <code>fork(2)</code>. Zero forks in the hot path.</p>
+            <h4>Cross-shell pub/sub and token-issued named locks</h4>
+            <p><code>zsubscribe</code> / <code>zpublish</code> / <code>zlock</code> as builtins routed through the daemon, replacing hand-glued <code>flock</code> + <code>socat</code> + FIFOs. Release requires the original token, so a dead shell cannot free someone else&rsquo;s lock.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">Observability</h3>
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Value lineage at the bytecode level (<code>provenance</code>)</h4>
+            <p>An <em>origin</em> (command substitution, glob, heredoc, process substitution) plus every op that touched the value &mdash; expand, concat, assign, exec, call &mdash; each stamped with file, line, enclosing function and wall clock. Functions carry the same chain: definition, every redefinition, every call at the <em>caller&rsquo;s</em> line, the <code>unfunction</code> that ended it. One relaxed atomic load when disarmed. <code>typeset -p</code> answers what a value <em>is</em>; <code>set -x</code> answers what <em>ran</em>; nothing answers where the bytes came from. Weiser&rsquo;s slicing (1981) is static, Perl&rsquo;s taint mode is one bit, PASS (2006) instruments the storage layer, W3C PROV standardizes the model &mdash; all outside the shell, which is the layer that glues the tools together. See <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PROVENANCE.md"><code>PROVENANCE.md</code></a>.</p>
           </div>
           <div class="cat-card">
-            <h4>90/10 daemon / shell split</h4>
-            <p>Singleton <code>zshrs-daemon</code> owns every mutation
-            (canonical state, fsnotify, schedule, jobs, locks, cache,
-            history). Thin shell clients are stateless and forkable.
-            No shared writer, no second process tree, no auto-spawn.</p>
+            <h4>Aspect-oriented advice on any command or function</h4>
+            <p><code>intercept</code> before/after/around with glob patterns, nanosecond timing and <code>intercept_proceed</code> &mdash; one primitive subsuming defer, profiling, memoization, retry and timeout. The vocabulary is forty-five years old (Flavors&rsquo; before/after methods, CLOS <code>:around</code> in 1988, AspectJ in 1997) and no shell had offered it as anything but hand-rolled function wrapping.</p>
           </div>
           <div class="cat-card">
-            <h4>Recorder-owns-rebuild (AOP intercept)</h4>
-            <p><code>zshrs-recorder</code> AOP-intercepts every state-mutating
-            dispatcher at runtime &mdash; alias / function / export / fpath
-            edit / hash -d / zstyle / bindkey / compdef / zmodload /
-            setopt / trap / sched / source / assignment &mdash; and ships
-            <code>(kind, name, value, file, line, fn_chain)</code> to the daemon.
-            Replaces the static-walker approach every other shell uses for
-            completion / fpath scanning.</p>
+            <h4>The shell describing itself to a program</h4>
+            <p><code>--dump-tokens</code>, <code>--dump-wordcode</code>, <code>--dump-ast</code>, <code>--disasm</code>, plus <code>--dump-reflection</code> for a JSON self-description of builtins, keywords and options. This is <code>javap</code>, Python&rsquo;s <code>dis</code> and <code>perl -MO=Deparse</code> for a shell; no Bourne-family shell can do it.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">Language</h3>
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Sigil dispatch to a second language sharing the VM</h4>
+            <p><code>@{}</code> routes to embedded stryke, compiling to the same fusevm ops the shell does &mdash; including inside AOP advice. Multi-language runtimes are the JVM and CLR story, and Racket&rsquo;s <code>#lang</code> is the closest analogue for inline dispatch, but no shell has hosted a second language in its own grammar.</p>
           </div>
           <div class="cat-card">
-            <h4>rkyv canonical-state shards</h4>
-            <p>Daemon's in-memory canonical state persists as
-            content-addressed rkyv archives under
-            <code>~/.zshrs/images/</code>. Cold-start shells mmap the
-            shard and skip every dotfile in <code>/etc</code> + <code>~</code>.
-            ~10ms cold-start vs &gt;100ms re-source.</p>
+            <h4>A grammar extension with a switch that makes it vanish</h4>
+            <p><code>intercept &hellip; { }</code> is a real lexer extension, since zsh cannot parse a bare <code>}</code> as an argument. The lexer captures the span as raw source, so the body keeps its own redirections, pipelines and heredocs, and nothing expands until the advice fires. Under <code>--zsh</code> the extension is off and the form is rejected exactly as <code>/bin/zsh</code> rejects it. This is how you add syntax to a language you have also promised to be compatible with.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">Extensibility</h3>
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>A stable, versioned, independently-published plugin ABI</h4>
+            <p><code>cargo add znative</code>, ship a <code>cdylib</code>, load it with <code>zmodload -R</code>, version-gated with mismatches refused, only <code>#[repr(C)]</code> crossing the boundary; plugins register builtins and native completion generators wired into compsys. bash&rsquo;s <code>enable -f</code> and zsh&rsquo;s <code>zmodload</code> load native code too, but only against the shell&rsquo;s private headers with no stable ABI and no version gate &mdash; which is why neither has third-party native plugins. Apache, nginx, PostgreSQL, Redis and Emacs 25 all published versioned boundaries and got ecosystems.</p>
           </div>
           <div class="cat-card">
-            <h4>Single <code>~/.zshrs/</code> directory rule</h4>
-            <p>Every config + log + sqlite + rkyv shard + socket lives
-            under one root. <code>$ZSHRS_HOME</code> overrides for
-            sandboxes / hermetic harnesses. <code>rm -rf ~/.zshrs/</code>
-            is the one-verb total reset.</p>
+            <h4>Absorbing foreign binaries into the shell process</h4>
+            <p><code>git</code> served as a builtin with no fork, exec or PATH lookup, and an fzf-compatible finder honoring <code>FZF_DEFAULT_OPTS</code> in-process. BusyBox absorbed the coreutils in 1995 and dispatched on <code>argv[0]</code>; this extends that logic past coreutils into full applications. Near misses, named: BusyBox has no git applet, Nushell&rsquo;s <code>gstat</code> is status-only in a child process, <code>git-shell</code> execs real git, and Elvish&rsquo;s in-process fuzzy modes are shell UI rather than a pipeline filter.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">Compatibility</h3>
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Two axes of emulation fidelity, both available</h4>
+            <p><code>--sh</code> reproduces <code>/bin/sh</code>; <code>--sh --zsh</code> reproduces zsh&rsquo;s <em>model</em> of <code>/bin/sh</code>. The bare POSIX modes use XSI <code>echo</code> where zsh&rsquo;s <code>emulate sh</code> sets <code>BSD_ECHO</code>, and <code>--bash</code> accepts bash&rsquo;s own <code>set -o</code> names including the six zsh has no option for. Eight Bourne-family dialects on one bytecode core, each verified against its actual reference shell rather than against zsh&rsquo;s approximation. No precedent found for offering both notions of fidelity as distinct modes.</p>
           </div>
           <div class="cat-card">
-            <h4>Three log files, one per binary</h4>
-            <p><code>zshrs.log</code> (shell) + <code>zshrs-daemon.log</code> +
-            <code>zshrs-recorder.log</code> &mdash; never interleaved. One
-            <code>paths::is_zshrs_log_file</code> matcher feeds rotation,
-            tail, clear, snapshot bundling.</p>
+            <h4>A hybrid port: native spine, interpreted leaves, one tree</h4>
+            <p><code>src/compsys/ported/</code> mirrors zsh&rsquo;s <code>Completion/</code> layout exactly, but engine functions are ported to Rust with citations while end-user completers are copied verbatim alongside them &mdash; same filenames, dispatched through a <code>_call_function</code> bridge, 1,240 files under that tree. The shape is a JIT with an interpreter fallback, applied to a script framework.</p>
           </div>
           <div class="cat-card">
-            <h4>Three TOML configs, all auto-seeded</h4>
-            <p><code>zshrs.toml</code> + <code>zshrs-daemon.toml</code> +
-            <code>zshrs-recorder.toml</code> with documented defaults.
-            Every binary seeds the dir on first run; idempotent across
-            all four. Auto-migrates legacy <code>daemon.toml</code> &rarr;
-            <code>zshrs-daemon.toml</code>.</p>
+            <h4>Inheriting the configuration vocabulary of what you replace</h4>
+            <p>The native ZLE engines are fish&rsquo;s Rust ports, but the palette and word-level classification are fast-syntax-highlighting&rsquo;s, and <code>ZSH_HIGHLIGHT_STYLES</code>, <code>ZSH_AUTOSUGGEST_*</code>, <code>HISTORY_SUBSTRING_SEARCH_*</code> and <code>AUTOPAIR_*</code> apply unchanged. The p10k engine does the same with <code>.p10k.zsh</code>. The rule &mdash; when replacing a widely-configured userspace layer with a native one, adopt its config surface so nobody migrates &mdash; appears twice in the codebase.</p>
           </div>
           <div class="cat-card">
-            <h4><code>z*</code> builtin family</h4>
-            <p>One namespace, twenty-three builtins, one daemon route.
-            <code>zcache</code>, <code>zls</code>, <code>zid</code>, <code>zping</code>,
-            <code>ztag</code>, <code>zuntag</code>, <code>zsend</code>, <code>znotify</code>,
-            <code>zsubscribe</code>, <code>zunsubscribe</code>, <code>zjob</code>, <code>zsync</code>,
-            <code>zask</code>, <code>zhistory</code>, <code>zsource</code>,
-            <code>zcomplete</code>, <code>zsuggest</code>, <code>zcmd-result</code>, <code>zlog</code>,
-            <code>zwhere</code>, <code>zd</code>, <code>zlock</code>,
-            <code>zpublish</code>.</p>
+            <h4>Absorbing the prompt theme into the binary</h4>
+            <p>powerlevel10k as 14 files and 15,479 lines of in-process Rust, segment builders cited line-by-line against the theme spec, <code>gitstatusd</code> replaced by a native <code>.git</code> reader, your <code>.p10k.zsh</code> sourced unchanged. The framing generalizes: instant prompt exists to hide the cost of interpreting the theme, so when interpretation stops the workaround is deleted rather than ported.</p>
           </div>
           <div class="cat-card">
-            <h4>Cross-shell pub/sub + named locks</h4>
-            <p><code>zsubscribe</code> / <code>zpublish</code> /
-            <code>zlock</code> as builtins routed through the singleton
-            daemon. Replaces <code>flock</code> + <code>socat</code> + named
-            pipes glued by hand. Locks are token-issued; release requires
-            the original token (lost shell can&rsquo;t accidentally release
-            someone else&rsquo;s lock).</p>
+            <h4>Wall-clock budgets on per-keystroke rendering</h4>
+            <p>Highlight and autosuggest passes are capped at 8&nbsp;ms by default, so a huge directory or a pathological <code>$PATH</code> cannot lag typing. Soft-real-time scheduling applied to a line editor. Shell plugins have historically had no budget at all, which is why a slow <code>git status</code> in a prompt hangs the terminal.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">Verification</h3>
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Architectural invariants enforced mechanically in CI</h4>
+            <p><code>tests/port_purity.rs</code> freezes the port directory: mirror a real <code>Src/&lt;x&gt;.c</code>, cite the C function, no new files, no invented helper names. <code>tests/tree_walker_absent.rs</code> asserts at source level that the old interpreter is still gone, backed by 174 behavioral pins. Contributors and code-generation tools both invent helpers and both create files to hold them; both vectors are closed by a test rather than by review. This is the mechanism that makes a large rewrite finishable.</p>
           </div>
           <div class="cat-card">
-            <h4>Session-persistent supervised jobs</h4>
-            <p><code>zjob submit</code> spawns under the daemon &mdash; survives
-            shell exit, output captured to disk, status persisted in
-            catalog.db, history survives daemon restarts. Replaces
-            <code>nohup</code> + <code>screen</code> + <code>pueue</code> +
-            <code>disown</code>.</p>
+            <h4>Differential fuzzing a shell against a reference implementation</h4>
+            <p>Grammar-driven, seed-replayable snippets per mode, run through both zshrs and real zsh, divergences re-confirmed three times so load flakes cannot register: 22,200 cases across 74 modes, 27 divergences at 0.12%, 71 of 74 modes at zero, each remaining mode traced to one named root cause. McKeeman named differential testing in 1998, Csmith made it standard for compilers in 2011, jsfunfuzz for JS engines. Nobody had aimed it at a shell.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">Tooling</h3>
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>A source formatter in the shell binary</h4>
+            <p><code>--fmt</code>: block reindent, idiomatic spacing per the zsh and OMZ style guides, heredoc-safe, idempotent, stdin-to-stdout or in-place. The same engine backs the LSP&rsquo;s formatting capability, so editor and CLI cannot drift. <code>gofmt</code> made this a language-community expectation in 2009; shells got <code>shfmt</code>, a third-party Go program.</p>
           </div>
           <div class="cat-card">
-            <h4>Bidirectional ptmx <code>zjob attach</code></h4>
-            <p><code>--pty</code> submit allocates a pseudo-terminal pair;
-            child runs with slave on 0/1/2.
-            <code>zjob attach</code> switches client termios to raw mode,
-            pumps stdin via <code>job_input</code> (base64), drains daemon
-            broadcast back to user&rsquo;s tty, propagates SIGWINCH via
-            <code>job_resize</code>. Ctrl-] detaches; job keeps running.
-            Solves bg-jobs-blocked-on-stdin.</p>
+            <h4>Live completion inside the editor</h4>
+            <p>The LSP does not stop at builtins and in-file functions: it answers from the real compsys completers, reading the recorded environment from the canonical shard, so <code>git ch</code> completes <code>checkout</code> and <code>git checkout </code> lists actual branches &mdash; in your editor. Shell-out completers are killed at the request deadline and never touch the editor&rsquo;s stdio. Because the server <em>is</em> the shell, it answers from the same lexer, parser, option table and completers the interactive session uses, instead of a reimplemented parser in a separate Node project.</p>
           </div>
           <div class="cat-card">
-            <h4>Auto-derived OpenAPI 3.1</h4>
-            <p><code>GET /openapi</code> serves a spec-compliant OpenAPI
-            doc generated on every request from the daemon&rsquo;s op
-            registry (<code>OP_NAMES</code>). 108 paths today (4 meta + 101
-            ops + 3 stream routes). bearerAuth declared only when
-            <code>[http.tokens]</code> is populated. Loopback bind requires
-            no token; non-loopback bind refuses without one.</p>
+            <h4>First Bourne-lineage shell with LSP and DAP in its own binary</h4>
+            <p>Scoped to what survives a prior-art check. Elvish shipped <code>elvish -lsp</code> in 0.18.0 on 2022-03-20 and Nushell shipped <code>nu --lsp</code> in 0.87.0 on 2023-11-14, so &ldquo;world&rsquo;s first shell with a language server&rdquo; is false; Endo v0.1.0 shipped <code>endo --lsp</code> and <code>endo --dap</code> together on 2026-04-08, before zshrs&rsquo;s two modules landed on 2026-05-16, so &ldquo;first with both&rdquo; is false too. All three are outside the Bourne lineage. What holds: <strong>first shell in the Bourne lineage with either, and with both.</strong> bash, zsh, ksh, dash and fish ship neither &mdash; <code>bash-language-server</code> and <code>fish-lsp</code> are separate Node/TypeScript packages and <code>vscode-bash-debug</code> drives the external <code>bashdb</code> script. Alongside it, <code>--dump-plugins</code> surfaces every sourced plugin (zinit / oh-my-zsh / prezto / antidote / antigen / zplug) under the IDE&rsquo;s External Libraries node &mdash; cmd-clickable, find-usages-able, renameable across plugin boundaries. No shell of any lineage exposes its plugin-manager state to an IDE.</p>
           </div>
           <div class="cat-card">
-            <h4>Daemon HTTP listener default-on (loopback)</h4>
-            <p>Seeded <code>zshrs-daemon.toml</code> ships
-            <code>[http] listen = "127.0.0.1:7733"</code> so
-            <code>zd health</code> works out of the box. Same trust model as
-            the Unix socket on a single-user box; flips to required-auth
-            the moment the bind goes non-loopback.</p>
-          </div>
-          <div class="cat-card">
-            <h4><code>zd</code> &mdash; HTTP bin AND in-process builtin</h4>
-            <p>Same arg surface, two transports.
-            <code>zd</code> the binary uses ureq against the HTTP listener
-            (works from bash / fish / CI / curl). <code>zd</code> the builtin
-            inside zshrs uses the local Unix socket via the daemon
-            <code>Client</code> &mdash; 5.5&times; faster (0.48ms vs 2.64ms,
-            no fork).</p>
-          </div>
-          <div class="cat-card">
-            <h4><code>zd doctor</code></h4>
-            <p>One-command health sweep: cache-root perms, file-perms drift,
-            pidlock liveness, socket presence, catalog integrity (sqlite
-            <code>PRAGMA integrity_check</code>), shards-present count,
-            fsnotify-alive, supervised-job count, legacy-litter scan
-            (<code>~/.zcompdump*</code>, <code>~/*.zwc</code>). Pretty
-            ASCII table; non-zero exit on any FAIL.</p>
-          </div>
-          <div class="cat-card">
-            <h4>Flat history + sibling FTS5 sqlite</h4>
-            <p><code>~/.zshrs/zshrs_history</code> (flat zsh-extended-history
-            text, <code>cat</code>-able and <code>grep</code>-able) +
-            <code>~/.zshrs/zshrs_history.db</code> (FTS5 index for fast
-            search / dedup / frequency). The writer keeps both in lockstep;
-            on open, the text mirror is rehydrated from the index if
-            stale. Auto-migrates the legacy
-            <code>~/Library/Application Support/zshrs/history.db</code>.</p>
-          </div>
-          <div class="cat-card">
-            <h4>Recorder sources the full 8-file login chain</h4>
-            <p><code>zshrs-recorder</code> by default mirrors a real
-            <code>zsh -l -i</code>: <code>/etc/zshenv</code>,
-            <code>${ZDOTDIR:-$HOME}/.zshenv</code>, <code>/etc/zprofile</code>,
-            <code>~/.zprofile</code>, <code>/etc/zshrc</code>,
-            <code>~/.zshrc</code>, <code>/etc/zlogin</code>,
-            <code>~/.zlogin</code>. Missing files skipped silently.
-            <code>$ZDOTDIR</code> re-resolved per file.</p>
-          </div>
-          <div class="cat-card">
-            <h4><code>zsync up --all</code></h4>
-            <p>Single command snapshots every overlay table
-            (alias / galias / salias / setopt / params /
-            env / path / manpath / fpath / named_dir / compdef /
-            zstyle) and pushes into the daemon&rsquo;s canonical state.
-            Shell-side <code>overlay_snapshot::enumerate_all_overlays</code>
-            registered via fn-pointer trampoline so the daemon crate
-            stays decoupled from <code>ShellExecutor</code>.</p>
-          </div>
-          <div class="cat-card">
-            <h4>23 anti-fork coreutils builtins</h4>
-            <p><code>cat</code>, <code>head</code>, <code>tail</code>,
-            <code>wc</code>, <code>sort</code>, <code>find</code>,
-            <code>uniq</code>, <code>cut</code>, <code>tr</code>,
-            <code>seq</code>, <code>rev</code>, <code>tee</code>,
-            <code>sleep</code>, <code>date</code>, <code>mktemp</code>,
-            <code>hostname</code>, <code>uname</code>, <code>whoami</code>,
-            <code>id</code>, <code>basename</code>, <code>dirname</code>,
-            <code>touch</code>, <code>realpath</code>. All in-process; one
-            <code>cat</code> in a pipeline doesn&rsquo;t fork.</p>
-          </div>
-          <div class="cat-card">
-            <h4>Parallel-as-syntactic-primitive</h4>
-            <p>fish-style parallel iterators (<code>par_for</code>,
-            <code>par_map</code>, <code>par_filter</code>, <code>par_reduce</code>)
-            ship as VM opcodes, not library calls. Glob walks parallelize
-            at depth &ge; 32 by default. Worker pool is the substrate.</p>
-          </div>
-          <div class="cat-card">
-            <h4>The <code>--no-fork</code> philosophy as a measurement</h4>
-            <p>Every accepted commit is graded by &ldquo;does this remove
-            a fork?&rdquo; not &ldquo;does this add a feature?&rdquo;
-            Optimization layers (zinit turbo, p10k instant prompt, zwc,
-            zcompile, BG_NICE, lazy autoload) are evidence that zsh
-            can&rsquo;t solve the problem in userspace; zshrs accepts the
-            architecture cost to solve it for real.</p>
-          </div>
-          <div class="cat-card">
-            <h4>First Bourne shell with native LSP server + DAP debug adapter</h4>
-            <p><strong>The first shell in the Bourne lineage to ship Language
-            Server Protocol and Debug Adapter Protocol as first-class
-            subsystems of the shell binary itself.</strong>
-            <code>zshrs --lsp</code>
-            starts an LSP server on stdio (completion, hover,
-            documentSymbol, foldingRange, semanticTokens, formatting,
-            rename, diagnostics) consumed by any editor &mdash; JetBrains,
-            VS Code, Helix, Neovim. <code>zshrs --dap HOST:PORT</code>
-            speaks the full Debug Adapter Protocol over TCP (breakpoints,
-            stepping, frames, scopes, variables, evaluate) so any DAP
-            client can debug zsh scripts. Outside the Bourne tradition
-            this is not new: Nushell (<code>nu --lsp</code>) and Elvish
-            (<code>elvish -lsp</code>, since 0.18.0) both ship in-binary
-            language servers, and Endo (v0.1.0, F#-inspired, not POSIX)
-            ships LSP and DAP. Inside it, nothing does &mdash; bash, zsh,
-            ksh, dash and fish all ship neither:
-            <code>bash-language-server</code> and <code>fish-lsp</code>
-            are separate Node/TypeScript packages, zsh has no mainstream
-            server at all, and <code>vscode-bash-debug</code> is a VS Code
-            extension driving the external <code>bashdb</code> script.
-            zshrs&rsquo;s LSP also completes through its own live compsys
-            completers &mdash; the same <code>_git</code> /
-            <code>_docker</code> / <code>_ssh</code> functions a Tab press
-            drives &mdash; which no shell language server of any lineage
-            does. The
-            JetBrains plugin at <code>editors/intellij/</code> drives
-            both, and additionally surfaces every sourced zsh plugin
-            (zinit / oh-my-zsh / prezto / antidote / antigen / zplug /
-            zsh-more-completions / zpwr / loose) under the IDE&rsquo;s
-            <em>External Libraries</em> node via
-            <code>zshrs --dump-plugins</code> &mdash; cmd-clickable,
-            find-usages-able, rename-across-plugin-boundary, indexed
-            once per project. No other shell exposes its plugin-manager
-            state as IDE library roots; the closest precedents
-            (bash-language-server, fish-shell.vscode) ignore plugin
-            managers entirely. Hand-rolled JSON-RPC framing, zero new
-            dependencies.</p>
-          </div>
-          <div class="cat-card">
-            <h4>First POSIX-compatible shell with a builtin unit-test framework</h4>
-            <p><strong>World&rsquo;s first POSIX-compatible shell to ship
-            a unit-test framework + worker-pool runner in the binary,
-            zero external install.</strong> <code>zassert_eq</code> /
-            <code>zassert_ne</code> / <code>zassert_ok</code> /
-            <code>zassert_gt</code> / <code>zassert_lt</code> /
-            <code>zassert_match</code> / <code>zassert_contains</code> /
-            <code>zassert_near</code> / <code>zassert_dies</code> &mdash;
-            14 assertion verbs &mdash; plus <code>ztest_skip</code> and
-            <code>ztest_run</code> (alias <code>run_tests</code>) are
-            shell builtins, callable from any <code>.zsh</code> / <code>.sh</code>
-            script with no <code>npm i</code>, <code>gem install</code>,
-            or <code>cargo install</code> step. <code>zshrs --ztest [paths&hellip;]</code>
-            runs a worker-pool: N persistent <code>--ztest-worker</code>
-            subprocesses (one per CPU) fork-on-receive per test, JSON-over-pipe
-            wire protocol, per-test fd 2 capture so concurrent workers
-            never tear each other&rsquo;s output &mdash; the same architecture
-            <code>cargo-nextest</code> brought to Rust testing, now in
-            a shell binary. Every other POSIX-family shell (bash, zsh,
-            ksh, dash, fish) relies on third-party packages installed
-            separately: <code>bats-core</code>, <code>shunit2</code>,
-            <code>Bach</code>, <code>ShellSpec</code>, <code>zunit</code>,
-            <code>korn-spec</code>. PowerShell&rsquo;s Pester (preinstalled
-            on Windows 10+) is the closest precedent, but PowerShell
-            is not POSIX. Nushell ships <code>std assert</code> builtins
-            but is its own non-POSIX language and has no integrated
-            runner. Lives in <code>src/extensions/ztest.rs</code>; port
-            of strykelang&rsquo;s <code>stryke test</code> runner.</p>
-          </div>
-          <div class="cat-card">
-            <h4>First shell with a native powerlevel10k engine</h4>
-            <p><strong>World&rsquo;s first shell to absorb its prompt theme
-            into the shell binary itself.</strong> Everywhere else,
-            powerlevel10k runs as ~13k lines of metaprogrammed zsh
-            re-evaluated by the prompt expander, plus
-            <code>gitstatusd</code> &mdash; a separate C++ daemon &mdash;
-            for git state; <em>p10k instant prompt exists precisely to
-            hide that cost.</em> zshrs intercepts the
-            <code>source powerlevel10k.zsh-theme</code> call at the
-            builtin-dispatch layer and renders in-process Rust instead
-            (<code>src/extensions/p10k/</code>, 21 files, 17,549 lines):
-            81 segment builders ported <code>p10k:NNN</code>-cited from
-            the theme spec (dir, vcs, status, prompt_char, kubecontext,
-            aws, virtualenv, battery, wifi, vi_mode, &hellip;) plus the
-            user-defined <code>prompt_&lt;name&gt;</code> /
-            <code>p10k segment</code> protocol,
-            <code>CONTENT_EXPANSION</code> templates through the real
-            <code>${(e)}</code> subst chain, <code>SHOW_ON_UPGLOB</code>,
-            transient prompt, right-aligned multiline assembly with gap
-            char/style. gitstatusd is absorbed: a native <code>.git</code>
-            reader (HEAD/refs/packed-refs, index v2/v3/v4 parse, stash
-            reflog, tags, ahead/behind) &mdash; no C++ daemon, no fork
-            per prompt in the cached case. The user&rsquo;s
-            <code>.p10k.zsh</code> config sources unchanged; the deferred
-            template state machine collapses into one eager linear fold
-            per prompt. The theme&rsquo;s own optimization layer becomes
-            unnecessary &mdash; the workaround is deleted, not ported.</p>
-          </div>
-          <div class="cat-card">
-            <h4>Value lineage as a builtin (<code>provenance</code>)</h4>
-            <p><strong>First shell to record how the values it holds were
-            built.</strong> The engine taps the bytecode itself: an
-            <em>origin</em> (command substitution, glob, heredoc, process
-            substitution) and then every op that touched the value
-            &mdash; expand, concat, assign, exec, call &mdash; each
-            stamped with file, line, enclosing shell function and
-            wall clock to the millisecond. Shell functions carry the
-            same chain: definition site, every redefinition, every call
-            at the <em>caller&rsquo;s</em> line, and the
-            <code>unfunction</code> that ended it.
-            <code>[provenance] track_all</code> arms every parameter and
-            function with no marking step; disarmed, each tap is one
-            relaxed atomic load. Other shells answer &ldquo;what is this
-            value?&rdquo; (<code>typeset -p</code>) and &ldquo;what
-            ran?&rdquo; (<code>set -x</code>, <code>PS4</code>) &mdash;
-            neither answers &ldquo;where did these bytes come from, and
-            what happened to them since?&rdquo; Every prior approach
-            lives outside the shell: provenance systems wrap commands,
-            static analyzers read scripts without running them, taint
-            tracking sits in language runtimes rather than the shell
-            that glues them together. See
-            <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PROVENANCE.md"><code>docs/PROVENANCE.md</code></a>.</p>
+            <h4>A unit-test framework and runner in the binary</h4>
+            <p>Fourteen assertion verbs plus a worker-pool runner: one persistent subprocess per CPU, fork-on-receive per test, JSON over pipes, per-test fd&nbsp;2 capture so concurrent workers cannot tear each other&rsquo;s output. Bounded to POSIX-compatible shells &mdash; Pester is named and excluded as non-POSIX, Nushell&rsquo;s <code>std assert</code> named and excluded for lacking a runner. <code>bats-core</code>, <code>shunit2</code>, Bach, ShellSpec and zunit are all separate installs.</p>
           </div>
         </div>
 
