@@ -153,6 +153,52 @@ math-evaluates to 0 — plus the single-evaluation and `KSH_ARRAYS`/`KSH_ZERO_SU
 
 ---
 
+## #1113 — `resolvebuiltin` is ported TWICE, with incompatible signatures — open
+
+**Status:** `port-bug`, found 2026-08-29 during the file-mapping sweep. It is the LAST remaining
+`ported_fn_names_match_c` violation (127 → 1) and is deliberately left, because the fix is
+de-duplication rather than a file move.
+
+`Src/exec.c:2700 static HashNode resolvebuiltin(const char *cmdarg, HashNode hn)` has two Rust
+implementations:
+
+| | signature | shape |
+|---|---|---|
+| `src/ported/exec.rs:1024` | `(cmdarg: &str, hn: &builtin) -> Option<&builtin>` | C-faithful — mirrors the C arguments and return exactly |
+| `src/ported/module.rs:6645` | `(name: &str) -> Option<i32>` | ledger-keyed — looks the name up in `MODULESTAB.autoload_builtins` |
+
+The audit reports the second one because `module.rs` is the mirror of `Src/module.c`, and
+`resolvebuiltin` is an `exec.c` function. That complaint is correct, but MOVING it is not the fix:
+`exec.rs` already holds the faithful port under that exact name, so the move would collide.
+
+**Ten call sites** use the `module.rs` form and none of them hold a `&builtin` to pass:
+
+```
+src/fusevm_bridge.rs:1021
+src/ported/zle/computil.rs:1701, 4955, 6344, 6666, 6870, 7099, 8381, 8561
+```
+(the eight `computil.rs` ones are all `let _ = …resolvebuiltin(nam); // c:2711`, i.e. called purely
+for the autoload side effect and the result discarded)
+
+**So the options are all real work, and each has a cost:**
+
+1. Rework the ten call sites to obtain a `&builtin` and use the `exec.rs` port. Faithful, but the
+   eight `computil.rs` sites genuinely have only a name at that point — C reaches them with a
+   `HashNode` already in hand from `builtintab->getnode`, so this means threading the lookup
+   through.
+2. Keep both but rename the `module.rs` one to say what it is (an autoload-by-name adapter) and
+   list it in `tests/data/fake_fn_allowlist.txt`. Honest about the divergence, but adds a second
+   Rust-only name to that list for something that IS partly a port — unlike
+   `glob.rs::parse_time_spec`, which was provably unrelated to the C symbol whose name it wore.
+3. Make the `module.rs` one a thin wrapper that does the `builtintab` lookup itself and delegates
+   to the `exec.rs` port. Removes the duplicate logic without touching the call sites — probably
+   the best of the three, and worth trying first.
+
+**Not** a candidate: changing `exec.rs`'s signature away from C's to match the adapter. That
+regresses the faithful port to accommodate the divergent one.
+
+---
+
 ## #1112 — an in-process `( … )` leaks its trap table and rlimits — fixed
 
 **Status:** `port-bug`, found 2026-08-28 while repairing `283_zsh_traps_full`; **fixed
