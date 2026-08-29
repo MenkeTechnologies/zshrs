@@ -45,6 +45,18 @@ mod tests {
     /// `INCOMPFUNC == 1`; mirror the sibling ports' test convention.
     fn with_incompfunc<T, F: FnOnce() -> T>(f: F) -> T {
         let _g = crate::test_util::global_state_lock();
+        // sh:3 reaches `_hosts`, so both comparisons below run through
+        // `compadd`, which filters every candidate against `$PREFIX` and
+        // indexes `comptags` by `locallevel` — neither of which any earlier
+        // test in this binary unwinds (see `reset_completion_state`).
+        crate::test_util::reset_completion_state();
+        // …and pin `_hosts`' own input: with no `hosts` style set it builds
+        // `$_cache_hosts` from `getent hosts` / `/etc/hosts` / the
+        // `known-hosts-files` list (`_hosts.rs:141-176`), which is empty on
+        // some hosts. Seeding it also keeps the sh:3 short-circuit check
+        // honest — a seeded cache means `_hosts` touches neither the
+        // filesystem nor `getent`.
+        crate::ported::params::setaparam("_cache_hosts", vec!["myhost.example".to_string()]);
         let prev = INCOMPFUNC.load(Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = f();

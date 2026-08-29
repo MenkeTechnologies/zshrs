@@ -113,3 +113,119 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
     }
     g
 }
+
+/// Reset the completion-machinery globals a `compadd`-driven completion
+/// unit test depends on, so its result reflects the test's own inputs
+/// rather than whatever the previous test in the same binary left behind.
+///
+/// [`global_state_lock`] serialises stateful tests but restores nothing,
+/// and the completion subsystem is almost entirely process-wide state:
+///
+/// * `$PREFIX` / `$SUFFIX` / `$IPREFIX` / `$ISUFFIX`. `addmatches`
+///   re-seeds the `compprefix` / `compsuffix` / `compiprefix` /
+///   `compisuffix` globals from those parameters whenever `incompfunc`
+///   is set (`src/ported/zle/compcore.rs:4334-4347`) and then matches
+///   every `CAF_MATCH` candidate against them
+///   (`compcore.rs:4360-4373`, `Src/Zle/compcore.c:2253-2300`). A dozen
+///   completion tests park a non-empty word there and never clear it
+///   (`_absolute_command_paths.rs:168` `"ls"`, `_ldap_filters.rs:267`
+///   `"-x"`, `_debbugs_bugnumber.rs:142` `"notabug"`, …); after any of
+///   them EVERY candidate a later `compadd` offers fails to match, so
+///   `compadd` returns 1 and `_all_labels` / `_wanted` report "no
+///   matches" for a tag set that was registered perfectly well.
+/// * `comptags[]`, which `bin_comptags` indexes by `locallevel`
+///   (`Src/Zle/computil.c:3782` "Array of tag-set infos. Index is the
+///   locallevel", ported at `computil.rs:6886`), plus `locallevel`
+///   itself — nothing unwinds it when a test panics out of a
+///   `doshfunc`-shaped port.
+/// * the `zstyle` table, which `_hosts` / `_domains` / `_completers` /
+///   `_call_program` all consult for their candidate lists.
+/// * the three process-wide `compadd` shadows `_approximate` and
+///   `_complete_help` install (`src/ported/zle/complete.rs:975-982`,
+///   `:1043-1048`).
+///
+/// Every half of this is the boot/teardown entry point zsh itself uses,
+/// not a bespoke reset: `Src/Zle/complete.c:1788 finish_` zsfree's each
+/// `comp*` string global, `Src/Zle/computil.c:5124 setup_` zeroes
+/// `comptags[]` and `lasttaglevel`, and `zstyle -d` with no pattern is
+/// `zstyletab->emptytable` (`Src/Modules/zutil.c:639-640`).
+pub fn reset_completion_state() {
+    use std::sync::atomic::Ordering;
+    // c:Src/Zle/complete.c:1788 — clears compprefix/compsuffix/compiprefix/
+    // compisuffix/compqiprefix/compqisuffix/compquote/compqstack/complist
+    // and compwords.
+    let _ = crate::ported::zle::complete::finish_(std::ptr::null());
+    // c:Src/Zle/computil.c:5124 — `memset(comptags, 0, sizeof(comptags))`
+    // plus `lasttaglevel = 0`.
+    let _ = crate::ported::zle::computil::setup_();
+    // The globals cleared above are re-seeded FROM these parameters at
+    // compcore.rs:4334-4347, so clearing only the globals would leave the
+    // stale word to come straight back. `curcontext` selects every style
+    // context; `expl`, `_comp_tags`, `_tags_level`, `_next_tags_not` and
+    // `_sort_tags` are the bookkeeping parameters `_tags` / `_all_labels`
+    // read (`_all_labels.rs:291-323`, `_tags.rs:157`, `_tags.rs:213`).
+    for p in [
+        "PREFIX",
+        "SUFFIX",
+        "IPREFIX",
+        "ISUFFIX",
+        "QIPREFIX",
+        "QISUFFIX",
+        "curcontext",
+        "expl",
+        "_comp_tags",
+        "_tags_level",
+        "_next_tags_not",
+        "_sort_tags",
+    ] {
+        crate::ported::params::unsetparam(p);
+    }
+    // c:Src/params.c:54 `locallevel` — the `comptags[]` index.
+    crate::ported::params::locallevel.store(0, Ordering::Relaxed);
+    // c:Src/Zle/complete.c:41 `compignored` — `$compstate[ignored]`, the
+    // gate `_ignored` fires on.
+    crate::ported::zle::complete::COMPIGNORED.store(0, Ordering::Relaxed);
+    // complete.rs:975-982 / :983-1002 / :1043-1048 — the shell-function,
+    // argv-rewrite and trace shadows over `compadd`. All three make the
+    // builtin return 1 (or swallow the call) for reasons that have
+    // nothing to do with the caller under test.
+    crate::ported::zle::complete::set_compadd_trace(false);
+    crate::ported::zle::complete::clear_compadd_prefix_injector();
+    if let Ok(mut g) = crate::ported::zle::complete::COMPADD_ARGV_SHADOW.lock() {
+        *g = None;
+    }
+    // c:Src/Modules/zutil.c:639-640 — `zstyle -d` with no pattern is
+    // `zstyletab->emptytable`, i.e. drop every style.
+    let ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    let _ = crate::ported::modules::zutil::bin_zstyle("zstyle", &["-d".to_string()], &ops, 0);
+}
+
+/// Install one `zstyle` for the duration of a test, the way a user would
+/// write it on the command line: `zstyle <context> <style> <value…>`
+/// (`Src/Modules/zutil.c:606-616` — the no-flag arm is `setstyle`).
+///
+/// Completion functions that shell out through `_call_program` take the
+/// command line from the `command` style
+/// (`Completion/Base/Utility/_call_program:26`, ported at
+/// `_call_program.rs:74-101`), so this is the upstream-sanctioned way to
+/// give such a port a fixed candidate list instead of whatever the host
+/// machine's `ifconfig` / `global` happens to print.
+pub fn set_test_zstyle(context: &str, style: &str, value: &str) {
+    let ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    let _ = crate::ported::modules::zutil::bin_zstyle(
+        "zstyle",
+        &[context.to_string(), style.to_string(), value.to_string()],
+        &ops,
+        0,
+    );
+}
