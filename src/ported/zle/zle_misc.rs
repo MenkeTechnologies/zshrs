@@ -58,7 +58,8 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 
-/// Port of `doinsert(ZLE_STRING_T zstr, int len)` from `Src/Zle/zle_misc.c:37`.
+/// Port of `doinsert()` from `Src/Zle/zle_misc.c:37`.
+/// C decl: `doinsert(ZLE_STRING_T zstr, int len)`
 /// ```c
 /// mod_export void
 /// doinsert(ZLE_STRING_T zstr, int len) {
@@ -168,7 +169,8 @@ pub fn doinsert(zstr: &[char]) {
 /// `wide_valid=false` branch is unreachable in the Rust input path
 /// and the ASCII-promotion is the correct fallback for the rare
 /// case where a widget sets `lastchar` directly.
-/// Port of `selfinsert(UNUSED(char **args))` from `Src/Zle/zle_misc.c:113`.
+/// Port of `selfinsert()` from `Src/Zle/zle_misc.c:113`.
+/// C decl: `selfinsert(UNUSED(char **args))`
 /// C body (4 lines under MULTIBYTE):
 ///   `if (!lastchar_wide_valid && getrestchar(lastchar,...) == WEOF) return 1;
 ///    tmp = LASTFULLCHAR;
@@ -221,7 +223,8 @@ pub fn fixunmeta() {
     LASTCHAR_WIDE_VALID.store(1, SeqCst);
 }
 
-/// Port of `selfinsertunmeta(char **args)` from Src/Zle/zle_misc.c:149.
+/// Port of `selfinsertunmeta()` from `Src/Zle/zle_misc.c:149`.
+/// C decl: `selfinsertunmeta(char **args)`
 pub fn selfinsertunmeta(args: &[String]) -> i32 {
     // c:149
     // c:151-152 — `fixunmeta(); return selfinsert(args)`. Args
@@ -230,7 +233,8 @@ pub fn selfinsertunmeta(args: &[String]) -> i32 {
     selfinsert(args)
 }
 
-/// Port of `deletechar(char **args)` from Src/Zle/zle_misc.c:157.
+/// Port of `deletechar()` from `Src/Zle/zle_misc.c:157`.
+/// C decl: `deletechar(char **args)`
 pub fn deletechar() -> i32 {
     // c:157
     // c:157-166 — `if (zmult < 0) { negate, recurse to backward,
@@ -267,7 +271,8 @@ pub fn deletechar() -> i32 {
     0 // c:175
 }
 
-/// Port of `backwarddeletechar(char **args)` from Src/Zle/zle_misc.c:180.
+/// Port of `backwarddeletechar()` from `Src/Zle/zle_misc.c:180`.
+/// C decl: `backwarddeletechar(char **args)`
 pub fn backwarddeletechar() -> i32 {
     // c:180
     // c:180-188 — `if (zmult < 0) { negate, recurse to forward,
@@ -293,7 +298,8 @@ pub fn backwarddeletechar() -> i32 {
     0 // c:190
 }
 
-/// Port of `killwholeline(UNUSED(char **args))` from Src/Zle/zle_misc.c:195.
+/// Port of `killwholeline()` from `Src/Zle/zle_misc.c:195`.
+/// C decl: `killwholeline(UNUSED(char **args))`
 pub fn killwholeline() -> i32 {
     // c:195
     let mut n = ZMOD.lock().unwrap().mult;
@@ -330,7 +336,8 @@ pub fn killwholeline() -> i32 {
     0 // c:210
 }
 
-/// Port of `killbuffer(UNUSED(char **args))` from Src/Zle/zle_misc.c:215.
+/// Port of `killbuffer()` from `Src/Zle/zle_misc.c:215`.
+/// C decl: `killbuffer(UNUSED(char **args))`
 /// C body (4 lines):
 ///   `zlecs = 0; forekill(zlell, CUT_RAW); clearlist = 1; return 0;`
 pub fn killbuffer() -> i32 {
@@ -342,7 +349,8 @@ pub fn killbuffer() -> i32 {
     0 // c:220
 }
 
-/// Port of `backwardkillline(char **args)` from Src/Zle/zle_misc.c:225.
+/// Port of `backwardkillline()` from `Src/Zle/zle_misc.c:225`.
+/// C decl: `backwardkillline(char **args)`
 pub fn backwardkillline() -> i32 {
     // c:225
     // c:225-234 — `if (n < 0) { negate, recurse killline, restore }`.
@@ -377,7 +385,8 @@ pub fn backwardkillline() -> i32 {
     0 // c:245
 }
 
-/// Port of `transpose_swap(int start, int middle, int end)` from `Src/Zle/zle_misc.c:254`.
+/// Port of `transpose_swap()` from `Src/Zle/zle_misc.c:255`.
+/// C decl: `transpose_swap(int start, int middle, int end)`
 /// ```c
 /// static void
 /// transpose_swap(int start, int middle, int end)
@@ -415,7 +424,8 @@ pub fn transpose_swap(start: usize, middle: usize, end: usize) {
     let _ = len1;
 }
 
-/// Port of `gosmacstransposechars(UNUSED(char **args))` from Src/Zle/zle_misc.c:274.
+/// Port of `gosmacstransposechars()` from `Src/Zle/zle_misc.c:274`.
+/// C decl: `gosmacstransposechars(UNUSED(char **args))`
 pub fn gosmacstransposechars() -> i32 {
     // c:274
     // C body (c:276-307): gosmacs-style: transpose char before cursor
@@ -454,7 +464,8 @@ pub fn gosmacstransposechars() -> i32 {
     0
 }
 
-/// Port of `transposechars(UNUSED(char **args))` from Src/Zle/zle_misc.c:313.
+/// Port of `transposechars()` from `Src/Zle/zle_misc.c:313`.
+/// C decl: `transposechars(UNUSED(char **args))`
 pub fn transposechars() -> i32 {
     // c:313
     let mut n = ZMOD.lock().unwrap().mult;
@@ -509,7 +520,8 @@ pub fn transposechars() -> i32 {
     0
 }
 
-/// Port of `poundinsert(UNUSED(char **args))` from Src/Zle/zle_misc.c:369.
+/// Port of `poundinsert()` from `Src/Zle/zle_misc.c:369`.
+/// C decl: `poundinsert(UNUSED(char **args))`
 pub fn poundinsert() -> i32 {
     // c:369
     // c:371-393 — `zlecs = 0; vifirstnonblank(zlenoargs);
@@ -557,7 +569,8 @@ pub fn poundinsert() -> i32 {
     0 // c:396
 }
 
-/// Port of `acceptline(UNUSED(char **args))` from `Src/Zle/zle_misc.c:401`.
+/// Port of `acceptline()` from `Src/Zle/zle_misc.c:401`.
+/// C decl: `acceptline(UNUSED(char **args))`
 /// ```c
 /// int
 /// acceptline(UNUSED(char **args))
@@ -575,7 +588,8 @@ pub fn acceptline() -> i32 {
     0 // c:404 return 0
 }
 
-/// Port of `acceptandhold(UNUSED(char **args))` from Src/Zle/zle_misc.c:409.
+/// Port of `acceptandhold()` from `Src/Zle/zle_misc.c:409`.
+/// C decl: `acceptandhold(UNUSED(char **args))`
 /// C body (4 lines):
 ///     `zpushnode(bufstack, zlelineasstring(zleline, zlell, 0, NULL, NULL, 0));
 ///      stackcs = zlecs;
@@ -591,7 +605,8 @@ pub fn acceptandhold() -> i32 {
     0 // c:414
 }
 
-/// Port of `killline(char **args)` from Src/Zle/zle_misc.c:419.
+/// Port of `killline()` from `Src/Zle/zle_misc.c:419`.
+/// C decl: `killline(char **args)`
 pub fn killline() -> i32 {
     // c:419
     // c:419-428 — `if (n < 0) { backward delegate w/ negated zmult }`.
@@ -632,7 +647,8 @@ pub fn killline() -> i32 {
     0 // c:439
 }
 
-/// Port of `regionlines(int *start, int *end)` from Src/Zle/zle_misc.c:444.
+/// Port of `regionlines()` from `Src/Zle/zle_misc.c:444`.
+/// C decl: `regionlines(int *start, int *end)`
 /// WARNING: param names don't match C — Rust=(zle) vs C=(start, end)
 pub fn regionlines() -> (usize, usize) {
     // c:444
@@ -664,7 +680,8 @@ pub fn regionlines() -> (usize, usize) {
     (start, end)
 }
 
-/// Port of `killregion(UNUSED(char **args))` from Src/Zle/zle_misc.c:463.
+/// Port of `killregion()` from `Src/Zle/zle_misc.c:463`.
+/// C decl: `killregion(UNUSED(char **args))`
 pub fn killregion() -> i32 {
     // c:463
     // c:463-466 — `if (mark > zlell) mark = zlell`.
@@ -708,7 +725,8 @@ pub fn killregion() -> i32 {
     0 // c:489
 }
 
-/// Port of `copyregionaskill(char **args)` from Src/Zle/zle_misc.c:494.
+/// Port of `copyregionaskill()` from `Src/Zle/zle_misc.c:494`.
+/// C decl: `copyregionaskill(char **args)`
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn copyregionaskill(args: &[String]) -> i32 {
     // c:494
@@ -751,7 +769,8 @@ pub fn copyregionaskill(args: &[String]) -> i32 {
 }
 
 /// Yank - insert from the cut buffer.
-/// Port of `yank(UNUSED(char **args))` from Src/Zle/zle_misc.c:533.
+/// Port of `yank()` from `Src/Zle/zle_misc.c:533`.
+/// C decl: `yank(UNUSED(char **args))`
 pub fn yank() -> i32 {
     // c:533
     let mut n = ZMOD.lock().unwrap().mult; // c:535 `int n = zmult;`
@@ -802,7 +821,8 @@ pub fn yank() -> i32 {
     0 // c:553
 }
 
-/// Port of `pastebuf(Cutbuffer buf, int mult, int position)` from Src/Zle/zle_misc.c:558.
+/// Port of `pastebuf()` from `Src/Zle/zle_misc.c:558`.
+/// C decl: `pastebuf(Cutbuffer buf, int mult, int position)`
 /// c:556 — position: 0 is before, 1 after, 2 split the line
 pub fn pastebuf(buf: &crate::ported::zle::zle_h::cutbuffer, mult: i32, position: i32) -> i32 {
     // c:558
@@ -894,7 +914,8 @@ pub fn pastebuf(buf: &crate::ported::zle::zle_h::cutbuffer, mult: i32, position:
     0
 }
 
-/// Port of `viputbefore(UNUSED(char **args))` from Src/Zle/zle_misc.c:608.
+/// Port of `viputbefore()` from `Src/Zle/zle_misc.c:608`.
+/// C decl: `viputbefore(UNUSED(char **args))`
 pub fn viputbefore() -> i32 {
     // c:608
     let n = ZMOD.lock().unwrap().mult; // c:610
@@ -935,7 +956,8 @@ pub fn viputbefore() -> i32 {
     pastebuf(&kctbuf, n, 0) // c:639
 }
 
-/// Port of `viputafter(UNUSED(char **args))` from Src/Zle/zle_misc.c:644.
+/// Port of `viputafter()` from `Src/Zle/zle_misc.c:644`.
+/// C decl: `viputafter(UNUSED(char **args))`
 pub fn viputafter() -> i32 {
     // c:644
     let n = ZMOD.lock().unwrap().mult; // c:646
@@ -976,7 +998,8 @@ pub fn viputafter() -> i32 {
     pastebuf(&kctbuf, n, 1) // c:676
 }
 
-/// Port of `putreplaceselection(UNUSED(char **args))` from Src/Zle/zle_misc.c:680.
+/// Port of `putreplaceselection()` from `Src/Zle/zle_misc.c:680`.
+/// C decl: `putreplaceselection(UNUSED(char **args))`
 pub fn putreplaceselection() -> i32 {
     // c:680
     let n = ZMOD.lock().unwrap().mult; // c:682
@@ -1018,7 +1041,8 @@ pub fn putreplaceselection() -> i32 {
     pastebuf(&prevbuf, n, pos) // c:721
 }
 
-/// Port of `yankpop(UNUSED(char **args))` from Src/Zle/zle_misc.c:741.
+/// Port of `yankpop()` from `Src/Zle/zle_misc.c:728`.
+/// C decl: `yankpop(UNUSED(char **args))`
 ///
 /// The C walk cycles `kct` through: original buffer (`-1`, whatever
 /// `kctbuf` points at) → kill ring entries newest→oldest → back to the
@@ -1130,8 +1154,9 @@ pub fn yankpop() -> i32 {
 /// pump that respects the ZLE timeout/select(2) machinery. Until
 /// the input pump lands, returns the empty string so callers see a
 /// no-op paste rather than a panic.
-/// Direct port of `char *bracketedstring(void)` from
-/// `Src/Zle/zle_misc.c:784`. Reads bytes from the controlling tty
+/// Port of `bracketedstring()` from `Src/Zle/zle_misc.c:784`.
+/// C decl: `bracketedstring(void)`
+/// Reads bytes from the controlling tty
 /// looking for the bracketed-paste end sentinel `\033[201~`,
 /// translating CR → LF and meta-encoding high-bit bytes along the
 /// way. Returns the accumulated payload (without the sentinel).
@@ -1201,8 +1226,8 @@ pub fn bracketedstring() -> String {
     String::from_utf8_lossy(&pbuf).into_owned()
 }
 
-/// Port of `int bracketedpaste(char **args)` from
-/// Src/Zle/zle_misc.c:814.
+/// Port of `bracketedpaste()` from `Src/Zle/zle_misc.c:814`.
+/// C decl: `bracketedpaste(char **args)`
 ///
 /// Captures a bracketed-paste payload via `bracketedstring()` then
 /// either stores it in `args[0]` (assoc-array setparam) or inserts it
@@ -1249,7 +1274,8 @@ pub fn bracketedpaste(args: &[String]) -> i32 {
     0 // c:838
 }
 
-/// Port of `overwritemode(UNUSED(char **args))` from `Src/Zle/zle_misc.c:843`.
+/// Port of `overwritemode()` from `Src/Zle/zle_misc.c:843`.
+/// C decl: `overwritemode(UNUSED(char **args))`
 /// ```c
 /// int
 /// overwritemode(UNUSED(char **args))
@@ -1265,7 +1291,8 @@ pub fn overwritemode() -> i32 {
     0 // c:846 return 0
 }
 
-/// Port of `whatcursorposition(UNUSED(char **args))` from Src/Zle/zle_misc.c:851.
+/// Port of `whatcursorposition()` from `Src/Zle/zle_misc.c:851`.
+/// C decl: `whatcursorposition(UNUSED(char **args))`
 pub fn whatcursorposition() -> i32 {
     // c:851
     let bol = findbol(); // c:855
@@ -1303,7 +1330,8 @@ pub fn whatcursorposition() -> i32 {
     0
 }
 
-/// Port of `undefinedkey(UNUSED(char **args))` from `Src/Zle/zle_misc.c:892`.
+/// Port of `undefinedkey()` from `Src/Zle/zle_misc.c:892`.
+/// C decl: `undefinedkey(UNUSED(char **args))`
 /// ```c
 /// int
 /// undefinedkey(UNUSED(char **args))
@@ -1321,8 +1349,9 @@ pub fn undefinedkey() -> i32 {
     1
 }
 
-/// Direct port of `int quotedinsert(char **args)` from
-/// `Src/Zle/zle_misc.c:899`.
+/// Port of `quotedinsert()` from `Src/Zle/zle_misc.c:899`.
+/// C decl: `quotedinsert(char **args)`
+///
 /// ```c
 /// // (raw-mode tweak for non-HAS_TIO systems — skipped on Linux/macOS)
 /// getfullchar(0);
@@ -1345,7 +1374,8 @@ pub fn quotedinsert() -> i32 {
     selfinsert(&[]) // c:922
 }
 
-/// Port of `parsedigit(int inkey)` from Src/Zle/zle_misc.c:919.
+/// Port of `parsedigit()` from `Src/Zle/zle_misc.c:919`.
+/// C decl: `parsedigit(int inkey)`
 /// WARNING: param names don't match C — Rust=(zle, inkey) vs C=(inkey)
 pub fn parsedigit(inkey: i32) -> i32 {
     // c:919
@@ -1376,7 +1406,8 @@ pub fn parsedigit(inkey: i32) -> i32 {
     -1 // c:1094
 }
 
-/// Port of `digitargument(UNUSED(char **args))` from Src/Zle/zle_misc.c:950.
+/// Port of `digitargument()` from `Src/Zle/zle_misc.c:950`.
+/// C decl: `digitargument(UNUSED(char **args))`
 pub fn digitargument() -> i32 {
     // c:950
     // c:1044 — `int sign = (zmult < 0) ? -1 : 1`.
@@ -1405,7 +1436,8 @@ pub fn digitargument() -> i32 {
     0 // c:1061
 }
 
-/// Port of `negargument(UNUSED(char **args))` from `Src/Zle/zle_misc.c:974`.
+/// Port of `negargument()` from `Src/Zle/zle_misc.c:974`.
+/// C decl: `negargument(UNUSED(char **args))`
 /// ```c
 /// int
 /// negargument(UNUSED(char **args))
@@ -1432,7 +1464,8 @@ pub fn negargument() -> i32 {
     0 // c:981 return 0
 }
 
-/// Port of `universalargument(char **args)` from Src/Zle/zle_misc.c:986.
+/// Port of `universalargument()` from `Src/Zle/zle_misc.c:986`.
+/// C decl: `universalargument(char **args)`
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn universalargument(args: &[String]) -> i32 {
     // c:986
@@ -1461,7 +1494,8 @@ pub fn universalargument(args: &[String]) -> i32 {
     0
 }
 
-/// Port of `argumentbase(char **args)` from `Src/Zle/zle_misc.c:1037`.
+/// Port of `argumentbase()` from `Src/Zle/zle_misc.c:1038`.
+/// C decl: `argumentbase(char **args)`
 /// ```c
 /// int
 /// argumentbase(char **args)
@@ -1517,7 +1551,8 @@ pub fn argumentbase(args: &[String]) -> i32 {
     0 // c:1061 return 0
 }
 
-/// Port of `copyprevword(UNUSED(char **args))` from Src/Zle/zle_misc.c:1066.
+/// Port of `copyprevword()` from `Src/Zle/zle_misc.c:1066`.
+/// C decl: `copyprevword(UNUSED(char **args))`
 pub fn copyprevword() -> i32 {
     // c:1066
     // C body (c:1066-1110): walk back over zmult words, copy that
@@ -1566,7 +1601,8 @@ pub fn copyprevword() -> i32 {
     0
 }
 
-/// Port of `copyprevshellword(UNUSED(char **args))` from Src/Zle/zle_misc.c:1108.
+/// Port of `copyprevshellword()` from `Src/Zle/zle_misc.c:1108`.
+/// C decl: `copyprevshellword(UNUSED(char **args))`
 pub fn copyprevshellword() -> i32 {
     // c:1108
     // C body: similar to copyprevword but uses shell tokenizer to
@@ -1601,7 +1637,8 @@ pub fn copyprevshellword() -> i32 {
     0
 }
 
-/// Port of `sendbreak(UNUSED(char **args))` from `Src/Zle/zle_misc.c:1144`.
+/// Port of `sendbreak()` from `Src/Zle/zle_misc.c:1144`.
+/// C decl: `sendbreak(UNUSED(char **args))`
 /// ```c
 /// int
 /// sendbreak(UNUSED(char **args))
@@ -1623,7 +1660,8 @@ pub fn sendbreak() -> i32 {
     1 // c:1147
 }
 
-/// Port of `quoteregion(UNUSED(char **args))` from Src/Zle/zle_misc.c:1152.
+/// Port of `quoteregion()` from `Src/Zle/zle_misc.c:1152`.
+/// C decl: `quoteregion(UNUSED(char **args))`
 pub fn quoteregion() -> i32 {
     // c:1152
     // c:1152 — `int extra = invicmdmode()`. Vi-cmd-mode bias.
@@ -1668,7 +1706,8 @@ pub fn quoteregion() -> i32 {
     0
 }
 
-/// Port of `quoteline(UNUSED(char **args))` from Src/Zle/zle_misc.c:1187.
+/// Port of `quoteline()` from `Src/Zle/zle_misc.c:1187`.
+/// C decl: `quoteline(UNUSED(char **args))`
 pub fn quoteline() -> i32 {
     // c:1187
     // c:1187 — `len = zlell`. Quote whole buffer.
@@ -1682,7 +1721,8 @@ pub fn quoteline() -> i32 {
     0 // c:1196
 }
 
-/// Port of `makequote(ZLE_STRING_T str, size_t *len)` from Src/Zle/zle_misc.c:1201.
+/// Port of `makequote()` from `Src/Zle/zle_misc.c:1201`.
+/// C decl: `makequote(ZLE_STRING_T str, size_t *len)`
 /// WARNING: param names don't match C — Rust=(s) vs C=(str, len)
 pub fn makequote(s: &[char]) -> Vec<char> {
     // c:1201
@@ -1712,16 +1752,17 @@ pub fn makequote(s: &[char]) -> Vec<char> {
 pub static namedcmdstr: std::sync::Mutex<String> = // c:1229
     std::sync::Mutex::new(String::new());
 
-/// Port of `static LinkList namedcmdll` from `Src/Zle/zle_misc.c:1235`.
+/// Port of `static LinkList namedcmdll` from `Src/Zle/zle_misc.c:1230`.
 pub static namedcmdll: std::sync::Mutex<Vec<String>> = // c:1235
     std::sync::Mutex::new(Vec::new());
 
-/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1235`.
+/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1231`.
 pub static namedcmdambig: std::sync::atomic::AtomicUsize = // c:1235
     std::sync::atomic::AtomicUsize::new(0);
 
 /// Direct port of `static int scancompcmd(HashNode hn, UNUSED(int flags))`
 /// from `Src/Zle/zle_misc.c:1235`.
+/// Port of `scancompcmd()` from `Src/Zle/zle_misc.c:1235`. — C decl `scancompcmd(HashNode hn, UNUSED(int flags))`
 pub fn scancompcmd(name: &str) -> i32 {
     // c:1235
     // c:1240 — `if (strpfx(namedcmdstr, t->nam))`.
@@ -1754,8 +1795,9 @@ pub fn scancompcmd(name: &str) -> i32 {
 /// as a macro just before the local-keymap fixture.
 pub const NAMLEN: usize = 60; // c:1249
 
-/// Direct port of `Thingy executenamedcommand(char *prompt)` from
-/// `Src/Zle/zle_misc.c:1261`. Prompts the user for a widget
+/// Port of `executenamedcommand()` from `Src/Zle/zle_misc.c:1261`.
+/// C decl: `executenamedcommand(char *prmt)`
+/// Prompts the user for a widget
 /// name (with name-completion via thingytab), then resolves the
 /// answer to a Thingy.
 ///
@@ -1775,7 +1817,7 @@ pub fn executenamedcommand(prompt: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Port of `struct suffixset` from `Src/Zle/zle_misc.c`. One node
+/// Port of `struct suffixset` from `Src/Zle/zle_misc.c:1530`. One node
 /// in the auto-removable suffix list.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
@@ -1794,7 +1836,8 @@ pub struct suffixset {
 }
 
 // Suffix system                                                            // c:1500
-/// Port of `addsuffix(int tp, int flags, ZLE_STRING_T chars, int lenstr, int lensuf)` from Src/Zle/zle_misc.c:1558.
+/// Port of `addsuffix()` from `Src/Zle/zle_misc.c:1558`.
+/// C decl: `addsuffix(int tp, int flags, ZLE_STRING_T chars, int lenstr, int lensuf)`
 pub fn addsuffix(tp: i32, flags: i32, chars: Vec<char>, lenstr: i32, lensuf: i32) {
     // c:1558
     // c:1561 — newsuf = zalloc(sizeof(struct suffixset));
@@ -1814,7 +1857,8 @@ pub fn addsuffix(tp: i32, flags: i32, chars: Vec<char>, lenstr: i32, lensuf: i32
     suffixlist().lock().unwrap().insert(0, newsuf);
 }
 
-/// Port of `addsuffixstring(int tp, int flags, char *chars, int lensuf)` from Src/Zle/zle_misc.c:1580.
+/// Port of `addsuffixstring()` from `Src/Zle/zle_misc.c:1580`.
+/// C decl: `addsuffixstring(int tp, int flags, char *chars, int lensuf)`
 pub fn addsuffixstring(tp: i32, flags: i32, chars: &str, lensuf: i32) {
     // c:1580
     // C body: `chars = ztrdup(chars); suffixstr = stringaszleline(...);
@@ -1824,8 +1868,9 @@ pub fn addsuffixstring(tp: i32, flags: i32, chars: &str, lensuf: i32) {
     addsuffix(tp, flags, chars_vec, slen, lensuf);
 }
 
-/// Direct port of `void makesuffix(int n)` from
-/// `Src/Zle/zle_misc.c:1598`. Reads `$ZLE_REMOVE_SUFFIX_CHARS` from
+/// Port of `makesuffix()` from `Src/Zle/zle_misc.c:1598`.
+/// C decl: `makesuffix(int n)`
+/// Reads `$ZLE_REMOVE_SUFFIX_CHARS` from
 /// paramtab and registers it as the active suffix-removal char set
 /// via `addsuffixstring`. Defaults to ` \t\n;&|` when the param is
 /// unset.
@@ -1860,7 +1905,8 @@ pub fn makesuffix(n: i32) {
     suffixnoinsrem.store(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Port of `makeparamsuffix(int br, int n)` from Src/Zle/zle_misc.c:1623.
+/// Port of `makeparamsuffix()` from `Src/Zle/zle_misc.c:1623`.
+/// C decl: `makeparamsuffix(int br, int n)`
 pub fn makeparamsuffix(br: i32, n: i32) {
     // c:1623
     // C body (c:1692-1697): `charstr = ":[#%?-+="; lenstr = (br ||
@@ -1888,13 +1934,14 @@ pub static suffixfunc: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(
 /// `makesuffixstr` from the `\-` / `^`-inverted class flag.
 pub static suffixnoinsrem: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `mod_export int suffixlen;` from `Src/Zle/zle_misc.c:1553`.
+/// Port of `mod_export int suffixlen;` from `Src/Zle/zle_misc.c:1554`.
 /// "Length of the currently active, auto-removable suffix." Consumed
 /// by `iremovesuffix` for the actual delete.
 pub static suffixlen: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `makesuffixstr(char *f, char *s, int n)` from
-/// `Src/Zle/zle_misc.c:1642`. Three-way dispatch:
+/// Port of `makesuffixstr()` from `Src/Zle/zle_misc.c:1642`.
+/// C decl: `makesuffixstr(char *f, char *s, int n)`
+/// Three-way dispatch:
 ///   - `f` set → register `f` as the post-insert hook (suffixfunc)
 ///   - `s` set → parse char-class spec (`^/!` invert; `\-` flag;
 ///     `a-z` ranges) into addsuffix calls
@@ -2030,8 +2077,9 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
 }
 
 // Remove suffix, if there is one, when inserting character c.             // c:1699
-/// Direct port of `int iremovesuffix(ZLE_INT_T c, int keep)` from
-/// `Src/Zle/zle_misc.c:1699`. Walks `suffixlist`; for each
+/// Port of `iremovesuffix()` from `Src/Zle/zle_misc.c:1699`.
+/// C decl: `iremovesuffix(ZLE_INT_T c, int keep)`
+/// Walks `suffixlist`; for each
 /// matching entry, removes `lensuf` chars before `ZLECS` in
 /// `ZLELINE` (unless `keep` is set), then either calls the
 /// registered `suffixfunc` or just clears the list.
@@ -2194,7 +2242,7 @@ pub fn fixsuffix() {
 /// `DONE` static.
 pub static DONE: AtomicI32 = AtomicI32::new(0); // c:79
 
-/// Port of `mod_export int suffixlen` from `Src/Zle/zle_misc.c:1553`.
+/// Port of `mod_export int suffixlen` from `Src/Zle/zle_misc.c:1554`.
 /// Length of the currently active, auto-removable suffix.
 ///
 /// Re-export alias of the lowercase [`suffixlen`] static — C has ONE
@@ -2206,7 +2254,7 @@ pub static DONE: AtomicI32 = AtomicI32::new(0); // c:79
 /// hit the same state.
 pub use self::suffixlen as SUFFIXLEN;
 
-/// Port of `struct suffixset *suffixlist` from `Src/Zle/zle_misc.c`.
+/// Port of `struct suffixset *suffixlist` from `Src/Zle/zle_misc.c:1540`.
 /// Stack of registered auto-removable suffixes.
 pub static SUFFIXLIST: std::sync::OnceLock<std::sync::Mutex<Vec<suffixset>>> =
     std::sync::OnceLock::new();
@@ -2286,7 +2334,14 @@ pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync
 // insert a zle string, with repetition and suffix removal              // c:33
 
 /// Self insert - insert the typed character
-/// Port of selfinsert(UNUSED(char **args)) from zle_misc.c
+/// Stands in for selfinsert(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `selfinsert()` (`Src/Zle/zle_misc.c:113`), whose
+/// faithful port is `selfinsert()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn self_insert(c: char) {
     // c:113
     ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
@@ -2296,41 +2351,62 @@ pub fn self_insert(c: char) {
 }
 
 /// Self insert unmeta - insert character with meta bit stripped
-/// Port of selfinsertunmeta(char **args) from zle_misc.c
+/// Stands in for selfinsertunmeta(char **args) from zle_misc.c
 
 /// Accept line - return the current line for execution
-/// Port of acceptline(UNUSED(char **args)) from zle_misc.c
+/// Stands in for acceptline(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `acceptline()` (`Src/Zle/zle_misc.c:401`), whose
+/// faithful port is `acceptline()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn accept_line() -> String {
     // c:401
     ZLELINE.lock().unwrap().iter().collect()
 }
 
 /// Accept and hold - accept line but keep it in the buffer
-/// Port of acceptandhold(UNUSED(char **args)) from zle_misc.c
+/// Stands in for acceptandhold(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `acceptandhold()` (`Src/Zle/zle_misc.c:409`), whose
+/// faithful port is `acceptandhold()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn accept_and_hold() -> String {
     ZLELINE.lock().unwrap().iter().collect()
 }
 
 /// Quoted insert - insert next char literally
-/// Port of quotedinsert(char **args) from zle_misc.c
+/// Stands in for quotedinsert(char **args) from zle_misc.c
 
 /// Bracketed paste - handle paste mode
-/// Port of bracketedpaste(char **args) from zle_misc.c
+/// Stands in for bracketedpaste(char **args) from zle_misc.c
 
 /// Delete char under cursor
-/// Port of deletechar(char **args) from zle_misc.c
+/// Stands in for deletechar(char **args) from zle_misc.c
 
 /// Delete char before cursor
-/// Port of backwarddeletechar(char **args) from zle_misc.c
+/// Stands in for backwarddeletechar(char **args) from zle_misc.c
 
 /// Kill from cursor to end of line
-/// Port of killline(char **args) from zle_misc.c
+/// Stands in for killline(char **args) from zle_misc.c
 
 /// Kill from beginning of line to cursor
-/// Port of backwardkillline(char **args) from zle_misc.c
+/// Stands in for backwardkillline(char **args) from zle_misc.c
 
 /// Kill entire buffer
-/// Port of killbuffer(UNUSED(char **args)) from zle_misc.c
+/// Stands in for killbuffer(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `killbuffer()` (`Src/Zle/zle_misc.c:215`), whose
+/// faithful port is `killbuffer()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn kill_buffer() {
     if !ZLELINE.lock().unwrap().is_empty() {
         let text: Vec<char> = ZLELINE.lock().unwrap().drain(..).collect();
@@ -2346,36 +2422,64 @@ pub fn kill_buffer() {
 }
 
 /// Kill whole line (including newlines in multi-line mode)
-/// Port of killwholeline(UNUSED(char **args)) from zle_misc.c
+/// Stands in for killwholeline(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `killwholeline()` (`Src/Zle/zle_misc.c:195`), whose
+/// faithful port is `killwholeline()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn kill_whole_line() {
     kill_buffer();
 }
 
 /// Swap cursor and mark.
-/// Port of `exchangepointandmark(UNUSED(char **args))` from Src/Zle/zle_move.c:496. The
+/// Stands in for `exchangepointandmark(UNUSED(char **args))` from Src/Zle/zle_move.c:496. The
 /// C source has additional zmult-based behaviour (zmult==0 just
 /// activates the region without swapping; zmult>0 also activates).
 /// This bare method only swaps; the widget-level
 /// `widget_exchange_point_and_mark` honours the count semantics.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `exchangepointandmark()` (`Src/Zle/zle_move.c:496`), whose
+/// faithful port is `exchangepointandmark()` in zle_move.rs.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn exchange_point_and_mark() {
     std::mem::swap(&mut ZLECS.load(SeqCst), &mut MARK.load(SeqCst));
     ZLE_RESET_NEEDED.store(1, SeqCst);
 }
 
 /// Set mark at the current cursor position.
-/// Port of `setmarkcommand(UNUSED(char **args))` from Src/Zle/zle_move.c:483 with the
+/// Stands in for `setmarkcommand(UNUSED(char **args))` from Src/Zle/zle_move.c:483 with the
 /// activate-region branch elided. The widget-level
 /// `widget_set_mark_command` covers the negative-count
 /// deactivate path that the bare C source supports.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `setmarkcommand()` (`Src/Zle/zle_move.c:483`), whose
+/// faithful port is `setmarkcommand()` in zle_move.rs.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn set_mark_here() {
     MARK.store(ZLECS.load(SeqCst), SeqCst);
 }
 
 /// Copy region as kill
-/// Port of copyregionaskill(char **args) from zle_misc.c
+/// Stands in for copyregionaskill(char **args) from zle_misc.c
 
 /// Kill region (between point and mark)
-/// Port of killregion(UNUSED(char **args)) from zle_misc.c
+/// Stands in for killregion(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `killregion()` (`Src/Zle/zle_misc.c:463`), whose
+/// faithful port is `killregion()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn kill_region() {
     // c:463
     let (start, end) = if ZLECS.load(SeqCst) < MARK.load(SeqCst) {
@@ -2397,7 +2501,14 @@ pub fn kill_region() {
 }
 
 /// Yank pop - cycle through kill ring
-/// Port of yankpop(UNUSED(char **args)) from zle_misc.c
+/// Stands in for yankpop(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `yankpop()` (`Src/Zle/zle_misc.c:728`), whose
+/// faithful port is `yankpop()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn yank_pop() {
     // c:728
     if !YANKLAST.load(SeqCst) || KILLRING.lock().unwrap().is_empty() {
@@ -2438,7 +2549,14 @@ pub fn yank_pop() {
 }
 
 /// Transpose chars
-/// Port of transposechars(UNUSED(char **args)) from zle_misc.c
+/// Stands in for transposechars(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `transposechars()` (`Src/Zle/zle_misc.c:313`), whose
+/// faithful port is `transposechars()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn transpose_chars() {
     if ZLECS.load(SeqCst) == 0 || ZLELL.load(SeqCst) < 2 {
         return;
@@ -2459,9 +2577,16 @@ pub fn transpose_chars() {
 
 /// Capitalize the next word: title-case the first letter, lowercase
 /// the rest of the word.
-/// Port of `capitalizeword(UNUSED(char **args))` from Src/Zle/zle_word.c (the C source
+/// Stands in for `capitalizeword(UNUSED(char **args))` from Src/Zle/zle_word.c (the C source
 /// uses `casemodifyword()` with a CASMOD_CAPS flag). Mirrors emacs's
 /// M-c convention. Cursor lands past the modified word.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `capitalizeword()` (`Src/Zle/zle_word.c:577`), whose
+/// faithful port is `capitalizeword()` in zle_word.rs.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn capitalize_word() {
     while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
         && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
@@ -2499,8 +2624,15 @@ pub fn capitalize_word() {
 }
 
 /// Lowercase the next word.
-/// Port of `downcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
+/// Stands in for `downcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
 /// `casemodifyword()` with the CASMOD_LOWER flag.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `downcaseword()` (`Src/Zle/zle_word.c:555`), whose
+/// faithful port is `downcaseword()` in zle_word.rs.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn downcase_word() {
     while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
         && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
@@ -2525,8 +2657,15 @@ pub fn downcase_word() {
 }
 
 /// Uppercase the next word.
-/// Port of `upcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
+/// Stands in for `upcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
 /// `casemodifyword()` with the CASMOD_UPPER flag.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `upcaseword()` (`Src/Zle/zle_word.c:533`), whose
+/// faithful port is `upcaseword()` in zle_word.rs.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn upcase_word() {
     while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
         && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
@@ -2551,7 +2690,14 @@ pub fn upcase_word() {
 }
 
 /// Transpose words
-/// Port of transpose words logic
+/// Stands in for transpose words logic
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `transposewords()` (`Src/Zle/zle_word.c:652`), whose
+/// faithful port is `transposewords()` in zle_word.rs.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn transpose_words() {
     if ZLELL.load(SeqCst) < 3 {
         return;
@@ -2609,7 +2755,14 @@ pub fn transpose_words() {
 }
 
 /// Quote line
-/// Port of quoteline(UNUSED(char **args)) from zle_misc.c
+/// Stands in for quoteline(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `quoteline()` (`Src/Zle/zle_misc.c:1187`), whose
+/// faithful port is `quoteline()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn quote_line() {
     ZLELINE.lock().unwrap().insert(0, '\'');
     ZLELL.fetch_add(1, SeqCst);
@@ -2620,7 +2773,14 @@ pub fn quote_line() {
 }
 
 /// Quote region
-/// Port of quoteregion(UNUSED(char **args)) from zle_misc.c
+/// Stands in for quoteregion(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `quoteregion()` (`Src/Zle/zle_misc.c:1152`), whose
+/// faithful port is `quoteregion()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn quote_region() {
     let (start, end) = if ZLECS.load(SeqCst) < MARK.load(SeqCst) {
         (ZLECS.load(SeqCst), MARK.load(SeqCst))
@@ -2637,7 +2797,14 @@ pub fn quote_region() {
 }
 
 /// What cursor position - display cursor info
-/// Port of whatcursorposition(UNUSED(char **args)) from zle_misc.c
+/// Stands in for whatcursorposition(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `whatcursorposition()` (`Src/Zle/zle_misc.c:851`), whose
+/// faithful port is `whatcursorposition()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn what_cursor_position() -> String {
     if ZLECS.load(SeqCst) >= ZLELL.load(SeqCst) {
         return format!(
@@ -2664,10 +2831,17 @@ pub fn what_cursor_position() -> String {
 }
 
 /// Universal argument - multiply next command
-/// Port of universalargument(char **args) from zle_misc.c
+/// Stands in for universalargument(char **args) from zle_misc.c
 
 /// Digit argument - accumulate numeric argument
-/// Port of digitargument(UNUSED(char **args)) from zle_misc.c
+/// Stands in for digitargument(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `digitargument()` (`Src/Zle/zle_misc.c:950`), whose
+/// faithful port is `digitargument()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn digit_argument(digit: u8) {
     if MULT.load(SeqCst) == 1 && !NEG_ARG.load(SeqCst) {
         MULT.store(0, SeqCst);
@@ -2681,19 +2855,40 @@ pub fn digit_argument(digit: u8) {
 }
 
 /// Negative argument
-/// Port of negargument(UNUSED(char **args)) from zle_misc.c
+/// Stands in for negargument(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `negargument()` (`Src/Zle/zle_misc.c:974`), whose
+/// faithful port is `negargument()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn neg_argument() {
     NEG_ARG.store(!NEG_ARG.load(SeqCst), SeqCst);
 }
 
 /// Undefined key - beep
-/// Port of undefinedkey(UNUSED(char **args)) from zle_misc.c
+/// Stands in for undefinedkey(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `undefinedkey()` (`Src/Zle/zle_misc.c:892`), whose
+/// faithful port is `undefinedkey()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn undefined_key() {
     print!("\x07"); // Bell
 }
 
 /// Send break - abort current operation
-/// Port of sendbreak(UNUSED(char **args)) from zle_misc.c
+/// Stands in for sendbreak(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `sendbreak()` (`Src/Zle/zle_misc.c:1144`), whose
+/// faithful port is `sendbreak()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn send_break() {
     ZLELINE.lock().unwrap().clear();
     ZLELL.store(0, SeqCst);
@@ -2703,7 +2898,14 @@ pub fn send_break() {
 }
 
 /// Vi put after cursor
-/// Port of viputafter(UNUSED(char **args)) from zle_misc.c
+/// Stands in for viputafter(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `viputafter()` (`Src/Zle/zle_misc.c:644`), whose
+/// faithful port is `viputafter()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn vi_put_after() {
     if ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
         ZLECS.fetch_add(1, SeqCst);
@@ -2715,19 +2917,40 @@ pub fn vi_put_after() {
 }
 
 /// Vi put before cursor
-/// Port of viputbefore(UNUSED(char **args)) from zle_misc.c
+/// Stands in for viputbefore(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `viputbefore()` (`Src/Zle/zle_misc.c:608`), whose
+/// faithful port is `viputbefore()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn vi_put_before() {
     yank();
 }
 
 /// Overwrite mode toggle
-/// Port of overwritemode(UNUSED(char **args)) from zle_misc.c
+/// Stands in for overwritemode(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `overwritemode()` (`Src/Zle/zle_misc.c:843`), whose
+/// faithful port is `overwritemode()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn overwrite_mode() {
     INSMODE.fetch_xor(1, SeqCst);
 }
 
 /// Copy previous word
-/// Port of copyprevword(UNUSED(char **args)) from zle_misc.c
+/// Stands in for copyprevword(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `copyprevword()` (`Src/Zle/zle_misc.c:1066`), whose
+/// faithful port is `copyprevword()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn copy_prev_word() {
     if ZLECS.load(SeqCst) == 0 {
         return;
@@ -2755,14 +2978,28 @@ pub fn copy_prev_word() {
 }
 
 /// Copy previous shell word (respects quoting)
-/// Port of copyprevshellword(UNUSED(char **args)) from zle_misc.c
+/// Stands in for copyprevshellword(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `copyprevshellword()` (`Src/Zle/zle_misc.c:1108`), whose
+/// faithful port is `copyprevshellword()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn copy_prev_shell_word() {
     // Simplified - doesn't handle full shell quoting
     copy_prev_word();
 }
 
 /// Pound insert - comment toggle for vi mode
-/// Port of poundinsert(UNUSED(char **args)) from zle_misc.c
+/// Stands in for poundinsert(UNUSED(char **args)) from zle_misc.c
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. It is a simplified Rust-side convenience wrapper standing
+/// in for the C widget `poundinsert()` (`Src/Zle/zle_misc.c:369`), whose
+/// faithful port is `poundinsert()` in this file.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn pound_insert() {
     if !ZLELINE.lock().unwrap().is_empty() && ZLELINE.lock().unwrap()[0] == '#' {
         ZLELINE.lock().unwrap().remove(0);
@@ -2811,6 +3048,13 @@ pub fn pound_insert() {
 // the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart. C reads the file-scope global
+/// `static struct suffixset *suffixlist;` (`Src/Zle/zle_misc.c:1540`)
+/// directly; Rust needs this accessor because `OnceLock::get_or_init`
+/// is the only way to lazily construct the shared `Mutex`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn suffixlist() -> &'static std::sync::Mutex<Vec<suffixset>> {
     SUFFIXLIST.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
