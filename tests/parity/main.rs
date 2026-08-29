@@ -125,6 +125,7 @@ mod zdharma_corpus_parity;
 mod zinit_p10k_parity;
 mod zinit_plugin_corpus_parity;
 mod zpwr_corpus_parity;
+mod always_break_parity;
 mod zsh_arrays_parity;
 mod zsh_compat_parity_gaps;
 mod zsh_idioms_parity;

@@ -185,6 +185,14 @@ pub struct ZshCompiler {
     /// BUILTIN_RESTORE_TRY_BLOCK_STATUS). Without this the escape
     /// is invisible to the always-arm and the loop doesn't unwind.
     pub try_block_depth: u32,
+    /// `break_patches.len()` captured on entry to each open try-block —
+    /// i.e. how many loops enclose the `{ … } always { … }` construct
+    /// itself. A `break` whose target index is at or above the innermost
+    /// entry targets a loop that lives INSIDE the try arm, so it is a
+    /// plain in-chunk jump; only a break aimed below it leaves the
+    /// construct and has to arm the BREAKS atomic. One entry per nesting
+    /// level so nested try-blocks each measure against their own base.
+    try_loop_base: Vec<usize>,
     /// Set by compile_assign each call to communicate whether the
     /// just-compiled scalar assignment's RHS could update $? via
     /// command substitution. compile_simple aggregates across the
@@ -323,6 +331,7 @@ impl ZshCompiler {
             lineno_addend: 0,
             cmd_stack_depth: 0,
             try_block_depth: 0,
+            try_loop_base: Vec::new(),
             last_assign_had_cmd_subst: false,
             defined_functions: std::collections::HashSet::new(),
             is_function_body: false,
@@ -1773,7 +1782,9 @@ impl ZshCompiler {
                 // statement inside it.
                 self.emit_cmd_push(crate::ported::zsh_h::CS_CURSH as u8);
                 self.try_block_depth += 1;
+                self.try_loop_base.push(self.break_patches.len());
                 self.compile_program(&t.try_block);
+                self.try_loop_base.pop();
                 self.try_block_depth -= 1;
                 self.emit_cmd_pop(); // c:Src/loop.c:759 — `cmdpop();`
                                      // After the try-block, snapshot the escape patches it
@@ -2473,15 +2484,36 @@ impl ZshCompiler {
             if depth > 0 && runtime_count {
                 self.emit_runtime_loop_level(&simple.words[1], "break", false);
             } else if depth >= levels && !nonpositive_literal {
+                let idx = depth.saturating_sub(levels);
                 // Inside try-block: also bump BREAKS atomic so the
                 // always-arm post-restore can detect the escape and
                 // re-emit the loop-end jump.
-                if self.try_block_depth > 0 {
+                //
+                // Only for a break that actually LEAVES the construct.
+                // A break aimed at a loop opened inside the try arm is
+                // an ordinary in-chunk jump to that loop's `loop_exit`,
+                // and `loop_exit` is reached WITHOUT passing the
+                // post-body `BUILTIN_LOOP_BREAK_DRAIN` that would clear
+                // the flag again — so arming it here left BREAKS set
+                // with nobody to consume it. The next
+                // `emit_break_escape_check` after the loop then read it
+                // as a foreign break and jumped to the always-arm,
+                // abandoning the rest of the try body and the enclosing
+                // function: `{ for i in 1 2; do break; done; print AFTER }
+                // always { print ALWAYS }; print END` printed only
+                // ALWAYS where zsh prints AFTER, ALWAYS, END. That is
+                // the `break 2` at _main_complete sh:216, which is why
+                // no `zle -C` widget ever ran past its completer loop.
+                // `continue` does not need the same guard: its jump
+                // lands on the loop's continue target, which falls into
+                // the drain and clears the flag on the next pass.
+                if self.try_block_depth > 0
+                    && idx < self.try_loop_base.last().copied().unwrap_or(0)
+                {
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_BREAK, 0), 0);
                     self.builder.emit(Op::Pop, 0);
                 }
-                let idx = depth.saturating_sub(levels);
                 // `break N` jumps straight to the N-th enclosing loop's
                 // exit, skipping the `loops--` of every loop in between
                 // (the target's own still runs at its exit label). Emit

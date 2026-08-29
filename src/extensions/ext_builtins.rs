@@ -2838,6 +2838,33 @@ impl ShellExecutor {
             Ok(bg) => {
                 let comps = bg.result.comps.len();
                 crate::compsys::ported::compinit::apply_keybindings(&bg.result);
+                // sh:333/sh:541 — every completer compinit registers is also
+                // `autoload -rUz`'d, from BOTH scan arms: `compdef -na` does it
+                // for each `#compdef` file and the `#autoload` arm does it
+                // directly. This branch is the one a cold `compinit` (no `-C`)
+                // takes, and it published the five association tables without
+                // ever registering a stub, so the shell came back with
+                // `$#_comps` = 1822 and `${#${(M)${(k)functions}:#_*}}` = 0
+                // where the same scan under reference zsh ends at 9048.
+                // `_main_complete` was among the missing names, so the
+                // completion widgets compinit binds at sh:556-560 all called an
+                // undefined function and tab inserted nothing.
+                let mut stubs = crate::compsys::ported::compinit::register_autoload_stubs(
+                    crate::compsys::ported::compinit::autoload_stub_names(&bg.result),
+                );
+                // `autoload_stub_names` reads `result.files`, which only a
+                // fresh `$fpath` scan fills — the background thread also
+                // returns a `load_from_cache` result (compinit.rs) when
+                // another shell installs a usable cache while this one waits
+                // for the rebuild lock, and that leaves `files` empty. The
+                // `autoloads` table holds the names that scan produced.
+                if bg.result.files.is_empty() {
+                    if let Ok(names) = bg.cache.list_autoload_names() {
+                        stubs +=
+                            crate::compsys::ported::compinit::register_autoload_stubs(&names);
+                    }
+                }
+                tracing::info!(stubs, "compinit: autoload stubs from scan");
                 self.set_assoc("_comps".to_string(), bg.result.comps.into_iter().collect());
                 self.set_assoc(
                     "_services".to_string(),

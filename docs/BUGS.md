@@ -19,10 +19,9 @@ CI green pending the underlying fix.
 
 ---
 
-## #1123 — a `zle -C` custom completion widget inserts nothing, blocking every completion/ZLE ztst file — open
+## #1123 — a `zle -C` custom completion widget inserts nothing, blocking every completion/ZLE ztst file — fixed
 
-**Status:** `open`, isolated 2026-08-29. With #1122 this accounts for the whole
-378-chunk ztst block.
+**Status:** `fixed` 2026-08-29. Two independent defects, both required.
 
 Reproduce with zsh's own `Test/comptest` harness, driving zshrs as the inner
 shell (outer shell can be either):
@@ -31,113 +30,80 @@ shell (outer shell can be either):
 ZTST_srcdir=~/forkedRepos/zsh/Test; ZTST_testdir=/tmp/ctd; cd $ZTST_testdir
 . $ZTST_srcdir/comptest
 comptestinit -z /path/to/zshrs
-comptesteval 'compdef _tst tst'
-comptesteval '_tst () { compadd arg1 }'
+comptesteval '_tst () { compadd arg1 arg2 }
+compdef _tst tst'
 comptest $'tst \t'
 ```
 ```
-zsh    line: {tst arg1 }{}
-zshrs  line: {tst }{}
+before   zsh  line: {tst arg}{}      zshrs  line: {tst }{}
+after    zsh  line: {tst arg}{}      zshrs  line: {tst arg}{}
 ```
 
-The widget RUNS — it reports `<LBUFFER>tst </LBUFFER>` back through the pty, so
-the keystroke, the widget dispatch and the `comp-finish` round-trip all work.
-It simply inserts no match.
+### Root cause 1 — the cold `compinit` path registered no autoload stubs
 
-**The completion entry point does not resolve at all.** In the inner shell,
-after `comptestinit` has run `compinit -u` against zsh's own
-`Functions` + `Completion` fpath:
+`compinit` sh:333 (`compdef -na` → `autoload -rUz "$func"`) and sh:541
+(the `#autoload` scan arm) mean a real zsh finishes `compinit` with an
+autoload stub in `${(k)functions}` for every completer it registered.
+zshrs has `register_autoload_stubs` for exactly this and calls it from the
+`-C` cache branch and from `drain_compinit_bg`, but the branch a cold
+`compinit` (no `-C`) actually takes — the blocking `rx.recv()` merge in
+`bin_compinit` — published the five association tables and returned without
+ever calling it:
 
 ```zsh
-comptesteval 'print -r -- "mc=[$(whence -w _main_complete)] cp=[$(whence -w _complete)]"'
-  →  mc=[_main_complete: none]  cp=[_complete: none]
-comptesteval 'print -r -- "${+functions[_main_complete]}"'
-  →  0
+fpath=( <zsh's own Completion tree> ); autoload -U compinit; compinit -u -d $D
+print -r -- "comps=$#_comps under=${#${(M)${(k)functions}:#_*}}"
+  zsh    comps=1822 under=9033
+  zshrs  comps=1822 under=0        # every completer name missing
 ```
 
-So the `zle -C` widget invokes a completion function that is not defined —
-neither as an autoloaded shell function from the fpath compinit just scanned,
-nor as a resolvable native port in that context. Nothing runs, no matches are
-added, and the widget correctly reports an unchanged line. Every layer measured
-"working" below this was an artifact of the shims used to observe it: defining
-`_main_complete` as a wrapper to log it also DEFINED it, which is why it
-appeared to run.
+`_main_complete` was among the missing names, so the widgets `compinit`
+binds at sh:556-560 all dispatched to an undefined function.
 
-That is the thing to fix: after `compinit` over an fpath that is zsh's own
-Completion tree, `_main_complete` (and `_complete`, `_normal`, `_dispatch`)
-must resolve. Note this environment differs from the one the comptab harness
-uses — there the user's fpath applies and zshrs's native compsys ports are
-authoritative, which is why real completions work there and not here.
+A second, narrower hole in the same area: `autoload_stub_names` derives its
+list from `result.files`, which only a fresh `$fpath` scan fills —
+`load_from_cache` rebuilds `comps`/`patcomps`/`postpatcomps` from SQLite and
+leaves `files` empty. The background thread returns a cache-derived result
+whenever another shell installs a usable cache while this one waits for the
+rebuild lock, so that path registered zero stubs too. Both merge sites now
+fall back to the cache's `autoloads` table when `files` comes back empty.
 
-**Earlier trace, kept for the shims it rules out.** Instrumenting each level of the chain from
-inside the pty (log lines appended to a file, so nothing perturbs the widget's
-own output):
+**Fixed:** `src/extensions/ext_builtins.rs` (the `rx.recv()` merge) and
+`src/extensions/compinit_bg.rs` (`drain_compinit_bg`).
 
-```
-                              zsh              zshrs
-zle -C widget fires           yes              yes      (<LBUFFER>tst </LBUFFER> returned)
-complete-word-with-postfunc   runs             runs
-_main_complete                runs             runs     (returns 1 = no matches)
-completer _complete           runs             runs
-$_comps[tst] -> _tst          CALLED           NEVER CALLED
-```
+### Root cause 2 — `break` inside a `{ … } always { … }` escaped the construct
 
-State at the moment `_main_complete` is entered is IDENTICAL in both shells,
-so none of the usual suspects apply:
+With the stubs registered, the shell `_main_complete` ran and reached its
+completer loop, but the widget still returned nothing and the calling ZLE
+widget was abandoned mid-body. `_main_complete` wraps its whole body in
+`{ … } always { … }` and leaves the completer loop with `break 2` (sh:216)
+once a completer succeeds. Minimal case, no completion involved:
 
-```
-words=(tst|)  CURRENT=2  compstate[context]=command  compstate[nmatches]=0
-_comps[tst]=_tst   ${+functions[_tst]}=1
+```zsh
+f(){ { for i in 1 2; do print $i; break; done; print AFTER } always { print ALWAYS }; print END }; f
+  zsh    1 AFTER ALWAYS END
+  zshrs  1 ALWAYS            # try body and the caller both abandoned
 ```
 
-So the registration, the function, the word vector, the cursor index and the
-completion context are all correct — zshrs's native `_complete` port simply
-never dispatches to the `$_comps` entry on this path. That is the single thing
-to fix.
+`compile_zsh.rs`'s break arm emitted `BUILTIN_SET_BREAK` for EVERY `break`
+compiled while `try_block_depth > 0`, then jumped to the target loop's
+`loop_exit`. That arming is only correct for a break that leaves the
+construct: a break aimed at a loop opened INSIDE the try arm is an ordinary
+in-chunk jump, and `loop_exit` is reached without passing the post-body
+`BUILTIN_LOOP_BREAK_DRAIN` that would clear the flag again. BREAKS stayed
+set with nobody to consume it, and the next `emit_break_escape_check` after
+the loop read it as a foreign break and jumped to the always-arm — skipping
+the rest of the try body and, after the finally clause, the enclosing
+function as well.
 
-Two dead ends worth not repeating: `$words`/`$CURRENT` are NOT the cause here
-(#1096 is a real gap but this path has them right), and `functions -c
-_complete …` cannot be used to shim the chain — `_complete` is a native Rust
-port, so the copy is empty and the wrapper returns 127, which looks like a
-failure of the completer and is not.
+`continue` needs no such guard: its jump lands on the loop's continue
+target, which falls into the drain and clears the flag on the next pass.
 
-**Layers eliminated by substitution.** Every one of these as the completion
-body gives `{tst }`, so it is not spec parsing:
+**Fixed:** `src/extensions/compile_zsh.rs` — track `break_patches.len()` on
+entry to each try-block (`try_loop_base`, one entry per nesting level) and
+arm `SET_BREAK` only when the break's target index is below that base.
 
-| Completion body | zshrs result |
-|---|---|
-| `compadd arg1` | `{tst }` |
-| `_describe -t x x "(arg1)"` | `{tst }` |
-| `_values v arg1` | `{tst }` |
-| `_arguments ':d:(arg1)'` | `{tst }` |
-| `_arguments '-x[xx]'` | `{tst }` |
-
-So it is not `_arguments`, `_describe`, `_values` or spec parsing — bare
-`compadd` inserts nothing either. Nor is it comptest's `comppostfuncs` wrapper:
-replacing it with a plain `zle -C complete-word complete-word _main_complete`
-fails identically.
-
-**What still works.** The built-in TAB path is fine — `scripts/comptab_parity.py`
-drives real TAB completion against real commands and zshrs matches zsh on 21 of
-29 curated cells. So the completion ENGINE works; what fails is reaching it
-through a widget defined by `zle -C`.
-
-**Not caused by #1091.** Verified by A/B: reverting `_arguments`' action-list
-handling to its pre-#1091 `split_whitespace` form leaves the failure unchanged.
-
-**Why it matters.** `Y03arguments` (97), `X02zlevi` (95), `X05zleincarg` (95),
-`Y02compmatch` (58) and `Y01completion` (33) are 378 of the 776 failing ztst
-chunks, and every one of them reaches completion through `comptestinit`'s
-`zle -C complete-word …`. Fixing this plus #1122's remaining scan half should
-move the ztst score from 69% toward ~83%.
-
-**Correction to an earlier reading.** These files were previously described as
-failing because "the first pty completion round-trip hangs". That was wrong —
-the round-trip completes and returns; it returns the wrong line. The apparent
-hang was the runner's chunk timeout on top of a prep that had already consumed
-most of its budget.
-
----
+**Regression tests:** `tests/parity/always_break_parity.rs`.
 
 ## #1122 — `compinit` is ~20x slower over zsh's full Completion tree, blocking 378 ztst chunks — partially fixed
 
