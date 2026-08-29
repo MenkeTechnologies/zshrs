@@ -43,11 +43,11 @@ todo_list() {
     local filter=${1:-all}
     for id in ${(ko)TODOS}; do
         local entry=${TODOS[$id]}
-        local status=${entry%%|*}
+        local state=${entry%%|*}
         local title=${entry#*|}
-        if [[ $filter == all || $filter == $status ]]; then
+        if [[ $filter == all || $filter == $state ]]; then
             local mark="□"
-            [[ $status == done ]] && mark="✓"
+            [[ $state == done ]] && mark="✓"
             printf "  %s #%-3d %s\n" $mark $id "$title"
         fi
     done
@@ -56,8 +56,8 @@ todo_list() {
 todo_stats() {
     local total=${#TODOS[@]} done=0 open=0
     for id in ${(k)TODOS}; do
-        local status=${TODOS[$id]%%|*}
-        if [[ $status == done ]]; then
+        local state=${TODOS[$id]%%|*}
+        if [[ $state == done ]]; then
             (( done++ ))
         else
             (( open++ ))

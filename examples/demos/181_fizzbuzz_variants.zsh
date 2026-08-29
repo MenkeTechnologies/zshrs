@@ -22,7 +22,7 @@ for i in {1..15}; do
 done
 
 echo
-echo "── ternary via $((...)) ──"
+echo '── ternary via $((...)) ──'
 for i in {1..15}; do
     s=""
     (( i % 3 == 0 )) && s+="Fizz"

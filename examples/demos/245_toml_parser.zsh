@@ -14,7 +14,7 @@ parse_toml() {
         [[ -z $line ]] && continue
         # Section header.
         if [[ $line == \[*\] ]]; then
-            section="${line#[}"
+            section="${line#\[}"
             section="${section%]}"
             continue
         fi

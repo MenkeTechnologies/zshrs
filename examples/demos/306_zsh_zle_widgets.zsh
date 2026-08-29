@@ -88,7 +88,9 @@ echo "    Ctrl-X v → 'version'"
 echo
 echo "── builtin widgets ──"
 echo "  some standard zle widgets (built-in):"
-widgets=(
+# NB: `widgets` is a read-only special parameter (the ZLE widget table),
+# so the sample list below is held in `builtin_widgets`.
+builtin_widgets=(
     "self-insert"
     "accept-line"
     "backward-char"
@@ -100,7 +102,7 @@ widgets=(
     "expand-or-complete"
     "menu-select"
 )
-for w in "${widgets[@]}"; do
+for w in "${builtin_widgets[@]}"; do
     echo "    $w"
 done
 
@@ -137,7 +139,7 @@ echo "  all my_widget_* unbound"
 unfunction my_widget_uppercase my_widget_lowercase my_widget_reverse my_widget_double 2>/dev/null
 
 # === ztest assertions ===
-# (demo currently fails to run cleanly under zshrs — `widgets=(…)` collides with
-# a special parameter and halts the file before this block; smoke only)
-zassert_ok 1 "demo loaded"
+zassert_eq "${#builtin_widgets[@]}" 10                 "10 sample builtin widget names"
+zassert_contains "${builtin_widgets[*]}" "accept-line" "accept-line listed"
+zassert_contains "${builtin_widgets[*]}" "self-insert" "self-insert listed"
 ztest_run

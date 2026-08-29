@@ -2,12 +2,12 @@
 # Function metadata — $funcfiletrace, $functrace, $funcsourcetrace, $funcstack.
 # Ports Src/exec.c (func stack push/pop) + Src/init.c (trace assignments).
 
-echo "── $funcstack[] at top level ──"
+echo '── $funcstack[] at top level ──'
 echo "  size: ${#funcstack}"
 echo "  contents: ${funcstack[@]:-(empty)}"
 
 echo
-echo "── $funcstack[] inside function ──"
+echo '── $funcstack[] inside function ──'
 f1() {
     echo "  in f1:"
     echo "    funcstack size: ${#funcstack}"
@@ -31,7 +31,7 @@ f3() {
 f1
 
 echo
-echo "── $funcfiletrace[] (file:line where caller invoked) ──"
+echo '── $funcfiletrace[] (file:line where caller invoked) ──'
 trace_dump() {
     echo "  in trace_dump:"
     echo "    funcfiletrace size: ${#funcfiletrace}"
@@ -52,7 +52,7 @@ caller_b() {
 caller_b
 
 echo
-echo "── $functrace[] (caller function + line) ──"
+echo '── $functrace[] (caller function + line) ──'
 trace_dump2() {
     echo "  in trace_dump2:"
     echo "    functrace size: ${#functrace}"
@@ -75,7 +75,7 @@ deep3() {
 deep1
 
 echo
-echo "── $funcsourcetrace[] (file:line of function definition) ──"
+echo '── $funcsourcetrace[] (file:line of function definition) ──'
 dump_src_trace() {
     echo "  funcsourcetrace size: ${#funcsourcetrace}"
     local i

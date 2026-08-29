@@ -41,8 +41,9 @@ merge_skylines() {
     local i=1 j=1 h1=0 h2=0
     local -a OUT
     local last_h=0
+    local x   # NB: declare once — a bare `local x` re-declaration inside the
+              # loop echoes "x=N" onto stdout and corrupts the merged skyline.
     while (( i <= ${#A} && j <= ${#B} )); do
-        local x
         if (( A[i] < B[j] )); then
             x=${A[i]}
             h1=${A[i+1]}

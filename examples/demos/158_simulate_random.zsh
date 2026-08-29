@@ -51,7 +51,7 @@ sample() {
         local idx=$(( RANDOM % ${#pool[@]} + 1 ))
         out+=("${pool[idx]}")
         # Remove picked.
-        pool=("${pool[@]:0:$((idx-1))}" "${pool[@]:idx}")
+        pool=("${pool[@]:0:$((idx-1))}" "${pool[@]:$idx}")
     done
     echo "${out[@]}"
 }
@@ -73,7 +73,19 @@ done
 echo "π estimate: $(( inside * 4 * 1000 / total )) / 1000"
 
 # === ztest assertions ===
-# (demo's sample() hits a parameter slice issue under zshrs, so the monte-carlo
-# block never reaches stdout — smoke only at the top of the file.)
-zassert_ok 1 "demo loaded"
+RANDOM=42; a1=$RANDOM; a2=$RANDOM
+RANDOM=42; b1=$RANDOM; b2=$RANDOM
+zassert_eq "$a1" "$b1"  "RANDOM=42 reproduces its first value"
+zassert_eq "$a2" "$b2"  "RANDOM=42 reproduces its second value"
+RANDOM=100; die=$(( RANDOM % 6 + 1 ))
+zassert_ge "$die" 1     "dice roll >= 1"
+zassert_le "$die" 6     "dice roll <= 6"
+RANDOM=7
+shuffled=( ${=$(shuffle a b c d e)} )
+zassert_eq "${#shuffled}" 5                        "shuffle keeps every element"
+zassert_eq "${(j: :)${(o)shuffled[@]}}" "a b c d e" "shuffle is a permutation"
+RANDOM=13
+picked=( ${=$(sample 3 apple banana cherry date elderberry fig grape)} )
+zassert_eq "${#picked}" 3                          "sample 3 returns three items"
+zassert_eq "${#${(u)picked[@]}}" 3                  "sample never repeats an item"
 ztest_run

@@ -120,12 +120,12 @@ edit_distance() {
     local s1=$1 s2=$2
     local m=${#s1} n=${#s2}
     typeset -A dp
-    local i j
+    local i j cost   # NB: declare once — a bare `local cost` re-declaration
+                     # inside the loop echoes "cost=N" to stdout.
     for ((i=0; i<=m; i++)); do dp[$i,0]=$i; done
     for ((j=0; j<=n; j++)); do dp[0,$j]=$j; done
     for ((i=1; i<=m; i++)); do
         for ((j=1; j<=n; j++)); do
-            local cost
             if [[ ${s1[i]} == ${s2[j]} ]]; then
                 cost=0
             else

@@ -76,14 +76,18 @@ target=$(printf "$template" "$name")
 echo "$target"
 
 echo "── conditional message ──"
-status="ok"
-echo "system: ${status:+(active)} ${status:-(inactive)}"
-unset status
-echo "system: ${status:+(active)} ${status:-(inactive)}"
+# NB: `status` is a read-only alias of `$?` in zsh, so the state variable
+# here is `svc_state` — assigning to `status` aborts the script.
+svc_state="ok"
+echo "system: ${svc_state:+(active)} ${svc_state:-(inactive)}"
+unset svc_state
+echo "system: ${svc_state:+(active)} ${svc_state:-(inactive)}"
 
 # === ztest assertions ===
-# (demo currently fails to run cleanly under zshrs — `status="ok"` near
-# end hits a read-only-variable error that aborts before this block;
-# smoke only)
-zassert_ok 1 "demo loaded"
+svc_state="ok"
+zassert_eq "${svc_state:+(active)}"   "(active)"   ":+ expands when set"
+zassert_eq "${svc_state:-(inactive)}" "ok"         ":- passes through when set"
+unset svc_state
+zassert_eq "${svc_state:+(active)}"   ""           ":+ empty when unset"
+zassert_eq "${svc_state:-(inactive)}" "(inactive)" ":- default when unset"
 ztest_run

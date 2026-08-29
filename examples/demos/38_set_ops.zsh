@@ -43,7 +43,9 @@ echo "── symmetric difference ──"
 print -l ${(o)symdiff}
 
 # === ztest assertions ===
-zassert_eq "${(j: :)${(o)union}}"   "apple banana cherry date elderberry fig grape" "union"
+# NB: `${(o)union}` inside a nested substitution joins before it sorts —
+# subscript with [@] so the sort sees the array elements.
+zassert_eq "${(j: :)${(o)union[@]}}"   "apple banana cherry date elderberry fig grape" "union"
 zassert_eq "${(j: :)${(o)inter}}"   "banana date"                                   "intersection"
 zassert_eq "${(j: :)${(o)diff}}"    "apple cherry"                                  "A - B"
 zassert_eq "${(j: :)${(o)symdiff}}" "apple cherry elderberry fig grape"             "symmetric diff"

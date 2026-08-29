@@ -2,6 +2,8 @@
 # Coin change — min coins + count ways DP.
 
 # Min coins to make amount. -1 if impossible.
+# NB: the sentinel is called BIG, not INF — `INF` is a built-in math constant
+# (infinity) in zsh, so a shell variable of that name is invisible to (( )).
 min_coins() {
     local amount=$1
     shift
@@ -9,11 +11,11 @@ min_coins() {
     coins=("$@")
     typeset -a dp
     dp=()
-    local i a c v INF=999999
+    local i a c v BIG=999999
     local idx prev_idx
     for ((a=0; a<=amount; a++)); do
         idx=$(( a + 1 ))
-        dp[idx]=$INF
+        dp[idx]=$BIG
     done
     dp[1]=0
     for ((a=1; a<=amount; a++)); do
@@ -22,7 +24,7 @@ min_coins() {
             if (( a >= c )); then
                 prev_idx=$(( a - c + 1 ))
                 v=${dp[prev_idx]}
-                if (( v < INF && v + 1 < ${dp[idx]} )); then
+                if (( v < BIG && v + 1 < ${dp[idx]} )); then
                     dp[idx]=$(( v + 1 ))
                 fi
             fi
@@ -30,7 +32,7 @@ min_coins() {
     done
     local final_idx=$(( amount + 1 ))
     local final_val="${dp[$final_idx]}"
-    if (( final_val >= INF )); then
+    if (( final_val >= BIG )); then
         echo -1
     else
         echo $final_val
@@ -45,11 +47,11 @@ which_coins() {
     typeset -a dp parent
     dp=()
     parent=()
-    local i a c v INF=999999
+    local i a c v BIG=999999
     local idx prev_idx
     for ((a=0; a<=amount; a++)); do
         idx=$(( a + 1 ))
-        dp[idx]=$INF
+        dp[idx]=$BIG
         parent[idx]=0
     done
     dp[1]=0
@@ -59,7 +61,7 @@ which_coins() {
             if (( a >= c )); then
                 prev_idx=$(( a - c + 1 ))
                 v=${dp[prev_idx]}
-                if (( v < INF && v + 1 < ${dp[idx]} )); then
+                if (( v < BIG && v + 1 < ${dp[idx]} )); then
                     dp[idx]=$(( v + 1 ))
                     parent[idx]=$c
                 fi
@@ -67,7 +69,7 @@ which_coins() {
         done
     done
     local final_idx=$(( amount + 1 ))
-    if (( ${dp[final_idx]} == INF )); then
+    if (( ${dp[final_idx]} == BIG )); then
         typeset -ga COINS_USED
         COINS_USED=()
         return

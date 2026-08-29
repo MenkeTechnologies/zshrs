@@ -87,13 +87,12 @@ done
 typeset -A SUBSCRIBERS=()
 subscribe "evt.x" handler_a >/dev/null
 zassert_contains "${SUBSCRIBERS[evt.x]}" "handler_a" "subscribe stores fn name"
-# NOTE: under zshrs, the ${VAR:+...} parameter flag in subscribe() causes a
-# subsequent subscribe to overwrite rather than append. Asserting current
-# behavior so the test stays in sync with what zshrs actually produces.
 subscribe "evt.x" handler_b >/dev/null
-zassert_contains "${SUBSCRIBERS[evt.x]}" "handler_b" "second subscribe registers"
+zassert_eq "${SUBSCRIBERS[evt.x]}" "handler_a handler_b" "second subscribe appends"
 unsubscribe "evt.x" handler_b >/dev/null
-zassert_eq "${SUBSCRIBERS[evt.x]}" ""               "unsubscribe last leaves empty"
+zassert_eq "${SUBSCRIBERS[evt.x]}" "handler_a"           "unsubscribe drops just that fn"
+unsubscribe "evt.x" handler_a >/dev/null
+zassert_eq "${SUBSCRIBERS[evt.x]}" ""                    "unsubscribe last leaves empty"
 # emit for unknown event short-circuits with message
 out="$(emit nothing.matters)"
 zassert_contains "$out" "no subscribers for nothing.matters" "emit unknown event"

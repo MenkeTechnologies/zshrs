@@ -125,7 +125,8 @@ typeset -A hist
 for ((i=0; i<100; i++)); do
     s=""
     for ((j=0; j<10; j++)); do
-        s+="${'#$(( 97 + RANDOM % 26 ))}"
+        # (#) evaluates its argument arithmetically and yields that character.
+        s+="${(#)$(( 97 + RANDOM % 26 ))}"
     done
     h=$(djb2 "$s")
     bucket=$(( 0x$h % 256 ))
@@ -142,8 +143,11 @@ echo "  use cases: file dedup, cache key, error detect, distribution"
 command rm -rf $tmpdir
 
 # === ztest assertions ===
-# (demo currently fails to run cleanly under zshrs — distribution-test loop uses
-# `${'#$(( … ))}` which the parser rejects as "bad substitution" before this
-# block runs; smoke only)
-zassert_ok 1 "demo loaded"
+zassert_eq "$(adler32 abc)"   "024d0127" "Adler-32 of 'abc' (RFC 1950 vector)"
+zassert_eq "$(adler32 '')"    "00000001" "Adler-32 of the empty string is 1"
+zassert_eq "$(djb2 abc)"      "0b885c8b" "DJB2 of 'abc'"
+zassert_eq "$(djb2 hello)"    "0f923099" "DJB2 of 'hello'"
+zassert_eq "$(fnv1a abc)"     "5f171ed71a47e90b" "FNV-1a of 'abc'"
+zassert_ge "${#hist[@]}"      1          "djb2 distribution test filled buckets"
+zassert_le "${#hist[@]}"      256        "djb2 buckets stay inside mod-256 range"
 ztest_run

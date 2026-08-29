@@ -26,7 +26,9 @@ hash | wc -l
 
 echo "── named directory via hash -d ──"
 hash -d work=/tmp
-echo "named dir 'work' → ${hash[-d work]:-via_param}"
+# Named directories live in $nameddirs, not $hash ($hash is the command
+# hash table and its subscripts are command names).
+echo "named dir 'work' → ${nameddirs[work]:-via_param}"
 # In zsh, ~work is a tilde-expansion that resolves to /tmp.
 echo "expanded ~work: $(eval echo ~work)"
 

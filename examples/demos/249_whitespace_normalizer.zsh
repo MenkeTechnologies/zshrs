@@ -1,6 +1,10 @@
 #!/usr/bin/env zshrs
 # Whitespace normalizer — strip, collapse, expand tabs, etc.
 
+# `[[:space:]]##` is an EXTENDED_GLOB closure — without this setopt the `##`
+# is matched literally and strip/collapse return their input unchanged.
+setopt extended_glob
+
 # Strip leading + trailing whitespace.
 strip() {
     local s=$1
@@ -24,18 +28,21 @@ expand_tabs() {
 }
 
 # Unexpand — collapse runs of 4 spaces to tab.
+# NB: `$'...'` is not expanded inside a ${...//pat/repl} pattern or
+# replacement — it stays literal there. Build the escapes into variables first.
 unexpand_tabs() {
     local s=$1 n=${2:-4} sp=""
-    local i
+    local i tab=$'\t'
     for ((i=0; i<n; i++)); do sp+=" "; done
-    echo "${s//$sp/$'\t'}"
+    echo "${s//$sp/$tab}"
 }
 
 # Normalize line endings.
 normalize_eol() {
     local s=$1
-    s="${s//$'\r\n'/$'\n'}"
-    s="${s//$'\r'/$'\n'}"
+    local cr=$'\r' lf=$'\n' crlf=$'\r\n'
+    s="${s//$crlf/$lf}"
+    s="${s//$cr/$lf}"
     echo "$s"
 }
 
@@ -120,9 +127,6 @@ printf "  after:\n"
 squash_blanks "$input" | sed 's/^/    /'
 
 # === ztest assertions ===
-# zshrs divergence: [[:space:]]## extended-glob inside parameter expansion
-# isn't honored, so strip/collapse return input unchanged here. tabs, EOL,
-# and squash work fine. Assert on the working subset.
 zassert_eq "$(expand_tabs $'a\tb' 4)" "a    b" "tab expanded to 4 spaces"
 zassert_eq "$(expand_tabs $'a\tb' 2)" "a  b"   "tab expanded to 2 spaces"
 zassert_eq "$(expand_tabs $'\tx' 4)"  "    x"  "leading tab"
@@ -132,6 +136,7 @@ nor=$(normalize_eol $'a\r\nb\rc\nd')
 zassert_eq "$nor" $'a\nb\nc\nd' "EOL normalize CRLF/CR/LF"
 sq=$(squash_blanks $'a\n\n\nb')
 zassert_contains "$sq" $'a\n\nb' "squash multiple blank lines"
-zassert_ok "${functions[strip]:+1}"      "strip defined"
-zassert_ok "${functions[collapse]:+1}"   "collapse defined"
+zassert_eq "$(strip '   hi   ')"    "hi"    "strip removes leading/trailing space"
+zassert_eq "$(strip 'hi')"          "hi"    "strip leaves a clean string alone"
+zassert_eq "$(collapse 'a   b')"    "a b"   "collapse squeezes internal runs"
 ztest_run

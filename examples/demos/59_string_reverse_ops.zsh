@@ -77,8 +77,7 @@ is_palindrome racecar && zassert_ok 1 "racecar palindrome" || zassert_ok 0 "race
 is_palindrome level   && zassert_ok 1 "level palindrome"   || zassert_ok 0 "level palindrome"
 is_palindrome hello   && zassert_ok 0 "hello not palindrome" || zassert_ok 1 "hello not palindrome"
 is_palindrome "A man a plan a canal Panama" && zassert_ok 1 "Panama phrase palindrome" || zassert_ok 0 "Panama phrase palindrome"
-# NOTE: remove_duplicates under zshrs returns the input unchanged — the
-# `[[ "$seen" != *"$ch"* ]]` pattern test inside the loop isn't working as
-# in real zsh. Assert the observed behavior, not zsh's.
-zassert_eq "$(remove_duplicates mississippi)" "mississippi" "remove_duplicates (zshrs returns input — pattern test divergence)"
+zassert_eq "$(remove_duplicates mississippi)" "misp"  "remove_duplicates keeps first occurrence"
+zassert_eq "$(remove_duplicates aabbccddee)"  "abcde" "remove_duplicates on runs"
+zassert_eq "$(remove_duplicates 'hello world')" "helo wrd" "remove_duplicates keeps the space"
 ztest_run
