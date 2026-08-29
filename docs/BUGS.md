@@ -19,9 +19,9 @@ CI green pending the underlying fix.
 
 ---
 
-## #1110 — `local path=<scalar>` inside a function is rejected — open
+## #1110 — `local path=<scalar>` inside a function is rejected — FIXED
 
-**Status:** `port-bug`, found 2026-08-28. Breaks five demos
+**Status:** `fixed` 2026-08-28. Found 2026-08-28. Blocked five demos
 (`53_file_tests`, `144_graph_bfs`, `194_url_parser`, `238_dijkstra`, `273_http_parser`).
 
 ```
@@ -31,23 +31,81 @@ $ zshrs --zsh -f -c 'f(){ local path=/a/b; echo "got:$path"; }; f'
 f:local: path: inconsistent type for assignment          (exit 1)
 ```
 
-zsh lets a local SCALAR shadow the PATH-tied array: `path` is
-`PM_SPECIAL|PM_TIED`, and `local` creates a fresh parameter at the new `locallevel` rather than
-re-typing the special. zshrs applies the type check against the outer special instead of the new
-local.
+**What zsh actually does** (the original diagnosis above was wrong about the
+mechanism): it does NOT create a local scalar. `local path=/a/b` produces an
+`array-local-tied-special` with ONE element —
+
+```
+$ zsh -fc 'f(){ local path=/a/b; print -r -- "${(t)path} $#path"; }; f'
+array-local-tied-special 1
+```
+
+— because `typeset_single` takes three steps that zshrs was collapsing into one:
+
+1. `c:2078-2090` clears `usepm` when the existing pm lives at an outer
+   `locallevel` and `PM_LOCAL` is requested, and sets `newspecial = NS_NORMAL`
+   for a `PM_SPECIAL` pm. The whole `"inconsistent type for assignment"` test at
+   `c:2233-2237` lives INSIDE `if (usepm) {` (`c:2216`), so a localized special
+   never reaches it. The mirror half at `c:2340-2345` — which does run — compares
+   the value shape only against the REQUESTED `on` flags, and plain `local` asks
+   for no type at all.
+2. The newspecial block (`c:2381-2425`) preserves the special's `PM_TYPE`, so the
+   shadow is still the tied array.
+3. The assignment tail (`c:2564-2578`) therefore takes the array arm and is
+   deliberately lenient: *"Attempt to assign a scalar value to an array. This can
+   happen if the array is special. We'll be lenient and guess what the user
+   meant."* — `mkarray(ztrdup(asg->value.scalar))`, or `mkarray(NULL)` for an
+   empty string.
+
+**Fix.** Three edits in `src/ported/builtin.rs`, all inside the `bin_typeset`
+per-arg `name=value` loop:
+
+* `builtin.rs:6727` — the `c:2236` test is now gated on a `usepm` computed per
+  `c:2062-2090` from the PRE-`createparam` snapshots (`usepm_existing`,
+  `pm_level_existing`, `cur_locallevel`). It was previously evaluated
+  unconditionally against whatever `paramtab` held.
+* `builtin.rs:6926` — the assignment now dispatches on the TYPE OF THE PARAM WE
+  ENDED UP WITH (`c:2577`), taking the lenient `c:2564-2576` one-element-array arm
+  when that param is `PM_ARRAY`/`PM_HASHED`.
+* `builtin.rs:7079` — `c:2306`: an array/hashed param gets no scalar env entry of
+  its own (a tied array reaches `environ` through its scalar partner via
+  `arrfixenv`), so the lenient arm must not write a lowercase `path=` alongside
+  `PATH`.
+
+Nothing is keyed on the NAME `path`; the rule is about `PM_SPECIAL` at an outer
+`locallevel`, so `fignore`, `cdpath`, `manpath`, `fpath`, `psvar` and `mailpath`
+all came along with it.
+
+Still rejected, verified against `zsh -f`: `local -a path=/a/b` (explicit `-a`,
+`c:2345`), top-level `typeset path=/a/b` (`usepm` survives, same level),
+`typeset -g path=/a/b` inside a function (`-g` clears `PM_LOCAL`),
+`local path; local path=/a/b` (re-declare at the same level), and
+`local status=0` (`read-only variable: status`, a different diagnostic entirely).
+
+Tests: `tests/parity/local_tied_special_parity.rs` (27 tests — 12 of them failed
+before the fix, and all 8 negative controls passed both before and after).
 
 Closely related to the already-fixed special-shadow work — `compsys_special_param_local_shadow`
 covers `local -a commands` (a HASHED special shadowed by a local ARRAY) and
-`local_shadow_special_assoc_wipe` covers the assoc case. This is the SCALAR-shadowing-a-tied-
-array leg, which those did not reach. `path` is the common one because scripts use it as an
-ordinary variable name constantly.
+`local_shadow_special_assoc_wipe` covers the assoc case. This was the
+SCALAR-value-on-a-tied-array leg, which those did not reach. `path` is the common
+one because scripts use it as an ordinary variable name constantly.
+
+**Adjacent gaps found while verifying, NOT fixed here** (both predate this fix
+and are independent of it):
+
+* `typeset -p` on the LOCAL shadow drops the tie marker — zsh prints
+  `typeset -aT PATH path=( /a/b )`, zshrs prints `typeset -a path=( /a/b )`. The
+  global `typeset -p path` is byte-identical, so only the shadow loses `-T PATH`.
+* `local -i path=5` should be `local: path: can't change type of a special
+  parameter` (`c:2183-2186`); zshrs accepts it and yields `integer 5`.
 
 ---
 
-## #1111 — `${arr[i]:-DEFAULT}` takes the default when the subscript is a BARE name — open
+## #1111 — `${arr[i]:-DEFAULT}` takes the default when the subscript is a BARE name — fixed
 
-**Status:** `port-bug`, found 2026-08-28 via `358_zsh_funcfile`. General parameter-expansion
-bug, not array-specific.
+**Status:** `port-bug`, found 2026-08-28 via `358_zsh_funcfile`, fixed 2026-08-28. General
+parameter-expansion bug, not array-specific.
 
 ```
 arr=(x y z); i=1; print "A=[${arr[i]:-DEF}] B=[${arr[i]}] C=[${arr[$i]:-DEF}]"
@@ -68,6 +126,30 @@ a stack-trace demo printed `(unknown)` for every frame. Any `${arr[i]:-fallback}
 the script before reaching this line; fixing the syntax turned a hidden bug into a visible one,
 and `zsh_zshrs_demo_equivalence` went 287/0 to 286/1 as a result. That regression in the score is
 this entry.
+
+**Blast radius was wider than the first probe suggested.** Every default-family operator was
+affected, not just `:-` — `:-` `-` `:+` `+` `:=` `=` `:?` `?` and `${+arr[i]}` — for arrays AND
+for scalar character subscripts (`s=abc; i=1; ${s[i]:-DEF}` → `DEF`), and for arithmetic
+subscripts (`${arr[i+j]:-DEF}`) as well as bare names.
+
+**Root cause.** In C there is ONE subscript evaluation and ONE `vunset`: `fetchvalue` →
+`getindex` → `getarg` math-evaluates the subscript text (`c:Src/params.c:1419-1484`) and stores
+the result in `v->start`; paramsubst then derives set-ness from that SAME index against the array
+length (`c:Src/subst.c:2944-2954`). `subst.rs::paramsubst` had split the two apart — the value
+side math-evaluated the subscript, but the `is_set` side only did a bare `sub.parse::<i64>()`,
+which accepts a digit literal and nothing else. A bare name or arith expression therefore
+resolved correctly for the VALUE while reading as "no index at all" for set-ness, so the operator
+took its unset branch.
+
+**Fix.** `src/ported/subst.rs` — the value path records the index it resolved (the stand-in for
+C's single `v->start`) and the `is_set` computation reads it back, for both the array arm and the
+scalar character-index arm. Re-running `mathevali` inside `is_set` would have been wrong: C
+evaluates the subscript exactly once, so `${arr[++i]:-x}` must leave `i == 1`.
+
+Pinned by `tests/parity/bare_name_subscript_default_parity.rs` (48 cases), which includes the
+rows where the default IS the right answer — out-of-range index, index 0, negative index past the
+start, empty element under `:-` (but not under `-`), unset array, an unset name subscript that
+math-evaluates to 0 — plus the single-evaluation and `KSH_ARRAYS`/`KSH_ZERO_SUBSCRIPT` guardrails.
 
 ---
 

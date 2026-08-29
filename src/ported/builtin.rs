@@ -6700,7 +6700,33 @@ pub fn bin_typeset(
                 }) == Some(true);
                 let requesting_type =
                     (on as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED)) != 0;
-                if target_is_arraylike && !requesting_type {
+                // c:2216 — the whole c:2233-2237 inconsistency test lives INSIDE
+                // `if (usepm) {`, i.e. it only applies when typeset_single is
+                // RE-USING the existing pm. `usepm` is seeded at c:2062-2064
+                // (`pm && !(pm->node.flags & PM_UNSET) || ...`) and then CLEARED
+                // at c:2078-2090 when we are localizing a parameter that lives
+                // at an outer scope:
+                //     if (usepm && locallevel != pm->level && (on & PM_LOCAL)) {
+                //         if ((pm->node.flags & PM_SPECIAL) && !(on & PM_HIDE)
+                //             && !(pm->node.flags & PM_HIDE & ~off))
+                //             newspecial = NS_NORMAL;
+                //         usepm = 0;
+                //     }
+                // So `local path=/a/b` in a function NEVER reaches c:2236 in C:
+                // `path` is PM_ARRAY|PM_TIED|PM_SPECIAL at level 0 while
+                // locallevel is 1, usepm drops to 0, and control falls through
+                // to the fresh-parameter path at c:2340, which compares the
+                // value shape only against the REQUESTED `on` flags (handled by
+                // the c:2345 test just below). zshrs evaluated c:2236
+                // unconditionally against whatever was in paramtab, so EVERY
+                // `local <tied-or-array-special>=<scalar>` was rejected —
+                // `path`, `cdpath`, `fignore`, `manpath`, `fpath`, ... Bug #1110.
+                // `usepm_existing` / `pm_level_existing` are the PRE-createparam
+                // snapshots taken at the top of this arg's iteration, which is
+                // exactly the state c:2062-2090 reads.
+                let usepm = usepm_existing
+                    && !(pm_level_existing != cur_locallevel && (on as u32 & PM_LOCAL) != 0); // c:2078
+                if usepm && target_is_arraylike && !requesting_type {
                     zerrnam(name, &format!("{}: inconsistent type for assignment", n)); // c:2236
                     returnval = 1;
                     continue;
@@ -6885,8 +6911,49 @@ pub fn bin_typeset(
                 // trips WARN_CREATE_GLOBAL. Routing through setsparam here
                 // made zshrs warn where zsh is silent (f-sy-h's
                 // `typeset -g _ZSH_HIGHLIGHT_PRIOR_BUFFER=...`).
-                crate::ported::params::assignsparam(n, raw_v, 0); // c:2322
-                                                                  // c:2326-2328 + c:2336-2337 (typeset_single) —
+                // c:2577-2604 — the `if (ASG_VALUEP(asg) && !dont_set)` tail of
+                // typeset_single dispatches on the TYPE OF THE PARAM WE ENDED UP
+                // WITH, not on the shape of the value:
+                //     if (pm->node.flags & (PM_ARRAY|PM_HASHED)) { ...array... }
+                //     else { ... assignsparam(pname, ztrdup(asg->value.scalar), 0); }
+                // `local path=/a/b` arrives here holding an ARRAY pm — the
+                // newspecial block (c:2381-2425) preserved `path`'s PM_TYPE
+                // through `pm->node.flags = (PM_TYPE(pm->node.flags) | on |
+                // PM_SPECIAL) & ~off` — so C takes the array arm. Recomputed
+                // here rather than reusing the c:2236 snapshot because the
+                // pre-assign type-flag block above can convert an array param
+                // to a numeric scalar (`typeset -i path=5`).
+                let pm_is_arraylike = paramtab().read().ok().and_then(|t| {
+                    t.get(n).map(|pm| {
+                        let typ = PM_TYPE(pm.node.flags as u32);
+                        typ == PM_ARRAY || typ == PM_HASHED
+                    })
+                }) == Some(true);
+                if pm_is_arraylike {
+                    // c:2564-2576 — verbatim from the C:
+                    //     /*
+                    //      * Attempt to assign a scalar value to an array.
+                    //      * This can happen if the array is special.
+                    //      * We'll be lenient and guess what the user meant.
+                    //      * This is how normal assignment works.
+                    //      */
+                    //     if (*asg->value.scalar) {
+                    //         /* Array with one value */
+                    //         arrayval = mkarray(ztrdup(asg->value.scalar));
+                    //     } else {
+                    //         /* Empty array */
+                    //         arrayval = mkarray(NULL);
+                    //     }
+                    let arrayval: Vec<String> = if raw_v.is_empty() {
+                        Vec::new() // c:2575 mkarray(NULL)
+                    } else {
+                        vec![raw_v.to_string()] // c:2572 mkarray(ztrdup(...))
+                    };
+                    crate::ported::exec::set_array(n, arrayval); // c:2578 assignaparam
+                } else {
+                    crate::ported::params::assignsparam(n, raw_v, 0); // c:2322
+                }
+                // c:2326-2328 + c:2336-2337 (typeset_single) —
                                                                   // `if (asg->value.scalar && !(pm = assignsparam(
                                                                   //     pname, ztrdup(asg->value.scalar), 0)))
                                                                   //      return NULL;
@@ -7001,8 +7068,15 @@ pub fn bin_typeset(
                 }
                 // c:Src/params.c:3024 addenv — only mirror to OS env
                 // when PM_EXPORTED is in flags or already-exported.
+                // c:2306 — `if (!(pm->node.flags & (PM_ARRAY|PM_HASHED)))`
+                // guards the whole addenv/delenv block: an array/hashed param
+                // never gets a scalar env entry of its own (a TIED array
+                // reaches the environment through its scalar partner via
+                // `arrfixenv`, Src/params.c). The lenient scalar-to-array arm
+                // above must not write `path=/a/b` into the environment
+                // alongside the tied `PATH`.
                 let already_exported = env::var_os(n).is_some();
-                if (on & PM_EXPORTED) != 0 || already_exported {
+                if !pm_is_arraylike && ((on & PM_EXPORTED) != 0 || already_exported) {
                     env::set_var(n, &env_val); // c:3024 addenv (value via copyenvstr, c:5434)
                 }
             }
