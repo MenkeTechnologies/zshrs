@@ -2,18 +2,24 @@
 //! `_NAME` calls to the Rust port (`src/compsys/ported/*`) vs the
 //! upstream shell function (autoloaded via `fpath`).
 //!
-//! Strategy: install a user shfunc `_setup()` (or `_main_complete()`)
-//! that sets an observable marker scalar. Then invoke that name from
-//! the same script and `echo` the marker:
+//! Strategy: empty `$fpath` and call `_setup` — a name the Rust tree
+//! ports and nothing else then defines — and `echo $?`:
 //!
-//! - **backend = "shell"** → router returns `None` → standard
-//!   shfunc/autoload path → user shfunc fires → marker set.
-//! - **backend = "rust"**  → router returns `Some(rust_fn)` → Rust
-//!   port runs INSTEAD of the user shfunc → marker unset.
+//! - **backend = "rust"**  → router returns `Some(rust_fn)` → the port
+//!   answers the call → `RC=0`, nothing on stderr.
+//! - **backend = "shell"** → router returns `None` → ordinary shfunc /
+//!   autoload lookup finds nothing → `command not found`, `RC=127`.
 //!
 //! Visible behavioral split = proof the switch is wired through to
 //! `vm_helper::dispatch_function_call` and not just config-shaped
 //! vaporware.
+//!
+//! What the split is NOT read against: a user-DEFINED `_setup() { … }`.
+//! `router::has_shfunc_override` (`src/compsys/router.rs:56-64`) lets a
+//! defined shell function beat the port under both backends, because a
+//! port stands in for the stock `Completion/` file only — C's `execcmd`
+//! runs whatever `shfunctab` holds. Tests that need that scenario assert
+//! the user's body wins (PROOF #2b, #8).
 //!
 //! Each test spawns a zshrs subprocess with `ZSHRS_HOME` pointing at
 //! a tempdir holding a `zshrs.toml` with the desired backend so the
@@ -51,13 +57,27 @@ backend = "{}"
 
 struct R {
     stdout: String,
+    stderr: String,
     exit: i32,
 }
+
+/// Every probe below runs with `$fpath` emptied first.
+///
+/// Without it the child inherits the developer's exported `FPATH` (50
+/// entries on this host), so `_setup` — a STOCK `Completion/Base/Utility`
+/// name — is autoloadable from disk and `backend = "shell"` resolves it
+/// instead of reporting `command not found`. That made the shell-vs-rust
+/// observable depend on whose machine the suite ran on:
+/// `FPATH=<real> zshrs --zsh -f -c '_setup default; echo $?'` prints `1`
+/// under the shell backend, `FPATH= …` prints `127`. Emptying `$fpath` in
+/// the script pins the "nothing on disk defines this name" premise that
+/// the backend split is read against.
+const NO_FPATH: &str = "fpath=()\n";
 
 fn run_with_backend(backend: &str, script: &str) -> R {
     let home = fresh_zshrs_home(backend);
     let o = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", script])
+        .args(["--zsh", "-f", "-c", &format!("{NO_FPATH}{script}")])
         .env("ZSHRS_HOME", home.path())
         .env_remove("EDITOR")
         .env_remove("VISUAL")
@@ -66,9 +86,20 @@ fn run_with_backend(backend: &str, script: &str) -> R {
         .expect("spawn zshrs");
     R {
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
         exit: o.status.code().unwrap_or(-1),
     }
 }
+
+/// The observable that separates the two backends, with no user
+/// definition of `_setup` anywhere: under `rust` the router hands the
+/// call to `compsys::ported::Base::Core::_setup` and it succeeds; under
+/// `shell` the router stands down, nothing defines the name, and the
+/// shell reports `command not found` (rc 127).
+const SETUP_PROBE: &str = r#"
+    _setup default
+    echo "RC=$?"
+"#;
 
 // ─── Core proof: `_setup` (a name with a registered Rust port) ────────
 
@@ -97,10 +128,52 @@ fn shell_backend_runs_user_setup_shfunc() {
     );
 }
 
-/// PROOF #2 — backend=rust: user-defined `_setup` is SHADOWED by the
-/// Rust port. Marker stays unset (Rust `_setup` doesn't touch PROOF).
+/// PROOF #2 — backend=rust: the router answers `_setup` itself.
+///
+/// This proof used to define a user `_setup()` shfunc and assert the Rust
+/// port SHADOWED it. That premise was deliberately inverted by commit
+/// d44b4f3ede: `router::has_shfunc_override`
+/// (`src/compsys/router.rs:56-64`, body at :88-110) makes an
+/// already-DEFINED shell function beat the port, because a port stands in
+/// for the STOCK `Completion/` file and nothing else — in C there is
+/// nothing to arbitrate, `execcmd` takes the `shfunctab` hit before it
+/// ever reaches `builtintab` (`Src/exec.c:3484-3488`, `is_shfunc = 1;
+/// break;`), so a user's own `_describe() { … }` in `.zshrc` must win or
+/// their customisation is silently dead. The router's own unit test
+/// pins the same rule: `src/compsys/router.rs:802-806`, "function defined
+/// in .zshrc (no PM_LOADDIR) must win over the port".
+///
+/// So the backend split is read WITHOUT a user definition. With `$fpath`
+/// emptied nothing on disk defines `_setup` either, and the only thing
+/// that can answer the call is the router:
+/// * `backend = rust`  → port runs → `RC=0`, no diagnostic;
+/// * `backend = shell` → router returns `None` → `command not found`.
 #[test]
-fn rust_backend_shadows_user_setup_shfunc() {
+fn rust_backend_supplies_setup_when_nothing_else_defines_it() {
+    let r = run_with_backend("rust", SETUP_PROBE);
+    assert_eq!(r.exit, 0, "exit nonzero; stdout=`{}`", r.stdout);
+    assert!(
+        r.stdout.contains("RC=0"),
+        "rust backend MUST route `_setup` to the Rust port when no shfunc \
+         and no `$fpath` file define it; got stdout=`{}` stderr=`{}`",
+        r.stdout,
+        r.stderr,
+    );
+    assert!(
+        !r.stderr.contains("command not found"),
+        "rust backend must not leave `_setup` unresolved; stderr=`{}`",
+        r.stderr,
+    );
+}
+
+/// PROOF #2b — the other half of the same switch: under `backend = rust`
+/// a DEFINED `_setup` shfunc still wins, exactly as C's `execcmd` would
+/// run it. This is the scenario PROOF #2 used to assert backwards; it is
+/// kept as its own case so the arbitration rule stays covered end-to-end
+/// (`router::has_shfunc_override`, `src/compsys/router.rs:88-110`) and
+/// not just at the unit level.
+#[test]
+fn rust_backend_yields_to_a_user_defined_setup_shfunc() {
     let r = run_with_backend(
         "rust",
         r#"
@@ -111,10 +184,9 @@ fn rust_backend_shadows_user_setup_shfunc() {
     );
     assert_eq!(r.exit, 0, "exit nonzero; stdout=`{}`", r.stdout);
     assert!(
-        r.stdout.contains("PROOF=") && !r.stdout.contains("PROOF=shell_setup_ran"),
-        "rust backend MUST shadow user shfunc \
-         when a Rust port is registered; \
-         got stdout=`{}` (would indicate the router didn't intercept)",
+        r.stdout.contains("PROOF=shell_setup_ran"),
+        "a shfunc the user DEFINED must beat the Rust port even under \
+         `backend = rust` (src/compsys/router.rs:56-64); got stdout=`{}`",
         r.stdout,
     );
 }
@@ -183,31 +255,24 @@ fn router_only_intercepts_underscore_prefix_names() {
 /// pass under one backend.
 #[test]
 fn distinct_backends_produce_distinct_observable_results() {
-    let shell_run = run_with_backend(
-        "shell",
-        r#"
-            _setup() { typeset -g PROOF=shell }
-            _setup args
-            echo "PROOF=$PROOF"
-        "#,
-    );
-    let rust_run = run_with_backend(
-        "rust",
-        r#"
-            _setup() { typeset -g PROOF=shell }
-            _setup args
-            echo "PROOF=$PROOF"
-        "#,
-    );
+    let shell_run = run_with_backend("shell", SETUP_PROBE);
+    let rust_run = run_with_backend("rust", SETUP_PROBE);
     assert!(
-        shell_run.stdout.contains("PROOF=shell"),
-        "shell backend should fire user shfunc; got `{}`",
+        shell_run.stdout.contains("RC=127"),
+        "shell backend must leave `_setup` to ordinary lookup, which finds \
+         nothing with `$fpath` empty → `command not found` (rc 127); \
+         got stdout=`{}` stderr=`{}`",
         shell_run.stdout,
+        shell_run.stderr,
     );
     assert!(
-        !rust_run.stdout.contains("PROOF=shell"),
-        "rust backend should SHADOW user shfunc; \
-         got `{}` (same as shell → switch is fake)",
+        shell_run.stderr.contains("command not found: _setup"),
+        "shell backend must report the unresolved name on stderr; got `{}`",
+        shell_run.stderr,
+    );
+    assert!(
+        rust_run.stdout.contains("RC=0"),
+        "rust backend must answer `_setup` from the port; got `{}`",
         rust_run.stdout,
     );
     assert_ne!(
@@ -230,16 +295,7 @@ fn missing_config_file_defaults_to_rust_backend() {
     let dir = tempfile::tempdir().expect("tempdir");
     // No zshrs.toml — config loader returns ZshrsConfig::default().
     let o = Command::new(zshrs_bin())
-        .args([
-            "--zsh",
-            "-f",
-            "-c",
-            r#"
-                _setup() { typeset -g PROOF=shell }
-                _setup args
-                echo "PROOF=$PROOF"
-            "#,
-        ])
+        .args(["--zsh", "-f", "-c", &format!("{NO_FPATH}{SETUP_PROBE}")])
         .env("ZSHRS_HOME", dir.path())
         .env_remove("EDITOR")
         .env_remove("VISUAL")
@@ -247,13 +303,15 @@ fn missing_config_file_defaults_to_rust_backend() {
         .output()
         .expect("spawn zshrs");
     let stdout = String::from_utf8_lossy(&o.stdout);
+    let stderr = String::from_utf8_lossy(&o.stderr);
     assert_eq!(o.status.code(), Some(0));
     assert!(
-        !stdout.contains("PROOF=shell"),
+        stdout.contains("RC=0") && !stderr.contains("command not found"),
         "default backend must be `rust` (CompsysBackend::default()) \
-         → user `_setup` shfunc should be shadowed; \
-         got stdout=`{}`",
+         → the router must answer `_setup` from the port; \
+         got stdout=`{}` stderr=`{}`",
         stdout,
+        stderr,
     );
 }
 
@@ -272,16 +330,7 @@ fn unknown_backend_value_falls_back_to_default_rust() {
     )
     .expect("write toml");
     let o = Command::new(zshrs_bin())
-        .args([
-            "--zsh",
-            "-f",
-            "-c",
-            r#"
-                _setup() { typeset -g PROOF=shell }
-                _setup args
-                echo "PROOF=$PROOF"
-            "#,
-        ])
+        .args(["--zsh", "-f", "-c", &format!("{NO_FPATH}{SETUP_PROBE}")])
         .env("ZSHRS_HOME", dir.path())
         .env_remove("EDITOR")
         .env_remove("VISUAL")
@@ -289,13 +338,15 @@ fn unknown_backend_value_falls_back_to_default_rust() {
         .output()
         .expect("spawn zshrs");
     let stdout = String::from_utf8_lossy(&o.stdout);
+    let stderr = String::from_utf8_lossy(&o.stderr);
     assert_eq!(o.status.code(), Some(0));
     assert!(
-        !stdout.contains("PROOF=shell"),
+        stdout.contains("RC=0") && !stderr.contains("command not found"),
         "bogus backend value should leave config at defaults \
-         (= rust); user `_setup` shfunc must still be shadowed; \
-         got stdout=`{}`",
+         (= rust); the router must still answer `_setup` from the port; \
+         got stdout=`{}` stderr=`{}`",
         stdout,
+        stderr,
     );
 }
 
@@ -330,18 +381,17 @@ fn function_body_sees_own_positionals_under_both_backends() {
             "#,
         );
         assert_eq!(r.exit, 0, "backend={backend} exit nonzero");
-        // Under shell backend the user shfunc runs and sees $1=inner_arg.
-        // Under rust backend the user shfunc is shadowed — PROOF stays
-        // unset — which is itself the proof for that backend (covered
-        // by other tests). Only check shell here.
-        if backend == "shell" {
-            assert!(
-                r.stdout.contains("PROOF=dollar1=inner_arg,argc=1"),
-                "doshfunc scope MUST swap positionals to the call's argv; \
-                 got stdout=`{}`",
-                r.stdout,
-            );
-        }
+        // The user DEFINED `_setup` here, so it runs under BOTH backends
+        // (`router::has_shfunc_override`, src/compsys/router.rs:56-64) and
+        // the scope wrap is observable under both. This used to be checked
+        // for `shell` only, on the pre-d44b4f3ede assumption that the rust
+        // backend shadowed a defined shfunc.
+        assert!(
+            r.stdout.contains("PROOF=dollar1=inner_arg,argc=1"),
+            "backend={backend}: doshfunc scope MUST swap positionals to the \
+             call's argv; got stdout=`{}`",
+            r.stdout,
+        );
     }
 }
 
@@ -358,19 +408,15 @@ fn function_body_sees_own_positionals_under_both_backends() {
 fn zshrs_home_overrides_global_config_path() {
     let dir_shell = fresh_zshrs_home("shell");
     let dir_rust = fresh_zshrs_home("rust");
-    let script = r#"
-        _setup() { typeset -g PROOF=shell }
-        _setup args
-        echo "PROOF=$PROOF"
-    "#;
+    let script = format!("{NO_FPATH}{SETUP_PROBE}");
     let out_shell = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", script])
+        .args(["--zsh", "-f", "-c", &script])
         .env("ZSHRS_HOME", dir_shell.path())
         .env_remove("ZSHRS_CACHE")
         .output()
         .expect("spawn shell-cfg");
     let out_rust = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", script])
+        .args(["--zsh", "-f", "-c", &script])
         .env("ZSHRS_HOME", dir_rust.path())
         .env_remove("ZSHRS_CACHE")
         .output()
@@ -382,6 +428,14 @@ fn zshrs_home_overrides_global_config_path() {
         "ZSHRS_HOME MUST switch config; \
          got identical stdout=`{}` from both temp dirs",
         shell_out,
+    );
+    assert!(
+        shell_out.contains("RC=127") && rust_out.contains("RC=0"),
+        "and they must differ in the DIRECTION the two configs name — \
+         shell backend leaves `_setup` unresolved, rust backend answers it; \
+         got shell=`{}` rust=`{}`",
+        shell_out,
+        rust_out,
     );
 }
 
@@ -411,6 +465,7 @@ fn run_with_fpath_parameters(script: &str) -> (R, tempfile::TempDir) {
     (
         R {
             stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
             exit: o.status.code().unwrap_or(-1),
         },
         fp,
@@ -518,6 +573,7 @@ fn run_sibling_inheritance(sibling: &str) -> (R, tempfile::TempDir) {
     (
         R {
             stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
             exit: o.status.code().unwrap_or(-1),
         },
         d,

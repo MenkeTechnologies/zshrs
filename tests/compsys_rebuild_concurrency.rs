@@ -45,10 +45,26 @@ fn make_fpath(dir: &Path, shared: usize, uniq: &str) {
     .expect("write unique completion");
 }
 
+/// `$HOME` and `$ZDOTDIR` are pinned to `home` alongside `$ZSHRS_HOME`.
+///
+/// `compinit -C` sources `$_comp_dumpfile`, which defaults to
+/// `${ZDOTDIR:-$HOME}/.zcompdump` (compinit sh:133, ported at
+/// `src/compsys/ported/compinit.rs:735`), and sh:512-517 then sets
+/// `_i_done=yes` so the whole sh:523-550 `$fpath` scan is skipped — the
+/// dump alone defines `$_comps`. With only `ZSHRS_HOME` redirected the
+/// child still read the DEVELOPER'S real `~/.zcompdump`, so
+/// `cold_dash_c_storm_scans_fpath_once` measured his 1729 completers
+/// instead of the 301 files this test wrote. Verified directly: same
+/// storm, same fpath, `COMPS=1729` with the ambient `$HOME` and
+/// `COMPS=301` with `HOME=$ZDOTDIR=<tempdir>`. All eight shells share the
+/// one `home`, which is the arrangement under test — one dump, one cache,
+/// one lock.
 fn spawn(home: &Path, fpath: &Path, script: &str) -> Child {
     Command::new(zshrs_bin())
         .args(["-f", "-c", script])
         .env("ZSHRS_HOME", home)
+        .env("HOME", home)
+        .env("ZDOTDIR", home)
         .env("FPATH", fpath)
         .env_remove("ZSHRS_CACHE")
         .stdout(std::process::Stdio::piped())
