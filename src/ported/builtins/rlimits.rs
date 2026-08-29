@@ -203,13 +203,13 @@ static RESINFO: OnceLock<Mutex<Vec<resinfo_T>>> = OnceLock::new();
 /// Port of `mod_export struct rlimit current_limits[RLIM_NLIMITS]`
 /// from `Src/exec.c:310`. Snapshot of the shell's resource limits as
 /// of `init_main()` (Src/init.c:1287).
-static CURRENT_LIMITS: OnceLock<Mutex<Vec<rlimit>>> = OnceLock::new();
+pub(crate) static CURRENT_LIMITS: OnceLock<Mutex<Vec<rlimit>>> = OnceLock::new();
 
 /// Port of `mod_export struct rlimit limits[RLIM_NLIMITS]` from
 /// `Src/exec.c:310`. The user-visible limits the next `setrlimit()`
 /// will install. `setlimits(nam)` (Src/exec.c:331) flushes them via
 /// `zsetlimit()`.
-static LIMITS: OnceLock<Mutex<Vec<rlimit>>> = OnceLock::new();
+pub(crate) static LIMITS: OnceLock<Mutex<Vec<rlimit>>> = OnceLock::new();
 
 // =====================================================================
 // Port of `free_resinfo()` from Src/Builtins/rlimits.c:222.
@@ -1382,7 +1382,7 @@ fn nlimits() -> usize {
 // requiring a separate init pass. Allowlisted in
 // tests/data/fake_fn_allowlist.txt.
 #[cfg(unix)]
-fn ensure_limits_initialized() {
+pub(crate) fn ensure_limits_initialized() {
     let init = || {
         let mut v: Vec<rlimit> = Vec::with_capacity(nlimits());
         for i in 0..nlimits() as i32 {

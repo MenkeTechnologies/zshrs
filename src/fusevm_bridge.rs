@@ -12947,6 +12947,228 @@ fn entersubsh_reset_traps() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// In-process subshell: signal delivery belongs to the PARENT.
+// ---------------------------------------------------------------------------
+
+/// Depth of nested in-process `( … )` subshells, for the signal
+/// bookkeeping below.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C has no counter because it forks: `entersubsh` (`Src/exec.c:1123`)
+/// runs in a fresh process whose signal state is a private copy. This
+/// counter exists only so `subshell_signal_enter` / `_leave` can tell
+/// the OUTERMOST boundary — the one where `$$` stops naming the shell
+/// that is running the body — from a nested one.
+static SUBSH_SIGNAL_DEPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// The top-level shell's `sigtrapped[]` while an in-process subshell
+/// runs; `None` when no subshell is active.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// This is C's `sigtrapped[]` (`Src/signals.c:39`) as the PARENT still
+/// sees it — in C that array simply stays put in the parent process
+/// while the forked child mutates its own copy. zshrs has one process
+/// and one array, so the parent's view has to be kept beside it.
+static SUBSH_PARENT_SIGTRAPPED: std::sync::Mutex<Option<Vec<i32>>> = std::sync::Mutex::new(None);
+
+/// Signals delivered to the process while an in-process subshell was
+/// running, which the PARENT traps. Replayed at the outermost
+/// `subshell_end`.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// The C analogue is `trap_queue[]` (`Src/signals.c:92`): the parent
+/// sets `trap_queueing_enabled` in `zwaitjob` (`Src/jobs.c:1688`
+/// `queue_traps(wait_cmd)`) for as long as the child runs, so a trap
+/// that arrives meanwhile is deferred and dispatched by
+/// `unqueue_traps()` (`Src/jobs.c:1751` → `Src/signals.c:1041-1047`)
+/// once the child is reaped. A separate queue is needed here because
+/// zshrs's `trap_queue` gate (`handletrap`, c:974) tests the LIVE
+/// `sigtrapped[]`, which the in-process subshell has already cleared.
+static SUBSH_DEFERRED_SIGS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+
+/// Called from `zhandler` (`src/ported/signals.rs`, at C's c:410
+/// queueing check) before any trap dispatch. Returns 1 when the
+/// delivery has been recorded for the parent and the handler must
+/// return without acting.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C needs nothing here. `( … )` forks (`Src/exec.c:2922`
+/// `entersubsh(flags, &esret)`), so `kill -USR1 $$` inside the
+/// subshell names the PARENT process: the child's handlers are never
+/// entered, and the parent — which `entersubsh` never touched —
+/// runs its own trap once `zwaitjob` drains the trap queue. zshrs runs
+/// the body in the same process, so the one set of handlers has to
+/// answer for both roles. Recording the delivery and replaying it
+/// against the parent's restored table at `subshell_end` reproduces
+/// both the disposition zsh picks and the point at which it runs.
+///
+/// SIGCHLD and SIGWINCH are never deferred, matching the two signals C
+/// itself excludes from the `settrap` / `removetrap` disposition
+/// switches (`Src/signals.c:714-718`, `Src/signals.c:810-814`): job
+/// reaping and resize redisplay have to stay live inside the body.
+///
+/// When the parent has NO trap for the signal this returns 0 and the
+/// handler proceeds normally. That is the one leg an in-process
+/// subshell cannot reproduce: C's parent would take the DEFAULT action
+/// (`( trap 'echo IN' USR1; kill -USR1 $$ )` kills zsh outright), which
+/// here would have to kill the shell out from under a body that C
+/// leaves running.
+pub fn subshell_defer_signal(sig: libc::c_int) -> i32 {
+    if sig == libc::SIGCHLD || sig == libc::SIGWINCH {
+        return 0;
+    }
+    let idx = crate::ported::signals_h::SIGIDX(sig) as usize;
+    // `try_lock`, not `lock`: this runs inside a signal handler, so a
+    // delivery that lands while the SAME thread is mid-`subshell_signal_enter`
+    // would self-deadlock on a blocking acquire. A miss degrades to normal
+    // handling, which is what happened before this hook existed.
+    let parent = match SUBSH_PARENT_SIGTRAPPED.try_lock() {
+        Ok(g) => match g.as_ref() {
+            Some(v) => v.get(idx).copied().unwrap_or(0),
+            None => return 0,
+        },
+        Err(_) => return 0,
+    };
+    if parent == 0 {
+        return 0;
+    }
+    if (parent & crate::ported::zsh_h::ZSIG_IGNORED) != 0 {
+        // The parent ignores it; C's parent process would drop it on
+        // the floor (`Src/signals.c:713-719` installed SIG_IGN).
+        return 1;
+    }
+    match SUBSH_DEFERRED_SIGS.try_lock() {
+        Ok(mut q) => q.push(sig),
+        // Could not record it; fall through to normal handling rather
+        // than swallow the delivery outright.
+        Err(_) => return 0,
+    }
+    1
+}
+
+/// Arm parent-side signal delivery for the duration of an in-process
+/// `( … )`. Must run BEFORE `entersubsh_reset_traps` clears the table.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// See `subshell_defer_signal`. Only the OUTERMOST subshell records the
+/// snapshot: `$$` names the top-level shell at every nesting level, so
+/// a nested `( ( … ) )` still routes deliveries to the same table.
+fn subshell_signal_enter() {
+    if SUBSH_SIGNAL_DEPTH.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+        let snap = crate::ported::signals::sigtrapped
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        if let Ok(mut p) = SUBSH_PARENT_SIGTRAPPED.lock() {
+            *p = Some(snap);
+        }
+        if let Ok(mut q) = SUBSH_DEFERRED_SIGS.lock() {
+            q.clear();
+        }
+    }
+}
+
+/// Disarm parent-side delivery and dispatch whatever arrived. Must run
+/// AFTER `subshell_end` has put the parent's `sigtrapped[]` and
+/// `traps_table` back.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// The dispatch itself is C's `unqueue_traps()` tail
+/// (`Src/signals.c:1043-1047`): `while (trap_queue_front !=
+/// trap_queue_rear) handletrap(trap_queue[…])`, run at the point
+/// `zwaitjob` reaches after the child is reaped (`Src/jobs.c:1751`).
+fn subshell_signal_leave() {
+    if SUBSH_SIGNAL_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) != 1 {
+        return;
+    }
+    if let Ok(mut p) = SUBSH_PARENT_SIGTRAPPED.lock() {
+        *p = None;
+    }
+    let pending: Vec<i32> = match SUBSH_DEFERRED_SIGS.lock() {
+        Ok(mut q) => std::mem::take(&mut *q),
+        Err(_) => return,
+    };
+    for sig in pending {
+        // c:Src/signals.c:1046 — `(void) handletrap(trap_queue[…]);`
+        let _ = crate::ported::signals::handletrap(sig);
+    }
+}
+
+/// Put the process's signal DISPOSITIONS back the way the parent had
+/// them, for every signal whose trap state the subshell changed.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C gets this from the fork: `trap 'echo IN' USR1` inside `( … )`
+/// calls `settrap` → `install_handler` (`Src/signals.c:724-732`) in the
+/// CHILD, so the parent's `SIG_DFL` survives untouched and a later
+/// `kill -USR1 $$` still kills the shell. zshrs shares the process, so
+/// the child's `sigaction` leaked out and swallowed the signal. The
+/// branch order below is `removetrap`'s tail verbatim
+/// (`Src/signals.c:801-815`) for the "parent had no trap" case, and
+/// `settrap`'s two installs (`Src/signals.c:713-719` ignored,
+/// `Src/signals.c:724-732` trapped) for the others.
+fn subshell_restore_signal_dispositions(parent: &[i32], child: &[i32]) {
+    let count = crate::ported::signals_h::SIGCOUNT;
+    for sig in 1..=count {
+        let i = sig as usize;
+        let p = parent.get(i).copied().unwrap_or(0);
+        let c = child.get(i).copied().unwrap_or(0);
+        if p == c {
+            continue;
+        }
+        // c:714-718 / c:810-814 — C leaves these two alone in both
+        // the install and the reset switch.
+        if sig == libc::SIGWINCH || sig == libc::SIGCHLD {
+            continue;
+        }
+        if (p & crate::ported::zsh_h::ZSIG_IGNORED) != 0 {
+            crate::ported::signals_h::signal_ignore(sig); // c:719
+        } else if p != 0 {
+            crate::ported::signals::install_handler(sig); // c:732
+        } else if sig == libc::SIGINT && crate::ported::signals::is_interact() {
+            crate::ported::signals::intr(); // c:804
+            crate::ported::signals::noholdintr(); // c:805
+        } else if sig == libc::SIGHUP {
+            crate::ported::signals::install_handler(sig); // c:807
+        } else if sig == libc::SIGPIPE
+            && crate::ported::signals::is_interact()
+            && crate::ported::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed) == 0
+        {
+            crate::ported::signals::install_handler(sig); // c:809
+        } else {
+            crate::ported::signals_h::signal_default(sig); // c:815
+        }
+    }
+}
+
+/// Stack of the parent's `limits[]` and `current_limits[]` across
+/// in-process `( … )` bodies.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C's `limits[]` / `current_limits[]` (`Src/exec.c:315`) are copied by
+/// the fork, and `zfork` applies the child's copy to the child process
+/// (`Src/exec.c:381-383` `setlimits(NULL)`), so `( ulimit -n 256 )`
+/// cannot be seen by the parent. zshrs shares the process, so the array
+/// and the real `setrlimit` state both have to be rolled back by hand.
+///
+/// BOTH arrays are needed, and they are not the same rollback. C keeps
+/// them apart on purpose: `limits[]` is what the shell WANTS,
+/// `current_limits[]` is what `setrlimit` has actually been given
+/// (`zsetlimit`, c:316-331, only calls `setrlimit` where the two
+/// disagree). `limit descriptors 256` without `-s` moves only the
+/// first. So the restore replays `setrlimit` for exactly the resources
+/// whose `current_limits[]` the BODY moved — never for a difference the
+/// parent was already carrying, which C would not have applied either.
+///
+/// Thread-local because subshell begin/end always pair on one thread,
+/// while a worker pool may have several in flight.
+#[cfg(unix)]
+thread_local! {
+    static SUBSH_SAVED_LIMITS: std::cell::RefCell<Vec<(Vec<libc::rlimit>, Vec<libc::rlimit>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// `waitpid(pid, &status, 0)` that retries on `EINTR`.
 ///
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -15115,6 +15337,28 @@ impl fusevm::ShellHost for ZshrsHost {
             // subshell_end, which is what makes clearing safe for zshrs's
             // in-process subshell.
             {
+                // Record the PARENT's `sigtrapped[]` and the parent's
+                // `limits[]` BEFORE the reset below wipes the first and
+                // before the body can call `ulimit` on the second. C
+                // gets both from the fork: the child mutates private
+                // copies (`Src/exec.c:315` for the limits, the
+                // `sigtrapped[]` of `Src/signals.c:39` for the traps)
+                // and the parent's stay put.
+                subshell_signal_enter();
+                #[cfg(unix)]
+                {
+                    crate::ported::builtins::rlimits::ensure_limits_initialized();
+                    let saved_limits = crate::ported::builtins::rlimits::LIMITS
+                        .get()
+                        .and_then(|l| l.lock().ok().map(|g| g.clone()))
+                        .unwrap_or_default();
+                    let saved_current = crate::ported::builtins::rlimits::CURRENT_LIMITS
+                        .get()
+                        .and_then(|l| l.lock().ok().map(|g| g.clone()))
+                        .unwrap_or_default();
+                    SUBSH_SAVED_LIMITS
+                        .with(|s| s.borrow_mut().push((saved_limits, saved_current)));
+                }
                 entersubsh_reset_traps();
             }
             // c:Src/exec.c:2862 — subshell fork flags carry ESUB_PGRP,
@@ -15253,9 +15497,26 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
                 // c:Src/signals.c:39 — same fork-copy reasoning for the
                 // per-signal trap flags cleared at subshell entry.
-                if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
-                    *st = snap.sigtrapped.clone();
-                }
+                //
+                // The `sigaction` DISPOSITIONS the body installed leak
+                // out too, and the flag restore alone does not undo
+                // them: `( trap 'echo IN' USR1 )` runs `settrap` →
+                // `install_handler` (c:Src/signals.c:730) on the shared
+                // process, so afterwards a `kill -USR1 $$` in the parent
+                // hit zshrs's handler, found no trap, and was swallowed
+                // where zsh — whose parent still had SIG_DFL, the child
+                // having installed the handler on its own copy — dies.
+                // Roll the dispositions back for exactly the signals
+                // whose flags differ.
+                let child_sigtrapped = match crate::ported::signals::sigtrapped.lock() {
+                    Ok(mut st) => {
+                        let prev = st.clone();
+                        *st = snap.sigtrapped.clone();
+                        prev
+                    }
+                    Err(_) => Vec::new(),
+                };
+                subshell_restore_signal_dispositions(&snap.sigtrapped, &child_sigtrapped);
                 // c:Src/exec.c::entersubsh — restore parent's
                 // modulestab so a subshell `(zmodload zsh/X)` doesn't
                 // leak to the parent. Bug #210 in docs/BUGS.md.
@@ -15496,6 +15757,50 @@ impl fusevm::ShellHost for ZshrsHost {
         // here against OUTER's trap, matching C zsh's
         // signal-delivery-to-parent semantics. Bug #450.
         crate::ported::signals_h::unqueue_signals();
+        // c:Src/exec.c:315 / :381-383 — `limits[]` is fork-copied and the
+        // child applies its copy with `setlimits(NULL)`, so `( ulimit -n
+        // 256 )` cannot be seen by the parent. Roll both arrays back and
+        // replay `setrlimit` for exactly the resources whose
+        // `current_limits[]` the BODY moved — the same test `zsetlimit`
+        // makes (c:319-320), applied to before/after rather than
+        // want/have, so a `limit` the PARENT set without `-s` is not
+        // suddenly installed here. A body that LOWERED a hard limit is
+        // the one case this cannot undo: the process cannot raise it
+        // again, and C only escapes that because the child dies with it.
+        #[cfg(unix)]
+        {
+            let saved = SUBSH_SAVED_LIMITS.with(|s| s.borrow_mut().pop());
+            if let Some((saved_limits, saved_current)) = saved {
+                if let Some(lock) = crate::ported::builtins::rlimits::CURRENT_LIMITS.get() {
+                    if let Ok(mut cur) = lock.lock() {
+                        for (i, want) in saved_current.iter().enumerate() {
+                            let have = match cur.get(i) {
+                                Some(h) => *h,
+                                None => continue,
+                            };
+                            // c:319-320 — `if (limits[n].rlim_max != …
+                            //   || limits[n].rlim_cur != …)`
+                            if have.rlim_max == want.rlim_max && have.rlim_cur == want.rlim_cur {
+                                continue;
+                            }
+                            // c:321 — `setrlimit(limnum, limits + limnum)`
+                            if unsafe { libc::setrlimit(i as _, want) } == 0 {
+                                cur[i] = *want; // c:329
+                            }
+                        }
+                    }
+                }
+                if let Some(lock) = crate::ported::builtins::rlimits::LIMITS.get() {
+                    if let Ok(mut g) = lock.lock() {
+                        *g = saved_limits;
+                    }
+                }
+            }
+        }
+        // Replay the signals that arrived while the body ran and that
+        // the PARENT traps, now that the parent's `sigtrapped[]` and
+        // `traps_table` are back. See `subshell_defer_signal`.
+        subshell_signal_leave();
         // c:Src/exec.c — a `( … )` subshell is a FORK in C: an errflag
         // abort inside the child ends the child with its lastval as
         // the exit status, and the flag dies with the child process.

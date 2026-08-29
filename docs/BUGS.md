@@ -153,9 +153,12 @@ math-evaluates to 0 — plus the single-evaluation and `KSH_ARRAYS`/`KSH_ZERO_SU
 
 ---
 
-## #1112 — an in-process `( … )` leaks its trap table and rlimits — open
+## #1112 — an in-process `( … )` leaks its trap table and rlimits — fixed
 
-**Status:** `port-bug`, found 2026-08-28 while repairing `283_zsh_traps_full`.
+**Status:** `port-bug`, found 2026-08-28 while repairing `283_zsh_traps_full`; **fixed
+2026-08-28**, both legs. `283_zsh_traps_full` now reports `usr1_cnt=4 zerr_cnt=2` and passes
+7/7. Pinned by `tests/parity/subshell_signal_limit_parity.rs` (20 cases; 9 of them failed
+before the fix).
 
 `sysparams[pid]` is the REAL pid (`Src/Modules/system.c`), unlike `$$`, which zsh keeps at the
 parent's value inside a subshell. It shows the fork plainly:
@@ -195,13 +198,48 @@ isolation already works in-process. Measured, `zsh -f` vs `zshrs --zsh -f`:
 | `( ulimit -n 256 ); ulimit -n` | `1048576` | `256` | **BROKEN** |
 
 So exactly two kinds of state leak out of an in-process `( … )`: the **trap table / signal
-dispositions**, and **resource limits**. That is a save/restore gap in `SubshStateGuard`
-(`src/ported/exec.rs`), whose doc already carries an applied/skipped breakdown of what it
-emulates from `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL)` (c:Src/exec.c:4781).
+dispositions**, and **resource limits**.
 
 **Do NOT fix this by making `( … )` fork.** In-process subshells are deliberate — this project
 exists partly to avoid forks, and `run_command_substitution` documents the same choice for
 `$(…)`. Forking would trade away that property to fix two pieces of unsaved state.
+
+**The fix (2026-08-28) — three parts, none of them a fork.** `SubshStateGuard`
+(`src/ported/exec.rs`) turned out NOT to be the site: it guards `$( … )`, and its
+applied/skipped breakdown lists traps and rlimits under DELIBERATELY SKIPPED for that path.
+The `( … )` COMMAND form runs through `subshell_begin` / `subshell_end` in
+`src/fusevm_bridge.rs`, which already snapshotted `sigtrapped[]` and `traps_table` and already
+applied `entersubsh`'s trap reset (`entersubsh_reset_traps`, c:Src/exec.c:1127-1131).
+
+1. **Signal DELIVERY belongs to the parent.** `$$` names the top-level shell at every nesting
+   level, so `kill -USR1 $$` is answered by the parent's dispositions — which `entersubsh`
+   never touches — at the point `zwaitjob` drains its trap queue (`Src/jobs.c:1688`
+   `queue_traps`, `Src/jobs.c:1751` `unqueue_traps`), i.e. after the body finishes. A hook in
+   `zhandler` (`subshell_defer_signal`) records such a delivery and `subshell_end` replays it
+   through `handletrap` against the restored parent table. Fixes both `OUTER`-vs-`INNER` and
+   the case with no inner trap, which was silently DROPPED: the pre-existing
+   `queue_signals()` bracket around the body cannot carry it, because `dont_queue_signals()`
+   calls inside the body (e.g. `jobs.rs:1763`, `exec.rs:3135`) drain the queue early, while
+   the body's cleared `sigtrapped[]` still gates `handletrap` (c:Src/signals.c:974).
+2. **Signal DISPOSITIONS must be rolled back.** `( trap 'echo IN' USR1 )` ran `settrap` →
+   `install_handler` (c:Src/signals.c:724-732) on the shared process, so afterwards a parent
+   `kill -USR1 $$` hit zshrs's handler, found no trap, and was swallowed where zsh dies
+   (`rc=158`). `subshell_restore_signal_dispositions` replays `removetrap`'s tail
+   (c:Src/signals.c:801-815) for every signal whose flags the body changed.
+3. **`limits[]` / `current_limits[]` are fork-copied** (c:Src/exec.c:315) and the child applies
+   its copy at `zfork` (c:Src/exec.c:381-383). `subshell_begin` stacks both arrays;
+   `subshell_end` replays `setrlimit` for exactly the resources whose `current_limits[]` the
+   BODY moved, so a `limit` the PARENT set without `-s` is not suddenly installed.
+
+**Remaining, and NOT fixable without a fork** (one process cannot be two):
+* `( trap 'echo IN' USR1; kill -USR1 $$ )` with NO parent trap. zsh's parent takes the DEFAULT
+  action and dies (`rc=158`) while the orphaned child runs on; zshrs runs `IN` and exits 0.
+  Reproducing it would mean killing the shell out from under a body C leaves running.
+* A body that LOWERS a hard limit cannot be undone — the process cannot raise it again. C only
+  escapes this because the child dies with it.
+* A terminal-generated `^C` reaches zsh's parent AND child; in-process it arrives once, and
+  when the parent traps `INT` it is routed to the parent (matching every `kill -INT $$` case)
+  rather than aborting the body.
 
 ---
 

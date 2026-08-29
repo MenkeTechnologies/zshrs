@@ -369,6 +369,28 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
     }
     let oldmask = signal_block(&newmask);
 
+    // NO C COUNTERPART AT c:409 — see
+    // `crate::fusevm_bridge::subshell_defer_signal`.
+    //
+    // C reaches this point only ever as ONE of the two processes a
+    // `( … )` splits the shell into: `entersubsh` (c:1123) runs after a
+    // fork, so `kill -USR1 $$` inside the subshell names the PARENT and
+    // is answered by the parent's untouched dispositions, while the
+    // child's handlers never see it. The parent is inside `zwaitjob`'s
+    // `queue_traps(wait_cmd)` window (Src/jobs.c:1688) for as long as
+    // the child runs, so the trap fires after the child is reaped, at
+    // `unqueue_traps()` (Src/jobs.c:1751).
+    //
+    // zshrs runs `( … )` in-process, so both roles land on this one
+    // handler. When a subshell is active and the parent traps `sig`,
+    // record the delivery and return; `subshell_end` replays it against
+    // the parent's restored table, which is the same disposition and
+    // the same point zsh uses.
+    if crate::fusevm_bridge::subshell_defer_signal(sig) != 0 {
+        let _ = signal_setmask(&oldmask);
+        return;
+    }
+
     // c:410-424 — `if (queueing_enabled) { ... return; }`
     if queueing_enabled.load(Ordering::SeqCst) != 0 {
         let temp_rear = (queue_rear.load(Ordering::SeqCst) + 1) % MAX_QUEUE_SIZE;
