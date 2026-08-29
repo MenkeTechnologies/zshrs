@@ -780,12 +780,6 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
     Ok(result)
 }
 
-/// Port of `lexconstant()` from `Src/math.c:462`.
-///
-/// Lex a numeric constant — decimal/hex/binary/octal integer or
-/// floating-point literal. Sets `m_yyval()` and returns
-/// `NUM`. Recognises `0x`/`0b` prefixes, base-prefix
-/// (`16#FF`), trailing-dot float, scientific notation, and zsh's
 /// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
 /// C math.c:856 calls `getkeystring(ptr, NULL, GETKEYS_MATH, &v)` — the
 /// shared 200-line key-string decoder run in GETKEY_SINGLE_CHAR mode
@@ -904,6 +898,12 @@ fn decode_math_keychar(s: &str) -> Option<(i64, usize)> {
     }
 }
 
+/// Port of `lexconstant()` from `Src/math.c:462`.
+///
+/// Lex a numeric constant — decimal/hex/binary/octal integer or
+/// floating-point literal. Sets `m_yyval()` and returns
+/// `NUM`. Recognises `0x`/`0b` prefixes, base-prefix
+/// (`16#FF`), trailing-dot float, scientific notation, and zsh's
 /// underscore digit-grouping. Mirrors C's `zstrtol_underscore()`
 /// for greedy base parsing (consume valid digits only, leave the
 /// rest as the next token).

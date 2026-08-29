@@ -16,11 +16,6 @@ use crate::ported::zle::{
 use crate::ported::zsh_h::{isset, COMBININGCHARS};
 use crate::zsh_h::{IS_BASECHAR, IS_COMBINING};
 
-/// Move cursor to the start of the current logical line.
-/// Port of `findbol()` from Src/Zle/zle_utils.c:1158 — same scan,
-/// just mutates zlecs in-place instead of returning the index.
-/// `findbol` (in utils.rs) is the side-effect-free equivalent.
-
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
@@ -1167,7 +1162,13 @@ pub fn vigotomarkline(ch: char) -> i32 {
     vigotomark(ch); // c:931
     vifirstnonblank() // c:932
 }
-/// `move_to_bol` — see implementation.
+/// Move cursor to the start of the current logical line.
+///
+/// NOT the port of `findbol()` — that lives under its C name at
+/// `zle_utils.rs:1206` (`Src/Zle/zle_utils.c:1165`) and RETURNS the
+/// index without touching the cursor. This is the Rust-only mutating
+/// counterpart: the same backward scan, assigning `zlecs` in place
+/// (C spells that inline as `zlecs = findbol();`).
 pub fn move_to_bol() {
     while ZLECS.load(Ordering::SeqCst) > 0
         && ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) - 1] != '\n'
@@ -1177,8 +1178,12 @@ pub fn move_to_bol() {
 }
 
 /// Move cursor to the end of the current logical line.
-/// Port of `findeol()` from Src/Zle/zle_utils.c:1169 — mutating
-/// counterpart to `findeol`.
+///
+/// NOT the port of `findeol()` — that lives under its C name at
+/// `zle_utils.rs:1229` (`Src/Zle/zle_utils.c:1176`) and RETURNS the
+/// index without touching the cursor. This is the Rust-only mutating
+/// counterpart: the same forward scan, assigning `zlecs` in place
+/// (C spells that inline as `zlecs = findeol();`).
 pub fn move_to_eol() {
     while ZLECS.load(Ordering::SeqCst) < ZLELL.load(Ordering::SeqCst)
         && ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)] != '\n'

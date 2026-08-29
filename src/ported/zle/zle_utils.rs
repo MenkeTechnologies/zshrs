@@ -2224,9 +2224,11 @@ pub fn paste_from_buffer(buf: usize, after: bool) {
 /// CUT_FRONT / CUT_REPLACE / CUT_RAW flag bits.
 
 /// Snapshot the current line into `last_line` for the undo system.
-/// Port of `setlastline()` from Src/Zle/zle_utils.c:1587. Routes to
-/// the canonical `setlastline` method below — kept under the
-/// snake-case name so older callers compile.
+///
+/// NOT the port of `setlastline()` — that lives under its C name at
+/// `zle_utils.rs:1684` (`Src/Zle/zle_utils.c:1595`) and holds the whole
+/// body. This is a Rust-only snake-case alias that just calls it, kept
+/// so older call sites compile.
 pub fn set_last_line() {
     setlastline();
 }
@@ -2258,10 +2260,13 @@ pub fn handle_feep() {
 /// Port of zlegetline(int *ll, int *cs) from zle_utils.c
 
 /// Read a y/n response from input.
-/// Port of `getzlequery()` from Src/Zle/zle_utils.c:1197. The C source
-/// reads one key, treats Tab as 'y', any control char or EOF as 'n',
-/// and otherwise tolowers the input. Echoes the response and returns
-/// true iff the user pressed 'y'. Used by completion-listing prompts
+///
+/// NOT the port of `getzlequery()` — that lives under its C name at
+/// `zle_utils.rs:1398` (`Src/Zle/zle_utils.c:1204`) and returns C's
+/// `int`. This is a Rust-only bool-returning DUPLICATE of the same
+/// read-one-key logic (Tab → 'y', control char or EOF → 'n', else
+/// tolower) that additionally echoes the resolved char to SHTTY, kept
+/// for callers that want a `bool`. Used by completion-listing prompts
 /// like "show all 200 matches?".
 pub fn get_zle_query() -> bool {
     let c = match getfullchar(false) {
