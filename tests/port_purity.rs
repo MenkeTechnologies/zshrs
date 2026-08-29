@@ -312,11 +312,48 @@ fn every_top_level_fn_cites_its_c_source() {
                 }
             }
 
-            // Track brace depth (naive; ignores braces in strings/comments).
-            for ch in line.chars() {
+            // Track brace depth, SKIPPING braces inside string/char literals
+            // and comments.
+            //
+            // The counter used to be naive, and the comment here said so. It
+            // desynced badly — a `"{"` in a message, a `//` comment
+            // containing C code, a doc-comment quoting a `#define` — and the
+            // error accumulates, so `depth` never returns to 0. Measured
+            // before this fix:
+            //
+            //   src/ported/utils.rs   221 col-0 fns, only 44 inspected, ended depth 7
+            //   src/ported/params.rs  221 col-0 fns, only 29 inspected, ended depth 4
+            //   src/ported/parse.rs   148 col-0 fns, only 26 inspected, ended depth 3
+            //
+            // Every fn after the first stray brace was silently skipped, so
+            // the reported total was a large UNDERCOUNT. This makes the audit
+            // STRICTER, not more permissive: the number goes UP.
+            //
+            // A correct scan ends at depth 0 for every file.
+            let mut chars = line.chars().peekable();
+            let mut in_str = false;
+            let mut in_char = false;
+            let mut esc = false;
+            while let Some(ch) = chars.next() {
+                if esc {
+                    esc = false;
+                    continue;
+                }
                 match ch {
-                    '{' => depth += 1,
-                    '}' => {
+                    '\\' if in_str || in_char => esc = true,
+                    '"' if !in_char => in_str = !in_str,
+                    '\'' if !in_str => {
+                        // A lifetime (`&'a T`) is not a char literal: it has
+                        // no closing quote on the line's remainder.
+                        if in_char {
+                            in_char = false;
+                        } else if line_has_char_close(&chars) {
+                            in_char = true;
+                        }
+                    }
+                    '/' if !in_str && !in_char && chars.peek() == Some(&'/') => break, // line comment
+                    '{' if !in_str && !in_char => depth += 1,
+                    '}' if !in_str && !in_char => {
                         depth -= 1;
                         if let Some(d) = in_test_mod_depth {
                             if depth <= d {
@@ -353,6 +390,28 @@ fn every_top_level_fn_cites_its_c_source() {
 /// Look at lines preceding `fn_idx` and decide whether they contain a
 /// `Port of ... from Src/...` citation. Walks upward across `///`,
 /// `//!`, `/* */`, attributes (`#[...]`), and blank lines.
+/// True when the rest of the line closes a char literal — distinguishes
+/// `'x'` from a lifetime such as `&'a str`.
+fn line_has_char_close(rest: &std::iter::Peekable<std::str::Chars>) -> bool {
+    let mut it = rest.clone();
+    let mut n = 0;
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            it.next();
+            n += 2;
+            continue;
+        }
+        if c == '\'' {
+            return true;
+        }
+        n += 1;
+        if n > 4 {
+            return false;
+        }
+    }
+    false
+}
+
 fn has_port_citation(lines: &[&str], fn_idx: usize, cite_re: &Regex) -> bool {
     let mut i = fn_idx;
     while i > 0 {
