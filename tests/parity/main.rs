@@ -99,6 +99,7 @@ mod recent_ports_parity;
 mod redirection_parity;
 mod regex_match_parity;
 mod repeat_select_parity;
+mod session_regression_parity;
 mod setopt_pattern_parity;
 mod shift_positional_parity;
 mod special_params_parity;
