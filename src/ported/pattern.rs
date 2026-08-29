@@ -30,14 +30,12 @@
 //!      `charsub`, `metacharinc`, `clear_shiftstate`)
 //!  13. Matcher entry points (`pattry`, `pattrylen`, `pattryrefs`)
 //!  14. `patmatch` interpreter — pattern.c:2694
-//!  15. (Section removed — formerly held Rust-only entries
-//!      `patmatchrange(&[char], char, igncase)`,
-//!      `patmatchindex(&[char], idx)`, `mb_patmatchrange`,
-//!      `mb_patmatchindex`. All deleted as Rule B / semantic
-//!      deviations; see comments at the deletion sites for the
-//!      faithful-port plan. The Cpattern-byte-stream walker in
-//!      `zle/compmatch.rs::patmatchrange` is the production matcher
-//!      pending a Rule C relocation to pattern.rs.)
+//!  15. `patmatchrange` — pattern.c:3865. The Cpattern-byte-stream
+//!      walker, relocated here from `zle/compmatch.rs` (the Rule C
+//!      move this section used to say was pending). The earlier
+//!      Rust-only entries `patmatchrange(&[char], char, igncase)` and
+//!      `patmatchindex(&[char], idx)` were deleted as Rule B /
+//!      semantic deviations; see the deletion sites.
 //!  16. String pre-processing (`patmungestring`, `patallocstr`,
 //!      `pattrystart`)
 //!  17. Module-loader / disable mgmt (`startpatternscope`,
@@ -4106,6 +4104,165 @@ pub fn patmatchindex(range: &[u8], mut ind: i32) -> Option<(Option<u8>, i32)> {
     }
     // c:4091 — `/* No corresponding index. */ return 0;`
     None
+}
+
+/// Port of `patmatchrange(char *range, int ch, int *indptr, int *mtp)`
+/// from `Src/pattern.c:3865-3995` (reached through the
+/// `PATMATCHRANGE` macro). Walks an encoded character-range
+/// descriptor in `str` (Cpattern.str byte sequence) and tests
+/// whether `c` falls inside. Encoding written by
+/// `complete.rs::parse_class` (c:Src/Zle/complete.c:523/539):
+///   0x80 + PP_RANGE (=0x95): next 2 bytes are lo,hi range
+///   0x80 + PP_* (POSIX class id): single-byte class marker
+///   plain byte: literal char (0x00-0x7F)
+/// The port's marker base is 0x80 where C uses `Meta` (0x83); every
+/// decoder in the port agrees on 0x80, so the offset is internal.
+///
+/// `indptr` is the position of `c` among the class MEMBERS seen so far:
+/// c:3970 adds `ch - r1` on a hit, c:3974 adds `r2 - r1` when stepping
+/// over a non-matching range, and c:3992-3993 adds a further 1 at the
+/// end of EVERY non-returning iteration — so a skipped range advances
+/// by its full `r2 - r1 + 1` member count and a skipped literal or
+/// POSIX-class marker advances by exactly 1. That is the same counting
+/// `pattern_match_equivalence`'s PATMATCHINDEX walk (c:1320,
+/// pattern.c:4013-4088) performs in reverse, so producer and consumer
+/// must agree element-for-element. `pattern_match1` turns that
+/// into the equivalence-class index (`ind + 1`, c:1283) that
+/// `pattern_match` compares between the line and word side
+/// (c:1573 `if (ind != wind) return 0;`), and that
+/// `pattern_match_equivalence` feeds back through PATMATCHINDEX.
+/// The port previously incremented by 1 per element, so every char of
+/// a `{a-z}`-style class collapsed to index 0: `m:{a-z\-}={A-Z\_}`
+/// then matched `a` against EVERY uppercase name (`cd /a<TAB>`
+/// offered /Applications /Library /System /Users /Volumes, and the
+/// bogus ambiguity suppressed the insertion entirely).
+pub fn patmatchrange(
+    s: Option<&[u8]>,
+    c: u32,
+    mut indp: Option<&mut u32>,
+    mtp: Option<&mut i32>,
+) -> bool {
+    let Some(bytes) = s else {
+        return false;
+    };
+    // c:3869 — `if (indptr) *indptr = 0;`
+    if let Some(out) = indp.as_deref_mut() {
+        *out = 0;
+    }
+
+    let mut i = 0usize;
+    let mut mtp_dest: Option<&mut i32> = mtp;
+    // c:3876 — `for (; *range; range++)`
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b >= 0x80 {
+            // c:3877-3878 — `imeta(*range)`; swtype = marker - base.
+            let swtype = (b as i32) - 0x80;
+            // c:3879-3880 — `if (mtp) *mtp = swtype;` runs for EVERY
+            // meta element, whether or not it goes on to match.
+            if let Some(out) = mtp_dest.as_deref_mut() {
+                *out = swtype;
+            }
+            if swtype == 0 {
+                // c:3882-3885 — metafied literal: next byte ^ 32.
+                if i + 1 >= bytes.len() {
+                    break;
+                }
+                if (bytes[i + 1] ^ 32) as u32 == c {
+                    return true;
+                }
+                i += 2;
+                // c:3992-3993 — fall through to the shared `(*indptr)++`.
+                if let Some(out) = indp.as_deref_mut() {
+                    *out += 1;
+                }
+                continue;
+            }
+            if swtype == PP_RANGE {
+                // c:3961-3975
+                if i + 2 >= bytes.len() {
+                    break;
+                }
+                let r1 = bytes[i + 1] as u32;
+                let r2 = bytes[i + 2] as u32;
+                if r1 <= c && c <= r2 {
+                    // c:3968-3971
+                    if let Some(out) = indp.as_deref_mut() {
+                        *out += c - r1;
+                    }
+                    return true;
+                }
+                // c:3973-3974 — `if (indptr && r1 < r2) *indptr += r2 - r1;`
+                if r1 < r2 {
+                    if let Some(out) = indp.as_deref_mut() {
+                        *out += r2 - r1;
+                    }
+                }
+                i += 3;
+                // c:3992-3993 — plus the per-iteration increment, so a skipped
+                // range advances the index by its full member count
+                // (r2 - r1 + 1). Omitting it made the producer disagree with
+                // pattern_match_equivalence's PATMATCHINDEX consumer, which
+                // does count every element.
+                if let Some(out) = indp.as_deref_mut() {
+                    *out += 1;
+                }
+                continue;
+            }
+            // c:3886-3960 — POSIX classes. Single-byte locale
+            // (the C build only reaches this file without
+            // MULTIBYTE_SUPPORT), so `ch` outside 0-255 never matches.
+            let hit = c < 256 && {
+                let cb = c as u8;
+                match swtype {
+                    PP_ALPHA => cb.is_ascii_alphabetic(),   // c:3886
+                    PP_ALNUM => cb.is_ascii_alphanumeric(), // c:3890
+                    PP_ASCII => (c & !0x7f) == 0,           // c:3894
+                    PP_BLANK => cb == b' ' || cb == b'\t',  // c:3898
+                    PP_CNTRL => cb.is_ascii_control(),      // c:3907
+                    PP_DIGIT => cb.is_ascii_digit(),        // c:3911
+                    PP_GRAPH => cb.is_ascii_graphic(),      // c:3915
+                    PP_LOWER => cb.is_ascii_lowercase(),    // c:3919
+                    // c:3923 ZISPRINT — C isprint(): graphic or space.
+                    PP_PRINT => cb.is_ascii_graphic() || cb == b' ',
+                    PP_PUNCT => cb.is_ascii_punctuation(), // c:3927
+                    // c:3931 isspace(): " \t\n\v\f\r"
+                    PP_SPACE => matches!(cb, b' ' | 0x09..=0x0d),
+                    PP_UPPER => cb.is_ascii_uppercase(), // c:3935
+                    PP_XDIGIT => cb.is_ascii_hexdigit(), // c:3939
+                    PP_IDENT => crate::ported::ztype_h::iident(cb), // c:3943
+                    PP_IFS => crate::ported::ztype_h::isep(cb), // c:3947
+                    PP_IFSSPACE => crate::ported::ztype_h::iwsep(cb), // c:3951
+                    PP_WORD => crate::ported::ztype_h::iword(cb), // c:3955
+                    // c:3959-3961 PP_INCOMPLETE / PP_INVALID are never
+                    // true without MULTIBYTE_SUPPORT; PP_UNKWN / unknown
+                    // markers fall through as no-match.
+                    _ => false,
+                }
+            };
+            if hit {
+                return true;
+            }
+            i += 1;
+            // c:3992-3993 — a skipped POSIX-class marker is one class member.
+            if let Some(out) = indp.as_deref_mut() {
+                *out += 1;
+            }
+        } else if b as u32 == c {
+            // c:3987-3990 — plain literal match sets `*mtp = 0`.
+            if let Some(out) = mtp_dest.as_deref_mut() {
+                *out = 0;
+            }
+            return true;
+        } else {
+            i += 1;
+            // c:3992-3993 — and so is a skipped literal.
+            if let Some(out) = indp.as_deref_mut() {
+                *out += 1;
+            }
+        }
+    }
+    false
 }
 
 /// Port of `mb_patmatchrange()` from `Src/pattern.c:3610`.

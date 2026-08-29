@@ -394,57 +394,37 @@ pub fn finish_(m: *const module) -> i32 {
 // Port of `addhookfunc(char *n, Hookfn f)` from Src/module.c:948.
 // C: `int addhookfunc(char *n, Hookfn f)` →
 //   `Hookdef h = gethookdef(n); if (h) return addhookdeffunc(h, f); return 1;`
+//
+// `gethookdef` (`Src/module.c:849`), `addhookdeffunc` (`:939`) and
+// `deletehookdeffunc` (`:961`) are module.c functions; the canonical
+// ports live in `src/ported/module.rs`. This file used to carry a
+// second, inert copy of all three — `gethookdef` returned `None`
+// unconditionally, so neither hook fn was ever reached. Those copies
+// are gone; the behaviour they produced (C's "hookdef not found"
+// return) is stated directly here.
+//
+// They are NOT forwarded to module.rs's real chain because the two
+// hook signatures differ: module.rs types the chain as `Hookfn =
+// fn(*mut hookdef, *mut c_void) -> i32` (`zsh_h.rs:1051`, C's
+// `Src/zsh.h` Hookfn), while nearcolor's hook is
+// `int (*)(Hookdef, Colour_rgb)` (`Src/Modules/nearcolor.c:161`). C
+// bridges them with the explicit `(Hookfn)` cast at nearcolor.c:199;
+// Rust cannot without a transmute, and wiring it up would change
+// runtime behaviour (`get_color_attr` IS registered in the hooktab —
+// `src/ported/init.rs:179`), which is a separate change.
 fn addhookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
     // c:948
-    // c:948 — `Hookdef h = gethookdef(n);`
-    let h = gethookdef(n);
-    if let Some(h) = h {
-        // c:953
-        return addhookdeffunc(h, f); // c:954
-    }
+    let _ = (n, f);
     1 // c:955
 }
 
 // Port of `deletehookfunc(const char *n, Hookfn f)` from Src/module.c:977.
 // C: `int deletehookfunc(const char *n, Hookfn f)` →
 //   `Hookdef h = gethookdef(n); if (h) return deletehookdeffunc(h, f); return 1;`
+// Same signature-mismatch note as `addhookfunc` above.
 fn deletehookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) {
     // c:977
-    let h = gethookdef(n); // c:977
-    if let Some(h) = h {
-        // c:982
-        let _ = deletehookdeffunc(h, f); // c:983
-    }
-}
-
-// Port of `gethookdef(const char *n)` from Src/module.c:849 — looks up a Hookdef by
-// name in the static-link `HOOKDEFS` registry.
-/// WARNING: param names don't match C — Rust=(_n) vs C=(funcs, NULL)
-fn gethookdef(_n: &str) -> Option<*const hookdef> {
-    // c:849
-    // Static-link path: hookdefs registry lives in src/ported/module.rs;
-    // until that exposes a typed lookup, return None.
-    None
-}
-
-// Port of `addhookdeffunc(Hookdef h, Hookfn f)` from Src/module.c:939.
-// C: `int addhookdeffunc(Hookdef h, Hookfn f)` →
-//   `addlinknode(h->funcs, (void *)f); return 0;`
-#[allow(unused_variables)]
-fn addhookdeffunc(h: *const hookdef, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
-    // c:939
-    // c:961 — addlinknode(h->funcs, f). Static-link path: registry is static.
-    0 // c:961
-}
-
-// Port of `deletehookdeffunc(Hookdef h, Hookfn f)` from Src/module.c:961.
-// C: `int deletehookdeffunc(Hookdef h, Hookfn f)` — walk h->funcs,
-// remove the matching entry; returns 0 on success, 1 if not found.
-/// WARNING: param names don't match C — Rust=(_h, _f) vs C=()
-fn deletehookdeffunc(_h: *const hookdef, _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
-    // c:961
-    // c:966-971 — walks h->funcs list; static-link path: nothing to remove.
-    1 // c:972
+    let _ = (n, f);
 }
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();

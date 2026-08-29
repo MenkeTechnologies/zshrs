@@ -1996,13 +1996,13 @@ pub struct Thingy {
 // Hashtable of thingies. Enabled nodes are those that refer to widgets.   // c:49
 static THINGYTAB: OnceLock<Mutex<HashMap<String, Thingy>>> = OnceLock::new();
 
-/// Look up a Thingy by name via `gethashnode2(thingytab, name)` —
-/// the C zle.h dispatch for `Th(X)` lookup. Direct port of the
-/// open-coded `gethashnode2()` call shape at `Src/Zle/zle_thingy.c:160`.
-pub fn gethashnode2(name: &str) -> Option<Thingy> {
-    // c:gethashtable.c (open-coded)
-    thingytab().lock().ok()?.get(name).cloned()
-}
+// `gethashnode2` is `Src/hashtable.c:255`; its port lives in
+// `src/ported/hashtable.rs`. C reaches it here only through the
+// function pointer `thingytab->getnode2` (`Src/Zle/zle_thingy.c:70`,
+// `thingytab->getnode2 = gethashnode2;`), so there is no zle_thingy.c
+// function of that name to mirror. The wrapper that used to sit here
+// is gone; `zle_h.rs::Th` calls the canonical port over `thingytab()`
+// directly.
 
 /// List every Thingy name. Used by `${widgets[@]}` parameter expansion.
 /// Replaces the legacy `ZleManager::list_widgets()` accessor.

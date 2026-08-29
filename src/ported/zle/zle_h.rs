@@ -72,7 +72,10 @@ pub fn Th(index: i32) -> Option<crate::ported::zle::zle_thingy::Thingy> {
     // c:316
     let i: usize = (index as i64).try_into().ok()?;
     let name = T_THINGY_NAMES.get(i)?;
-    crate::ported::zle::zle_thingy::gethashnode2(name)
+    // c:Src/Zle/zle_thingy.c:70 `thingytab->getnode2 = gethashnode2;`
+    // → `Src/hashtable.c:255`.
+    let tab = crate::ported::zle::zle_thingy::thingytab().lock().ok()?;
+    crate::ported::hashtable::gethashnode2(&tab, name).cloned()
 }
 
 /// Fixed-thingy index table. Order matches the `mod_export Thingy

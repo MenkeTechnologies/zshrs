@@ -496,6 +496,8 @@ pub fn scantermcap(
 // via tgetent(3) + tgetflag(3) / tgetnum(3) / tgetstr(3) directly.
 // Each call site below now invokes those libc-level routines via FFI.
 
+use crate::ported::utils::putraw;
+
 unsafe extern "C" {
     // c:Src/utils.c:399 — `zsetupterm()` initialises `cur_term` with
     // `setupterm`, which is what termcap.c:347 `boot_` calls. termcap.c
@@ -522,16 +524,9 @@ unsafe extern "C" {
     fn tgoto(cap: *const libc::c_char, col: libc::c_int, row: libc::c_int) -> *mut libc::c_char;
 }
 
-/// Port of `putraw(int c)` from `Src/utils.c:424`. Single-byte
-/// stdout emit used as the tputs callback.
-extern "C" fn putraw(c: libc::c_int) -> libc::c_int {
-    // c:426 — `putc(c, stdout);`
-    let byte = c as u8;
-    unsafe {
-        libc::write(1, &byte as *const u8 as *const libc::c_void, 1);
-    }
-    0 // c:427
-}
+// `putraw` is `Src/utils.c:424`, so its port lives in
+// `src/ported/utils.rs`; imported above and handed to `tputs` exactly
+// as C's `bin_echotc` does at c:132/133.
 
 // `bintab` — port of `static struct builtin bintab[]` (termcap.c).
 
