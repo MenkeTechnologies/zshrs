@@ -19,13 +19,48 @@
 //! See `docs/PORT_PLAN.md` Phase 5 + the "Where 100% Faithful Port
 //! Cannot Work" section for the canonical bucket-2 rationale.
 
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Once};
 use std::thread;
 
 use zsh::ported::options::{opt_state_get, opt_state_set};
 use zsh::ported::params::{getsparam, setsparam};
 
 const N_WORKERS: usize = 8;
+
+/// Perform the two startup steps these assertions depend on.
+///
+/// An integration test links the library WITHOUT running shell startup,
+/// so two globals that C guarantees are populated before the first
+/// assignment can ever be evaluated are still at their zero value. Each
+/// one makes `setsparam` fail for a reason that has nothing to do with
+/// the shared storage under test, so both have to be reproduced here or
+/// this test reports a bucket-2 visibility failure while proving
+/// nothing about visibility at all.
+///
+/// 1. `opts[]` (`Src/options.c:36`). `assignsparam` -> `assignstrvalue`
+///    opens with `if (unset(EXECOPT)) return;` (`Src/params.c:2686`),
+///    and `exec` is declared `OPT_ALL` (`Src/options.c:135`), i.e. on
+///    by default under every emulation. C installs those defaults at
+///    startup via `parseopts_setemulate` -> `emulate(nam, 1,
+///    &emulation, opts)` -- "initialises most options"
+///    (`Src/init.c:361`). With `opts[]` all zero `EXECOPT` reads as
+///    unset, `assignstrvalue` returns before storing, and the parameter
+///    reaches the shared table with an EMPTY value.
+///
+/// 2. `typtab[256]` (`Src/utils.c:4148`). `assignsparam` guards its
+///    name with `isident()` (`Src/params.c:3350` -> `c:1313`), which
+///    classifies bytes through `itype_end()` -> `zistype()` -> that
+///    table. C fills it in `setupvals()`: `inittyptab();  /* initialize
+///    the ztypes table */` (`Src/init.c:1277`). All-zero type bits make
+///    `isident("FOO")` false, so every write aborts with
+///    `not an identifier` before it reaches the table at all.
+fn init_shell_globals() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        zsh::ported::options::emulate("zsh", true); // Src/init.c:361
+        zsh::ported::utils::inittyptab(); // Src/init.c:1277
+    });
+}
 
 /// Each worker writes a unique paramtab entry. After all writers
 /// finish, an observer (the main thread) reads every entry and
@@ -34,6 +69,7 @@ const N_WORKERS: usize = 8;
 /// its own thread.
 #[test]
 fn paramtab_writes_visible_across_threads() {
+    init_shell_globals();
     let barrier = Arc::new(Barrier::new(N_WORKERS));
     let mut handles = Vec::with_capacity(N_WORKERS);
 
@@ -72,6 +108,7 @@ fn paramtab_writes_visible_across_threads() {
 /// not just same-thread-after-join. TLS would always fail this.
 #[test]
 fn paramtab_writes_observed_by_other_worker() {
+    init_shell_globals();
     let barrier = Arc::new(Barrier::new(2));
     let writer_barrier = Arc::clone(&barrier);
     let reader_barrier = Arc::clone(&barrier);
@@ -101,6 +138,7 @@ fn paramtab_writes_observed_by_other_worker() {
 /// `setopt ERREXIT` from any thread must be visible everywhere.
 #[test]
 fn options_writes_visible_across_threads() {
+    init_shell_globals();
     let barrier = Arc::new(Barrier::new(N_WORKERS));
     let mut handles = Vec::with_capacity(N_WORKERS);
 
@@ -135,6 +173,7 @@ fn options_writes_visible_across_threads() {
 /// holder ever loses its lock primitive.
 #[test]
 fn paramtab_parallel_read_write_stress() {
+    init_shell_globals();
     let n_iters = 64;
     let mut handles = Vec::with_capacity(N_WORKERS * 2);
 

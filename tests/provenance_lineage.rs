@@ -296,12 +296,15 @@ fn track_all_arms_every_parameter_and_function_without_a_single_m() {
     );
     // The function armed itself at its definition, and the call is an op.
     assert!(
-        out.contains(&format!("greet()\n  origin: function greet ({}:2", path)),
+        out.contains(&format!(
+            "greet()\n  origin: function greet {{ MSG=\"hi $1\" }} ({}:2",
+            path
+        )),
         "the function's origin is its definition site:\n{out}"
     );
     assert!(
         out.contains(&format!(
-            "call       greet()                                  {}:5",
+            "call       greet(world)                             {}:5",
             path
         )),
         "the call op stands at the caller's line:\n{out}"
@@ -398,7 +401,7 @@ fn every_redefinition_of_a_function_lands_on_its_chain() {
     );
     assert!(
         out.contains(&format!(
-            "redefine   greet                                    {}:4",
+            "redefine   greet {{ : two }}                          {}:4",
             path
         )),
         "the redefinition stands at the new body's line:\n{out}"

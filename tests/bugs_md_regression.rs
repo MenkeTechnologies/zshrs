@@ -521,9 +521,15 @@ fn bug567_real_dollar_quote_uppercase_U_decodes() {
 
 // ════════════════════════════════════════════════════════════════════
 // BUGS.md #562 — `${a:U}` / `${a:C}` / `${a:W}` silently accepted.
-// Fix: src/ported/subst.rs::modify emits unrecognized-modifier zerr
-// per Src/subst.c:3786-3790 for non-modifier letters and for
-// pre-flags consumed without a following modifier letter.
+// Fix: src/ported/subst.rs::modify leaves the cursor on the offending
+// text and the caller emits the unrecognized-modifier zerr per
+// Src/subst.c:3797-3802. Two arms, both pinned below:
+//   c:3799 `zerr("unrecognized modifier `%c\'", s[1])` when the
+//          leftover starts with `:` and s[1] is not a token byte —
+//          this covers `U`, `C` AND `W`, because an unusable pre-flag
+//          rewinds to its own colon (c:4721, c:4727).
+//   c:3801 `zerr("unrecognized modifier")` — bare, no letter — when
+//          the leftover does not start with `:` (`${a:hX}`).
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -555,23 +561,49 @@ fn bug562_uppercase_C_modifier_emits_canonical_diagnostic() {
 }
 
 #[test]
-fn bug562_lone_W_preflag_without_modifier_emits_bare_error() {
-    // C source emits the bare form "unrecognized modifier" (no letter)
-    // when the pre-flag W was consumed but no actual modifier letter
-    // followed.
+fn bug562_lone_W_preflag_without_modifier_emits_letter_diagnostic() {
+    // `${a:W}` takes the LETTER form, not the bare one. Src/subst.c:4699
+    // enters the `case 'W'` pre-flag arm, but every exit that fails to
+    // settle on a modifier letter rewinds the cursor to the colon it
+    // started from (c:4721 `*ptr = lptr; return;` in the switch default,
+    // and c:4727-4728 for the `!c` exit). So back in modify()'s caller
+    // the leftover text still begins with `:`, and c:3798-3799 takes the
+    // `*s == ':' && !imeta(s[1])` branch:
+    //     zerr("unrecognized modifier `%c'", s[1]);
+    // Verified against the reference shell:
+    //     $ zsh -fc 'a=hello; echo "${a:W}"'
+    //     zsh:1: unrecognized modifier `W'
+    //     rc=1
     let (ec, _stdout, stderr) = run_zshrs(r#"a=hello; echo "${a:W}""#);
     if zshrs_bin().is_none() {
         return;
     }
     assert_eq!(ec, 1, "rc must be 1");
-    assert!(
-        stderr.contains("unrecognized modifier"),
-        "must emit unrecognized-modifier diagnostic, got stderr={:?}",
+    assert_eq!(
+        stderr, "zsh:1: unrecognized modifier `W\'\n",
+        "must match zsh byte for byte, got stderr={:?}",
         stderr
     );
-    assert!(
-        !stderr.contains("unrecognized modifier `W'"),
-        "for bare-W case the zsh diagnostic has NO letter, got stderr={:?}",
+}
+
+#[test]
+fn bug562_trailing_junk_after_a_valid_modifier_emits_bare_error() {
+    // The bare `unrecognized modifier` (no letter) arm at
+    // Src/subst.c:3801 fires when the leftover text does NOT start with
+    // a colon — i.e. a valid modifier ran and left junk glued to it.
+    // `${a:hX}` is the canonical case: `h` is consumed, `X` remains, so
+    // `*s != ':'` and C falls to the `else` arm. Verified:
+    //     $ zsh -fc 'a=hello; echo "${a:hX}"'
+    //     zsh:1: unrecognized modifier
+    //     rc=1
+    let (ec, _stdout, stderr) = run_zshrs(r#"a=hello; echo "${a:hX}""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "rc must be 1");
+    assert_eq!(
+        stderr, "zsh:1: unrecognized modifier\n",
+        "the bare arm carries no letter, got stderr={:?}",
         stderr
     );
 }

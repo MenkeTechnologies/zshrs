@@ -52808,26 +52808,51 @@ error-message-format-divergence count alongside #488
 ## #562 — `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted
 
 **Status:** **fixed** 2026-05-31 — `modify()` in `src/ported/subst.rs`
-now mirrors C `Src/subst.c:3786-3790`:
-- Letter-but-not-modifier first char (`U`, `C`, etc.) → `zerr(
-  "unrecognized modifier 'X'")` + `errflag_set_error()`, no longer
-  silently routed to the `${str:offset:length}` substring arm where
-  `mathevali("U")` returned 0 and sliced from offset 0.
-- Pre-modifier flags (`g`/`w`/`W`/`f`/`F`) consumed but no actual
-  modifier letter follows → `zerr("unrecognized modifier")` (bare,
-  no letter, matching C's `else` arm at c:3790). `${a:W}` was the
-  symptomatic case — `W` got eaten as the wide-separator flag and
-  the loop exited cleanly with rc=0.
+now mirrors C `Src/subst.c:3797-3802`. `modify()` itself never reports the
+error; it rewinds its cursor and the caller inspects the leftover text:
+- Leftover starts with `:` and the next byte is not a token byte →
+  the letter form, C `zerr("unrecognized modifier X'", s[1])` where the
+  `%c` is `s[1]` (c:3799). This is the arm
+  `U`, `C` **and** `W` all take, no longer silently routed to the
+  `${str:offset:length}` substring arm where `mathevali("U")` returned 0
+  and sliced from offset 0.
+- Leftover does not start with `:` → `zerr("unrecognized modifier")`,
+  bare, no letter (c:3801). `${a:hX}` is the case that reaches it: `h` is
+  consumed as a real modifier and `X` is left glued to it.
+
+**Correction 2026-08-28** — an earlier revision of this entry claimed
+`${a:W}` produces the *bare* diagnostic, on the theory that `W` is eaten
+as the wide-separator pre-flag. That is false. `case 'W'` (c:4699) is
+entered, but every exit that fails to settle on a modifier letter rewinds
+to the colon it started from (c:4721 `*ptr = lptr; return;` in the switch
+default, c:4727-4728 for the `!c` exit), so the caller still sees `:W` and
+takes the letter arm. The transcript below had also been misread: the
+second `echo` never ran, because the `C` error aborted the whole `-c`.
+`tests/bugs_md_regression.rs` pinned the false claim and has been
+corrected to the measured behaviour, with `${a:hX}` added as the real
+bare-arm pin.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:U}"'
 zsh:1: unrecognized modifier `U'
 
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:C}"'
+zsh:1: unrecognized modifier `C'
+
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:W}"'
+zsh:1: unrecognized modifier `W'
+
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:hX}"'
+zsh:1: unrecognized modifier
+```
+
+zshrs now matches all four byte for byte (verified 2026-08-28 with
+`--zsh -f -c`, rc=1 on each). The original symptom, for the record —
+every invalid modifier passed the value straight through at rc=0:
+
+```sh
 $ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${a:U}"'
 hello
-
-$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:C}"; echo "${a:W}"'
-zsh:1: unrecognized modifier `C'
 
 $ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${a:C}"; echo "${a:W}"'
 hello
