@@ -39,14 +39,10 @@ pub fn ztgetflag(s: &str) -> i32 {
     if !ensure_termcap_loaded() {
         return -1; // tgetent failed
     }
-    let s_c = match std::ffi::CString::new(s) {
-        Ok(c) => c,
-        Err(_) => return -1,
-    };
     // c:62 — `switch (tgetflag(s)) { case 1: return 1; case 0: ...; }`
     let flag = {
         let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { tgetflag(s_c.as_ptr()) }
+        tgetflag(s)
     };
     match flag {
         // c:62
@@ -122,15 +118,10 @@ pub fn bin_echotc(
     if !ensure_termcap_loaded() {
         return 1;
     }
-    let s_c = match std::ffi::CString::new(s) {
-        Ok(c) => c,
-        Err(_) => return 1,
-    };
-
     // c:92 — `if ((num = tgetnum(s)) != -1) { printf("%d\n", num); return 0; }`
     let num = {
         let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { tgetnum(s_c.as_ptr()) }
+        tgetnum(s)
     }; // c:92
     if num != -1 {
         // c:92
@@ -153,21 +144,18 @@ pub fn bin_echotc(
         }
     }
     // c:108-110 — `t = tgetstr(s, &u);`
-    let mut buf: [libc::c_char; 2048] = [0; 2048]; // c:84
-    let mut area = buf.as_mut_ptr();
     let value = {
         let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let t = unsafe { tgetstr(s_c.as_ptr(), &mut area) }; // c:109
-        if t.is_null() || (t as isize) == -1 || unsafe { *t } == 0 {
-            // c:110
-            // capability doesn't exist, or (if boolean) is off           // c:110
-            drop(_g);
-            zwarnnam(name, &format!("no such capability: {}", s)); // c:113
-            return 1; // c:114
+        match tgetstr(s) {
+            // c:109
+            Some(t) if !t.is_empty() => String::from_utf8_lossy(&t).into_owned(),
+            // c:110 — capability doesn't exist, or (if boolean) is off
+            _ => {
+                drop(_g);
+                zwarnnam(name, &format!("no such capability: {}", s)); // c:113
+                return 1; // c:114
+            }
         }
-        unsafe { std::ffi::CStr::from_ptr(t) }
-            .to_string_lossy()
-            .into_owned()
     };
 
     // c:117-122 — count arguments expected by the cap's `%d/%2/%3/%./%+` codes.
@@ -206,22 +194,20 @@ pub fn bin_echotc(
     }
 
     // c:131-137 — `tputs(t, 1, putraw)` or `tputs(tgoto(t, num, atoi(*argv)), 1, putraw)`.
-    // Re-fetch the cap pointer for tputs/tgoto — `value` is the cloned
-    // String for the argct-count walk above, but tputs/tgoto want the
-    // original cap C-string still in libtermcap's buffer area.
-    let value_cstr = match std::ffi::CString::new(value.as_str()) {
-        Ok(c) => c,
-        Err(_) => return 1,
-    };
     let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // `tputs` is `crate::tparm::tputs_strip_padding` plus the c:424
+    // `putraw` byte loop: it drops the `$<delay>` padding specs and writes
+    // the remaining bytes, which is all C's tputs did for this call site
+    // (zshrs never used ncurses' padding SLEEP).
+    let emit = |bytes: &[u8]| {
+        for b in crate::tparm::tputs_strip_padding(bytes) {
+            putraw(b as libc::c_int);
+        }
+    };
     if argct == 0 {
         // c:131
-        // c:132 — `tputs(t, 1, putraw);` — emit through libtermcap so
-        // padding ($<delay>) is honored and any embedded %% / %i / %r
-        // gets resolved.
-        unsafe {
-            tputs(value_cstr.as_ptr(), 1, putraw);
-        }
+        // c:132 — `tputs(t, 1, putraw);`
+        emit(value.as_bytes());
     } else {
         // c:131-133 — verbatim:
         //   /* This assumes arguments of <lines> <columns> for cap 'cm' */
@@ -240,18 +226,16 @@ pub fn bin_echotc(
         // Prior Rust port had this reversed (col = argv_rest[0],
         // line = argv_rest[1]) — `echotc cm 5 10` jumped to (col=5,
         // line=10) where C jumps to (col=10, line=5).
-        let num: libc::c_int = argv_rest
+        let num: i64 = argv_rest
             .get(1)
             .and_then(|s| s.parse().ok())
             .or_else(|| argv_rest.first().and_then(|s| s.parse().ok()))
             .unwrap_or(0); // c:132
-        let arg0_n: libc::c_int = argv_rest.first().and_then(|s| s.parse().ok()).unwrap_or(0); // c:133 atoi(*argv)
-        unsafe {
-            // c:133 — tgoto(t, num, atoi(*argv))
-            let resolved = tgoto(value_cstr.as_ptr(), num, arg0_n);
-            if !resolved.is_null() {
-                tputs(resolved, 1, putraw);
-            }
+        let arg0_n: i64 = argv_rest.first().and_then(|s| s.parse().ok()).unwrap_or(0); // c:133 atoi(*argv)
+        // c:133 — tgoto(t, num, atoi(*argv))
+        let resolved = crate::tparm::tgoto(value.as_bytes(), num, arg0_n);
+        if !resolved.is_empty() {
+            emit(&resolved);
         }
     }
     drop(_g);
@@ -342,7 +326,7 @@ pub fn gettermcap(
     // for a known-off auto-margin instead of "no" as C does.
     let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // c:167 — try numeric cap first.
-    let num = unsafe { tgetnum(n_c.as_ptr()) }; // c:167
+    let num = tgetnum(name); // c:167
     if num != -1 {
         // c:168-171 — PM_INTEGER with value (Rust port flattens to
         // decimal string so vm_helper::partab_get sees a populated
@@ -358,15 +342,9 @@ pub fn gettermcap(
         _ => {
             // c:176 (break) — fall through to tgetstr.
             let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let mut buf: [libc::c_char; 1024] = [0; 1024];
-            let mut area = buf.as_mut_ptr();
-            let raw = unsafe { tgetstr(n_c.as_ptr(), &mut area) }; // c:187
-            if !raw.is_null() && (raw as isize) != -1 {
+            if let Some(raw) = tgetstr(name) {
                 // c:188 — PM_SCALAR with cap string.
-                let s = unsafe { std::ffi::CStr::from_ptr(raw) }
-                    .to_string_lossy()
-                    .into_owned();
-                Some(mk(s, PM_SCALAR as i32))
+                Some(mk(String::from_utf8_lossy(&raw).into_owned(), PM_SCALAR as i32))
             } else {
                 // c:192-193 — `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
                 Some(mk(String::new(), PM_SCALAR as i32 | PM_UNSET as i32))
@@ -450,13 +428,9 @@ pub fn scantermcap(
     // decimal rendering is identical for every consumer of the scan.
     for cap in NUMCODES.iter() {
         // c:283
-        let c_c = match std::ffi::CString::new(*cap) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
         let num = {
             let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            unsafe { tgetnum(c_c.as_ptr()) } // c:284
+            tgetnum(cap) // c:284
         };
         if num != -1 {
             // c:285 — `pm->u.val = num;`
@@ -470,22 +444,13 @@ pub fn scantermcap(
     //                      tcstr != (char *)-1) ... }`
     for cap in STRCODES.iter() {
         // c:294
-        let c_c = match std::ffi::CString::new(*cap) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let mut buf = [0i8; 2048]; // c:217 `char buf[2048]`
         let tcstr = {
             let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let mut u = buf.as_mut_ptr() as *mut libc::c_char; // c:301 `char *u = buf;`
-            unsafe { tgetstr(c_c.as_ptr(), &mut u) } // c:302
+            tgetstr(cap) // c:302
         };
-        if !tcstr.is_null() && tcstr as isize != -1 {
-            // c:302-303
-            let s = unsafe { std::ffi::CStr::from_ptr(tcstr) }
-                .to_string_lossy()
-                .into_owned();
-            emit_cap(cap, &s); // c:304-306
+        // c:302-303
+        if let Some(tcstr) = tcstr {
+            emit_cap(cap, &String::from_utf8_lossy(&tcstr)); // c:304-306
         }
     }
 }
@@ -498,31 +463,15 @@ pub fn scantermcap(
 
 use crate::ported::utils::putraw;
 
-unsafe extern "C" {
-    // c:Src/utils.c:399 — `zsetupterm()` initialises `cur_term` with
-    // `setupterm`, which is what termcap.c:347 `boot_` calls. termcap.c
-    // itself never calls `tgetent`.
-    fn setupterm(
-        term: *const libc::c_char,
-        filedes: libc::c_int,
-        errret: *mut libc::c_int,
-    ) -> libc::c_int;
-    fn tgetflag(id: *const libc::c_char) -> libc::c_int;
-    fn tgetnum(id: *const libc::c_char) -> libc::c_int;
-    fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
-    // c:Src/utils.c:424 `putraw(int c) { putc(c, stdout); }` is the
-    // callback C's bin_echotc hands to tputs at c:129/133. tputs walks
-    // the cap string and calls the putc-fn for each byte, expanding
-    // padding ($<delay>) and decoding %-codes inline. Without it, the
-    // naive %d/%2/%3 string replacement misses padding entirely and
-    // mis-handles caps using %., %+, %i, %r, %% etc.
-    fn tputs(
-        str_: *const libc::c_char,
-        affcnt: libc::c_int,
-        putc_fn: extern "C" fn(libc::c_int) -> libc::c_int,
-    ) -> libc::c_int;
-    fn tgoto(cap: *const libc::c_char, col: libc::c_int, row: libc::c_int) -> *mut libc::c_char;
-}
+// c:Src/utils.c:399 — `zsetupterm()` initialises `cur_term` with
+// `setupterm`, which is what termcap.c:347 `boot_` calls; termcap.c itself
+// never calls `tgetent`. All of these were an `extern "C"` block resolved
+// against ncurses and are now `crate::terminfo_db` / `crate::tparm`, reading
+// the compiled terminfo database directly. That removed the binary's last
+// link against a C terminal library, and with it the `libtinfo.so.6` install
+// dependency on Ubuntu.
+use crate::terminfo_db::{setupterm, tgetflag, tgetnum, tgetstr};
+
 
 // `putraw` is `Src/utils.c:424`, so its port lives in
 // `src/ported/utils.rs`; imported above and handed to `tputs` exactly
@@ -668,67 +617,22 @@ static ZSTRCODES_FALLBACK: &[&str] = &[
 //   extern NCURSES_CONST char * const strcodes[];
 // Each is a NUL-pointer-terminated array of C strings. Declared as a
 // zero-length array so `as_ptr()` yields the symbol address.
-#[allow(non_upper_case_globals)]
-unsafe extern "C" {
-    static boolcodes: [*const libc::c_char; 0];
-    static numcodes: [*const libc::c_char; 0];
-    static strcodes: [*const libc::c_char; 0];
-}
+/// `boolcodes[]` / `numcodes[]` / `strcodes[]` — the two-letter TERMCAP
+/// codes, positionally parallel to the terminfo long-name tables. C reads
+/// them from the terminal library when it exports them (`HAVE_BOOLCODES`),
+/// else uses its own literals at c:45-49 etc. zshrs no longer links a
+/// terminal library, so they come from `crate::terminfo_caps`, generated from
+/// the same frozen ncurses 6 arrays.
+static BOOLCODES: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| crate::terminfo_caps::BOOL_CODES.to_vec());
 
-/// `boolcodes[]` — the library's array when it exports one (the
-/// HAVE_BOOLCODES path C takes), else the c:45-49 literal.
-static BOOLCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
-    let mut v: Vec<&'static str> = Vec::new();
-    let base = boolcodes.as_ptr();
-    let mut i = 0isize;
-    while !(*base.offset(i)).is_null() {
-        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
-            v.push(s);
-        }
-        i += 1;
-    }
-    if v.is_empty() {
-        BOOLCODES_FALLBACK.to_vec()
-    } else {
-        v
-    }
-});
+/// See [`BOOLCODES`] — `numcodes[]`.
+static NUMCODES: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| crate::terminfo_caps::NUM_CODES.to_vec());
 
-/// `numcodes[]` — library array (HAVE_NUMCODES path) else c:220-224.
-static NUMCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
-    let mut v: Vec<&'static str> = Vec::new();
-    let base = numcodes.as_ptr();
-    let mut i = 0isize;
-    while !(*base.offset(i)).is_null() {
-        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
-            v.push(s);
-        }
-        i += 1;
-    }
-    if v.is_empty() {
-        NUMCODES_FALLBACK.to_vec()
-    } else {
-        v
-    }
-});
-
-/// `strcodes[]` — library array (HAVE_STRCODES path) else c:228-264.
-static STRCODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
-    let mut v: Vec<&'static str> = Vec::new();
-    let base = strcodes.as_ptr();
-    let mut i = 0isize;
-    while !(*base.offset(i)).is_null() {
-        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
-            v.push(s);
-        }
-        i += 1;
-    }
-    if v.is_empty() {
-        ZSTRCODES_FALLBACK.to_vec()
-    } else {
-        v
-    }
-});
+/// See [`BOOLCODES`] — `strcodes[]`.
+static STRCODES: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| crate::terminfo_caps::STR_CODES.to_vec());
 
 /// WARNING: NOT IN TERMCAP.C — AtomicI32-guarded once-only wrapper
 /// around the terminal setup that C performs in `boot_` (c:347
@@ -784,18 +688,12 @@ fn ensure_termcap_loaded() -> bool {
             // parameter instead so a not-yet-exported `TERM=` is
             // still honoured.
             let term = getsparam("TERM").unwrap_or_else(|| "dumb".into());
-            let term_c = match std::ffi::CString::new(term) {
-                Ok(c) => c,
-                Err(_) => return false,
-            };
             // c:Src/utils.c:399 — `setupterm((char *)0, 1, &errret)`,
             // which termcap.c:347 boot_ reaches via zsetupterm().
-            let r = {
+            let ok = {
                 let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-                let mut errret: libc::c_int = 0;
-                unsafe { setupterm(term_c.as_ptr(), 1, &mut errret) }
+                setupterm(Some(&term)).is_ok()
             };
-            let ok = r == 0; // curses OK
             STATE.store(if ok { 1 } else { -1 }, Ordering::Relaxed);
             ok
         }

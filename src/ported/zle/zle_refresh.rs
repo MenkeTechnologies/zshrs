@@ -3751,11 +3751,6 @@ pub fn tcoutarg(cap: i32, arg: i32) {
     // c:2409
     use crate::ported::init::tcstr;
     use crate::ported::zsh_h::TC_COUNT;
-    use std::ffi::{CStr, CString};
-    extern "C" {
-        fn tgoto(cap: *const libc::c_char, col: libc::c_int, row: libc::c_int)
-            -> *mut libc::c_char;
-    }
     let cap_idx = cap as usize;
     if cap_idx >= TC_COUNT as usize {
         return;
@@ -3764,18 +3759,14 @@ pub fn tcoutarg(cap: i32, arg: i32) {
     if cap_str.is_empty() {
         return;
     }
-    let c_cap = match CString::new(cap_str) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    // c:2413 — `result = tgoto(tcstr[cap], arg, arg);`
-    let result = unsafe { tgoto(c_cap.as_ptr(), arg as libc::c_int, arg as libc::c_int) };
-    if result.is_null() {
+    // c:2413 — `result = tgoto(tcstr[cap], arg, arg);` — now the pure-Rust
+    // `crate::tparm::tgoto`, so this file no longer pulls in libtinfo.
+    let result = crate::tparm::tgoto(cap_str.as_bytes(), arg as i64, arg as i64);
+    if result.is_empty() {
         return;
     }
-    let bytes = unsafe { CStr::from_ptr(result) }.to_bytes();
     // c:2416-2417 — `tputs(result, 1, putshout)`.
-    crate::shout::write(&crate::shout::tputs(&String::from_utf8_lossy(bytes)));
+    crate::shout::write(&crate::shout::tputs(&String::from_utf8_lossy(&result)));
     // c:2419 — SELECT_ADD_COST(strlen(result)) cost accounting (no-op).
 }
 

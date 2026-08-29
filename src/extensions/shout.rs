@@ -127,20 +127,38 @@ pub fn tputs(s: &str) -> Vec<u8> {
     if !s.contains("$<") {
         return s.as_bytes().to_vec();
     }
-    extern "C" {
-        fn tputs(
-            str: *const libc::c_char,
-            affcnt: libc::c_int,
-            putc: extern "C" fn(libc::c_int) -> libc::c_int,
-        ) -> libc::c_int;
-    }
-    let Ok(c_str) = std::ffi::CString::new(s) else {
-        return s.as_bytes().to_vec();
-    };
-    TPUTS_SINK.with(|sink| sink.borrow_mut().clear());
     // `affcnt` = 1 — the same constant every zsh call site passes.
-    unsafe { tputs(c_str.as_ptr(), 1, tputs_collect) };
-    TPUTS_SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut()))
+    // `crate::tparm::tputs` replaced an `extern "C"` call into ncurses; the
+    // pad-rate inputs it needs come from the loaded terminfo entry and the
+    // tty's own output speed instead of from `cur_term` and `ospeed`.
+    crate::tparm::tputs(s.as_bytes(), 1, &pad_info())
+}
+
+/// Gather the terminal properties `crate::tparm::tputs` needs. Reads `ospeed`
+/// straight off the tty and `xon` / `pb` / `npc` / `pad` from the entry
+/// `init_term` loaded. When stdout is not a tty the speed is 0, which is
+/// ncurses' own "emit no pad bytes" case.
+fn pad_info() -> crate::tparm::PadInfo {
+    use crate::terminfo_db;
+    let baud = unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDOUT_FILENO, &mut t) == 0 {
+            libc::cfgetospeed(&t) as i32
+        } else {
+            0
+        }
+    };
+    crate::tparm::PadInfo {
+        baud,
+        xon: terminfo_db::tigetflag("xon") == 1,
+        padding_baud_rate: terminfo_db::tigetnum("pb").max(0),
+        no_pad_char: terminfo_db::tigetflag("npc") == 1,
+        pad_char: terminfo_db::tigetstr("pad")
+            .ok()
+            .flatten()
+            .and_then(|v| v.first().copied())
+            .unwrap_or(0),
+    }
 }
 
 /// [`tputs`] + [`write`] — the exact `tputs(cap, 1, putshout)` pair.

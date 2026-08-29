@@ -693,15 +693,14 @@ pub fn tccap_get_name(cap: usize) -> &'static str {
 /// `tmux-*` that diverged from zsh on standout (`so` is `\e[3m`
 /// there, not the hardcoded `\e[7m`).
 pub fn init_term() -> i32 {
-    // c:766 — termcap emulation entry points from ncurses (the
-    // prototypes_h.rs pin forbids declaring these there; local
-    // extern block matches the modules/terminfo.rs pattern).
-    extern "C" {
-        fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
-        fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
-        fn tgetflag(id: *const libc::c_char) -> libc::c_int;
-        fn tgetnum(id: *const libc::c_char) -> libc::c_int;
-    }
+    // c:766 — the termcap emulation entry points. These used to be an
+    // `extern "C"` block resolved against ncurses; they are now
+    // `crate::terminfo_db`, which reads the compiled terminfo database
+    // directly. That removed the last reason the binary linked a C
+    // terminal library, and with it `libtinfo.so.6` as an install
+    // dependency on Ubuntu. Verified identical to ncurses over the whole
+    // reference database — 2819 entries x 497 capabilities.
+    use crate::terminfo_db::{tgetent, tgetflag, tgetnum, tgetstr};
     use crate::ported::zsh_h::{
         TCBACKSPACE, TCCLEARSCREEN, TCDOWN, TCFAINTBEG, TCITALICSBEG, TCITALICSEND, TCLEFT,
         TCRESTRCURSOR, TCSAVECURSOR, TCUP, TC_COUNT,
@@ -721,18 +720,16 @@ pub fn init_term() -> i32 {
         crate::ported::options::opt_state_set("zle", false); // c:783 opts[USEZLE] = 0
     }
 
-    let cterm = match std::ffi::CString::new(term.as_str()) {
-        Ok(c) => c,
-        Err(_) => {
-            TERMFLAGS.fetch_or(TERM_BAD, Ordering::SeqCst);
-            return 0;
-        }
-    };
+    // An embedded NUL can never name a terminfo entry.
+    if term.contains('\0') {
+        TERMFLAGS.fetch_or(TERM_BAD, Ordering::SeqCst);
+        return 0;
+    }
     // c:785-797 — `if (tgetent(termbuf, term) != TGETENT_SUCCESS) {
     //   zerr(...); errflag &= ~ERRFLAG_ERROR; termflags |= TERM_BAD;
     //   return 0; }`. ncurses tgetent accepts NULL (the
     //   TGETENT_ACCEPTS_NULL arm at c:786-787).
-    let ent = unsafe { tgetent(std::ptr::null_mut(), cterm.as_ptr()) };
+    let ent = tgetent(&term);
     if ent != 1 {
         // c:791 — `if (interact) zerr("can't find terminal definition
         // for %s", term);` — interact gate keeps -fc scripts quiet.
@@ -756,33 +753,25 @@ pub fn init_term() -> i32 {
         let mut l = tclen.lock().unwrap();
         // c:798 `char tbuf[1024]` — element type must be c_char: it is
         // i8 on macOS/x86_64-linux but u8 on aarch64-linux.
-        let mut tbuf = [0 as libc::c_char; 1024];
         for t0 in 0..TC_COUNT as usize {
-            let cap = std::ffi::CString::new(tccapnams[t0]).unwrap();
-            let mut pp: *mut libc::c_char = tbuf.as_mut_ptr(); // c:804 `pp = tbuf;`
-            let got = unsafe { tgetstr(cap.as_ptr(), &mut pp) }; // c:808
-            if got.is_null() || got as isize == -1 {
-                // c:809 — `tcstr[t0] = NULL, tclen[t0] = 0;`
-                s[t0] = String::new();
-                l[t0] = 0;
-            } else {
+            match tgetstr(tccapnams[t0]) {
                 // c:811-813 — dup the cap string + record length.
-                let bytes = unsafe { std::ffi::CStr::from_ptr(got) }.to_bytes();
-                s[t0] = String::from_utf8_lossy(bytes).into_owned();
-                l[t0] = bytes.len() as i32;
+                Some(bytes) => {
+                    s[t0] = String::from_utf8_lossy(&bytes).into_owned();
+                    l[t0] = bytes.len() as i32;
+                }
+                // c:809 — `tcstr[t0] = NULL, tclen[t0] = 0;`
+                None => {
+                    s[t0] = String::new();
+                    l[t0] = 0;
+                }
             }
         }
     }
 
     // c:817-818 — automargin / newline-glitch flags.
-    let flag = |name: &str| -> i32 {
-        let c = std::ffi::CString::new(name).unwrap();
-        unsafe { tgetflag(c.as_ptr()) }
-    };
-    let num = |name: &str| -> i32 {
-        let c = std::ffi::CString::new(name).unwrap();
-        unsafe { tgetnum(c.as_ptr()) }
-    };
+    let flag = tgetflag;
+    let num = tgetnum;
     hasam.store(flag("am"), Ordering::SeqCst); // c:818 `hasam = tgetflag("am");`
     hasxn.store(flag("xn"), Ordering::SeqCst); // c:819 `hasxn = tgetflag("xn");`
     tclines.store(num("li"), Ordering::SeqCst); // c:821 `tclines = tgetnum("li");`

@@ -1802,8 +1802,7 @@ pub fn zcurses_windowsgetfn() -> Vec<String> {
 /// Static-link path: probe the live ncurses COLORS via tigetnum.
 pub fn zcurses_colorsintgetfn() -> i64 {
     // c:1691
-    let cap = std::ffi::CString::new("colors").unwrap();
-    let n = unsafe { libc_tigetnum(cap.as_ptr()) }; // c:1701 COLORS
+    let n = crate::terminfo_db::tigetnum("colors"); // c:1701 COLORS
     if n < 0 {
         0
     } else {
@@ -1816,8 +1815,7 @@ pub fn zcurses_colorsintgetfn() -> i64 {
 /// against the `pairs` capability.
 pub fn zcurses_colorpairsintgetfn() -> i64 {
     // c:1701
-    let cap = std::ffi::CString::new("pairs").unwrap();
-    let n = unsafe { libc_tigetnum(cap.as_ptr()) }; // c:1703 COLOR_PAIRS
+    let n = crate::terminfo_db::tigetnum("pairs"); // c:1703 COLOR_PAIRS
     if n < 0 {
         0
     } else {
@@ -2485,14 +2483,11 @@ fn flags_lock() -> &'static Mutex<u32> {
     zcurses_flags.get_or_init(|| Mutex::new(0))
 }
 
-// The terminal library name comes from `build.rs` (`link_term_lib`,
-// which reproduces `configure.ac:725-771`), not from a `#[link]` here —
-// pinning `ncurses` would add a second terminal library to the link line
-// alongside the probed one.
-extern "C" {
-    #[link_name = "tigetnum"]
-    fn libc_tigetnum(name: *const libc::c_char) -> libc::c_int;
-}
+// `COLORS` / `COLOR_PAIRS` come from `crate::terminfo_db`, which reads the
+// compiled terminfo database directly. This was the whole of `zsh/curses`'s
+// dependency on a C terminal library — the rest of the module is already a
+// pure-Rust port — so removing it left the binary with no `libtinfo` /
+// `libncurses` link at all.
 // WARNING: NOT IN CURSES.C — see flags_lock above.
 /// Port of `zccmd_input(const char *nam, char **args)` from `Src/Modules/curses.c:1029`.
 fn mouse_mask_lock() -> &'static Mutex<u32> {
