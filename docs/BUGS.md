@@ -222,6 +222,31 @@ handler.
 Existing `TRAP*` coverage was `--zsh` only (`tests/zshrs_shell.rs:14363`, `:14426`, `:14516`;
 `tests/parity/fuzz_discovered_parity.rs:2852`); the emulation modes had none.
 
+**Correction to the fix shape: the surface is FOUR sites, not two.** The two recorded above are
+the function-DEFINITION paths. Two more register or clear trap state from a `TRAP` prefix, both
+faithful ports of real C:
+
+    src/ported/builtin.rs:8319   `functions -c src TRAPUSR1`  -> settrap(sigidx, ZSIG_FUNC)   c:3437-3447
+    src/ported/builtin.rs:8869   `autoload TRAPUSR1`          -> removetrapnode(sigidx)       c:3728-3735
+
+Both are reachable and both fire in `--bash` today:
+
+    $ zshrs --bash -c 'f(){ echo x; }; functions -c f TRAPUSR1; trap'
+    TRAPUSR1 () { echo x }
+    $ zshrs --bash -c 'autoload TRAPUSR1; trap'
+    TRAPUSR1 () { # undefined ... }
+
+They are, however, only reachable through `functions` and `autoload`, which bash does not have
+at all (`bash: functions: command not found`). So gating them is for consistency; the larger
+divergence on those two lines is that `--bash` exposes zsh-only builtins in the first place,
+which is a separate question and NOT part of this entry.
+
+The pinned test deliberately exercises only the two definition paths, since those are the ones
+reachable through syntax bash actually accepts.
+
+**The line numbers above drift.** Locate the sites by pattern instead:
+`grep -rn 'starts_with("TRAP")' src/ | grep -v '^src/zsh/'`.
+
 ---
 
 ## #1113 — `resolvebuiltin` is ported TWICE, with incompatible signatures — open
