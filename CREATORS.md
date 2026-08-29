@@ -32,69 +32,59 @@ guard upstream identity, not the ideas themselves.
 The zshrs corpus is offered as **prior art for the
 shell-design commons**. Take what helps. Drop what doesn't.
 No permission needed beyond what the MIT license already
-grants. Inventions that future shells should inherit:
+grants.
 
-- The compiled-shell architecture itself (parse to bytecode,
-  cache, JIT hot blocks) instead of re-parsing on every command.
-- **Zsh grammar introspection to stdout:** the first shell to emit,
-  in canonical diffable formats, zsh’s **lexer token stream**,
-  **wordcode (`Eprog`) layout**, and a **structured parser AST**
-  (S-expression) — via the `zshrs` binary (`--dump-tokens`,
-  `--dump-wordcode`, `--dump-ast`) and the matching `zshrs_dump`
-  loadable module (`dumptokens`, `dumpwordcode`). Stock zsh does
-  not ship this trio as a user-facing pipeline.
-- The 90/10 daemon / shell work split — singleton daemon owns
-  every mutation, thin shell clients are stateless and
-  forkable, no shared writers.
-- Recorder-owns-rebuild: an AOP-intercept pass at runtime
-  captures `(kind, name, value, file, line, fn_chain)` for
-  every state-mutating dispatcher, replacing the static-walker
-  approach that every other shell uses for completion / fpath
-  scanning. Means the shell never "rebuilds your house every
-  morning."
-- The `~/.zshrs/`-style single-directory rule for every shell
-  artifact (configs, logs, sockets, sqlite caches, history,
-  rkyv shards) — instead of the
-  `~/.cache` / `~/.config` / `~/.local/share` XDG split that
-  makes shell state unfindable.
-- Session-persistent supervised jobs with bidirectional ptmx
-  attach — `nohup` + `screen` + `pueue` + `disown` collapsed
-  into one builtin that survives the shell's death.
-- Cross-shell pub/sub + named lock primitives (`zsubscribe` /
-  `zpublish` / `zlock`) as builtins routed through a singleton
-  daemon, instead of users gluing `flock` + `socat` + named
-  pipes by hand.
-- Auto-derived OpenAPI 3.1 surface from the daemon op registry,
-  so external tooling (curl, SDK generators, dashboards) can
-  discover every shell-internal verb without hand-maintained
-  schemas.
-- The zsh-extended-history flat text file as the user-facing
-  artifact + a sibling sqlite FTS5 index for fast queries —
-  instead of forcing users to choose between `cat`-able and
-  searchable.
-- **Value lineage as a shell builtin** (`provenance`): the shell
-  records, at bytecode level, how every value it holds was built —
-  origin (command substitution, glob, heredoc, process substitution),
-  then each op that touched it (expand, concat, assign, exec, call),
-  each stamped with file, line, enclosing function and wall clock.
-  Shell functions carry the same chain: definition site, every
-  redefinition, every call at the caller's line, and the removal that
-  ended it. `track_all` arms every parameter and function with no
-  marking step. Existing shells answer "what is this value?"
-  (`typeset -p`) and "what ran?" (`set -x`, `PS4`); none answers "where
-  did these bytes come from, and what happened to them since?" Prior
-  work sits outside the shell — provenance systems wrap commands from
-  the outside, static analyzers reason about scripts without running
-  them, and taint tracking lives in language runtimes rather than the
-  shell that glues them together.
-- The prompt theme absorbed into the shell binary: the first
-  shell to run powerlevel10k as a native in-process engine
-  (`src/extensions/p10k/`) instead of ~13k lines of interpreted
-  zsh + a separate C++ `gitstatusd` daemon — segment semantics
-  ported line-cited from the theme spec, git status computed by
-  a native `.git` reader, the user's `.p10k.zsh` config
-  unchanged. Deletes the problem "instant prompt" was invented
-  to hide.
+The canonical register of what originated here is
+[`docs/INVENTIONS.md`](docs/INVENTIONS.md) — twenty-nine entries,
+each filtered by three tests: it exists in the tree with a name you
+can type, no other shell does the thing at all (with the near misses
+named), and it is an idea another project could inherit rather than a
+file layout or a flag. That document also lists what was cut and why,
+including claims that turned out to be false on a prior-art check.
+
+The short form, grouped as the register groups them:
+
+- **Execution** — bytecode + Cranelift JIT with both the bytecode and
+  the native code persisted across processes; AOT compilation of the
+  completion corpus keyed on compiler identity; JIT tier introspection
+  (`--tiers`) that tells you why a chunk stayed interpreted; the
+  anti-fork architecture (worker pool + 23 in-process coreutils);
+  parallelism as VM-dispatched builtins (`pmap`, `pgrep`, `peach`,
+  `barrier`, `async`, `await`) rather than as a library.
+- **State** — recorder-owns-rebuild, an AOP-intercept pass that
+  captures `(kind, name, value, file, line, fn_chain)` for every
+  state-mutating dispatcher instead of static-walking your dotfiles;
+  the split between configuration that can be cached and configuration
+  that must be replayed; a singleton daemon owning every mutation with
+  stateless forkable clients; session-persistent supervised jobs with
+  bidirectional ptmx attach; cross-shell pub/sub and token-issued
+  named locks as builtins.
+- **Observability** — value lineage at the bytecode level
+  (`provenance`); aspect-oriented advice on any command or function
+  (`intercept` before/after/around with `intercept_proceed`); a shell
+  that can describe itself to a program (`--dump-tokens`,
+  `--dump-wordcode`, `--dump-ast`, `--disasm`, `--dump-reflection`).
+- **Language** — sigil dispatch (`@{}`) to a second language sharing
+  the same VM; a grammar extension with a switch that makes it vanish,
+  so compatibility mode rejects it exactly as `/bin/zsh` does.
+- **Extensibility** — a stable, versioned, independently-published
+  plugin ABI (`znative` + `zmodload -R`); absorbing foreign binaries
+  (`git`, an fzf-compatible finder) into the shell process.
+- **Compatibility** — two axes of emulation fidelity offered as
+  distinct modes (`--sh` vs `--sh --zsh`); a hybrid port with a native
+  spine and interpreted leaves in one mirrored tree; inheriting the
+  configuration vocabulary of the userspace layer you replace, so
+  nobody migrates; absorbing the prompt theme into the binary;
+  wall-clock budgets on per-keystroke rendering.
+- **Verification** — architectural invariants enforced by tests rather
+  than by review; differential fuzzing of a shell against its
+  reference implementation.
+- **Tooling** — a source formatter in the shell binary sharing one
+  engine with the LSP; live compsys completion inside the editor;
+  LSP and DAP in the binary (first in the Bourne lineage — Elvish and
+  Nushell got there first outside it) plus plugin-manager state as IDE
+  library roots; a unit-test framework and worker-pool runner in the
+  binary.
 
 What [MAINTAINERS.md](MAINTAINERS.md) governs is the *official
 zshrs upstream* — protecting it from identity-dissolving

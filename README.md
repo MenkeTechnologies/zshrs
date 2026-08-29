@@ -1137,14 +1137,22 @@ Original-authorship record + portability stance:
 [CREATORS.md](CREATORS.md). Maintainer governance + protected
 invariants: [MAINTAINERS.md](MAINTAINERS.md).
 
-**This is a legacy, not a battle.** The synthesis
-(compiled-shell architecture, 90/10 daemon split,
-recorder-owns-rebuild AOP intercept, single `~/.zshrs/` rule,
-session-persistent supervised jobs with bidirectional ptmx
-attach, cross-shell pub/sub + named-lock builtins, auto-derived
-OpenAPI surface, flat-text history + sibling FTS5 index,
-bytecode-level value lineage as a builtin) is
-prior art for the shell-design commons under the MIT grant.
+**This is a legacy, not a battle.** The canonical register of what
+originated here is [docs/INVENTIONS.md](docs/INVENTIONS.md) —
+twenty-nine entries, each filtered by three tests: it exists in
+the tree with a name you can type, no other shell does the thing
+at all (with the near misses named), and it is an idea another
+project could inherit rather than a file layout or a flag. The
+same document lists what was cut and why, including claims that
+did not survive a prior-art check. The synthesis it covers
+(compiled-shell architecture with both bytecode and native code
+persisted, recorder-owns-rebuild AOP intercept, purity analysis
+splitting cacheable config from replayed config, the singleton
+daemon owning every mutation, session-persistent supervised jobs
+with bidirectional ptmx attach, cross-shell pub/sub + named-lock
+builtins, bytecode-level value lineage, AOP advice as a shell
+primitive, a stable published plugin ABI) is prior art for the
+shell-design commons under the MIT grant.
 Future shells — bash, fish, nushell, elvish, oil, xonsh, murex,
 projects that don't exist yet — should inherit any of it. The
 protected invariants in `MAINTAINERS.md` guard upstream
