@@ -84,6 +84,8 @@ brew install zshrs-all    # umbrella: zshrs + zd + zshrs-recorder + zshrs-daemon
 
 # From crates.io
 cargo install zshrs
+# `zsh` on crates.io is the same source under a second name, published at the
+# same version by the same release. `zshrs` is the canonical one.
 
 # From source — lean build, pure shell, no stryke dependency
 git clone https://github.com/MenkeTechnologies/zshrs

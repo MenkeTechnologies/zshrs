@@ -11,8 +11,10 @@
 #     man .TH lines (man/man1/zshrs.1, zshrsall.1) — REQUIRED so the meta-repo
 #     version-sync gates (docs build-line + man .TH must match Cargo) stay green.
 #
-# Publishes zshrs-daemon then zshrs (dependency order; zshrs depends on the
-# daemon). Crucially it publishes from a CLEAN git worktree of the new tag, NOT
+# Publishes znative, then zshrs-daemon, then zshrs (dependency order; zshrs
+# depends on both), and finally `zsh` — the alias crate: the same source under a
+# second crates.io name. Crucially it publishes from a CLEAN git worktree of the
+# new tag, NOT
 # the live working tree — this repo is edited by many concurrent sessions, so the
 # working tree is usually dirty, and `cargo publish` packages the working
 # directory (which would refuse on a dirty tree, or bake unrelated WIP into the
@@ -131,8 +133,13 @@ git push origin "v$NEW"
 echo "→ publishing from a clean worktree of v$NEW"
 WORKTREE="$(mktemp -d)/zshrs-publish"
 git worktree add --detach "$WORKTREE" "v$NEW" >/dev/null
+# Second worktree of the same tag, for the `zsh` alias crate below. Separate so
+# the two-line rename it needs never contaminates the tarball zshrs ships from.
+WORKTREE_ZSH="$(mktemp -d)/zsh-publish"
+git worktree add --detach "$WORKTREE_ZSH" "v$NEW" >/dev/null
 cleanup() {
     git worktree remove --force "$WORKTREE" 2>/dev/null || true
+    git worktree remove --force "$WORKTREE_ZSH" 2>/dev/null || true
     git worktree prune 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -151,4 +158,44 @@ publish znative
 publish zshrs-daemon
 publish zshrs
 
+# `zsh` — the alias crate. Same source, same version, published under the name
+# the shell answers to (and the name of this crate's [lib]). It is a separate
+# crates.io registration, so cargo has to see a manifest whose [package] name IS
+# `zsh`; there is no rename flag for publish. Two lines change, in a throwaway
+# worktree of the tag:
+#
+#   [package] name                zshrs -> zsh
+#   [workspace.dependencies]      zshrs = { path = "." } gains package = "zsh",
+#                                 without which runtime/'s `zshrs.workspace =
+#                                 true` stops resolving — path "." now provides
+#                                 a crate called `zsh`.
+#
+# --allow-dirty is required by exactly those two edits; the worktree is
+# otherwise an untouched checkout of v$NEW. Publishing zsh LAST means a failure
+# here leaves the three real crates already up, and re-running only needs this
+# step. Skipping it is what let `zsh` fall 19 patches behind before v0.12.44.
+echo "→ publishing the zsh alias crate from a clean worktree of v$NEW"
+python3 - "$WORKTREE_ZSH/Cargo.toml" "$NEW" <<'PYZSH'
+import sys
+
+path, new = sys.argv[1], sys.argv[2]
+src = open(path).read()
+
+pkg_old = '[package]\nname = "zshrs"\n'
+pkg_new = '[package]\nname = "zsh"\n'
+if pkg_old not in src:
+    sys.exit('bp: [package] name = "zshrs" not found at the top of Cargo.toml')
+src = src.replace(pkg_old, pkg_new, 1)
+
+dep_old = 'zshrs = { path = ".", version = "%s" }' % new
+dep_new = 'zshrs = { path = ".", version = "%s", package = "zsh" }' % new
+if dep_old not in src:
+    sys.exit("bp: [workspace.dependencies] zshrs line for %s not found" % new)
+src = src.replace(dep_old, dep_new, 1)
+
+open(path, "w").write(src)
+PYZSH
+( cd "$WORKTREE_ZSH" && cargo publish -p zsh --no-verify --allow-dirty )
+
 echo "✓ bumped to v$NEW, pushed, and published to crates.io"
+echo "  znative $NEW · zshrs-daemon $NEW · zshrs $NEW · zsh $NEW"
