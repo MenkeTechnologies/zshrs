@@ -33,6 +33,7 @@ mod builtin_c_parity;
 mod builtin_misc_parity;
 mod builtin_print_parity;
 mod builtins_parity;
+mod builtin_module_surface_parity;
 mod case_parity;
 mod cd_options_parity;
 mod cmdsubst_parity;
