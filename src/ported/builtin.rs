@@ -120,7 +120,7 @@ pub use crate::ported::hashtable_h::{
     BIN_UNSET, BIN_UNSETOPT, BIN_WAIT,
 };
 
-/// Port of `mod_export int ineval;` from `Src/builtin.c:6381`.
+/// Port of `mod_export int ineval;` from `Src/builtin.c:6389`.
 ///
 /// `eval()` sets it at c:6155 — `ineval = !isset(EVALLINENO);` — and
 /// restores the saved value at c:6215. `Src/exec.c` reads it at three
@@ -192,8 +192,8 @@ pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> {
 // fn entries satisfy ABI/name parity for the drift gate.
 // ===========================================================
 
-/// Port of `printbuiltinnode(HashNode hn, int printflags)` from
-/// `Src/builtin.c:174`.
+/// Port of `printbuiltinnode()` from `Src/builtin.c:174`.
+/// C decl: `printbuiltinnode(HashNode hn, int printflags)`
 ///
 /// C body (c:174-194):
 /// ```c
@@ -237,7 +237,8 @@ pub fn printbuiltinnode(
     println!("{}", bn.nam); // c:194
 }
 
-/// Port of `freebuiltinnode(HashNode hn)` from Src/builtin.c:199.
+/// Port of `freebuiltinnode()` from `Src/builtin.c:199`.
+/// C decl: `freebuiltinnode(HashNode hn)`
 /// C: `static void freebuiltinnode(HashNode hn)` — free a builtin-table
 ///   node only when BINF_ADDED is clear (i.e., dynamically added).
 pub fn freebuiltinnode(hn: *mut hashnode) {
@@ -277,11 +278,12 @@ pub fn init_builtins() {
     }
 }
 
-/// Port of `OPT_ALLOC_CHUNK` from `Src/builtin.c:227`. Number of
+/// Port of `OPT_ALLOC_CHUNK` from `Src/builtin.c:223`. Number of
 /// `ops->args[]` slots `new_optarg()` grows the array by when full.
 pub const OPT_ALLOC_CHUNK: i32 = 16; // c:227
 
-/// Port of `new_optarg(Options ops)` from Src/builtin.c:227.
+/// Port of `new_optarg()` from `Src/builtin.c:227`.
+/// C decl: `new_optarg(Options ops)`
 /// C: `static int new_optarg(Options ops)` — grow the `ops->args[]`
 ///   array by `OPT_ALLOC_CHUNK` slots when full. Returns 1 on overflow
 ///   (>=63 args), 0 on success.
@@ -323,7 +325,8 @@ bitflags::bitflags! {
     }
 }
 
-/// Port of `execbuiltin(LinkList args, LinkList assigns, Builtin bn)` from Src/builtin.c:250.
+/// Port of `execbuiltin()` from `Src/builtin.c:250`.
+/// C decl: `execbuiltin(LinkList args, LinkList assigns, Builtin bn)`
 ///
 /// C: `int execbuiltin(LinkList args, LinkList assigns, Builtin bn)` —
 ///   execute a builtin handler function after parsing the arguments.
@@ -814,7 +817,8 @@ pub fn execbuiltin(
     handler(&name, &trimmed, &ops, bn_ref.funcid) // c:506
 }
 
-/// Port of `bin_enable(char *name, char **argv, Options ops, int func)` from Src/builtin.c:517.
+/// Port of `bin_enable()` from `Src/builtin.c:517`.
+/// C decl: `bin_enable(char *name, char **argv, Options ops, int func)`
 /// C: `int bin_enable(char *name, char **argv, Options ops, int func)` —
 ///   enable/disable hashtab entries (default builtins; `-f`/`-r`/`-s`/`-a`
 ///   pick alternate tables); `-p` routes to pat_enables (pattern toggles).
@@ -1117,7 +1121,8 @@ pub fn bin_enable(
     returnval // c:595
 }
 
-/// Port of `bin_set(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:601.
+/// Port of `bin_set()` from `Src/builtin.c:601`.
+/// C decl: `bin_set(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_set(char *nam, char **args, UNUSED(Options ops),
 ///                 UNUSED(int func))` — set shell options, declare arrays,
 ///   replace positional params, or display variables.
@@ -1546,7 +1551,8 @@ pub fn bin_set(
     0 // c:715
 }
 
-/// Port of `bin_pwd(UNUSED(char *name), UNUSED(char **argv), Options ops, UNUSED(int func))` from Src/builtin.c:728.
+/// Port of `bin_pwd()` from `Src/builtin.c:728`.
+/// C decl: `bin_pwd(UNUSED(char *name), UNUSED(char **argv), Options ops, UNUSED(int func))`
 /// C: `int bin_pwd(UNUSED(char *name), UNUSED(char **argv), Options ops,
 ///     UNUSED(int func))` — `-r`/`-P` or (CHASELINKS && !`-L`) →
 ///   print resolved cwd via zgetcwd; else print the cached `pwd`.
@@ -1598,7 +1604,8 @@ pub fn bin_pwd(
     0 // c:737
 }
 
-/// Port of `bin_dirs(UNUSED(char *name), char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:749.
+/// Port of `bin_dirs()` from `Src/builtin.c:749`.
+/// C decl: `bin_dirs(UNUSED(char *name), char **argv, Options ops, UNUSED(int func))`
 /// C: `int bin_dirs(UNUSED(char *name), char **argv, Options ops, ...)` —
 ///   list dirstack (default / -v / -p / -l) or replace it with argv.
 // dirs: list the directory stack, or replace it with a provided list      // c:749
@@ -1673,8 +1680,9 @@ pub fn bin_dirs(
     0 // c:794
 }
 
-/// Direct port of `void set_pwd_env(void)` from
-/// `Src/builtin.c:800`. Refreshes both `$PWD` and `$OLDPWD` shell
+/// Port of `set_pwd_env()` from `Src/builtin.c:800`.
+/// C decl: `set_pwd_env(void)`
+/// Refreshes both `$PWD` and `$OLDPWD` shell
 /// parameters from the shell-side `pwd`/`oldpwd` globals
 /// (`assignsparam` at c:818-819), then `addenv`s each so child
 /// processes inherit them (c:821-826). C also clears `PM_READONLY`
@@ -1732,7 +1740,8 @@ pub fn set_pwd_env() {
     }
 }
 
-/// Port of `bin_cd(char *nam, char **argv, Options ops, int func)` from Src/builtin.c:840.
+/// Port of `bin_cd()` from `Src/builtin.c:840`.
+/// C decl: `bin_cd(char *nam, char **argv, Options ops, int func)`
 /// C: `int bin_cd(char *nam, char **argv, Options ops, int func)`.
 ///
 /// Body (verbatim translation per c:842-859):
@@ -2138,7 +2147,8 @@ pub fn bin_cd(
     0 // c:859
 }
 
-/// Port of `cd_get_dest(char *nam, char **argv, int hard, int func)` from Src/builtin.c:865.
+/// Port of `cd_get_dest()` from `Src/builtin.c:865`.
+/// C decl: `cd_get_dest(char *nam, char **argv, int hard, int func)`
 /// C: `static LinkNode cd_get_dest(char *nam, char **argv, int hard,
 ///     int func)` — resolve the `cd` argument (`-`, `+N`/`-N`,
 ///   bare → $HOME, two-arg substitution form) to a destination path.
@@ -2316,7 +2326,8 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
     }
 }
 
-/// Port of `cd_do_chdir(char *cnam, char *dest, int hard)` from Src/builtin.c:967.
+/// Port of `cd_do_chdir()` from `Src/builtin.c:967`.
+/// C decl: `cd_do_chdir(char *cnam, char *dest, int hard)`
 /// C: `static char *cd_do_chdir(char *cnam, char *dest, int hard)` —
 ///   resolve `dest` (handling cdpath, cdablevars, leading `~`/`.`),
 ///   chdir there, return the LOGICAL path used (not `getcwd`'d) or
@@ -2430,7 +2441,8 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
     None
 }
 
-/// Port of `cd_able_vars(char *s)` from Src/builtin.c:1088.
+/// Port of `cd_able_vars()` from `Src/builtin.c:1088`.
+/// C decl: `cd_able_vars(char *s)`
 /// C: `char *cd_able_vars(char *s)` — when CDABLEVARS is set, look up
 ///   the leading bareword as a parameter and return its expanded value
 ///   prefixed in front of any trailing `/...`. Returns NULL otherwise.
@@ -2457,7 +2469,8 @@ pub fn cd_able_vars(s: &str) -> Option<String> {
     getsparam(head).map(|val| format!("{}{}", val, tail))
 }
 
-/// Port of `cd_try_chdir(char *pfix, char *dest, int hard)` from `Src/builtin.c:1116`.
+/// Port of `cd_try_chdir()` from `Src/builtin.c:1116`.
+/// C decl: `cd_try_chdir(char *pfix, char *dest, int hard)`
 /// Compose `pfix/dest` (or `pwd/pfix/dest` for relative pfix, or
 /// `pwd/dest` for empty pfix + relative dest), normalise via `fixdir`,
 /// then attempt chdir. Falls back to `dest` alone when the full path
@@ -2510,7 +2523,8 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
     Some(buf) // c:1181 — metafy(buf, ...)
 }
 
-/// Port of `cd_new_pwd(int func, LinkNode dir, int quiet)` from Src/builtin.c:1187.
+/// Port of `cd_new_pwd()` from `Src/builtin.c:1187`.
+/// C decl: `cd_new_pwd(int func, LinkNode dir, int quiet)`
 /// C: `static void cd_new_pwd(int func, LinkNode dir, int quiet)` —
 ///   commit a new PWD: rotate dirstack on `BIN_PUSHD`, pop on
 ///   `BIN_POPD`, then setparam(PWD/OLDPWD), fire chpwd hooks.
@@ -2629,8 +2643,9 @@ pub fn printdirstack() {
     println!(); // c:1287
 }
 
-/// Direct port of `int fixdir(char *src)` from
-/// `Src/builtin.c:1297`. Lexically canonicalises a path in-place
+/// Port of `fixdir()` from `Src/builtin.c:1297`.
+/// C decl: `fixdir(char *src)`
+/// Lexically canonicalises a path in-place
 /// (no symlink follow): collapses `//`, drops `./` segments, and
 /// removes `..` along with their preceding segment. Returns 1 if
 /// fully canonicalised, 0 if a `..` could not be popped (e.g. at
@@ -2686,7 +2701,8 @@ pub fn fixdir(src: &str) -> String {
     }
 }
 
-/// Port of `printqt(char *str)` from Src/builtin.c:1399.
+/// Port of `printqt()` from `Src/builtin.c:1399`.
+/// C decl: `printqt(char *str)`
 /// C: `mod_export void printqt(char *str)` — emit `str`, escaping any
 /// `'` as `'\''` (or `''` if RCQUOTES is set).
 pub fn printqt(str: &str) {
@@ -2703,7 +2719,8 @@ pub fn printqt(str: &str) {
     }
 }
 
-/// Port of `printif(char *str, int c)` from Src/builtin.c:1411.
+/// Port of `printif()` from `Src/builtin.c:1411`.
+/// C decl: `printif(char *str, int c)`
 /// C: `mod_export void printif(char *str, int c)` — `printf(" -%c ", c)`
 /// then `quotedzputs(str, stdout)`, only when `str != NULL`.
 pub fn printif(str: Option<&str>, c: u8) {
@@ -2717,7 +2734,8 @@ pub fn printif(str: Option<&str>, c: u8) {
     }
 }
 
-/// Port of `bin_fc(char *nam, char **argv, Options ops, int func)` from Src/builtin.c:1426.
+/// Port of `bin_fc()` from `Src/builtin.c:1426`.
+/// C decl: `bin_fc(char *nam, char **argv, Options ops, int func)`
 /// C: `int bin_fc(char *nam, char **argv, Options ops, int func)`.
 ///
 /// History/edit/list dispatcher: `-p` push hist stack, `-P` pop,
@@ -3163,8 +3181,9 @@ pub fn bin_fc(
 /// Port of `fcgetcomm(char *s)` from Src/builtin.c:1683.
 /// C: `static zlong fcgetcomm(char *s)` — match `s` against history
 ///   numbers (signed) or prefix; returns the matched event number.
-/// Direct port of `zlong fcgetcomm(char *s)` from
-/// `Src/builtin.c:1683`. Resolve an `fc` command-line argument to a
+/// Port of `fcgetcomm()` from `Src/builtin.c:1683`.
+/// C decl: `fcgetcomm(char *s)`
+/// Resolve an `fc` command-line argument to a
 /// history event number. Numeric args become event numbers (negative
 /// numbers count back from current via `addhistnum`); non-numeric
 /// args go through `hcomsearch` (history prefix search). Emits
@@ -3202,7 +3221,8 @@ pub fn fcgetcomm(s: &str) -> i64 {
     }
 }
 
-/// Port of `fcsubs(char **sp, struct asgment *sub)` from Src/builtin.c:1708.
+/// Port of `fcsubs()` from `Src/builtin.c:1708`.
+/// C decl: `fcsubs(char **sp, struct asgment *sub)`
 /// C: `static int fcsubs(char **sp, struct asgment *sub)` — apply the
 ///   linked-list of `old=new` substitutions to `*sp` in place; return
 ///   the count of substitutions made.
@@ -3237,6 +3257,7 @@ pub fn fcsubs(sp: &mut String, sub: &[(String, String)]) -> i32 {
 /// `is_command` caller in `bin_fc` collects to a heredoc string).
 /// Was a 5-line stub returning 0; now actually emits the range.
 #[allow(clippy::too_many_arguments)]
+/// Port of `fclist()` from `Src/builtin.c:1750`. — C decl `fclist(FILE *f, Options ops, zlong first, zlong last,`
 pub fn fclist(
     out: &mut dyn Write, // c:1750
     ops: &options,
@@ -3414,7 +3435,8 @@ pub fn fclist(
     0 // c:1880
 }
 
-/// Port of `fcedit(char *ename, char *fn)` from Src/builtin.c:1885.
+/// Port of `fcedit()` from `Src/builtin.c:1885`.
+/// C decl: `fcedit(char *ename, char *fn)`
 /// C: `static int fcedit(char *ename, char *fn)` — invoke `$ename fn`,
 ///   returning the editor's exit status (0 if `ename == "-"`).
 /// WARNING: param names don't match C — Rust=(ename, fn_) vs C=(ename, fn)
@@ -3438,7 +3460,8 @@ pub fn fcedit(ename: &str, fn_: &str) -> i32 {
     i32::from(LASTVAL.load(Relaxed) == 0) // c:1896 `return !lastval`
 }
 
-/// Port of `getasg(char ***argvp, LinkList assigns)` from Src/builtin.c:1908.
+/// Port of `getasg()` from `Src/builtin.c:1908`.
+/// C decl: `getasg(char ***argvp, LinkList assigns)`
 /// C: `static Asgment getasg(char ***argvp, LinkList assigns)` —
 ///   parse one assignment-form arg (`name=value` / `name`) from
 ///   `*argvp`. Returns NULL when exhausted.
@@ -3504,7 +3527,8 @@ pub fn getasg(
     }
 }
 
-/// Port of `typeset_setbase(const char *name, Param pm, Options ops, int on, int always)` from Src/builtin.c:1961.
+/// Port of `typeset_setbase()` from `Src/builtin.c:1961`.
+/// C decl: `typeset_setbase(const char *name, Param pm, Options ops, int on, int always)`
 /// C: `static int typeset_setbase(const char *name, Param pm, Options ops,
 ///     int on, int always)` — install numeric base on `pm`. For
 ///     `-i ARG`/`-E ARG`/`-F ARG`, parse ARG as base and validate
@@ -3575,7 +3599,8 @@ pub fn typeset_setbase(
     0 // c:1997
 }
 
-/// Port of `typeset_setwidth(const char * name, Param pm, Options ops, int on, int always)` from Src/builtin.c:1997.
+/// Port of `typeset_setwidth()` from `Src/builtin.c:1997`.
+/// C decl: `typeset_setwidth(const char * name, Param pm, Options ops, int on, int always)`
 /// C: `static int typeset_setwidth(const char *name, Param pm, Options ops,
 ///     int on, int always)` — install padding width via `-L/-R/-Z ARG`.
 /// WARNING: param names don't match C — Rust=(name, pm, on, always) vs C=(name, pm, ops, on, always)
@@ -3629,7 +3654,8 @@ pub fn typeset_setwidth(
     0 // c:2025
 }
 
-/// Port of `typeset_single(char *cname, char *pname, Param pm, int func, int on, int off, int roff, Asgment asg, Param altpm, Options ops, int joinchar)` from Src/builtin.c:2025.
+/// Port of `typeset_single()` from `Src/builtin.c:2025`.
+/// C decl: `typeset_single(char *cname, char *pname, Param pm, int func,`
 /// Port of `static Param typeset_single(char *cname, char *pname,
 /// Param pm, int func, int on, int off, int roff, Asgment asg,
 /// Param altpm, Options ops, int joinchar)` from `Src/builtin.c:2025`.
@@ -3922,7 +3948,8 @@ thread_local! {
     static TYPESET_M_APPLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Port of `bin_typeset(char *name, char **argv, LinkList assigns, Options ops, int func)` from Src/builtin.c:2655.
+/// Port of `bin_typeset()` from `Src/builtin.c:2655`.
+/// C decl: `bin_typeset(char *name, char **argv, LinkList assigns, Options ops, int func)`
 /// C: `int bin_typeset(char *name, char **argv, LinkList assigns,
 ///     Options ops, int func)`.
 ///
@@ -7793,7 +7820,8 @@ pub fn bin_typeset(
     returnval
 }
 
-/// Port of `eval_autoload(Shfunc shf, char *name, Options ops, int func)` from Src/builtin.c:3166.
+/// Port of `eval_autoload()` from `Src/builtin.c:3166`.
+/// C decl: `eval_autoload(Shfunc shf, char *name, Options ops, int func)`
 /// C: `int eval_autoload(Shfunc shf, char *name, Options ops, int func)`.
 /// PM_UNDEFINED guard; -X spawns the eval-trampoline, otherwise loadautofn
 /// resolves and installs the body.
@@ -7865,7 +7893,8 @@ pub fn eval_autoload(
     loadautofn(shf, mode, 1, _d as i32) // c:3184
 }
 
-/// Port of `check_autoload(Shfunc shf, char *name, Options ops, int func)` from Src/builtin.c:3193.
+/// Port of `check_autoload()` from `Src/builtin.c:3193`.
+/// C decl: `check_autoload(Shfunc shf, char *name, Options ops, int func)`
 /// C: `static int check_autoload(Shfunc shf, char *name, Options ops,
 ///     int func)` — `OPT_ISSET(ops,'X')` ? eval_autoload : 0.
 /// WARNING: param names don't match C — Rust=(shf, name, func) vs C=(shf, name, ops, func)
@@ -7946,7 +7975,8 @@ pub fn check_autoload(
     0 // c:3243
 }
 
-/// Port of `listusermathfunc(MathFunc p)` from Src/builtin.c:3243.
+/// Port of `listusermathfunc()` from `Src/builtin.c:3243`.
+/// C decl: `listusermathfunc(MathFunc p)`
 /// C: `static void listusermathfunc(MathFunc p)` — emit a `functions -M`
 ///   row for one user math function with arg counts and module name.
 pub fn listusermathfunc(p: &mathfunc) {
@@ -7989,7 +8019,8 @@ pub fn listusermathfunc(p: &mathfunc) {
     println!(); // c:3277
 }
 
-/// Port of `add_autoload_function(Shfunc shf, char *funcname)` from Src/builtin.c:3278.
+/// Port of `add_autoload_function()` from `Src/builtin.c:3278`.
+/// C decl: `add_autoload_function(Shfunc shf, char *funcname)`
 /// C: `static void add_autoload_function(Shfunc shf, char *funcname)` —
 ///   two branches:
 ///     (a) funcname is absolute & shf is PM_UNDEFINED → split `/dir/nam`,
@@ -8119,7 +8150,8 @@ pub fn add_autoload_function(
     }
 }
 
-/// Port of `bin_functions(char *name, char **argv, Options ops, int func)` from Src/builtin.c:3342.
+/// Port of `bin_functions()` from `Src/builtin.c:3342`.
+/// C decl: `bin_functions(char *name, char **argv, Options ops, int func)`
 /// C: `int bin_functions(char *name, char **argv, Options ops, int func)`.
 /// This is the canonical free-function port matching the C signature so
 /// the dispatcher can call it. The earlier `ShellExecutor::bin_functions`
@@ -8937,7 +8969,8 @@ pub fn bin_functions(
     returnval
 }
 
-/// Port of `mkautofn(Shfunc shf)` from Src/builtin.c:3790.
+/// Port of `mkautofn()` from `Src/builtin.c:3790`.
+/// C decl: `mkautofn(Shfunc shf)`
 /// C: `Eprog mkautofn(Shfunc shf)` — synthesize a 5-wordcode body that
 ///   re-fires the autoload mechanism when first called.
 pub fn mkautofn(shf: *mut shfunc) -> *mut eprog {
@@ -8966,7 +8999,8 @@ pub fn mkautofn(shf: *mut shfunc) -> *mut eprog {
     Box::into_raw(p)
 }
 
-/// Port of `bin_unset(char *name, char **argv, Options ops, int func)` from Src/builtin.c:3818.
+/// Port of `bin_unset()` from `Src/builtin.c:3818`.
+/// C decl: `bin_unset(char *name, char **argv, Options ops, int func)`
 /// C: `int bin_unset(char *name, char **argv, Options ops, int func)` —
 ///   `-f` delegates to `bin_unhash`; `-m` glob deletes matching params;
 ///   default literal-name unset with subscript handling.
@@ -9620,7 +9654,8 @@ pub fn bin_unset(
     returnval // c:3915
 }
 
-/// Port of `fetchcmdnamnode(HashNode hn, UNUSED(int printflags))` from Src/builtin.c:3967.
+/// Port of `fetchcmdnamnode()` from `Src/builtin.c:3967`.
+/// C decl: `fetchcmdnamnode(HashNode hn, UNUSED(int printflags))`
 /// C: `static void fetchcmdnamnode(HashNode hn, UNUSED(int printflags))` →
 ///   `addlinknode(matchednodes, cn->node.nam);`
 /// C body (2 lines):
@@ -9638,7 +9673,8 @@ pub fn fetchcmdnamnode(
     } // c:3971
 }
 
-/// Port of `bin_whence(char *nam, char **argv, Options ops, int func)` from Src/builtin.c:3975.
+/// Port of `bin_whence()` from `Src/builtin.c:3975`.
+/// C decl: `bin_whence(char *nam, char **argv, Options ops, int func)`
 /// C: `int bin_whence(char *nam, char **argv, Options ops, int func)`.
 ///
 /// `whence`/`type`/`which`/`where`/`command` dispatcher. `-c` csh,
@@ -10376,7 +10412,8 @@ pub fn bin_whence(
     returnval | (informed == 0) as i32 // c:4209
 }
 
-/// Port of `bin_hash(char *name, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:4234.
+/// Port of `bin_hash()` from `Src/builtin.c:4234`.
+/// C decl: `bin_hash(char *name, char **argv, Options ops, UNUSED(int func))`
 /// C: `int bin_hash(char *name, char **argv, Options ops, ...)` —
 ///   manage `cmdnamtab` (default) or `nameddirtab` (`-d`); `-r` empties,
 ///   `-f` fills, `-L` sets PRINT_LIST, `-m` is a glob.
@@ -10663,7 +10700,8 @@ pub fn bin_hash(
     returnval // c:4346
 }
 
-/// Port of `bin_unhash(char *name, char **argv, Options ops, int func)` from Src/builtin.c:4346.
+/// Port of `bin_unhash()` from `Src/builtin.c:4346`.
+/// C decl: `bin_unhash(char *name, char **argv, Options ops, int func)`
 /// C: `int bin_unhash(char *name, char **argv, Options ops, int func)` —
 ///   remove entries from cmdnamtab/aliastab/sufaliastab/nameddirtab/
 ///   shfunctab. `-a` clears all, `-m` is a glob.
@@ -10900,7 +10938,8 @@ pub fn bin_unhash(
     returnval // c:4450
 }
 
-/// Port of `bin_alias(char *name, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:4450.
+/// Port of `bin_alias()` from `Src/builtin.c:4450`.
+/// C decl: `bin_alias(char *name, char **argv, Options ops, UNUSED(int func))`
 /// C: `int bin_alias(char *name, char **argv, Options ops, ...)` — list,
 ///   define, glob-list, or display aliases. `-r`/`-g`/`-s` filter type;
 ///   `-L` prints definitions; `-m` treats args as patterns.
@@ -11145,7 +11184,8 @@ pub fn bin_alias(
     returnval // c:4542
 }
 
-/// Port of `bin_true(UNUSED(char *name), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:4550.
+/// Port of `bin_true()` from `Src/builtin.c:4550`.
+/// C decl: `bin_true(UNUSED(char *name), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_true(UNUSED(char *name), UNUSED(char **argv),
 ///                  UNUSED(Options ops), UNUSED(int func))` → `return 0;`
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
@@ -11158,7 +11198,8 @@ pub fn bin_true(
     0 // c:4559
 }
 
-/// Port of `bin_false(UNUSED(char *name), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:4559.
+/// Port of `bin_false()` from `Src/builtin.c:4559`.
+/// C decl: `bin_false(UNUSED(char *name), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_false(UNUSED(char *name), UNUSED(char **argv),
 ///                   UNUSED(Options ops), UNUSED(int func))` → `return 1;`
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
@@ -11171,7 +11212,8 @@ pub fn bin_false(
     1 // c:4562
 }
 
-/// Port of `bin_print(char *name, char **args, Options ops, int func)` from Src/builtin.c:4587.
+/// Port of `bin_print()` from `Src/builtin.c:4587`.
+/// C decl: `bin_print(char *name, char **args, Options ops, int func)`
 /// C: `int bin_print(char *name, char **args, Options ops, int func)`.
 ///
 /// The C body is ~1000 lines: `print` / `echo` / `printf` / `pushln`
@@ -12130,7 +12172,8 @@ pub fn bin_print(
     0
 }
 
-/// Port of `bin_shift(char *name, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:5593.
+/// Port of `bin_shift()` from `Src/builtin.c:5593`.
+/// C decl: `bin_shift(char *name, char **argv, Options ops, UNUSED(int func))`
 /// C: `int bin_shift(char *name, char **argv, Options ops, UNUSED(int func))`
 /// — shift positional params (or named arrays) by `num` positions; `-p`
 /// pops from the right end.
@@ -12252,7 +12295,8 @@ pub fn bin_shift(
     ret // c:5659
 }
 
-/// Port of `bin_getopts(UNUSED(char *name), char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:5672.
+/// Port of `bin_getopts()` from `Src/builtin.c:5672`.
+/// C decl: `bin_getopts(UNUSED(char *name), char **argv, UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_getopts(UNUSED(char *name), char **argv, UNUSED(Options ops),
 ///                     UNUSED(int func))`.
 ///
@@ -12530,7 +12574,8 @@ pub fn bin_getopts(
     0 // c:5790
 }
 
-/// Port of `bin_break(char *name, char **argv, UNUSED(Options ops), int func)` from Src/builtin.c:5809.
+/// Port of `bin_break()` from `Src/builtin.c:5809`.
+/// C decl: `bin_break(char *name, char **argv, UNUSED(Options ops), int func)`
 /// C: `int bin_break(char *name, char **argv, UNUSED(Options ops), int func)`
 /// — handles BIN_BREAK / BIN_CONTINUE / BIN_RETURN / BIN_LOGOUT / BIN_EXIT.
 /// WARNING: param names don't match C — Rust=(name, argv, func) vs C=(name, argv, ops, func)
@@ -12866,7 +12911,8 @@ pub fn _realexit() -> ! {
     }
 }
 
-/// Port of `zexit(int val, enum zexit_t from_where)` from Src/builtin.c:5977.
+/// Port of `zexit()` from `Src/builtin.c:5977`.
+/// C decl: `zexit(int val, enum zexit_t from_where)`
 /// C: `void zexit(int val, enum zexit_t from_where)` — record exit
 ///   value, fire EXIT trap unless already exiting, then realexit.
 #[allow(unused_variables)]
@@ -13034,7 +13080,8 @@ pub fn zexit(val: i32, from_where: i32) {
     realexit(); // c:6082
 }
 
-/// Port of `bin_dot(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:6060.
+/// Port of `bin_dot()` from `Src/builtin.c:6060`.
+/// C decl: `bin_dot(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_dot(char *name, char **argv, ...)` — `.` / `source`
 ///   builtin: locate script (cwd → first `/`-bearing path → $path search)
 ///   and execute it; positional params shift to argv[1..].
@@ -13483,7 +13530,8 @@ pub fn bin_dot(
     result
 }
 
-/// Port of `static int eval(char **argv)` from `Src/builtin.c:6151`.
+/// Port of `eval()` from `Src/builtin.c:6151`.
+/// C decl: `eval(char **argv)`
 pub fn eval(argv: &[String]) -> i32 {
     // c:6151
     // c:6153 — `Eprog prog;` (declared inline below)
@@ -13639,7 +13687,8 @@ pub fn eval(argv: &[String]) -> i32 {
     LASTVAL.load(Relaxed) // c:6225
 }
 
-/// Port of `bin_emulate(char *nam, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:6232.
+/// Port of `bin_emulate()` from `Src/builtin.c:6232`.
+/// C decl: `bin_emulate(char *nam, char **argv, Options ops, UNUSED(int func))`
 /// C: `int bin_emulate(char *nam, char **argv, Options ops, ...)` —
 ///   no-args print current emulation; single-arg switch emulation;
 ///   `-l` list, `-L` set LOCAL*, `-R` reset to defaults.
@@ -14109,7 +14158,8 @@ pub fn bin_emulate(
     0
 }
 
-/// Port of `bin_eval(UNUSED(char *nam), char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:6393.
+/// Port of `bin_eval()` from `Src/builtin.c:6393`.
+/// C decl: `bin_eval(UNUSED(char *nam), char **argv, UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_eval(UNUSED args)` → `return eval(argv);`
 /// WARNING: param names don't match C — Rust=(_name, argv, _func) vs C=(nam, argv, ops, func)
 pub fn bin_eval(
@@ -14150,7 +14200,8 @@ pub fn bin_eval(
     eval(argv) // c:6396
 }
 
-/// Port of `bin_read(char *name, char **args, Options ops, UNUSED(int func))` from Src/builtin.c:6412.
+/// Port of `bin_read()` from `Src/builtin.c:6412`.
+/// C decl: `bin_read(char *name, char **args, Options ops, UNUSED(int func))`
 /// C: `int bin_read(char *name, char **args, Options ops, UNUSED(int func))`.
 ///
 /// The C body is ~720 lines covering the whole `read` builtin matrix:
@@ -15064,7 +15115,8 @@ pub fn bin_read(
     0
 }
 
-/// Port of `zread(int izle, int *readchar, long izle_timeout)` from Src/builtin.c:7134.
+/// Port of `zread()` from `Src/builtin.c:7134`.
+/// C decl: `zread(int izle, int *readchar, long izle_timeout)`
 /// C: `static int zread(int izle, int *readchar, long izle_timeout)` —
 ///   read one byte from stdin (or via ZLE), respecting timeout.
 pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
@@ -15603,7 +15655,8 @@ impl TestCond {
     }
 }
 
-/// Port of `bin_test(char *name, char **argv, UNUSED(Options ops), int func)` from Src/builtin.c:7231.
+/// Port of `bin_test()` from `Src/builtin.c:7231`.
+/// C decl: `bin_test(char *name, char **argv, UNUSED(Options ops), int func)`
 /// C: `int bin_test(char *name, char **argv, UNUSED(Options ops), int func)`
 /// — the `test` / `[` builtin: when invoked as `[`, requires a trailing
 ///   `]`; XSI-extension paren-stripping for 3/4-arg forms; final
@@ -15742,7 +15795,8 @@ pub fn bin_test(
     ret // c:7310
 }
 
-/// Port of `bin_times(UNUSED(char *name), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:7324.
+/// Port of `bin_times()` from `Src/builtin.c:7324`.
+/// C decl: `bin_times(UNUSED(char *name), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_times(UNUSED args)` — `times(&buf)`; print user/system
 ///   for self then for children, separated by spaces and newlines.
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
@@ -15789,7 +15843,8 @@ pub fn bin_times(
     0 // c:7340
 }
 
-/// Port of `bin_trap(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:7347.
+/// Port of `bin_trap()` from `Src/builtin.c:7347`.
+/// C decl: `bin_trap(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_trap(char *name, char **argv, ...)` — list, clear, or
 ///   set signal traps.
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
@@ -16286,7 +16341,8 @@ pub fn bin_trap(
     trap_install_error
 }
 
-/// Port of `bin_ttyctl(UNUSED(char *name), UNUSED(char **argv), Options ops, UNUSED(int func))` from Src/builtin.c:7454.
+/// Port of `bin_ttyctl()` from `Src/builtin.c:7454`.
+/// C decl: `bin_ttyctl(UNUSED(char *name), UNUSED(char **argv), Options ops, UNUSED(int func))`
 /// C: `int bin_ttyctl(UNUSED args, Options ops, ...)` — `-f` freezes the
 ///   tty, `-u` unfreezes; otherwise emit `"tty is [not ]frozen"`.
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
@@ -16317,7 +16373,8 @@ pub fn bin_ttyctl(
     0 // c:7463
 }
 
-/// Port of `bin_let(UNUSED(char *name), char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:7469.
+/// Port of `bin_let()` from `Src/builtin.c:7469`.
+/// C decl: `bin_let(UNUSED(char *name), char **argv, UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_let(UNUSED(char *name), char **argv, UNUSED(Options ops),
 ///     UNUSED(int func))` — evaluate each arg as a math expression;
 ///   return 1 if the final value is zero (success/false), 0 if non-zero
@@ -16386,7 +16443,8 @@ pub fn bin_let(
     }
 }
 
-/// Port of `bin_umask(char *nam, char **args, Options ops, UNUSED(int func))` from Src/builtin.c:7491.
+/// Port of `bin_umask()` from `Src/builtin.c:7491`.
+/// C decl: `bin_umask(char *nam, char **args, Options ops, UNUSED(int func))`
 /// C: `int bin_umask(char *nam, char **args, Options ops, ...)` —
 ///   set/show file-creation mask. No args → show; numeric arg → octal
 ///   parse; symbolic `[ugoa]+[+-=][rwx]+,...` → walk and apply.
@@ -16557,7 +16615,8 @@ pub fn bin_umask(
     0 // c:7599
 }
 
-/// Port of `bin_notavail(char *nam, UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:7604.
+/// Port of `bin_notavail()` from `Src/builtin.c:7604`.
+/// C decl: `bin_notavail(char *nam, UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))`
 /// C: `int bin_notavail(char *nam, UNUSED(char **argv),
 ///                      UNUSED(Options ops), UNUSED(int func))`
 ///   → `zwarnnam(nam, "not available on this system"); return 1;`
@@ -18518,6 +18577,7 @@ pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32:
 // `execbuiltin` can parse flags and call through to the real builtin.
 /// `BUILTIN` — see implementation.
 #[allow(non_snake_case)]
+/// Port of `BUILTIN()` from `Src/zsh.h:1450`. — C decl `BUILTIN(name, flags, handler, min, max, funcid, optstr, defopts)`
 pub fn BUILTIN(
     name: &str,
     flags: u32,
@@ -18549,6 +18609,7 @@ pub fn BUILTIN(
 static TRAPS_INNER: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 #[allow(non_snake_case)]
+/// Port of `BIN_PREFIX()` from `Src/zsh.h:1452`. — C decl `BIN_PREFIX(name, flags)`
 fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
     BUILTIN(name, flags | BINF_PREFIX, None, 0, 0, 0, None, None)
 }
@@ -18569,6 +18630,15 @@ fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
 /// format-reuse CYCLE began (c:Src/builtin.c `splits`). `printf -v` to
 /// an array assigns one element per cycle, so the caller slices `out`
 /// at these boundaries.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn printf_format(
     fmt: &str,
     args: &[String],
@@ -19336,6 +19406,15 @@ fn printf_format(
 /// Apply a printf-style `%[-flag][width][.prec]s` spec to a string.
 /// Mirrors C `printf "%-10s" str` formatting; the Rust `format!` macro
 /// doesn't accept runtime-parsed specs so we hand-parse.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn format_spec_str(spec: &str, s: &str, honor_zero: bool) -> String {
     // zsh's `%c` and `%q` route through `print_val`, which HONORS the `0` flag
     // (`printf %04c x` → `000x`, `%04q a` → `000a`), so those callers pass
@@ -19381,6 +19460,15 @@ thread_local! {
     static PRINTF_MATH_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn parse_int_arg(s: &str) -> i64 {
     // c:Src/builtin.c bin_print c:5447 — character-constant check
     // operates on the RAW arg, not after trim. `*curarg == '\''`
@@ -19460,6 +19548,15 @@ fn parse_int_arg(s: &str) -> i64 {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn format_spec_int(spec: &str, n: i64) -> String {
     let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
     // c:libc printf %d — when precision is given, `0` flag is
@@ -19562,6 +19659,15 @@ fn format_spec_int(spec: &str, n: i64) -> String {
 
 /// printf %x / %X / %o with full flag support: `#` prefix, zero pad,
 /// width, left-align. Matches libc printf semantics.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn format_spec_radix(spec: &str, n: u64, conv: char) -> String {
     let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
     // c:libc printf — when a precision is given the `0` flag is ignored;
@@ -19621,6 +19727,15 @@ fn format_spec_radix(spec: &str, n: u64, conv: char) -> String {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn format_spec_uint(spec: &str, n: u64) -> String {
     // c:Src/builtin.c — `%u` is rendered via libc `%lu`. Unsigned
     // conversions print NO sign: the `+` and ` ` flags are ignored
@@ -19684,6 +19799,15 @@ fn format_spec_uint(spec: &str, n: u64) -> String {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn format_spec_float(spec: &str, n: f64) -> String {
     let (left_align, zero_pad, width, prec) = parse_flags_width_prec(spec);
     let p = prec.unwrap_or(6);
@@ -19713,6 +19837,15 @@ fn format_spec_float(spec: &str, n: f64) -> String {
 // float-parameter formatter `convfloat` is NOT interchangeable: it re-appends a
 // trailing `.` when %g yields no dot (c:params.c:5748-5749), which printf never
 // does — `sqrt(2)*sqrt(2)` must print `2`, not `2.`.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub(crate) fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
     // c:Src/builtin.c:5495-5499 — `/* force consistent form for Inf/NaN
     // output */ if (isnan(doubleval)) fputs("nan"); else if (isinf(doubleval))
@@ -19860,6 +19993,15 @@ pub(crate) fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
     let (left_align, _zero_pad, width, prec) = parse_flags_width_prec(spec);
     (left_align, width, prec)
@@ -19870,6 +20012,15 @@ fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
 /// Mirrors C `parsefmt()` in Src/builtin.c — the `0` flag is only a
 /// flag when it appears BEFORE any width digit; a `0` inside the
 /// width number (e.g. `%10d`) is just part of the width.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart: this name does not exist anywhere in
+/// `Src/`. C has no printf-spec helper functions at all: `bin_print`
+/// (`Src/builtin.c:4587`) walks the format string inline and hands the
+/// reconstructed spec to libc `fprintf` through the `print_val` macro
+/// (`Src/builtin.c:4571`). Rust has no runtime format-spec engine, so
+/// that walk is split into these hand-written pieces.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn parse_flags_width_prec(spec: &str) -> (bool, bool, usize, Option<usize>) {
     let s = spec.trim_start_matches('%');
     let mut i = 0;
@@ -19911,7 +20062,8 @@ fn parse_flags_width_prec(spec: &str) -> (bool, bool, usize, Option<usize>) {
 pub use crate::ported::exec::findcmd;
 use crate::ported::signals_h::run_queued_signals;
 
-/// Port of `getsigidx(const char *s)` from `Src/jobs.c:3047`.
+/// Port of `getsigidx()` from `Src/jobs.c:3047`.
+/// C decl: `getsigidx(const char *s)`
 /// Local wrapper that delegates to the canonical
 /// `crate::ported::jobs::getsigidx` (matching `Src/jobs.c` location).
 /// Returns -1 for unknown so existing builtin.rs call sites (which
@@ -19925,6 +20077,7 @@ fn getsigidx(name: &str) -> i32 {
 /// the canonical pattern.rs port. Static-link path: the actual
 /// zpc_strings/zpc_disables manipulation lives in
 /// `pat_enables`.
+/// Port of `pat_enables()` from `Src/pattern.c:4171`. — C decl `pat_enables(const char *cmd, char **patp, int enable)`
 fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
     // c:4171
     let patp: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
@@ -19953,6 +20106,14 @@ fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
 // the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /// `traps_table` — see implementation.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart. C keeps trap state in the
+/// `int *sigtrapped` (`Src/signals.c:39`) and `Eprog *siglists`
+/// (`Src/signals.c:53`) arrays and touches them directly; this is the
+/// `OnceLock` accessor for the builtin.rs-side `TRAPS_INNER` mirror
+/// that `bin_trap` reads/writes.
+/// Deliberately left uncited so the port audit keeps reporting it.
 pub fn traps_table() -> &'static Mutex<HashMap<String, String>> {
     TRAPS_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
