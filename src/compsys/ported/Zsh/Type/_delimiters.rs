@@ -97,17 +97,24 @@ mod tests {
 
     #[test]
     fn falls_back_to_default_list_when_style_unset() {
-        // sh:10 — when delimiters style is unset, falls back to
-        //   `: + / - %`. We can't observe the list contents from
-        //   here (it's published into `list` shell array), but we
-        //   can verify the function publishes a non-empty array and
-        //   takes the _wanted path (which returns 1 when no tags
-        //   are registered, matching shell semantics).
+        // sh:10 — when the delimiters style is unset, the default list
+        //   `: + / - %` is published. The list contents are not observable
+        //   from here (they go into the `list` shell array), so this checks
+        //   that the array is published AND that the `_wanted` path returns
+        //   0: post-doshfunc-shift `_wanted` registers its own tag and
+        //   `_all_labels` adds those compiled-in candidates, so 0 is the
+        //   correct return. See Base/Core/_wanted.rs:45-54.
+        //
+        //   This asserted 1 and was passing only because a leaked $PREFIX
+        //   from an earlier test made every candidate fail to match
+        //   (compcore.rs:4334-4373). It FAILS ALONE on a pristine binary,
+        //   which is how the mask was found once the reset below landed.
         let _g = crate::test_util::global_state_lock();
+        crate::test_util::reset_completion_state();
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = _delimiters_impl(&["mytag".to_string()]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
         // Verify the default list was published.
         let list = crate::ported::params::getaparam("list").unwrap_or_default();
         assert_eq!(list, vec![":", "+", "/", "-", "%"]);
