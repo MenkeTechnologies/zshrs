@@ -1,6 +1,6 @@
 //! # `znative` — native plugin SDK for zshrs
 //!
-//! zshrs is the first compiled Unix shell; this crate is what makes it
+//! zshrs is the first JIT-compiled Unix shell; this crate is what makes it
 //! the first compiled shell that **hosts third-party plugins written in
 //! a native compiled language** (Rust) and loaded at runtime — no
 //! recompile of the shell, no zsh script glue. A plugin is an ordinary

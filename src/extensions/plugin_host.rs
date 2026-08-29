@@ -5,7 +5,7 @@
 //! **stable, versioned C ABI** (`znative` crate) so third parties
 //! ship a compiled `cdylib` and load it at runtime with
 //! `zmodload -R <path>` — no zshrs recompile, no zsh script glue. This
-//! is the first compiled Unix shell hosting native compiled-language
+//! is the first JIT-compiled Unix shell hosting native compiled-language
 //! plugins.
 //!
 //! ## Where plugin commands resolve

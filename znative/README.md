@@ -17,7 +17,7 @@
 
 ## `[THE ABI]`
 
-`znative` is the stable, versioned **C ABI** for writing native (Rust) plugins for [zshrs](https://github.com/MenkeTechnologies/zshrs) — the first compiled Unix shell, and the first that hosts compiled-language plugins loaded at runtime with no recompile of the shell. A plugin is an ordinary `cdylib` the shell `dlopen`s via `zmodload -R <path>`. The host/plugin boundary is `#[repr(C)]` structs + `extern "C"` function pointers; nothing about Rust's unstable layout, allocator, or panic ABI crosses it. The matching package manager is the [`znative`](https://github.com/MenkeTechnologies/zshrs/blob/main/docs/ZNATIVE.md) builtin (`znative load owner/repo`).
+`znative` is the stable, versioned **C ABI** for writing native (Rust) plugins for [zshrs](https://github.com/MenkeTechnologies/zshrs) — the first JIT-compiled Unix shell, and the first that hosts compiled-language plugins loaded at runtime with no recompile of the shell. A plugin is an ordinary `cdylib` the shell `dlopen`s via `zmodload -R <path>`. The host/plugin boundary is `#[repr(C)]` structs + `extern "C"` function pointers; nothing about Rust's unstable layout, allocator, or panic ABI crosses it. The matching package manager is the [`znative`](https://github.com/MenkeTechnologies/zshrs/blob/main/docs/ZNATIVE.md) builtin (`znative load owner/repo`).
 
 ### [`zshrs`](https://github.com/MenkeTechnologies/zshrs) &middot; [`docs`](https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PLUGINS.md) &middot; [`crates.io`](https://crates.io/crates/znative)
 

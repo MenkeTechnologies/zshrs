@@ -6,7 +6,7 @@
 //! model (no per-project manifest/lockfile — the global install index at
 //! `$ZSHRS_HOME/pkg/installed.toml` is the single source of truth).
 //!
-//! World's first: a compiled Unix shell whose package manager installs and
+//! World's first: a JIT-compiled Unix shell whose package manager installs and
 //! loads BOTH interpreted (zsh) and compiled (Rust cdylib) plugins from one
 //! content-addressed global store, with SHA-256 integrity pinning.
 //!

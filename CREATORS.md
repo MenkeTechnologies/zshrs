@@ -2,7 +2,7 @@
 
 zshrs was created by [MenkeTechnologies](https://github.com/MenkeTechnologies).
 
-Original synthesis (2025–): the first compiled Unix shell, the
+Original synthesis (2025–): the first JIT-compiled Unix shell, the
 no-fork architecture, the 90/10 work split between
 `zshrs-daemon` and the shell, the AOP-intercept recorder
 (`zshrs-recorder`), the `~/.zshrs/` single-directory rule, the
