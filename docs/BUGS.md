@@ -19,6 +19,95 @@ CI green pending the underlying fix.
 
 ---
 
+## #1110 — `local path=<scalar>` inside a function is rejected — open
+
+**Status:** `port-bug`, found 2026-08-28. Breaks five demos
+(`53_file_tests`, `144_graph_bfs`, `194_url_parser`, `238_dijkstra`, `273_http_parser`).
+
+```
+$ zsh   -fc 'f(){ local path=/a/b; echo "got:$path"; }; f'
+got:/a/b
+$ zshrs --zsh -f -c 'f(){ local path=/a/b; echo "got:$path"; }; f'
+f:local: path: inconsistent type for assignment          (exit 1)
+```
+
+zsh lets a local SCALAR shadow the PATH-tied array: `path` is
+`PM_SPECIAL|PM_TIED`, and `local` creates a fresh parameter at the new `locallevel` rather than
+re-typing the special. zshrs applies the type check against the outer special instead of the new
+local.
+
+Closely related to the already-fixed special-shadow work — `compsys_special_param_local_shadow`
+covers `local -a commands` (a HASHED special shadowed by a local ARRAY) and
+`local_shadow_special_assoc_wipe` covers the assoc case. This is the SCALAR-shadowing-a-tied-
+array leg, which those did not reach. `path` is the common one because scripts use it as an
+ordinary variable name constantly.
+
+---
+
+## #1111 — `${arr[i]:-DEFAULT}` takes the default when the subscript is a BARE name — open
+
+**Status:** `port-bug`, found 2026-08-28 via `358_zsh_funcfile`. General parameter-expansion
+bug, not array-specific.
+
+```
+arr=(x y z); i=1; print "A=[${arr[i]:-DEF}] B=[${arr[i]}] C=[${arr[$i]:-DEF}]"
+
+zsh  : A=[x]   B=[x] C=[x]
+zshrs: A=[DEF] B=[x] C=[x]
+```
+
+Only the `[bare_name]` + `:-` COMBINATION diverges. `${arr[i]}` alone is correct, and
+`${arr[$i]}` with `:-` is correct — so the subscript evaluates fine on its own and the default
+branch alone is fine; it is the two together. The `:-` path evidently tests emptiness before the
+bare-name subscript has been arithmetic-evaluated, so it sees an unset element and substitutes.
+
+Real-world shape: `${funcfiletrace[i]:-(unknown)}` inside a loop over `$funcstack`, which is why
+a stack-trace demo printed `(unknown)` for every frame. Any `${arr[i]:-fallback}` idiom hits it.
+
+**Found only because a demo was repaired.** `358_zsh_funcfile` had a syntax error that aborted
+the script before reaching this line; fixing the syntax turned a hidden bug into a visible one,
+and `zsh_zshrs_demo_equivalence` went 287/0 to 286/1 as a result. That regression in the score is
+this entry.
+
+---
+
+## #1112 — `( … )` does not fork, so `$$`-targeted signals hit the wrong trap — open
+
+**Status:** `port-bug`, found 2026-08-28 while repairing `283_zsh_traps_full`.
+
+`sysparams[pid]` is the REAL pid (`Src/Modules/system.c`), unlike `$$`, which zsh keeps at the
+parent's value inside a subshell. It shows the fork plainly:
+
+```
+zmodload zsh/system
+echo "top: real=${sysparams[pid]}"
+( echo "sub: real=${sysparams[pid]}" )
+```
+```
+zsh  : top: real=54169   sub: real=54171      <- forked
+zshrs: top: real=54173   sub: real=54173      <- NOT forked
+```
+
+**Observable consequence.** A trap installed inside the subshell wrongly handles a signal aimed
+at the parent:
+
+```
+trap 'echo OUTER' USR1
+( trap 'echo "  INNER"' USR1; kill -USR1 $$; sleep 0.1 )
+```
+zsh runs `OUTER` — `$$` is the parent and the child's trap table is a separate process. zshrs
+runs `INNER`. `283_zsh_traps_full` measures this as `usr1_cnt=3 zerr_cnt=3` where zsh gives
+`4` / `2`.
+
+**Scope.** In-process subshells are deliberate in places (`run_command_substitution` documents
+why `$(…)` runs on a sub-VM rather than forking, so a variable it sets is gone afterwards). This
+entry is about the `( … )` COMMAND form, where C forks unconditionally
+(`Src/exec.c`, `execsubsh` → `entersubsh`), and about signal disposition specifically: an
+in-process subshell shares the parent's trap table, so `kill -USR1 $$` cannot reach the
+disposition zsh would use.
+
+---
+
 ## #1109 — an inherited `SIG_IGN` is not honoured in `--bash` mode — open
 
 **Status:** `port-bug`, found 2026-08-28. Surfaced by a new emulation test that passed
