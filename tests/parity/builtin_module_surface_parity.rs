@@ -109,7 +109,19 @@ mod traps {
     /// ERR_RETURN unwinds the function without running the rest of it.
     #[test]
     fn errreturn_aborts_the_function_body() {
-        assert_parity(r#"setopt errreturn; f(){ false; print unreached }; f; print rc=$?"#);
+        // Scope the option to the function and let the caller survive: with a
+        // bare `setopt errreturn` at top level the whole -c script aborts and
+        // prints NOTHING, so the case passed on a matching exit code while
+        // asserting no behaviour at all. Both shapes below print, and together
+        // they pin the two halves — the body stops at the failure, and the
+        // status reaches the caller.
+        assert_parity(
+            r#"f(){ setopt localoptions errreturn; print a; false; print unreached }
+               f; print -r -- "rc=$? tail"
+               setopt errreturn
+               g(){ print c; false; print unreached2 }
+               g || print -r -- "caught=$?""#,
+        );
     }
 }
 
