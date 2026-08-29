@@ -23,16 +23,9 @@ use crate::zsh_h::{isset, INTERACTIVE, TERM_UNKNOWN};
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, OnceLock};
 
-// FFI bindings to the system ncurses terminfo interface. Direct
-// port of the call sites in `zsh/Src/Modules/terminfo.c`.
-//
-// The library NAME is deliberately not pinned here: `build.rs`
-// (`link_term_lib`) reproduces `configure.ac:725-771`'s
-// `ncursesw ncurses tinfow tinfo termcap curses` search and emits a
-// single `cargo:rustc-link-lib` for the whole crate. Re-adding
-// `#[link(name = "ncurses")]` would put a second, different terminal
-// library on the link line and let symbol resolution order decide
-// which terminfo database these calls read.
+// Direct port of the call sites in `zsh/Src/Modules/terminfo.c`. Where the C
+// calls into a terminal library, this calls `crate::terminfo_db` /
+// `crate::tparm` — see the note below.
 // The terminfo entry points are `crate::terminfo_db` and `crate::tparm`,
 // pure-Rust readers for the compiled database and the parameterized-string
 // evaluator. They replaced an `extern "C"` block resolved against ncurses,
