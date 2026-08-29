@@ -12,12 +12,19 @@
 
 This RFC proposes `zshrs` as the **universal default shell** for all *Nix systems — Linux distributions, macOS, FreeBSD, OpenBSD, and embedded Unix — replacing `bash`, `zsh`, and `dash` in their respective roles. 
 
-`zshrs` is the first shell in computing history to:
+`zshrs` is the first shell to:
 - Compile all execution to bytecode (100% compiled, zero tree-walking)
 - JIT-compile hot paths to native x86-64/aarch64 machine code via Cranelift
-- Persist compiled bytecode across invocations (100x warm start speedup)
-- Embed 180+ builtins including 23 coreutils commands (2000-8000x fork avoidance)
-- Execute parallel primitives on the VM without forking to `sh -c`
+- Persist both the bytecode *and* the JIT's native code across invocations
+- Run parallel primitives as VM-dispatched builtins (`pmap`, `pgrep`, `peach`,
+  `barrier`, `async`, `await`) rather than forking to `sh -c`
+- Take command substitution, globbing, completion and autoloading off `fork()`
+  entirely, with 23 coreutils commands executing in-process
+
+Nushell reached bytecode first (IR in 0.96.0, default in 0.98.0) but interprets
+it, rebuilds it per parse, and drops it at exit; zsh's `.zwc` is wordcode for
+zsh's own interpreter. The full register, with the near misses named per entry
+and the rejected claims listed, is [`INVENTIONS.md`](INVENTIONS.md).
 
 The result is **the omega shell** — the final evolution of Unix shells. No successor is needed because all functionality converges into a single, high-performance, statically-linked binary.
 
@@ -159,7 +166,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 
 ### World-first capabilities (verified prior-art survey)
 
-zshrs targets five stacked world-firsts on a single substrate, none of which exist in any active shell as of 2026:
+The canonical register is [`INVENTIONS.md`](INVENTIONS.md): twenty-nine entries, each filtered by three tests — it exists in the tree with a name you can type, no other shell does the thing at all (near misses named), and it is an idea another project could inherit rather than a file layout or a flag. That document also records what was cut, and which earlier claims did not survive a prior-art check. The rows below are the subset this RFC's architecture argument rests on; each states its own prior art rather than asserting a blanket first.
 
 | Capability | Prior art in any shell? |
 |---|---|
