@@ -19,6 +19,61 @@ CI green pending the underlying fix.
 
 ---
 
+## #1120 — a global `TRAPEXIT` function fires an extra time when a function installs a string EXIT trap — open
+
+**Status:** `open`, isolated 2026-08-29.
+
+```zsh
+TRAPEXIT(){ print T }; f(){ trap "print inner" EXIT; print body }; f; print after
+```
+```
+zsh  : body / inner / after / T
+zshrs: body / inner / T / after / T
+```
+
+The global `TRAPEXIT` runs once at function return AND again at shell exit.
+
+**Isolated to exactly one combination.** The other three global/local ×
+function/string pairings all agree, which is what makes this diagnosable:
+
+| global | function-local | result |
+|---|---|---|
+| `TRAPEXIT(){}` | *(none)* | agrees |
+| *(none)* | `trap "…" EXIT` | agrees |
+| `trap "…" EXIT` | `trap "…" EXIT` | agrees |
+| `TRAPEXIT(){}` | `TRAPEXIT(){}` | agrees |
+| `trap "…" EXIT` | `TRAPEXIT(){}` | agrees |
+| **`TRAPEXIT(){}`** | **`trap "…" EXIT`** | **diverges** |
+
+**Mechanism.** c:Src/signals.c:891-903 `endtrapscope` pulls the SIGEXIT trap
+aside at function return and branches on `ZSIG_FUNC`:
+
+```c
+if (exittr & ZSIG_FUNC) {
+    exitfn = removehashnode(shfunctab, "TRAPEXIT");
+} else {
+    exitfn = siglists[SIGEXIT];
+    siglists[SIGEXIT] = NULL;
+}
+```
+
+A function-local `trap "…" EXIT` is a STRING trap, so C takes the `else` arm
+and the global `TRAPEXIT` FUNCTION is never touched until the shell exits.
+zshrs evidently reaches the `ZSIG_FUNC` arm, i.e. the FUNC bit set by the outer
+`TRAPEXIT` definition is surviving the install of the inner string trap.
+
+`settrap` itself looks faithful — c:725 assigns `*slot = ZSIG_TRAPPED` (clearing
+prior bits) before c:738's `*slot |= flags` — so the bit is surviving somewhere
+between that install and the scope pop, most likely in the savetraps
+save/restore around `locallevel`. Instrument `sigtrapped[SIGEXIT]` at
+`endtrapscope` entry to confirm before changing anything.
+
+**Pinned** by `tests/parity/session_regression_parity.rs::exit_trap_scope`,
+whose other five cases assert the agreeing combinations so a fix cannot regress
+them; the divergent one is `#[ignore]`d against this entry.
+
+---
+
 ## #1110 — `local path=<scalar>` inside a function is rejected — FIXED
 
 **Status:** `fixed` 2026-08-28. Found 2026-08-28. Blocked five demos
