@@ -940,6 +940,7 @@ parse_qualifier_string
 parse_uid_gid
 parse_size_spec
 parse_range_spec
+parse_time_spec
 parse_subscript
 parse_pattern
 scan_pattern
