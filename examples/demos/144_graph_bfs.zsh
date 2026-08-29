@@ -123,13 +123,15 @@ echo "── shortest A → Z (no such node) ──"
 shortest_path A Z
 
 # === ztest assertions ===
-# Note: zshrs evaluates `${GRAPH[$u]:+${GRAPH[$u]} }$v` as `$v` alone (the :+
-# branch drops the existing value), so each edge() clobbers rather than appends.
-# Re-invoking bfs/dfs from here hangs (the leading-space split yields an empty
-# nb token that infinite-loops the queue), so we assert only on direct state.
-zassert_eq "${GRAPH[A]}" " C"  "A adjacency = ' C' (clobbered)"
-zassert_eq "${GRAPH[H]}" " F"  "H adjacency = ' F' (clobbered)"
-zassert_eq "${GRAPH[D]}" "B"   "D adjacency = 'B' (first edge for D had no prior)"
+# The note that used to sit here claimed `${GRAPH[$u]:+${GRAPH[$u]} }$v`
+# evaluated to `$v` alone in zshrs, so edge() clobbered instead of appending,
+# and that re-invoking bfs/dfs hung. Both were true and both are FIXED
+# (docs/BUGS.md #1111 — set-ness was derived from an unresolved subscript, so
+# every `:+` on a bare-name subscript took its unset branch). Verified: zsh and
+# zshrs now BOTH give A=[B C], H=[E F], D=[B], and bfs A returns `A B C D`.
+zassert_eq "${GRAPH[A]}" "B C" "A adjacency appends both edges"
+zassert_eq "${GRAPH[H]}" "E F" "H adjacency appends both edges"
+zassert_eq "${GRAPH[D]}" "B"   "D adjacency = 'B' (only one edge into D)"
 zassert_eq "${#GRAPH[@]}" "8"  "8 nodes recorded"
 zassert_ne "${GRAPH[B]+x}" ""  "B node present"
 zassert_ne "${GRAPH[E]+x}" ""  "E node present"
