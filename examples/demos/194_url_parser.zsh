@@ -105,10 +105,13 @@ zassert_eq "$(extract_host ftp://user@ftp.example.org/)"  "ftp.example.org"   "e
 zassert_contains "$(parse_url 'https://example.com/path/to/resource')" "scheme:   https"   "scheme parsed"
 zassert_contains "$(parse_url 'https://example.com/path/to/resource')" "host:     example.com" "host parsed"
 zassert_contains "$(parse_url 'https://example.com:8080/api/v1')" "port:     8080"   "port parsed"
-# Divergence: under this zshrs build the `*\?*` test in parse_url empties
-# the URL before scheme extraction, so `?`-bearing inputs produce empty
-# fields (still a stable, asserted output).
-zassert_contains "$(parse_url 'https://example.com/search?q=hello')" "query:    (none)" "query branch empties URL (divergence)"
+# The "divergence" note that used to sit here claimed the `*\?*` test emptied
+# the URL before scheme extraction, so `?`-bearing inputs produced empty
+# fields. FIXED (docs/BUGS.md #1111). Verified: zsh and zshrs now both parse
+# this URL identically, down to `host: example.com`, `path: /search`,
+# `query: q=hello`, `fragment: (none)`.
+zassert_contains "$(parse_url 'https://example.com/search?q=hello')" "query:    q=hello" "query parsed"
+zassert_contains "$(parse_url 'https://example.com/search?q=hello')" "path:     /search" "path parsed alongside query"
 zassert_contains "$(parse_url 'https://example.com/docs#section-2')" "fragment: section-2" "fragment parsed"
 zassert_contains "$(rebuild_query 'name=alice&age=30')" "name       = alice" "rebuild_query name"
 zassert_contains "$(rebuild_query 'name=alice&age=30')" "age        = 30"    "rebuild_query age"
