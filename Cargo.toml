@@ -114,7 +114,7 @@ zshrs-daemon = { workspace = true, optional = true }
 # See src/extensions/plugin_host.rs and docs/PLUGINS.md.
 libloading = "0.8"
 znative = { workspace = true }
-fusevm = { version = "0.25.0", features = ["jit", "jit-disk-cache", "aot", "ffi", "rkyv-archive"] }
+fusevm = { version = "0.26.0", features = ["jit", "jit-disk-cache", "aot", "ffi", "rkyv-archive"] }
 regex = "1.11"
 # zsh/pcre needs PCRE features the `regex` crate cannot express — zero-width
 # lookahead/lookbehind and backreferences (Src/Modules/pcre.c wraps libpcre2,
