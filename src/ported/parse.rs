@@ -1620,6 +1620,7 @@ fn par_for() -> Option<ZshCommand> {
     }))
 }
 
+/// Port of `par_case()` from `Src/parse.c:1209` — C decl `par_case(int *cmplx)`. AST variant: builds a `ZshCommand::Case` instead of emitting WC_CASE wordcode.
 /// Parse case statement
 /// Parse `case WORD in PATTERN) BODY ;; ... esac`. Direct port
 /// of zsh/Src/parse.c:1209 `par_case`. Each case arm is a
@@ -2065,6 +2066,7 @@ fn par_case() -> Option<ZshCommand> {
     Some(ZshCommand::Case(ZshCase { word, arms }))
 }
 
+/// Port of `par_if()` from `Src/parse.c:1411` — C decl `par_if(int *cmplx)`. AST variant: builds a `ZshIf` instead of emitting WC_IF wordcode.
 /// Parse if statement
 /// Parse `if COND; then BODY; [elif COND; then BODY;]* [else BODY;] fi`, plus
 /// the brace forms `if COND { BODY } [elif COND { BODY }]* [else { BODY }]`.
@@ -2260,6 +2262,7 @@ fn par_if() -> Option<ZshCommand> {
     }))
 }
 
+/// Port of `par_while()` from `Src/parse.c:1521` — C decl `par_while(int *cmplx)`. AST variant; the `until` flag selects C's `tok == UNTIL` branch (c:1524).
 /// Parse while/until loop
 /// Parse `while COND; do BODY; done` and `until COND; do BODY; done`.
 /// Direct port of zsh/Src/parse.c:1521 `par_while`. The
@@ -2303,6 +2306,7 @@ fn par_while(until: bool) -> Option<ZshCommand> {
     })
 }
 
+/// Port of `par_repeat()` from `Src/parse.c:1565` — C decl `par_repeat(int *cmplx)`. AST variant.
 /// Parse repeat loop
 /// Parse `repeat N; do BODY; done`. Direct port of
 /// zsh/Src/parse.c:1565 `par_repeat`. The C source supports
@@ -2347,6 +2351,7 @@ fn par_repeat() -> Option<ZshCommand> {
     }))
 }
 
+/// Port of `par_subsh()` from `Src/parse.c:1619` — C decl `par_subsh(int *cmplx, int zsh_construct)`. AST variant, `(...)` arm only.
 /// Parse (...) subshell
 /// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619
 /// `par_subsh`. Body parses as a normal list; the subshell wrapper
@@ -2380,6 +2385,7 @@ fn par_subsh() -> Option<ZshCommand> {
     Some(ZshCommand::Subsh(Box::new(prog)))
 }
 
+/// Port of `par_funcdef()` from `Src/parse.c:1672` — C decl `par_funcdef(int *cmplx)`. AST variant.
 /// Parse function definition
 /// Parse `function NAME { BODY }` or `NAME () { BODY }`. Direct
 /// port of zsh/Src/parse.c:1672 `par_funcdef`. zsh handles
@@ -2738,6 +2744,7 @@ fn par_funcdef() -> Option<ZshCommand> {
     }
 }
 
+/// Port of `par_time()` from `Src/parse.c:1787` — C decl `par_time(void)`. AST variant: builds `ZshCommand::Time` instead of WCB_TIMED.
 /// Parse time command
 /// Parse `time CMD` (POSIX time keyword). Direct port of
 /// zsh/Src/parse.c:1787 `par_time`. The `time` keyword
@@ -2775,6 +2782,7 @@ pub fn par_dinbrack() -> Option<()> {
     Some(())
 }
 
+/// Port of `par_simple()` from `Src/parse.c:1836` — C decl `par_simple(int *cmplx, int nr)`. AST variant.
 /// Parse a simple command
 /// Parse a simple command (assignments + words + redirections).
 /// Direct port of zsh/Src/parse.c:1836 `par_simple` —
@@ -3078,6 +3086,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     }))
 }
 
+/// Port of `par_redir()` from `Src/parse.c:2229` — C decl `par_redir(int *rp, char *idstring)`. AST variant; the body lives in `par_redir_with_id` (C's `idstring` parameter).
 /// Parse a redirection
 /// Parse a redirection (>file, <file, >>file, <<HEREDOC, etc.).
 /// Direct port of zsh/Src/parse.c:2229 `par_redir`. Returns
@@ -3099,8 +3108,8 @@ fn par_redir() -> Option<ZshRedir> {
 /// attached inline during the post-parse `fill_heredoc_bodies` walk.
 /// This method is the AST-side equivalent: writes back to the
 /// matching redir node by index.
-/// Port of `setheredoc(int pc, int type, char *str, char *termstr,
-/// char *munged_termstr)` from `Src/parse.c:2347-2355`. Patches the
+/// Port of `setheredoc()` from `Src/parse.c:2347` — C decl `setheredoc(int pc, int type, char *str, char *termstr, char *munged_termstr)`. AST variant: writes back into the `ZshRedir` node instead of patching `ecbuf`.
+/// Patches the
 /// pending heredoc redir at `pc` with its body string + raw and
 /// munged terminator forms.
 pub fn setheredoc(pc: usize, redir_type: i32, doc: &str, term: &str, munged_term: &str) {
@@ -3134,6 +3143,7 @@ pub fn setheredoc(pc: usize, redir_type: i32, doc: &str, term: &str, munged_term
     });
 }
 
+/// Port of `par_wordlist()` from `Src/parse.c:2362` — C decl `par_wordlist(void)`. AST variant: returns the words instead of `ecstr`-ing them.
 /// Parse a wordlist for `for ... in WORDS;`. Direct port of
 /// zsh/Src/parse.c:2362 `par_wordlist`. Reads STRING tokens
 /// until the next SEPER / SEMI / NEWLIN.
@@ -3149,6 +3159,7 @@ pub fn par_wordlist() -> Vec<String> {
     out
 }
 
+/// Port of `par_nl_wordlist()` from `Src/parse.c:2379` — C decl `par_nl_wordlist(void)`. AST variant.
 /// Parse a newline-separated wordlist. Direct port of
 /// zsh/Src/parse.c:2379 `par_nl_wordlist`. Like
 /// par_wordlist but tolerates leading/trailing newlines.
@@ -3165,6 +3176,7 @@ pub fn par_nl_wordlist() -> Vec<String> {
     out
 }
 
+/// Port of `COND_SEP()` from `Src/parse.c:2405` — C decl `#define COND_SEP() (tok == SEPER && condlex != testlex && *zshlextext != ';')`. C macro.
 /// `COND_SEP()` macro from `Src/parse.c:2405`:
 ///   `(tok == SEPER && condlex != testlex && *zshlextext != ';')`
 /// A newline (but NOT a `;`) between cond terms inside `[[ … ]]` is
@@ -3190,6 +3202,7 @@ pub fn COND_SEP() -> bool {
     }
 }
 
+/// Port of `par_cond()` from `Src/parse.c:2409` — C decl `par_cond(void)`. AST variant. It also inlines `par_dinbrack`'s wrapper (c:1810-1822): `incond`/`incmdpos` set, `[[` skipped, `]]` required.
 /// Parse [[ ... ]] conditional
 /// Parse `[[ EXPR ]]` conditional expression. Direct port of
 /// zsh/Src/parse.c:2409 `par_cond` (and helpers par_cond_1,
@@ -3521,8 +3534,8 @@ thread_local! {
     static COND_LIST_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
-/// Port of `par_cond_triple(char *a, char *b, char *c)` from
-/// `Src/parse.c:2659`. Emits wordcode for the binary forms
+/// Port of `par_cond_triple()` from `Src/parse.c:2659` — C decl `par_cond_triple(char *a, char *b, char *c)`.
+/// Emits wordcode for the binary forms
 /// `[ A op B ]` — `=` / `==` / `!=` / `<` / `>` / `=~` / `-X`.
 ///
 /// C does `(b[0] == Equals || b[0] == '=')` etc., matching BOTH the
@@ -3661,8 +3674,7 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
 /// 2733-2766 `yyerror`. C version fills a per-event error buffer
 /// and sets errflag. zshrs pushes onto errors which the
 /// caller drains via parse()'s Result return.
-/// WARNING: param-name divergence — Rust takes `&str message`, C takes
-/// Port of `static void yyerror(int noerr)` from `Src/parse.c:2733`.
+/// Port of `yyerror()` from `Src/parse.c:2733` — C decl `yyerror(int noerr)`.
 ///
 /// Faithful C body (verbatim):
 /// ```c
@@ -3763,9 +3775,9 @@ pub fn yyerror(noerr: i32) {
 // "free" is automatic on drop.
 // ============================================================
 
-/// Duplicate an Eprog. Direct port of zsh/Src/parse.c:2813
-/// Port of `Eprog dupeprog(Eprog p, int heap)` from
-/// `Src/parse.c:2767`. Deep-copies the wordcode array, string
+/// Duplicate an Eprog. Direct port of zsh/Src/parse.c:2767
+/// Port of `dupeprog()` from `Src/parse.c:2767` — C decl `dupeprog(Eprog p, int heap)`.
+/// Deep-copies the wordcode array, string
 /// table, and pattern-prog slots. `dummy_eprog` is returned
 /// unchanged. `heap`-allocated copies get `nref = -1` (never
 /// freed); real ones get `nref = 1`.
@@ -3916,8 +3928,8 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
 // src/vm_helper.
 // ============================================================
 
-/// Port of `ecrawstr(Eprog p, Wordcode pc, int *tokflag)` from
-/// `Src/parse.c:2891`. Like `ecgetstr` but reads at the given pc
+/// Port of `ecrawstr()` from `Src/parse.c:2891` — C decl `ecrawstr(Eprog p, Wordcode pc, int *tokflag)`.
+/// Like `ecgetstr` but reads at the given pc
 /// without advancing — caller steps `pc` separately.
 pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
     if pc >= p.prog.len() {
@@ -3955,8 +3967,8 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
     }
 }
 
-/// Port of `ecgetarr(Estate s, int num, int dup, int *tokflag)` from
-/// `Src/parse.c:2917`. Reads `num` strings from wordcode at `s->pc`
+/// Port of `ecgetarr()` from `Src/parse.c:2917` — C decl `ecgetarr(Estate s, int num, int dup, int *tokflag)`.
+/// Reads `num` strings from wordcode at `s->pc`
 /// and OR-folds each entry's token flag into `*tokflag`.
 pub fn ecgetarr(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>) -> Vec<String> {
     let mut ret: Vec<String> = Vec::with_capacity(num); // c:2922
@@ -3974,8 +3986,8 @@ pub fn ecgetarr(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>)
     ret
 }
 
-/// Port of `ecgetlist(Estate s, int num, int dup, int *tokflag)` from
-/// `Src/parse.c:2937`. Same shape as `ecgetarr` but C returns
+/// Port of `ecgetlist()` from `Src/parse.c:2937` — C decl `ecgetlist(Estate s, int num, int dup, int *tokflag)`.
+/// Same shape as `ecgetarr` but C returns
 /// `LinkList`; zshrs uses `Vec<String>` for both.
 pub fn ecgetlist(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>) -> Vec<String> {
     if num == 0 {
@@ -4289,8 +4301,8 @@ pub struct wcfunc {
     pub flags: u32,   // c:3161
 }
 
-/// Port of `dump_find_func(Wordcode h, char *name)` from
-/// `Src/parse.c:3167`. Walks the header table inside a loaded
+/// Port of `dump_find_func()` from `Src/parse.c:3167` — C decl `dump_find_func(Wordcode h, char *name)`.
+/// Walks the header table inside a loaded
 /// dump for a function with the given basename; returns the
 /// matching `fdhead` record (C returns the `FDHead` pointer).
 pub fn dump_find_func(h: &[u32], name: &str) -> Option<fdhead> {
@@ -4318,8 +4330,8 @@ pub fn dump_find_func(h: &[u32], name: &str) -> Option<fdhead> {
     None // c:3175
 }
 
-/// Port of `bin_zcompile(char *nam, char **args, Options ops, UNUSED(int func))`
-/// from `Src/parse.c:3180`. Validates the option set, then dispatches
+/// Port of `bin_zcompile()` from `Src/parse.c:3180` — C decl `bin_zcompile(char *nam, char **args, Options ops, UNUSED(int func))`.
+/// Validates the option set, then dispatches
 /// to one of: `-t` (test/list), `-c`/`-a` (dump current functions),
 /// or the default (compile source files to `.zwc`).
 pub fn bin_zcompile(
@@ -4438,8 +4450,8 @@ pub fn bin_zcompile(
     }
 }
 
-/// Port of `load_dump_header(char *nam, char *name, int err)` from
-/// `Src/parse.c:3258`. Opens the file, reads + validates the magic
+/// Port of `load_dump_header()` from `Src/parse.c:3258` — C decl `load_dump_header(char *nam, char *name, int err)`.
+/// Opens the file, reads + validates the magic
 /// and version, then slurps the full header table into memory.
 /// Returns the header u32-array on success or None on any failure
 /// (emitting C-shaped warnings when `err != 0`).
@@ -4541,8 +4553,8 @@ pub fn fdswap(p: &mut [u32]) {
     }
 }
 
-/// Port of `write_dump(int dfd, LinkList progs, int map, int hlen, int tlen)`
-/// from `Src/parse.c:3334`. Writes the prelude + header records +
+/// Port of `write_dump()` from `Src/parse.c:3334` — C decl `write_dump(int dfd, LinkList progs, int map, int hlen, int tlen)`.
+/// Writes the prelude + header records +
 /// body wordcode bytes to the dump file descriptor.
 ///
 /// Two passes: first native-byte-order (`FD_MAGIC`), then opposite-
@@ -4783,8 +4795,8 @@ pub fn build_dump(
     0 // c:3482
 }
 
-/// Port of `cur_add_func(char *nam, Shfunc shf, LinkList names, LinkList progs, int *hlen, int *tlen, int what)`
-/// from `Src/parse.c:3489`. Adds a shfunc to the in-build dump
+/// Port of `cur_add_func()` from `Src/parse.c:3489` — C decl `cur_add_func(char *nam, Shfunc shf, LinkList names, LinkList progs, int *hlen, int *tlen, int what)`.
+/// Adds a shfunc to the in-build dump
 /// progs+names lists. Stub: `Eprog` for the function body isn't
 /// yet wired through `shfunc.funcdef` to be serializable here.
 pub fn cur_add_func(
@@ -4828,8 +4840,8 @@ pub fn cur_add_func(
     0
 }
 
-/// Port of `build_cur_dump(char *nam, char *dump, char **names, int match, int map, int what)`
-/// from `Src/parse.c:3536`. Serializes the currently-loaded shell
+/// Port of `build_cur_dump()` from `Src/parse.c:3536` — C decl `build_cur_dump(char *nam, char *dump, char **names, int match, int map, int what)`.
+/// Serializes the currently-loaded shell
 /// functions (`-c` → `what & 1`) and/or autoloadable ones (`-a` →
 /// `what & 2`) into a `.zwc` dump. Shares `write_dump` with the
 /// source-file variant `build_dump`.
@@ -5106,8 +5118,8 @@ pub fn build_cur_dump(
     0 // c:3632
 }
 
-/// Port of `zwcstat(char *filename, struct stat *buf)` from
-/// `Src/parse.c:3656`. Stats a `.zwc` file, falling back to
+/// Port of `zwcstat()` from `Src/parse.c:3656` — C decl `zwcstat(char *filename, struct stat *buf)`.
+/// Stats a `.zwc` file, falling back to
 /// `.zwc.old` if the primary doesn't exist (zsh uses the `.old`
 /// suffix to keep a previous dump readable while a rewrite is in
 /// progress).
@@ -5120,8 +5132,8 @@ pub fn zwcstat(filename: &str) -> Option<fs::Metadata> {
     fs::metadata(&old).ok()
 }
 
-/// Port of `load_dump_file(char *dump, struct stat *sbuf, int other, int len)`
-/// from `Src/parse.c:3675`. Reads (or mmap()'s) a complete `.zwc`
+/// Port of `load_dump_file()` from `Src/parse.c:3675` — C decl `load_dump_file(char *dump, struct stat *sbuf, int other, int len)`.
+/// Reads (or mmap()'s) a complete `.zwc`
 /// file into memory. Returns the u32 buffer or None on I/O error.
 pub fn load_dump_file(
     dump: &str, // c:3675
@@ -5143,8 +5155,8 @@ pub fn load_dump_file(
     )
 }
 
-/// Port of `try_dump_file(char *path, char *name, char *file, int *ksh, int test_only)`
-/// from `Src/parse.c:3746`. Tries to load function `name` from a
+/// Port of `try_dump_file()` from `Src/parse.c:3746` — C decl `try_dump_file(char *path, char *name, char *file, int *ksh, int test_only)`.
+/// Tries to load function `name` from a
 /// `.zwc` digest (`<path>.zwc`) or per-function compiled file
 /// (`<file>.zwc`) when each is newer than its uncompiled source.
 pub fn try_dump_file(
@@ -5268,8 +5280,7 @@ pub fn try_source_file(file: &str) -> Option<eprog> {
     None // c:3825
 }
 
-/// Port of `Eprog check_dump_file(char *file, struct stat *sbuf,
-/// char *name, int *ksh, int test_only)` from `Src/parse.c:3833`.
+/// Port of `check_dump_file()` from `Src/parse.c:3833` — C decl `check_dump_file(char *file, struct stat *sbuf, char *name, int *ksh, int test_only)`.
 /// Walks the `dumps` mmap list looking for `(dev, ino)` matching
 /// `sbuf`; on miss, calls `load_dump_header` to read the .zwc
 /// header. Then `dump_find_func(d, name)` locates the function
@@ -5437,7 +5448,7 @@ pub fn check_dump_file(
     Some((prog, ksh)) // c:3958
 }
 
-/// Port of `incrdumpcount(FuncDump f)` from `Src/parse.c:3970/4021`.
+/// Port of `incrdumpcount()` from `Src/parse.c:3970` — C decl `incrdumpcount(FuncDump f)`. The `#else` (non-USE_MMAP) twin is at c:4021.
 /// `f->count++;` — refcount-up a loaded dump entry. The Rust port
 /// keys lookup by `filename` because Rust can't raw-pointer-compare
 /// funcdump values inside a `Mutex<Vec<...>>`; same observable
@@ -5465,7 +5476,7 @@ pub fn freedump(f: &funcdump) {
     }
 }
 
-/// Port of `decrdumpcount(FuncDump f)` from `Src/parse.c:3988/4026`.
+/// Port of `decrdumpcount()` from `Src/parse.c:3988` — C decl `decrdumpcount(FuncDump f)`. The `#else` (non-USE_MMAP) twin is at c:4026.
 /// `f->count--; if (!f->count) { unlink from dumps; freedump(f); }`.
 pub fn decrdumpcount(f: &funcdump) {
     // c:3988
@@ -5488,7 +5499,8 @@ pub fn decrdumpcount(f: &funcdump) {
     }
 }
 
-/// Port of `closedumps(void)` from `Src/parse.c:4008/4033`. Walks
+/// Port of `closedumps()` from `Src/parse.c:4008` — C decl `closedumps(void)`. The `#else` (non-USE_MMAP) twin is at c:4033.
+/// Walks
 /// `dumps` freeing every entry. Called on shell exit (exec.c:522).
 pub fn closedumps() {
     // c:4008
@@ -5496,8 +5508,8 @@ pub fn closedumps() {
     g.clear(); // c:4011-4014 `while (dumps) { ... freedump(...); ... }`
 }
 
-/// Port of `dump_autoload(char *nam, char *file, int on, Options ops, int func)`
-/// from `Src/parse.c:4042`. Registers every function in a `.zwc`
+/// Port of `dump_autoload()` from `Src/parse.c:4042` — C decl `dump_autoload(char *nam, char *file, int on, Options ops, int func)`.
+/// Registers every function in a `.zwc`
 /// for autoload via `shfunctab`.
 pub fn dump_autoload(
     nam: &str,
@@ -5701,6 +5713,13 @@ pub static DUMMY_EPROG: std::sync::Mutex<eprog> = std::sync::Mutex::new(eprog {
     strs_metafied: false, // native pool — clean UTF-8
 });
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the post-parse here-document back-fill. C never needs it: `setheredoc`
+/// (c:2347) patches the heredoc body straight into `ecbuf` at parse time,
+/// while the zshrs AST records a `heredoc_idx` that this walk resolves
+/// afterwards.
 /// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
 /// pull the body+terminator out of `bodies` and stuff into `heredoc`.
 /// `bodies[i]` corresponds to the i-th heredoc registered by the lexer
@@ -5711,6 +5730,12 @@ fn fill_heredoc_bodies(prog: &mut ZshProgram, bodies: &[HereDocInfo]) {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for one recursion level of the `fill_heredoc_bodies` walk described above
+/// (sublist level). No C counterpart: C patches `ecbuf` in `setheredoc`,
+/// c:2347.
 fn fill_in_sublist(sub: &mut ZshSublist, bodies: &[HereDocInfo]) {
     fill_in_pipe(&mut sub.pipe, bodies);
     if let Some(next) = &mut sub.next {
@@ -5718,6 +5743,12 @@ fn fill_in_sublist(sub: &mut ZshSublist, bodies: &[HereDocInfo]) {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for one recursion level of the `fill_heredoc_bodies` walk described above
+/// (pipeline level). No C counterpart: C patches `ecbuf` in `setheredoc`,
+/// c:2347.
 fn fill_in_pipe(pipe: &mut ZshPipe, bodies: &[HereDocInfo]) {
     fill_in_command(&mut pipe.cmd, bodies);
     if let Some(next) = &mut pipe.next {
@@ -5725,6 +5756,12 @@ fn fill_in_pipe(pipe: &mut ZshPipe, bodies: &[HereDocInfo]) {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for one recursion level of the `fill_heredoc_bodies` walk described above
+/// (command level). No C counterpart: C patches `ecbuf` in `setheredoc`,
+/// c:2347.
 fn fill_in_command(cmd: &mut ZshCommand, bodies: &[HereDocInfo]) {
     match cmd {
         ZshCommand::Simple(s) => {
@@ -5779,6 +5816,12 @@ fn fill_in_command(cmd: &mut ZshCommand, bodies: &[HereDocInfo]) {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the `name()` shape test that C performs inline in `par_simple` at
+/// c:2016-2028 (`if (tok == INOUTPAR)`), where the funcdef decision is made
+/// against the already-emitted wordcode instead of an AST node.
 /// If `list` is a Simple containing one word that ends in the
 /// `<Inpar><Outpar>` token pair (the lexer-port encoding of `()`),
 /// return the bare name. Used by `parse_program_until` to detect
@@ -5853,6 +5896,14 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     Some((names, rest))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for a parse-only entry point that seeds the option defaults the lexer
+/// reads. C gets those from `install_emulation_defaults` (Src/options.c) at
+/// startup and its parser only READS options; `init_parse` (c:509) and
+/// `init_parse_status` (c:491) are the real C initialisers and are ported
+/// separately.
 /// Initialize parser state for a fresh parse of `input`.
 /// Free-fn entry point — resets parser thread_locals and loads input.
 pub fn parse_init(input: &str) {
@@ -5895,6 +5946,7 @@ pub fn parse_init(input: &str) {
     lex_init(input);
 }
 
+/// Port of `ecgetstr` from `Src/parse.c:2855` — C decl `ecgetstr(Estate s, int dup, int *tokflag)`. Rust fn `ecgetstr_wordcode` is the wordcode-pipeline decoder variant; the AST-side `ecgetstr` is at parse.rs:3869.
 /// P9b decoder (wordcode-pipeline variant): direct port of
 /// `ecgetstr(Estate s, int dup, int *tokflag)` from
 /// `Src/parse.c:2855-2890`. Reads a wordcode at `pc`, decodes the
@@ -5937,6 +5989,12 @@ pub fn ecgetstr_wordcode(buf: &[u32], pc: usize) -> (String, usize) {
     (s, next)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the AST-pipeline top-level driver. C's equivalents are `parse_event`
+/// (c:614) and `par_event` (c:635), both ported separately; this entry loops
+/// `parse_program_until` instead of emitting wordcode.
 /// Parse the complete input. Direct port of `parse_event` /
 /// `par_list` from `Src/parse.c:614-720`. On syntax error,
 /// sets `errflag |= ERRFLAG_ERROR` (via `zerr`) and returns the
@@ -5967,6 +6025,13 @@ pub fn parse() -> ZshProgram {
     program
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the wordcode-pipeline top-level driver. C's closest analogue is
+/// `parse_list` (c:697), but that calls `init_parse` + `par_list` +
+/// `bld_eprog`; this entry only drives `par_list_wordcode`, leaving
+/// init/build to the caller.
 /// Wordcode-emission top-level driver. Closest C analog is
 /// `parse_list(void)` at `Src/parse.c:697-712`: init_parse +
 /// zshlex + par_list(&c) + bld_eprog. This entry omits init_parse
@@ -5998,7 +6063,7 @@ pub fn par_event_wordcode() -> usize {
     start
 }
 
-/// Port of `par_list(int *cmplx)` from `Src/parse.c:769-803`.
+/// Port of `par_list` from `Src/parse.c:771` — C decl `par_list(int *cmplx)`. Rust fn `par_list_wordcode` is the wordcode-emitting variant (the AST twin is `par_list` at parse.rs:1008).
 /// `list : { SEPER } [ sublist [ { SEPER | AMPER | AMPERBANG } list ] ]`.
 /// True line-by-line port: takes `cmplx: &mut i32` matching C's
 /// `int *cmplx` out-parameter, uses stack-local `c` per iteration
@@ -6068,7 +6133,7 @@ pub fn par_list_wordcode(cmplx: &mut i32) {
     }
 }
 
-/// Port of `par_list1(int *cmplx)` from `Src/parse.c:806-817`.
+/// Port of `par_list1` from `Src/parse.c:808` — C decl `par_list1(int *cmplx)`. Rust fn `par_list1_wordcode` is the wordcode-emitting variant.
 /// Single-sublist variant used by funcdef bodies and the short
 /// `for`/`while`/`repeat` forms — exactly one sublist with
 /// `Z_SYNC|Z_END`, no chain.
@@ -6088,7 +6153,7 @@ pub fn par_list1_wordcode(cmplx: &mut i32) {
     }
 }
 
-/// Port of `par_save_list(C)` macro from `Src/parse.c:475-480`.
+/// Port of `par_save_list` from `Src/parse.c:475` — C decl `#define par_save_list(C) do { int eu = ecused; par_list(C); if (eu == ecused) ecadd(WCB_END()); } while (0)`. Rust fn `par_save_list_wordcode` is the wordcode-emitting variant of that C macro.
 ///   do { int eu = ecused; par_list(C); if (eu == ecused) ecadd(WCB_END()); } while (0)
 pub fn par_save_list_wordcode(cmplx: &mut i32) {
     let eu = ECUSED.get();
@@ -6098,7 +6163,7 @@ pub fn par_save_list_wordcode(cmplx: &mut i32) {
     }
 }
 
-/// Port of `par_save_list1(C)` macro from `Src/parse.c:481-486`.
+/// Port of `par_save_list1` from `Src/parse.c:481` — C decl `#define par_save_list1(C) do { int eu = ecused; par_list1(C); if (eu == ecused) ecadd(WCB_END()); } while (0)`. Rust fn `par_save_list1_wordcode` is the wordcode-emitting variant of that C macro.
 pub fn par_save_list1_wordcode(cmplx: &mut i32) {
     let eu = ECUSED.get();
     par_list1_wordcode(cmplx);
@@ -6107,7 +6172,7 @@ pub fn par_save_list1_wordcode(cmplx: &mut i32) {
     }
 }
 
-/// Port of `par_sublist(int *cmplx)` from `Src/parse.c:823-865`.
+/// Port of `par_sublist` from `Src/parse.c:825` — C decl `par_sublist(int *cmplx)`. Rust fn `par_sublist_wordcode` is the wordcode-emitting variant.
 /// `sublist : sublist2 [ ( DBAR | DAMPER ) { SEPER } sublist ]`.
 /// Emits a WCB_SUBLIST header, recurses into par_sublist2 for
 /// the !/coproc prefix + pipeline, then chains via DBAR (`||`)
@@ -6178,13 +6243,12 @@ pub fn par_sublist_wordcode(cmplx: &mut i32) -> bool {
     }
 }
 
-/// Port of `par_pline(int *cmplx)` from `Src/parse.c:894-955`.
+/// Port of `par_pline` from `Src/parse.c:894` — C decl `par_pline(int *cmplx)`. Rust fn `par_pipe_wordcode` is the wordcode-emitting variant; named `par_pipe_wordcode` because the AST `par_pline` (parse.rs:1183) already owns the C name.
 /// `pline : cmd [ ( BAR | BARAMP ) { SEPER } pline ]`. Emits a
 /// WCB_PIPE header (mid for chain links, end for the last cmd)
 /// plus the optional BARAMP `2>&1` synthetic redir.
-/// Port of `par_pline(int *cmplx)` from `Src/parse.c:893-947`.
 /// (Named `par_pipe_wordcode` to disambiguate from the AST
-/// `par_pline` at parse.rs:3744 — semantically the same `pline`
+/// `par_pline` at parse.rs:1183 — semantically the same `pline`
 /// production.)
 pub fn par_pipe_wordcode(cmplx: &mut i32) -> bool {
     // c:897 — `zlong line = toklineno;`
@@ -6292,13 +6356,11 @@ pub fn par_pipe_wordcode(cmplx: &mut i32) -> bool {
     }
 }
 
-/// Port of `par_cmd(int *cmplx, int zsh_construct)` from
-/// `Src/parse.c:958-1085`. Parses leading + trailing redirs and
+/// Port of `par_cmd` from `Src/parse.c:958` — C decl `par_cmd(int *cmplx, int zsh_construct)`. Rust fn `par_cmd_wordcode` is the wordcode-emitting variant.
+/// Parses leading + trailing redirs and
 /// dispatches on the current token to the right par_* builder.
 /// Returns false only when no command was emitted (no redirs +
 /// par_simple returned 0).
-/// Port of `par_cmd(int *cmplx, int zsh_construct)` from
-/// `Src/parse.c:957-1077`.
 pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
     // c:960 — `int r, nr = 0;`
     let mut nr: i32 = 0;
@@ -6433,7 +6495,7 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
     true
 }
 
-/// Port of `par_for(int *cmplx)` from `Src/parse.c:1086-1198`.
+/// Port of `par_for` from `Src/parse.c:1087` — C decl `par_for(int *cmplx)`. Rust fn `par_for_wordcode` is the wordcode-emitting variant.
 pub fn par_for_wordcode(cmplx: &mut i32) {
     // c:1089 — `int oecused = ecused, csh = (tok == FOREACH), p, sel = (tok == SELECT);`
     let _oecused = ECUSED.get() as usize;
@@ -6624,7 +6686,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
     });
 }
 
-/// Port of `par_wordlist(void)` from `Src/parse.c:2361-2371` —
+/// Port of `par_wordlist` from `Src/parse.c:2362` — C decl `par_wordlist(void)`. Rust fn `par_wordlist_wordcode` is the wordcode-emitting variant.
 /// emits wordcode form. Returns the number of strings emitted.
 fn par_wordlist_wordcode() -> u32 {
     // c:2364 — `int num = 0;`
@@ -6642,7 +6704,7 @@ fn par_wordlist_wordcode() -> u32 {
     num
 }
 
-/// Port of `par_nl_wordlist(void)` from `Src/parse.c:2378-2390` —
+/// Port of `par_nl_wordlist` from `Src/parse.c:2379` — C decl `par_nl_wordlist(void)`. Rust fn `par_nl_wordlist_wordcode` is the wordcode-emitting variant.
 /// emits wordcode form. Like par_wordlist but tolerates SEPER
 /// between words.
 fn par_nl_wordlist_wordcode() -> u32 {
@@ -6662,6 +6724,12 @@ fn par_nl_wordlist_wordcode() -> u32 {
     num
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the loop-body tail shared by C's `par_for` / `par_while` /
+/// `par_repeat` (the DOLOOP / INBRACE / short-form ladder at c:1170-1194),
+/// factored out because all three Rust wordcode emitters need it.
 /// Body dispatch shared by par_for / par_while / par_repeat.
 /// Direct port of `Src/parse.c:1170-1194`.
 fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
@@ -6702,12 +6770,17 @@ fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for C's SELECT routing: `par_cmd` sends both FOR and SELECT to `par_for`
+/// (c:983-985), so this is a one-line alias onto `par_for_wordcode`.
 /// `select` shares par_for body (c:983-985 routes SELECT to par_for).
 pub fn par_select_wordcode(cmplx: &mut i32) {
     par_for_wordcode(cmplx);
 }
 
-/// Port of `par_case(int *cmplx)` from `Src/parse.c:1208-1400`.
+/// Port of `par_case` from `Src/parse.c:1209` — C decl `par_case(int *cmplx)`. Rust fn `par_case_wordcode` is the wordcode-emitting variant.
 pub fn par_case_wordcode(_cmplx: &mut i32) {
     // c:1211 — `int oecused = ecused, brflag, p, pp, palts, type, nalts;`
     let _oecused = ECUSED.get() as usize;
@@ -7005,7 +7078,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
     });
 }
 
-/// Port of `par_if(int *cmplx)` from `Src/parse.c:1410-1512`.
+/// Port of `par_if` from `Src/parse.c:1411` — C decl `par_if(int *cmplx)`. Rust fn `par_if_wordcode` is the wordcode-emitting variant.
 pub fn par_if_wordcode(cmplx: &mut i32) {
     // c:1413 — `int oecused = ecused, p, pp, type, usebrace = 0;`
     let _oecused = ECUSED.get() as usize;
@@ -7213,7 +7286,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
     });
 }
 
-/// Port of `par_while(int *cmplx)` from `Src/parse.c:1520-1557`.
+/// Port of `par_while` from `Src/parse.c:1521` — C decl `par_while(int *cmplx)`. Rust fn `par_while_wordcode` is the wordcode-emitting variant.
 pub fn par_while_wordcode(cmplx: &mut i32) {
     // c:1523 — `int oecused = ecused, p;`
     let _oecused = ECUSED.get() as usize;
@@ -7292,12 +7365,17 @@ pub fn par_while_wordcode(cmplx: &mut i32) {
     });
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for C's UNTIL routing: `par_cmd` sends both WHILE and UNTIL to `par_while`
+/// (c:990-992), so this is a one-line alias onto `par_while_wordcode`.
 /// `until` shares par_while body — tok==UNTIL flips the type.
 pub fn par_until_wordcode(cmplx: &mut i32) {
     par_while_wordcode(cmplx);
 }
 
-/// Port of `par_repeat(int *cmplx)` from `Src/parse.c:1564-1606`.
+/// Port of `par_repeat` from `Src/parse.c:1565` — C decl `par_repeat(int *cmplx)`. Rust fn `par_repeat_wordcode` is the wordcode-emitting variant.
 pub fn par_repeat_wordcode(cmplx: &mut i32) {
     // c:1567 — `/* ### what to do about inrepeat_ here? */`
     // c:1568 — `int oecused = ecused, p;`
@@ -7372,7 +7450,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
     });
 }
 
-/// Port of `par_funcdef(int *cmplx)` from `Src/parse.c:1672-1779`.
+/// Port of `par_funcdef` from `Src/parse.c:1672` — C decl `par_funcdef(int *cmplx)`. Rust fn `par_funcdef_wordcode` is the wordcode-emitting variant.
 ///
 /// The `function NAME { ... }` form. Emits a WCB_FUNCDEF header
 /// followed by a names-count slot, the names themselves, four
@@ -7599,6 +7677,7 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
 /// the header-walk macros below.
 pub const FDHEAD_WORDS: usize = size_of::<fdhead>() / 4;
 
+/// Port of `par_subsh` from `Src/parse.c:1619` — C decl `par_subsh(int *cmplx, int zsh_construct)`. Rust fn `par_subsh_wordcode` is the wordcode-emitting variant; `zsh_construct` selects the `{...}` (cursh) shape as in C.
 /// `Src/parse.c:1619-1665`. Handles both `(...)` subshell and
 /// `{...}` brace group (cursh) plus optional `always { ... }`
 /// trailing block. C uses a single function with `zsh_construct=1`
@@ -7779,6 +7858,12 @@ pub fn par_cond_wordcode() {
     zshlex();
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the `case DINPAR:` arm of `par_cmd` (c:1031-1035: `ecadd(WCB_ARITH());
+/// ecstr(tokstr); zshlex();`), which C inlines rather than giving it a
+/// function.
 /// Port of the `case DINPAR:` arm of `par_cmd` from
 /// `Src/parse.c:1031-1034`:
 /// ```c
@@ -7800,8 +7885,8 @@ pub fn par_arith_wordcode() {
     zshlex();
 }
 
-/// Port of `par_simple(int *cmplx, int nr)` from
-/// `Src/parse.c:1836-2227`. Emits WC_SIMPLE + word count +
+/// Port of `par_simple` from `Src/parse.c:1836` — C decl `par_simple(int *cmplx, int nr)`. Rust fn `par_simple_wordcode` is the wordcode-emitting variant.
+/// Emits WC_SIMPLE + word count +
 /// interned string offsets. Returns `0` when nothing was emitted,
 /// otherwise `1 + (number of code words consumed by redirections)`.
 /// The full C body handles assignments (ENVSTRING/ENVARRAY),
@@ -8470,8 +8555,8 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
     1 + sr
 }
 
-/// Port of `par_redir(int *rp, char *idstring)` from
-/// `Src/parse.c:2229-2345` — the wordcode-emitting variant that
+/// Port of `par_redir` from `Src/parse.c:2229` — C decl `par_redir(int *rp, char *idstring)`. Rust fn `par_redir_wordcode` is the wordcode-emitting variant (the AST twin is `par_redir` at parse.rs:3096).
+/// the wordcode-emitting variant that
 /// pushes WCB_REDIR + fd + ecstrcode(name) into ECBUF. Distinct
 /// from the AST `par_redir` (parse.rs:3771) which builds a
 /// ZshRedir struct for the AST executor pipeline.
@@ -8722,7 +8807,7 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
     ncodes as i32
 }
 
-/// Port of `IS_READFD(type)` macro from `Src/zsh.h` — determines
+/// Port of `IS_READFD` from `Src/zsh.h:407` — C decl `#define IS_READFD(X) (((X)>=REDIR_READWRITE && (X)<=REDIR_MERGEIN) || (X)==REDIR_INPIPE)`. Rust fn `is_readfd`. DIVERGENCE: the Rust port covers the `REDIR_READWRITE..REDIR_MERGEIN` range but omits C's `|| (X)==REDIR_INPIPE` arm.
 /// default fd (0 for read-ish, 1 for write-ish) when none specified.
 fn is_readfd(t: i32) -> bool {
     matches!(
@@ -8736,6 +8821,12 @@ fn is_readfd(t: i32) -> bool {
     )
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the AST-pipeline whole-program entry. C's counterparts `parse_event`
+/// (c:614) and `par_event` (c:635) are ported separately; this one loops
+/// `parse_program_until` with no end-token sentinel.
 /// Parse a program (list of lists)
 /// Parse a complete program (top-level entry). Calls
 /// parse_program_until with no end-token sentinel. Direct port of
@@ -8747,6 +8838,12 @@ fn parse_program() -> ZshProgram {
     parse_program_until(None, false)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the AST-pipeline event loop modelled on the body of `par_event`
+/// (c:635-695); `single_event` reproduces C's `endtok == ENDINPUT` top-level
+/// mode.
 /// Parse a program until we hit an end token
 /// Parse a program until one of `end_tokens` is seen (or EOF).
 /// Drives par_list in a loop. C equivalent: the body of par_event
@@ -9176,6 +9273,11 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
     ZshProgram { lists }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the ENVSTRING / ENVARRAY assignment arms that C handles inline inside
+/// `par_simple` (c:1900-1998).
 /// Parse an assignment
 /// Parse an assignment word `NAME=value` or `NAME=(arr items)`.
 /// Sub-routine of par_simple. The C source handles assignments
@@ -9359,6 +9461,7 @@ fn parse_assign() -> Option<ZshAssign> {
     })
 }
 
+/// Port of `par_redir` from `Src/parse.c:2229` — C decl `par_redir(int *rp, char *idstring)`. Rust fn `par_redir_with_id` is the AST variant carrying C's `char *idstring` parameter; `par_redir` at parse.rs:3096 is the NULL-idstring wrapper.
 /// AST `par_redir` variant accepting an idstring for the
 /// `{var}>file` brace-FD shape. C signature
 /// `par_redir(int *rp, char *idstring)` (parse.c:2229). The
@@ -9534,6 +9637,11 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
     })
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the `if (tok == DINPAR)` c-style-for branch that C handles inline
+/// inside `par_for` (c:1096-1140).
 /// Parse C-style for loop: for (( init; cond; step ))
 /// Parse the c-style `for ((init; cond; incr)) do BODY done`.
 /// Inner branch of zsh/Src/parse.c:1100-1140 inside par_for.
@@ -9589,6 +9697,11 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     }))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the SELECT arm of `par_for` (c:1087; `par_cmd` routes SELECT there at
+/// c:983-985), which C does not split into its own function.
 /// Parse select loop (same syntax as for)
 /// Parse `select NAME in WORDS; do BODY; done`. Same shape as
 /// `for NAME in WORDS; do ...` but with menu-prompt semantics in
@@ -9606,6 +9719,12 @@ fn parse_select() -> Option<ZshCommand> {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the DOLOOP / INBRACE / short-form loop-body ladder that C repeats
+/// inline in `par_for` (c:1170-1194), `par_while` (c:1536-1553) and
+/// `par_repeat` (c:1586-1602).
 /// Parse loop body (do...done, {...}, or shortloop)
 /// Parse the `do BODY done` body of a for/while/until/select/
 /// repeat loop. Direct equivalent of zsh's parse.c handling
@@ -9710,6 +9829,11 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the anonymous-function shape that C handles inline in `par_simple`
+/// (c:2016-2028) via the INOUTPAR test with no preceding name.
 /// `() { body } arg1 arg2 …` — anonymous function. Defines a fresh
 /// function named `_zshrs_anon_N`, invokes it with the args, and the
 /// body runs with positional params set. Implemented as the desugared
@@ -9852,6 +9976,11 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the `case INBRACE:` arm of `par_cmd` (c:1013-1019), which C inlines as
+/// `cmdpush(CS_CURSH); par_subsh(cmplx, 1); cmdpop();`.
 /// Parse {...} cursh
 /// Parse a current-shell brace block `{ BODY }`. C source
 /// par_cmd at parse.c:958-1085 handles Inbrace → emit WC_CURSH
@@ -9922,6 +10051,11 @@ fn parse_cursh() -> Option<ZshCommand> {
     Some(ZshCommand::Cursh(Box::new(prog)))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the `NAME () { ... }` funcdef shape that C handles inline in
+/// `par_simple` (c:2016-2028) after the INOUTPAR token.
 /// Parse inline function definition: name() { ... }
 /// Parse the inline form `NAME () { BODY }` (POSIX-style funcdef
 /// without the `function` keyword). The name has already been
@@ -10073,6 +10207,11 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the entry alias onto the AST cond ladder; C enters at `par_cond`
+/// (c:2409) directly.
 /// Parse conditional expression
 /// Top of `[[ ]]` cond-expression parsing — entry to recursive
 /// descent (or → and → not → primary). Direct port of zsh's
@@ -10081,6 +10220,7 @@ fn parse_cond_expr() -> Option<ZshCond> {
     parse_cond_or()
 }
 
+/// Port of `par_cond` from `Src/parse.c:2409` — C decl `par_cond(void)`. Rust fn `parse_cond_or` is the AST variant: C's `cond : cond_1 [ DBAR { SEPER } cond ]` production, building `ZshCond::Or`.
 /// Cond-expression `||` level. C: inside par_cond_1 at
 /// parse.c:2434-2475 (the `cond_or` ladder).
 fn parse_cond_or() -> Option<ZshCond> {
@@ -10096,6 +10236,7 @@ fn parse_cond_or() -> Option<ZshCond> {
     }
 }
 
+/// Port of `par_cond_1` from `Src/parse.c:2434` — C decl `par_cond_1(void)`. Rust fn `parse_cond_and` is the AST variant: C's `cond_1 : cond_2 [ DAMPER { SEPER } cond_1 ]` production, building `ZshCond::And`.
 /// Cond-expression `&&` level. C: par_cond_2 at parse.c:2476-2625.
 fn parse_cond_and() -> Option<ZshCond> {
     let left = parse_cond_not()?;
@@ -10116,6 +10257,7 @@ fn parse_cond_and() -> Option<ZshCond> {
 /// so refcount ops can find an entry without raw-pointer compare.
 pub static DUMPS: std::sync::Mutex<Vec<funcdump>> = std::sync::Mutex::new(Vec::new());
 
+/// Port of `par_cond_2` from `Src/parse.c:2476` — C decl `par_cond_2(void)`. Rust fn `parse_cond_not` is the AST variant, BANG and INPAR arms (c:2528-2547); the STRING arms are split out into `parse_cond_primary`.
 /// Cond-expression `!` negation level. C: handled inside
 /// par_cond_2 at parse.c:2476-2625 via the Bang token check.
 fn parse_cond_not() -> Option<ZshCond> {
@@ -10166,6 +10308,12 @@ fn parse_cond_not() -> Option<ZshCond> {
     parse_cond_primary()
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the STRING arms of `par_cond_2` (c:2549-2624) together with the
+/// `par_cond_double` / `par_cond_triple` / `par_cond_multi` arity dispatch
+/// (c:2626/2659/2716), which C keeps inside `par_cond_2`.
 /// Cond-expression primary: unary tests (-f, -d, ...), binary
 /// tests (=, !=, <, >, ==, =~, -eq, -ne, ...), and parenthesized
 /// sub-expressions. Direct port of par_cond_double / par_cond_triple
@@ -10412,6 +10560,11 @@ fn parse_cond_primary() -> Option<ZshCond> {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for C's open-coded `while (COND_SEP()) condlex();` separator skip,
+/// repeated at c:2413, c:2418, c:2437 and c:2442.
 fn skip_cond_separators() {
     // c:2405 `COND_SEP()` — a `;` is NOT a cond separator, so it ends
     // the condition and becomes the token the parse error names
@@ -10423,6 +10576,11 @@ fn skip_cond_separators() {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the `case DINPAR:` arm of `par_cmd` (c:1031-1035) in AST form,
+/// building a `ZshCommand::Arith`.
 /// Parse (( ... )) arithmetic command
 /// Parse `(( EXPR ))` arithmetic command. C source: parse.c:1810-1834
 /// `par_dinbrack` (despite the name; the function actually handles
@@ -10433,6 +10591,11 @@ fn parse_arith() -> Option<ZshCommand> {
     Some(ZshCommand::Arith(expr))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for C's open-coded `while (tok == SEPER) zshlex();` skips at the head of
+/// `par_list` (c:774-775) and friends.
 /// Skip separator tokens
 fn skip_separators() {
     while tok() == SEPER || tok() == NEWLIN {
@@ -10444,21 +10607,24 @@ fn skip_separators() {
 // `Src/parse.c:3125-3152`. C uses raw pointer arithmetic on a
 // `Wordcode` (= `u32 *`); the Rust port takes a slice and indexes.
 
-/// Port of `fdheaderlen(f)` macro (`Src/parse.c:3125`) — header
+/// Port of `fdheaderlen()` from `Src/parse.c:3125` — C decl `#define fdheaderlen(f) (((Wordcode) (f))[FD_PRELEN])`. C macro; the Rust port indexes a `&[u32]` where C does `Wordcode` pointer arithmetic.
+/// ) — header
 /// length in u32 words (read from prelude word `FD_PRELEN`).
 #[inline]
 pub fn fdheaderlen(f: &[u32]) -> u32 {
     f[FD_PRELEN]
 }
 
-/// Port of `fdmagic(f)` macro (`Src/parse.c:3127`) — first prelude
+/// Port of `fdmagic()` from `Src/parse.c:3127` — C decl `#define fdmagic(f) (((Wordcode) (f))[0])`. C macro.
+/// ) — first prelude
 /// word, either `FD_MAGIC` or `FD_OMAGIC`.
 #[inline]
 pub fn fdmagic(f: &[u32]) -> u32 {
     f[0]
 }
 
-/// Port of `fdflags(f)` macro (`Src/parse.c:3131`) — low byte of
+/// Port of `fdflags()` from `Src/parse.c:3131` — C decl `#define fdflags(f) fdbyte(f, 0)`. C macro (via `fdbyte`, c:3129).
+/// ) — low byte of
 /// the packed `pre[1]` word.
 #[inline]
 pub fn fdflags(f: &[u32]) -> u32 {
@@ -10466,14 +10632,16 @@ pub fn fdflags(f: &[u32]) -> u32 {
     f[1] & 0xff
 }
 
-/// Port of `fdsetflags(f, v)` macro (`Src/parse.c:3132`) — write
+/// Port of `fdsetflags()` from `Src/parse.c:3132` — C decl `#define fdsetflags(f,v) fdsetbyte(f, 0, v)`. C macro (via `fdsetbyte`, c:3128).
+/// ) — write
 /// the low byte of `pre[1]`.
 #[inline]
 pub fn fdsetflags(f: &mut [u32], v: u8) {
     f[1] = (f[1] & !0xff) | (v as u32);
 }
 
-/// Port of `fdother(f)` macro (`Src/parse.c:3133`) — high 24 bits
+/// Port of `fdother()` from `Src/parse.c:3133` — C decl `#define fdother(f) (fdbyte(f, 1) + (fdbyte(f, 2) << 8) + (fdbyte(f, 3) << 16))`. C macro.
+/// ) — high 24 bits
 /// of `pre[1]`, holds the byte-offset to the opposite-byte-order
 /// dump copy.
 #[inline]
@@ -10481,13 +10649,15 @@ pub fn fdother(f: &[u32]) -> u32 {
     (f[1] >> 8) & 0x00ff_ffff
 }
 
-/// Port of `fdsetother(f, o)` macro (`Src/parse.c:3134`).
+/// Port of `fdsetother()` from `Src/parse.c:3134` — C decl `#define fdsetother(f, o) do { fdsetbyte(f, 1, ((o) & 0xff)); fdsetbyte(f, 2, (((o) >> 8) & 0xff)); fdsetbyte(f, 3, (((o) >> 16) & 0xff)); } while (0)`. C macro.
+/// ).
 #[inline]
 pub fn fdsetother(f: &mut [u32], o: u32) {
     f[1] = (f[1] & 0xff) | ((o & 0x00ff_ffff) << 8);
 }
 
-/// Port of `fdversion(f)` macro (`Src/parse.c:3140`) — read the
+/// Port of `fdversion()` from `Src/parse.c:3140` — C decl `#define fdversion(f) ((char *) ((f) + 2))`. C macro; the Rust port copies the NUL-terminated string out instead of returning a pointer into the dump.
+/// ) — read the
 /// `ZSH_VERSION` C-string from `pre[2..]`.
 pub fn fdversion(f: &[u32]) -> String {
     let bytes: Vec<u8> = f[2..]
@@ -10499,42 +10669,48 @@ pub fn fdversion(f: &[u32]) -> String {
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
-/// Port of `firstfdhead(f)` macro (`Src/parse.c:3142`) — pointer
+/// Port of `firstfdhead` from `Src/parse.c:3142` — C decl `#define firstfdhead(f) ((FDHead) (((Wordcode) (f)) + FD_PRELEN))`. Rust fn `firstfdhead_offset` returns the u32-word OFFSET of the first `fdhead` rather than a `FDHead` pointer.
+/// ) — pointer
 /// to the first `struct fdhead` past the prelude.
 #[inline]
 pub fn firstfdhead_offset() -> usize {
     FD_PRELEN
 }
 
-/// Port of `nextfdhead(f)` macro (`Src/parse.c:3143`) — advance to
+/// Port of `nextfdhead` from `Src/parse.c:3143` — C decl `#define nextfdhead(f) ((FDHead) (((Wordcode) (f)) + (f)->hlen))`. Rust fn `nextfdhead_offset` returns the u32-word OFFSET of the next `fdhead` rather than a `FDHead` pointer.
+/// ) — advance to
 /// the next header by reading the current `hlen` slot.
 #[inline]
 pub fn nextfdhead_offset(f: &[u32], cur: usize) -> usize {
     cur + (f[cur + 4] as usize) // .hlen is field 4 of fdhead
 }
 
-/// Port of `fdhflags(f)` macro (`Src/parse.c:3145`) — low 2 bits
+/// Port of `fdhflags()` from `Src/parse.c:3145` — C decl `#define fdhflags(f) (((FDHead) (f))->flags)`. C macro.
+/// ) — low 2 bits
 /// of the header's `flags` field (the kshload/zshload marker).
 #[inline]
 pub fn fdhflags(h: &fdhead) -> u32 {
     h.flags & 0x3
 }
 
-/// Port of `fdhtail(f)` macro (`Src/parse.c:3146`) — high 30 bits
+/// Port of `fdhtail()` from `Src/parse.c:3146` — C decl `#define fdhtail(f) (((FDHead) (f))->flags >> 2)`. C macro.
+/// ) — high 30 bits
 /// of `flags`, byte offset from the name start to its basename.
 #[inline]
 pub fn fdhtail(h: &fdhead) -> u32 {
     h.flags >> 2
 }
 
-/// Port of `fdhbldflags(f, t)` macro (`Src/parse.c:3147`) — pack
+/// Port of `fdhbldflags()` from `Src/parse.c:3147` — C decl `#define fdhbldflags(f,t) ((f) | ((t) << 2))`. C macro.
+/// ) — pack
 /// `(flags, tail)` into one u32 (low 2 bits = flags, high 30 = tail).
 #[inline]
 pub fn fdhbldflags(flags: u32, tail: u32) -> u32 {
     flags | (tail << 2)
 }
 
-/// Port of `fdname(f)` macro (`Src/parse.c:3152`) — name string
+/// Port of `fdname()` from `Src/parse.c:3152` — C decl `#define fdname(f) ((char *) (((FDHead) (f)) + 1))`. C macro; the Rust port copies the NUL-terminated name out of the dump buffer.
+/// ) — name string
 /// follows the fdhead record immediately. Reads bytes from the
 /// dump buffer until NUL.
 pub fn fdname(buf: &[u32], header_offset: usize) -> String {
@@ -10547,6 +10723,12 @@ pub fn fdname(buf: &[u32], header_offset: usize) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for decoding one `struct fdhead` record (c:3116-3123) out of a `&[u32]`
+/// dump buffer. C needs no decoder: it casts the buffer to `FDHead` and reads
+/// the struct in place.
 /// Decode a `fdhead` record at the given u32-word offset in the
 /// dump buffer. Used by the header-walk loops in `bin_zcompile -t`.
 pub fn read_fdhead(buf: &[u32], offset: usize) -> Option<fdhead> {
@@ -10584,15 +10766,17 @@ fn freedump_locked(g: &mut std::sync::MutexGuard<'_, Vec<funcdump>>, filename: &
 // and any future `.zwc`-emit pipeline both call into these.
 // =====================================================================
 
+/// Port of `ecstr()` from `Src/parse.c:473` — C decl `#define ecstr(S) ecadd(ecstrcode(S))`. C macro.
 /// `ecstr(s)` helper — `ecadd(ecstrcode(s))`. Mirrors the C macro at
-/// `Src/parse.c:482` used everywhere by the par_* emitters.
+/// `Src/parse.c:473` used everywhere by the par_* emitters.
 #[inline]
 pub fn ecstr(s: &str) {
     let code = ecstrcode(s);
     ecadd(code);
 }
 
-/// Port of `condlex` function-pointer global from `Src/parse.c`. C
+/// Port of `condlex()` from `Src/parse.c:2399` — C decl `void (*condlex) (void) = zshlex;`. C is a mutable function pointer (`zshlex` or `testlex`); zshrs has no `testlex` yet, so this always calls `zshlex`.
+/// Port of `condlex` function-pointer global from `Src/parse.c:2399`. C
 /// flips this between `zshlex` and `testlex` depending on whether
 /// we're inside `[[ ]]` vs `/bin/test` builtin. zshrs has no
 /// separate `testlex` yet, so this just defers to `zshlex`.
@@ -10601,6 +10785,11 @@ pub fn condlex() {
     zshlex();
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/parse.c`. This helper stands in
+/// for the recursive tree walk that C writes as a self-recursive call inside
+/// `copy_ecstr` itself (c:537-545).
 fn copy_ecstr_walk(node: &Option<Box<EccstrNode>>, p: &mut [u8]) {
     let mut cur = node.as_ref();
     while let Some(n) = cur {
@@ -10652,8 +10841,8 @@ pub fn par_cond_top() -> i32 {
     r
 }
 
-/// Port of `static int check_cond(const char *input, const char *cond)`
-/// from `Src/parse.c:2459`. True iff `input` is the two-char `-X`
+/// Port of `check_cond()` from `Src/parse.c:2459` — C decl `static int check_cond(const char *input, const char *cond)`.
+/// True iff `input` is the two-char `-X`
 /// form whose `X` matches `cond` — used by par_cond_2 to detect
 /// `-a` / `-o` n-ary chain operators and by build_dump for `-k` /
 /// `-z`. C: `return !IS_DASH(input[0]) ? 0 : !strcmp(input+1, cond);`.
