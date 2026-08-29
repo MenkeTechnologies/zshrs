@@ -109,6 +109,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # `libzsh.a` lives in the `runtime/` workspace member, not on the main
+      # `zshrs` lib target, so that `cargo install zshrs` stops emitting (and
+      # then discarding) a 170 MB archive it never installs. Nothing else in
+      # CI builds that member, so guard it here — and guard it end-to-end
+      # rather than by existence, since a stale archive that links but has no
+      # `fusevm_aot_register_builtins` would still pass a `test -f`.
+      - name: AOT — build libzsh.a and link a native binary against it
+        shell: bash
+        run: |
+          set -e
+          cargo build --release --locked -p zshrs-runtime
+          # runtime_staticlib() (src/extensions/aot.rs) probes beside the
+          # executable; the shared workspace target dir puts both here.
+          test -f target/release/libzsh.a
+          printf 'print hello-from-aot\n' > aot_ci.zsh
+          ./target/release/zshrs --zsh -fc \
+            "zbuild --native --in $PWD/aot_ci.zsh --out $PWD/aot_ci"
+          got=$(./aot_ci)
+          echo "AOT binary printed: $got"
+          [ "$got" = "hello-from-aot" ]
+
   emulation-parity:
     # Emulation parity MATRIX (9 ways): `zshrs --{zsh,bash,ksh,sh,dash}` vs the
     # real reference shells, PLUS the cross-emulation legs `zshrs --sh --zsh` /

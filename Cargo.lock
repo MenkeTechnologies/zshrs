@@ -3579,6 +3579,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zshrs-runtime"
+version = "0.12.42"
+dependencies = [
+ "zshrs",
+]
+
+[[package]]
 name = "zstd"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

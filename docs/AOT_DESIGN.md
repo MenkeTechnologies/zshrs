@@ -104,6 +104,10 @@ The new components are the **codegen pass** (Chunk → `.o`) and the **runtime s
 
 A `staticlib` crate (`crate-type = ["staticlib"]`) that exposes every zshrs runtime primitive as a C-ABI symbol. The compiled `.o` calls into it; ld resolves at link time; the result is a single self-contained static binary.
 
+**Where it comes from:** the workspace member `runtime/` (package `zshrs-runtime`, lib name `zsh`), built with `cargo build --release -p zshrs-runtime` → `target/release/libzsh.a`. It is a separate member rather than a second `crate-type` on the main `zshrs` lib so that `cargo install zshrs` does not emit — and then discard — a 170 MB archive it never installs.
+
+**Known limitation:** `runtime_staticlib()` (`src/extensions/aot.rs:397`) probes for `libzsh.a` beside the running executable, which works in the `target/<profile>/` dev layout but not for a shell installed by `cargo install` or Homebrew, since neither ships the archive. Those users must point `ZSHRS_AOT_RUNTIME_LIB` at an archive built from source. Phase E below (pre-shipped per-target archives under `~/.zshrs/runtime/`) is the intended fix.
+
 **What's in the stub:**
 
 - All ~317 `BUILTIN_*` handlers (echo, cd, set, typeset, read, print, …).
@@ -280,7 +284,7 @@ If any of these defaults is wrong, fix it here before code starts. Once code exi
 ## [0x0E] Implementation phases
 
 1. **Phase A — fusevm cranelift-object output.** Add `cranelift-object` as fusevm dep; implement Chunk → `.o` codegen alongside the existing JIT path. Ship as fusevm 0.11.
-2. **Phase B — `libzshrs_runtime.a` stub.** Add `[lib] crate-type = ["staticlib"]` target to zshrs. Expose all BUILTIN_* + executor accessors as `zshrs_v1_*` C-ABI symbols. CI builds for {mac-aarch64, linux-x86_64-musl, linux-aarch64-musl}.
+2. **Phase B — `libzshrs_runtime.a` stub.** Add a `crate-type = ["staticlib"]` lib target (shipped as the `runtime/` workspace member, emitting `libzsh.a`). Expose all BUILTIN_* + executor accessors as `zshrs_v1_*` C-ABI symbols. CI builds for {mac-aarch64, linux-x86_64-musl, linux-aarch64-musl}.
 3. **Phase C — `zshrs build` CLI.** Wire up `cargo` subcommand → cranelift-object → ld → output binary. Single-script first.
 4. **Phase D — Multi-script + bundle support.** v2 trailer format equivalent for native, busybox dispatch, `zshrs build .` walker.
 5. **Phase E — Cross-arch.** Pre-shipped target stubs in install. `--target` flag.
