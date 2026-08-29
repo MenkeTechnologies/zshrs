@@ -155,7 +155,7 @@
           <div><div class="stat">0</div><div class="stat-label">forks in hot path</div></div>
           <div><div class="stat">100%</div><div class="stat-label">bytecode compiled</div></div>
           <div><div class="stat">18</div><div class="stat-label">worker threads</div></div>
-          <div><div class="stat">180+</div><div class="stat-label">builtins</div></div>
+          <div><div class="stat">243</div><div class="stat-label">builtins</div></div>
           <div><div class="stat">23</div><div class="stat-label">coreutils builtins</div></div>
           <div><div class="stat">100x</div><div class="stat-label">warm start speedup</div></div>
           <div><div class="stat">2000x</div><div class="stat-label">fork avoidance speedup</div></div>
@@ -416,9 +416,9 @@
   └──────────────────────┬──────────────────────────────┘
                          │
   ┌──────────────────────▼──────────────────────────────┐
-  │              ShellExecutor (18K lines)               │
+  │       ShellExecutor (vm_helper.rs, 7.9K lines)       │
   │   parser ─► compiler ─► fusevm bytecode dispatch     │
-  │   180+ builtins │ AOP intercept │ trap/signal        │
+  │    243 builtins │ AOP intercept │ trap/signal        │
   └──────┬─────────┬─────────┬─────────┬────────────────┘
          │         │         │         │
   ┌──────▼───┐ ┌───▼────┐ ┌─▼──────┐ ┌▼──────────────┐
@@ -438,7 +438,7 @@
         <p>The runtime crate is physically split so port code and original code can never be confused. Bots, contributors, and humans all read <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);"><code>docs/PORT.md</code></a> before writing a single line of code; <code>tests/port_purity.rs</code> mechanically enforces the rules in CI.</p>
         <ul>
           <li><strong><code>src/ported/</code> &mdash; 106 files, FROZEN.</strong> Strict 1:1 port. Every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file (same stem, same relative subpath). Every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment. New file creation is banned; new fn names that don't exist in upstream zsh C source are banned. The freeze closes both drift vectors: bots invent helper names ("shell_quote", "find_in_path") and bots create fresh files to drop helpers in. Both blocked.</li>
-          <li><strong><code>src/extensions/</code> &mdash; 93 files.</strong> The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload/plugin/script caches, fish-style autosuggest/abbrev/highlight, the native powerlevel10k engine (<code>p10k/</code>, 21 files), persistent worker pool, arith JIT, AST s-exp dump, ZWC byte-code helpers, recorder hooks, daemon presence, structured logging, ZLE keymaps/widgets, ext builtins, regex module, config, overlay snapshot + canonical apply, subscript/fds/hist extensions. <code>port_purity</code> exempts this directory from the 1:1 file-existence rule on the basis that no C ancestor exists.</li>
+          <li><strong><code>src/extensions/</code> &mdash; 102 files.</strong> The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload/plugin/script caches, fish-style autosuggest/abbrev/highlight, the native powerlevel10k engine (<code>p10k/</code>, 21 files), persistent worker pool, arith JIT, AST s-exp dump, ZWC byte-code helpers, recorder hooks, daemon presence, structured logging, ZLE keymaps/widgets, ext builtins, regex module, config, overlay snapshot + canonical apply, subscript/fds/hist extensions. <code>port_purity</code> exempts this directory from the 1:1 file-existence rule on the basis that no C ancestor exists.</li>
           <li><strong><code>src/recorder/</code> &mdash; 1 file, feature-gated.</strong> Every symbol <code>#[cfg(feature = "recorder")]</code>; deleted by rustc when the feature is off. Compiled into the separate <code>zshrs-recorder</code> binary, never the default <code>zshrs</code> build.</li>
           <li><strong><code>src/zsh/</code> &mdash; vendored upstream.</strong> Read-only reference. The C spec; never modified.</li>
         </ul>

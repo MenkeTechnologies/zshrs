@@ -145,18 +145,134 @@ Drop-in for
 .BR /bin/ksh
 (ksh-93 semantics).
 .TP
-.B \-\-posix
+.BR \-\-posix ", " \-\-sh
 Drop-in for
 .BR /bin/sh
 (Bourne / dash).
+.TP
+.BR \-\-dash ", " \-\-ash
+Drop-in for
+.BR dash (1)
+and its
+.BR ash (1)
+ancestor.
+.TP
+.BR \-\-mksh ", " \-\-pdksh
+Drop-in for
+.BR mksh (1)
+and
+.BR pdksh (1),
+which differ from ksh-93 in option set and arithmetic edge cases.
+.TP
+.B \-\-csh
+Drop-in for
+.BR csh (1).
+Outside the Bourne family; provided for argv[0] dispatch.
 .TP
 .B \-\-zsh\-compat
 Legacy alias for
 .BR \-\-zsh .
 .PP
+Two notions of fidelity are available, and they are not the same shell.
+.B \-\-sh
+reproduces
+.BR /bin/sh ;
+.B "\-\-sh \-\-zsh"
+reproduces
+.IR "zsh's model of" " /bin/sh" .
+Concretely, the bare POSIX modes use XSI
+.BR echo ,
+where zsh's
+.B "emulate sh"
+sets
+.BR BSD_ECHO ;
+and
+.B \-\-bash
+accepts bash's own
+.B "set \-o"
+names, including the six zsh has no option for.
+.PP
 With no parity flag, zshrs runs in full mode: rkyv
 .IR script_cache " + " plugin_cache " + " daemon
 enabled.
+.SS Editor and developer tooling
+.TP
+.B \-\-lsp
+Serve the Language Server Protocol over stdin/stdout: completion, hover,
+definition, references, documentHighlight, documentSymbol, foldingRange,
+rename, semanticTokens, formatting and publishDiagnostics. Completion
+answers from the shell's own compsys completers, so
+.B "git ch"
+completes
+.B checkout
+inside the editor. Framing and JSON-RPC are hand-rolled; no LSP crate is
+linked in. Set
+.B ZSHRS_LSP_LOG
+to a path to dump every request and response.
+.TP
+.BI \-\-dap " [HOST:PORT]"
+Serve the Debug Adapter Protocol \(em breakpoints, stepping, frames,
+scopes, variables and evaluate \(em so any DAP client can debug a zsh
+script. With a
+.I HOST:PORT
+argument the adapter connects back to the client's listener; with no
+argument (or when the next word is not an address) it serves over stdio.
+.TP
+.BI \-\-fmt " [\-w] [\-t] [\-i " N ] " [FILE ...]"
+Format zsh source: block-structure reindent and idiomatic spacing per the
+zsh and Oh-My-Zsh style guides, heredoc bodies left verbatim, idempotent.
+With no
+.I FILE
+it reads stdin and writes stdout;
+.B \-w
+rewrites each file in place and requires file arguments;
+.B \-t
+indents with tabs;
+.BI \-i " N"
+sets the indent width (default 4). The same engine backs the LSP's
+formatting capability, so editor and command line cannot drift.
+.TP
+.BI \-\-ztest " [\-j " N ] " [\-q] [PATH ...]"
+Run the builtin unit-test framework over the named paths. Tests execute on
+a worker pool of persistent subprocesses \(em one per CPU by default,
+.BI \-j " N"
+to override \(em which fork per test and report over a JSON pipe, with
+per-test capture of file descriptor 2 so concurrent workers cannot tear
+each other's output.
+.B \-q
+suppresses per-test lines. The assertions themselves
+(14 assertion verbs \(em
+.BR zassert_eq ", " zassert_ne ", " zassert_ok ", " zassert_match
+and the rest \(em plus
+.BR ztest_skip " and " ztest_run )
+are shell builtins, callable from any script with nothing installed.
+.TP
+.BI \-\-docs " NAME"
+Render the same documentation card the LSP returns on hover for
+.IR NAME ,
+formatted for a terminal.
+.B \-\-names
+lists every name it knows \(em builtins, keywords, options, special
+parameters, compsys functions and extensions \(em one per line, which is
+what drives
+.B "zshrs \-\-docs <TAB>" .
+.TP
+.B \-\-dump\-reflection
+Emit a JSON self-description of every builtin, keyword and option, for
+tools that would otherwise scrape
+.BR \-\-help .
+.B \-\-dump\-reference\-html
+emits the same corpus as a standalone HTML reference.
+.TP
+.B \-\-dump\-plugins
+Emit JSON for every sourced plugin, grouped by the manager that installed
+it (zinit, oh\-my\-zsh, prezto, antidote, antigen, zplug, or loose). The
+JetBrains plugin turns each entry into an IDE library root, so plugin
+functions are navigable and renameable across plugin boundaries.
+.TP
+.BI \-\-gen\-docs " SUBCOMMAND"
+Regenerate the shipped documentation corpus. Run with no subcommand for
+the list.
 .SS Standard zsh single-letter options
 The following match
 .BR zsh (1)

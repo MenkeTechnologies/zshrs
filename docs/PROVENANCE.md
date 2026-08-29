@@ -1,5 +1,9 @@
 # PROVENANCE.md — value lineage over bytecode execution
 
+Value lineage is entry 12 in the filtered invention register,
+[`INVENTIONS.md`](INVENTIONS.md), which names the prior art it is measured
+against (Weiser 1981, Perl taint mode, PASS 2006, W3C PROV).
+
 **Status:** shipped
 **Layer:** bytecode host taps + parameter write funnels + `provenance` builtin
 **Engine:** `src/extensions/provenance.rs`
