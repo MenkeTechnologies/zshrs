@@ -40,9 +40,32 @@ impl crate::ported::vm_helper::ShellExecutor {
                     // compinit sh:337/sh:541 — `compdef -na` autoloads every
                     // completer it registers, so `${(k)functions}` holds a stub
                     // for each one (see `register_autoload_stubs`).
-                    crate::compsys::ported::compinit::register_autoload_stubs(
+                    let mut stubs = crate::compsys::ported::compinit::register_autoload_stubs(
                         crate::compsys::ported::compinit::autoload_stub_names(&bg.result),
                     );
+                    // `autoload_stub_names` reads `result.files`, which only a
+                    // fresh `$fpath` scan fills: `load_from_cache`
+                    // (compinit.rs) rebuilds `comps`/`patcomps`/`postpatcomps`
+                    // out of SQLite and leaves `files` empty. The background
+                    // thread returns whichever of the two it ended up taking,
+                    // so on every cache-hit start the call above registered
+                    // ZERO stubs and `${(k)functions}` came back holding no
+                    // `_*` name at all -- measured `${#${(M)${(k)functions}:#_*}}`
+                    // = 0 against a 1822-entry `$_comps`. `zle -C`'s entry
+                    // point `_main_complete` was one of the missing names, so
+                    // every completion widget compinit binds called an
+                    // undefined function and inserted nothing. The `autoloads`
+                    // table carries the same names the scan would have
+                    // produced, so read it whenever the file list came back in
+                    // the empty cache shape.
+                    if bg.result.files.is_empty() {
+                        if let Ok(names) = bg.cache.list_autoload_names() {
+                            stubs += crate::compsys::ported::compinit::register_autoload_stubs(
+                                &names,
+                            );
+                        }
+                    }
+                    tracing::info!(stubs, "compinit: autoload stubs from background result");
                     self.set_assoc("_comps".to_string(), bg.result.comps.into_iter().collect());
                     self.set_assoc(
                         "_services".to_string(),
