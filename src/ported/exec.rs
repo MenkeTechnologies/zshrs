@@ -7358,7 +7358,15 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
             // c:5458-5484 — named function path.
             let nm = s.as_deref().unwrap_or("");
             // c:5460-5475 — TRAP* signal-trap install.
-            if nm.len() > 4 && nm.starts_with("TRAP") {
+            // BUGS.md #1114 — the TRAPxxx() FUNCTION-trap form is zsh-only.
+            // bash, ksh and dash have no such concept: there `TRAPINT` is an
+            // ordinary function whose name merely begins with TRAP, and SIGINT
+            // keeps its default disposition. Recognising it in a drop-in mode
+            // also SILENTLY DESTROYS an already-installed list trap for that
+            // signal, since the two forms are alternatives in zsh.
+            // posix_faithful() is raised only for a bare drop-in flag, so
+            // --zsh, native zshrs and `emulate sh` are untouched.
+            if !crate::extensions::dash_mode::posix_faithful() && nm.len() > 4 && nm.starts_with("TRAP") {
                 if let Some(sn) = getsigidx(&nm[4..]) {
                     signum = sn;
                     // c:5462 — `if (settrap(signum, NULL, ZSIG_FUNC))`
