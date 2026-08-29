@@ -19,6 +19,102 @@ CI green pending the underlying fix.
 
 ---
 
+## #1124 — the binary linked `libtinfo`, making it an Ubuntu install dependency — fixed
+
+**Status:** `fixed` 2026-08-29.
+
+`nm -u` on the built binary showed exactly eighteen symbols resolved against a
+C terminal library — `libtinfo.so.6` on Linux, `libncursesw` on macOS:
+
+| group | symbols | consumer |
+|---|---|---|
+| termcap | `tgetent` `tgetstr` `tgetflag` `tgetnum` `tgoto` | `src/ported/init.rs`, `src/ported/zle/zle_refresh.rs` |
+| terminfo | `setupterm` `tigetstr` `tigetflag` `tigetnum` `tparm` `tputs` `putp` | `src/ported/modules/terminfo.rs`, `src/ported/modules/curses.rs` |
+| cap tables | `boolnames` `numnames` `strnames` `boolcodes` `numcodes` `strcodes` | `src/ported/modules/terminfo.rs`, `src/ported/modules/termcap.rs` |
+
+Nothing needed the ncurses *screen* library — `zsh/curses` is already a
+pure-Rust port and imported a single `tigetnum`. All eighteen are terminfo
+database access plus the parameterized-string evaluator, so they were replaced
+with pure Rust:
+
+- `src/extensions/terminfo_db.rs` — reads the compiled database (`term(5)`,
+  both the 16-bit `0432` and 32-bit `01036` forms, plus ncurses' extended
+  section), with ncurses' search order and both the letter-dir and hex-dir
+  layouts.
+- `src/extensions/terminfo_caps.rs` — the frozen ncurses 6 capability-name
+  tables (44 booleans, 39 numbers, 414 strings), checked in so a fresh
+  checkout needs no ncurses headers.
+- `src/extensions/tparm.rs` — the `terminfo(5)` stack machine plus `tgoto`
+  and `tputs` padding.
+
+`build.rs`'s `link_term_lib` is gone, and with it `libncurses-dev` /
+`libtinfo-dev` from `.github/workflows/release.yml` and `Cross.toml`.
+`otool -L` / `ldd` on the result names no terminal library.
+
+**Verification.** Both halves were differential-tested against ncurses over
+the entire reference database, not sampled:
+
+```
+database read : 2819 entries x 497 capabilities   0 divergences
+tparm         : 2491 entries, 170694 evaluations  0 divergences
+```
+
+Getting there required reproducing six ncurses behaviours that are not in the
+man pages:
+
+1. `tigetnum` reports a CANCELLED value as absent (`-1`), reserving `-2` for a
+   name that is not numeric — 45 of 394 entries differ on `ncv`/`colors` alone.
+2. `setupterm` runs `_nc_get_screensize`, so `lines`/`cols` come from the tty
+   (then `$LINES`/`$COLUMNS`, then 24x80) rather than the entry — 72 entries
+   carry neither capability.
+3. `tparm`'s `%c` writes `0200` for a value of exactly 0 (`save_char`), and a
+   non-zero value whose low byte is 0 writes a NUL that ends the C string.
+4. The termcap hack (`tparm_tc_compat`): a capability with no `%p` gets its
+   parameters pre-pushed in reverse, at most two, and `%i` then writes the
+   incremented values into stack slots 0 and 1 — which is why `%i%d.%d`
+   prints p2+1 before p1+1 while a plain `%d.%d` prints p1 first.
+5. `lib_tparm.c` ends its switch in `default: break;`, so an unknown `%z`
+   emits nothing rather than the literal character.
+6. `%x`/`%X`/`%o` format through `int`, so `%x` of -1 is `ffffffff`.
+
+Two more govern the module surface rather than the reader: `tigetflag` /
+`tigetnum` / `tigetstr` must report an UNKNOWN name as wrong-type
+(`-1`/`-2`/`(char *)-1`), not as absent — answering `0` made every two-letter
+termcap code probed as a terminfo name come back as a boolean `no`, adding
+~220 phantom keys to `$terminfo` on terminals such as `putty`; and
+`tgetent` recomputes `OTbs` as `cub1 == "\b"` and substitutes a trimmed
+`sgr0` (`FIX_SGR0`) for termcap's `me`.
+
+**Residual, measured across 29 terminals.** `$terminfo` matches the reference
+shell byte-for-byte everywhere. `$termcap` differs on 12 lines:
+
+- `me` on `vt220`, `linux`, `sun`, `cons25` — ncurses' `_nc_trim_sgr0` is more
+  conservative than the "evaluate `sgr` with zero parameters and strip the
+  charset selection" rule implemented here. It trims for `xterm`, `ansi` and
+  `vt100` (where zshrs now agrees) and declines to for these four. Before this
+  rule was added `me` differed on 16 terminals, so it is a net improvement, not
+  a regression.
+- `rs2` / `OTrs` / termcap `r2` — `tgetent` redistributes the reset strings
+  between the modern and obsolete slots inconsistently: `screen` ends with
+  `rs2` present-but-empty, `vt100` with `rs2` gone and `OTrs` holding the
+  value. zshrs reports the entry as compiled. Not guessed at.
+
+Both are open and confined to the legacy `$termcap` view; `$terminfo`,
+`echoti` and ZLE rendering are unaffected.
+
+**Separately noted, pre-existing and NOT introduced here:** `$terminfo[acsc]`
+and `$terminfo[dispc]` are corrupted for entries whose capability bytes are
+not valid UTF-8. Both zsh module ports convert the capability to a `String`
+lossily before `metafy`, which replaces every high byte with U+FFFD; the code
+did the same through `CStr::to_string_lossy` before this change. Fixing it
+needs a byte-taking `metafy`, which cannot live under `src/ported/` without a
+C counterpart.
+
+**Regression tests:** `tests/parity/terminfo_parity.rs` (6), plus 24 unit
+tests in the three new modules.
+
+---
+
 ## #1123 — a `zle -C` custom completion widget inserts nothing, blocking every completion/ZLE ztst file — fixed
 
 **Status:** `fixed` 2026-08-29. Two independent defects, both required.
