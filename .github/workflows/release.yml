@@ -90,25 +90,25 @@ jobs:
         if: '!matrix.use_cross'
         # recorder feature implies daemon (per Cargo.toml). zd has its own
         # required-features gate. One pass builds all three zshrs-crate bins.
-        run: cargo build --release --locked --features recorder,zd --bin zshrs --bin zshrs-recorder --bin zd --target ${{ matrix.target }}
+        run: cargo build --profile dist --locked --features recorder,zd --bin zshrs --bin zshrs-recorder --bin zd --target ${{ matrix.target }}
 
       - name: Build zshrs + zd + recorder (cross)
         if: matrix.use_cross
-        run: cross build --release --locked --features recorder,zd --bin zshrs --bin zshrs-recorder --bin zd --target ${{ matrix.target }}
+        run: cross build --profile dist --locked --features recorder,zd --bin zshrs --bin zshrs-recorder --bin zd --target ${{ matrix.target }}
 
       - name: Build zshrs-daemon binary (native)
         if: '!matrix.use_cross'
         # zshrs-daemon lives in a separate workspace crate; needs its own -p.
-        run: cargo build --release --locked -p zshrs-daemon --bin zshrs-daemon --target ${{ matrix.target }}
+        run: cargo build --profile dist --locked -p zshrs-daemon --bin zshrs-daemon --target ${{ matrix.target }}
 
       - name: Build zshrs-daemon binary (cross)
         if: matrix.use_cross
-        run: cross build --release --locked -p zshrs-daemon --bin zshrs-daemon --target ${{ matrix.target }}
+        run: cross build --profile dist --locked -p zshrs-daemon --bin zshrs-daemon --target ${{ matrix.target }}
 
       - name: Package zshrs (basic)
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
+          cd target/${{ matrix.target }}/dist
           for b in zshrs zd; do
             strip "$b" 2>/dev/null || true
           done
@@ -118,7 +118,7 @@ jobs:
       - name: Package zshrs-all (basic + recorder + daemon)
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
+          cd target/${{ matrix.target }}/dist
           for b in zshrs zd zshrs-recorder zshrs-daemon; do
             strip "$b" 2>/dev/null || true
           done
