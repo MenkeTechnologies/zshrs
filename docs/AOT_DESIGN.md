@@ -25,6 +25,12 @@ Workflow: `zshrs build script.zsh && scp script user@server:/usr/local/bin/ && s
 
 ## [0x01] World-first claim
 
+> The filtered, cross-checked register lives in [`INVENTIONS.md`](INVENTIONS.md):
+> twenty-nine entries, each with its near misses named, plus the claims that
+> were cut for failing one of its three tests. Where this design doc and the
+> register disagree, the register is current.
+
+
 Every existing shell ships scripts as source. The runtime (bash, zsh, dash, fish, nu, elvish) must be installed on the target box. Even shells with internal JIT still parse and compile at every invocation.
 
 **No shell has ever shipped an "AOT-compiled-to-machine-code" deployment artifact for scripts.** zshrs is the first.
