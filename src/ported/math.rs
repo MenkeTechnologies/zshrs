@@ -194,7 +194,7 @@ pub enum prec_type {
     MPREC_ARG,
 }
 
-/// Port of `getmathparam(struct mathvalue *mptr)` from `Src/math.c:337`.
+/// Port of `getmathparam()` from `Src/math.c:337` — C decl `getmathparam(struct mathvalue *mptr)`.
 ///
 /// Look up a parameter by name from inside math context. zsh
 /// auto-typesets a missing-but-referenced name (its mathparam
@@ -641,7 +641,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
 }
 
 /// Evaluate the expression
-/// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
+/// Port of `mathevall()` from `Src/math.c:367` — C decl `mathevall(char *s, enum prec_type prec_tp, char **ep)`.
 /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
 pub(crate) fn mathevall() -> Result<mnumber, String> {
     // c:Src/math.c — matheval reads `isset(CPRECEDENCES)` / `isset(FORCEFLOAT)`
@@ -898,7 +898,7 @@ fn decode_math_keychar(s: &str) -> Option<(i64, usize)> {
     }
 }
 
-/// Port of `lexconstant()` from `Src/math.c:462`.
+/// Port of `lexconstant()` from `Src/math.c:462` — C decl `lexconstant(void)`.
 ///
 /// Lex a numeric constant — decimal/hex/binary/octal integer or
 /// floating-point literal. Sets `m_yyval()` and returns
@@ -1313,14 +1313,14 @@ pub(crate) fn lexconstant() -> i32 {
 // preserving the C name + citation.
 // ===========================================================
 
-/// Port of `isinf(double x)` from Src/math.c:588 — IEEE +/-Infinity test.
+/// Port of `isinf()` from `Src/math.c:588` — C decl `isinf(double x)` — IEEE +/-Infinity test.
 /// Wraps Rust's `f64::is_infinite`.
 /// WARNING: param names don't match C — Rust=() vs C=(x)
 pub(crate) fn isinf(x: f64) -> bool {
     x.is_infinite()
 }
 
-/// Port of `isnan(double x)` from Src/math.c:608 — IEEE NaN test. C
+/// Port of `isnan()` from `Src/math.c:608` — C decl `isnan(double x)` — IEEE NaN test. C
 /// implements it as `store(&x) != store(&x)` to defeat compiler
 /// folding of the canonical `x != x` NaN test; we route through
 /// `store` for parity, but Rust's `f64::is_nan` is the
@@ -1330,7 +1330,7 @@ pub(crate) fn isnan(x: f64) -> bool {
     store(x) != store(x) || x.is_nan()
 }
 
-/// Port of `notzero(mnumber a)` from Src/math.c:1142 — error-on-zero check
+/// Port of `notzero()` from `Src/math.c:1142` — C decl `notzero(mnumber a)` — error-on-zero check
 /// used by `/` and `%` operators. Returns true when `a` is non-
 /// zero (caller continues), false when zero (caller raises
 /// "division by zero"). Float zero is treated as non-zero per
@@ -1494,11 +1494,18 @@ impl Drop for MathLevel {
 /// Returns 0 if no `[#…]` directive was seen during the most
 /// recent matheval. Caller is responsible for clearing via
 /// `set_output_format(0, 0)` if it wants per-call state.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `int outputradix` (Src/math.c:580). C reads
+/// the global directly; Rust needs a fn because the value lives in a
+/// `thread_local!` Cell.
 pub fn outputradix() -> i32 {
     M_OUTPUTRADIX.with(|c| c.get())
 }
 
 /// `outputunderscore` accessor — see [`outputradix`].
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `int outputunderscore` (Src/math.c:583).
+/// Same rationale as `outputradix` above.
 pub fn outputunderscore() -> i32 {
     M_OUTPUTUNDERSCORE.with(|c| c.get())
 }
@@ -1506,21 +1513,31 @@ pub fn outputunderscore() -> i32 {
 /// Reset the output-format state. Called by `mathevall` before
 /// each evaluation so `[#16]` from a prior `$((…))` doesn't leak
 /// into the next call.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Stands in for C's inline `outputradix = outputunderscore = 0;` in
+/// `matheval` (Src/math.c:1487).
 pub fn reset_output_format() {
     M_OUTPUTRADIX.with(|c| c.set(0));
     M_OUTPUTUNDERSCORE.with(|c| c.set(0));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for the C global `int outputradix` (Src/math.c:580); C
+/// assigns it inline in `zzlex` (Src/math.c:807).
 fn m_outputradix_set(v: i32) {
     M_OUTPUTRADIX.with(|c| c.set(v));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for the C global `int outputunderscore` (Src/math.c:583);
+/// C assigns it inline in `zzlex` (Src/math.c:813).
 fn m_outputunderscore_set(v: i32) {
     M_OUTPUTUNDERSCORE.with(|c| c.set(v));
 }
 
 // ============================================================
-// WARNING: NOT IN MATH.C — every `m_*` fn below is a Rust-only
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// every `m_*` fn below is a Rust-only
 // thread_local accessor. C dereferences the corresponding module
 // global directly (`yyval.u.l`, `*ptr++`, etc.) without an
 // fn-shaped wrapper. The wrappers exist solely because Rust's
@@ -1531,88 +1548,143 @@ fn m_outputunderscore_set(v: i32) {
 // Accessor helpers — each thread_local reads/writes via these so the
 // migration from `s.X` → free-fn-only access is mechanical.
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C lexer cursor `static char *ptr` (Src/math.c:60).
+/// C dereferences `ptr` directly; the Rust port owns the input as a `String`
+/// in a `thread_local!`, so every touch goes through an `m_input_*` fn.
 #[inline]
 fn m_input_clone() -> String {
     M_INPUT.with(|c| c.borrow().clone())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for `static char *ptr` (Src/math.c:60) — C's `ptr = s;` in
+/// `mathevall` (Src/math.c:367).
 #[inline]
 fn m_input_set(v: String) {
     M_INPUT.with(|c| *c.borrow_mut() = v)
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Length of the buffer behind `static char *ptr` (Src/math.c:60). C has no
+/// length: it stops at the NUL terminator.
 #[inline]
 fn m_input_len() -> usize {
     M_INPUT.with(|c| c.borrow().len())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Single-byte read of `ptr[i]` — C writes `*ptr` / `ptr[1]` directly against
+/// `static char *ptr` (Src/math.c:60).
 #[inline]
 fn m_input_byte(i: usize) -> u8 {
     M_INPUT.with(|c| c.borrow().as_bytes().get(i).copied().unwrap_or(0))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Tail slice of the input — C just passes the raw `ptr` onward
+/// (`static char *ptr`, Src/math.c:60).
 #[inline]
 fn m_input_slice_from(start: usize) -> String {
     M_INPUT.with(|c| c.borrow()[start..].to_string())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Sub-slice of the input — C uses two `char *` into the same buffer
+/// (`static char *ptr`, Src/math.c:60).
 #[inline]
 fn m_input_slice(start: usize, end: usize) -> String {
     M_INPUT.with(|c| c.borrow()[start..end].to_string())
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Byte offset of the lexer cursor into the input. C has no such variable:
+/// `static char *ptr` (Src/math.c:60) IS the cursor, moved by `*ptr++`.
 #[inline]
 fn m_pos() -> usize {
     M_POS.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Absolute cursor move — C assigns `ptr` directly (`static char *ptr`,
+/// Src/math.c:60).
 #[inline]
 fn m_pos_set(v: usize) {
     M_POS.with(|c| c.set(v))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Cursor rewind — C writes `ptr--` / `ptr -= n` on `static char *ptr`
+/// (Src/math.c:60).
 #[inline]
 fn m_pos_sub(n: usize) {
     M_POS.with(|c| c.set(c.get() - n))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Cursor advance — C writes `ptr++` / `ptr += n` on `static char *ptr`
+/// (Src/math.c:60).
 #[inline]
 fn m_pos_add(n: usize) {
     M_POS.with(|c| c.set(c.get() + n))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Byte offset where the current token began. Stands in for the saved `char *`
+/// C passes as `checkunary`'s `mptr` argument (Src/math.c:1548), used to build
+/// the `bad math expression: ... at ...` error context.
 #[inline]
 fn m_tok_start() -> usize {
     M_TOK_START.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write side of `m_tok_start` — stands in for the saved token-start `char *`
+/// C hands to `checkunary` (Src/math.c:1548).
 #[inline]
 fn m_tok_start_set(v: usize) {
     M_TOK_START.with(|c| c.set(v))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `static mnumber yyval` (Src/math.c:62).
 #[inline]
 fn m_yyval() -> mnumber {
     M_YYVAL.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for `static mnumber yyval` (Src/math.c:62); C assigns
+/// `yyval.u.l` / `yyval.u.d` directly throughout `zzlex` (Src/math.c:617).
 #[inline]
 fn m_yyval_set(v: mnumber) {
     M_YYVAL.with(|c| c.set(v))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `static char *yylval` (Src/math.c:63).
 #[inline]
 fn m_yylval_clone() -> String {
     M_YYLVAL.with(|c| c.borrow().clone())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for `static char *yylval` (Src/math.c:63).
 #[inline]
 fn m_yylval_set(v: String) {
     M_YYLVAL.with(|c| *c.borrow_mut() = v)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `static int mtok` (Src/math.c:305).
 #[inline]
 fn m_mtok() -> i32 {
     M_MTOK.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for `static int mtok` (Src/math.c:305).
 #[inline]
 fn m_mtok_set(t: i32) {
     M_MTOK.with(|c| c.set(t))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `static int unary = 1` (Src/math.c:71).
 #[inline]
 fn m_unary() -> bool {
     M_UNARY.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for `static int unary = 1` (Src/math.c:71).
 #[inline]
 fn m_unary_set(v: bool) {
     M_UNARY.with(|c| c.set(v))
@@ -1626,6 +1698,8 @@ fn m_unary_set(v: bool) {
 /// (`Src/exec.c:6450,6486`) — the math state must round-trip across
 /// nested sublist evaluation so a ternary-arm `noeval++/--` inside
 /// one expression doesn't leak into outer evaluations.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `int noeval` (Src/math.c:40).
 #[inline]
 pub fn m_noeval() -> i32 {
     M_NOEVAL.with(|c| c.get())
@@ -1633,19 +1707,31 @@ pub fn m_noeval() -> i32 {
 /// Setter paired with `m_noeval` — assigns the math-evaluator
 /// `noeval` counter. C does plain `noeval = en->noeval;`; this is
 /// the Rust thread-local equivalent.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for `int noeval` (Src/math.c:40).
 #[inline]
 pub fn m_noeval_set(v: i32) {
     M_NOEVAL.with(|c| c.set(v))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Stands in for C's `noeval++` on `int noeval` (Src/math.c:40), written inline
+/// by `bop` (Src/math.c:1454).
 #[inline]
 fn m_noeval_inc() {
     M_NOEVAL.with(|c| c.set(c.get() + 1))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Stands in for C's `noeval--` on `int noeval` (Src/math.c:40), written inline
+/// by `mathparse` (Src/math.c:1594).
 #[inline]
 fn m_noeval_dec() {
     M_NOEVAL.with(|c| c.set(c.get() - 1))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for the C global `int lastbase` (Src/math.c:58); C assigns
+/// `lastbase = -1;` in `mathevall` (Src/math.c:367) and the literal's base in
+/// `lexconstant` (Src/math.c:462).
 #[inline]
 fn m_lastbase_set(v: i32) {
     M_LASTBASE.with(|c| c.set(v))
@@ -1654,6 +1740,9 @@ fn m_lastbase_set(v: i32) {
 /// Public getter for `lastbase` — used by `assignstrvalue` in
 /// params.rs to inherit the input numeric base when a freshly
 /// assigned integer parameter has none of its own.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `int lastbase` (Src/math.c:58), exported for
+/// the `$((...))` output formatter.
 pub fn lastbase() -> i32 {
     M_LASTBASE.with(|c| c.get())
 }
@@ -1666,35 +1755,58 @@ pub fn lastbase() -> i32 {
 /// the canonical lexer (as `arith_compiler` does) requires
 /// poking the TLS slot directly so assignsparam's `pm.base ==
 /// 0 ? lastbase()` inheritance path fires.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Public write accessor for the C global `int lastbase` (Src/math.c:58).
 pub fn set_lastbase(base: i32) {
     m_lastbase_set(base)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the C global `static int *prec` (Src/math.c:278) — the
+/// active precedence table.
 #[inline]
 fn m_prec() -> &'static [u8; TOKCOUNT] {
     M_PREC.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for `static int *prec` (Src/math.c:278); C assigns it in
+/// `mathevall` (Src/math.c:405).
 #[inline]
 fn m_prec_set(p: &'static [u8; TOKCOUNT]) {
     M_PREC.with(|c| c.set(p))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Cached mirror of C's `isset(CPRECEDENCES)` test, which `mathevall` evaluates
+/// inline when choosing the precedence table (Src/math.c:405).
 #[inline]
 fn m_c_precedences() -> bool {
     M_C_PRECEDENCES.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write side of the `isset(CPRECEDENCES)` mirror — see `m_c_precedences`; C
+/// re-reads the option instead (Src/math.c:405).
 #[inline]
 fn m_c_precedences_set(v: bool) {
     M_C_PRECEDENCES.with(|c| c.set(v))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Cached mirror of C's `isset(FORCEFLOAT)` test, read inline by `getmathparam`
+/// (Src/math.c:348).
 #[inline]
 fn m_force_float() -> bool {
     M_FORCE_FLOAT.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write side of the `isset(FORCEFLOAT)` mirror — see `m_force_float`
+/// (Src/math.c:348).
 #[inline]
 fn m_force_float_set(v: bool) {
     M_FORCE_FLOAT.with(|c| c.set(v))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Cached mirror of C's `isset(OCTALZEROES)` test, read inline by `lexconstant`
+/// (Src/math.c:489).
 #[inline]
 fn m_octal_zeroes() -> bool {
     // c:Src/math.c:489 — `isset(OCTALZEROES)` is read directly at
@@ -1708,36 +1820,60 @@ fn m_octal_zeroes() -> bool {
     }
     M_OCTAL_ZEROES.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write side of the `isset(OCTALZEROES)` mirror — see `m_octal_zeroes`
+/// (Src/math.c:489).
 #[inline]
 fn m_octal_zeroes_set(v: bool) {
     M_OCTAL_ZEROES.with(|c| c.set(v))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for the shell's `lastval` (`$?`) mirror, which C's `zzlex`
+/// reads straight off the global at Src/math.c:774.
 #[inline]
 fn m_lastval_set(v: i32) {
     M_LASTVAL.with(|c| c.set(v))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the shell's `lastval` (`$?`) mirror — C reads the global
+/// inline at Src/math.c:774.
 #[inline]
 fn m_lastval() -> i32 {
     M_LASTVAL.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read accessor for the shell's `mypid` (`$$`) mirror; C's `zzlex` reads the
+/// global inline at Src/math.c:770.
 #[inline]
 fn m_pid() -> i64 {
     M_PID.with(|c| c.get())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write accessor for the `mypid` (`$$`) mirror — see `m_pid` (Src/math.c:770).
 #[inline]
 fn m_pid_set(v: i64) {
     M_PID.with(|c| c.set(v))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Part of the Rust error channel that replaces C's `zerr()` + `errflag` unwind
+/// (e.g. Src/math.c:420). Takes and clears the pending message.
 #[inline]
 fn m_error_take() -> Option<String> {
     M_ERROR.with(|c| c.borrow_mut().take())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Part of the Rust error channel that replaces C's `zerr()` + `errflag` unwind
+/// (e.g. Src/math.c:420). Reports whether an error is pending.
 #[inline]
 fn m_error_some() -> bool {
     M_ERROR.with(|c| c.borrow().is_some())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Part of the Rust error channel that replaces C's `zerr()` + `errflag` unwind
+/// (e.g. Src/math.c:420). Records the FIRST error only, matching C's bail-out
+/// on the first `zerr`.
 #[inline]
 fn m_error_set(msg: String) {
     M_ERROR.with(|c| {
@@ -1746,75 +1882,127 @@ fn m_error_set(msg: String) {
         }
     })
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Part of the Rust error channel that replaces C's `zerr()` + `errflag` unwind
+/// (e.g. Src/math.c:420). Overwrites any pending message.
 #[inline]
 fn m_error_set_force(msg: String) {
     M_ERROR.with(|c| *c.borrow_mut() = Some(msg))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Part of the Rust error channel that replaces C's `zerr()` + `errflag` unwind
+/// (e.g. Src/math.c:420). Clears the pending message.
 #[inline]
 fn m_error_clear() {
     M_ERROR.with(|c| *c.borrow_mut() = None)
 }
 
 // Stack helpers — mathvalue stack operations.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Push onto the operand stack. C indexes the globals `static struct mathvalue
+/// *stack` (Src/math.c:322) and `static int sp` (Src/math.c:306) directly —
+/// `stack[++sp]` in `push` (Src/math.c:916).
 #[inline]
 fn m_stack_push(v: mathvalue) {
     M_STACK.with(|c| c.borrow_mut().push(v))
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Pop from the operand stack — C writes `stack[sp--]` against `static struct
+/// mathvalue *stack` (Src/math.c:322) / `static int sp` (Src/math.c:306).
 #[inline]
 fn m_stack_pop() -> Option<mathvalue> {
     M_STACK.with(|c| c.borrow_mut().pop())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Operand-stack depth. C keeps it as `static int sp` (Src/math.c:306), a bare
+/// index with no accessor.
 #[inline]
 fn m_stack_len() -> usize {
     M_STACK.with(|c| c.borrow().len())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Operand-stack empty test — C writes `sp < 0` on `static int sp`
+/// (Src/math.c:306).
 #[inline]
 fn m_stack_is_empty() -> bool {
     M_STACK.with(|c| c.borrow().is_empty())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Peek at the operand-stack top — C writes `&stack[sp]` against `static struct
+/// mathvalue *stack` (Src/math.c:322), e.g. in `bop` (Src/math.c:1454).
 #[inline]
 fn m_stack_top_clone() -> Option<mathvalue> {
     M_STACK.with(|c| c.borrow().last().cloned())
 }
 
 // Variable map helpers.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read of the within-expression value cache that stands in for C's
+/// per-`struct mathvalue` `pval` field (Src/math.c:340-343). NOT a store: the
+/// parameter table stays authoritative, exactly as in C.
 #[inline]
 fn m_variables_get(name: &str) -> Option<mnumber> {
     M_VARIABLES.with(|c| c.borrow().get(name).copied())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write to the within-expression value cache standing in for C's `mptr->pval`
+/// (Src/math.c:340-343).
 #[inline]
 fn m_variables_insert(k: String, v: mnumber) {
     M_VARIABLES.with(|c| {
         c.borrow_mut().insert(k, v);
     })
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Snapshot of the `mptr->pval` stand-in cache (Src/math.c:340-343), taken by
+/// `save_state` so a nested evaluation cannot see the outer frame's cached
+/// reads — C gets the same from `stack` being swapped (Src/math.c:374).
 #[inline]
 fn m_variables_clone() -> HashMap<String, mnumber> {
     M_VARIABLES.with(|c| c.borrow().clone())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Restore of the `mptr->pval` stand-in cache (Src/math.c:340-343); the
+/// counterpart of `m_variables_clone`.
 #[inline]
 fn m_variables_set(map: HashMap<String, mnumber>) {
     M_VARIABLES.with(|c| *c.borrow_mut() = map)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Read of the raw-string side of the `mptr->pval` stand-in cache
+/// (Src/math.c:340-343), used for C's recursive `getvalue` path where the
+/// parameter's text is itself an expression (Src/math.c:343).
 #[inline]
 fn m_string_variables_get(name: &str) -> Option<String> {
     M_STRING_VARIABLES.with(|c| c.borrow().get(name).cloned())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Eviction from the raw-string side of the `mptr->pval` stand-in cache
+/// (Src/math.c:340-343).
 #[inline]
 fn m_string_variables_remove(name: &str) {
     M_STRING_VARIABLES.with(|c| {
         c.borrow_mut().remove(name);
     })
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Snapshot of the raw-string side of the `mptr->pval` stand-in cache
+/// (Src/math.c:340-343), taken by `save_state`.
 #[inline]
 fn m_string_variables_clone() -> HashMap<String, String> {
     M_STRING_VARIABLES.with(|c| c.borrow().clone())
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Restore of the raw-string side of the `mptr->pval` stand-in cache
+/// (Src/math.c:340-343).
 #[inline]
 fn m_string_variables_set(map: HashMap<String, String>) {
     M_STRING_VARIABLES.with(|c| *c.borrow_mut() = map)
 }
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// Write to the raw-string side of the `mptr->pval` stand-in cache
+/// (Src/math.c:340-343).
 #[inline]
 fn m_string_variables_insert(k: String, v: String) {
     M_STRING_VARIABLES.with(|c| {
@@ -1849,7 +2037,8 @@ struct xyy_locals {
     lastbase: i32,
 }
 
-// WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only helper. C inlines the
 // xyy* save/restore directly inside `mathevall()`'s body
 // (math.c:367 onward); the Rust port factors it out because two
 // callsites (callmathfunc arg parsing, getmathparam indirect-string
@@ -1876,7 +2065,7 @@ fn save_state() -> xyy_locals {
     }
 }
 
-/// Port of `store(double *x)` from Src/math.c:601 — load/store a double
+/// Port of `store()` from `Src/math.c:601` — C decl `store(double *x)` — load/store a double
 /// via a pointer to defeat compilers that mis-optimize the
 /// canonical `x != x` NaN test. zsh only compiles this path when
 /// `HAVE_ISNAN` is undefined; we keep it as a name-parity shim
@@ -1887,7 +2076,7 @@ pub(crate) fn store(x: f64) -> f64 {
     x
 }
 
-/// Port of `getcvar(char *s)` from Src/math.c:943 — character-constant
+/// Port of `getcvar()` from `Src/math.c:943` — C decl `getcvar(char *s)` — character-constant
 /// lookup. Reads the named shell variable and returns the
 /// codepoint of its first character. Used for `#varname` token
 /// (CId): `x="hello"; (( y = #x ))` puts 104 (`'h'`) into y.
@@ -1945,7 +2134,7 @@ pub(crate) fn getcvar(name: &str) -> mnumber {
     }
 }
 
-/// Port of `zzlex()` from `Src/math.c:617`.
+/// Port of `zzlex()` from `Src/math.c:617` — C decl `zzlex(void)`.
 ///
 /// Main math-expression lexer — returns the next token, advancing
 /// `m_pos()` and updating `m_yyval()` / `m_yylval_clone()` as side-effects.
@@ -2530,7 +2719,7 @@ impl Default for mathvalue {
     }
 }
 
-/// Port of `push(mnumber val, char *lval, int getme)` from `Src/math.c:916`.
+/// Port of `push()` from `Src/math.c:916` — C decl `push(mnumber val, char *lval, int getme)`.
 ///
 /// Push a value onto the evaluator's operand stack, with the
 /// optional lvalue name (set when the value came from a variable
@@ -2544,7 +2733,7 @@ pub(crate) fn push(val: mnumber, lval: Option<String>) {
     });
 }
 
-/// Port of `pop(int noget)` from `Src/math.c:931`.
+/// Port of `pop()` from `Src/math.c:931` — C decl `pop(int noget)`.
 ///
 /// Pop the top operand from the stack, resolving any deferred
 /// variable read (`mnumber { l: 0, d: 0.0, type_: MN_UNSET }` + lval set). The C source
@@ -2570,10 +2759,9 @@ pub(crate) fn pop() -> mnumber {
     }
 }
 
-/// Port of `setmathvar(struct mathvalue *mvp, mnumber v)` from `Src/math.c:972`.
+/// Port of `setmathvar()` from `Src/math.c:972` — C decl `setmathvar(struct mathvalue *mvp, mnumber v)`.
 ///
 /// Write `val` to the named parameter from inside math context.
-/// Port of `setmathvar(struct mathvalue *mvp, mnumber v)` from `Src/math.c:972`.
 /// Calls `setnparam` (the canonical param-set) and returns the value
 /// re-typed to match the parameter's type (C c:1014-1027).
 pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
@@ -2691,7 +2879,7 @@ pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
 }
 
 /// Call a math function
-/// Port of `callmathfunc(char *o)` from `Src/math.c:1037`.
+/// Port of `callmathfunc()` from `Src/math.c:1037` — C decl `callmathfunc(char *o)`.
 /// WARNING: param names don't match C — Rust=() vs C=(o)
 pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // Parse function name and args
@@ -3291,7 +3479,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
 // a second, less complete copy (they lacked the `errflag` bail at
 // c:495-496).
 
-/// Port of `op(int what)` from `Src/math.c:1154`.
+/// Port of `op()` from `Src/math.c:1154` — C decl `op(int what)`.
 ///
 /// Apply a binary or unary operator to the operand stack. Pops
 /// 1-2 values, applies the operation (with type coercion), and
@@ -4099,7 +4287,7 @@ pub(crate) fn op(what: i32) {
     }
 }
 
-/// Port of `bop(int tk)` from `Src/math.c:1454`.
+/// Port of `bop()` from `Src/math.c:1454` — C decl `bop(int tk)`.
 ///
 /// Short-circuit boolean prologue. Inspects (without popping) the
 /// top of stack and bumps `m_noeval()` for the parse-only side of
@@ -4151,7 +4339,7 @@ pub(crate) fn bop(tk: i32) {
     }
 }
 
-/// Port of `mnumber matheval(char *s)` from `Src/math.c:1480`.
+/// Port of `matheval()` from `Src/math.c:1480` — C decl `mnumber matheval(char *s)`.
 ///
 /// C body (c:1481-1500):
 /// ```c
@@ -4268,8 +4456,8 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     result
 }
 
-/// Port of `mnumber matheval(char *s)` integer-coerce front-end
-/// `mod_export zlong mathevali(char *s)` from Src/math.c:1505.
+/// Port of `mathevali()` from `Src/math.c:1505` — C decl
+/// `mod_export zlong mathevali(char *s)`; the integer-coerce front-end for `matheval`.
 ///
 /// C body (c:1505-1509):
 /// ```c
@@ -4293,6 +4481,12 @@ pub fn mathevali(s: &str) -> Result<i64, String> {
 /// paramtab via setmathvar's c:1002-1003 noeval gate). Used by the
 /// compile-time pre-check at compile_zsh.rs to validate `(( expr ))`
 /// without polluting the param table. Bug #617.
+/// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+/// A NOEVAL-mode variant of `mathevali` (Src/math.c:1505). C has no such entry
+/// point — it reaches parse-only mode by raising the `noeval` global
+/// (Src/math.c:40) from inside `bop` (Src/math.c:1454). zshrs needs a public
+/// front door for the compile-time `(( expr ))` pre-check, which must not
+/// write the parameter table.
 pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
     // new() inside matheval resets noeval to 0; we work around that
     // by intercepting at matheval's entry. Run matheval, but bump
@@ -4332,7 +4526,7 @@ pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
     })
 }
 
-/// Port of `zlong mathevalarg(char *s, char **ss)` from `Src/math.c:1514-1539`.
+/// Port of `mathevalarg()` from `Src/math.c:1514` — C decl `zlong mathevalarg(char *s, char **ss)` (body c:1514-1539).
 ///
 /// C body (c:1517-1538):
 /// ```c
@@ -4393,7 +4587,7 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {
     result
 }
 
-/// Port of `checkunary(int mtokc, char *mptr)` from `Src/math.c:1548`.
+/// Port of `checkunary()` from `Src/math.c:1548` — C decl `checkunary(int mtokc, char *mptr)`.
 ///
 /// Two roles. (1) Validate that the just-lexed token (`m_mtok()`)
 /// matches the parser's expectation: an operand was wanted but an
@@ -4471,7 +4665,7 @@ pub(crate) fn checkunary() {
 }
 
 /// Operator-precedence parser - closely follows zsh math.c mathparse()
-/// Port of `mathparse(int pc)` from `Src/math.c:1594`.
+/// Port of `mathparse()` from `Src/math.c:1594` — C decl `mathparse(int pc)`.
 /// WARNING: param names don't match C — Rust=() vs C=(pc)
 pub(crate) fn mathparse(pc: u8) {
     if m_error_some() {
@@ -4736,7 +4930,8 @@ static OP_TYPE: [u16; TOKCOUNT] = [
     LR | OP_OPF,
 ];
 
-// WARNING: NOT IN MATH.C — Rust-only helper. See save_state above.
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only helper. See save_state above.
 fn restore_state(saved: xyy_locals) {
     m_input_set(saved.input);
     m_pos_set(saved.pos);
@@ -4760,7 +4955,8 @@ fn restore_state(saved: xyy_locals) {
 // MathState struct DELETED — state now lives in M_* thread_locals
 // (matching C math.c's module statics + mathevall's xyy* save/restore).
 
-// WARNING: NOT IN MATH.C — Rust-only initializer. C `mathevall()`
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only initializer. C `mathevall()`
 // (math.c:367) takes the input as a parameter and seeds the module
 // statics inline at function entry; Rust port factors that seeding
 // out so call sites can chain `with_*` setters before invoking
@@ -4795,14 +4991,16 @@ pub(crate) fn new(input: &str) {
     m_error_clear();
 }
 
-// WARNING: NOT IN MATH.C — Rust-only setter. zsh C reads parameters
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only setter. zsh C reads parameters
 // directly from the global param table on demand; the Rust port
 // caller seeds an in-memory map up front via this fn.
 pub(crate) fn with_variables(vars: HashMap<String, mnumber>) {
     m_variables_set(vars);
 }
 
-// WARNING: NOT IN MATH.C — Rust-only setter. Parses each value as
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only setter. Parses each value as
 // numeric → `mnumber` if possible, otherwise stores the raw string
 // for `getmathparam`'s recursive-eval path (e.g. `a="3+2"; $((a))`).
 /// Inject variables from string->string mapping (for shell integration)
@@ -4835,7 +5033,8 @@ pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
     }
 }
 
-// WARNING: NOT IN MATH.C — Rust-only accessor. zsh C writes back
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only accessor. zsh C writes back
 // to the global param table during evaluation; ShellExecutor
 // integration uses this to harvest the post-eval variables map and
 // merge it into its own `variables` table.
@@ -4871,7 +5070,8 @@ pub(crate) fn extract_string_variables() -> HashMap<String, String> {
     })
 }
 
-// WARNING: NOT IN MATH.C — Rust-only setopt mirror. zsh C reads
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only setopt mirror. zsh C reads
 // the option flag directly from `isset(CPRECEDENCES)` inside
 // `mathevall()`; this setter caches the bit so the evaluator
 // avoids re-reading the option tree on every token.
@@ -4880,24 +5080,28 @@ pub(crate) fn with_c_precedences(enable: bool) {
     m_prec_set(if enable { &C_PREC } else { &Z_PREC });
 }
 
-// WARNING: NOT IN MATH.C — Rust-only setopt mirror for FORCE_FLOAT.
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only setopt mirror for FORCE_FLOAT.
 pub(crate) fn with_force_float(enable: bool) {
     m_force_float_set(enable);
 }
 
-// WARNING: NOT IN MATH.C — Rust-only setopt mirror for OCTAL_ZEROES.
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only setopt mirror for OCTAL_ZEROES.
 pub(crate) fn with_octal_zeroes(enable: bool) {
     m_octal_zeroes_set(enable);
 }
 
-// WARNING: NOT IN MATH.C — Rust-only setter for `$?` (last command
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only setter for `$?` (last command
 // status) so the `?`-token in unary position can read it. zsh C
 // reads `lastval` directly as a global.
 pub(crate) fn with_lastval(val: i32) {
     m_lastval_set(val);
 }
 
-// WARNING: NOT IN MATH.C — Rust-only cursor read. C uses `*ptr`
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only cursor read. C uses `*ptr`
 // directly without an fn-shaped wrapper.
 pub(crate) fn peek() -> Option<char> {
     // Read the char in place. This used to be
@@ -4934,7 +5138,8 @@ pub(crate) fn peek() -> Option<char> {
     })
 }
 
-// WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only cursor advance. C uses
 // `*ptr++` directly.
 pub(crate) fn advance() -> Option<char> {
     let c = peek()?;
@@ -4942,25 +5147,29 @@ pub(crate) fn advance() -> Option<char> {
     Some(c)
 }
 
-// WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only char classifier. C uses
 // ctype.h `idigit()` macro directly.
 fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
 
-// WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only char classifier. C uses
 // `iident()` / `isalpha()` macros directly.
 fn is_ident_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_'
 }
 
-// WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only char classifier. C uses
 // `iident()` macro directly.
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-// WARNING: NOT IN MATH.C — Rust-only stack helper. C inlines
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only stack helper. C inlines
 // this inside `pop()` (math.c:931) — its `noget` flag controls
 // whether to resolve the deferred Unset+lval read; zshrs splits
 // the two paths into separate ported so the resolved-vs-raw choice
@@ -4969,7 +5178,8 @@ pub(crate) fn pop_with_lval() -> mathvalue {
     m_stack_pop().unwrap_or_default()
 }
 
-// WARNING: NOT IN MATH.C — Rust-only value-resolver. C inlines
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only value-resolver. C inlines
 // the deferred-variable-read pattern inside `pop()` and `op()`
 // (math.c:931, 1154); the Rust port factors it out for `bop`
 // and `mathparse` to inspect-without-consuming.
@@ -4982,14 +5192,16 @@ pub(crate) fn get_value(mv: &mathvalue) -> mnumber {
     mv.val
 }
 
-// WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only helper. C inlines the
 // expression `prec[COMMA] + 1` directly in mathparse() and
 // mathevall() everywhere it's needed (math.c:1594, 367).
 pub(crate) fn top_prec() -> u8 {
     m_prec()[COMMA as usize] + 1
 }
 
-// WARNING: NOT IN MATH.C — Rust-only accessor (note plural — singular
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only accessor (note plural — singular
 // `getmathparam` IS in math.c:337). zsh C's caller reads the param
 // table directly post-eval; this returns a snapshot of the in-memory
 // variables map for ShellExecutor integration.
@@ -5025,7 +5237,8 @@ pub(crate) fn getmathparams() -> HashMap<String, mnumber> {
 /// references — the C source's `mathexpr()` (Src/math.c) inlines this work
 /// inside the lexer, but Rust splits it out so the assignment-target arms
 /// don't get confused with read sites.
-// WARNING: NOT IN MATH.C — Rust-only string parser. C `setmathvar`
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only string parser. C `setmathvar`
 // (math.c:972) walks the lvalue pointer left in place by zzlex,
 // so subscripted compound assigns fall out of the lexer for free.
 // zshrs sees `((a[i]+=v))` as raw text and must split it before
@@ -5106,7 +5319,8 @@ pub(crate) fn parse_compound(expr: &str) -> Option<(String, String, String, Stri
     }
     Some((name, idx_expr, op.to_string(), rhs))
 }
-// WARNING: NOT IN MATH.C — Rust-only string parser. C handles
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only string parser. C handles
 // `++NAME[IDX]` via the lexer leaving the lvalue pointer set; the
 // Rust port pre-parses the text. See parse_compound above.
 /// Pre-increment/decrement on subscript: `++NAME[IDX]` / `--NAME[IDX]`.
@@ -5163,7 +5377,8 @@ pub(crate) fn parse_pre_inc(expr: &str) -> Option<(String, String, String)> {
     }
     Some((name, idx_expr, pre_op.to_string()))
 }
-// WARNING: NOT IN MATH.C — Rust-only string parser for `NAME[IDX]=v`.
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only string parser for `NAME[IDX]=v`.
 // See parse_compound above for the rationale.
 pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
     let trimmed = expr.trim();
@@ -5222,7 +5437,8 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 // Mirror Src/math.c / Src/utils.c base+digit-grouping logic.
 // ===========================================================
 
-// WARNING: NOT IN MATH.C — `convbase` lives in `Src/params.c:5632`
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// `convbase` lives in `Src/params.c:5632`
 // (called from math.c:1089). This file holds a duplicate that
 // predates the params.rs port; canonical home is
 // `convbase`. This entry is drift pending
