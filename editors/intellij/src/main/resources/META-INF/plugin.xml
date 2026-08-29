@@ -5,8 +5,8 @@
 
     <!-- BEGIN-CANONICAL: plugin-description -->
     <description><![CDATA[
-        <p>JetBrains IDE support for <b>zshrs</b> — the first compiled Unix shell
-        (Rust bytecode VM + fusevm JIT + persistent worker pool).</p>
+        <p>JetBrains IDE support for <b>zshrs</b> — the first JIT-compiled Unix shell
+        (Rust bytecode VM + Cranelift JIT to native code + persistent worker pool).</p>
 
         <ul>
             <li><b>.zsh / .zshrc / .zlogin / .zlogout / .zprofile / .zshenv</b> file association
