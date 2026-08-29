@@ -319,25 +319,30 @@ fn dash_ignores_optind_writes_is_a_known_gap() {
 /// (`Src/builtin.c:7405-7409`), so they never reach the listing at all — a
 /// separate divergence from this family.
 ///
-/// Compared through `strip_inherited_ignores`. Cargo's test harness ignores
-/// SIGINT/SIGQUIT; the shell under test inherits that `SIG_IGN`, POSIX forbids
-/// resetting an inherited ignore (so a `trap - INT QUIT` prefix is a no-op),
-/// and bash LISTS the inherited entry while zshrs does not. Without the filter
-/// these scripts measured THAT divergence instead of the formatting they exist
-/// to pin — passing standalone and failing under the harness. The inherited
-/// case is a real gap, pinned on its own by
-/// `inherited_sig_ign_is_listed_by_bash` (docs/BUGS.md #1109), not swept up
-/// here.
+/// Uses ONLY signals that no plausible launcher ignores — TERM, USR1, USR2 and
+/// EXIT — and is compared through `strip_inherited_ignores`.
+///
+/// An inherited `SIG_IGN` is the hazard. POSIX forbids resetting one, so a
+/// `trap - SIG` prefix is a no-op, and bash then both LISTS the inherited
+/// entry and REFUSES to trap that signal, while zshrs does neither
+/// (docs/BUGS.md #1109). Any script here naming an ignored signal therefore
+/// measures THAT gap instead of the formatting it exists to pin.
+///
+/// Two launchers do this, and between them they rule out three signals:
+/// cargo's own test harness ignores INT and QUIT, and `nohup` ignores HUP —
+/// which is how this test broke a second time, having first been "fixed" by
+/// moving off INT onto HUP. The inherited case is pinned separately by
+/// `inherited_sig_ign_is_listed_by_bash`, never swept up here.
 const TRAP_SCRIPTS: &[&str] = &[
-    "trap ':' HUP; trap",
+    "trap ':' TERM; trap",
     "trap ':' EXIT; trap",
-    "trap ':' 1; trap",
-    "trap ':' EXIT HUP USR1 TERM; trap",
+    "trap ':' 15; trap",
+    "trap ':' EXIT TERM USR1 USR2; trap",
     "trap '' USR2; trap",
-    "trap '' USR2 HUP TERM; trap",
+    "trap '' USR2 TERM USR1; trap",
     "trap 'printf x' TERM USR1; trap",
     "trap 'printf a; printf b' USR2; trap",
-    "trap 'if true; then printf x; fi' HUP; trap",
+    "trap 'if true; then printf x; fi' USR1; trap",
     r#"trap "printf 'a b'" USR2; trap"#,
     r#"trap "a'b'c" USR2; trap"#,
     r"trap 'printf %s\n' TERM; trap",
