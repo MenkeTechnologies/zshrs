@@ -19,10 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
-## #1122 — `compinit` is ~20x slower over zsh's full Completion tree, blocking 378 ztst chunks — open
+## #1122 — `compinit` is ~20x slower over zsh's full Completion tree, blocking 378 ztst chunks — partially fixed
 
-**Status:** `open`, root cause narrowed 2026-08-29. This is the single largest
-item in the ztst score: it blocks 378 of the 776 failing chunks (49%).
+**Status:** `partially fixed` 2026-08-29 — the dump half is done (37.3s ->
+~17s); the scan half remains. This is the single largest item in the ztst
+score: it blocks 378 of the 776 failing chunks (49%).
+
+**Fixed so far.** `compdump` wrote its ~5,000 short lines (five assoc blocks
+plus one `autoload` line per completer) straight to a raw `File`, so every
+`writeln!` was its own `write(2)`. Wrapping it in a `BufWriter` — flushing and
+then `sync_all`ing the inner file before the atomic rename — collapses that to
+a handful of syscalls:
+
+```
+before   37,342 ms      (scan 13,354 ms + dump ~24,000 ms)
+after    ~17,000 ms
+zsh       1,719 ms
+```
+
+Dump output verified unchanged: 2,146 lines, correct `#files:`/`version:`
+header, sources cleanly, 1,823 comps registered.
+
+**Still open: the ~13s scan half.** Measured and ruled out, each independently:
+
+| Hypothesis | Measurement | Verdict |
+|---|---|---|
+| Body bytes read | 120 big files (2.5 MB) vs 120 small (20 KB) | both 66 ms — not size |
+| File count | 800 synthetic files, one dir | 211 ms, flat |
+| Directory count | 40 dirs x 20 files | 61 ms |
+| Real file content | 400 real `_*` flat | 51 ms |
+| SQLite body insert | `add_autoloads_with_bodies_bulk` | already one transaction + prepared stmt |
+
+So it is not bytes, files, dirs, content or the cache write in isolation — only
+the combination at full scale. The subtrees sum to ~1.0s but cost 22.4s
+together, so keep looking for an O(n^2) walk over the combined registration set
+that only appears past ~500 names.
 
 ```zsh
 setopt extendedglob
