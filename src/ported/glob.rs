@@ -4835,7 +4835,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             }
             // Times
             'a' => {
-                let (unit, op, val) = schedgetfn(&mut chars);
+                let (unit, op, val) = parse_time_spec(&mut chars);
                 qs.qualifiers.push(qualifier::Atime {
                     value: val as i64,
                     unit,
@@ -4843,7 +4843,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 });
             }
             'm' => {
-                let (unit, op, val) = schedgetfn(&mut chars);
+                let (unit, op, val) = parse_time_spec(&mut chars);
                 qs.qualifiers.push(qualifier::Mtime {
                     value: val as i64,
                     unit,
@@ -4851,7 +4851,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 });
             }
             'c' => {
-                let (unit, op, val) = schedgetfn(&mut chars);
+                let (unit, op, val) = parse_time_spec(&mut chars);
                 qs.qualifiers.push(qualifier::Ctime {
                     value: val as i64,
                     unit,
@@ -5583,9 +5583,20 @@ fn parse_size_spec(
 }
 
 /// Parse the unit/op/value tail of an `(a/m/c...)` time qualifier.
-/// **RUST-ONLY** — C parses inline in parsepat; time-unit constants
-/// are `TT_SECONDS`/`TT_MINS`/… at glob.c:121-126.
-fn schedgetfn(
+///
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+/// C parses this inline in `parsepat`; the time-unit constants are
+/// `TT_SECONDS`/`TT_MINS`/… at c:Src/glob.c:121-126.
+///
+/// It was previously NAMED `schedgetfn` — a real and entirely unrelated C
+/// function (`Src/sched.c:341`, the `$zsh_scheduled_events` getfn) — which
+/// made `build.rs`'s no-new-functions gate accept it. That disguised a
+/// Rust-only helper as a port and put it in permanent violation of
+/// `ported_fn_names_match_c`, which correctly saw a `sched.c` name in
+/// `glob.rs`. Its two siblings, `parse_size_spec` and `parse_range_spec`,
+/// were always handled the honest way — descriptive names, listed in
+/// `tests/data/fake_fn_allowlist.txt` — and this now joins them.
+fn parse_time_spec(
     // RUST-ONLY (clashes with sched.c:341 name, unrelated fn)
     chars: &mut std::iter::Peekable<std::str::Chars>,
 ) -> (i32, char, u64) {
