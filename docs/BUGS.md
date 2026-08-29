@@ -19,6 +19,70 @@ CI green pending the underlying fix.
 
 ---
 
+## #1122 — `compinit` is ~20x slower over zsh's full Completion tree, blocking 378 ztst chunks — open
+
+**Status:** `open`, root cause narrowed 2026-08-29. This is the single largest
+item in the ztst score: it blocks 378 of the 776 failing chunks (49%).
+
+```zsh
+setopt extendedglob
+ZSRC=~/forkedRepos/zsh
+fpath=( $ZSRC/Functions/*~*/CVS(/) $ZSRC/Completion $ZSRC/Completion/*/*~*/CVS(/) )
+autoload -U compinit; compinit -u -d /tmp/dump.$$
+```
+```
+zsh 5.9.2   3,065 ms
+zshrs      52,847 ms      17.2x
+```
+
+**Why it matters beyond perf.** `Y03arguments`, `X02zlevi`, `X05zleincarg`,
+`Y02compmatch` and `Y01completion` all score 0 of N because their `%prep` runs
+`comptestinit`, which spawns the shell under test inside `zsh/zpty` and runs
+`compinit` in it. Against a debug build that needs 60-90 s versus the runner's
+10 s budget (`ZTST_TIMEOUT_MS`), so the prep times out and every chunk in the
+file is marked failed. At `ZTST_TIMEOUT_MS=90000` the `Y03arguments` prep
+COMPLETES — the shell is not broken, it is slow.
+
+**Scaling, measured.** Ratio degrades with fpath size, so this is algorithmic,
+not debug-build overhead:
+
+| fpath dirs | zsh | zshrs | ratio |
+|---|---|---|---|
+| 8 | 90 ms | 165 ms | 1.8x |
+| 16 | 208 ms | 1,275 ms | 6.1x |
+| 32 | 914 ms | 14,854 ms | 16.2x |
+| 44 | 3,065 ms | 52,847 ms | 17.2x |
+
+**Ruled out.** Each hypothesis was measured and killed:
+
+- *File count* — 800 synthetic `#compdef` files in one dir: **211 ms**, flat
+  across 100/200/400/800.
+- *Directory count* — 40 synthetic dirs x 20 files: **61 ms**.
+- *Real completion-file content* — 400 real `_*` files copied flat into one
+  dir: **51 ms**.
+- *The Functions tree* — `Functions/*~*/CVS(/)` alone: **131 ms** (3.5x).
+- *Any single Completion subtree* — Base 146 ms, Unix (473 files) 189 ms,
+  Zsh 282 ms, X 71 ms, Linux 134 ms, Darwin 230 ms; all 1.9-3.5x.
+
+**What is left.** The subtrees sum to about 1.0 s but cost 22.4 s together
+(`Completion` + `Completion/*/*~*/CVS(/)` alone: zsh 1,089 ms, zshrs
+22,420 ms, 20.5x). ~21x more than the sum of its parts, so the cost is
+superlinear in the COMBINED registration set rather than in any one directory
+or file. Look for a per-entry scan over all previously-registered completions
+in the compinit/compdump path — an O(n^2) walk that only becomes visible past
+~500 registered names.
+
+**Also worth fixing while in there:** bare startup is 205 ms vs zsh's 59 ms.
+
+**Next step for the ztst score.** Even with this fixed, the 5 blocked files need
+one more thing: once the prep completes, the first pty completion round-trip
+hangs and wedges the file's shell, marking the remaining chunks "not run". So
+the block is this bug plus one hang, not 378 defects. `zsh/zpty` itself is
+sound — `-r -m`, `-w` and `-t` all behave, and spawn -> `compinit` -> `zle -C`
+completes through a pty.
+
+---
+
 ## #1121 — the `[[ … ]]` parse-error diagnostic prints the substituted word, not its source text — open
 
 **Status:** `open`, isolated 2026-08-29.
