@@ -42,16 +42,36 @@
 //! `diff3 -<TAB>` byte-identical to the reference shell, while the port
 //! without the shift offered `$PWD` file names in place of the option list.
 //!
-//! KNOWN CONSEQUENCE, deliberately NOT papered over: nine unit tests still
-//! assert the pre-shift answer — this module's `no_matching_tagset_returns_one`
-//! and eight `returns_one_without_registered_tags` cases in `_bind_addresses`,
-//! `_completers`, `_domains`, `_file_systems`, `_global_tags`, `_hosts`,
-//! `_limits`, `_x_visual`. They call the `_impl` bodies with no `doshfunc`
-//! frame at all, so their "no tags registered" premise only held while
-//! `_wanted`'s own `_tags` registration silently landed on (and was read back
-//! from) the caller's level. With the shift, `_wanted` registers its tag and
-//! `_all_labels` adds matches, so 0 is the correct return. Those assertions
-//! need updating by the test owner; they are left failing rather than edited.
+//! CONSEQUENCE, since RESOLVED (2026-08-28): eight `returns_one_without_registered_tags`
+//! cases in `_bind_addresses`, `_completers`, `_domains`, `_file_systems`,
+//! `_global_tags`, `_hosts`, `_limits` and `_x_visual` asserted the pre-shift
+//! answer. They call the `_impl` bodies with no `doshfunc` frame at all, so
+//! their "no tags registered" premise only held while `_wanted`'s own `_tags`
+//! registration silently landed on (and was read back from) the caller's
+//! level. With the shift, `_wanted` registers its tag and `_all_labels` adds
+//! matches, so 0 is the correct return — confirmed against real zsh 5.9.2
+//! driven through a PTY inside a live completion widget, which returns 0 for
+//! all eight. They are now `returns_zero_because_wanted_registers_its_own_tag`
+//! and assert 0.
+//!
+//! This module's own `returns_zero_once_wanted_registers_the_tag_itself` (was
+//! `no_matching_tagset_returns_one`) is the NINTH case from the same list and
+//! the same mechanism — it passes a tag plus a `compadd` action with a match,
+//! so post-shift `_wanted` registers `mytag`, the match is added, and 0 is
+//! returned. Its old comment ("the while loop short-circuits and we return 1")
+//! described the pre-shift behaviour. Note the PTY confirmation above covered
+//! the eight siblings; this one rests on the identical documented mechanism
+//! rather than its own measurement.
+//!
+//! All nine were ORDER-DEPENDENT after the flip: each passed alone and failed
+//! inside a full `--lib` run, in a different combination every time. The
+//! reason was never the shift — it was that `compadd` filters every candidate
+//! against `$PREFIX` (`compcore.rs:4334-4373`) and `comptags` is indexed by
+//! `locallevel` (`Src/Zle/computil.c:3782`), and a dozen unrelated completion
+//! tests leave both dirty. They now call `crate::test_util::reset_completion_state`
+//! first, and the ones whose candidate list came from the host machine
+//! (`_hosts`, `_domains`, `_bind_addresses`, `_global_tags`) pin that input
+//! too.
 
 use super::_all_labels::_all_labels_impl;
 use super::_tags::_tags_impl;
@@ -192,6 +212,12 @@ mod tests {
 
     fn with_incompfunc<T, F: FnOnce() -> T>(f: F) -> T {
         let _g = crate::test_util::global_state_lock();
+        // `_wanted_impl` drives `comptags` (indexed by `locallevel`,
+        // `Src/Zle/computil.c:3782`) and `compadd` (which filters every
+        // candidate against `$PREFIX`, `compcore.rs:4334-4373`), both of
+        // which the previous test in this binary leaves behind. Without
+        // this the return below depended on test ORDER, not on the body.
+        crate::test_util::reset_completion_state();
         let prev = INCOMPFUNC.load(Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = f();
@@ -199,11 +225,14 @@ mod tests {
         r
     }
 
+    /// Post-shift, `_wanted` registers `mytag` itself and the `compadd
+    /// alpha` action adds a match, so this returns 0. The old name and the
+    /// old comment below described the pre-shift answer; see the module doc.
     #[test]
-    fn no_matching_tagset_returns_one() {
-        // sh:13 — when _tags's switch-to-next never produces a
-        //   match (no comptags state pre-loaded), the while loop
-        //   short-circuits and we return 1.
+    fn returns_zero_once_wanted_registers_the_tag_itself() {
+        // sh:13 — PRE-SHIFT: with no comptags state pre-loaded the
+        //   switch-to-next never matched, the while loop short-circuited
+        //   and this returned 1.
         let r = with_incompfunc(|| {
             _wanted_impl(&[
                 "mytag".to_string(),
@@ -213,7 +242,7 @@ mod tests {
                 "alpha".to_string(),
             ])
         });
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 
     #[test]

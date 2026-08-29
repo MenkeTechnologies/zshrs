@@ -468,6 +468,14 @@ mod tests {
     fn mark_readonly_is_scoped_to_a_function() {
         use crate::ported::modules::parameter::paramtypestr;
         let _g = crate::test_util::global_state_lock();
+        // `mark_readonly` keys off `locallevel` (shared.rs:216), the
+        // process-wide `AtomicI32` port of `Src/params.c:54`. Nothing
+        // unwinds it when a test panics out of a `doshfunc`-shaped port
+        // (`_wanted_impl`'s inc/dec pair, `FnScope`, `LocalScope`), so the
+        // "no scope — no readonly bit" leg below only holds from a pinned
+        // 0, which is also the value a real shell starts at. Without this
+        // the assertion passed alone and failed inside a full run.
+        crate::ported::params::locallevel.store(0, std::sync::atomic::Ordering::Relaxed);
         let type_of = |n: &str| {
             crate::ported::params::paramtab()
                 .read()

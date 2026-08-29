@@ -87,12 +87,34 @@ pub fn _domains(args: &[String]) -> i32 {
 mod tests {
     use super::*;
 
+    /// `_wanted` registers its OWN tag, so the "without registered tags"
+    /// premise never holds: with the `doshfunc`-frame shift (see
+    /// `Base/Core/_wanted.rs:45-54`) `_wanted` registers and `_all_labels`
+    /// adds matches, making 0 the correct return. Confirmed against real
+    /// zsh 5.9.2 driven through a PTY inside a live completion widget —
+    /// all of these return 0, not 1. The old name and `assert_eq!(r, 1)`
+    /// encoded the pre-shift answer.
+    ///
+    /// `reset_completion_state` is what makes that answer STABLE. The
+    /// assertion used to pass alone and fail inside a full run because a
+    /// leftover `$PREFIX` from an earlier test filtered out every candidate
+    /// `compadd` was offered, so `compadd` returned 1 for a tag set that had
+    /// been registered perfectly well — see that helper for the mechanism.
     #[test]
-    fn returns_one_without_registered_tags() {
+    fn returns_zero_because_wanted_registers_its_own_tag() {
         let _g = crate::test_util::global_state_lock();
+        crate::test_util::reset_completion_state();
+        // Pin the INPUT. sh:6-16 — with no `domains` style set, the
+        // candidates come from `$_cache_domains`, which sh:7-14 fills from
+        // `/etc/resolv.conf` only when the parameter is UNSET. A machine
+        // with no `domain`/`search` line (a container, a VPN-less CI box)
+        // yields an empty list, `compadd` adds nothing, and `_all_labels`
+        // correctly returns 1 — so seed the cache and let the assertion
+        // measure the `_wanted` registration instead of the host resolver.
+        setaparam("_cache_domains", vec!["example.com".to_string()]);
         crate::ported::zle::complete::INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
         let r = _domains(&[]);
         crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 }

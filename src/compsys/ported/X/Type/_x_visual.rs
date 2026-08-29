@@ -92,12 +92,26 @@ mod tests {
         assert_eq!(rest, vec!["-J".to_string(), "grp".to_string()]);
     }
 
+    /// `_wanted` registers its OWN tag, so the "without registered tags"
+    /// premise never holds: with the `doshfunc`-frame shift (see
+    /// `Base/Core/_wanted.rs:45-54`) `_wanted` registers and `_all_labels`
+    /// adds matches, making 0 the correct return. Confirmed against real
+    /// zsh 5.9.2 driven through a PTY inside a live completion widget —
+    /// all of these return 0, not 1. The old name and `assert_eq!(r, 1)`
+    /// encoded the pre-shift answer.
+    ///
+    /// `reset_completion_state` is what makes that answer STABLE. The
+    /// assertion used to pass alone and fail inside a full run because a
+    /// leftover `$PREFIX` from an earlier test filtered out every candidate
+    /// `compadd` was offered, so `compadd` returned 1 for a tag set that had
+    /// been registered perfectly well — see that helper for the mechanism.
     #[test]
-    fn returns_one_without_registered_tags() {
+    fn returns_zero_because_wanted_registers_its_own_tag() {
         let _g = crate::test_util::global_state_lock();
+        crate::test_util::reset_completion_state();
         crate::ported::zle::complete::INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
         let r = _x_visual(&[]);
         crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 }

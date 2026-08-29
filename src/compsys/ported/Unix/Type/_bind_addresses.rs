@@ -194,12 +194,40 @@ mod tests {
         assert!(!is_v6_link_local("2001:db8::1"));
     }
 
+    /// `_wanted` registers its OWN tag, so the "without registered tags"
+    /// premise never holds: with the `doshfunc`-frame shift (see
+    /// `Base/Core/_wanted.rs:45-54`) `_wanted` registers and `_all_labels`
+    /// adds matches, making 0 the correct return. Confirmed against real
+    /// zsh 5.9.2 driven through a PTY inside a live completion widget —
+    /// all of these return 0, not 1. The old name and `assert_eq!(r, 1)`
+    /// encoded the pre-shift answer.
+    ///
+    /// `reset_completion_state` is what makes that answer STABLE. The
+    /// assertion used to pass alone and fail inside a full run because a
+    /// leftover `$PREFIX` from an earlier test filtered out every candidate
+    /// `compadd` was offered, so `compadd` returned 1 for a tag set that had
+    /// been registered perfectly well — see that helper for the mechanism.
     #[test]
-    fn returns_one_without_registered_tags() {
+    fn returns_zero_because_wanted_registers_its_own_tag() {
         let _g = crate::test_util::global_state_lock();
+        crate::test_util::reset_completion_state();
+        // Pin the INPUT. sh:24 runs `_call_program bind-addresses ifconfig
+        // -a` (or `ip addr show`), so the candidate list is whatever this
+        // host has bound — empty in a container with no `ifconfig`. Feed it
+        // one synthetic `inet` line through the `command` style, the same
+        // override upstream documents (`_call_program:26`, ported at
+        // `_call_program.rs:74-101`); sh:25-27 then extracts `192.0.2.1`,
+        // and the `-4` this test passes keeps it (sh:31). The context is
+        // `:completion::bind-addresses` because `reset_completion_state`
+        // unsets `$curcontext`.
+        crate::test_util::set_test_zstyle(
+            ":completion::bind-addresses",
+            "command",
+            "echo '    inet 192.0.2.1 netmask 0xffffff00'",
+        );
         crate::ported::zle::complete::INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
         let r = _bind_addresses(&["-4".to_string()]);
         crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 }
