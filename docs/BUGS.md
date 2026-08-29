@@ -71,7 +71,7 @@ this entry.
 
 ---
 
-## #1112 — `( … )` does not fork, so `$$`-targeted signals hit the wrong trap — open
+## #1112 — an in-process `( … )` leaks its trap table and rlimits — open
 
 **Status:** `port-bug`, found 2026-08-28 while repairing `283_zsh_traps_full`.
 
@@ -99,12 +99,27 @@ zsh runs `OUTER` — `$$` is the parent and the child's trap table is a separate
 runs `INNER`. `283_zsh_traps_full` measures this as `usr1_cnt=3 zerr_cnt=3` where zsh gives
 `4` / `2`.
 
-**Scope.** In-process subshells are deliberate in places (`run_command_substitution` documents
-why `$(…)` runs on a sub-VM rather than forking, so a variable it sets is gone afterwards). This
-entry is about the `( … )` COMMAND form, where C forks unconditionally
-(`Src/exec.c`, `execsubsh` → `entersubsh`), and about signal disposition specifically: an
-in-process subshell shares the parent's trap table, so `kill -USR1 $$` cannot reach the
-disposition zsh would use.
+**Scope — narrowed 2026-08-28 after measuring, and the title above was corrected with it.**
+"Does not fork" is literally true but a misleading framing of the fix, because MOST of the
+isolation already works in-process. Measured, `zsh -f` vs `zshrs --zsh -f`:
+
+| probe | zsh | zshrs | |
+|---|---|---|---|
+| `v=out; ( v=in ); echo $v` | `out` | `out` | OK |
+| `cd /; ( cd /tmp ); pwd` | `/` | `/` | OK |
+| `( exit 3 ); echo rc=$?` | `rc=3` | `rc=3` | OK |
+| `setopt noglob; ( unsetopt noglob )` | still set | still set | OK |
+| the trap probe above | `OUTER` | `INNER` | **BROKEN** |
+| `( ulimit -n 256 ); ulimit -n` | `1048576` | `256` | **BROKEN** |
+
+So exactly two kinds of state leak out of an in-process `( … )`: the **trap table / signal
+dispositions**, and **resource limits**. That is a save/restore gap in `SubshStateGuard`
+(`src/ported/exec.rs`), whose doc already carries an applied/skipped breakdown of what it
+emulates from `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL)` (c:Src/exec.c:4781).
+
+**Do NOT fix this by making `( … )` fork.** In-process subshells are deliberate — this project
+exists partly to avoid forks, and `run_command_substitution` documents the same choice for
+`$(…)`. Forking would trade away that property to fix two pieces of unsaved state.
 
 ---
 
