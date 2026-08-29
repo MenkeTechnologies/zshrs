@@ -7611,6 +7611,28 @@ pub fn paramsubst(
             };
             Some((node.and_then(|p_| p_.u_str), unset))
         };
+        // !!! WARNING: RUST-ONLY HELPER !!!
+        // In C there is ONE subscript evaluation and ONE `vunset`: `fetchvalue`
+        // → `getindex` → `getarg` runs `mathevalarg`/`mathevali` on the
+        // subscript text (c:Src/params.c:1419-1484), stores the result in
+        // `v->start`, and paramsubst then decides set-ness from THAT SAME
+        // `v->start` against the array length —
+        //   c:Src/subst.c:2944-2954
+        //       if (v->start < 0) { tmplen = arrlen(…); v->start += tmplen … }
+        //       if (!(v->valflags & VALFLAG_INV))
+        //           if (v->start < 0 || … v->start >= tmplen) vunset = 1;
+        // The Rust port splits those two into separate expressions (`raw_value`
+        // below, then `is_set`), and the `is_set` side only ever did a plain
+        // `parse::<i64>()`. A BARE-NAME subscript (`${arr[i]}`) or an arith
+        // expression (`${arr[i+j]}`) therefore resolved fine for the VALUE but
+        // read as "no index at all" for set-ness, so every default-family
+        // operator (`:-`/`-`/`:+`/`+`/`:=`/`=`/`:?`/`?`) took the unset branch.
+        // Re-running mathevali inside `is_set` is NOT an option: C evaluates the
+        // subscript exactly once, so `${arr[++i]:-x}` must leave `i == 1`.
+        // Instead the value path records the index it resolved here — the
+        // stand-in for C's single `v->start` — and `is_set` reads it back.
+        // Bug #1111 in docs/BUGS.md.
+        let resolved_sub_index: std::cell::Cell<Option<i64>> = std::cell::Cell::new(None);
         let raw_value: String = if let Some(pv) = prefiltered_value.clone() {
             // Pre-resolved scalar value from `${(flags)NAME[KEY]}`
             // fast-path. Skip lookup entirely; the flag chain
@@ -9057,6 +9079,12 @@ pub fn paramsubst(
                     })
                 {
                     // c:2926 (numeric index)
+                    // c:Src/params.c:1419-1484 getarg — this is the single
+                    // mathevali of the subscript; C keeps its result in
+                    // `v->start` and c:Src/subst.c:2944-2954 derives `vunset`
+                    // from it. Record it so the `is_set` computation below reads
+                    // the same resolved index instead of re-parsing the text.
+                    resolved_sub_index.set(Some(idx_n));
                     let len = arr.len() as i64;
                     // c:Src/params.c:2110-2150 — KSH_ARRAYS uses 0-based
                     // indexing (arr[0] = first). Without the option,
@@ -10214,6 +10242,11 @@ pub fn paramsubst(
                             }
                         })
                     {
+                        // c:Src/params.c:1419-1484 getarg — same single
+                        // subscript evaluation as the array arm above; record
+                        // the resolved index for the `is_set` computation (C
+                        // reads it back off `v->start`, c:Src/subst.c:2944).
+                        resolved_sub_index.set(Some(idx_n));
                         let len = s_chars.len() as i64;
                         // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
                         // non-strict mode: `s[0]` → first char.
@@ -10917,7 +10950,20 @@ pub fn paramsubst(
                         if is_at_or_star || is_slice {
                             !a.is_empty()
                         } else {
-                            sub.parse::<i64>().ok().is_some_and(|i| {
+                            // c:Src/subst.c:2944-2954 — `vunset` is decided from
+                            // `v->start`, the index getarg already produced by
+                            // math-evaluating the subscript. `parse::<i64>()`
+                            // alone only sees a DIGIT LITERAL, so a bare-name
+                            // (`${arr[i]}`) or arith (`${arr[i+j]}`) subscript
+                            // was reported unset and every default-family
+                            // operator fired its default. Prefer the index the
+                            // value path resolved (C's `v->start`); the literal
+                            // parse remains the fallback for the paths that
+                            // never reached that arm. Bug #1111.
+                            resolved_sub_index
+                                .get()
+                                .or_else(|| sub.parse::<i64>().ok())
+                                .is_some_and(|i| {
                                 let len = a.len() as i64;
                                 // The subscript→slot mapping has to match the
                                 // one the VALUE path uses, or `${a[i]}` and
@@ -10962,7 +11008,10 @@ pub fn paramsubst(
                 // though the character exists. Guarded to true scalars: an
                 // ARRAY out-of-range index (`${+a[4]}`) must stay 0, which the
                 // array branch above already decides.
-                || (sub.parse::<i64>().is_ok()
+                // Same `v->start` reuse as the array arm: a bare-name or arith
+                // scalar subscript (`s=abc; ${s[i]:-x}`) parses as no integer
+                // but getarg resolved it to a real character index. Bug #1111.
+                || ((sub.parse::<i64>().is_ok() || resolved_sub_index.get().is_some())
                     && vars_contains(&var_name)
                     && !arrays_contains(&var_name)
                     && !assoc_contains(&var_name))
