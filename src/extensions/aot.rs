@@ -1,7 +1,33 @@
-//! Ahead-of-time build: bake one or more shell scripts into a copy of the
-//! running `zshrs` binary as a compressed trailer, producing a self-contained
-//! executable. At startup, zshrs detects the trailer and runs every embedded
-//! script IN INPUT ORDER as a single concatenated zsh program.
+//! Ahead-of-time build (`zbuild`): turn one or more shell scripts into a
+//! self-contained executable that runs with no zsh and no zshrs installed.
+//! Two modes, and they produce genuinely different artifacts:
+//!
+//! * **`zbuild`** (default, this module's trailer format below) appends the
+//!   script *source*, zstd-compressed, to a copy of the running `zshrs`
+//!   binary. At startup zshrs detects the trailer and runs every embedded
+//!   script IN INPUT ORDER as one concatenated zsh program. The launch still
+//!   parses and compiles; what you gain is a single file to ship.
+//!
+//! * **`zbuild --native`** ([`build_native`]) compiles the scripts to a fusevm
+//!   `Chunk`, lowers that to **native machine code** with Cranelift
+//!   (`fusevm::aot::compile_object` → a relocatable `.o`), and links it
+//!   against `libzsh.a` into a standalone binary. `objdump -d
+//!   fusevm_aot_entry` on the result shows the script's own control flow as
+//!   machine instructions — a `br_table` over one native block per opcode —
+//!   with no bytecode dispatch loop at run time.
+//!
+//!   Be precise about what that does and does not mean. The *shape* of the
+//!   program is native; the *work* each op does is a call into the linked zsh
+//!   runtime (`fusevm_aot_exec_op`), because a shell op is `fork`/`execve`/
+//!   glob/expansion, not arithmetic. fusevm's fully-register-native path —
+//!   where ops become real arithmetic in registers — needs
+//!   `Chunk::builtin_argc_is_arity`, which zshrs cannot set: its builtin
+//!   handlers do not treat `CallBuiltin`'s `argc` as a stack arity
+//!   (`BUILTIN_XTRACE_ARGS` is emitted with `argc = 2` and pops one value,
+//!   peeking the rest). So a shell chunk takes fusevm's threaded-native
+//!   lowering. The serialized chunk also rides along in the binary
+//!   (`fusevm_aot_chunk_blob`) — the native driver reads its ops and
+//!   constants from there.
 //!
 //! **zshrs-original infrastructure — no C source counterpart.** C zsh
 //! has the `zcompile` builtin (Src/parse.c → `bin_zcompile()`) which
