@@ -153,6 +153,61 @@ math-evaluates to 0 — plus the single-evaluation and `KSH_ARRAYS`/`KSH_ZERO_SU
 
 ---
 
+## #1114 — zsh's `TRAPxxx()` function traps fire in `--bash` / `--ksh` / `--dash` mode — open
+
+**Status:** `port-bug`, found 2026-08-29. Reported by the maintainer, who pointed out that zsh's
+two trap forms list and scope differently and that a `--bash` conformance suite comparing `trap`
+output would trip on the split. It does, and worse than expected.
+
+zsh has TWO trap forms — the list trap `trap 'cmd' INT` and the function trap
+`TRAPINT() { … }` — and they are alternatives: defining one removes the other for that signal.
+**bash, ksh and dash have no function-trap concept at all.** In those shells `TRAPINT()` is an
+ordinary function whose name merely begins with `TRAP`.
+
+zshrs recognises `TRAP*` unconditionally, in two ungated places:
+
+    src/ported/exec.rs:7361      if nm.len() > 4 && nm.starts_with("TRAP")
+    src/fusevm_bridge.rs:11917   if name.len() > 4 && name.starts_with("TRAP")
+
+Four measured divergences against real bash 5.3, `zshrs --bash`:
+
+| script | bash | zshrs --bash |
+|---|---|---|
+| `TRAPINT() { echo F; }; trap` | *(nothing)* | prints the function as a trap |
+| `TRAPUSR1() { echo F; }; kill -USR1 $$; echo end` | *(nothing — the shell dies on the default action)* | `F` then `end` |
+| `TRAPINT() { echo F; }; declare -F TRAPINT` | `TRAPINT` | *(nothing)* |
+| `trap "echo L" USR1; TRAPUSR1() { echo F; }; trap` | `trap -- 'echo L' SIGUSR1` | prints TRAPUSR1 |
+
+The third and fourth are the damaging ones. In the third, zshrs CONSUMES the definition as a
+trap, so the function disappears from the function table and `declare -F` cannot see it. In the
+fourth, defining a function whose name merely starts with `TRAP` **silently destroys a real
+trap** that the script had already installed — a script doing `trap 'cleanup' USR1` and later
+defining an unrelated helper called `TRAPUSR1_helper`… (safe, >4 chars but `getsigidx` rejects
+the tail) or, realistically, `TRAPUSR1` as a handler name, loses its cleanup handler with no
+diagnostic.
+
+Confirmed the other two drop-in shells agree with bash, so the gate is not bash-specific:
+
+    $ ksh  -c 'TRAPUSR1() { echo F; }; trap'   -> (nothing)
+    $ dash -c 'TRAPUSR1() { echo F; }; trap'   -> (nothing)
+
+**Fix shape.** Gate both sites on `crate::dash_mode::posix_faithful()` — the same gate
+`52bf99403f` used for the umask/getopts/trap/type formats. It is raised only for a bare drop-in
+flag (`bins/zshrs.rs:1572`), so `--zsh`, native zshrs, a runtime `emulate sh`, and the
+`--sh --zsh` / `--ksh --zsh` legs are all untouched by construction.
+
+**zsh mode is already CORRECT and must not change.** Verified against `zsh -f`, all identical:
+list trap listed by bare `trap`; a function trap listed as its definition; defining a function
+trap removes the list trap and vice versa; and in a subshell the LIST trap is reset while the
+FUNCTION trap survives (`( trap )` empty, `functions TRAPUSR1` still there) — the zsh-vs-POSIX
+split the docs describe. The subshell half was exercised by
+[#1112](#1112)'s save/restore work and came through correct.
+
+**Note on `trap -p`:** that is a bash flag; zsh's `trap` has no `-p` and bare `trap` is the
+reusable listing. Any harness checking zsh-mode trap output must use plain `trap`.
+
+---
+
 ## #1113 — `resolvebuiltin` is ported TWICE, with incompatible signatures — open
 
 **Status:** `port-bug`, found 2026-08-29 during the file-mapping sweep. It is the LAST remaining
