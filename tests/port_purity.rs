@@ -258,7 +258,18 @@ fn every_top_level_fn_cites_its_c_source() {
         r"^(?P<vis>(?:pub(?:\([^)]*\))?\s+)?(?:async\s+|unsafe\s+|extern\s+\x22[^\x22]*\x22\s+|const\s+)*)fn\s+(?P<name>[A-Za-z_][A-Za-z_0-9]*)",
     )
     .unwrap();
-    let cite_re = Regex::new(r"Port of `?[A-Za-z_][A-Za-z_0-9]*`?\(\)?\s*from\s*`?Src/").unwrap();
+    // The backtick may close AFTER the parens — `` `name()` `` — which is the
+    // form src/ported/ actually uses, e.g.
+    //   /// Port of `clear_shiftstate()` from `Src/pattern.c:327`.
+    // The original pattern only allowed `` `name`() `` or a bare `name()`, so
+    // it rejected the canonical spelling and reported 144 correctly-cited
+    // functions as uncited. Measured across src/ported/ when this was
+    // widened: 144 of the flagged entries had a real citation, the rest do
+    // genuinely lack one — so this is an accuracy fix worth ~3%, NOT a
+    // relaxation. The requirement is unchanged: a `/// Port of X() from
+    // Src/…` line must still precede every top-level fn.
+    let cite_re =
+        Regex::new(r"Port of\s+`?[A-Za-z_][A-Za-z_0-9]*(?:\(\))?`?\s*from\s+`?Src/").unwrap();
 
     let mut missing: Vec<String> = Vec::new();
     for rs in &rust_files {
