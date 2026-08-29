@@ -993,27 +993,83 @@ mod tests {
         assert_eq!(ztgetflag(""), -1);
     }
 
-    /// c:200 — `scantermcap` results must have unique keys (the
-    /// boolcodes / numcodes / strcodes tables are disjoint by C
-    /// design). Catches a regression that double-emits a cap when
-    /// two tables claim it.
+    /// c:272-309 — `scantermcap` walks `boolcodes`, `numcodes` and the
+    /// string-capability table linearly and calls `func()` once for every
+    /// entry that resolves. It never deduplicates, and the tables are NOT
+    /// disjoint: zsh's own fallback `zstrcodes[]` lists `"ML"` twice, at
+    /// c:258 and again at c:263, and the live library `strcodes[]` this
+    /// port walks (`STRCODES`, the HAVE_STRCODES path) carries the same
+    /// duplicate. C gets away with it because every consumer of the scan
+    /// is a hash — `scanhashtable` over the special `termcap` param
+    /// (c:311-313 `SPECIALPMDEF("termcap", …, scantermcap)`) — so a repeat
+    /// that carries the SAME value is invisible to the reader.
+    ///
+    /// So "all keys unique" is not what C guarantees, and asserting it
+    /// fails on any host whose `strcodes[]` has the upstream duplicate.
+    /// What C *does* guarantee, and what this pins, is:
+    ///
+    ///   * a key is emitted no more often than the codes tables list it —
+    ///     a regression that double-emits a cap (two tables claiming it,
+    ///     or a loop running twice) still fails here; and
+    ///   * repeated emissions of one key carry an identical value, so the
+    ///     consuming hash cannot lose information and the scan is
+    ///     order-independent.
     #[test]
-    fn scantermcap_keys_are_unique() {
+    fn scantermcap_emits_each_key_at_most_as_often_as_the_codes_tables_list_it() {
         let _g = crate::test_util::global_state_lock();
         use std::sync::Mutex;
-        static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-        KEYS.lock().unwrap().clear();
+        static SEEN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+        SEEN.lock().unwrap().clear();
         fn cb(node: &crate::ported::zsh_h::param, _flags: i32) {
-            KEYS.lock().unwrap().push(node.node.nam.clone());
+            SEEN.lock().unwrap().push((
+                node.node.nam.clone(),
+                node.u_str.clone().unwrap_or_default(),
+            ));
         }
         scantermcap(std::ptr::null_mut(), Some(cb), 0);
-        let collected = KEYS.lock().unwrap().clone();
-        let mut seen = std::collections::HashSet::new();
-        for k in &collected {
+        let collected = SEEN.lock().unwrap().clone();
+        assert!(
+            !collected.is_empty(),
+            "scantermcap emitted nothing — the scan is dead, not merely duplicating"
+        );
+
+        // How many slots each code occupies across the three tables C walks
+        // (c:272 boolcodes, c:283 numcodes, c:294 strcodes) — the upper
+        // bound on how often the scan may emit it.
+        let mut budget: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for cap in BOOLCODES
+            .iter()
+            .chain(NUMCODES.iter())
+            .chain(STRCODES.iter())
+        {
+            *budget.entry(cap).or_insert(0) += 1;
+        }
+
+        let mut emitted: std::collections::HashMap<String, (usize, String)> =
+            std::collections::HashMap::new();
+        for (k, v) in &collected {
+            let slot = emitted.entry(k.clone()).or_insert((0, v.clone()));
+            slot.0 += 1;
+            // Repeats must agree: the same cap looked up twice returns the
+            // same tgetstr/tgetnum/ztgetflag result, so the hash the caller
+            // builds is the same whichever emission lands last.
+            assert_eq!(
+                &slot.1, v,
+                "termcap key {k} emitted with conflicting values {:?} vs {v:?} — \
+                 the consuming hash would depend on scan order",
+                slot.1
+            );
+            let allowed = budget.get(k.as_str()).copied().unwrap_or(0);
             assert!(
-                seen.insert(k.clone()),
-                "duplicate termcap key emitted: {}",
-                k
+                allowed > 0,
+                "scantermcap emitted {k}, which is in none of \
+                 boolcodes/numcodes/strcodes"
+            );
+            assert!(
+                slot.0 <= allowed,
+                "termcap key {k} emitted {} times but the codes tables list it \
+                 only {allowed} time(s) — a cap is being double-emitted",
+                slot.0
             );
         }
     }

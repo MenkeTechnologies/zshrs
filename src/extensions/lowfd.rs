@@ -299,7 +299,11 @@ mod tests {
     fn an_internal_open_is_registered_in_the_fdtable() {
         // Same serialisation the other guard tests take: these tests share
         // one process, and a guard in flight moves descriptors 3-9 under
-        // any test that is sampling them.
+        // any test that is sampling them. `fd_test_lock` additionally keeps
+        // out the rest of the binary's fd-moving tests — this assertion
+        // reads the descriptor number the kernel handed back, so a
+        // concurrently-freed low slot would land the open there.
+        let _g = fd_test_lock();
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         use std::os::unix::io::AsRawFd;
         let dir = tempfile::tempdir().expect("tempdir");
@@ -330,6 +334,25 @@ mod tests {
     /// they take turns.
     static SERIAL: Mutex<()> = Mutex::new(());
 
+    /// The lock the rest of the test binary uses to serialise work that
+    /// touches process-global state, taken here for the descriptor TABLE.
+    ///
+    /// `SERIAL` only keeps the guard tests apart from each other; the fd table
+    /// is shared with all ~10k tests, and several move low descriptors on
+    /// purpose — `bin_sysread_no_args_returns_nonzero`
+    /// (`ported/modules/system.rs:2595-2605`) dups a pipe onto fd 0 and closes
+    /// pipe ends that can sit inside the script range. Those tests hold this
+    /// lock, so taking it keeps them out of the window rather than racing
+    /// them. It is not a complete fence — a test that touches fds without
+    /// taking it still can interleave — which is why the assertions below pin
+    /// the guard's own reservation rather than the descriptor number the
+    /// kernel happens to return.
+    ///
+    /// Order is always this lock first, then `SERIAL`.
+    fn fd_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::test_util::global_state_lock()
+    }
+
     /// Which of the script descriptors are currently open.
     fn open_script_fds() -> Vec<RawFd> {
         (FIRST_SCRIPT_FD..FIRST_INTERNAL_FD)
@@ -337,15 +360,44 @@ mod tests {
             .collect()
     }
 
+    /// The guard reserves the SCRIPT range, and that is what is pinned here:
+    /// while it is alive every descriptor in `FIRST_SCRIPT_FD..FIRST_INTERNAL_FD`
+    /// is occupied, so a fresh open cannot land on one.
+    ///
+    /// It does NOT, and must not, reserve 0/1/2 — those are stdin/stdout/stderr
+    /// and belong to nobody the shell may park `/dev/null` on (see
+    /// `FIRST_SCRIPT_FD`: the script's own descriptors start at 3, `exec 3>out`).
+    /// Asserting the *consequence* (`landed >= FIRST_INTERNAL_FD`) instead of the
+    /// reservation therefore made this test depend on a precondition the guard
+    /// neither controls nor claims: that stdio is open. In a 10k-test binary it
+    /// intermittently is not — another test has a low descriptor in flight — and
+    /// the kernel's lowest-free rule then hands `open` fd 0 before the guard's
+    /// range is ever reached. Observed in a full `cargo test --lib`:
+    /// "open inside the guard landed on fd 0, inside the script range".
     #[test]
     fn guard_pushes_opens_above_the_script_range() {
+        let _g = fd_test_lock();
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let guard = LowFdGuard::new();
+
+        // The reservation itself — the guard's own invariant, independent of
+        // which number the kernel hands back next. Every script slot is spoken
+        // for: by this guard, or by whoever already owned it.
+        for fd in FIRST_SCRIPT_FD..FIRST_INTERNAL_FD {
+            assert!(
+                fd_is_open(fd),
+                "guard left script fd {fd} free; it reserved {:?}",
+                guard.held
+            );
+        }
+
         let f = std::fs::File::open("/dev/null").expect("open /dev/null");
+        let landed = f.as_raw_fd();
+        // With every script slot proven occupied above, a landing anywhere in
+        // that range is the guard's fault and nothing else's.
         assert!(
-            f.as_raw_fd() >= FIRST_INTERNAL_FD,
-            "open inside the guard landed on fd {}, inside the script range",
-            f.as_raw_fd()
+            !(FIRST_SCRIPT_FD..FIRST_INTERNAL_FD).contains(&landed),
+            "open inside the guard landed on fd {landed}, inside the script range"
         );
         drop(f);
         drop(guard);
@@ -353,6 +405,10 @@ mod tests {
 
     #[test]
     fn guard_restores_the_script_range_exactly() {
+        // Samples the script range before and after, so any other test that
+        // opens or closes a descriptor down there in between is a false
+        // failure — see `fd_test_lock`.
+        let _g = fd_test_lock();
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let before = open_script_fds();
         {
@@ -376,6 +432,7 @@ mod tests {
     /// aborts the whole test binary instead of failing one test.
     #[test]
     fn concurrent_guards_never_steal_a_descriptor_from_another_thread() {
+        let _g = fd_test_lock();
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 
         let path = std::env::temp_dir().join(format!("zshrs-lowfd-{}", std::process::id()));
@@ -404,7 +461,16 @@ mod tests {
             if fd < 0 {
                 continue;
             }
-            if fd < FIRST_INTERNAL_FD {
+            // Only the SCRIPT range is watched. The guard can never affect
+            // fds 0/1/2: it does not reserve them (`FIRST_SCRIPT_FD`), and the
+            // only syscall it aims at them is `open`, which cannot return a
+            // descriptor somebody else holds. A change of identity down there
+            // is some other test re-pointing stdio — e.g.
+            // `bin_sysread_no_args_returns_nonzero`
+            // (`ported/modules/system.rs:2598-2604`) dups a pipe onto fd 0 and
+            // back — which is exactly what this assertion used to report as
+            // "a LowFdGuard on another thread took over live fd Some(0)".
+            if (FIRST_SCRIPT_FD..FIRST_INTERNAL_FD).contains(&fd) {
                 std::thread::yield_now();
                 let mut st: libc::stat = unsafe { std::mem::zeroed() };
                 if unsafe { libc::fstat(fd, &mut st) } == 0 && st.st_ino != want_ino {
@@ -439,6 +505,7 @@ mod tests {
     /// timeout) if anyone reintroduces one.
     #[test]
     fn guard_still_works_in_a_fork_child_while_other_threads_hold_it() {
+        let _g = fd_test_lock();
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -454,7 +521,9 @@ mod tests {
             .collect();
 
         let mut stuck = 0;
-        let mut failed = 0;
+        // The descriptor each failing child landed on, so a real regression
+        // names the slot instead of only counting.
+        let mut failed: Vec<i32> = Vec::new();
         for _ in 0..20 {
             // SAFETY: the child does nothing but build a guard, open once, and
             // `_exit` — no unwinding, no atexit handlers, no stdio.
@@ -466,10 +535,16 @@ mod tests {
                 // whole range inherits those descriptors and correctly
                 // reserves nothing.
                 let fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
-                let ok = fd >= FIRST_INTERNAL_FD;
+                // The contract is the SCRIPT range. 0/1/2 are stdio and are
+                // never reserved (`FIRST_SCRIPT_FD`), so a child forked while
+                // the parent happened to have one of them closed legitimately
+                // gets it back from the kernel's lowest-free rule — not a
+                // guard failure. Report the offending descriptor as the exit
+                // status so a real one is diagnosable.
+                let bad = (FIRST_SCRIPT_FD..FIRST_INTERNAL_FD).contains(&fd);
                 unsafe { libc::close(fd) };
                 drop(g);
-                unsafe { libc::_exit(i32::from(!ok)) };
+                unsafe { libc::_exit(if bad { fd } else { 0 }) };
             }
             assert!(pid > 0, "fork failed");
 
@@ -479,8 +554,9 @@ mod tests {
             loop {
                 let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
                 if r == pid {
-                    if libc::WEXITSTATUS(status) != 0 {
-                        failed += 1;
+                    let code = libc::WEXITSTATUS(status);
+                    if code != 0 {
+                        failed.push(code);
                     }
                     break;
                 }
@@ -499,9 +575,9 @@ mod tests {
             let _ = t.join();
         }
         assert_eq!(stuck, 0, "LowFdGuard::new() hung in a fork child");
-        assert_eq!(
-            failed, 0,
-            "an open inside a fork child's guard landed in the script fd range"
+        assert!(
+            failed.is_empty(),
+            "an open inside a fork child's guard landed in the script fd range: {failed:?}"
         );
     }
 
@@ -510,6 +586,7 @@ mod tests {
     /// the script's descriptors.
     #[test]
     fn reserved_descriptors_are_close_on_exec() {
+        let _g = fd_test_lock();
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let before = open_script_fds();
         let guard = LowFdGuard::new();

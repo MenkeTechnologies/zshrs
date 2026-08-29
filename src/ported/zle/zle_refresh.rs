@@ -6216,7 +6216,22 @@ mod tests {
         use std::os::unix::io::FromRawFd;
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
+        // Pin the terminal geometry BEFORE zrefresh runs. In C `winw` IS
+        // `zterm_columns` (c:729 `winw = zterm_columns`), and countprompt
+        // measures against that same global (c:1158/1255). This port keeps
+        // them in two places: `WINW` comes from `adjustcolumns()` (which
+        // applies C's 80-column fallback, Src/utils.c:1866-1870) while
+        // `countprompt` reads the raw `$COLUMNS` param, which is 0 in a test
+        // binary with no tty. With `zterm_columns == 0` the c:1158 wrap loop
+        // collapses `w` to the LAST character's width on every step, so
+        // countprompt("RP") returns w=1/h=3 instead of w=2/h=1 — and the
+        // `rprompth == 1` gate at c:1647 then rejects the right prompt.
+        // Same pin as prompt.rs's countprompt tests (prompt.rs:5219/5255).
+        crate::ported::params::setiparam("COLUMNS", 80);
         *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = "RP".to_string();
+        // zrefresh republishes both from `countprompt(rpromptbuf, …)` (c:774,
+        // ported at zle_refresh.rs:1269-1275); these seeds only prove the
+        // pre-state is not what the assertions later observe.
         RPROMPTW.store(2, Ordering::SeqCst);
         RPROMPTH.store(1, Ordering::SeqCst);
         TRASHEDZLE.store(0, Ordering::SeqCst);

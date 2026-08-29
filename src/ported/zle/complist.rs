@@ -7710,16 +7710,37 @@ mod tests {
         let _: i32 = menuselect(&[]);
     }
 
-    /// c:3505-3506 — with no menu in progress (`!minfo.cur`) `menuselect`
-    /// clears the `selected` handshake flag before running the menu
-    /// completion, so the c:3508 test observes only what THIS invocation
-    /// set (c:2589 sets it from `domenucomplete`).
+    /// c:3505-3510 — with no menu in progress (`!minfo.cur`) `menuselect`
+    /// clears the `selected` handshake flag (c:3506) BEFORE running the menu
+    /// completion (c:3507), so the c:3508 early-return test observes only
+    /// what THIS invocation set.
     ///
-    /// Regression pin: the previous body was a bare `menucomplete(&[])`,
-    /// which is a different function entirely — it never touched
-    /// `selected`, never consulted `minfo.asked`, and never reached
-    /// `domenuselect(NULL, NULL)` (c:3512). That NULL `dummy` is the whole
-    /// point of the widget: `domenuselect` bails early on
+    /// The post-condition is NOT `selected == 0`, and asserting that was
+    /// wrong: c:3512 reads
+    /// `minfo.cur && (minfo.asked == 2 || domenuselect(NULL, NULL)) && !d`,
+    /// and C's `&&` evaluates left to right — so `domenuselect` is CALLED
+    /// before `!d` is ever tested, and `domenuselect` stores `selected = 1`
+    /// at c:2589. Any run in which c:3507's `menucomplete` managed to build
+    /// a menu therefore ends with `selected == 1`, which is precisely what C
+    /// produces. Whether a menu gets built depends on the completion state
+    /// the process happens to be in, which is why `assert_eq!(selected, 0)`
+    /// passed for this test alone and failed in a full `cargo test --lib`
+    /// run (observed: `selected=1 minfo.cur=Some menucmp=1`).
+    ///
+    /// What c:3506 *does* guarantee, and what is pinned here: a STALE
+    /// `selected = 1` left by an earlier invocation must not short-circuit
+    /// the widget at c:3508-3509. Delete c:3506 and `|| selected` is already
+    /// true on entry, so `menuselect` returns 0 at c:3509 without ever
+    /// calling `menucomplete` — leaving the entry state untouched, i.e.
+    /// `selected == 1` AND `minfo.cur == None`. With c:3506 in place at
+    /// least one of those two must have moved, whichever completion state
+    /// this process is in.
+    ///
+    /// Regression pin (kept from the original test): the body must call
+    /// `menuselect`, not `menucomplete` — a different function entirely,
+    /// which never touches `selected`, never consults `minfo.asked`, and
+    /// never reaches `domenuselect(NULL, NULL)` (c:3512). That NULL `dummy`
+    /// is the whole point of the widget: `domenuselect` bails early on
     /// `dummy && !getsparam("MENUSELECT")` (c:2407-2408), so only a NULL
     /// `dummy` lets the explicit `menu-select` widget start interactive
     /// selection when `$MENUSELECT` is unset.
@@ -7732,12 +7753,30 @@ mod tests {
                 mi.cur = None;
             }
         }
+        let cur_before = MINFO
+            .get()
+            .and_then(|lk| lk.lock().ok())
+            .map(|mi| mi.cur.is_some())
+            .unwrap_or(false);
+        assert!(!cur_before, "test precondition: minfo.cur must start NULL");
+
+        // The stale flag c:3506 exists to clear.
         SELECTED.store(1, Ordering::SeqCst);
         let _ = menuselect(&[]);
-        assert_eq!(
-            SELECTED.load(Ordering::SeqCst),
-            0,
-            "c:3506 — `selected = 0` must run on the !minfo.cur path"
+
+        let selected_after = SELECTED.load(Ordering::SeqCst);
+        let cur_after = MINFO
+            .get()
+            .and_then(|lk| lk.lock().ok())
+            .map(|mi| mi.cur.is_some())
+            .unwrap_or(false);
+        assert!(
+            selected_after == 0 || cur_after,
+            "c:3506 — the stale `selected = 1` must be cleared before c:3507, \
+             so c:3508-3509 cannot return early on it. Entry state came back \
+             unchanged (selected={selected_after}, minfo.cur set={cur_after}), \
+             which is exactly what dropping `selected = 0` produces: c:3508's \
+             `|| selected` fires and `menucomplete` never runs"
         );
     }
 
