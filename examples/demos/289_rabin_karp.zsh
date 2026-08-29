@@ -36,12 +36,12 @@ rk_search() {
         h_mult=$(( (h_mult * BASE) % MOD ))
     done
 
-    local i
+    local i j   # NB: declare j once — a bare `local j` re-declaration inside
+                # the loop echoes "j=N" to stdout.
     for ((i=1; i<=n-m+1; i++)); do
         if (( w_hash == p_hash )); then
             # Verify (collision check).
             local match=1
-            local j
             for ((j=1; j<=m; j++)); do
                 if [[ ${text[i+j-1]} != ${pat[j]} ]]; then
                     match=0
@@ -115,18 +115,21 @@ echo "  total collisions: $collisions / ${#sample_strs}"
 
 echo
 echo "── benchmark vs naive (text 100 chars, pat 10 chars) ──"
+# NB: `"abcdefghij"[1,1]` is not a subscript — it is a literal string followed
+# by a bracket pattern. Subscript a variable instead.
+alphabet="abcdefghij"
 text=""
 for ((i=0; i<100; i++)); do
-    text+="abcdefghij"[$(( i % 10 + 1 )),$(( i % 10 + 1 ))]
+    text+=${alphabet[i % 10 + 1]}
 done
-text="abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"
 pat="cdefghijab"
 rk_search "$text" "$pat"
 echo "  text len: ${#text}, pat len: ${#pat}"
 echo "  RK matches at: ${MATCHES[*]:0:5}…   count=${#MATCHES}"
 
 # === ztest assertions ===
-# (demo's benchmark `text+="abcdefghij"[1,1]` line triggers zshrs glob no-match
-#  and aborts before this block runs. Smoke-only.)
-zassert_ok 1 "demo loaded"
+zassert_eq "${#text}" 100                        "100-char benchmark text built"
+zassert_eq "${text[1,10]}" "abcdefghij"          "text repeats the alphabet"
+zassert_eq "${#MATCHES}" 9                       "9 occurrences of cdefghijab"
+zassert_eq "${MATCHES[1]}" 3                     "first match at index 3"
 ztest_run

@@ -56,7 +56,7 @@ colors+=( pink "#ffc0cb" white "#ffffff" black "#000000" )
 echo "  bulk add: size now ${#colors}"
 
 echo
-echo "── ${+...+} existence check ──"
+echo '── ${+...+} existence check ──'
 echo "  red exists: ${+colors[red]} (0=no, 1=yes)"
 echo "  blue exists: ${+colors[blue]}"
 echo "  unknown exists: ${+colors[unknown]}"
@@ -65,9 +65,10 @@ echo
 echo "── parameter expansion flags on assoc ──"
 echo "  count:          ${#colors}"
 echo "  key/value:      ${(k)colors[blue]} (=blue) / ${colors[blue]}"
-echo "  upper keys:     ${(U@k)colors[1]}"
-echo "  flag (Ojk) — odd reverse sort by key:"
-echo "    ${(@kOj)colors:0:5}"
+echo "  upper keys:     ${(U)${(@ko)colors}}"
+# NB: `j` needs an argument (j:sep:); plain reverse-key order is (kO).
+echo "  flag (kO) — keys in reverse sort order:"
+echo "    ${(@kO)colors}"
 
 echo
 echo "── two-dim emulation via composite keys ──"
@@ -149,8 +150,8 @@ echo "  (kvi) inverse-sort:  $(echo ${(@kOj: :)colors})"
 
 echo
 echo "── count distinct values ──"
-typeset -A status
-status=(
+typeset -A svc_status
+svc_status=(
     server1 up
     server2 down
     server3 up
@@ -159,7 +160,7 @@ status=(
     server6 down
 )
 typeset -A status_count
-for v in "${(@v)status}"; do
+for v in "${(@v)svc_status}"; do
     (( status_count[$v]++ ))
 done
 for s in "${(@ko)status_count}"; do
@@ -183,7 +184,12 @@ echo "  built-in support:         declare -A, typeset -A"
 echo "  splay-tree vs hash:       zsh uses hash table"
 
 # === ztest assertions ===
-# (demo currently fails to run cleanly under zshrs — ${+colors[red]}
-#  expansion form unsupported; smoke only)
-zassert_ok 1 "demo loaded"
+zassert_eq "${#colors}"          "9"        "9 colours after add/remove/bulk-add"
+zassert_eq "${+colors[red]}"     "0"        "red was unset"
+zassert_eq "${+colors[blue]}"    "1"        "blue is present"
+zassert_eq "${colors[blue]}"     "#0000ff"  "blue value"
+zassert_eq "${(j: :)${(@ko)colors}}" "black blue cyan green magenta orange pink white yellow" "sorted keys"
+zassert_eq "${${(@kO)colors}[1]}"    "yellow"   "kO gives reverse-sorted keys"
+zassert_eq "${svc_status[server1]}" "up"    "second assoc holds its own keys"
+zassert_eq "${status_count[up]}"    "3"     "3 servers up"
 ztest_run

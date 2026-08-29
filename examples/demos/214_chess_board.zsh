@@ -8,15 +8,16 @@ render_fen() {
     local -a rows=( ${(s|/|)placement} )
 
     echo "  a b c d e f g h"
-    local r=8
+    # NB: declare every local here — bare `local i` / `local j` re-declarations
+    # inside the loops echo "i=N"/"j=N" into the rendered board.
+    local r=8 row i j ch n
     for row in "${rows[@]}"; do
         printf "%d" $r
-        local i
         for ((i=1; i<=${#row}; i++)); do
-            local ch=${row[i]}
+            ch=${row[i]}
             case $ch in
                 [1-8])
-                    local n=$ch j
+                    n=$ch
                     for ((j=0; j<n; j++)); do printf " ."; done
                     ;;
                 *) printf " %s" "$ch" ;;

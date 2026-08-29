@@ -97,14 +97,16 @@ count_pegs() {
 
 # Find first valid move (greedy).
 find_any_move() {
-    local r c dr dc
+    # NB: declare every local up front — a bare `local i` re-declaration inside
+    # the loop echoes "i=N" onto stdout, which this function's caller parses as
+    # part of the move, and the greedy loop then never terminates.
+    local r c dr dc i
     typeset -a DIRS_R DIRS_C
     DIRS_R=(-1 1 0 0)
     DIRS_C=(0 0 -1 1)
     for ((r=1; r<=SIZE; r++)); do
         for ((c=1; c<=SIZE; c++)); do
             if [[ $(cell_v $r $c) == P ]]; then
-                local i
                 for ((i=1; i<=4; i++)); do
                     dr=${DIRS_R[i]}
                     dc=${DIRS_C[i]}

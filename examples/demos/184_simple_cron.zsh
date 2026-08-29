@@ -72,9 +72,14 @@ zassert_eq "${#SCHEDULE[@]}" 6                       "6 schedules registered"
 zassert_eq "${SCHEDULE[0 0 * * *]}"      "daily-midnight" "midnight schedule task"
 zassert_eq "${SCHEDULE[0 12 * * *]}"     "daily-noon"     "noon schedule task"
 zassert_eq "${SCHEDULE[*/15 * * * *]}"   "every-15min"    "every-15 schedule task"
-# matches_cron — divergence: under this zshrs build the ${(s/ /)cron} split
-# on a leading "*" appears to not match $v=0, so all simulated ticks emit
-# "nothing fired". Pin behavior as observed rather than the cron spec.
-matches_cron "* * * * *" 0 0 1 1 1 && r1=1 || r1=0
-zassert_eq "$r1" 0   "matches_cron returns 1 (divergence: split / glob)"
+matches_cron "* * * * *"     0  0 1 1 1 && r1=1 || r1=0
+zassert_eq "$r1" 1   "all-wildcard cron matches every tick"
+matches_cron "0 0 * * *"     0  0 1 1 1 && r2=1 || r2=0
+zassert_eq "$r2" 1   "midnight cron matches 00:00"
+matches_cron "0 0 * * *"     5  0 1 1 1 && r3=1 || r3=0
+zassert_eq "$r3" 0   "midnight cron rejects 00:05"
+matches_cron "*/15 * * * *" 30 12 1 5 1 && r4=1 || r4=0
+zassert_eq "$r4" 1   "*/15 matches minute 30"
+matches_cron "*/15 * * * *"  5 12 1 5 1 && r5=1 || r5=0
+zassert_eq "$r5" 0   "*/15 rejects minute 5"
 ztest_run

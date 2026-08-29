@@ -87,8 +87,7 @@ zassert_eq "$(b64_encode 'zshrs')" "enNocnM=" "base64 'zshrs'"
 # Cross-check against system base64
 zassert_eq "$(b64_encode 'zshrs')" "$(echo -n 'zshrs' | base64)" "matches system base64 (zshrs)"
 zassert_eq "$(b64_encode 'Hello, World!')" "$(echo -n 'Hello, World!' | base64)" "matches system base64 (Hello)"
-# URL-safe transform — divergence: this zshrs build's ${s//\//_} does not
-# substitute the literal '/' (the escaped slash inside // pattern is mis-
-# parsed). The '+' → '-' transform still works.
-zassert_eq "$(url_safe 'a+b/c')" "a-b/c" "url_safe + (slash sub divergence)"
+zassert_eq "$(url_safe 'a+b/c')" "a-b_c" "url_safe maps + to - and / to _"
+zassert_eq "$(url_safe 'no+special')" "no-special" "url_safe + only"
+zassert_eq "$(url_safe 'plain')" "plain" "url_safe passthrough"
 ztest_run

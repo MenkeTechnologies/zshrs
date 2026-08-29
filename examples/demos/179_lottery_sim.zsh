@@ -45,9 +45,11 @@ done
 
 echo "── 200-game match histogram ──"
 typeset -A match_counts
+# NB: `for ((p=...))` above declared `p` as an integer, so reuse a fresh
+# name here — assigning the space-separated draw to `p` is a math error.
 for ((g=0; g<200; g++)); do
-    p=$(draw_lottery 6 49)
-    m=$(count_matches "$p" "$winning")
+    pick=$(draw_lottery 6 49)
+    m=$(count_matches "$pick" "$winning")
     (( match_counts[$m]++ ))
 done
 echo "match → count"
@@ -70,13 +72,6 @@ echo "6/49 expected matches per draw ≈ 0.73"
 echo "5/69 expected matches per draw ≈ $(( 5 * 5 * 100 / 69 )) / 100"
 
 # === ztest assertions ===
-# Original batch-agent note misdiagnosed the cause as `${(n)drawn}`.
-# The actual demo bug was `${pool[@]:j}` — bare `j` is parsed as a
-# `:modifier` letter, not as the variable name. Real zsh emits the
-# same "unrecognized modifier `j'" diagnostic (verified against
-# /opt/homebrew/bin/zsh). Fixed in-place by writing `${pool[@]:$j}`.
-# `${(n)drawn}` is fine on its own (`./zshrs --zsh -c 'a=(10 2 30);
-# echo "${(on)a[@]}"'` → `2 10 30`).
 zassert_eq "$(( 5 * 5 * 100 / 69 ))" 36     "5*5*100/69 = 36 (int floor)"
 zassert_eq "$(( 6 * 6 * 100 / 49 ))" 73     "6*6*100/49 = 73 (int floor)"
 zassert_ok 1                                "demo loaded"

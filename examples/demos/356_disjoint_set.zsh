@@ -199,7 +199,7 @@ for f in "${friendships[@]}"; do echo "    $f"; done
 echo "  total circles: $(ds_components)"
 
 echo "  individual circles:"
-declared=()
+typeset -A declared
 for p in alice bob carol dave eve frank grace heidi; do
     root=$(ds_find $p)
     if [[ -z ${declared[$root]+x} ]]; then

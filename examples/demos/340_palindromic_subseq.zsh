@@ -173,17 +173,18 @@ brute_count_palin_subseq() {
     local count=0
     # 2^n subsequences.
     if (( n > 12 )); then echo "(too many)"; return; fi
-    local mask
+    # NB: declare i up front — a bare `local i` re-declaration inside the loop
+    # echoes "i=N" onto stdout and corrupts this function's captured result.
+    local mask i j sub rev
     for ((mask=1; mask<(1<<n); mask++)); do
-        local sub=""
-        local i
+        sub=""
         for ((i=1; i<=n; i++)); do
             if (( mask & (1 << (i-1)) )); then
                 sub+="${s[i]}"
             fi
         done
         # Check palindrome.
-        local rev="" j
+        rev=""
         for ((j=${#sub}; j>=1; j--)); do
             rev+="${sub[j]}"
         done

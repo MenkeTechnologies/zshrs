@@ -1,6 +1,10 @@
 #!/usr/bin/env zshrs
 # IPv6 parser — validate, expand, compress.
 
+# `[0-9A-Fa-f]##` (one-or-more) and `${g##0##}` below are EXTENDED_GLOB
+# operators; without this setopt they are matched as literal `#` characters.
+setopt extended_glob
+
 is_hex_group() {
     local g=$1
     (( ${#g} > 4 )) && return 1
@@ -40,7 +44,10 @@ expand_ipv6() {
         for ((i=0; i<need; i++)); do zeros+=":0000"; done
         # Build full address.
         local full
-        if [[ -z $left ]]; then
+        if [[ -z $left && -z $right ]]; then
+            # "::" on its own — the zero run IS the whole address.
+            full="${zeros#:}"
+        elif [[ -z $left ]]; then
             full="${zeros#:}:${right}"
         elif [[ -z $right ]]; then
             full="${left}${zeros}"
@@ -182,15 +189,15 @@ for g in "${samples[@]}"; do
 done
 
 # === ztest assertions ===
-# zshrs divergence: [0-9A-Fa-f]## extended-glob inside [[ ]] always returns
-# false here, so is_hex_group + compress_ipv6 misbehave. expand_ipv6 works.
-zassert_eq "$(expand_ipv6 '::1')"        "0000:0000:0000:0000:0000:0000:0000:1" "expand ::1"
+# expand_ipv6 zero-pads every group to 4 hex digits, so the expected strings
+# below are the fully-expanded RFC 4291 forms.
+zassert_eq "$(expand_ipv6 '::1')"        "0000:0000:0000:0000:0000:0000:0000:0001" "expand ::1"
 zassert_eq "$(expand_ipv6 '::')"         "0000:0000:0000:0000:0000:0000:0000:0000" "expand ::"
-zassert_eq "$(expand_ipv6 'fe80::1')"    "fe80:0000:0000:0000:0000:0000:0000:1"    "expand fe80::1"
-zassert_eq "$(expand_ipv6 '2001:db8::1')" "2001:db8:0000:0000:0000:0000:0000:1" "expand 2001:db8::1"
-zassert_eq "$(expand_ipv6 '1:2:3:4:5:6:7:8')" "1:2:3:4:5:6:7:8" "full form passthrough"
-zassert_eq "$(expand_ipv6 'ff02::1:2')"  "ff02:0000:0000:0000:0000:0000:1:2" "expand ff02::1:2"
-zassert_eq "$(expand_ipv6 '1::')"        "1:0000:0000:0000:0000:0000:0000:0000" "expand 1::"
+zassert_eq "$(expand_ipv6 'fe80::1')"    "fe80:0000:0000:0000:0000:0000:0000:0001"    "expand fe80::1"
+zassert_eq "$(expand_ipv6 '2001:db8::1')" "2001:0db8:0000:0000:0000:0000:0000:0001" "expand 2001:db8::1"
+zassert_eq "$(expand_ipv6 '1:2:3:4:5:6:7:8')" "0001:0002:0003:0004:0005:0006:0007:0008" "full form passthrough"
+zassert_eq "$(expand_ipv6 'ff02::1:2')"  "ff02:0000:0000:0000:0000:0000:0001:0002" "expand ff02::1:2"
+zassert_eq "$(expand_ipv6 '1::')"        "0001:0000:0000:0000:0000:0000:0000:0000" "expand 1::"
 zassert_eq "$(expand_ipv6 '1:2:3')"      "INVALID" "too few groups → INVALID"
 zassert_eq "$(expand_ipv6 '1:2:3:4:5:6:7:8:9')" "INVALID" "too many groups → INVALID"
 ztest_run

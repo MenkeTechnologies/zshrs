@@ -53,7 +53,7 @@ echo "host=$host"
 echo "── log line parser via patterns ──"
 log_line="[ERROR][2026-05-29 14:30:00] failed to connect"
 level=${log_line#\[}; level=${level%%\]*}
-date_part=${log_line#*\][}; date_part=${date_part%%\]*}
+date_part=${log_line#*\]\[}; date_part=${date_part%%\]*}
 msg=${log_line##*\] }
 echo "level=$level"
 echo "date=$date_part"

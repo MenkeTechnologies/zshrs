@@ -6,7 +6,9 @@ typeset -A VARS
 expand_template() {
     local tmpl=$1 out=""
     local i=1 len=${#tmpl}
-    local ch close var_start var_end var_name op name v
+    # NB: every local is declared here — a bare `local n` re-declaration inside
+    # the loop echoes "n=VALUE" onto stdout and corrupts the expanded URL.
+    local ch close var_start var_end var_name op name v n
     while (( i <= len )); do
         ch="${tmpl[i]}"
         if [[ $ch == "{" ]]; then
@@ -45,7 +47,6 @@ expand_template() {
                 local -a names
                 names=( ${(s:,:)name} )
                 local first_in_op=1
-                local n
                 for n in "${names[@]}"; do
                     v="${VARS[$n]:-}"
                     if [[ -n $v ]]; then
@@ -163,16 +164,13 @@ for t in "${templates6[@]}"; do
 done
 
 # === ztest assertions ===
-# NOTE: expand_template's nested-local-in-loop pattern interacts badly with
-# zshrs's local-variable lifetime in the iteration — the `${VARS[$var_name]:-}`
-# lookup returns empty even though VARS is set globally (zsh-divergence: in zsh
-# the assoc lookup succeeds). Assertions reflect what zshrs actually produces.
-zassert_eq "$(expand_template 'no/placeholders')"      "no/placeholders"     "literal passthrough works"
-# Empty-substitution paths still get traversed:
-zassert_eq "$(expand_template '/users/{user}')"        "/users/"             "missing-VARS reduces to slash"
-zassert_eq "$(expand_template '{user}@example.com')"   "@example.com"        "leading placeholder removed when blank"
-zassert_eq "$(expand_template '/u/{x}/{y}')"           "/u//"                "two empty placeholders both removed"
-# Verify the parser at least consumed the {…} tokens (no leftover braces)
-out=$(expand_template '/api/{user}/posts/{id}')
-zassert_match '^/api//posts/$' "$out"                                       "braces consumed"
+VARS=( user alice id 42 )
+zassert_eq "$(expand_template 'no/placeholders')"        "no/placeholders"        "literal passthrough"
+zassert_eq "$(expand_template '/users/{user}')"          "/users/alice"           "{var} substitution"
+zassert_eq "$(expand_template '/api/{user}/posts/{id}')" "/api/alice/posts/42"    "two placeholders"
+zassert_eq "$(expand_template '{user}@example.com')"     "alice@example.com"      "leading placeholder"
+VARS=( user bob )
+zassert_eq "$(expand_template '/users/{user}/{missing}')" "/users/bob/"           "unset var expands to empty"
+VARS=( q rust page 2 )
+zassert_eq "$(expand_template '/search{?q,page}')"       "/search?q=rust&page=2"  "? query operator"
 ztest_run

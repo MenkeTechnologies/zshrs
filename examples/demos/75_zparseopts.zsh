@@ -60,13 +60,12 @@ harness() {
     printf "v=%s|d=%s|o=%s|rest=%s\n" \
         "${verbose[*]}" "${debug[*]}" "${output[*]}" "$*"
 }
-## zshrs-divergence: zparseopts shoves trailing positionals into the next
-## spec rather than leaving them in $@ (real zsh would leave them in rest).
-## Assertions track the observed behavior, not POSIX zsh behavior.
-zassert_eq "$(harness -v arg1)"           "v=-v|d=arg1|o=|rest="               "short -v (consumes arg1)"
-zassert_eq "$(harness --verbose foo)"     "v=--verbose|d=foo|o=|rest="         "long --verbose (consumes foo)"
-zassert_eq "$(harness -v -d a b)"         "v=-v|d=-d|o=a b|rest="              "short -v -d (a b → o)"
-zassert_eq "$(harness -o /tmp/x file1)"   "v=-o /tmp/x|d=file1|o=|rest="       "short -o arg (-o → v, file1 → d)"
+# `v` and `d` are flag specs (no `:`), so they never consume the next word —
+# -E stops at the first non-option and everything from there stays in $@.
+zassert_eq "$(harness -v arg1)"           "v=-v|d=|o=|rest=arg1"               "flag -v leaves arg1 in \$@"
+zassert_eq "$(harness --verbose foo)"     "v=--verbose|d=|o=|rest=foo"         "flag --verbose leaves foo in \$@"
+zassert_eq "$(harness -v -d a b)"         "v=-v|d=-d|o=|rest=a b"              "two flags, two positionals left"
+zassert_eq "$(harness -o /tmp/x file1)"   "v=|d=|o=-o /tmp/x|rest=file1"       "o: consumes its argument"
 accum() {
     local -a verbose=()
     zparseopts -D -E -- v+=verbose

@@ -13,7 +13,7 @@ pop() {
     if (( n <= 1 )); then
         stack=()
     else
-        stack=("${stack[@]:0:n-1}")
+        stack=("${stack[@]:0:$((n-1))}")
     fi
 }
 peek() { STACK_RESULT="${stack[-1]}"; }
@@ -33,7 +33,16 @@ while (( ${#stack[@]} > 0 )); do
 done
 
 # === ztest assertions ===
-# (demo currently fails to run cleanly under zshrs — pop's slice "${stack[@]:0:n-1}"
-# halts on "unrecognized modifier 'n'" at the first call; smoke only)
-zassert_ok 1 "demo loaded"
+zassert_eq "$(size)" "0"       "stack drained by the pop loop above"
+push one; push two; push three
+zassert_eq "$(size)" "3"       "three pushes"
+peek
+zassert_eq "$STACK_RESULT" "three" "peek sees the top without popping"
+zassert_eq "$(size)" "3"       "peek does not shrink the stack"
+pop
+zassert_eq "$STACK_RESULT" "three" "pop returns the top"
+zassert_eq "$(size)" "2"       "pop shrinks the stack"
+pop; pop
+zassert_eq "$STACK_RESULT" "one" "last pop returns the bottom"
+zassert_eq "$(size)" "0"       "stack empty again"
 ztest_run

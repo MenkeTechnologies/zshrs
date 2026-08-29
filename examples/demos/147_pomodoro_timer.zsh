@@ -21,11 +21,16 @@ session() {
         fi
     done
     local end=$EPOCHREALTIME
-    printf "[%s] done (real ~%.2fs)\n" "$kind" $((end - start))
+    # Report the simulated quantum, not the measured wall clock — a raw
+    # duration would print a different value on every run.
+    printf "[%s] done (%dms simulated, clock advanced: %d)\n" \
+        "$kind" $elapsed $(( end > start ))
 }
 
 zmodload zsh/datetime 2>/dev/null
-EPOCHREALTIME=${EPOCHREALTIME:-0}
+# EPOCHREALTIME is read-only once zsh/datetime is loaded, so only supply a
+# fallback when the module is unavailable.
+(( ${+EPOCHREALTIME} )) || EPOCHREALTIME=0
 
 echo "── pomodoro session (compressed for CI) ──"
 session work $WORK_MS

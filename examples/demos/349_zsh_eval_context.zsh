@@ -74,7 +74,7 @@ fn_dump_0
 echo "  argv-0 also accessible via shift to '\$0'"
 
 echo
-echo "── $FUNCSTACK[] (call stack) ──"
+echo '── $FUNCSTACK[] (call stack) ──'
 outer() {
     middle
 }
@@ -91,7 +91,7 @@ inner() {
 outer
 
 echo
-echo "── $FUNCFILETRACE[] (file:line) ──"
+echo '── $FUNCFILETRACE[] (file:line) ──'
 trace_fn() {
     echo "  funcfiletrace:"
     local i
@@ -136,8 +136,9 @@ echo "  after exit 42: \$? = $?"
 
 echo
 echo "── \$$ vs \$\$ ──"
-echo "  shell pid (\$\$): $$"
-echo "  parent pid (\$PPID): $PPID"
+# Print only that the pids exist — the numbers differ on every run.
+echo "  shell pid (\$\$) set: $(( $$ > 0 ))"
+echo "  parent pid (\$PPID) set: $(( PPID > 0 ))"
 
 echo
 echo "── eval context flags ──"
@@ -152,16 +153,18 @@ echo "    trap       — inside trap handler"
 
 echo
 echo "── reset ──"
-FUNCNEST=
-unset FUNCNEST
-echo "  FUNCNEST cleared"
+# NB: `FUNCNEST=` is an empty value that evaluates to 0, and `unset FUNCNEST`
+# does NOT restore the built-in default — the limit stays 0, which then
+# rejects every subsequent function call. Restore the default explicitly.
+FUNCNEST=500
+echo "  FUNCNEST restored to $FUNCNEST (zsh default)"
 
 # === ztest assertions ===
 zassert_eq "$ZSH_NAME"      "zsh"           "ZSH_NAME"
 zassert_match '^5\.'        "$ZSH_VERSION"  "ZSH_VERSION starts with 5."
 # ZSH_SUBSHELL is "0" at top level (counter, not truthy flag)
 zassert_eq   "$ZSH_SUBSHELL" "0" "ZSH_SUBSHELL=0 at top"
-# zshrs leaves ZSH_EVAL_CONTEXT empty (zsh-divergence: zsh sets 'toplevel')
+zassert_eq "$ZSH_EVAL_CONTEXT" "toplevel" "ZSH_EVAL_CONTEXT at script top level"
 # funcstack inside nested calls: 3 frames
 capture_stack() {
     typeset -ga STACK_SNAPSHOT

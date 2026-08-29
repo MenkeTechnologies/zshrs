@@ -161,15 +161,17 @@ for pat in "iss" "miss" "ppi" "abc"; do
 done
 
 # === ztest assertions ===
+# banana suffixes in sorted order: a(6) ana(4) anana(2) banana(1) na(5) nana(3)
 build_suffix_array "banana"
-zassert_eq "${SA_IDX[*]}" "2 4 6 1 3 5"      "SA banana order"
+zassert_eq "${SA_IDX[*]}" "6 4 2 1 5 3"      "SA banana order"
 build_lcp "banana"
-zassert_eq "${LCP[*]}" "0 3 1 0 0 2"         "LCP banana"
+zassert_eq "${LCP[*]}" "0 1 3 0 0 2"         "LCP banana"
 build_suffix_array "mississippi"
 build_lcp "mississippi"
-zassert_eq "${SA_IDX[1]}" "8"                "miss SA[1]=ippi at 8"
+zassert_eq "${SA_IDX[1]}" "11"               "miss SA[1]=i at 11"
 zassert_eq "${SA_IDX[11]}" "3"               "miss SA[11]=ssissippi at 3"
-zassert_eq "$(sa_search mississippi iss)"  "2"   "search iss"
+# "iss" occurs at 2 and 5; the binary search lands on 5.
+zassert_eq "$(sa_search mississippi iss)"  "5"   "search iss"
 zassert_eq "$(sa_search mississippi miss)" "1"   "search miss"
 zassert_eq "$(sa_search mississippi ppi)"  "9"   "search ppi"
 zassert_eq "$(sa_search mississippi abc)"  "-1"  "search missing"

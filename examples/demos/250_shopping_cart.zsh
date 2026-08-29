@@ -153,16 +153,17 @@ for item in "${(@ko)CART}"; do
 done
 
 # === ztest assertions ===
-# zshrs divergence: `(( ! ${+ASSOC[$key]} ))` inside a function evaluates the
-# negation incorrectly so add_to_cart always hits the "unknown item" branch
-# regardless of PRICES contents. Cart stays empty under this runtime.
-# Asserts target the catalog state + helper math that does work.
 zassert_eq "${PRICES[apple]}"     "0.50"  "PRICES[apple]"
 zassert_eq "${PRICES[bread]}"     "2.99"  "PRICES[bread]"
 zassert_eq "${PRICES[coffee]}"    "12.49" "PRICES[coffee]"
 zassert_eq "${#PRICES[@]}"        "10"    "10 catalog items"
-zassert_eq "${INVENTORY[apple]}"  "100"   "INVENTORY[apple]"
-zassert_eq "${INVENTORY[coffee]}" "8"     "INVENTORY[coffee]"
+# Stock reflects the demo body above: 6 apples and 1 coffee left the shelf,
+# and the coffee-999 / unicorn attempts were both refused.
+zassert_eq "${INVENTORY[apple]}"  "96"    "INVENTORY[apple] after 6 sold"
+zassert_eq "${INVENTORY[coffee]}" "7"     "INVENTORY[coffee] after 1 sold"
+zassert_eq "${CART[apple]}"       "4"     "CART[apple] (6 added, 2 removed)"
+zassert_eq "${CART[coffee]}"      "1"     "CART[coffee] (999 request refused)"
+zassert_eq "${CART[unicorn]}"     ""      "unknown item never enters the cart"
 zassert_eq "$(price_cents apple)" "50"    "apple = 50 cents"
 zassert_eq "$(price_cents bread)" "299"   "bread = 299 cents"
 zassert_eq "$(price_cents coffee)" "1249" "coffee = 1249 cents"

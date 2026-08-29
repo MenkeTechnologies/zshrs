@@ -73,12 +73,9 @@ for p in app ban xyz appl banan; do
 done
 
 # === ztest assertions ===
-# Note: assoc-array subscripts containing `|` (e.g. ${TRIE["${node}|END"]+x})
-# trigger glob-alternation behavior in zshrs, so the END-terminal check never
-# matches and trie_contains returns "prefix" for every inserted word.  Assert
-# on the observed behavior.
-zassert_eq "$(trie_contains apple)"        "prefix: apple"         "contains apple → prefix"
-zassert_eq "$(trie_contains app)"          "prefix: app"           "contains app → prefix"
+zassert_eq "$(trie_contains apple)"        "yes: apple"            "contains apple → terminal"
+zassert_eq "$(trie_contains app)"          "yes: app"              "contains app → terminal"
+zassert_eq "$(trie_contains bana)"         "prefix: bana"          "contains bana → prefix only"
 zassert_eq "$(trie_contains xyz)"          "no: xyz"               "contains xyz → no (missing edge)"
 zassert_eq "$(trie_starts_with app)"       "app: leads to a valid node"   "starts-with app"
 zassert_eq "$(trie_starts_with xyz)"       "no path: xyz"                 "starts-with xyz → no path"

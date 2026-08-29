@@ -12,7 +12,7 @@ classify_char() {
         [a-z])    echo "$c → lowercase" ;;
         [A-Z])    echo "$c → uppercase" ;;
         ' '|$'\t') echo "$c → whitespace" ;;
-        [-_.,;:]) echo "$c → punctuation" ;;
+        [-_.,\;:]) echo "$c → punctuation" ;;
         *)        echo "$c → other" ;;
     esac
 }
@@ -83,9 +83,26 @@ for f in build.zsh main.rs README.md data.tar.gz Makefile script.py log.bin; do
 done
 
 # === ztest assertions ===
-# (demo currently fails to run cleanly under zshrs — smoke only)
-# Parser rejects the ' '|$'\t' alternation in classify_char (case-pattern alternation
-# with quoted/$'..' atoms hits "expected ')' in case pattern").
-zassert_ok 1 "demo loaded"
+zassert_eq "$(classify_char 5)"   "5 → digit"        "bracket range [0-9]"
+zassert_eq "$(classify_char a)"   "a → lowercase"    "bracket range [a-z]"
+zassert_eq "$(classify_char Z)"   "Z → uppercase"    "bracket range [A-Z]"
+zassert_eq "$(classify_char ,)"   ", → punctuation"  "escaped ; inside a bracket set"
+zassert_eq "$(classify_char ' ')" "  → whitespace"   "quoted-space alternation"
+zassert_eq "$(classify_char '!')" "! → other"        "default arm"
+zassert_eq "$(greet hi)"             "informal greeting" "| alternation"
+zassert_eq "$(greet 'good morning')" "polite"            "escaped space in a pattern"
+zassert_eq "$(greet asdf)"           "not a greeting"    "greet default arm"
+zassert_eq "$(season 1)"  "winter" "range [0-2]"
+zassert_eq "$(season 12)" "winter" "literal 12 alternative"
+zassert_eq "$(season 7)"  "summer" "range [6-8]"
+zassert_eq "$(season 13)" "invalid month" "season default arm"
+zassert_eq "$(test_fallthrough a)" "a
+b
+c"                                             ";& falls through twice"
+zassert_eq "$(test_fallthrough c)" "c"        "no fallthrough into d"
+zassert_eq "$(file_kind build.zsh)"    "shell script" "glob alternation *.zsh"
+zassert_eq "$(file_kind data.tar.gz)"  "archive"      "multi-suffix glob"
+zassert_eq "$(file_kind Makefile)"     "make recipe"  "literal filename arm"
+zassert_eq "$(file_kind log.bin)"      "unknown"      "file_kind default arm"
 ztest_run
 

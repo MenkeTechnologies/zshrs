@@ -82,19 +82,23 @@ echo "── final inventory ──"
 list_inventory
 
 # === ztest assertions ===
-# Note: zshrs's (( ${QTY[$name]:-0} >= qty )) inside remove_item evaluates to
-# false even when qty is sufficient (local `qty=$2` not visible inside the
-# arithmetic context as expected), so remove_item never actually decrements
-# QTY.  Demo state is therefore the cumulative add_item totals.
-zassert_eq "${QTY[apple]}"      "100"  "apple stock = 100 (remove no-ops)"
-zassert_eq "${QTY[banana]}"     "50"   "banana stock = 50"
-zassert_eq "${QTY[cherry]}"     "200"  "cherry stock = 200"
+# State below is what the demo body above leaves behind: the add_item totals
+# minus every successful remove_item.
+zassert_eq "${QTY[apple]}"      "80"   "apple stock = 100 added - 20 removed"
+zassert_eq "${QTY[banana]}"     "35"   "banana stock = 50 added - 15 removed"
+zassert_eq "${QTY[cherry]}"     "150"  "cherry stock = 200 added - 50 removed"
 zassert_eq "${QTY[date]}"       "30"   "date stock = 30"
 zassert_eq "${QTY[elderberry]}" "105"  "elderberry stock = 105 (5 + 100)"
 zassert_eq "${PRICE[apple]}"    "50"   "apple price = 50"
 zassert_eq "${PRICE[date]}"     "200"  "date price = 200"
 zassert_eq "${#QTY[@]}"         "5"    "5 distinct items"
-zassert_contains "$(remove_item apple 20)" "insufficient" "remove_item path: insufficient branch fires"
+# Over-large request takes the insufficient branch and leaves stock untouched.
+zassert_contains "$(remove_item apple 9999)" "insufficient" "remove_item: insufficient branch"
+zassert_eq "${QTY[apple]}" "80"  "insufficient removal does not decrement"
+zassert_contains "$(remove_item apple 30)" "removed 30 apple" "remove_item: success branch"
+zassert_eq "${QTY[apple]}" "80"  'command substitution forks, so stock is unchanged here'
+remove_item apple 30 >/dev/null   # same call in the current shell
+zassert_eq "${QTY[apple]}" "50"  "successful in-shell removal decrements"
 zassert_contains "$(restock_below 50)"     "date"  "restock_below 50 flags date"
 zassert_contains "$(restock_below 100)"    "date" "restock_below 100 flags date"
 ztest_run

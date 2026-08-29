@@ -53,10 +53,11 @@ lzw_encode() {
     local s=$1
     lzw_init_alpha
     local w_ords="" c_ord
-    local i n=${#s} out=""
+    local i n=${#s} out="" wc_ords   # NB: declare wc_ords once — a bare
+                                     # `local wc_ords` re-declaration inside
+                                     # the loop echoes it onto stdout.
     for ((i=1; i<=n; i++)); do
         c_ord=$(ord "${s[i]}")
-        local wc_ords
         if [[ -z $w_ords ]]; then
             wc_ords=$c_ord
         else

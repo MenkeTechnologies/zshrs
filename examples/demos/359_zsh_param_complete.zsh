@@ -3,15 +3,17 @@
 # Ports Src/subst.c paramsubst exhaustively.
 
 echo "── modifiers (Src/hist.c) ──"
-path="/usr/local/bin/zsh.tar.gz"
-echo "  path = $path"
-echo "  :h (head)    = ${path:h}"
-echo "  :t (tail)    = ${path:t}"
-echo "  :r (root)    = ${path:r}"
-echo "  :e (ext)     = ${path:e}"
-echo "  :h:h         = ${path:h:h}"
-echo "  :t:r         = ${path:t:r}"
-echo "  :t:e         = ${path:t:e}"
+# NB: `path` is tied to $PATH — assigning a plain string to it wrecks command
+# lookup for the rest of the script, so the sample uses its own name.
+sample_path="/usr/local/bin/zsh.tar.gz"
+echo "  path = $sample_path"
+echo "  :h (head)    = ${sample_path:h}"
+echo "  :t (tail)    = ${sample_path:t}"
+echo "  :r (root)    = ${sample_path:r}"
+echo "  :e (ext)     = ${sample_path:e}"
+echo "  :h:h         = ${sample_path:h:h}"
+echo "  :t:r         = ${sample_path:t:r}"
+echo "  :t:e         = ${sample_path:t:e}"
 
 echo
 echo "── upper/lower flags ──"
@@ -121,7 +123,7 @@ echo
 echo "── width padding ──"
 val=42
 echo "  val: $val"
-echo "  (l:5::0::) (right-justify with 0s, width 5): ${(l:5::0::)val}"
+echo "  (l:5::0:) (right-justify with 0s, width 5): ${(l:5::0:)val}"
 echo "  (l:8:: :) (right-justify with spaces, width 8): '${(l:8:: :)val}'"
 echo "  (r:5::*:) (left-justify, fill with *): '${(r:5::*:)val}'"
 
@@ -186,10 +188,12 @@ text="Hello World"
 zassert_eq "${(U)text}" "HELLO WORLD"        "(U) upper"
 zassert_eq "${(L)text}" "hello world"        "(L) lower"
 arr=(banana apple cherry date)
-zassert_eq "${(o)arr[*]}" "apple banana cherry date" "(o) sort asc"
-zassert_eq "${(O)arr[*]}" "date cherry banana apple" "(O) sort desc"
+# NB: `[*]` joins the array before the flag runs, so the flag has a single
+# element to work on. Sort/unique the array, then join.
+zassert_eq "${(j: :)${(o)arr[@]}}" "apple banana cherry date" "(o) sort asc"
+zassert_eq "${(j: :)${(O)arr[@]}}" "date cherry banana apple" "(O) sort desc"
 dups=(a b c a d b e c)
-zassert_eq "${(u)dups[*]}" "a b c d e"       "(u) unique"
+zassert_eq "${(j: :)${(u)dups[@]}}" "a b c d e"       "(u) unique"
 joined=(a b c)
 zassert_eq "${(j:-:)joined}" "a-b-c"         "(j:-:) join"
 target="zshrs"

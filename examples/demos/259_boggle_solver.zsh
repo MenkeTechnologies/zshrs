@@ -119,6 +119,6 @@ zassert_eq "${#DICT[@]}" "52" "52 dictionary words"
 if find_word_in_grid CAT; then zassert_ok 1 "CAT findable"; else zassert_ok 0 "CAT findable"; fi
 if find_word_in_grid STONE; then zassert_ok 1 "STONE findable"; else zassert_ok 0 "STONE findable"; fi
 if find_word_in_grid PYTHON; then zassert_ok 0 "PYTHON not in grid"; else zassert_ok 1 "PYTHON not in grid"; fi
-zassert_eq "${#found[@]}" "32"  "32 of 52 dict words found"
+zassert_eq "${#found[@]}" "31"  "31 of 52 dict words found in the grid"
 zassert_eq "$longest" "STONE"   "longest found = STONE"
 ztest_run

@@ -54,10 +54,10 @@ matches_pattern() {
 
 # Compound filter via &&.
 filter_compound() {
-    local role=$1 status=$2
+    local role=$1 state=$2
     for p in "${people[@]}"; do
         local parts=( ${(s/|/)p} )
-        if [[ ${parts[3]} == $role && ${parts[4]} == $status ]]; then
+        if [[ ${parts[3]} == $role && ${parts[4]} == $state ]]; then
             echo "  $p"
         fi
     done

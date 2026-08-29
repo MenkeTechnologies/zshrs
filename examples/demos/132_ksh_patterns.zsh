@@ -39,7 +39,9 @@ print -l *
 echo "── @(zsh|rs) extension ──"
 print -l *.@(zsh|rs)
 echo "── !(README*) ──"
-print -l !(README*)
+# NB: in filename generation zsh only honours a `!(...)` whose body contains a
+# `*` when it sits inside a group, so wrap it: (!(README*)).
+print -l (!(README*))
 echo "── *(main|test).* ──"
 print -l @(main|test).*
 cd /tmp

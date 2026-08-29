@@ -110,8 +110,8 @@ zassert_eq "$(days_in_month 2 2025)" 28      "Feb 2025 = 28"
 zassert_eq "$(days_in_month 4 2024)" 30      "Apr 2024 = 30"
 # parse_date.
 zassert_eq "$(parse_date 2026-05-29)" "2026 05 29" "parse_date splits"
-# NOTE: days_between under zshrs returns 0 (function uses local arrays inside
-# arith — the for-loop accumulator does not persist across calls in zshrs's
-# subshell capture). Pin to actual behavior.
-zassert_eq "$(days_between 2026-01-01 2026-01-31)" 0 "days_between under zshrs returns 0"
+zassert_eq "$(days_between 2026-01-01 2026-01-31)" 30  "Jan 1 → Jan 31 is 30 days"
+zassert_eq "$(days_between 2025-01-01 2026-01-01)" 365 "a common year is 365 days"
+zassert_eq "$(days_between 2024-01-01 2025-01-01)" 366 "a leap year is 366 days"
+zassert_eq "$(days_between 2026-01-31 2026-01-01)" 30  "argument order does not matter"
 ztest_run

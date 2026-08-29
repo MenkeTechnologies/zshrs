@@ -57,11 +57,17 @@ echo "── all quoted ──"
 parse_csv_line '"a","b","c"'
 
 echo "── full table example ──"
-cat <<EOF | while IFS= read -r line; do
-    echo
-    echo "── row: $line"
-    parse_csv_line "$line"
-done
+# NB: a here-document body starts on the line after the *whole* line carrying
+# `<<EOF`, so `cat <<EOF | while ...; do` would swallow the loop body as
+# here-doc text. Keep the loop in its own function and feed it the here-doc.
+parse_csv_table() {
+    while IFS= read -r line; do
+        echo
+        echo "── row: $line"
+        parse_csv_line "$line"
+    done
+}
+parse_csv_table <<'EOF'
 ID,Name,Description,Status
 1,Alice,"Senior dev, Cloud",active
 2,Bob,"Junior, ""in training""",probation
@@ -70,7 +76,24 @@ ID,Name,Description,Status
 EOF
 
 # === ztest assertions ===
-# (demo currently fails to parse cleanly under zshrs — heredoc-inside-while
-# pipeline triggers a parse error; smoke only)
-zassert_ok 1 "demo loaded"
+zassert_eq "$(parse_csv_line 'alice,30,admin')" \
+    "  field: 'alice'
+  field: '30'
+  field: 'admin'"                                        "unquoted 3-field row"
+zassert_eq "$(parse_csv_line 'alice,"30, M.D.",admin')" \
+    "  field: 'alice'
+  field: '30, M.D.'
+  field: 'admin'"                                        "comma inside quotes"
+zassert_eq "$(parse_csv_line 'name,"She said ""hi""",role')" \
+    "  field: 'name'
+  field: 'She said \"hi\"'
+  field: 'role'"                                         "escaped double quotes"
+zassert_eq "$(parse_csv_line 'a,,c')" \
+    "  field: 'a'
+  field: ''
+  field: 'c'"                                            "empty middle field"
+zassert_contains "$(parse_csv_table <<'ROW'
+1,Alice,"Senior dev, Cloud",active
+ROW
+)" "field: 'Senior dev, Cloud'"                          "table row parses"
 ztest_run
