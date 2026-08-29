@@ -136,7 +136,7 @@ thread_local! {
 const EC_DOUBLE_THRESHOLD: i32 = 32768;
 const EC_INCREMENT: i32 = 1024;
 
-/// Direct port of `parse_context_save(struct parse_stack *ps, int toplevel)` at `Src/parse.c:295`.
+/// Port of `parse_context_save()` from `Src/parse.c:295` — C signature `parse_context_save(struct parse_stack *ps, int toplevel)`.
 /// Snapshots the lexer-side file-statics (which currently live on
 /// `lexer` until Phase 7 dissolution makes them file-scope
 /// thread_local!s) plus the pending heredoc list, plus the
@@ -183,7 +183,7 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     set_intypeset(false);
 }
 
-/// Direct port of `parse_context_restore(const struct parse_stack *ps, int toplevel)` at `Src/parse.c:326`.
+/// Port of `parse_context_restore()` from `Src/parse.c:326` — C signature `parse_context_restore(const struct parse_stack *ps, int toplevel)`.
 /// Inverse of `parse_context_save`. Restores lexer-side state +
 /// pending heredocs + Rust-only counters from `ps`, then clears
 /// `errflag & ERRFLAG_ERROR` per parse.c:354.
@@ -217,7 +217,7 @@ pub fn parse_context_restore(ps: &parse_stack) {
     errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
 }
 
-/// Direct port of `ecadjusthere(int p, int d)` at `Src/parse.c:360`. Walk
+/// Port of `ecadjusthere()` from `Src/parse.c:360` — C signature `ecadjusthere(int p, int d)`. Walk
 /// the pending-heredocs list and bump each `pc` by `d` if it's
 /// at or after position `p`. Called by `ecispace` / `ecdel` when
 /// wordcodes shift.
@@ -245,7 +245,7 @@ pub fn ecadjusthere(p: usize, d: i32) {
 // retires them entirely — until then, callers reach them via this
 // re-export.
 
-/// Direct port of `ecispace(int p, int n)` at `Src/parse.c:372`. Insert `n`
+/// Port of `ecispace()` from `Src/parse.c:372` — C signature `ecispace(int p, int n)`. Insert `n`
 /// empty wordcode slots at position `p`, shifting later entries
 /// right, growing the buffer as needed, adjusting heredoc pointers.
 pub fn ecispace(p: usize, n: usize) {
@@ -288,7 +288,7 @@ pub fn ecispace(p: usize, n: usize) {
     ecadjusthere(p, need);
 }
 
-/// Direct port of `ecadd(wordcode c)` at `Src/parse.c:397`. Append `c` to
+/// Port of `ecadd()` from `Src/parse.c:397` — C signature `ecadd(wordcode c)`. Append `c` to
 /// the wordcode buffer with grow-on-demand, return the new index.
 pub fn ecadd(c: u32) -> usize {
     // parse.c:399-405 — `if ((eclen - ecused) < 1) grow`.
@@ -315,7 +315,7 @@ pub fn ecadd(c: u32) -> usize {
     idx as usize
 }
 
-/// Direct port of `ecdel(int p)` at `Src/parse.c:413`. Remove the
+/// Port of `ecdel()` from `Src/parse.c:413` — C signature `ecdel(int p)`. Remove the
 /// wordcode at position `p`, shift later entries left by one,
 /// decrement ecused, adjust pending heredoc pointers.
 pub fn ecdel(p: usize) {
@@ -333,7 +333,7 @@ pub fn ecdel(p: usize) {
     ecadjusthere(p, -1);
 }
 
-/// Direct port of `ecstrcode(char *s)` at `Src/parse.c:426`. Encode a
+/// Port of `ecstrcode()` from `Src/parse.c:426` — C signature `ecstrcode(char *s)`. Encode a
 /// string into a single wordcode (short strings ≤4 bytes packed
 /// inline; longer strings get an offset into the deduped registry).
 ///
@@ -540,8 +540,8 @@ pub fn ecstrcode(s: &str) -> u32 {
     }
 }
 
-/// Initialize parser status. Direct port of zsh/Src/parse.c:491
-/// `init_parse_status`. Clears the per-parse-call lexer flags
+/// Port of `init_parse_status()` from `Src/parse.c:491`.
+/// Initialize parser status. Clears the per-parse-call lexer flags
 /// so a fresh parse starts from cmd-position with no nesting
 /// state inherited from a prior parse.
 ///
@@ -564,8 +564,8 @@ pub fn init_parse_status() {
     set_incmdpos(true); // c:502
 }
 
-/// Initialize parser for a fresh parse. Direct port of
-/// zsh/Src/parse.c:509 `init_parse`. C source allocates a
+/// Port of `init_parse()` from `Src/parse.c:509`.
+/// Initialize parser for a fresh parse. C source allocates a
 /// fresh wordcode buffer (ecbuf) sized EC_INIT_SIZE, resets the
 /// per-parse-call counters, and calls init_parse_status. zshrs
 /// has no flat wordcode buffer (AST is built inline) so this
@@ -596,7 +596,7 @@ pub fn init_parse() {
     init_parse_status();
 }
 
-/// Port of `copy_ecstr(Eccstr s, char *p)` from `Src/parse.c:537`.
+/// Port of `copy_ecstr()` from `Src/parse.c:537` — C signature `copy_ecstr(Eccstr s, char *p)`.
 /// Walks the BST and writes each entry to `p[s->aoffs..]` matching
 /// C's recursive in-order traversal exactly. The old impl used the
 /// `ECSTRS_REVERSE` HashMap keyed by `offs` (= ecssub-relative
@@ -612,7 +612,7 @@ pub fn copy_ecstr(_table: &std::collections::HashMap<u32, Vec<u8>>, p: &mut [u8]
     });
 }
 
-/// Port of `bld_eprog(int heap)` from `Src/parse.c:547`. Finalizes
+/// Port of `bld_eprog()` from `Src/parse.c:547` — C signature `bld_eprog(int heap)`. Finalizes
 /// the in-build `ECBUF`/`ECSTRS`/`ECNPATS` state into an `Eprog`.
 /// Resets the build state so a new parse can start.
 pub fn bld_eprog(heap: bool) -> eprog {
@@ -677,7 +677,7 @@ pub fn bld_eprog(heap: bool) -> eprog {
     ret
 }
 
-/// Port of `int empty_eprog(Eprog p)` from `Src/parse.c:584`. C
+/// Port of `empty_eprog()` from `Src/parse.c:584` — C signature `empty_eprog(Eprog p)`. C
 /// body: `return (!p || !p->prog || *p->prog == WCB_END());` —
 /// the eprog is empty when its prog buffer is missing or the
 /// first wordcode is the WC_END marker. Used by signal handlers
@@ -687,8 +687,8 @@ pub fn empty_eprog(p: &eprog) -> bool {
     p.prog.is_empty() || p.prog[0] == WCB_END()
 }
 
-/// Clear pending here-document list. Direct port of
-/// `clear_hdocs(void)` from `Src/parse.c:591`. The C version walks
+/// Port of `clear_hdocs()` from `Src/parse.c:591` — C signature `clear_hdocs(void)`.
+/// Clear pending here-document list. The C version walks
 /// `hdocs` and frees each node; Rust drops the `Box<heredocs>`
 /// chain automatically when the head is replaced with None.
 pub fn clear_hdocs() {
@@ -701,8 +701,8 @@ pub fn clear_hdocs() {
     LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
 }
 
-/// Top-level parse-event entry. Direct port of zsh/Src/parse.c:
-/// 612-631 `parse_event`. Reads one event from the lexer (a
+/// Port of `parse_event()` from `Src/parse.c:614` (body c:615-631).
+/// Top-level parse-event entry. Reads one event from the lexer (a
 /// sublist optionally followed by SEPER/AMPER/AMPERBANG) and
 /// returns the resulting ZshProgram.
 ///
@@ -805,8 +805,8 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
     Some(program)
 }
 
-/// Parse one event (sublist with optional separator). Direct
-/// port of zsh/Src/parse.c:635 `par_event`. Returns true if
+/// Port of `par_event()` from `Src/parse.c:635`.
+/// Parse one event (sublist with optional separator). Returns true if
 /// an event was successfully parsed, false on EOF / endtok.
 ///
 /// zshrs port note: the C version emits wordcodes via ecadd/
@@ -842,7 +842,7 @@ pub fn par_event(endtok: lextok) -> bool {
     }
 }
 
-/// Port of `parse_list(void)` from `Src/parse.c:697`. C-shape entry
+/// Port of `parse_list()` from `Src/parse.c:697` — C signature `parse_list(void)`. C-shape entry
 /// point: drives `par_list` and finalizes via `bld_eprog`. Returns
 /// `None` on syntax error.
 pub fn parse_list() -> Option<eprog> {
@@ -874,7 +874,7 @@ pub fn parse_list() -> Option<eprog> {
     Some(bld_eprog(false))
 }
 
-/// Port of `parse_cond(void)` from `Src/parse.c:722`. Only used by
+/// Port of `parse_cond()` from `Src/parse.c:722` — C signature `parse_cond(void)`. Only used by
 /// `bin_test`/`bin_bracket` for `/bin/test`/`[` compat — the
 /// `condlex` global must already point at `testlex` before entry.
 pub fn parse_cond() -> Option<eprog> {
@@ -908,8 +908,8 @@ pub fn parse_cond() -> Option<eprog> {
 /// rewrite the slot with WCB_LIST(type, distance) once the
 /// sublist's final length is known.
 ///
-/// Port of `set_list_code(int p, int type, int cmplx)` from
-/// `Src/parse.c:738`. Patches the WCB_LIST header at `p` based on
+/// Port of `set_list_code()` from `Src/parse.c:738` — C signature `set_list_code(int p, int type, int cmplx)`.
+/// Patches the WCB_LIST header at `p` based on
 /// whether the sublist body is simple (single command, no
 /// pipeline) and Z_SYNC/Z_END — emits the Z_SIMPLE-optimized
 /// header when possible, otherwise the plain WCB_LIST(type, 0).
@@ -954,8 +954,8 @@ pub fn set_list_code(p: usize, type_code: i32, cmplx: bool) {
     }
 }
 
-/// Port of `set_sublist_code(int p, int type, int flags, int skip, int cmplx)`
-/// from `Src/parse.c:755`. Patches the WCB_SUBLIST header at `p`.
+/// Port of `set_sublist_code()` from `Src/parse.c:755` — C signature `set_sublist_code(int p, int type, int flags, int skip, int cmplx)`.
+/// Patches the WCB_SUBLIST header at `p`.
 /// When the sublist is non-complex (single command, no pipeline),
 /// sets WC_SUBLIST_SIMPLE and rewrites the following slot to
 /// `WC_PIPE_LINENO`.
@@ -989,8 +989,8 @@ pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: 
 
 /// Parse a list (sublist with optional & or ;).
 ///
-/// Direct port of zsh/Src/parse.c:771-804 `par_list` (and the
-/// par_list1 wrapper at parse.c:807-817).
+/// Port of `par_list()` from `Src/parse.c:771` (body c:771-804; the
+/// `par_list1` wrapper follows at c:808).
 ///
 /// **Structural divergence**: zsh's parse.c emits flat wordcode
 /// into the `ecbuf` u32 array via `ecadd(0)` (placeholder),
@@ -1070,8 +1070,8 @@ fn par_list(single_event: bool) -> Option<(ZshList, bool)> {
     Some((ZshList { sublist, flags }, terminated))
 }
 
-/// Parse one list — non-recursing variant. Direct port of
-/// zsh/Src/parse.c:808 `par_list1`. Like par_list but
+/// Port of `par_list1()` from `Src/parse.c:808`.
+/// Parse one list — non-recursing variant. Like par_list but
 /// doesn't recurse on the trailing-separator path; used by
 /// callers that only want one statement (e.g. each arm of a
 /// case body).
@@ -1084,8 +1084,8 @@ pub fn par_list1() -> Option<ZshSublist> {
 
 /// Parse a sublist (pipelines connected by && or ||).
 ///
-/// Direct port of zsh/Src/parse.c:825 `par_sublist` and
-/// par_sublist2 at parse.c:869-892. par_sublist handles the
+/// Port of `par_sublist()` from `Src/parse.c:825` (with `par_sublist2`
+/// at c:869-892 folded in). par_sublist handles the
 /// && / || conjunction and emits WC_SUBLIST opcodes; par_sublist2
 /// handles the leading `!` negation and `coproc` keyword.
 ///
@@ -1152,7 +1152,7 @@ fn par_sublist() -> Option<ZshSublist> {
     Some(ZshSublist { pipe, next, flags })
 }
 
-/// Port of `par_sublist2(int *cmplx)` from `Src/parse.c:869`.
+/// Port of `par_sublist2()` from `Src/parse.c:869` — C signature `par_sublist2(int *cmplx)`.
 /// Secondary-sublist arm: handles the `COPROC`/`Bang` prefix
 /// in front of a pline. Returns the WC_SUBLIST flag word added.
 pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {
@@ -1176,9 +1176,9 @@ pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {
     Some(f)
 }
 
-/// Parse a pipeline
-/// Parse a pipeline (cmds joined by `|` / `|&`). Direct port of
-/// zsh/Src/parse.c:894 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
+/// Port of `par_pline()` from `Src/parse.c:894`.
+/// Parse a pipeline (cmds joined by `|` / `|&`).
+/// AST: ZshPipe { cmds: Vec<ZshCommand> }.
 /// C emits WC_PIPE wordcodes per command; same flow.
 fn par_pline() -> Option<ZshPipe> {
     let lineno = toklineno();
@@ -1218,7 +1218,7 @@ fn par_pline() -> Option<ZshPipe> {
     })
 }
 
-/// Parse a command
+/// Port of `par_cmd()` from `Src/parse.c:958` — C signature `par_cmd(int *cmplx, int zsh_construct)`.
 /// Parse a command — dispatches by leading token (FOR / CASE /
 /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
 /// Inpar subshell / Inbrace current-shell / TIME / NOCORRECT,
@@ -1391,10 +1391,10 @@ fn par_cmd() -> Option<ZshCommand> {
     None
 }
 
-/// Parse for/foreach loop
+/// Port of `par_for()` from `Src/parse.c:1087`.
 /// Parse `for NAME in WORDS; do BODY; done` (foreach style) AND
-/// `for ((init; cond; incr)) do BODY done` (c-style). Direct port
-/// of zsh/Src/parse.c:1087 `par_for`. parse_for_cstyle is the
+/// `for ((init; cond; incr)) do BODY done` (c-style).
+/// parse_for_cstyle is the
 /// inner branch for the `((...))` arithmetic-header variant
 /// (parse.c:1100-1140 inside par_for).
 fn par_for() -> Option<ZshCommand> {
@@ -2754,7 +2754,7 @@ fn par_time() -> Option<ZshCommand> {
     }
 }
 
-/// Port of `par_dinbrack(void)` from `Src/parse.c:1810`. Body
+/// Port of `par_dinbrack()` from `Src/parse.c:1810` — C signature `par_dinbrack(void)`. Body
 /// parser inside `[[ ... ]]` — calls `par_cond` to emit the
 /// condition wordcode then advances past `]]`.
 pub fn par_dinbrack() -> Option<()> {
@@ -3247,7 +3247,7 @@ fn par_cond() -> Option<ZshCommand> {
     cond.map(ZshCommand::Cond)
 }
 
-/// Port of `par_cond_1(void)` from `Src/parse.c:2434`. Parses one
+/// Port of `par_cond_1()` from `Src/parse.c:2434` — C signature `par_cond_1(void)`. Parses one
 /// `||`-separated cond expression. Emits `WCB_COND(COND_AND, …)`
 /// when an `&&` is found and recurses.
 pub fn par_cond_1() -> i32 {
@@ -3274,7 +3274,7 @@ pub fn par_cond_1() -> i32 {
     r
 }
 
-/// Port of `par_cond_2(void)` from `Src/parse.c:2476`. The heavy
+/// Port of `par_cond_2()` from `Src/parse.c:2476` — C signature `par_cond_2(void)`. The heavy
 /// cond-term parser: handles `! cond`, `(cond)`, unary `[ -X arg ]`,
 /// binary `[ A op B ]`, and `[ A op1 B op2 C … ]` n-ary chains.
 pub fn par_cond_2() -> i32 {
@@ -3443,7 +3443,7 @@ pub fn par_cond_2() -> i32 {
     par_cond_double(&s1, &s2)
 }
 
-/// Port of `par_cond_double(char *a, char *b)` from `Src/parse.c:2626`.
+/// Port of `par_cond_double()` from `Src/parse.c:2626` — C signature `par_cond_double(char *a, char *b)`.
 /// Emits wordcode for unary cond `[ -X b ]` or modular `[ -mod b ]`.
 pub fn par_cond_double(a: &str, b: &str) -> i32 {
     // c:2628 — `if (!IS_DASH(a[0]) || !a[1])` — char-based, since
@@ -3483,7 +3483,7 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {
     1
 }
 
-/// Port of `get_cond_num(char *tst)` from `Src/parse.c:2643`. Returns
+/// Port of `get_cond_num()` from `Src/parse.c:2643` — C signature `get_cond_num(char *tst)`. Returns
 /// the index of `tst` in `{"nt","ot","ef","eq","ne","lt","gt","le","ge"}`
 /// or `-1` if not a recognized binary cond operator.
 pub fn get_cond_num(tst: &str) -> i32 {
@@ -3638,7 +3638,7 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
     1
 }
 
-/// Port of `par_cond_multi(char *a, LinkList l)` from `Src/parse.c:2716`.
+/// Port of `par_cond_multi()` from `Src/parse.c:2716` — C signature `par_cond_multi(char *a, LinkList l)`.
 /// Emits wordcode for `[ -OP A B C … ]` n-ary cond (alternation).
 pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
     // c:2716 — `if (!IS_DASH(a[0]) || !a[1])`; same Dash/`-` dual
@@ -3807,7 +3807,7 @@ pub fn dupeprog(p: &eprog, heap: bool) -> eprog {
     r
 }
 
-/// Port of `void useeprog(Eprog p)` from `Src/parse.c:2813`.
+/// Port of `useeprog()` from `Src/parse.c:2813` — C signature `useeprog(Eprog p)`.
 /// `if (p && p != &dummy_eprog && p->nref >= 0) p->nref++;` —
 /// pin a real (non-heap, non-dummy) Eprog so it survives the
 /// next `freeeprog`.
@@ -3818,7 +3818,7 @@ pub fn useeprog(p: &mut eprog) {
     }
 }
 
-/// Port of `void freeeprog(Eprog p)` from `Src/parse.c:2823`.
+/// Port of `freeeprog()` from `Src/parse.c:2823` — C signature `freeeprog(Eprog p)`.
 /// Refcount-decrement; when it hits zero, drops the pattern progs,
 /// decrements the dump refcount if any, and releases the eprog.
 /// `dummy_eprog` is never freed. Heap-eprogs (`nref < 0`) are
@@ -3850,7 +3850,7 @@ pub fn freeeprog(p: &mut eprog) {
 // below as free ported at module scope.
 // =============================================================================
 
-/// Port of `ecgetstr(Estate s, int dup, int *tokflag)` from `Src/parse.c:2855`.
+/// Port of `ecgetstr()` from `Src/parse.c:2855` — C signature `ecgetstr(Estate s, int dup, int *tokflag)`.
 /// `s->pc` advances through the wordcode buffer; `s->strs` indexes the
 /// string pool. Returns the interned string (or a 1-3-char literal
 /// inlined directly into the wordcode word).
@@ -3988,7 +3988,7 @@ pub fn ecgetlist(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>
     ecgetarr(s, num, dup, tokflag)
 }
 
-/// Port of `ecgetredirs(Estate s)` from `Src/parse.c:2959`.
+/// Port of `ecgetredirs()` from `Src/parse.c:2959` — C signature `ecgetredirs(Estate s)`.
 ///
 /// `strs` must be the same tail `ecgetstr` uses (`s->strs` / `estate.strs` from offset).
 /// WARNING: param names don't match C — Rust=(prog, strs, pc) vs C=(s)
@@ -4056,7 +4056,7 @@ pub fn ecgetredirs(s: &mut estate) -> Vec<redir> {
     ret // c:2990 `return ret`
 }
 
-/// Port of `eccopyredirs(Estate s)` from `Src/parse.c:3003`. Reads
+/// Port of `eccopyredirs()` from `Src/parse.c:3003` — C signature `eccopyredirs(Estate s)`. Reads
 /// the WC_REDIR run at `s->pc`, counts the wordcodes needed,
 /// reserves space in `ecbuf` via `ecispace`, then re-walks `s->pc`
 /// re-emitting each redir's wordcodes into the reserved slot —
@@ -4183,7 +4183,7 @@ pub fn eccopyredirs(s: &mut estate) -> Option<eprog> {
     Some(bld_eprog(false))
 }
 
-/// Port of `init_eprog(void)` from `Src/parse.c:3069`. Sets up
+/// Port of `init_eprog()` from `Src/parse.c:3069` — C signature `init_eprog(void)`. Sets up
 /// `dummy_eprog_code = WCB_END(); dummy_eprog.len = sizeof(wordcode);
 /// dummy_eprog.prog = &dummy_eprog_code; dummy_eprog.strs = NULL;`.
 /// Called once at shell startup (init_main → init_misc → init_eprog).
@@ -4531,7 +4531,7 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
     Some(head) // c:3311
 }
 
-/// Port of `fdswap(Wordcode p, int n)` from `Src/parse.c:3318`.
+/// Port of `fdswap()` from `Src/parse.c:3318` — C signature `fdswap(Wordcode p, int n)`.
 /// Byte-swap each u32 in `p[..n]` in place. Used when writing the
 /// opposite-byte-order copy of a wordcode dump.
 pub fn fdswap(p: &mut [u32]) {
@@ -4665,8 +4665,9 @@ pub fn write_dump(
     Ok(())
 }
 
-/// Port of `build_dump(char *nam, char *dump, char **files, int ali, int map, int flags)`
-/// from `Src/parse.c:3396`. Source-file → wordcode dump compiler:
+/// Port of `build_dump()` from `Src/parse.c:3397` — C signature
+/// `build_dump(char *nam, char *dump, char **files, int ali, int map, int flags)`.
+/// Source-file → wordcode dump compiler:
 /// parses each source file via `parse_string` and serializes the
 /// resulting `Eprog`s through `write_dump` into `<dump>.zwc`.
 pub fn build_dump(
@@ -5211,7 +5212,7 @@ pub fn try_dump_file(
     None // c:3788
 }
 
-/// Port of `try_source_file(char *file)` from `Src/parse.c:3795`.
+/// Port of `try_source_file()` from `Src/parse.c:3795` — C signature `try_source_file(char *file)`.
 /// Returns an Eprog (the wordcode dump body) if `<file>.zwc` exists
 /// and is newer than `<file>`, else None. The dump entry searched is
 /// the file's basename (`tail`), matching how `zcompile` names
@@ -5453,7 +5454,7 @@ pub fn incrdumpcount(f: &funcdump) {
     }
 }
 
-/// Port of `freedump(FuncDump f)` from `Src/parse.c:3976`. Public
+/// Port of `freedump()` from `Src/parse.c:3976` — C signature `freedump(FuncDump f)`. Public
 /// helper for the rare external caller; locks the dumps mutex and
 /// drops the entry with the given filename.
 pub fn freedump(f: &funcdump) {
@@ -7704,7 +7705,7 @@ pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
     }
 }
 
-/// Port of `par_time(void)` from `Src/parse.c:1787`. `time PIPE`
+/// Port of `par_time()` from `Src/parse.c:1787` — C signature `par_time(void)`. `time PIPE`
 /// emits WCB_TIMED(WC_TIMED_PIPE) + the sublist code; bare `time`
 /// with no pipeline emits WCB_TIMED(WC_TIMED_EMPTY).
 pub fn par_time_wordcode() {
@@ -7742,7 +7743,7 @@ pub fn par_time_wordcode() {
     }
 }
 
-/// Port of `par_dinbrack(void)` from `Src/parse.c:1810`. Wraps
+/// Port of `par_dinbrack()` from `Src/parse.c:1810` — C signature `par_dinbrack(void)`. Wraps
 /// `par_cond` (the cond-expression emitter at parse.c:2409) with
 /// the `[[ ... ]]` framing: incond/incmdpos toggles + DOUTBRACK
 /// expectation.
@@ -10562,7 +10563,7 @@ pub fn read_fdhead(buf: &[u32], offset: usize) -> Option<fdhead> {
     })
 }
 
-/// Port of `freedump(FuncDump f)` from `Src/parse.c:3976`. C
+/// Port of `freedump()` from `Src/parse.c:3976` — C signature `freedump(FuncDump f)`. C
 /// `munmap`s, `zclose`s the fd, and frees the struct. The Rust
 /// port relies on Drop for the `funcdump` (no mmap held in this
 /// port — `addr`/`map` are byte-offset placeholders), so the
@@ -10617,7 +10618,7 @@ fn copy_ecstr_walk(node: &Option<Box<EccstrNode>>, p: &mut [u8]) {
     }
 }
 
-/// Port of `par_cond(void)` from `Src/parse.c:2409`. Top-level cond
+/// Port of `par_cond()` from `Src/parse.c:2409` — C signature `par_cond(void)`. Top-level cond
 /// OR-chain — drives `par_cond_1` and stitches `||`-separated terms
 /// with `WCB_COND(COND_OR, …)`. This is the missing top of the
 /// wordcode cond chain: `par_cond_wordcode` (the par_dinbrack port)
