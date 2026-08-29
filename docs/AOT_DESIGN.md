@@ -1,6 +1,9 @@
 # zshrs AOT — design doc
 
-**Status:** Draft. No code yet. This doc decides the architectural calls before implementation begins.
+**Status:** Shipped, with one gap named below. Both rungs are implemented: `zbuild` writes the
+source-trailer artifact and `zbuild --native` emits a Cranelift object linked into a standalone
+binary (`src/extensions/aot.rs`, `fusevm::aot`). The sections below are the original design calls;
+[\[0x16\]](#0x16-what-actually-shipped) records where the shipped artifact differs from them.
 
 **Companion docs:** [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) (project bar + endgame constraints), [`ROADMAP.md`](./ROADMAP.md) (phase plan), [`RFC.md`](./RFC.md) (system-shell pitch).
 
@@ -13,7 +16,7 @@ The killer capability: **AOP + nanosecond profiling baked into native binaries f
 `zshrs build script.zsh -o script` produces a static native binary that:
 
 - Runs on a target machine with **zero zshrs install**, **zero shell install**, **zero runtime dependency** (POSIX-compliant kernel + libc on Linux is sufficient; static-musl removes even libc).
-- Contains **actual machine code** for the script's logic — no parse, no compile, no bytecode interpretation, no JIT warmup at launch.
+- Contains **actual machine code** for the script's logic — no parse, no compile, no JIT warmup at launch. (Shipped, with the qualification in [\[0x16\]](#0x16-what-actually-shipped): the program's *control flow* is machine code; each op's *work* is a call into the linked runtime.)
 - Behaves identically to running the source script under `zshrs` — same builtins, same expansion semantics, same `eval`/dynamic-dispatch support.
 
 Workflow: `zshrs build script.zsh && scp script user@server:/usr/local/bin/ && ssh user@server script`. No `apt install`, no `brew install`, no version management on the target.
@@ -31,7 +34,7 @@ This satisfies both legs of the [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) project b
 | Leg | Status |
 |-----|--------|
 | World's first capability | Yes — no prior art across any shell tradition |
-| World's fastest in category | Yes — native machine code, zero parse/compile/interp on launch, parity with Go/Rust binaries |
+| World's fastest in category | Not yet demonstrated. The launch cost is gone (no parse, no compile); the per-op cost is not, because a shell op's work still runs in the linked runtime. Parity with a Go/Rust binary is not claimable on the current artifact — see [\[0x16\]](#0x16-what-actually-shipped). |
 
 ---
 
@@ -43,9 +46,13 @@ The fusevm `Chunk` is the pivot point. Three deployment rungs use the same Chunk
 |------|---------|-------------|--------|
 | 1 — source trailer | UTF-8 source appended to binary copy | parse + compile + JIT (~1-2 ms) | What stryke ships today |
 | 2 — bytecode trailer | bincode `Chunk` appended to binary copy | JIT or interp only (~µs) | Available to zshrs because Chunks are serde-ready (`BUILTIN_REGISTER_COMPILED_FN` already round-trips them via base64-bincode) |
-| 3 — native object | Cranelift-emitted `.o` linked into a static binary | Zero codegen at launch | Target |
+| 3 — native object | Cranelift-emitted `.o` linked into a static binary | Zero codegen at launch | **Shipped** — `zbuild --native` |
 
 Stryke chose rung 1 because its `Arc<HeapObject>` runtime values aren't serde-ready. zshrs has no such constraint, so rungs 1 and 2 are stepping stones we don't need. **Ship rung 3 directly.**
+
+(As shipped, rung 3 also carries the bincode `Chunk` as an exported blob — `fusevm_aot_chunk_blob` —
+because the native driver reads each op's constants and operands from it. So the artifact is rung 3
+*plus* rung 2's payload, not rung 3 alone.)
 
 The fusevm side already has `cranelift-jit` for runtime codegen. Adding `cranelift-object` is a parallel output sink on the same IR pass — the same IR that JIT consumes is what AOT consumes.
 
@@ -1115,3 +1122,41 @@ This doc is the source of truth for AOT design. Changes require an entry below.
 ## [0x15] Next step
 
 Review and lock-in §0x0D defaults. If all green, Phase A (fusevm cranelift-object output) starts with a version bump to fusevm 0.11 and a new `aot` module added to that crate. If any default is wrong, edit this doc first; code follows the doc, never the other way around.
+
+---
+
+## [0x16] What actually shipped
+
+Written after the fact, against the built artifact rather than the plan. Reproduce any of it with:
+
+```
+zshrs --zsh -fc 'zbuild --native --in script.zsh --out prog'
+objdump -d --disassemble-symbols=_fusevm_aot_entry prog   # macOS; ELF drops the leading _
+```
+
+**The binary contains machine code for the script's control flow.** `fusevm_aot_entry` is a
+Cranelift-emitted function: a `br_table` dispatch over one native block per opcode, each block
+ending in a compare-and-branch on the next instruction index. A 270-op chunk (a `for (( ))` loop
+over a million iterations) lowers to 2455 arm64 instructions; a 37-op chunk (`print hello`) to 358.
+There is no bytecode dispatch loop at run time.
+
+**Each op's work is still a call into the linked runtime.** Every block calls
+`fusevm_aot_exec_op`, which runs that op through the same `VM::exec_op` the interpreter uses — the
+single source of truth for semantics. This is fusevm's *threaded-native* lowering, and for a shell
+it is the right one: a shell op is `fork`/`execve`/glob/parameter expansion, not arithmetic, so
+there is nothing to hold in a register. What the native lowering removes is the dispatch, not the
+work.
+
+**Why the fully-register-native path does not engage.** fusevm can lower ops to real arithmetic in
+registers (`build_entry_native`), and it can lower `Op::CallBuiltin` inline — but only for a chunk
+whose `Chunk::builtin_argc_is_arity` is set, meaning every builtin handler pops exactly `argc` and
+pushes one result. zshrs cannot set it. `BUILTIN_XTRACE_ARGS` is emitted as `CallBuiltin(id, 2)`
+for a handler that pops one value and *peeks* the rest, leaving them for the op that follows
+(`src/fusevm_bridge.rs`), so `argc` describes the command's word count, not the op's stack effect.
+Making the flag settable means auditing every handler in the builtin table against its emit sites —
+a zshrs-side project, not a fusevm one, and the prerequisite for any "native arithmetic" claim.
+
+**Do not claim, on this artifact:** speed parity with a Go or Rust binary; that the script's
+arithmetic is machine code; that no bytecode is present (the chunk is embedded and deserialized at
+startup). **Do claim:** a standalone binary with no shell or zshrs on the target, no parse and no
+compile at launch, and the script's control flow compiled to native instructions.
