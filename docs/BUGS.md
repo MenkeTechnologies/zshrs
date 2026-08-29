@@ -206,6 +206,22 @@ split the docs describe. The subshell half was exercised by
 **Note on `trap -p`:** that is a bash flag; zsh's `trap` has no `-p` and bare `trap` is the
 reusable listing. Any harness checking zsh-mode trap output must use plain `trap`.
 
+**Pinned by** `tests/parity/emulation_trap_function_parity.rs` (`1f7664f33d`), reference-shell
+driven, as a deliberate PAIR:
+
+* `zsh_mode_function_traps_match_real_zsh` — runs LIVE and passes today. The anti-regression
+  half: `--zsh` must keep firing function traps, keep listing them, and keep letting a function
+  trap displace a list trap. Whatever fixes `--bash` must leave every one of those alone.
+* `bash_mode_has_no_function_traps` — `#[ignore]`d against this entry; un-ignore with the fix.
+
+The harness compares stdout AND exit status, where `-1` means KILLED BY A SIGNAL rather than
+exited. That column is load-bearing: a correct `--bash` must DIE the way bash dies, so stdout
+alone would pass a bogus "fix" that swallowed the signal instead of declining to install the
+handler.
+
+Existing `TRAP*` coverage was `--zsh` only (`tests/zshrs_shell.rs:14363`, `:14426`, `:14516`;
+`tests/parity/fuzz_discovered_parity.rs:2852`); the emulation modes had none.
+
 ---
 
 ## #1113 — `resolvebuiltin` is ported TWICE, with incompatible signatures — open
