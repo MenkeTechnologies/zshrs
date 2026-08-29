@@ -2758,11 +2758,13 @@ pub fn init_history(max_size: usize) {
 }
 
 /// Walk one entry older through the externally-supplied History.
-/// External-history overload of the widget-callable
-/// `zle_goto_hist(-1, false)` — kept for callers that drive a
-/// separate History instance. Port of `uphistory()` at
-/// Src/Zle/zle_hist.c:233 (the live-buffer save matches the C
-/// source's first-navigate-saves-original behaviour).
+///
+/// NOT the port of `uphistory()` — that lives under its C name at
+/// `zle_hist.rs:225` (`Src/Zle/zle_hist.c:233`) and takes `char **args`
+/// against the global hist_ring. This is a Rust-only external-history
+/// overload of the widget-callable `zle_goto_hist(-1, false)`, kept for
+/// callers that drive a separate `History` instance; the live-buffer
+/// save mirrors the C source's first-navigate-saves-original behaviour.
 pub fn history_up(hist: &mut History) {
     if hist.saved_line.is_none() {
         // Save current line
@@ -2813,11 +2815,13 @@ pub fn history_isearch_forward(hist: &mut History) {
 
 /// Search history for an entry containing the buffer text up to
 /// the cursor.
-/// Port of `historybeginningsearchbackward()` from
-/// Src/Zle/zle_hist.c:2039 with substring-match instead of
-/// prefix-match — useful as an isearch-style helper for callers
-/// that drive History externally. The strict prefix-match form
-/// lives in `widget_history_beginning_search_backward`.
+///
+/// NOT the port of `historybeginningsearchbackward()` — that lives
+/// under its C name at `zle_hist.rs:2517` (`Src/Zle/zle_hist.c:2039`)
+/// and does a strict PREFIX match against the global hist_ring. This
+/// is a Rust-only SUBSTRING-match isearch-style helper for callers
+/// that drive a separate `History` instance; the strict prefix-match
+/// widget form lives in `widget_history_beginning_search_backward`.
 pub fn history_search_prefix(hist: &mut History) {
     let prefix: String = ZLELINE.lock().unwrap()[..ZLECS.load(Ordering::SeqCst)]
         .iter()

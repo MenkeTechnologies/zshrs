@@ -14,3 +14,29 @@
 #
 # Lines starting with `#` are comments. Blank lines ignored.
 
+
+# ---------------------------------------------------------------
+# Deliberate renames: the C name is ALREADY TAKEN in src/ported/ by
+# the faithful port of that same C symbol, living in the Rust module
+# that maps to the symbol's own C home. Renaming these would produce
+# a SECOND Rust fn under the same C name porting the same C symbol,
+# which is worse drift than the rename. Each entry names the fn that
+# owns the C name.
+# ---------------------------------------------------------------
+
+# `imeta` is owned by `src/ported/ztype_h.rs:203` — the faithful port
+# of the `#define imeta(X) zistype(X,IMETA)` macro at `Src/ztype.h:60`,
+# living in ztype_h.rs because ztype.h is that macro's C home.
+# `utils::imeta_byte` implements the same predicate as a closed-range
+# test so `metafy` works before the typtab is initialised and without
+# taking the typtab Mutex per byte (metafy runs per character on every
+# input line). Renaming it to `imeta` would duplicate the C name.
+src/ported/utils.rs::imeta_byte->imeta
+
+# `invicmdmode` is owned by `src/ported/zle/zle_h.rs:122` — the
+# faithful port of `#define invicmdmode() (!strcmp(curkeymapname,
+# "vicmd"))` at `Src/Zle/zle.h:324`, living in zle_h.rs because zle.h
+# is that macro's C home. `zle_main::in_vi_cmd_mode` is the zero-arg
+# form that reads the keymap name itself rather than taking it as a
+# parameter. Renaming it to `invicmdmode` would duplicate the C name.
+src/ported/zle/zle_main.rs::in_vi_cmd_mode->invicmdmode
