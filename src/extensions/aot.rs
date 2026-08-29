@@ -481,6 +481,121 @@ pub fn build_native(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf
 mod tests {
     use super::*;
 
+    // ── `zbuild --native` gets real machine code, not a stub ──────────────
+    //
+    // fusevm decides between a register-native lowering and a threaded one (a
+    // native block per op, each calling the runtime). Both are machine code;
+    // what is NOT acceptable is the third outcome that shipped for a while — a
+    // native plan covering a single op, with a `resume` handing the entire
+    // program back to the interpreter. That produced a working binary that
+    // printed the right answer, so only an assertion on the lowering catches it.
+    //
+    // These run the REAL zsh front end (`compile_source_to_chunk`, the same call
+    // `build_native` makes), so they also fail if a compiler change reshapes a
+    // chunk into something the analysis chokes on. No linking and no `cc` — the
+    // decision is made from the chunk alone.
+
+    use fusevm::aot::{lowering_for, Lowering};
+
+    /// Ops in the chunk zshrs compiles for `src`, and the lowering it gets.
+    fn lowering_of(src: &str) -> (usize, Lowering) {
+        let chunk = compile_source_to_chunk(src).expect("compiles");
+        (chunk.ops.len(), lowering_for(&chunk))
+    }
+
+    #[test]
+    fn native_lowering_covers_the_whole_script_not_one_op() {
+        // A spread of real shell: the simplest possible command, a loop, a
+        // function, and a script with arrays and expansion. Whatever path each
+        // takes, it must not be a native plan that gives up after a couple of
+        // ops — that is the shape that silently interpreted everything.
+        for (label, src) in [
+            ("simplest", "print hello\n"),
+            (
+                "arith loop",
+                "integer i sum\nsum=0\nfor (( i = 1; i <= 10; i++ )); do (( sum += i )); done\nprint $sum\n",
+            ),
+            (
+                "function",
+                "f() { local n=$1; print $(( n * 2 )) }\nf 21\n",
+            ),
+            (
+                "arrays",
+                "a=(one two three)\nfor x in $a; do print \"item:$x\"; done\nprint ${#a} ${a[2]}\n",
+            ),
+        ] {
+            let (ops, lowering) = lowering_of(src);
+            assert!(ops > 10, "{label}: chunk is only {ops} ops");
+            match lowering {
+                // Threaded is the expected answer for shell: every op becomes a
+                // native block. Nothing to assert beyond "it was chosen".
+                Lowering::Threaded => {}
+                // If a shell chunk ever does lower natively, it must cover the
+                // program rather than deopt out of the first handful of ops.
+                Lowering::Native { covered, .. } => assert!(
+                    covered * 2 >= ops,
+                    "{label}: native plan covers {covered} of {ops} ops — \
+                     the rest is interpreted, which a threaded lowering would not be"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn emitted_code_grows_with_the_program() {
+        // The regression's signature: `print hello` and a million-iteration loop
+        // emitted byte-identical drivers, because neither's ops were lowered.
+        //
+        // Object size alone does not catch that — an object is the driver PLUS
+        // the serialized chunk, and the chunk grows with the script either way.
+        // Subtract the blob and what is left is code: with a stub driver that
+        // remainder is a fixed ~100 bytes whatever the script does.
+        let small = compile_source_to_chunk("print hello\n").expect("compiles");
+        let mut big_src = String::new();
+        for i in 0..60 {
+            big_src.push_str(&format!("print line{i}\n"));
+        }
+        let big = compile_source_to_chunk(&big_src).expect("compiles");
+        assert!(
+            big.ops.len() > small.ops.len() * 4,
+            "test setup: {} vs {} ops",
+            big.ops.len(),
+            small.ops.len()
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let code_len = |chunk: &fusevm::Chunk, name: &str| -> i64 {
+            let path = dir.path().join(name);
+            fusevm::aot::compile_object(chunk, &path).expect("emits an object");
+            let obj = fs::metadata(&path).expect("object exists").len() as i64;
+            let blob = bincode::serialize(chunk).expect("chunk serializes").len() as i64;
+            obj - blob
+        };
+        let small_code = code_len(&small, "small.o");
+        let big_code = code_len(&big, "big.o");
+        assert!(
+            small_code > 0 && big_code > small_code * 3,
+            "code size did not follow the program: {small_code} vs {big_code} bytes \
+             (a stub driver is constant-size whatever the script)"
+        );
+    }
+
+    #[test]
+    fn zsh_builtins_are_not_arity_honest() {
+        // Why a shell chunk takes the threaded path, stated as a test so the day
+        // it stops being true is visible. `Op::CallBuiltin(id, argc)` may only be
+        // lowered inline when every handler pops exactly `argc`; zshrs's do not
+        // (BUILTIN_XTRACE_ARGS pops one and peeks the rest), so the compiler must
+        // not set the opt-in. If an audit ever makes the table arity-honest,
+        // flip this and `compile_source_to_chunk` together — never one alone.
+        let chunk = compile_source_to_chunk("print hello\n").expect("compiles");
+        assert!(
+            !chunk.builtin_argc_is_arity,
+            "the zsh compiler declared builtin argc as a stack arity; every \
+             handler in fusevm_bridge.rs must pop exactly argc before this holds"
+        );
+    }
+
     fn mkfile(name: &str, src: &str) -> EmbeddedFile {
         EmbeddedFile {
             name: name.into(),
