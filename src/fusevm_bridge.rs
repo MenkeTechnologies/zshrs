@@ -11914,7 +11914,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // dosavetrap snapshot the NEW body, so endtrapscope
                 // "restored" the inner definition and a nested
                 // `TRAPEXIT() { … }` permanently clobbered the outer one.
-                if name.len() > 4 && name.starts_with("TRAP") {
+                // BUGS.md #1114 — the TRAPxxx() FUNCTION-trap form is zsh-only.
+                // bash, ksh and dash have no such concept: there `TRAPINT` is an
+                // ordinary function whose name merely begins with TRAP, and SIGINT
+                // keeps its default disposition. Recognising it in a drop-in mode
+                // also SILENTLY DESTROYS an already-installed list trap for that
+                // signal, since the two forms are alternatives in zsh.
+                // posix_faithful() is raised only for a bare drop-in flag, so
+                // --zsh, native zshrs and `emulate sh` are untouched.
+                if !crate::extensions::dash_mode::posix_faithful() && name.len() > 4 && name.starts_with("TRAP") {
                     if let Some(sn) = crate::ported::jobs::getsigidx(&name[4..]) {
                         let _ = crate::ported::signals::settrap(
                             sn,
