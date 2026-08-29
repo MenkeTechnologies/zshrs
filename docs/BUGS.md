@@ -19,6 +19,68 @@ CI green pending the underlying fix.
 
 ---
 
+## #1123 — a `zle -C` custom completion widget inserts nothing, blocking every completion/ZLE ztst file — open
+
+**Status:** `open`, isolated 2026-08-29. With #1122 this accounts for the whole
+378-chunk ztst block.
+
+Reproduce with zsh's own `Test/comptest` harness, driving zshrs as the inner
+shell (outer shell can be either):
+
+```zsh
+ZTST_srcdir=~/forkedRepos/zsh/Test; ZTST_testdir=/tmp/ctd; cd $ZTST_testdir
+. $ZTST_srcdir/comptest
+comptestinit -z /path/to/zshrs
+comptesteval 'compdef _tst tst'
+comptesteval '_tst () { compadd arg1 }'
+comptest $'tst \t'
+```
+```
+zsh    line: {tst arg1 }{}
+zshrs  line: {tst }{}
+```
+
+The widget RUNS — it reports `<LBUFFER>tst </LBUFFER>` back through the pty, so
+the keystroke, the widget dispatch and the `comp-finish` round-trip all work.
+It simply inserts no match.
+
+**Narrowed.** Every layer above was eliminated by substituting it directly:
+
+| Completion body | zshrs result |
+|---|---|
+| `compadd arg1` | `{tst }` |
+| `_describe -t x x "(arg1)"` | `{tst }` |
+| `_values v arg1` | `{tst }` |
+| `_arguments ':d:(arg1)'` | `{tst }` |
+| `_arguments '-x[xx]'` | `{tst }` |
+
+So it is not `_arguments`, `_describe`, `_values` or spec parsing — bare
+`compadd` inserts nothing either. Nor is it comptest's `comppostfuncs` wrapper:
+replacing it with a plain `zle -C complete-word complete-word _main_complete`
+fails identically.
+
+**What still works.** The built-in TAB path is fine — `scripts/comptab_parity.py`
+drives real TAB completion against real commands and zshrs matches zsh on 21 of
+29 curated cells. So the completion ENGINE works; what fails is reaching it
+through a widget defined by `zle -C`.
+
+**Not caused by #1091.** Verified by A/B: reverting `_arguments`' action-list
+handling to its pre-#1091 `split_whitespace` form leaves the failure unchanged.
+
+**Why it matters.** `Y03arguments` (97), `X02zlevi` (95), `X05zleincarg` (95),
+`Y02compmatch` (58) and `Y01completion` (33) are 378 of the 776 failing ztst
+chunks, and every one of them reaches completion through `comptestinit`'s
+`zle -C complete-word …`. Fixing this plus #1122's remaining scan half should
+move the ztst score from 69% toward ~83%.
+
+**Correction to an earlier reading.** These files were previously described as
+failing because "the first pty completion round-trip hangs". That was wrong —
+the round-trip completes and returns; it returns the wrong line. The apparent
+hang was the runner's chunk timeout on top of a prep that had already consumed
+most of its budget.
+
+---
+
 ## #1122 — `compinit` is ~20x slower over zsh's full Completion tree, blocking 378 ztst chunks — partially fixed
 
 **Status:** `partially fixed` 2026-08-29 — the dump half is done (37.3s ->
