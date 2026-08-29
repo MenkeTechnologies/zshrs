@@ -90,6 +90,11 @@ git clone https://github.com/MenkeTechnologies/zshrs
 cd zshrs && cargo build --release
 # binary: target/release/zshrs
 
+# Max-perf build (fat LTO, one codegen unit) — what the tagged release
+# artifacts and Homebrew bottles are built with. Needs ~8 GB free RAM.
+cargo build --profile dist
+# binary: target/dist/zshrs
+
 # Set as login shell
 sudo sh -c 'echo "$(which zshrs)" >> /etc/shells'
 chsh -s "$(which zshrs)"

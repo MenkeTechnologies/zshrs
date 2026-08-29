@@ -51,10 +51,16 @@ authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
 [lib]
 name = "zsh"
 path = "src/lib.rs"
-# `staticlib` produces libzsh.a so `zbuild --native` can link AOT-compiled
-# objects (fusevm::aot) against the zsh runtime into a standalone executable.
-# `lib` keeps the normal rlib for the binaries and tests.
-crate-type = ["lib", "staticlib"]
+# rlib only. `libzsh.a` — the archive `zbuild --native` links AOT-compiled
+# objects (fusevm::aot) against — is emitted by the `runtime/` workspace member
+# instead, and still lands at the same `target/<profile>/libzsh.a` path.
+#
+# It used to be a second crate-type here, which meant every `cargo install
+# zshrs` built a 170 MB archive and then threw it away: `cargo install` copies
+# binaries into `~/.cargo/bin/` and nothing else, and `runtime_staticlib()`
+# (src/extensions/aot.rs:397) looks for the archive beside the running
+# executable, so it was unreachable post-install anyway.
+crate-type = ["lib"]
 
 [[bin]]
 name = "zshrs"
@@ -225,7 +231,7 @@ ureq = { version = "2", default-features = false, features = ["json"] }
 base64 = "0.22"
 
 [workspace]
-members = [".", "daemon", "znative"]
+members = [".", "daemon", "znative", "runtime"]
 
 
 # Single source of truth for inter-crate path-dep versions. Updated by
@@ -234,11 +240,36 @@ members = [".", "daemon", "znative"]
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
 zshrs-daemon = { path = "daemon", version = "0.12.41" }
+# The root package, so the `runtime/` member can depend on it to bundle its
+# objects into libzsh.a. bp.sh rewrites every version literal in this block.
+zshrs = { path = ".", version = "0.12.41" }
 znative = { path = "znative", version = "0.12.41" }
 
+# `cargo install zshrs` always builds with `[profile.release]`, so this profile
+# is what every crates.io user's machine has to survive — not what CI's release
+# artifacts want. Those are different goals and they used to be the same knob.
+#
+# With `lto = "fat"` + `codegen-units = 1` the whole crate lands in one LLVM
+# module. Measured on the 634k-line `zsh` lib: peak rustc RSS 7.28 GB for the
+# lib compile ALONE, before the binary's LTO step. That OOM-kills `cargo
+# install` on any box under ~8 GB of RAM: reported as a bare "signal: 9,
+# SIGKILL" from the OOM killer on an aarch64 Debian VM building zshrs 0.12.40.
+#
+# So `release` is now the memory-sane profile: thin LTO across 16 codegen units
+# still inlines across crate boundaries, but LLVM works on 16 independent
+# modules instead of one, and each unit's peak is a fraction of the whole.
+# Max-perf shipping binaries use `[profile.dist]` below.
 [profile.release]
 opt-level = 3
-lto = "fat"
-codegen-units = 1
+lto = "thin"
+codegen-units = 16
 panic = "abort"
 strip = true
+
+# The profile for artifacts we ship: fat LTO, one codegen unit, no compile-time
+# or memory budget. Used by .github/workflows/release.yml (`--profile dist`),
+# never by `cargo install`. Build it locally with `cargo build --profile dist`.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

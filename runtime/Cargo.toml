@@ -1,0 +1,40 @@
+# `zshrs-runtime` exists for exactly one reason: to emit `libzsh.a` without
+# making every `cargo install zshrs` pay for it.
+#
+# The staticlib used to be a second crate-type on the main `zshrs` lib target
+# (`crate-type = ["lib", "staticlib"]`). That meant `cargo install zshrs`
+# emitted a 170 MB archive — and then discarded it, because `cargo install`
+# copies binaries into `~/.cargo/bin/` and nothing else. The archive was never
+# reachable afterwards either: `runtime_staticlib()` in
+# `src/extensions/aot.rs` looks for `libzsh.a` beside the running executable,
+# which for an installed shell is `~/.cargo/bin/libzsh.a`.
+#
+# Splitting it into its own workspace member keeps the artifact byte-identical
+# and in the same place (`target/<profile>/libzsh.a`, since the workspace
+# shares a target dir), so `zbuild --native` and the dev flow are unchanged —
+# but `cargo install zshrs` no longer builds it.
+#
+#   cargo build --release -p zshrs-runtime   # produces target/release/libzsh.a
+[package]
+name = "zshrs-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Static runtime archive (libzsh.a) for linking zshrs AOT-compiled objects"
+repository = "https://github.com/MenkeTechnologies/zshrs"
+publish = false
+
+[lib]
+# `name = "zsh"` keeps the archive named `libzsh.a` — the filename
+# `runtime_staticlib()` probes for and the one docs/AOT_DESIGN.md documents.
+name = "zsh"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+# Default features ON: `aot-hook` is what compiles the `#[no_mangle]`
+# `fusevm_aot_register_builtins` symbol that fusevm's AOT runtime resolves by
+# name when linking against this archive. Without it the archive links but the
+# AOT binary has no builtins.
+zshrs.workspace = true
