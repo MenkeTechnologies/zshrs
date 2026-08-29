@@ -27,7 +27,7 @@ The result is **the omega shell** — the final evolution of Unix shells. No suc
 
 ### The 55-Year Problem
 
-Since the Bourne shell at Bell Labs in 1970, **every Unix shell has been an interpreter**. Through csh, ksh, bash, zsh, and fish — all share the same fundamental architecture: parse source text, walk the AST, fork processes.
+Since the Bourne shell at Bell Labs in 1970, **no Unix shell has emitted native machine code**. Through csh, ksh, bash, zsh and fish the architecture is unchanged: parse source text, walk the AST, fork processes. Nushell narrowed the gap in 2024 — its IR compiler and evaluator (0.96.0, default in 0.98.0) replaced AST-walking with a register bytecode — but that IR is still interpreted, is compiled per parse, and is never cached to disk. Nothing in the lineage compiles shell source to machine code.
 
 This architecture made sense in 1970 when memory was measured in kilobytes. It no longer makes sense in 2026 when:
 - A single fork costs 2-5ms (millions of CPU cycles)
@@ -163,8 +163,9 @@ zshrs targets five stacked world-firsts on a single substrate, none of which exi
 
 | Capability | Prior art in any shell? |
 |---|---|
-| AOT-compiled shell scripts to native binaries (deploy as static artifact) | No — zsh's `.zwc` is bytecode for interpretation, not native code; no shell compiles to standalone binaries |
-| Sharded rkyv-mmap'd bytecode image cache with two-level lookup (~150-200ns) | No — zsh `.zwc` is per-file static; bash has no compiled form |
+| AOT-compiled shell scripts to native binaries (deploy as static artifact) | No — zsh's `.zwc` is bytecode for interpretation, not native code; Nushell compiles to in-memory IR, not to binaries; no shell compiles to standalone binaries |
+| Shell source JIT-compiled to native machine code at runtime (tiered Cranelift) | No — Nushell compiles to IR (0.96.0+, default 0.98.0) but interprets it; zsh `.zwc` is wordcode for zsh's own interpreter; no shell emits machine code |
+| Sharded rkyv-mmap'd bytecode image cache with two-level lookup (~150-200ns) | No — zsh `.zwc` is per-file static; bash has no compiled form; Nushell's IR is in-memory only, dropped at process exit |
 | Companion daemon spanning bytecode cache + supervised jobs + cross-shell IPC + federation | No — fish had `fishd` for var-sync only (removed 2014); no other shell ever shipped a daemon |
 | Native cross-shell pub/sub + dispatch + federation as first-class primitives | No — zconvey is a zsh plugin built on filesystem-IPC + per-prompt polling; not native to any shell |
 | **Native LSP server + DAP debug adapter built into the shell binary** | **No — no shell (bash, zsh, fish, nu, elvish, oil, xonsh, murex) ships `--lsp` or `--dap` first-class. Third-party LSPs exist for bash (`bash-language-server`, Node-based) and zsh (none mainstream); none are part of the shell itself. zshrs ships `zshrs --lsp` (stdio, hand-rolled JSON-RPC, dependency-free) and `zshrs --dap HOST:PORT` (TCP, full Debug Adapter Protocol) in `src/extensions/lsp.rs` + `src/extensions/dap.rs`; the JetBrains plugin at `editors/intellij/` drives both. First shell with editor-tooling as a native subsystem.** |

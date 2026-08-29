@@ -107,7 +107,7 @@
     <header class="tutorial-header">
       <div class="tutorial-header-inner">
         <div>
-          <h1 class="tutorial-brand">// ZSHRS — THE FIRST COMPILED UNIX SHELL</h1>
+          <h1 class="tutorial-brand">// ZSHRS — THE FIRST JIT-COMPILED UNIX SHELL</h1>
           <nav class="tutorial-crumbs" aria-label="Breadcrumb">
             <span class="current">Docs</span>
             <span class="sep">/</span>
@@ -159,13 +159,15 @@
           <div><div class="stat">23</div><div class="stat-label">coreutils builtins</div></div>
           <div><div class="stat">100x</div><div class="stat-label">warm start speedup</div></div>
           <div><div class="stat">2000x</div><div class="stat-label">fork avoidance speedup</div></div>
-          <div><div class="stat">1st</div><div class="stat-label">compiled Unix shell</div></div>
+          <div><div class="stat">1st</div><div class="stat-label">JIT-compiled Unix shell</div></div>
         </div>
 
         <p style="font-size: 14px; line-height: 1.8; color: var(--text);">
         For the first time in the history of computing &mdash; since the dawn of Unix at Bell Labs
-        in 1970 &mdash; a shell compiles to executable bytecodes and runs them on a virtual machine
-        with fused superinstructions. <span class="highlight">Every interactive command line, every shell script,
+        in 1970 &mdash; a shell compiles to executable bytecodes and JITs them to native machine code.
+        Nushell got to bytecode first (its IR evaluator shipped in 0.96.0 and became the default in
+        0.98.0), but interprets it; zshrs runs its bytecode on a VM with fused superinstructions and
+        hands hot blocks to Cranelift. <span class="highlight">Every interactive command line, every shell script,
         every function invocation, every <code>source</code>&rsquo;d file</span> compiles to fusevm bytecodes
         and executes at near-machine-code speed. No tree-walking interpreter. No fork. No parsing at
         runtime if bytecodes are cached.</p>
@@ -175,7 +177,9 @@
         memory. Function invocations deserialize cached bytecodes
         in microseconds &mdash; skipping the lexer, parser, and compiler entirely. <code>source</code>&rsquo;d
         scripts and interpreted scripts follow the same path: compile once, cache, execute from bytecode
-        forever. This has <span class="highlight">never been achieved in a Unix shell</span>.</p>
+        forever. <span class="highlight">No other shell persists its bytecode</span>: zsh&rsquo;s
+        <code>.zwc</code> is per-file wordcode for zsh&rsquo;s own interpreter, and Nushell&rsquo;s IR is
+        rebuilt on every parse and dropped at process exit.</p>
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->
@@ -195,11 +199,13 @@
 
         <div class="cat-grid">
           <div class="cat-card">
-            <h4>Compiled Unix shell</h4>
-            <p>First Unix shell to compile every command (interactive,
-            script, function, sourced file) to bytecode and execute on
-            a purpose-built VM. Every shell since Bell Labs 1970 has
-            been an interpreter.</p>
+            <h4>JIT-compiled Unix shell</h4>
+            <p>First Unix shell to JIT-compile to native machine code.
+            Every command (interactive, script, function, sourced file)
+            compiles to fusevm bytecode; hot blocks go through Cranelift
+            to x86-64/aarch64. Nushell reached bytecode first (IR in
+            0.96.0, default in 0.98.0) but interprets it, per parse,
+            with no on-disk cache.</p>
           </div>
           <div class="cat-card">
             <h4>fusevm bytecode VM</h4>
@@ -2420,11 +2426,13 @@ intercept list</div>
         because the bytecodes are mmap'd zero-copy from <code>rkyv</code> archives the daemon
         already validated.</p>
 
-        <p>Since the Bourne shell at Bell Labs in 1970, through csh, ksh, bash, zsh, and fish &mdash;
-        every Unix shell has been an interpreter. zshrs is the first to be a compiler. Shell scripts
+        <p>Since the Bourne shell at Bell Labs in 1970, through csh, ksh, bash, zsh and fish, no Unix
+        shell has emitted native machine code. Nushell reached bytecode in 2024 (IR in 0.96.0, default
+        in 0.98.0) and still interprets it, per parse, with no on-disk cache. zshrs is the first to JIT
+        to native code and the first to persist its bytecode across processes. Shell scripts
         at machine code speed. Achieved in alpha.</p>
 
-        <p class="motto">THE FIRST COMPILED UNIX SHELL. THE MOST POWERFUL SHELL EVER CREATED.</p>
+        <p class="motto">THE FIRST JIT-COMPILED UNIX SHELL. THE MOST POWERFUL SHELL EVER CREATED.</p>
       </section>
 
     </main>

@@ -5,7 +5,7 @@
 [![JDK](https://img.shields.io/badge/JDK-17-blue.svg)](https://adoptium.net/)
 [![Plugin SDK](https://img.shields.io/badge/IntelliJ%20Platform%20Gradle-2.16-purple.svg)](https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html)
 
-### `[FULL IDE FRONT-END FOR THE FIRST COMPILED UNIX SHELL]`
+### `[FULL IDE FRONT-END FOR THE FIRST JIT-COMPILED UNIX SHELL]`
 
 > *"No fork, no problems — now with breakpoints."*
 
