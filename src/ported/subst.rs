@@ -7371,17 +7371,24 @@ pub fn paramsubst(
         //   `${v@U}`/`${v@L}`/`${v@u}` — upper-all / lower-all / upper-first
         //   `${v~~}` / `${v~}`     — case TOGGLE (all / first char)
         //   `${v@Q}`               — shell-quote
+        //   `${v@A}`               — the assignment statement that recreates it
+        //   `${v@K}` / `${v@k}`    — key/value pairs (quoted / unquoted)
         // PAT is a glob matching a SINGLE character (`[hw]`, `?`, `a`); empty
         // PAT matches every char. zsh/ksh lack all of this (`^`/`,` are rc-
         // expand there, `~` is filename expansion, `@` the splat pseudo-name),
-        // so gated to --bash. Rarer `@E`/`@P`/`@A`/`@a`/`@k`/`@K` still fall
-        // through to the bad-substitution reject like zsh.
+        // so gated to --bash. `@P` (prompt expansion) is still NOT implemented
+        // and falls through to the bad-substitution reject like zsh, because
+        // bash's prompt escapes (`\u`, `\h`, `\w`) are a different language
+        // from zsh's `%n`/`%m`/`%~` and no bash prompt expander exists yet.
         let mut bash_casemod: u8 = 0; // 0=none 1=upper-all 2=lower-all 3=upper-first 4=lower-first
         let mut bash_casemod_pat = String::new(); // single-char glob; empty = all chars
         let mut bash_casemod_toggle: u8 = 0; // 0=none, 1=~~ toggle-all, 2=~ toggle-first
         let mut bash_at_q = false; // ${v@Q} shell-quote
         let mut bash_at_a = false; // ${v@a} attribute-flags string
         let mut bash_at_e = false; // ${v@E} expand ANSI-C backslash escapes
+        let mut bash_at_assign = false; // ${v@A} recreating assignment statement
+        let mut bash_at_kv = false; // ${v@K} quoted key/value pairs, one word
+        let mut bash_at_kwords = false; // ${v@k} unquoted key/value words
         if crate::dash_mode::bash_mode() {
             let r = rest.as_str();
             match r {
@@ -7391,6 +7398,9 @@ pub fn paramsubst(
                 "@Q" => bash_at_q = true,
                 "@a" => bash_at_a = true,
                 "@E" => bash_at_e = true,
+                "@A" => bash_at_assign = true,
+                "@K" => bash_at_kv = true,
+                "@k" => bash_at_kwords = true,
                 "~~" => bash_casemod_toggle = 1,
                 "~" => bash_casemod_toggle = 2,
                 _ => {
@@ -7411,7 +7421,14 @@ pub fn paramsubst(
                     }
                 }
             }
-            if bash_casemod != 0 || bash_casemod_toggle != 0 || bash_at_q || bash_at_a || bash_at_e
+            if bash_casemod != 0
+                || bash_casemod_toggle != 0
+                || bash_at_q
+                || bash_at_a
+                || bash_at_e
+                || bash_at_assign
+                || bash_at_kv
+                || bash_at_kwords
             {
                 rest = String::new();
             }
@@ -17792,6 +17809,38 @@ pub fn paramsubst(
             }
         } // c:1673
 
+        // !!! WARNING: RUST-ONLY HELPER — BASH IS THE REFERENCE !!!
+        // bash applies every `${var@OP}` / `${var^^}` transformation
+        // ELEMENT-WISE across an array reference and joins only afterwards:
+        //
+        //   $ bash -c 'a=(x "y z"); printf "<%s>" "${a[*]@Q}"'  → <'x' 'y z'>
+        //   $ bash -c 'a=(x "y z"); printf "<%s>" "${a[@]@U}"'  → <X><Y Z>
+        //   $ bash -c 'a=(a b c);   printf "<%s>" "${a[@]^^}"'  → <A><B><C>
+        //
+        // By this point a `[*]` reference has already been collapsed to the
+        // joined scalar (the c:3032 arm) and a `[@]` one leaves `split_parts`
+        // empty for the downstream refetch, so both saw a scalar and the
+        // transforms were either wrong (`'x y z'`) or a no-op. Seed
+        // `split_parts` from the source array the same way the `casmod` arm
+        // below refetches it. A bare array NAME is element 0 in bash exactly
+        // as it is under KSHARRAYS (`bash -c 'a=(x y); echo "${a@Q}"'` → 'x'),
+        // so only an explicit `[@]`/`[*]` splat refetches.
+        let bash_splat_ref = matches!(subscript.as_deref(), Some("@") | Some("*"))
+            || (was_at_star_splat && subscript.is_none());
+        let bash_elemwise = crate::dash_mode::bash_mode()
+            && (bash_casemod != 0
+                || bash_casemod_toggle != 0
+                || bash_at_q
+                || bash_at_a
+                || bash_at_e);
+        if bash_elemwise && bash_splat_ref && split_parts.is_none() {
+            if let Some(arr) = arrays_get(&var_name) {
+                split_parts = Some(crate::bash_arrays::compact(&var_name, arr));
+            } else if let Some(m) = assoc_get(&var_name) {
+                split_parts = Some(m.values().cloned().collect());
+            }
+        }
+
         // !!! BASH-MODE GATE !!! bash case modification with an optional
         // single-char pattern: `${v^^}`/`${v^^PAT}` (upper all matching),
         // `${v^}`/`${v^PAT}` (upper first if matching), `,,`/`,` (lower), plus
@@ -17838,9 +17887,12 @@ pub fn paramsubst(
                 }
                 out
             };
-            value = xform(&value);
             if let Some(parts) = split_parts.as_ref() {
-                split_parts = Some(parts.iter().map(|p| xform(p)).collect());
+                let np: Vec<String> = parts.iter().map(|p| xform(p)).collect();
+                value = crate::dash_mode::bash_rejoin_elems(&np, dq_collapsed, sep.as_deref());
+                split_parts = Some(np);
+            } else {
+                value = xform(&value);
             }
         }
 
@@ -17869,9 +17921,12 @@ pub fn paramsubst(
                     }
                 }
             };
-            value = toggle(&value);
             if let Some(parts) = split_parts.as_ref() {
-                split_parts = Some(parts.iter().map(|p| toggle(p)).collect());
+                let np: Vec<String> = parts.iter().map(|p| toggle(p)).collect();
+                value = crate::dash_mode::bash_rejoin_elems(&np, dq_collapsed, sep.as_deref());
+                split_parts = Some(np);
+            } else {
+                value = toggle(&value);
             }
         }
 
@@ -17880,18 +17935,21 @@ pub fn paramsubst(
         // identifier: `abc` → `'abc'`), so QT_SINGLE, not the "only-when-
         // needed" optional form. No C counterpart; --bash only.
         if bash_at_q {
+            // bash uses `sh_quote_reusable`, which switches to `$'…'` when the
+            // value holds an unprintable character:
+            //   $ bash -c $'v=$\'a\\tb\'; printf "<%s>" "${v@Q}"'  → <$'a\tb'>
+            //   $ bash -c $'v="it\'s";      printf "<%s>" "${v@Q}"'  → <'it'\''s'>
             let q = |s: &str| -> String {
-                // `quotestring(QT_SINGLE)` returns the BODY only
-                // (utils.c:6131-6134 — the quote pair is the caller's job,
-                // as in subst.c:4085-4087), so add the `'…'` wrapper here.
-                format!(
-                    "'{}'",
-                    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE)
-                )
+                let s: String =
+                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
+                crate::dash_mode::bash_quote_reusable(&s)
             };
-            value = q(&value);
             if let Some(parts) = split_parts.as_ref() {
-                split_parts = Some(parts.iter().map(|p| q(p)).collect());
+                let np: Vec<String> = parts.iter().map(|p| q(p)).collect();
+                value = crate::dash_mode::bash_rejoin_elems(&np, dq_collapsed, sep.as_deref());
+                split_parts = Some(np);
+            } else {
+                value = q(&value);
             }
         }
 
@@ -17900,39 +17958,22 @@ pub fn paramsubst(
         // `l` lower, `u` upper), empty for a plain variable. No C counterpart;
         // --bash only. Reads the param's flags from the canonical table.
         if bash_at_a {
-            use crate::ported::zsh_h::{
-                PM_ARRAY, PM_EXPORTED, PM_HASHED, PM_INTEGER, PM_LOWER, PM_READONLY, PM_UPPER,
-            };
-            let flags = crate::ported::params::paramtab()
-                .read()
-                .ok()
-                .and_then(|t| t.get(&var_name).map(|p| p.node.flags as u32))
-                .unwrap_or(0);
-            let mut attrs = String::new();
-            // bash attribute order (empirically: array, i, r, x, then u/l which
-            // are mutually exclusive): `declare -rix` → "irx", `-aux` → "axu".
-            if flags & PM_HASHED != 0 {
-                attrs.push('A');
-            } else if flags & PM_ARRAY != 0 {
-                attrs.push('a');
+            // The letter set and its order live in ONE place —
+            // `dash_mode::bash_attr_letters` — because `${v@A}` below needs
+            // the identical string after `declare -`.
+            let attrs = crate::dash_mode::bash_attr_letters(crate::dash_mode::bash_param_flags(&var_name));
+            // bash repeats the attribute string once PER ELEMENT of an array
+            // reference:
+            //   $ bash -c 'declare -air z=(1 2); printf "<%s>" "${z[@]@a}"'
+            //   <air><air>
+            if let Some(parts) = split_parts.as_ref() {
+                let np: Vec<String> = vec![attrs; parts.len()];
+                value = crate::dash_mode::bash_rejoin_elems(&np, dq_collapsed, sep.as_deref());
+                split_parts = Some(np);
+            } else {
+                value = attrs;
+                split_parts = None;
             }
-            if flags & PM_INTEGER != 0 {
-                attrs.push('i');
-            }
-            if flags & PM_READONLY != 0 {
-                attrs.push('r');
-            }
-            if flags & PM_EXPORTED != 0 {
-                attrs.push('x');
-            }
-            if flags & PM_UPPER != 0 {
-                attrs.push('u');
-            }
-            if flags & PM_LOWER != 0 {
-                attrs.push('l');
-            }
-            value = attrs;
-            split_parts = None;
         }
 
         // bash `${v@E}` — expand ANSI-C backslash escapes in the value exactly
@@ -17947,10 +17988,105 @@ pub fn paramsubst(
                 )
                 .0
             };
-            value = e(&value);
             if let Some(parts) = split_parts.as_ref() {
-                split_parts = Some(parts.iter().map(|p| e(p)).collect());
+                let np: Vec<String> = parts.iter().map(|p| e(p)).collect();
+                value = crate::dash_mode::bash_rejoin_elems(&np, dq_collapsed, sep.as_deref());
+                split_parts = Some(np);
+            } else {
+                value = e(&value);
             }
+        }
+
+        // !!! WARNING: RUST-ONLY HELPER — BASH IS THE REFERENCE !!!
+        // bash `${v@A}` (the assignment statement that recreates the
+        // parameter), `${v@K}` (quoted `key "value"` pairs, ONE word) and
+        // `${v@k}` (the same pairs unquoted, each its own word). No zsh C
+        // counterpart — `zsh -fc 'v=x; echo ${v@A}'` is "bad substitution" —
+        // so the string builders live in `dash_mode` and this arm only wires
+        // the parameter's shape into them.
+        //
+        //   $ bash -c 'v=abc;       printf "<%s>" "${v@A}"'    → <v='abc'>
+        //   $ bash -c 'v=abc;       printf "<%s>" "${v@K}"'    → <'abc'>
+        //   $ bash -c 'a=(x "y z"); printf "<%s>" "${a[*]@A}"'
+        //       → <declare -a a=([0]="x" [1]="y z")>
+        //   $ bash -c 'a=(x "y z"); printf "<%s>" "${a[@]@A}"'
+        //       → <declare><-a><a=([0]="x" [1]="y z")>
+        //   $ bash -c 'a=(x "y z"); printf "<%s>" "${a[@]@K}"' → <0 "x" 1 "y z">
+        //   $ bash -c 'a=(x "y z"); printf "<%s>" "${a[@]@k}"' → <0><x><1><y z>
+        //
+        // Only `@A` under `[@]` is word-split, and it is split by IFS with
+        // quote regions skipped — `@K` stays one word however it is
+        // subscripted. See `dash_mode::bash_split_ifs_quote_aware`.
+        if bash_at_assign || bash_at_kv || bash_at_kwords {
+            use crate::dash_mode::BashParamShape;
+            let attrs = crate::dash_mode::bash_attr_letters(crate::dash_mode::bash_param_flags(&var_name));
+            // Only an explicit `[@]`/`[*]` splat looks at the whole
+            // array/assoc; a bare name or an `[N]`/`[key]` subscript is one
+            // element, which bash then reports under the PARAMETER's name and
+            // attributes (`a=(x); ${a[0]@A}` → `declare -a a='x'`).
+            let mut idx_items: Vec<(usize, String)> = Vec::new();
+            let mut kv_items: Vec<(String, String)> = Vec::new();
+            let mut kind = 0u8; // 0 = scalar, 1 = indexed array, 2 = assoc
+            if bash_splat_ref {
+                if let Some(m) = assoc_get(&var_name) {
+                    kv_items = m.into_iter().collect();
+                    kind = 2;
+                } else if let Some(arr) = arrays_get(&var_name) {
+                    // Sparse bash arrays keep their real indices.
+                    idx_items = crate::bash_arrays::live_indices(&var_name, arr.len())
+                        .into_iter()
+                        .filter_map(|i| arr.get(i).map(|v| (i, v.clone())))
+                        .collect();
+                    kind = 1;
+                }
+            }
+            let at_splat = matches!(subscript.as_deref(), Some("@"))
+                || (was_at_star_splat && subscript.is_none());
+            let (new_value, new_parts): (String, Option<Vec<String>>) = {
+                let scalar: String =
+                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(&value))
+                        .into_owned();
+                let shape = match kind {
+                    1 => BashParamShape::Indexed(&idx_items),
+                    2 => BashParamShape::Assoc(&kv_items),
+                    _ => BashParamShape::Scalar(&scalar),
+                };
+                if bash_at_assign {
+                    let out = crate::dash_mode::bash_assignment_string(&var_name, &attrs, &shape);
+                    if at_splat {
+                        let words = crate::dash_mode::bash_split_ifs_quote_aware(
+                            &out,
+                            vars_get("IFS").as_deref(),
+                        );
+                        (words.join(" "), Some(words))
+                    } else {
+                        (out, None)
+                    }
+                } else if bash_at_kv {
+                    let out = crate::dash_mode::bash_kvpair_string(&shape);
+                    if at_splat {
+                        // An EMPTY array expands `"${a[@]…}"` to ZERO words in
+                        // bash, not to one empty word:
+                        //   $ bash -c 'a=(); printf "<%s>" x "${a[@]@K}"'  → <x>
+                        let words = if out.is_empty() { Vec::new() } else { vec![out.clone()] };
+                        (out, Some(words))
+                    } else {
+                        (out, None)
+                    }
+                } else {
+                    let words = crate::dash_mode::bash_kv_words(&shape);
+                    if at_splat {
+                        (words.join(" "), Some(words))
+                    } else {
+                        (
+                            crate::ported::utils::sepjoin(&words, sep.as_deref()),
+                            None,
+                        )
+                    }
+                }
+            };
+            value = new_value;
+            split_parts = new_parts;
         }
 
         if casmod != CASMOD_NONE {

@@ -25,6 +25,7 @@ mod assoc_array_deep_parity;
 mod autoload_parity;
 mod bare_name_subscript_default_parity;
 mod bash_param_compat_parity;
+mod bash_param_transform_parity;
 mod bash_shopt_parity;
 mod binary_parity;
 mod bindkey_parity;

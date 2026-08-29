@@ -1156,3 +1156,485 @@ pub fn getopts_forget_reported() {
     GETOPTS_REPORTED.store(-1, Ordering::Relaxed);
     GETOPTS_INTERNAL.store(-1, Ordering::Relaxed);
 }
+
+// ===========================================================================
+// bash `${parameter@operator}` parameter transformations
+// ===========================================================================
+//
+// !!! WARNING: RUST-ONLY HELPER !!!
+//
+// Nothing below has a zsh C counterpart, so nothing below carries a `// c:NNN`
+// citation.  `${var@Q}`, `${var@A}`, `${var@K}`, `${var@k}`, `${var@a}`,
+// `${var@E}` and the `@U` / `@L` / `@u` case operators are bash extensions;
+// zsh answers "bad substitution" for every one of them:
+//
+// ```text
+// $ zsh -fc 'v=abc; echo "${v@A}"'
+// zsh:1: bad substitution
+// ```
+//
+// THE REFERENCE IS BASH ITSELF (GNU bash 5.3.15), not `Src/subst.c`.  Every
+// rule encoded here was established by running bash and recording its output;
+// the transcripts are pinned as parity tests in
+// `tests/parity/bash_param_transform.rs`.  Callers must gate on
+// [`bash_mode`] so `--zsh` keeps answering "bad substitution".
+
+/// bash's `isprint()` test, as `ansic_shouldquote` (lib/sh/strtrans.c) uses
+/// it: C0 controls and DEL are unprintable, everything else — including
+/// non-ASCII — is printable.  `${v@Q}` on `héllo` answers `'héllo'`, not a
+/// `$'…'` byte dump, which is what fixes the boundary here.
+fn bash_isprint(c: char) -> bool {
+    let u = c as u32;
+    !(u < 0x20 || u == 0x7f)
+}
+
+/// bash `ansic_shouldquote` — true when the value holds a character that
+/// cannot survive `'…'` quoting and so forces the `$'…'` form.
+pub fn bash_ansic_shouldquote(s: &str) -> bool {
+    s.chars().any(|c| !bash_isprint(c))
+}
+
+/// bash `ansic_quote` — render `s` as a `$'…'` literal.
+///
+/// ```text
+/// $ bash -c $'v=$\'\\a\\v\\b\\f\\n\\r\\t\\e\\001\\177\'; printf "<%s>" "${v@Q}"'
+/// <$'\a\v\b\f\n\r\t\E\001\177'>
+/// ```
+pub fn bash_ansic_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    out.push_str("$'");
+    for c in s.chars() {
+        match c {
+            '\u{7}' => out.push_str("\\a"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{b}' => out.push_str("\\v"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{1b}' => out.push_str("\\E"),
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            _ if bash_isprint(c) => out.push(c),
+            // Unprintable and not one of the named escapes: bash emits one
+            // three-digit octal escape per BYTE (`\001`, `\177`).
+            _ => {
+                let mut buf = [0u8; 4];
+                for b in c.encode_utf8(&mut buf).as_bytes() {
+                    out.push_str(&format!("\\{:03o}", b));
+                }
+            }
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// bash `sh_single_quote` — `'…'`, with an embedded `'` written `'\''`.
+///
+/// ```text
+/// $ bash -c $'v="it\'s"; printf "<%s>" "${v@Q}"'
+/// <'it'\''s'>
+/// ```
+pub fn bash_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// bash `sh_double_quote` — `"…"`, backslash-escaping only the four
+/// characters that stay live inside double quotes (`CBSDQUOTE`).
+pub fn bash_double_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        if matches!(c, '"' | '\\' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+/// bash `sh_quote_reusable` — what `${v@Q}` and the SCALAR form of `${v@A}`
+/// emit: `$'…'` when the value needs it, otherwise `'…'`.
+pub fn bash_quote_reusable(s: &str) -> String {
+    if bash_ansic_shouldquote(s) {
+        bash_ansic_quote(s)
+    } else {
+        bash_single_quote(s)
+    }
+}
+
+/// The form bash uses for one ELEMENT inside a `name=(…)` assignment or a
+/// `@K` key/value pair: `$'…'` when unprintable, otherwise DOUBLE quotes.
+///
+/// ```text
+/// $ bash -c 'a=(x "y z"); printf "<%s>" "${a[*]@K}"'
+/// <0 "x" 1 "y z">
+/// ```
+pub fn bash_quote_element(s: &str) -> String {
+    if bash_ansic_shouldquote(s) {
+        bash_ansic_quote(s)
+    } else {
+        bash_double_quote(s)
+    }
+}
+
+/// bash `sh_contains_shell_metas` — decides whether an associative-array KEY
+/// has to be quoted inside `@A` / `@K` output.  Measured char-by-char against
+/// bash 5.3: `- . + , : / @ % = # ~` stay bare mid-word, the rest quote.
+pub fn bash_contains_shell_metas(s: &str) -> bool {
+    let b: Vec<char> = s.chars().collect();
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            ' ' | '\t' | '\n' => return true,
+            '\'' | '"' | '\\' => return true,
+            '|' | '&' | ';' => return true,
+            '(' | ')' | '<' | '>' => return true,
+            '!' | '{' | '}' => return true,
+            '*' | '[' | '?' | ']' => return true,
+            '^' => return true,
+            '$' | '`' => return true,
+            // Tilde expansion only fires at the start of a word or right
+            // after `=` / `:`, so a mid-word `~` needs no quoting.
+            '~' => {
+                if i == 0 || b[i - 1] == '=' || b[i - 1] == ':' {
+                    return true;
+                }
+            }
+            // A comment only starts a word.
+            '#' => {
+                if i == 0 {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The form bash uses for an associative-array key inside `@A` / `@K`.
+pub fn bash_quote_assoc_key(s: &str) -> String {
+    if bash_ansic_shouldquote(s) {
+        bash_ansic_quote(s)
+    } else if bash_contains_shell_metas(s) {
+        bash_double_quote(s)
+    } else {
+        s.to_string()
+    }
+}
+
+/// The shape a `${var@A}` / `@K` / `@k` transformation is looking at.
+///
+/// `Indexed` carries the LIVE indices, so a sparse bash array recreates as
+/// `declare -a a=([0]="x" [5]="z")` rather than renumbering its holes away.
+pub enum BashParamShape<'a> {
+    /// The reference resolved to nothing at all.
+    Unset,
+    /// A scalar, or an array/assoc reduced to one element by a subscript.
+    Scalar(&'a str),
+    /// A whole indexed array: `(index, value)` in index order.
+    Indexed(&'a [(usize, String)]),
+    /// A whole associative array: `(key, value)`.
+    Assoc(&'a [(String, String)]),
+}
+
+/// bash `${var@A}` — the assignment statement that would recreate the
+/// parameter with its attributes.
+///
+/// `attrs` is the attribute-letter string [`bash_attr_letters`] produces; an
+/// empty one means bash omits the `declare` word entirely.
+///
+/// ```text
+/// $ bash -c 'v=abc;          printf "<%s>" "${v@A}"'    → <v='abc'>
+/// $ bash -c 'declare -i n=5; printf "<%s>" "${n@A}"'    → <declare -i n='5'>
+/// $ bash -c 'a=(x "y z");    printf "<%s>" "${a[*]@A}"' → <declare -a a=([0]="x" [1]="y z")>
+/// $ bash -c 'declare -A h=([q]=1); printf "<%s>" "${h[*]@A}"'
+///                                                       → <declare -A h=([q]="1" )>
+/// ```
+pub fn bash_assignment_string(name: &str, attrs: &str, shape: &BashParamShape) -> String {
+    let decl = if attrs.is_empty() {
+        String::new()
+    } else {
+        format!("declare -{} ", attrs)
+    };
+    match shape {
+        // An unset reference recreates as a bare declaration with no `=`.
+        BashParamShape::Unset => format!("{}{}", decl, name),
+        BashParamShape::Scalar(v) => format!("{}{}={}", decl, name, bash_quote_reusable(v)),
+        BashParamShape::Indexed(items) => {
+            let body = items
+                .iter()
+                .map(|(i, v)| format!("[{}]={}", i, bash_quote_element(v)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{}{}=({})", decl, name, body)
+        }
+        // bash's assoc writer emits a trailing space after EVERY pair, so the
+        // body ends `… )` — reproduced verbatim.  Keys are bracketed here,
+        // unlike in the `@K` pair form.
+        BashParamShape::Assoc(items) => {
+            let mut body = String::new();
+            for (k, v) in items.iter() {
+                body.push('[');
+                body.push_str(&bash_quote_assoc_key(k));
+                body.push_str("]=");
+                body.push_str(&bash_quote_element(v));
+                body.push(' ');
+            }
+            format!("{}{}=({})", decl, name, body)
+        }
+    }
+}
+
+/// bash `${var@K}` — like `@Q` for a scalar; for an array, `key "value"`
+/// pairs in ONE word.
+///
+/// ```text
+/// $ bash -c 'a=(x "y z");          printf "<%s>" "${a[@]@K}"' → <0 "x" 1 "y z">
+/// $ bash -c 'declare -A h=([q]=1); printf "<%s>" "${h[*]@K}"' → <q "1" >
+/// ```
+pub fn bash_kvpair_string(shape: &BashParamShape) -> String {
+    match shape {
+        BashParamShape::Unset => String::new(),
+        BashParamShape::Scalar(v) => bash_quote_reusable(v),
+        BashParamShape::Indexed(items) => items
+            .iter()
+            .map(|(i, v)| format!("{} {}", i, bash_quote_element(v)))
+            .collect::<Vec<_>>()
+            .join(" "),
+        BashParamShape::Assoc(items) => {
+            let mut out = String::new();
+            for (k, v) in items.iter() {
+                out.push_str(&bash_quote_assoc_key(k));
+                out.push(' ');
+                out.push_str(&bash_quote_element(v));
+                out.push(' ');
+            }
+            out
+        }
+    }
+}
+
+/// bash `${var@k}` — the `@K` pairs with NO quoting, each key and each value
+/// its own word.
+///
+/// ```text
+/// $ bash -c 'a=(x "y z"); printf "<%s>" "${a[@]@k}"' → <0><x><1><y z>
+/// ```
+pub fn bash_kv_words(shape: &BashParamShape) -> Vec<String> {
+    match shape {
+        BashParamShape::Unset => Vec::new(),
+        BashParamShape::Scalar(v) => vec![bash_quote_reusable(v)],
+        BashParamShape::Indexed(items) => items
+            .iter()
+            .flat_map(|(i, v)| [i.to_string(), v.clone()])
+            .collect(),
+        BashParamShape::Assoc(items) => items
+            .iter()
+            .flat_map(|(k, v)| [k.clone(), v.clone()])
+            .collect(),
+    }
+}
+
+/// Split a `${var[@]@A}` result into words the way bash does.
+///
+/// bash hands the assignment statement back through IFS field splitting, but
+/// with quote regions skipped, so `declare -a a=([0]="x" [1]="y z")` becomes
+/// three words and the parenthesised body stays whole.  Measured:
+///
+/// ```text
+/// $ bash -c 'a=(x "y z");            printf "<%s>" "${a[@]@A}"'
+/// <declare><-a><a=([0]="x" [1]="y z")>
+/// $ bash -c 'a=(x "y z"); IFS=":";   printf "<%s>" "${a[@]@A}"'
+/// <declare -a a=([0]="x" [1]="y z")>
+/// $ bash -c 'a=(x "y z"); IFS="a";   printf "<%s>" "${a[@]@A}"'
+/// <decl><re ->< ><=([0]="x" [1]="y z")>
+/// ```
+///
+/// An IFS that is unset OR empty falls back to `" \t\n"` — the empty case is
+/// bash's own, and is why `IFS=""` above still splits.
+///
+/// A parenthesised region is protected too, which is what keeps the whole
+/// `a=(…)` body one word even though its interior is full of spaces:
+///
+/// ```text
+/// $ bash -c 'a=(x y); IFS="0"; printf "<%s>" "${a[@]@A}"'
+/// <declare -a a=([0]="x" [1]="y")>          # the `0`s live inside the parens
+/// $ bash -c 'a=(x y); IFS="[";  printf "<%s>" "${a[@]@A}"'
+/// <declare -a a=([0]="x" [1]="y")>
+/// ```
+pub fn bash_split_ifs_quote_aware(s: &str, ifs: Option<&str>) -> Vec<String> {
+    let seps: Vec<char> = match ifs {
+        Some(v) if !v.is_empty() => v.chars().collect(),
+        _ => vec![' ', '\t', '\n'],
+    };
+    let is_sep = |c: char| seps.contains(&c);
+    let is_ws_sep = |c: char| is_sep(c) && (c == ' ' || c == '\t' || c == '\n');
+
+    let cs: Vec<char> = s.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut started = false;
+    let mut depth = 0usize; // unquoted `(` … `)` nesting — never split inside
+    let mut i = 0usize;
+    while i < cs.len() {
+        let c = cs[i];
+        if c == '(' {
+            depth += 1;
+            cur.push(c);
+            started = true;
+            i += 1;
+            continue;
+        }
+        if c == ')' {
+            depth = depth.saturating_sub(1);
+            cur.push(c);
+            started = true;
+            i += 1;
+            continue;
+        }
+        if c == '\'' {
+            // Single-quoted region (also the tail of `$'…'`): nothing inside
+            // it splits and no backslash ends it early.
+            cur.push(c);
+            started = true;
+            i += 1;
+            while i < cs.len() && cs[i] != '\'' {
+                cur.push(cs[i]);
+                i += 1;
+            }
+            if i < cs.len() {
+                cur.push('\'');
+                i += 1;
+            }
+            continue;
+        }
+        if c == '"' {
+            cur.push(c);
+            started = true;
+            i += 1;
+            while i < cs.len() && cs[i] != '"' {
+                if cs[i] == '\\' && i + 1 < cs.len() {
+                    cur.push(cs[i]);
+                    i += 1;
+                }
+                cur.push(cs[i]);
+                i += 1;
+            }
+            if i < cs.len() {
+                cur.push('"');
+                i += 1;
+            }
+            continue;
+        }
+        if c == '\\' && i + 1 < cs.len() {
+            cur.push(c);
+            cur.push(cs[i + 1]);
+            started = true;
+            i += 2;
+            continue;
+        }
+        if is_sep(c) && depth == 0 {
+            if started {
+                out.push(std::mem::take(&mut cur));
+                started = false;
+            }
+            if is_ws_sep(c) {
+                // Runs of IFS whitespace collapse into one separator.
+                while i + 1 < cs.len() && is_ws_sep(cs[i + 1]) {
+                    i += 1;
+                }
+            }
+            i += 1;
+            continue;
+        }
+        cur.push(c);
+        started = true;
+        i += 1;
+    }
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
+/// bash `${var@a}` — the parameter's attribute flags as a letter string, and
+/// the same letters `${var@A}` puts after `declare -`.
+///
+/// The ORDER is bash's, measured:
+///
+/// ```text
+/// $ bash -c 'declare -air z=(1 2); printf "<%s>" "${z@a}"'  → <air>
+/// $ bash -c 'declare -xi  q=3;     printf "<%s>" "${q@a}"'  → <ix>
+/// $ bash -c 'declare -A   h; h[x]=1; printf "<%s>" "${h[@]@a}"' → <A>
+/// $ bash -c 'v=abc;                printf "<%s>" "${v@a}"'  → <>
+/// ```
+pub fn bash_attr_letters(flags: u32) -> String {
+    use crate::ported::zsh_h::{
+        PM_ARRAY, PM_EXPORTED, PM_HASHED, PM_INTEGER, PM_LOWER, PM_READONLY, PM_UPPER,
+    };
+    let mut attrs = String::new();
+    if flags & PM_HASHED != 0 {
+        attrs.push('A');
+    } else if flags & PM_ARRAY != 0 {
+        attrs.push('a');
+    }
+    if flags & PM_INTEGER != 0 {
+        attrs.push('i');
+    }
+    if flags & PM_READONLY != 0 {
+        attrs.push('r');
+    }
+    if flags & PM_EXPORTED != 0 {
+        attrs.push('x');
+    }
+    if flags & PM_UPPER != 0 {
+        attrs.push('u');
+    }
+    if flags & PM_LOWER != 0 {
+        attrs.push('l');
+    }
+    attrs
+}
+
+/// Rebuild the scalar `val` after a bash `${var@OP}` transformation ran
+/// ELEMENT-WISE over an array reference.
+///
+/// A `"${a[*]…}"` reference was already collapsed to one word before the
+/// transform ran, so its result has to be re-joined with the same separator
+/// (`$IFS[0]`, or an explicit `(j:X:)`); a `"${a[@]…}"` one still splats from
+/// `split_parts` and only needs a placeholder join, which mirrors what the
+/// `casmod` arm in `subst.rs` does.
+///
+/// ```text
+/// $ bash -c 'a=(x "y z"); IFS=":"; printf "<%s>" "${a[*]@Q}"'  → <'x':'y z'>
+/// ```
+pub fn bash_rejoin_elems(parts: &[String], dq_collapsed: bool, sep: Option<&str>) -> String {
+    if dq_collapsed {
+        crate::ported::utils::sepjoin(parts, sep)
+    } else {
+        parts.join(" ")
+    }
+}
+
+/// The raw `PM_*` flag word of a named parameter, or 0 when it has none.
+/// Feeds [`bash_attr_letters`] for `${v@a}` and `${v@A}`.
+pub fn bash_param_flags(name: &str) -> u32 {
+    crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).map(|p| p.node.flags as u32))
+        .unwrap_or(0)
+}
