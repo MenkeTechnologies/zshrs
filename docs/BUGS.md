@@ -44,7 +44,40 @@ The widget RUNS — it reports `<LBUFFER>tst </LBUFFER>` back through the pty, s
 the keystroke, the widget dispatch and the `comp-finish` round-trip all work.
 It simply inserts no match.
 
-**Narrowed.** Every layer above was eliminated by substituting it directly:
+**Traced to one dispatch point.** Instrumenting each level of the chain from
+inside the pty (log lines appended to a file, so nothing perturbs the widget's
+own output):
+
+```
+                              zsh              zshrs
+zle -C widget fires           yes              yes      (<LBUFFER>tst </LBUFFER> returned)
+complete-word-with-postfunc   runs             runs
+_main_complete                runs             runs     (returns 1 = no matches)
+completer _complete           runs             runs
+$_comps[tst] -> _tst          CALLED           NEVER CALLED
+```
+
+State at the moment `_main_complete` is entered is IDENTICAL in both shells,
+so none of the usual suspects apply:
+
+```
+words=(tst|)  CURRENT=2  compstate[context]=command  compstate[nmatches]=0
+_comps[tst]=_tst   ${+functions[_tst]}=1
+```
+
+So the registration, the function, the word vector, the cursor index and the
+completion context are all correct — zshrs's native `_complete` port simply
+never dispatches to the `$_comps` entry on this path. That is the single thing
+to fix.
+
+Two dead ends worth not repeating: `$words`/`$CURRENT` are NOT the cause here
+(#1096 is a real gap but this path has them right), and `functions -c
+_complete …` cannot be used to shim the chain — `_complete` is a native Rust
+port, so the copy is empty and the wrapper returns 127, which looks like a
+failure of the completer and is not.
+
+**Layers eliminated by substitution.** Every one of these as the completion
+body gives `{tst }`, so it is not spec parsing:
 
 | Completion body | zshrs result |
 |---|---|
