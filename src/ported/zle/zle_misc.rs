@@ -2778,19 +2778,12 @@ pub fn pound_insert() {
     ZLE_RESET_NEEDED.store(1, SeqCst);
 }
 
-/// Port of `processcmd(UNUSED(char **args))` from
-/// `Src/Zle/zle_tricky.c`. Shared widget body for both
-/// `which-command` and `run-help` (per iwidgets.list: both names
-/// bind to the same C fn `processcmd`; the runtime distinguishes
-/// based on `bindk->nam` to decide whether to emit "whence" output
-/// or invoke `$HELPDIR/cmd`).
-pub fn processcmd(_args: &[String]) -> i32 {
-    // c:2971
-    // The canonical port lives at zle_tricky.rs:1003 with the same
-    // C-fn name. Delegate so the misc.rs entry point (widget table
-    // wiring) goes through the real body.
-    crate::ported::zle::zle_tricky::processcmd()
-}
+// `processcmd` is `Src/Zle/zle_tricky.c:2971`, so its port lives in
+// `src/ported/zle/zle_tricky.rs`. The signature-adapting shim that
+// used to sit here (`fn processcmd(&[String]) -> i32` forwarding to
+// it) is gone; `zle_bindings.rs` wraps the call in a closure for the
+// `which-command` / `run-help` widget rows instead, the same way it
+// does for every other zero-arg widget body.
 
 // `zgetline` lives at its canonical C location (zle_hist.c:898) →
 // `crate::ported::zle::zle_hist::zgetline`. The duplicate that

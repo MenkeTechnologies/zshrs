@@ -451,10 +451,26 @@ pub fn zdeleteterm() {
 
 /// Port of `int putraw(int c)` from Src/utils.c:424. Writes a
 /// single byte to stdout for the termcap library, returning 0.
-pub fn putraw(c: char) -> i32 {
+///
+/// Declared `extern "C"` with C's exact `int (int)` signature because
+/// it is handed to `tputs(3)` as a function pointer — that is the only
+/// thing C uses it for (`Src/Modules/termcap.c:132`,
+/// `tputs(t, 1, putraw)`), and a Rust-ABI `fn(char) -> i32` cannot be
+/// passed there. `src/ported/modules/termcap.rs` used to carry its own
+/// copy under this name for exactly that reason; the copy is gone and
+/// termcap now passes this one.
+///
+/// !!! RUST-ONLY DEVIATION !!! C is `putc(c, stdout)` — buffered through
+/// the FILE*. This writes the byte straight to fd 1, so the caller
+/// controls interleaving with Rust's own buffered stdout by flushing
+/// (termcap.rs does, right after the `tputs` call).
+pub extern "C" fn putraw(c: libc::c_int) -> libc::c_int {
     // c:424
-    print!("{}", c); // c:434
-    0 // c:434
+    let byte = c as u8; // c:426 — `putc(c, stdout);`
+    unsafe {
+        libc::write(1, &byte as *const u8 as *const libc::c_void, 1);
+    }
+    0 // c:427
 }
 
 /// Port of `int putshout(int c)` from Src/utils.c:434. Writes a

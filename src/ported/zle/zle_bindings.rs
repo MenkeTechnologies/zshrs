@@ -879,8 +879,11 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         }),
         "yank" => Some(|_| super::zle_misc::yank()),
         "vi-yank" => Some(viyank),
-        "which-command" => Some(super::zle_misc::processcmd),
-        "run-help" => Some(super::zle_misc::processcmd),
+        // c:Src/Zle/zle_tricky.c:2971 — iwidgets.list binds both names
+        // to the same C fn `processcmd`, which reads `bindk->nam` to
+        // decide between whence output and `$HELPDIR/cmd`.
+        "which-command" => Some(|_| crate::ported::zle::zle_tricky::processcmd()),
+        "run-help" => Some(|_| crate::ported::zle::zle_tricky::processcmd()),
         "get-line" => Some(|_| super::zle_hist::zgetline()),
         // execute-named-cmd / execute-last-named-cmd have NULL fn
         // in C iwidgets.list — handled inline at C bind dispatch
