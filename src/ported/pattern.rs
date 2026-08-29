@@ -150,19 +150,22 @@ pub const P_OPEN: u8 = 0x80; // c:126 Mark this point in input as start of n.
 /// `P_CLOSE` constant.
 pub const P_CLOSE: u8 = 0x90; // c:127 Analogous to OPEN.
 
-/// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
+/// Port of `P_ISBRANCH()` from `Src/pattern.c:200`.
+/// C macro `#define P_ISBRANCH(p)   ((p)->l & 0x20)`.
 #[inline]
 pub fn P_ISBRANCH(op: u8) -> bool {
     (op & 0x20) != 0
 }
 
-/// `P_ISEXCLUDE(p)` macro from pattern.c:201 — `((p->l & 0x30) == 0x30)`.
+/// Port of `P_ISEXCLUDE()` from `Src/pattern.c:201`.
+/// C macro `#define P_ISEXCLUDE(p)	(((p)->l & 0x30) == 0x30)`.
 #[inline]
 pub fn P_ISEXCLUDE(op: u8) -> bool {
     (op & 0x30) == 0x30
 }
 
-/// `P_NOTDOT(p)` macro from pattern.c:202 — `(p->l & 0x40)`.
+/// Port of `P_NOTDOT()` from `Src/pattern.c:202`.
+/// C macro `#define P_NOTDOT(p)	((p)->l & 0x40)`.
 #[inline]
 pub fn P_NOTDOT(op: u8) -> bool {
     (op & 0x40) != 0
@@ -238,8 +241,8 @@ pub static patinlen: AtomicI32 = AtomicI32::new(0); // c:1877
 /// state to clear.
 pub fn clear_shiftstate() {} // c:327
 
-/// Port of `metacharinc(char **x)` from `Src/pattern.c:336`. Advances past
-/// Port of `wchar_t metacharinc(char **x)` from `Src/pattern.c:336`.
+/// Port of `metacharinc()` from `Src/pattern.c:336`.
+/// C: `static wchar_t metacharinc(char **x)`.
 /// Advances `*x` past one metafied / multibyte char and returns the
 /// decoded codepoint. The C body branches on:
 ///   - `GF_MULTIBYTE` clear OR high-bit-clear: single-byte path
@@ -282,7 +285,8 @@ pub const PA_NOALIGN: i32 = 1; // c:406
 /// `PA_UNMETA` constant.
 pub const PA_UNMETA: i32 = 2; // c:407
 
-/// Direct port of `static void patadd(char *add, int ch, long n,
+/// Port of `patadd()` from `Src/pattern.c:412`.
+/// C: `static void patadd(char *add, int ch, long n,
 /// int paflags)` from `Src/pattern.c:410-450`.
 ///
 /// Append `n` bytes from `add` (or a single `ch` byte when `add ==
@@ -1807,7 +1811,8 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
 // 10. Glob-flag parser — pattern.c:1037
 // =====================================================================
 
-/// Port of `patgetglobflags(char **strp, long *assertp, int *ignore)` from `Src/pattern.c:1037`.
+/// Port of `patgetglobflags()` from `Src/pattern.c:1037`.
+/// C: `patgetglobflags(char **strp, long *assertp, int *ignore)`.
 ///
 /// C signature: `int patgetglobflags(char **strp, long *assertp,
 /// int *ignore)`. C reads/writes the file-static `patglobflags`
@@ -1961,7 +1966,8 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {
 // 11. Range helpers — pattern.c:1148, :1179
 // =====================================================================
 
-/// Port of `range_type(char *start, int len)` from `Src/pattern.c:1148`. Looks up the
+/// Port of `range_type()` from `Src/pattern.c:1148`.
+/// C: `range_type(char *start, int len)`. Looks up the
 /// integer code for a POSIX character class name (e.g. "alpha" → 1).
 /// Returns None for unknown names.
 ///
@@ -1977,7 +1983,8 @@ pub fn range_type(start: &str) -> Option<usize> {
         .map(|i| i + 1)
 }
 
-/// Port of `int pattern_range_to_string(char *rangestr, char *outstr)`
+/// Port of `pattern_range_to_string()` from `Src/pattern.c:1179`.
+/// C: `int pattern_range_to_string(char *rangestr, char *outstr)`
 /// from `Src/pattern.c:1179`. Walks a Meta-encoded range bytestring,
 /// re-emitting the human-readable form: literal chars as-is,
 /// PP_RANGE pairs as `c1-c2`, POSIX classes as `[:name:]`.
@@ -2036,7 +2043,8 @@ pub fn pattern_range_to_string(rangestr: &str) -> String {
     out // c:1261 return len
 }
 
-/// Port of `patcomppiece(int *flagp, int paren)` from `Src/pattern.c:1261`.
+/// Port of `patcomppiece()` from `Src/pattern.c:1261`.
+/// C: `patcomppiece(int *flagp, int paren)`.
 ///
 /// C: `static long patcomppiece(int *flagp, int paren)`. Parses a
 /// single atom + optional quantifier. Returns offset of compiled node.
@@ -3154,7 +3162,8 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     atom
 }
 
-/// Port of `patcompnot(int paren, int *flagsp)` from `Src/pattern.c:1760`.
+/// Port of `patcompnot()` from `Src/pattern.c:1760`.
+/// C: `patcompnot(int paren, int *flagsp)`.
 ///
 /// C: `static long patcompnot(int paren, int *flagsp)`. Implements
 /// the `^pat` (paren=0) or `!(pat)` (paren=1) extended/ksh-glob
@@ -3228,7 +3237,8 @@ pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {
     starter as i64
 }
 
-/// Port of `patnode(long op)` from `Src/pattern.c:1790`.
+/// Port of `patnode()` from `Src/pattern.c:1790`.
+/// C: `patnode(long op)`.
 ///
 /// C: `static long patnode(long op)` — writes a 1-byte opcode plus a
 /// 4-byte zeroed next-offset. Returns the offset of the opcode byte.
@@ -3241,7 +3251,8 @@ fn patnode(op: u8) -> usize {
     off
 }
 
-/// Port of `patinsert(long op, int opnd, char *xtra, int sz)` from `Src/pattern.c:1807`.
+/// Port of `patinsert()` from `Src/pattern.c:1807`.
+/// C: `patinsert(long op, int opnd, char *xtra, int sz)`.
 ///
 /// C: `static void patinsert(long op, int opnd, char *xtra, int sz)`.
 /// Inserts an opcode (+ next slot) at position `opnd`, shifting bytes
@@ -3263,7 +3274,8 @@ fn patinsert(op: u8, opnd: usize, xtra: Option<&[u8]>, sz: usize) {
     fixup_offsets_after_insert(&mut buf, opnd, total as u32);
 }
 
-/// Port of `pattail(long p, long val)` from `Src/pattern.c:1834`.
+/// Port of `pattail()` from `Src/pattern.c:1834`.
+/// C: `pattail(long p, long val)`.
 ///
 /// C: `static void pattail(long p, long val)` — patches the next-offset
 /// field of the opcode at offset `p` to point to `val`. Walks any
@@ -3289,7 +3301,8 @@ fn pattail(p: usize, val: usize) {
     }
 }
 
-/// Port of `patoptail(long p, long val)` from `Src/pattern.c:1856`.
+/// Port of `patoptail()` from `Src/pattern.c:1856`.
+/// C: `patoptail(long p, long val)`.
 ///
 /// C: `static void patoptail(long p, long val)` — like pattail but
 /// only patches branches (P_BRANCH/P_WBRANCH).
@@ -3371,7 +3384,8 @@ pub struct rpat {
     pub errsfound: i32, // c:2046
 }
 
-/// Port of `wchar_t charref(char *x, char *y, int *zmb_ind)` from
+/// Port of `charref()` from `Src/pattern.c:1909`.
+/// C: `wchar_t charref(char *x, char *y, int *zmb_ind)` from
 /// `Src/pattern.c:1909`. Decode the char at `pos` without
 /// advancing. UTF-32-native delegation: `s.chars().next()` returns
 /// the decoded codepoint; delegates to Rust's native UTF-8 string
@@ -3388,7 +3402,8 @@ pub fn charref(s: &str, pos: usize) -> Option<char> {
     s[pos..].chars().next()
 }
 
-/// Port of `char *charnext(char *x, char *y)` from `Src/pattern.c:1935`.
+/// Port of `charnext()` from `Src/pattern.c:1936`.
+/// C: `char *charnext(char *x, char *y)`.
 /// C returns the pointer past the current character; the Rust port
 /// returns that position as a byte offset. Delegates to `metacharinc`
 /// — same advance-by-one-codepoint logic.
@@ -3397,7 +3412,8 @@ pub fn charnext(x: &str, y: usize) -> usize {
     metacharinc(x, y)
 }
 
-/// Port of `wchar_t charrefinc(char **x, char *y, int *z)` from
+/// Port of `charrefinc()` from `Src/pattern.c:1964`.
+/// C: `wchar_t charrefinc(char **x, char *y, int *z)` from
 /// `Src/pattern.c:1964`. Decode + advance: delegates to the
 /// `charref`-then-`len_utf8`-step pattern. The C body's Meta /
 /// mbrtowc / zshtoken triple collapses to one `chars().next()`
@@ -3415,7 +3431,8 @@ pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {
     Some(c)
 }
 
-/// Port of `ptrdiff_t charsub(char *x, char *y)` from `Src/pattern.c:1997`.
+/// Port of `charsub()` from `Src/pattern.c:1997`.
+/// C: `ptrdiff_t charsub(char *x, char *y)`.
 ///
 /// Returns the number of characters between the start `x` and the
 /// position `y` — i.e. the character-distance of byte offset `y` from
@@ -3464,7 +3481,8 @@ pub fn charsub(x: &str, y: usize) -> usize {
 /// match state globals; Rust state is per-call so no-op.
 pub fn pattrystart() {} // c:2063
 
-/// Port of `void patmungestring(char **string, int *stringlen, int *unmetalenin)`
+/// Port of `patmungestring()` from `Src/pattern.c:2080`.
+/// C: `void patmungestring(char **string, int *stringlen, int *unmetalenin)`
 /// from `Src/pattern.c:2080`.
 ///
 /// Skips a leading `Nularg` (the empty-tokenised-string sentinel)
@@ -3498,7 +3516,8 @@ pub fn patmungestring(string: &mut &str, stringlen: &mut i32, unmetalenin: &mut 
     }
 }
 
-/// Port of `pattry(Patprog prog, char *string)` from `Src/pattern.c:2223`.
+/// Port of `pattry()` from `Src/pattern.c:2223`.
+/// C: `pattry(Patprog prog, char *string)`.
 ///
 /// C signature: `int pattry(Patprog prog, char *string)`. Returns
 /// non-zero on match, 0 on no-match.
@@ -3508,7 +3527,8 @@ pub fn pattry(prog: &Patprog, string: &str) -> bool {
     pattrylen(prog, string, string.len() as i32, -1, None, 0) // c:2225
 }
 
-/// Port of `int pattrylen(Patprog prog, char *string, int len,
+/// Port of `pattrylen()` from `Src/pattern.c:2236`.
+/// C: `int pattrylen(Patprog prog, char *string, int len,
 /// int unmetalen, Patstralloc patstralloc, int offset)` from
 /// `Src/pattern.c:2236`.
 ///
@@ -3543,7 +3563,8 @@ pub fn pattrylen(
     )
 }
 
-/// Port of `int pattryrefs(Patprog prog, char *string, int stringlen,
+/// Port of `pattryrefs()` from `Src/pattern.c:2294`.
+/// C: `int pattryrefs(Patprog prog, char *string, int stringlen,
 /// int unmetalenin, Patstralloc patstralloc, int patoffset,
 /// int *nump, int *begp, int *endp)` from `Src/pattern.c:2294`.
 /// Runs `prog` against `string[0..stringlen]` (or whole string when
@@ -3947,7 +3968,8 @@ pub fn pattryrefs(
 // 15. Range matching — pattern.c:3856, :4004, :3610, :3767
 // =====================================================================
 
-/// Direct port of `int patmatchlen(void)` from `Src/pattern.c:2649`.
+/// Port of `patmatchlen()` from `Src/pattern.c:2649`.
+/// C: `int patmatchlen(void)`.
 ///
 /// ```c
 /// /**/
@@ -3967,7 +3989,8 @@ pub fn patmatchlen() -> i32 {
     // c:2649-2652
     patinlen.load(Ordering::Relaxed) // c:2651 — `return patinlen;`
 }
-/// Direct port of `int patmatchindex(char *range, int ind, int *chr, int *mtp)`
+/// Port of `patmatchindex()` from `Src/pattern.c:4004`.
+/// C: `int patmatchindex(char *range, int ind, int *chr, int *mtp)`
 /// from `Src/pattern.c:4004` (MULTIBYTE_SUPPORT-disabled single-byte
 /// variant). Walks a NULL-terminated, METAFIED, PP_*-encoded byte
 /// stream `range` and returns the character (or POSIX-class id)
@@ -4085,7 +4108,8 @@ pub fn patmatchindex(range: &[u8], mut ind: i32) -> Option<(Option<u8>, i32)> {
     None
 }
 
-/// Direct port of `int mb_patmatchrange(char *range, wchar_t ch,
+/// Port of `mb_patmatchrange()` from `Src/pattern.c:3610`.
+/// C: `int mb_patmatchrange(char *range, wchar_t ch,
 /// int zmb_ind, wint_t *indptr, int *mtp)` from `Src/pattern.c:3610`.
 /// Multibyte variant of `patmatchrange`: walks the metafied,
 /// PP_*-encoded byte stream `range` and tests whether wide char `ch`
@@ -4232,7 +4256,8 @@ pub fn mb_patmatchrange(
     false // c:3766 — `return 0;`
 }
 
-/// Direct port of `int mb_patmatchindex(char *range, wint_t ind,
+/// Port of `mb_patmatchindex()` from `Src/pattern.c:3767`.
+/// C: `int mb_patmatchindex(char *range, wint_t ind,
 /// wint_t *chr, int *mtp)` from `Src/pattern.c:3767`. The reverse
 /// of `mb_patmatchrange`: given a metafied byte range and an index
 /// `ind` into it, return the character (or PP_* class) at that
@@ -4321,13 +4346,15 @@ pub fn mb_patmatchindex(range: &[u8], mut ind: u32) -> Option<(Option<char>, i32
     None // c:3849 — `return 0`
 }
 
-/// Port of `freepatprog(Patprog prog)` from `Src/pattern.c:4161`. Frees a Patprog.
+/// Port of `freepatprog()` from `Src/pattern.c:4161`.
+/// C: `freepatprog(Patprog prog)`. Frees a Patprog.
 /// Rust's `Drop` on `Box<patprog>` handles this; the explicit fn
 /// exists for C parity (Rule A).
 #[allow(unused_variables)]
 pub fn freepatprog(prog: Patprog) {} // c:4161
 
-/// Port of `int pat_enables(const char *cmd, char **patp, int enable)`
+/// Port of `pat_enables()` from `Src/pattern.c:4171`.
+/// C: `int pat_enables(const char *cmd, char **patp, int enable)`
 /// from `Src/pattern.c:4171`. Implements `enable -p`/`disable -p`: with
 /// an empty `patp`, prints the currently enabled (or disabled, if
 /// `!enable`) tokens by walking `zpc_strings[]`/`zpc_disables[]` in
@@ -4419,7 +4446,8 @@ pub const ZPC_STRINGS: [Option<&'static str>; ZPC_COUNT as usize] = [
     Some("@("),
 ];
 
-/// Port of `unsigned int savepatterndisables(void)` from
+/// Port of `savepatterndisables()` from `Src/pattern.c:4220`.
+/// C: `unsigned int savepatterndisables(void)` from
 /// `Src/pattern.c:4220`.
 ///
 /// C body (c:4220-4233):
@@ -4458,7 +4486,8 @@ pub fn savepatterndisables() -> u32 {
     disables // c:4232
 }
 
-/// Port of `void startpatternscope(void)` from `Src/pattern.c:4241`.
+/// Port of `startpatternscope()` from `Src/pattern.c:4241`.
+/// C: `void startpatternscope(void)`.
 /// Pushes a frame onto `PATSCOPE_STACK` (`zpc_disables_stack` in C)
 /// carrying the current `zpc_disables[]` state as a `savepatterndisables()`
 /// u32 bitmap. Called at function entry; `endpatternscope` pops it.
@@ -4477,7 +4506,8 @@ pub fn startpatternscope() {
     PATSCOPE_STACK.with(|s| s.borrow_mut().push(saved));
 }
 
-/// Port of `void restorepatterndisables(unsigned int disables)` from
+/// Port of `restorepatterndisables()` from `Src/pattern.c:4258`.
+/// C: `void restorepatterndisables(unsigned int disables)` from
 /// `Src/pattern.c:4258`. Walks the 12-slot `zpc_disables[]` array,
 /// setting each slot's byte from the bitmask: `disables & (1<<i)`
 /// → slot `i` gets 1, else 0.
@@ -4511,7 +4541,8 @@ pub fn restorepatterndisables(disables: u32) {
     }
 }
 
-/// Port of `void endpatternscope(void)` from `Src/pattern.c:4279`.
+/// Port of `endpatternscope()` from `Src/pattern.c:4279`.
+/// C: `void endpatternscope(void)`.
 /// Pops the saved bitmap from `PATSCOPE_STACK` (`zpc_disables_stack`
 /// in C); restores `zpc_disables[]` from the bitmap ONLY when
 /// `isset(LOCALPATTERNS)` per C c:4286. Called at function exit.
@@ -4535,14 +4566,16 @@ pub fn endpatternscope() {
     }
 }
 
-/// Port of `void clearpatterndisables(void)` from `Src/pattern.c:4296`.
+/// Port of `clearpatterndisables()` from `Src/pattern.c:4296`.
+/// C: `void clearpatterndisables(void)`.
 /// C body: `memset(zpc_disables, 0, ZPC_COUNT)` — zero every slot.
 pub fn clearpatterndisables() {
     // c:4296
     *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize]; // c:4298
 }
 
-/// Port of `haswilds(char *str)` from `Src/pattern.c:4306`.
+/// Port of `haswilds()` from `Src/pattern.c:4306`.
+/// C: `haswilds(char *str)`.
 ///
 /// Check whether `str` is eligible for filename generation.
 ///
@@ -4814,9 +4847,18 @@ thread_local! {
 /// not its meta-meaning.
 pub static zpc_disables: Mutex<[u8; ZPC_COUNT as usize]> = Mutex::new([0u8; ZPC_COUNT as usize]); // c:268
 
-/// Helper: when patinsert shifts a chunk of bytecode, any 4-byte
-/// next_off slot that previously pointed past `opnd` must be bumped
-/// by `delta` to keep the chain links valid.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// There is NO `fixup_offsets_after_insert()` in `Src/pattern.c`.
+/// It stands in for C's ABSENCE of a fixup step: C's `patinsert()`
+/// (`Src/pattern.c:1807`) links nodes by RELATIVE `P_NEXT` deltas
+/// (`Src/pattern.c:198`) held in `union upat` slots, so shifting the
+/// tail of `patout` down leaves every link valid and C only has to
+/// `memmove` (`Src/pattern.c:1816-1820`). zshrs's bytecode stores
+/// ABSOLUTE byte offsets in the 4-byte `I_NEXT` slot, which the
+/// memmove invalidates — so every next-offset past `opnd` has to be
+/// re-based by `delta`. Called only from `patinsert()`; both writer
+/// and reader live in pattern.rs.
 ///
 /// Walks the buffer linearly opcode-by-opcode reading I_NEXT slots.
 /// Conservatively adjusts every nonzero next that lands past opnd.
@@ -4844,8 +4886,18 @@ fn fixup_offsets_after_insert(buf: &mut [u8], opnd: usize, delta: u32) {
     }
 }
 
-/// Helper: given a buffer and current opcode offset, return the
-/// offset of the next opcode after this one's payload.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// There is NO `advance_past_instr()` in `Src/pattern.c`. C never
+/// needs one: its bytecode is an array of fixed-size `union upat`
+/// slots (`union upat`, `Src/pattern.c:84-89`), so "the next slot"
+/// is just
+/// `p + 1` pointer arithmetic and the payload width is implicit in
+/// the slot count each emitter wrote. zshrs emits a packed BYTE
+/// stream instead, so stepping over an instruction requires decoding
+/// its payload width from the opcode. This function is that decode
+/// table. Called only from `fixup_offsets_after_insert()`; both
+/// writer and reader live in pattern.rs.
 ///
 /// Encodes the per-opcode payload size table — must stay in sync
 /// with patnode/patinsert calls in the compiler.
@@ -4889,10 +4941,17 @@ fn advance_past_instr(buf: &[u8], pos: usize) -> usize {
     }
 }
 
-/// Helper: directly set the `next_off` slot of the instruction at
-/// `pos` without walking the chain. C uses pointer arithmetic
-/// (`scanp->l = ...`) inline; Rust factors it for byte-offset
-/// bookkeeping. Architectural helper.
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// There is NO `set_next()` in `Src/pattern.c`. C writes a node's
+/// next-link inline as one assignment against the `union upat`
+/// pointer — `scan->l |= offset << 8;` (`Src/pattern.c:1849`), the
+/// write half of the `P_NEXT` macro at `Src/pattern.c:198`, as used
+/// in `pattail()` (`Src/pattern.c:1846-1849`). zshrs stores that link
+/// as a 4-byte little-endian absolute offset inside a `Vec<u8>`
+/// behind a mutex, so the same one-liner needs a lock, a bounds
+/// check and a `to_le_bytes` — factored here rather than repeated at
+/// every emit site. Both writer and reader live in pattern.rs.
 fn set_next(pos: usize, val: usize) {
     let mut buf = patout.lock().unwrap();
     if pos + I_NEXT + 4 <= buf.len() {
@@ -4900,13 +4959,23 @@ fn set_next(pos: usize, val: usize) {
     }
 }
 
-/// Helper: walk every branch's operand chain and patch each branch's
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// There is NO `chain_branches_to()` in `Src/pattern.c`. C performs
+/// this walk inline at the end of `patcompswitch()`
+/// (`Src/pattern.c:909-911`): `for (ptr = (Upat)patout + starter; ptr;
+/// ptr = PATNEXT(ptr)) if (!P_ISEXCLUDE(ptr)) patoptail(ptr -
+/// (Upat)patout, ender);` — `union upat` pointer arithmetic reaches
+/// each alternative and its operand. In zshrs the operand is at
+/// `br + I_BODY` and the branch link is a
+/// 4-byte absolute offset read under the `patout` mutex, so the loop
+/// is factored out to keep `patcompswitch()` readable. Both writer
+/// and reader live in pattern.rs.
+///
+/// Walks every branch's operand chain and patches each branch's
 /// last-operand-node `.next` to `target`. Used to chain a fully-
 /// compiled alternation switch to whatever opcode follows (P_END for
 /// the outermost compile, P_CLOSE_N for a sub-group).
-///
-/// Architectural helper — C uses pattail inside the BRANCH operand
-/// scope via Upat pointer arithmetic; Rust factors it for clarity.
 fn chain_branches_to(starter: usize, target: usize) {
     let mut cur = starter;
     loop {
@@ -4929,26 +4998,19 @@ fn chain_branches_to(starter: usize, target: usize) {
     }
 }
 
-/// Port of `patmatch(Upat prog)` from `Src/pattern.c:2694`. The interpreter.
+/// !!! WARNING: RUST-ONLY HELPER !!!
 ///
-/// Returns `Some(end_pos)` on successful match (end_pos = byte offset
-/// in `string` where match ended), `None` on no-match. The state
-/// param tracks captures.
-///
-/// Rust signature differs from C's `int patmatch(Upat prog)`: input
-/// bytecode, current input position, captures, and glob flags are
-/// threaded through args rather than C's per-thread file-statics
-/// (`patinput`, `patinstart`, `patbeginp`/`patendp`, `patglobflags`).
-/// Rule S1 deviation justified by zshrs's threading model — see
-/// PORT_PLAN.md Bucket 1.
-///
-/// WARNING: NOT IN PATTERN.C — Rust-only helper. Approximate-match
-/// inner loop for `(#aN)`-flagged P_EXACTLY arms. C interleaves the
-/// edit-operation backtracking inline within the P_EXACTLY case
-/// (c:2737-2779); the Rust port factors the inner per-byte walk +
-/// recursive sub/ins/del trials into this helper so the linear
-/// patmatch loop body stays manageable. Both writer and reader live
-/// in pattern.rs.
+/// There is NO `approx_match_exactly()` in `Src/pattern.c`. This is the
+/// factored-out inner loop of the C `case P_EXACTLY:` arm of
+/// `patmatch()` (`Src/pattern.c:2737-2779`), which C writes inline: the
+/// per-byte compare plus the three approximate-match edit trials
+/// (substitute / insert / delete) that `(#aN)` enables. C can keep it
+/// inline because `patinput` / `errsfound` are file-statics it mutates
+/// in place and restores on backtrack; the Rust matcher threads that
+/// state through `&mut rpat` and recurses into `patmatch()`, so the
+/// trial walk needs its own frame. Extracting it keeps the linear
+/// `patmatch()` dispatch loop readable. Both writer and reader live in
+/// pattern.rs; nothing outside the P_EXACTLY arm calls it.
 ///
 /// Walks pattern bytes `str_bytes` against `input_bytes[s_off..]`.
 /// On exact-match per byte: advance both. On mismatch: try the 3
@@ -5209,6 +5271,20 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// Port of `patmatch()` from `Src/pattern.c:2694`. The bytecode
+/// interpreter — `static int patmatch(Upat prog)`.
+///
+/// Returns `Some(end_pos)` on a successful match (`end_pos` = byte
+/// offset in `string` where the match ended), `None` on no-match; C
+/// returns 1/0 and leaves the end position in the file-static
+/// `patinput`.
+///
+/// Rust signature differs from C's `int patmatch(Upat prog)`: the
+/// bytecode, the current input position, the captures and the glob
+/// flags are threaded through arguments rather than C's per-thread
+/// file-statics (`patinput`, `patinstart`, `patbeginp`/`patendp`,
+/// `patglobflags`). Rule S1 deviation justified by zshrs's threading
+/// model — see PORT_PLAN.md Bucket 1.
 pub fn patmatch(
     code: &[u8],
     prog_off: usize,
@@ -6526,7 +6602,8 @@ pub fn patmatch(
     Some(s_off)
 }
 
-/// Port of `char *patallocstr(Patprog prog, char *string, int stringlen,
+/// Port of `patallocstr()` from `Src/pattern.c:2132`.
+/// C: `char *patallocstr(Patprog prog, char *string, int stringlen,
 /// int unmetalen, int force, Patstralloc patstralloc)` from
 /// `Src/pattern.c:2132`.
 ///
@@ -6728,7 +6805,21 @@ pub type PatProg = Patprog;
 // native `P_NUMRNG`. Dissolve fully when fusevm + exec_shims
 // migrate to pure `patcompile` + `pattry`.
 
-/// Extract all `<N-M>` / `<N->` / `<-M>` / `<->` ranges from a glob
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// There is NO `extract_numeric_ranges()` in `Src/pattern.c`. C has
+/// no such pre-pass at all: `<N-M>` is parsed inside `patcomppiece()`
+/// (`Src/pattern.c:1528-1573`, the `case Inang:` arm) and emitted as
+/// `P_NUMRNG` / `P_NUMFROM` / `P_NUMTO` / `P_NUMANY` opcodes, then
+/// matched by `patmatch()` (`Src/pattern.c:2694`). This scanner
+/// exists only for the transitional callers named in the section
+/// comment above (`vm_helper`, `exec_shims.rs`), which still route
+/// some globs through the external `glob` crate — which has no
+/// `P_NUMRNG` equivalent — and so must strip and re-check the
+/// numeric ranges themselves. It disappears when those call sites
+/// move to `patcompile()` + `pattry()`.
+///
+/// Extracts all `<N-M>` / `<N->` / `<-M>` / `<->` ranges from a glob
 /// pattern. Returns `(start, end, lo, hi)` tuples — `start`/`end`
 /// are byte offsets of `<` / past `>`, `lo`/`hi` are bounds (`None`
 /// = unbounded on that side).
@@ -6776,7 +6867,18 @@ pub fn extract_numeric_ranges(s: &str) -> Vec<(usize, usize, Option<i64>, Option
     out
 }
 
-/// Replace every `<N-M>` in `s` with `*` for fallback glob
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// There is NO `numeric_ranges_to_star()` in `Src/pattern.c`. C never
+/// rewrites a pattern before matching it — `<N-M>` compiles straight
+/// to `P_NUMRNG` in `patcomppiece()` (`Src/pattern.c:1528-1573`).
+/// This is the second half of the transitional `extract_numeric_ranges()`
+/// shim above: the external `glob` crate cannot express a numeric
+/// range, so the range is widened to `*` for the crate's pass and
+/// re-checked afterwards by `numeric_range_contains()`. Dies with the
+/// same call sites.
+///
+/// Replaces every `<N-M>` in `s` with `*` for fallback glob
 /// expansion.
 pub fn numeric_ranges_to_star(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -6790,7 +6892,17 @@ pub fn numeric_ranges_to_star(s: &str) -> String {
     out
 }
 
-/// Test whether `n` falls within numeric range `(lo, hi)`. Unbounded
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// There is NO `numeric_range_contains()` in `Src/pattern.c`. The C
+/// equivalent is the inline bounds test in the `P_NUMRNG` arm of
+/// `patmatch()` (`Src/pattern.c:2810-2910`, the `case P_NUMRNG:` arm), which reads
+/// its two `zrange_t` operands straight out of the bytecode. This standalone
+/// form exists only for the transitional `extract_numeric_ranges()`
+/// callers above, which have the bounds as `Option<i64>` rather than
+/// as compiled operands. Dies with the same call sites.
+///
+/// Tests whether `n` falls within numeric range `(lo, hi)`. Unbounded
 /// sides always pass.
 pub fn numeric_range_contains(lo: Option<i64>, hi: Option<i64>, n: i64) -> bool {
     lo.map_or(true, |l| n >= l) && hi.map_or(true, |h| n <= h)
