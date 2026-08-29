@@ -44,7 +44,32 @@ The widget RUNS — it reports `<LBUFFER>tst </LBUFFER>` back through the pty, s
 the keystroke, the widget dispatch and the `comp-finish` round-trip all work.
 It simply inserts no match.
 
-**Traced to one dispatch point.** Instrumenting each level of the chain from
+**The completion entry point does not resolve at all.** In the inner shell,
+after `comptestinit` has run `compinit -u` against zsh's own
+`Functions` + `Completion` fpath:
+
+```zsh
+comptesteval 'print -r -- "mc=[$(whence -w _main_complete)] cp=[$(whence -w _complete)]"'
+  →  mc=[_main_complete: none]  cp=[_complete: none]
+comptesteval 'print -r -- "${+functions[_main_complete]}"'
+  →  0
+```
+
+So the `zle -C` widget invokes a completion function that is not defined —
+neither as an autoloaded shell function from the fpath compinit just scanned,
+nor as a resolvable native port in that context. Nothing runs, no matches are
+added, and the widget correctly reports an unchanged line. Every layer measured
+"working" below this was an artifact of the shims used to observe it: defining
+`_main_complete` as a wrapper to log it also DEFINED it, which is why it
+appeared to run.
+
+That is the thing to fix: after `compinit` over an fpath that is zsh's own
+Completion tree, `_main_complete` (and `_complete`, `_normal`, `_dispatch`)
+must resolve. Note this environment differs from the one the comptab harness
+uses — there the user's fpath applies and zshrs's native compsys ports are
+authoritative, which is why real completions work there and not here.
+
+**Earlier trace, kept for the shims it rules out.** Instrumenting each level of the chain from
 inside the pty (log lines appended to a file, so nothing perturbs the widget's
 own output):
 
