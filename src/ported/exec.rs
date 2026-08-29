@@ -17,7 +17,7 @@
 //! - **`getoutput`** (`Src/exec.c:4712`) — command-substitution body
 //!   runner. Called from the parameter-expansion port
 //!   (`src/ported/subst.rs`).
-//! - **`loadautofn`** + **`getfpfunc`** (`Src/exec.c:5050` / `:5260`)
+//! - **`loadautofn`** + **`getfpfunc`** (`Src/exec.c:5682` / `:6219`)
 //!   — `$fpath` walker + autoload file installer. Called from
 //!   `bin_autoload` / `bin_functions -c` in `src/ported/builtin.rs`.
 //! - **`resolvebuiltin`** (`Src/exec.c:2703`) — module-autoload guard
@@ -123,7 +123,7 @@ pub static TRAP_STATE: std::sync::atomic::AtomicI32 = // c:134 (Src/exec.c)
 pub static TRAP_RETURN: std::sync::atomic::AtomicI32 = // c:155 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `int forklevel;` from `Src/exec.c:1052`. Records the
+/// Port of `int forklevel;` from `Src/exec.c:1053`. Records the
 /// `locallevel` at the most recent fork point (set at c:1221:
 /// `forklevel = locallevel;` inside `entersubsh()`). Used by:
 ///   - `signals.c:808` SIGPIPE handler — `!forklevel` distinguishes
@@ -205,12 +205,12 @@ pub static nohistsave: std::sync::atomic::AtomicI32 = // c:122 (Src/exec.c)
 pub static subsh: std::sync::atomic::AtomicI32 = // c:160 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `mod_export int zsh_subshell;` from `Src/init.c:67`. Visible
+/// Port of `int zsh_subshell;` from `Src/params.c:108`. Visible
 /// `$ZSH_SUBSHELL` parameter — incremented by `entersubsh()` each time
 /// the shell forks into a subshell (real or fake-exec). Distinct from
 /// `subsh` which records whether we ARE a subshell; `zsh_subshell` is
 /// the visible depth count.
-pub static zsh_subshell: std::sync::atomic::AtomicI32 = // c:67 (Src/init.c)
+pub static zsh_subshell: std::sync::atomic::AtomicI32 = // c:108 (Src/params.c)
     std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `mod_export volatile int retflag;` from `Src/exec.c:165`.
@@ -353,7 +353,7 @@ pub static STTYval: std::sync::Mutex<Option<String>> = // c:263 (Src/exec.c)
 /// unreachable, but the return type stays `Option<String>` to mirror
 /// the C signature which can return NULL.
 ///
-/// Port of `gethere(char **strp, int typ)` from `Src/exec.c:4573`.
+/// Port of `gethere()` from `Src/exec.c:4570` — C decl `gethere(char **strp, int typ)`.
 pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
     // c:4573 (Src/exec.c)
     let mut buf: String; // c:4575 char *buf
@@ -500,6 +500,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 /// mask catastrophic state corruption as "command produced no output",
 /// which is the failure mode the `subst.rs:496` warning block flags.
 /* $(...) */
+/// Port of `getoutput()` from `Src/exec.c:4713` — C decl `getoutput(char *cmd, int qt)`.
 // c:4709
 /// `getoutput` — see implementation.
 pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
@@ -623,7 +624,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
 }
 
 /// Direct port of `Shfunc loadautofn(Shfunc shf, int ks, int test_only,
-/// int ignore_loaddir)` from `Src/exec.c:5050`. Walks `$fpath` for a
+/// int ignore_loaddir)` from `Src/exec.c:5682`. Walks `$fpath` for a
 /// file named `shf->node.nam`, reads it, installs the text body on
 /// the corresponding `shfunctab` entry, and clears `PM_UNDEFINED`.
 ///
@@ -639,7 +640,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
 /// raw file text on `ShFunc.body` (the Rust-side ShFunc in
 /// `hashtable.rs:362`); the parser pass that converts text →
 /// Eprog runs lazily at first call site.
-/// Port of `loadautofn(Shfunc shf, int fksh, int autol, int current_fpath)` from `Src/exec.c:5682`.
+/// Port of `loadautofn()` from `Src/exec.c:5682` — C decl `loadautofn(Shfunc shf, int fksh, int autol, int current_fpath)`.
 pub fn loadautofn(
     shf: *mut shfunc, // c:5682 (Src/exec.c)
     _ks: i32,
@@ -941,7 +942,7 @@ pub fn loadautofn(
     0
 }
 
-/// Port of `getfpfunc(char *s, int *ksh, char **fdir, char **alt_path, int test_only)` from Src/exec.c:6219. Walks `$fpath` (or the
+/// Port of `getfpfunc()` from `Src/exec.c:6219` — C decl `getfpfunc(char *s, int *ksh, char **fdir, char **alt_path, int test_only)`.
 /// supplied `spec_path` slice) for a file named `name` and writes the
 /// resolved directory through `*dir_path_out` (matching the C `char **dir_path`).
 /// Returns `Some(file_path)` on success, `None` when not found.
@@ -1002,8 +1003,8 @@ pub fn getfpfunc(
     None
 }
 
-/// Port of `resolvebuiltin(const char *cmdarg, HashNode hn)` from
-/// `Src/exec.c:2703`. Ensures that an autoload-stub builtin has its
+/// Port of `resolvebuiltin()` from `Src/exec.c:2703` — C decl `resolvebuiltin(const char *cmdarg, HashNode hn)`.
+/// Ensures that an autoload-stub builtin has its
 /// module loaded before the caller invokes its `handlerfunc`. If the
 /// stub has no handler, `ensurefeature` is asked to load the module
 /// and re-lookup the builtin node. C body (abridged):
@@ -1050,9 +1051,9 @@ pub fn resolvebuiltin<'a>(
     Some(hn) // c:2723
 }
 
-/// Port of `static struct builtin commandbn` from `Src/exec.c:281-282`.
+/// Port of `static struct builtin commandbn` from `Src/exec.c:276`.
 ///
-/// c:280 — /* structure for command builtin for when it is used with -v or -V */
+/// c:275 — /* structure for command builtin for when it is used with -v or -V */
 ///
 /// `BUILTIN("command", 0, bin_whence, 0, -1, BIN_COMMAND, "pvV", NULL)`.
 /// This is a SEPARATE descriptor from the `BIN_PREFIX("command", …)` row in
@@ -1124,6 +1125,13 @@ pub struct execcmd_dispatch {
     pub is_empty_command: bool,
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// the head section of `execcmd_exec` (c:2901; locals + the BINF_PREFIX
+/// precommand-modifier walk at c:2966-3096), called at fusevm
+/// bytecode-compile time. It does NOT perform dispatch the way the C function
+/// does.
 /// !!! NOT A PORT OF C `execcmd_exec` !!!
 ///
 /// This is a fusevm-bytecode-time head resolver invoked by
@@ -1542,7 +1550,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
 // replaces — see the WARNING block in execcmd_exec).
 // =============================================================================
 
-/// Port of `parse_string(char *s, int reset_lineno)` from `Src/exec.c:283`.
+/// Port of `parse_string()` from `Src/exec.c:283` — C decl `parse_string(char *s, int reset_lineno)`.
 ///
 /// C body:
 /// ```c
@@ -1630,7 +1638,7 @@ pub fn parse_string(s: &str, reset_lineno: i32) -> Option<eprog> {
     p // c:301
 }
 
-/// Port of `int isgooderr(int e, char *dir)` from `Src/exec.c:652`.
+/// Port of `isgooderr()` from `Src/exec.c:652` — C decl `isgooderr(int e, char *dir)`.
 ///
 /// C body:
 /// ```c
@@ -1660,7 +1668,7 @@ pub fn isgooderr(e: i32, dir: &str) -> bool {
     (e != libc::EACCES || access_ok) && e != libc::ENOENT && e != libc::ENOTDIR
 }
 
-/// Port of `int iscom(char *s)` from `Src/exec.c:962`.
+/// Port of `iscom()` from `Src/exec.c:962` — C decl `iscom(char *s)`.
 ///
 /// C body:
 /// ```c
@@ -1692,7 +1700,7 @@ pub fn iscom(s: &str) -> bool {
     meta.file_type().is_file()
 }
 
-/// Port of `int isreallycom(Cmdnam cn)` from `Src/exec.c:972-987`.
+/// Port of `isreallycom()` from `Src/exec.c:973` — C decl `isreallycom(Cmdnam cn)`.
 ///
 /// Verify that a hashed/cached cmdnamtab entry still names a real
 /// external command (X-perm + regular file). For HASHED entries
@@ -1717,7 +1725,7 @@ pub fn isreallycom(cn: &cmdnam) -> bool {
     iscom(&fullnam) // c:986
 }
 
-/// Port of `int isrelative(char *s)` from `Src/exec.c:996`.
+/// Port of `isrelative()` from `Src/exec.c:996` — C decl `isrelative(char *s)`.
 ///
 /// C body:
 /// ```c
@@ -1762,7 +1770,7 @@ pub fn isrelative(s: &str) -> i32 {
     0 // c:1005
 }
 
-/// Port of `void setunderscore(char *str)` from `Src/exec.c:2652`.
+/// Port of `setunderscore()` from `Src/exec.c:2652` — C decl `setunderscore(char *str)`.
 ///
 /// C body:
 /// ```c
@@ -1805,7 +1813,7 @@ pub fn setunderscore(str: &str) {
     unqueue_signals(); // c:2672
 }
 
-/// Port of `int mpipe(int *pp)` from `Src/exec.c:5160`.
+/// Port of `mpipe()` from `Src/exec.c:5160` — C decl `mpipe(int *pp)`.
 ///
 /// C body:
 /// ```c
@@ -1844,8 +1852,7 @@ pub fn mpipe(pp: &mut [i32; 2]) -> i32 {
 /// `() { ... }` anonymous function dispatch.
 pub const ANONYMOUS_FUNCTION_NAME: &str = "(anon)";
 
-/// Port of `int is_anonymous_function_name(const char *name)` from
-/// `Src/exec.c:5300`.
+/// Port of `is_anonymous_function_name()` from `Src/exec.c:5300` — C decl `is_anonymous_function_name(const char *name)`.
 ///
 /// C body:
 /// ```c
@@ -1864,7 +1871,7 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
     }
 }
 
-/// Port of `void execsave(void)` from `Src/exec.c:6438`.
+/// Port of `execsave()` from `Src/exec.c:6438` — C decl `execsave(void)`.
 ///
 /// C body:
 /// ```c
@@ -1951,7 +1958,7 @@ pub fn execsave() {
     cmdoutpid.store(0, Ordering::Relaxed);
 }
 
-/// Port of `void execrestore(void)` from `Src/exec.c:6470`.
+/// Port of `execrestore()` from `Src/exec.c:6470` — C decl `execrestore(void)`.
 ///
 /// C body:
 /// ```c
@@ -2041,8 +2048,7 @@ pub fn execrestore() {
     unqueue_signals(); // c:6502
 }
 
-/// Port of `void execstring(char *s, int dont_change_job, int exiting,
-/// char *context)` from `Src/exec.c:1228`.
+/// Port of `execstring()` from `Src/exec.c:1228` — C decl `execstring(char *s, int dont_change_job, int exiting, char *context)`.
 ///
 /// C body:
 /// ```c
@@ -2170,8 +2176,8 @@ static BODY_WRAPPERS: &[BodyWrap] = &[
     },
 ];
 
-/// Port of `void runshfunc(Eprog prog, FuncWrap wrap, char *name)` from
-/// `Src/exec.c:6166` — the wrapper-chain walk that stands between
+/// Port of `runshfunc()` from `Src/exec.c:6166` — C decl `runshfunc(Eprog prog, FuncWrap wrap, char *name)`.
+/// the wrapper-chain walk that stands between
 /// `doshfunc` and a function body. C:
 ///
 /// ```c
@@ -2355,8 +2361,7 @@ pub fn runshfunc(
     body()
 }
 
-/// Port of `Emulation_options sticky_emulation_dup(Emulation_options src,
-/// int useheap)` from `Src/exec.c:5501`.
+/// Port of `sticky_emulation_dup()` from `Src/exec.c:5501` — C decl `sticky_emulation_dup(Emulation_options src, int useheap)`.
 ///
 /// C body (`useheap` selects between heap-arena and permanent zalloc;
 /// Rust collapses both into owned `Box` clones):
@@ -2407,8 +2412,7 @@ pub fn sticky_emulation_dup(src: &emulation_options, _useheap: i32) -> Emulation
     newsticky // c:5519
 }
 
-/// Port of `int sticky_emulation_differs(Emulation_options sticky2)`
-/// from `Src/exec.c:5829`.
+/// Port of `sticky_emulation_differs()` from `Src/exec.c:5770` — C decl `int sticky_emulation_differs(Emulation_options sticky2)`.
 ///
 /// C body:
 /// ```c
@@ -2461,7 +2465,7 @@ pub fn sticky_emulation_differs(sticky2: Option<&emulation_options>) -> i32 {
     0 // c:5859
 }
 
-/// Port of `void shfunc_set_sticky(Shfunc shf)` from `Src/exec.c:5527`.
+/// Port of `shfunc_set_sticky()` from `Src/exec.c:5527` — C decl `shfunc_set_sticky(Shfunc shf)`.
 ///
 /// C body:
 /// ```c
@@ -2485,8 +2489,7 @@ pub fn shfunc_set_sticky(shf: &mut shfunc) {
     }
 }
 
-/// Port of `static char *search_defpath(char *cmd, char *pbuf, int plen)`
-/// from `Src/exec.c:691`.
+/// Port of `search_defpath()` from `Src/exec.c:691` — C decl `search_defpath(char *cmd, char *pbuf, int plen)`.
 ///
 /// Walk DEFAULT_PATH for an executable `<dir>/<cmd>` regular file.
 /// Used by `command -p` to bypass the user's `$PATH` and search the
@@ -2521,8 +2524,7 @@ pub fn search_defpath(cmd: &str, plen: usize) -> Option<String> {
     None // c:716
 }
 
-/// Port of `static int checkclobberparam(struct redir *f)` from
-/// `Src/exec.c:2178`.
+/// Port of `checkclobberparam()` from `Src/exec.c:2178` — C decl `checkclobberparam(struct redir *f)`.
 ///
 /// C body:
 /// ```c
@@ -2617,8 +2619,7 @@ pub fn checkclobberparam(f: &redir) -> i32 {
     1 // c:2214
 }
 
-/// Port of `static int clobber_open(struct redir *f)` from
-/// `Src/exec.c:2221`.
+/// Port of `clobber_open()` from `Src/exec.c:2221` — C decl `clobber_open(struct redir *f)`.
 ///
 /// C body:
 /// ```c
@@ -2728,8 +2729,8 @@ pub fn clobber_open(f: &redir) -> i32 {
     -1 // c:2263
 }
 
-/// Port of `char *findcmd(char *arg0, int docopy, int default_path)`
-/// from `Src/exec.c:897`. Walk `$PATH` (or DEFAULT_PATH under
+/// Port of `findcmd()` from `Src/exec.c:897` — C decl `findcmd(char *arg0, int docopy, int default_path)`.
+/// Walk `$PATH` (or DEFAULT_PATH under
 /// `default_path=1`) for `arg0`, returning the matching path on
 /// success. `_docopy` is the C source's "duplicate the result"
 /// flag — Rust ownership covers it without an explicit copy step.
@@ -2789,7 +2790,7 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     None // c:952
 }
 
-/// Port of `static void addfd(int forked, int *save, struct multio **mfds,
+/// Port of `addfd()` from `Src/exec.c:2397` — C decl `addfd(int forked, int *save, struct multio **mfds, int fd1, int fd2, int rflag, char *varid)`.
 ///                             int fd1, int fd2, int rflag, char *varid)`
 /// from `Src/exec.c:2397`.
 ///
@@ -3028,8 +3029,7 @@ pub fn addfd(
     }
 }
 
-/// Port of `static void closemn(struct multio **mfds, int fd, int type)`
-/// from `Src/exec.c:2273`.
+/// Port of `closemn()` from `Src/exec.c:2273` — C decl `closemn(struct multio **mfds, int fd, int type)`.
 ///
 /// C body (abridged — the meat is the fork-into-tee-or-cat child):
 /// ```c
@@ -3210,8 +3210,7 @@ pub fn closemn(mfds: &mut [Option<Box<multio>>; 10], fd: i32, type_: i32) {
     }
 }
 
-/// Port of `static void closemnodes(struct multio **mfds)` from
-/// `Src/exec.c:2344`.
+/// Port of `closemnodes()` from `Src/exec.c:2344` — C decl `closemnodes(struct multio **mfds)`.
 ///
 /// C body:
 /// ```c
@@ -3244,8 +3243,7 @@ pub fn closemnodes(mfds: &mut [Option<Box<multio>>; 10]) {
     }
 }
 
-/// Port of `static void closeallelse(struct multio *mn)` from
-/// `Src/exec.c:2358`.
+/// Port of `closeallelse()` from `Src/exec.c:2358` — C decl `closeallelse(struct multio *mn)`.
 ///
 /// C body:
 /// ```c
@@ -3294,7 +3292,7 @@ pub fn closeallelse(mn: &multio) {
     }
 }
 
-/// Port of `static void fixfds(int *save)` from `Src/exec.c:4523`.
+/// Port of `fixfds()` from `Src/exec.c:4523` — C decl `fixfds(int *save)`.
 ///
 /// C body:
 /// ```c
@@ -3332,7 +3330,7 @@ pub fn fixfds(save: &[i32; 10]) {
     }
 }
 
-/// Port of `mod_export void closem(int how, int all)` from `Src/exec.c:4546`.
+/// Port of `closem()` from `Src/exec.c:4546` — C decl `closem(int how, int all)`.
 ///
 /// C body:
 /// ```c
@@ -3382,8 +3380,7 @@ pub fn closem(how: i32, all: i32) {
     }
 }
 
-/// Port of `Cmdnam hashcmd(char *arg0, char **pp)` from
-/// `Src/exec.c:1010`.
+/// Port of `hashcmd()` from `Src/exec.c:1010` — C decl `hashcmd(char *arg0, char **pp)`.
 ///
 /// C body:
 /// ```c
@@ -3474,8 +3471,7 @@ pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<cmdnam> {
     Some(cn) // c:1044
 }
 
-/// Port of `static pid_t zfork(struct timespec *ts)` from
-/// `Src/exec.c:349`.
+/// Port of `zfork()` from `Src/exec.c:349` — C decl `zfork(struct timespec *ts)`.
 ///
 /// C body:
 /// ```c
@@ -3552,8 +3548,7 @@ pub fn zfork(ts: Option<&mut ZshTimespec>) -> libc::pid_t {
     pid // c:380
 }
 
-/// Port of `void loadautofnsetfile(Shfunc shf, char *fdir)` from
-/// `Src/exec.c:5657`.
+/// Port of `loadautofnsetfile()` from `Src/exec.c:5657` — C decl `loadautofnsetfile(Shfunc shf, char *fdir)`.
 ///
 /// C body:
 /// ```c
@@ -3597,8 +3592,7 @@ pub fn loadautofnsetfile(shf: &mut shfunc, fdir: Option<&str>) {
     }
 }
 
-/// Port of `int commandnotfound(char *arg0, LinkList args)` from
-/// `Src/exec.c:669`.
+/// Port of `commandnotfound()` from `Src/exec.c:669` — C decl `commandnotfound(char *arg0, LinkList args)`.
 ///
 /// C body:
 /// ```c
@@ -3652,7 +3646,7 @@ pub fn commandnotfound(arg0: &str, args: &mut Vec<String>) -> i32 {
     0 // c:681
 }
 
-/// Port of `char *namedpipe(void)` from `Src/exec.c:5001`.
+/// Port of `namedpipe()` from `Src/exec.c:5001` — C decl `namedpipe(void)`.
 ///
 /// C body (#ifdef HAVE_FIFOS branch):
 /// ```c
@@ -3725,8 +3719,8 @@ pub fn namedpipe() -> Option<String> {
 /// return prog;
 /// ```
 ///
-/// Port of `static LinkList readoutput(int in, int qt, int *readerror)`
-/// from `Src/exec.c:4805`. Drain a command-substitution pipe fd and
+/// Port of `readoutput()` from `Src/exec.c:4805` — C decl `readoutput(int in, int qt, int *readerror)`.
+/// Drain a command-substitution pipe fd and
 /// return the captured output split per `qt`.
 ///
 /// `qt=1` (quoted-substitution `"$(...)"`): single-element vec with
@@ -3807,6 +3801,7 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
     words
 }
 
+/// Port of `parsecmd()` from `Src/exec.c:4878` — C decl `parsecmd(char *cmd, char **eptr)`.
 /// Lex a `<(...)`/`>(...)`/`=(...)` body — the leading 2 chars are
 /// the marker pair (`Inang+Inpar`, `Outang+Inpar`, `Equals+Inpar`),
 /// remainder is the command up to the matching `Outpar`. Returns the
@@ -3853,7 +3848,7 @@ pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
 /// front of a script when probing for a `#!` shebang line.
 pub const POUNDBANGLIMIT: usize = 128;
 
-/// Port of `static char **makecline(LinkList list)` from `Src/exec.c:2046`.
+/// Port of `makecline()` from `Src/exec.c:2046` — C decl `makecline(LinkList list)`.
 ///
 /// Builds the argv array from a command's args list. The C version
 /// allocates with a 4-slot prepad (2 reserved at the front for the
@@ -3888,8 +3883,8 @@ pub fn makecline(list: &[String]) -> Vec<String> {
     list.to_vec() // c:2071-2072 — argv built; null terminator implicit in CString[] conversion
 }
 
-/// Port of `static void execute(LinkList args, int flags, int defpath)`
-/// from `Src/exec.c:723`. The canonical "child runs the simple
+/// Port of `execute()` from `Src/exec.c:723` — C decl `execute(LinkList args, int flags, int defpath)`.
+/// The canonical "child runs the simple
 /// external command" path: STTY/ARGV0/BINF_DASH handling, makecline,
 /// closem(FDT_XTRACE) + child_unblock, slash-path direct exec,
 /// defpath (`command -p`) search, cmdnamtab + $PATH walk, with
@@ -4108,8 +4103,8 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     }
 }
 
-/// Port of `static int zexecve(char *pth, char **argv, char **newenvp)`
-/// from `Src/exec.c:504`. Wraps `execve(2)` with:
+/// Port of `zexecve()` from `Src/exec.c:504` — C decl `zexecve(char *pth, char **argv, char **newenvp)`.
+/// Wraps `execve(2)` with:
 ///   - `$_` env var stamped to absolute `pth` (c:514-520)
 ///   - winch signal unblock right before the syscall (c:527)
 ///   - on `ENOEXEC` / `ENOENT`: reads the first POUNDBANGLIMIT
@@ -4200,8 +4195,8 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
     eno // c:643
 }
 
-/// Port of `char *getoutputfile(char *cmd, char **eptr)` from
-/// `Src/exec.c:4910` — `=(cmd)` process substitution.
+/// Port of `getoutputfile()` from `Src/exec.c:4910` — C decl `getoutputfile(char *cmd, char **eptr)`.
+/// `=(cmd)` process substitution.
 ///
 /// Substitutes the cmd's stdout into a temp file, returns the
 /// filename. Optimised path: `=(<<<heredoc-str)` writes the
@@ -4353,8 +4348,8 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     }
 }
 
-/// Port of `char *getproc(char *cmd, char **eptr)` from
-/// `Src/exec.c:5025` — `<(cmd)` / `>(cmd)` process substitution
+/// Port of `getproc()` from `Src/exec.c:5025` — C decl `getproc(char *cmd, char **eptr)`.
+/// `<(cmd)` / `>(cmd)` process substitution
 /// via `/dev/fd/N` (PATH_DEV_FD branch; modern Linux/macOS).
 ///
 /// (a) PATH_DEV_FD branch only — the FIFO fallback (`!PATH_DEV_FD`
@@ -4501,8 +4496,8 @@ pub struct entersubsh_ret {
     pub list_pipe_job: i32, // c:1123
 }
 
-/// Port of `static void entersubsh(int flags, struct entersubsh_ret *retp)`
-/// from `Src/exec.c:1083`. Called by every child fork to switch the
+/// Port of `entersubsh()` from `Src/exec.c:1084` — C decl `entersubsh(int flags, struct entersubsh_ret *retp)`.
+/// Called by every child fork to switch the
 /// process into subshell mode: traps reset, monitor disabled, signals
 /// re-defaulted, pgrp + tty handed off, saved fds closed, jobtab
 /// cleared, ZSH_SUBSHELL bumped, forklevel = locallevel.
@@ -4884,8 +4879,7 @@ impl Drop for SubshStateGuard {
     }
 }
 
-/// Port of `static int getpipe(char *cmd, int nullexec)` from
-/// `Src/exec.c:5119`.
+/// Port of `getpipe()` from `Src/exec.c:5119` — C decl `getpipe(char *cmd, int nullexec)`.
 ///
 /// C body executes `<(cmd)` / `>(cmd)` process substitution via a
 /// pipe pair: parent gets back the readable (`<(...)`) or writable
@@ -5010,8 +5004,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     std::process::exit(LASTVAL.load(Ordering::Relaxed));
 }
 
-/// Port of `static void spawnpipes(LinkList l, int nullexec)` from
-/// `Src/exec.c:5184`.
+/// Port of `spawnpipes()` from `Src/exec.c:5184` — C decl `spawnpipes(LinkList l, int nullexec)`.
 ///
 /// Walks a redir list `l`, and for each REDIR_OUTPIPE/REDIR_INPIPE
 /// entry fires `getpipe(name, nullexec || varid)` and stashes the
@@ -5054,7 +5047,7 @@ pub fn spawnpipes(l: &mut [redir], nullexec: i32) {
     }
 }
 
-/// Port of `static int cancd2(char *s)` from `Src/exec.c:6411`.
+/// Port of `cancd2()` from `Src/exec.c:6411` — C decl `cancd2(char *s)`.
 ///
 /// C body:
 /// ```c
@@ -5123,7 +5116,7 @@ pub fn cancd2(s: &str) -> i32 {
     1
 }
 
-/// Port of `char *cancd(char *s)` from `Src/exec.c:6370`.
+/// Port of `cancd()` from `Src/exec.c:6370` — C decl `cancd(char *s)`.
 ///
 /// Resolve a `cd` target against `$cdpath` and `cd_able_vars`.
 /// Returns the chosen absolute path (heap-dup) if `cancd2` accepts
@@ -5190,8 +5183,7 @@ pub fn cancd(s: &str) -> Option<String> {
     }
 }
 
-/// Port of `char *simple_redir_name(Eprog prog, int redir_type)` from
-/// `Src/exec.c:4689`.
+/// Port of `simple_redir_name()` from `Src/exec.c:4689` — C decl `simple_redir_name(Eprog prog, int redir_type)`.
 ///
 /// Test if an Eprog encodes a single simple-command consisting of a
 /// SINGLE redirection of the requested type with NO command body
@@ -5233,7 +5225,7 @@ pub fn simple_redir_name(prog: &eprog, redir_type: i32) -> Option<String> {
     Some(dupstring(&ecrawstr(prog, 5, None)))
 }
 
-/// Port of `int getherestr(struct redir *fn)` from `Src/exec.c:4655`.
+/// Port of `getherestr()` from `Src/exec.c:4655` — C decl `getherestr(struct redir *fn)`.
 ///
 /// C body:
 /// ```c
@@ -5290,8 +5282,7 @@ pub fn getherestr(fn_: &redir) -> i32 {
     new_fd // c:4679
 }
 
-/// Port of `void quote_tokenized_output(char *str, FILE *file)` from
-/// `Src/exec.c:2114`.
+/// Port of `quote_tokenized_output()` from `Src/exec.c:2114` — C decl `quote_tokenized_output(char *str, FILE *file)`.
 ///
 /// C body (abridged):
 /// ```c
@@ -5450,7 +5441,7 @@ use crate::ported::zsh_h::{
 // work (sub-PR). Once those land, these locals collapse to direct
 // `crate::ported::<owner>::<fn>` calls.
 
-/// Port of `void execsubst(LinkList strs)` from `Src/exec.c:2684`.
+/// Port of `execsubst()` from `Src/exec.c:2684` — C decl `execsubst(LinkList strs)`.
 ///
 /// C body (c:2684-2693):
 /// ```c
@@ -5486,6 +5477,7 @@ pub(crate) fn execsubst(list: &mut Vec<String>) {
     *list = ll.into_iter().collect();
 }
 
+/// Port of `addvars()` from `Src/exec.c:2499` — C decl `addvars(Estate state, Wordcode pc, int addflags)`.
 /// Direct port of `static void addvars(Estate state, Wordcode pc,
 /// int addflags)` from `Src/exec.c:2497-2648`. Process the WC_ASSIGN
 /// nodes stacked inline of a simple command — the `var=value` and
@@ -5737,8 +5729,8 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
 
 // --- exec.c entries ---------------------------------------------------
 
-/// Port of `execcursh(Estate state, int do_exec)` from
-/// `Src/exec.c:469-498`. Execute a `{ ... }` current-shell command
+/// Port of `execcursh()` from `Src/exec.c:469` — C decl `execcursh(Estate state, int do_exec)`.
+/// Execute a `{ ... }` current-shell command
 /// group: skip the trailing try-only word, optionally drop a stale
 /// job slot, then run the inner list.
 pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
@@ -5782,8 +5774,8 @@ pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
 // inner-list walk since fusevm bytecode handles the forking via
 // Op::Subshell at a higher layer.
 
-/// Port of `execcond(Estate state, UNUSED(int do_exec))` from
-/// `Src/exec.c:5204-5232`. Run a `[[ ... ]]` cond expression.
+/// Port of `execcond()` from `Src/exec.c:5204` — C decl `execcond(Estate state, UNUSED(int do_exec))`.
+/// Run a `[[ ... ]]` cond expression.
 pub fn execcond(state: &mut estate, _do_exec: i32) -> i32 {
     state.pc -= 1; // c:5208 — `state->pc--;`
                    // c:5209-5213 — XTRACE prelude.
@@ -5808,8 +5800,8 @@ pub fn execcond(state: &mut estate, _do_exec: i32) -> i32 {
     stat // c:5230 — `return stat;`
 }
 
-/// Port of `execarith(Estate state, UNUSED(int do_exec))` from
-/// `Src/exec.c:5237-5275`. Run a `(( ... ))` arithmetic command;
+/// Port of `execarith()` from `Src/exec.c:5235` — C decl `execarith(Estate state, UNUSED(int do_exec))`.
+/// Run a `(( ... ))` arithmetic command;
 /// returns 0 when val != 0 (success), 1 when val == 0 (false), 2 on
 /// parse error.
 pub fn execarith(state: &mut estate, _do_exec: i32) -> i32 {
@@ -5851,8 +5843,8 @@ pub fn execarith(state: &mut estate, _do_exec: i32) -> i32 {
     }
 }
 
-/// Port of `exectime(Estate state, UNUSED(int do_exec))` from
-/// `Src/exec.c:5279-5294`. Run `time pipeline`: drives execpline with
+/// Port of `exectime()` from `Src/exec.c:5272` — C decl `exectime(Estate state, UNUSED(int do_exec))`.
+/// Run `time pipeline`: drives execpline with
 /// the Z_TIMED|Z_SYNC flags so it tracks wall/user/sys time.
 pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
     let jb = *THISJOB
@@ -5879,6 +5871,7 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
     LASTVAL.load(Ordering::Relaxed) // c:5290
 }
 
+/// Port of `execshfunc()` from `Src/exec.c:5540` — C decl `execshfunc(Shfunc shf, LinkList args)`.
 /// `execshfunc(Shfunc shf, LinkList args)` — `Src/exec.c:5540`.
 /// Promoted to top-level pub fn so execcmd_exec at the shfunc
 /// dispatch site (c:4102-4105) can route through it. The real port
@@ -6043,6 +6036,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
 /// save/restore discipline matches C's funcsave. Bug #1058.
 pub static FUNC_OFLAGS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// Port of `doshfunc()` from `Src/exec.c:5823` — C decl `doshfunc(Shfunc shfunc, LinkList doshargs, int noreturnval)`.
 pub fn doshfunc(
     shfunc: &mut shfunc,                  // c:5823
     doshargs: Vec<String>,                // c:5823
@@ -7046,8 +7040,8 @@ impl Drop for EvalFuncstackFrame {
 ///     zshrs: CAUGHT DONE
 use crate::ported::zsh_h::TRAP_STATE_PRIMED;
 
-/// Port of `execfuncdef(Estate state, Eprog redir_prog)` from
-/// `Src/exec.c:5309-5494`. Define a shell function: extract
+/// Port of `execfuncdef()` from `Src/exec.c:5309` — C decl `execfuncdef(Estate state, Eprog redir_prog)`.
+/// Define a shell function: extract
 /// name(s)+body from the wordcode payload, allocate the Shfunc,
 /// install into `shfunctab` (named), or execute immediately (anon).
 #[allow(non_snake_case)]
@@ -7440,7 +7434,7 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
     ret
 }
 
-/// Port of `execsimple(Estate state)` from `Src/exec.c:1290-1340`.
+/// Port of `execsimple()` from `Src/exec.c:1290` — C decl `execsimple(Estate state)`.
 /// Fast-path for single-Simple commands that bypasses the full
 /// `execcmd_exec` machinery.
 pub fn execsimple(state: &mut estate) -> i32 {
@@ -7539,8 +7533,8 @@ pub fn execsimple(state: &mut estate) -> i32 {
     lv
 }
 
-/// Port of `execlist(Estate state, int dont_change_job, int exiting)`
-/// from `Src/exec.c:1349-1665`. Walks WC_LIST entries, dispatches each
+/// Port of `execlist()` from `Src/exec.c:1349` — C decl `execlist(Estate state, int dont_change_job, int exiting)`.
+/// Walks WC_LIST entries, dispatches each
 /// sublist (WC_SUBLIST chain inlined per c:1525-1625, same as C —
 /// there's no separate execsublist function), handles signal-trap
 /// dispatch + ERREXIT propagation.
@@ -7712,8 +7706,8 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
 // 1625`, the C source likewise inlines it — there's no `execsublist`
 // function in zsh C).
 
-/// Port of `execcmd_getargs(LinkList preargs, LinkList args, int expand)`
-/// from `Src/exec.c:2791-2806`. Transfer the first node of `args`
+/// Port of `execcmd_getargs()` from `Src/exec.c:2791` — C decl `static void execcmd_getargs(LinkList preargs, LinkList args, int expand)`.
+/// Transfer the first node of `args`
 /// to `preargs`, performing `prefork` (singleton-list expansion) on
 /// the way if `expand` is set. Used by `execcmd_exec` to pull the
 /// command head one word at a time so prefix-modifier walking
@@ -7750,7 +7744,7 @@ pub fn execcmd_getargs(preargs: &mut LinkList<String>, args: &mut LinkList<Strin
     }
 }
 
-/// Port of `execcmd_fork(Estate state, int how, int type,
+/// Port of `execcmd_fork()` from `Src/exec.c:2810` — C decl `execcmd_fork(Estate state, int how, int type, Wordcode varspc, LinkList *filelistp, char *text, int oautocont, int close_if_forked)`.
 /// Wordcode varspc, LinkList *filelistp, char *text, int oautocont,
 /// int close_if_forked)` from `Src/exec.c:2810-2893`.
 ///
@@ -8013,8 +8007,8 @@ pub fn execcmd_fork(
     0 // c:2892
 }
 
-/// Port of `execcmd_analyse(Estate state, Execcmd_params eparams)`
-/// from `Src/exec.c:2733-2785`. Pre-execcmd_exec analysis pass:
+/// Port of `execcmd_analyse()` from `Src/exec.c:2733` — C decl `execcmd_analyse(Estate state, Execcmd_params eparams)`.
+/// Pre-execcmd_exec analysis pass:
 /// walks the wordcode at `state->pc`, splits out redirs/varspc/args
 /// without expanding (no prefork, no globbing), and fills `eparams`
 /// so the caller (execcmd_exec at c:2901 or execpline2 at c:2013)
@@ -8209,8 +8203,8 @@ impl Drop for EvalContextFrame {
 /// `dotrap(SIGZERR)` fires inside `BUILTIN_ERREXIT_CHECK`.
 pub static DONETRAP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `save_params(Estate state, Wordcode pc, LinkList *restore_p,
-/// LinkList *remove_p)` from `Src/exec.c:4410-4458`. Walk WC_ASSIGN
+/// Port of `save_params()` from `Src/exec.c:4410` — C decl `save_params(Estate state, Wordcode pc, LinkList *restore_p, LinkList *remove_p)`.
+/// Walk WC_ASSIGN
 /// chain at `pc`, snapshot each existing param into `restore_p` (so
 /// the builtin/shfunc can restore them on return) and enqueue every
 /// touched name in `remove_p` (so we know what to unset).
@@ -8277,8 +8271,8 @@ pub fn save_params(
     }
 }
 
-/// Port of `restore_params(LinkList restorelist, LinkList removelist)`
-/// from `Src/exec.c:4464-4528`. After the builtin/shfunc returns,
+/// Port of `restore_params()` from `Src/exec.c:4464` — C decl `restore_params(LinkList restorelist, LinkList removelist)`.
+/// After the builtin/shfunc returns,
 /// unset every name in removelist, then for each saved param in
 /// restorelist re-install its values (PM_SPECIAL go through gsu
 /// setfn; regular params re-enter paramtab as-is).
@@ -8328,8 +8322,8 @@ pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist:
     }
 }
 
-/// Port of `void execode(Eprog p, int dont_change_job, int exiting,
-/// char *context)` from `Src/exec.c:1245-1282`. Set up an `estate`
+/// Port of `execode` from `Src/exec.c:1245` — C decl `execode(Eprog p, int dont_change_job, int exiting, char *context)`. Rust fn `execode_wordcode` is the wordcode form, driving the ported `execlist` interpreter; `execode` at exec.rs:8413 is the fusevm-pipeline entry that carries the C name.
+/// Set up an `estate`
 /// around the given Eprog and run `execlist`. Maintains the
 /// `zsh_eval_context` stack so `$ZSH_EVAL_CONTEXT` reflects the
 /// call chain.
@@ -8391,6 +8385,12 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// installing the process-lifetime fusevm executor that `execode`
+/// (exec.rs:8413) runs programs on. C has no analogue: its interpreter state
+/// is the `estate` built per call in `execode` (c:1245).
 /// Register the persistent session executor used by [`execode`] for the
 /// interactive `loop()` REPL. The pointer must outlive the session (the
 /// bin keeps the executor alive until `zsh_main` exits the process).
@@ -8402,7 +8402,8 @@ pub fn install_session_executor(exec: &mut crate::vm_helper::ShellExecutor) {
     crate::fusevm_bridge::register_session_executor(exec);
 }
 
-/// zshrs `execode` — run an already-parsed `ZshProgram` (Src/exec.c:220
+/// Port of `execode()` from `Src/exec.c:1245` — C decl `execode(Eprog p, int dont_change_job, int exiting, char *context)`. DIVERGENCE: this entry drives the fusevm pipeline over a `ZshProgram`; the faithful wordcode walker is `execode_wordcode` (exec.rs:8338).
+/// zshrs `execode` — run an already-parsed `ZshProgram` (Src/exec.c:1245
 /// `execode(prog, ...)`, called from `loop()`). This is the **exec.rs
 /// exception** to the line-by-line port: rather than walk wordcode via
 /// `execlist`, it drives zshrs's live engine — compile the program with
@@ -8450,6 +8451,12 @@ pub fn execode(
 // (the sanctioned exception), not scattered through src/ported.
 // =========================================================================
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// reading an array parameter through the live fusevm executor, falling back
+/// to `params::getaparam`. C reads `paramtab` directly wherever it needs
+/// this.
 /// Array param value via the live executor; falls back to the direct
 /// param table (`params::getaparam`) when no executor is in scope, so
 /// compsys / unit-test environments still observe shell-side arrays.
@@ -8470,39 +8477,75 @@ pub fn array(name: &str) -> Option<Vec<String>> {
     crate::ported::params::getaparam(name)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// reading an associative parameter through the live fusevm executor. C reads
+/// `paramtab` directly.
 /// Associative-array param value via the live executor (`None` when no
 /// executor / not set).
 pub fn assoc(name: &str) -> Option<indexmap::IndexMap<String, String>> {
     crate::fusevm_bridge::try_with_executor(|exec| exec.assoc(name)).flatten()
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// writing an array parameter through the live fusevm executor. C calls
+/// `setaparam` directly.
 /// Store an array param into the live executor (no-op without one).
 pub fn set_array(name: &str, val: Vec<String>) {
     let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.set_array(name.to_string(), val));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// writing an associative parameter through the live fusevm executor. C calls
+/// `sethparam` directly.
 /// Store an associative-array param into the live executor (no-op
 /// without one).
 pub fn set_assoc(name: &str, val: indexmap::IndexMap<String, String>) {
     let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.set_assoc(name.to_string(), val));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// unsetting a scalar parameter through the live fusevm executor. C calls
+/// `unsetparam` directly.
 /// Unset a scalar param in the live executor (no-op without one).
 pub fn unset_scalar(name: &str) {
     let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.unset_scalar(name));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// unsetting an array parameter through the live fusevm executor. C calls
+/// `unsetparam` directly.
 /// Unset an array param in the live executor (no-op without one).
 pub fn unset_array(name: &str) {
     let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.unset_array(name));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// unsetting an associative parameter through the live fusevm executor. C
+/// calls `unsetparam` directly.
 /// Unset an associative-array param in the live executor (no-op
 /// without one).
 pub fn unset_assoc(name: &str) {
     let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.unset_assoc(name));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// calling a shell function by name on the live fusevm executor, with the
+/// full `doshfunc` (c:5823) scope wrap. C reaches the function through
+/// `execshfunc` (c:5540) off a wordcode `Shfunc`.
 /// Dispatch a shell-function call by name through the live executor
 /// (full doshfunc scope wrap). `None` when no executor / not a
 /// function.
@@ -8539,6 +8582,11 @@ pub fn dispatch_function_call(name: &str, args: &[String]) -> Option<i32> {
     })
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// running a function BODY on the live fusevm executor with no scope wrap,
+/// for callers that already entered `doshfunc` (c:5823).
 /// Body-only function dispatch (no doshfunc scope wrap) — call as the
 /// `body_runner` of a direct `doshfunc(...)` invocation to avoid the
 /// double-wrap of going back through [`dispatch_function_call`]. `None`
@@ -8560,6 +8608,11 @@ pub fn run_function_body(name: &str, args: &[String]) -> Option<i32> {
     })
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// running a source string on the live fusevm executor. The C path is
+/// `execstring` (c:1228) -> `parse_string` (c:283) -> `execode` (c:1245).
 /// Run a script source string on the live executor. `Ok(0)` when no
 /// executor is in scope.
 pub fn execute_script(src: &str) -> Result<i32, String> {
@@ -8579,6 +8632,11 @@ pub fn execute_script(src: &str) -> Result<i32, String> {
     })
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// running a source string through the fusevm zsh pipeline. Same C path as
+/// above: `execstring` (c:1228).
 /// Run a script source string through the live executor's zsh pipeline.
 /// `Ok(0)` when no executor is in scope.
 pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
@@ -8586,6 +8644,13 @@ pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
         .unwrap_or(Ok(0))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// running a `$(...)` body in-process on the live fusevm executor. C forks
+/// and calls `entersubsh(ESUB_PGRP|ESUB_NOMONITOR, NULL)` inside `getoutput`
+/// (c:4713); the in-process form applies that subshell state with a guard
+/// instead.
 /// Run a `$(...)` command substitution on the live executor, returning
 /// captured stdout. Empty string when no executor is in scope.
 ///
@@ -8621,18 +8686,33 @@ pub fn run_command_substitution(cmd: &str) -> String {
     })
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// reading the positional parameters off the live fusevm executor. C reads
+/// the `pparams` global directly (Src/params.c).
 /// Positional parameters ($1..$N) from the live executor; empty without
 /// one.
 pub fn pparams() -> Vec<String> {
     crate::fusevm_bridge::try_with_executor(|exec| exec.pparams()).unwrap_or_default()
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// replacing the positional parameters on the live fusevm executor. C assigns
+/// the `pparams` global directly (Src/params.c).
 /// Replace the positional parameters in the live executor (no-op
 /// without one).
 pub fn set_pparams(v: Vec<String>) {
     let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.set_pparams(v));
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// dropping a function from the fusevm executor's compiled-chunk and source
+/// maps. C removes the node from `shfunctab` directly.
 /// Drop a function from both the compiled-chunk and source maps in the
 /// live executor. Returns true if either entry existed; false when no
 /// executor.
@@ -8645,6 +8725,12 @@ pub fn unregister_function(name: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// reading the saved outer stdout fd of an in-progress `$(...)` capture. C
+/// has no such stack: the capture happens in a forked child (`getoutput`,
+/// c:4713) so the parent fd is never rebound.
 /// Saved outer stdout fd for an in-progress `$(...)` capture (top of
 /// the bridge's CMDSUBST_OUTER_FDS stack), or `None` when not inside a
 /// cmdsub. Used by the trap dispatcher to route a trap body's stdout to
@@ -8653,8 +8739,8 @@ pub fn cmdsubst_outer_stdout() -> Option<i32> {
     crate::fusevm_bridge::cmdsubst_outer_stdout()
 }
 
-/// Port of `execautofn_basic(Estate state, UNUSED(int do_exec))` from
-/// `Src/exec.c:5608-5630`. Run a pre-loaded autoload function body
+/// Port of `execautofn_basic()` from `Src/exec.c:5608` — C decl `execautofn_basic(Estate state, UNUSED(int do_exec))`.
+/// Run a pre-loaded autoload function body
 /// via `execode`, snapshotting `scriptname`/`scriptfilename` around
 /// the call so `%N` / `%x` reflect the autoload target during
 /// execution.
@@ -8698,8 +8784,8 @@ pub fn execautofn_basic(state: &mut estate, _do_exec: i32) -> i32 {
     LASTVAL.load(Ordering::Relaxed) // c:5630
 }
 
-/// Port of `static int execautofn(Estate state, UNUSED(int do_exec))`
-/// from `Src/exec.c:5635-5644`. The autoload-aware dispatch entry
+/// Port of `execautofn()` from `Src/exec.c:5635` — C decl `execautofn(Estate state, UNUSED(int do_exec))`.
+/// The autoload-aware dispatch entry
 /// for `WC_AUTOFN`: fault the function body in via `loadautofn`,
 /// then hand off to `execautofn_basic` to actually run it.
 ///
@@ -8732,8 +8818,8 @@ pub fn execautofn(state: &mut estate, _do_exec: i32) -> i32 {
     execautofn_basic(state, 0)
 }
 
-/// Port of `execpline2(Estate state, wordcode pcode, int how, int input,
-/// int output, int last1)` from `Src/exec.c:1989-2040`. Recursive
+/// Port of `execpline2()` from `Src/exec.c:1991` — C decl `execpline2(Estate state, wordcode pcode, int how, int input, int output, int last1)`.
+/// Recursive
 /// multi-stage pipe walker: at each step, analyse the current
 /// command, fork-into-pipe (if mid-pipeline) or exec directly (if
 /// WC_PIPE_END), then recurse on the next stage with `pipes[0]` as
@@ -8870,8 +8956,8 @@ pub fn execpline2(
     }
 }
 
-/// Port of `execpline(Estate state, wordcode slcode, int how, int last1)`
-/// from `Src/exec.c:1724-2041`. Full faithful port: allocates a job-table
+/// Port of `execpline()` from `Src/exec.c:1668` — C decl `execpline(Estate state, wordcode slcode, int how, int last1)`.
+/// Full faithful port: allocates a job-table
 /// entry via `initjob`, sets up coproc mpipes, drives the whole
 /// (multi-stage) pipeline through `execpline2` (which performs the real
 /// per-stage mpipe/fork/exec), then either spawns the job asynchronously
@@ -9455,7 +9541,7 @@ mod _execcmd_tail_doc_anchor {
 }
 
 
-/// Port of `execcmd_exec(Estate state, Execcmd_params eparams,
+/// Port of `execcmd_exec()` from `Src/exec.c:2901` — C decl `execcmd_exec(Estate state, Execcmd_params eparams, int input, int output, int how, int last1, int close_if_forked)`.
 /// int input, int output, int how, int last1, int close_if_forked)`
 /// from `Src/exec.c:2900-4404`. Execute a command at the lowest
 /// level of the hierarchy.
@@ -9492,7 +9578,7 @@ mod _execcmd_tail_doc_anchor {
 ///   - `restore_params(restorelist, removelist)` → Src/exec.c:4463
 ///   - `isreallycom(cn)` → Src/exec.c:2670
 ///   - `execerr()` → Src/exec.c:2700 (label-style; converts to errflag set + goto-equivalent)
-///   - `execautofn_basic(state, do_exec)` → Src/exec.c:5050
+///   - `execautofn_basic(state, do_exec)` → Src/exec.c:5608
 ///   - `ensurefeature(modname, "b:", ...)` → Src/module.c:1654
 ///
 /// **NOT routed through fusevm.** This canonical port targets the
@@ -11251,7 +11337,7 @@ pub fn execcmd_exec(
             } else {
                 // c:4053 — `lastval = (execfuncs[type - WC_CURSH])(state, do_exec);`
                 // dispatch_execfuncs ports the C `execfuncs[]` table
-                // (Src/exec.c:170-180) by typ → exec{cursh,for,select,...}
+                // (Src/exec.c:268) by typ → exec{cursh,for,select,...}
                 // direct call. See dispatch_execfuncs at end of file.
                 let lv = dispatch_execfuncs(state, typ, do_exec);
                 LASTVAL.store(lv, Ordering::Relaxed);
@@ -11701,6 +11787,11 @@ pub fn execcmd_exec(
     );
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// the `done:` label tail of `execcmd_exec` (c:4366-4403), which C reaches by
+/// `goto` and Rust cannot.
 /// Internal helper modelling the C `done:` label tail of
 /// `execcmd_exec` at `Src/exec.c:4366-4403`. Handles POSIX special-
 /// builtin error escalation, AUTOCONTINUE restore, STTYval clear,
@@ -11766,6 +11857,11 @@ fn execcmd_exec_done_path(
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// the `err:` label tail of `execcmd_exec` (c:4330-4365), which C reaches by
+/// `goto` and Rust cannot.
 /// Internal helper modelling the C `err:` label tail of
 /// `execcmd_exec` at `Src/exec.c:4330-4365`. Forked-child fd cleanup
 /// + waitjobs + _realexit; non-forked: `fixfds(save)` + fall through
@@ -11829,8 +11925,14 @@ fn execcmd_exec_err_path(
     );
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No function of this name exists in `Src/exec.c`. This helper stands in for
+/// the `execfuncs[type - WC_CURSH]` function-pointer table dispatch (table at
+/// c:268, call sites at c:1331 and c:4053), written as a `match` because Rust
+/// has no equivalent table of `int (*)(Estate, int)`.
 /// Internal helper dispatching `execfuncs[type - WC_CURSH]` from
-/// `Src/exec.c:170-180`. Each branch maps to the ported wordcode-
+/// `Src/exec.c:268`. Each branch maps to the ported wordcode-
 /// walker function in `src/ported/exec.rs`.
 fn dispatch_execfuncs(state: &mut estate, typ: i32, do_exec: i32) -> i32 {
     use crate::ported::zsh_h::{
@@ -11838,7 +11940,7 @@ fn dispatch_execfuncs(state: &mut estate, typ: i32, do_exec: i32) -> i32 {
         WC_SELECT, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE,
     };
     // Port of `static int (*const execfuncs[])(Estate, int)` dispatch
-    // table at `Src/exec.c:170-180`. C indexes by `(type - WC_CURSH)`;
+    // table at `Src/exec.c:268`. C indexes by `(type - WC_CURSH)`;
     // Rust matches on the WC_* tag directly.
     match typ as wordcode {
         x if x == WC_CURSH => execcursh(state, do_exec),
@@ -11862,8 +11964,8 @@ fn dispatch_execfuncs(state: &mut estate, typ: i32, do_exec: i32) -> i32 {
     }
 }
 
-/// Port of `Eprog stripkshdef(Eprog prog, char *name)` from
-/// `Src/exec.c:6286-6364`. Given an Eprog read from an autoload
+/// Port of `stripkshdef()` from `Src/exec.c:6292` — C decl `stripkshdef(Eprog prog, char *name)`.
+/// Given an Eprog read from an autoload
 /// file plus the function name being defined, check whether the
 /// file consists of *exactly* one `function NAME { … }` definition
 /// for that name. If so, return a new Eprog whose `prog`/`strs`/
@@ -12129,7 +12231,7 @@ mod tests {
         }
     }
 
-    // ─── stripkshdef (Src/exec.c:6286) early-return paths ──────────
+    // ─── stripkshdef (Src/exec.c:6292) early-return paths ──────────
 
     /// `stripkshdef(None, "foo")` → `None` (matches C `if (!prog)
     /// return NULL;` at exec.c:6300).

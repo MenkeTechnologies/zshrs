@@ -71,8 +71,7 @@ static histfile_linect: AtomicI64 = AtomicI64::new(0); // c:242
 // Functions from hist.c
 // =========================================================================
 
-/// Port of `void hist_context_save(struct hist_stack *hs, int toplevel)`
-/// from Src/hist.c:248.
+/// Port of `hist_context_save()` from `Src/hist.c:248`. — C decl `hist_context_save(struct hist_stack *hs, int toplevel)`.
 pub fn hist_context_save(hs: &mut hist_stack, toplevel: i32) {
     // c:248
     if toplevel != 0 {
@@ -105,8 +104,7 @@ pub fn hist_context_save(hs: &mut hist_stack, toplevel: i32) {
                                  // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
 }
 
-/// Port of `void hist_context_restore(const struct hist_stack *hs, int toplevel)`
-/// from Src/hist.c:296.
+/// Port of `hist_context_restore()` from `Src/hist.c:296`. — C decl `hist_context_restore(const struct hist_stack *hs, int toplevel)`.
 pub fn hist_context_restore(hs: &hist_stack, toplevel: i32) {
     // c:296
     if toplevel != 0 {
@@ -138,7 +136,7 @@ pub fn hist_context_restore(hs: &hist_stack, toplevel: i32) {
                                                            // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:339-324
 }
 
-/// Port of `void hist_in_word(int yesno)` from Src/hist.c.
+/// Port of `hist_in_word()` from `Src/hist.c:339`. — C decl `hist_in_word(int yesno)`.
 pub fn hist_in_word(yesno: i32) {
     if yesno != 0 {
         histactive.fetch_or(HA_INWORD, SeqCst);
@@ -147,7 +145,7 @@ pub fn hist_in_word(yesno: i32) {
     }
 }
 
-/// Port of `int hist_is_in_word(void)` from Src/hist.c.
+/// Port of `hist_is_in_word()` from `Src/hist.c:349`. — C decl `hist_is_in_word(void)`.
 pub fn hist_is_in_word() -> i32 {
     if (histactive.load(SeqCst) & HA_INWORD) != 0 {
         1
@@ -156,7 +154,7 @@ pub fn hist_is_in_word() -> i32 {
     }
 }
 
-/// Port of `void ihwaddc(int c)` from Src/hist.c:357.
+/// Port of `ihwaddc()` from `Src/hist.c:357`. — C decl `ihwaddc(int c)`.
 ///
 /// C body:
 /// ```c
@@ -268,7 +266,7 @@ pub fn ihwaddc(c: i32) {
     }
 }
 
-/// Port of `void iaddtoline(int c)` from Src/hist.c:397.
+/// Port of `iaddtoline()` from `Src/hist.c:397`. — C decl `iaddtoline(int c)`.
 ///
 /// C body (c:397-414):
 /// ```c
@@ -361,7 +359,7 @@ pub fn iaddtoline(c: i32) {
     chline.lock().unwrap().push(push_ch); // c:413
 }
 
-/// Port of `void safeinungetc(int c)` from Src/hist.c:466.
+/// Port of `safeinungetc()` from `Src/hist.c:467`. — C decl `safeinungetc(int c)`.
 /// ```c
 /// static void
 /// safeinungetc(int c)
@@ -386,7 +384,8 @@ pub fn safeinungetc(c: i32) {
     }
 }
 
-/// Port of `int ihgetc(void)` from Src/hist.c:418. Returns the next
+/// Port of `ihgetc()` from `Src/hist.c:418`. — C decl `ihgetc(void)`.
+/// Returns the next
 /// character from the input stream, optionally performing history
 /// expansion via `histsubchar`. Sets `lexstop`/`errflag` and bumps
 /// `qbang` per the bang-escape rules.
@@ -513,7 +512,7 @@ pub static marg: AtomicI32 = AtomicI32::new(-1); // c:599
 /// most-recent `!?str?` event match; `-1` when no match has happened.
 pub static mev: AtomicI64 = AtomicI64::new(-1); // c:600
 
-/// Port of `static int histsubchar(int c)` from Src/hist.c:594.
+/// Port of `histsubchar()` from `Src/hist.c:595`. — C decl `histsubchar(int c)`.
 /// Implements `^foo^bar` and full `!` history expansion: walks the input
 /// stream pulling event-spec, word-designator, and modifier characters,
 /// looks up the matching history entry, applies any modifiers, then
@@ -1178,7 +1177,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
     ingetc().map(|ch| ch as i32).unwrap_or(-1)
 }
 
-/// Port of `void herrflush(void)` from Src/hist.c:477.
+/// Port of `herrflush()` from `Src/hist.c:477`. — C decl `herrflush(void)`.
 ///
 /// C body drains the input buffer after a history-expansion error,
 /// feeding the consumed chars into the history-build cursor
@@ -1235,7 +1234,7 @@ pub fn herrflush() {
     }
 }
 
-/// Port of `int getargc(Histent ehist)` from Src/hist.c:556.
+/// Port of `getargc()` from `Src/hist.c:556`. — C decl `getargc(Histent ehist)`.
 /// C body: `return ehist->nwords ? ehist->nwords-1 : 0;`
 /// Returns the number of word designators (nwords - 1, since word 0
 /// is the command name and arguments start at word 1).
@@ -1248,7 +1247,7 @@ pub fn getargc(entry: &histent) -> usize {
     }
 }
 
-/// Port of `int substfailed(void)` from Src/hist.c:562.
+/// Port of `substfailed()` from `Src/hist.c:563`. — C decl `substfailed(void)`.
 /// ```c
 /// static int
 /// substfailed(void)
@@ -1265,7 +1264,7 @@ pub fn substfailed() -> i32 {
     -1 // c:567
 }
 
-/// Port of `static int digitcount(void)` from `Src/hist.c:573-589`.
+/// Port of `digitcount()` from `Src/hist.c:574`. — C decl `digitcount(void)`.
 ///
 /// C body:
 /// ```c
@@ -1323,7 +1322,7 @@ pub fn digitcount() -> i32 {
     count // c:588
 }
 
-/// Port of `void strinbeg(int dohist)` from `Src/hist.c:1033-1044`.
+/// Port of `strinbeg()` from `Src/hist.c:1033`. — C decl `strinbeg(int dohist)`.
 ///
 /// C body:
 ///     strin++;
@@ -1347,7 +1346,7 @@ pub fn strinbeg(dohist: i32) {
     init_parse_status(); // c:1042
 }
 
-/// Port of `void strinend(void)` from `Src/hist.c:1049-1056`.
+/// Port of `strinend()` from `Src/hist.c:1049`. — C decl `strinend(void)`.
 ///
 /// C body:
 ///     hend(NULL);
@@ -1375,19 +1374,19 @@ pub fn strinend() {
     histdone.store(0, SeqCst); // c:1055 histdone = 0
 }
 
-/// Port of `static void nohw(UNUSED(int c))` from Src/hist.c:1062.
+/// Port of `nohw()` from `Src/hist.c:1062`. — C decl `nohw(UNUSED(int c))`.
 pub fn nohw(_c: i32) { /* do nothing */
 } // c:1062
 
-/// Port of `static void nohwabort(void)` from Src/hist.c:1067.
+/// Port of `nohwabort()` from `Src/hist.c:1067`. — C decl `nohwabort(void)`.
 pub fn nohwabort() { /* do nothing */
 } // c:1067
 
-/// Port of `static void nohwe(void)` from Src/hist.c:1072.
+/// Port of `nohwe()` from `Src/hist.c:1072`. — C decl `nohwe(void)`.
 pub fn nohwe() { /* do nothing */
 } // c:1072
 
-/// Port of `void ihwbegin(int offset)` from `Src/hist.c:1656`.
+/// Port of `ihwbegin()` from `Src/hist.c:1656`. — C decl `ihwbegin(int offset)`.
 ///
 /// C gate:
 /// ```c
@@ -1484,7 +1483,7 @@ pub fn ihwbegin(offset: i32) {
     chwordpos.fetch_add(1, SeqCst); // c:1668 chwordpos++
 }
 
-/// Port of `static void linkcurline(void)` from Src/hist.c:1079.
+/// Port of `linkcurline()` from `Src/hist.c:1079`. — C decl `linkcurline(void)`.
 pub fn linkcurline() {
     // c:1079
     let new_hist = curhist.fetch_add(1, SeqCst) + 1; // c:1093 ++curhist
@@ -1495,7 +1494,7 @@ pub fn linkcurline() {
                                                         // lives in `curline` until then.
 }
 
-/// Port of `static void unlinkcurline(void)` from Src/hist.c:1093.
+/// Port of `unlinkcurline()` from `Src/hist.c:1093`. — C decl `unlinkcurline(void)`.
 pub fn unlinkcurline() {
     // c:1093-1102 — C splices the STATIC `curline` struct out of the
     // ring; its fields (histnum included) survive. Two readers depend
@@ -1508,7 +1507,7 @@ pub fn unlinkcurline() {
     curhist.fetch_sub(1, SeqCst); // c:1103
 }
 
-/// Port of `void hbegin(int dohist)` from Src/hist.c:1110.
+/// Port of `hbegin()` from `Src/hist.c:1110`. — C decl `hbegin(int dohist)`.
 pub fn hbegin(dohist: i32) {
     // c:1110
     // c:1114 — `isfirstln = isfirstch = 1;`. These live in lex.rs LEX_*
@@ -1626,7 +1625,7 @@ pub fn hbegin(dohist: i32) {
     }
 }
 
-/// Port of `void histreduceblanks(void)` from `Src/hist.c:1199-1248`.
+/// Port of `histreduceblanks()` from `Src/hist.c:1199`. — C decl `histreduceblanks(void)`.
 ///
 /// **Signature divergence from C**: C operates on global `chline`
 /// + `chwords` state and returns void. Rust port takes a `&str`
@@ -1672,8 +1671,7 @@ pub fn histreduceblanks(text: &str) -> String {
     s
 }
 
-/// Port of `void histremovedups(void)` from Src/hist.c.
-/// Port of `void histremovedups(void)` from `Src/hist.c:1252-1262`.
+/// Port of `histremovedups()` from `Src/hist.c:1254`. — C decl `histremovedups(void)`.
 ///
 /// C body:
 /// ```c
@@ -1701,7 +1699,7 @@ pub fn histremovedups() {
     histlinect.store(new_ct, SeqCst);
 }
 
-/// Port of `zlong addhistnum(zlong hl, int n, int xflags)` from Src/hist.c:1266.
+/// Port of `addhistnum()` from `Src/hist.c:1266`. — C decl `addhistnum(zlong hl, int n, int xflags)`.
 pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {
     // c:1266
     let dir: i32 = if n < 0 {
@@ -1740,7 +1738,7 @@ pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {
     }
 }
 
-/// Port of `Histent movehistent(Histent he, int n, int xflags)` from `Src/hist.c:1284`.
+/// Port of `movehistent()` from `Src/hist.c:1284`. — C decl `movehistent(Histent he, int n, int xflags)`.
 ///
 /// The previous Rust port omitted the `checkcurline(he)` call at
 /// c:1298 — when the walk lands on the in-flight history entry,
@@ -1779,21 +1777,21 @@ pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {
     Some(cur) // c:1299
 }
 
-/// Port of `Histent up_histent(Histent he)` from Src/hist.c.
+/// Port of `up_histent()` from `Src/hist.c:1304`. — C decl `up_histent(Histent he)`.
 pub fn up_histent(current: i64) -> Option<i64> {
     // c:1304
     let pos = ring_position(current)?; // c:1306 !he
     (pos + 1 < ring_len()).then(|| ring_at(pos + 1)) // c:1306 he->up == hist_ring? NULL : he->up
 }
 
-/// Port of `Histent down_histent(Histent he)` from Src/hist.c.
+/// Port of `down_histent()` from `Src/hist.c:1311`. — C decl `down_histent(Histent he)`.
 pub fn down_histent(current: i64) -> Option<i64> {
     // c:1311
     let pos = ring_position(current)?;
     (pos > 0).then(|| ring_at(pos - 1)) // c:1313 he == hist_ring? NULL : he->down
 }
 
-/// Port of `Histent gethistent(zlong ev, int nearmatch)` from Src/hist.c.
+/// Port of `gethistent()` from `Src/hist.c:1318`. — C decl `gethistent(zlong ev, int nearmatch)`.
 pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {
     // c:1318
     if ring_len() == 0 {
@@ -1822,7 +1820,7 @@ pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {
     }
 }
 
-/// Port of `void putoldhistentryontop(short keep_going)` from `Src/hist.c:1347`.
+/// Port of `putoldhistentryontop()` from `Src/hist.c:1347`. — C decl `putoldhistentryontop(short keep_going)`.
 /// Rotate the next-to-expire entry to the head of the ring so that
 /// the subsequent expire/save pass evicts it. When
 /// `HISTEXPIREDUPSFIRST` is set and the candidate is not already a
@@ -1919,7 +1917,7 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {
     1
 }
 
-/// Port of `Histent prepnexthistent(void)` from Src/hist.c.
+/// Port of `prepnexthistent()` from `Src/hist.c:1387`. — C decl `prepnexthistent(void)`.
 pub fn prepnexthistent() -> i64 {
     // c:1387
     let cap = histsiz.load(SeqCst);
@@ -1935,7 +1933,7 @@ pub fn prepnexthistent() -> i64 {
     n
 }
 
-/// Port of `static int should_ignore_line(Eprog prog)` from Src/hist.c:1425.
+/// Port of `should_ignore_line()` from `Src/hist.c:1425`. — C decl `should_ignore_line(Eprog prog)`.
 fn should_ignore_line(prog: Option<&[u8]>) -> i32 {
     // c:1425
     let line = chline.lock().unwrap().clone();
@@ -1997,7 +1995,7 @@ fn should_ignore_line(prog: Option<&[u8]>) -> i32 {
     0 // c:1474
 }
 
-/// Port of `int hend(Eprog prog)` from Src/hist.c:1474.
+/// Port of `hend()` from `Src/hist.c:1474`. — C decl `hend(Eprog prog)`.
 pub fn hend(prog: Option<&[u8]>) -> i32 {
     // c:1474
     let stack_pos = histsave_stack_pos.load(SeqCst); // c:1474
@@ -2341,7 +2339,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
     }
 }
 
-/// Port of `void ihwabort(void)` from Src/hist.c.
+/// Port of `ihwabort()` from `Src/hist.c:1675`. — C decl `ihwabort(void)`.
 pub fn ihwabort() {
     // c:1675
     // Rust-only: pool threads run C's `hwabort = nohwabort` arm (c:1143).
@@ -2356,7 +2354,7 @@ pub fn ihwabort() {
     hist_keep_comment.store(1, SeqCst);
 }
 
-/// Port of `void ihwend(void)` from `Src/hist.c:1686`.
+/// Port of `ihwend()` from `Src/hist.c:1686`. — C decl `ihwend(void)`.
 ///
 /// Same gate as `ihwbegin` at c:1688:
 ///   stophist == 2 || (histactive & HA_INWORD) ||
@@ -2420,7 +2418,7 @@ pub fn ihwend() {
     }
 }
 
-/// Port of `void histbackword(void)` from `Src/hist.c:1711`.
+/// Port of `histbackword()` from `Src/hist.c:1711`. — C decl `histbackword(void)`.
 ///
 /// C body:
 /// ```c
@@ -2462,7 +2460,7 @@ pub fn histbackword() {
     }
 }
 
-/// Port of `int hwget(char **startptr)` from Src/hist.c.
+/// Port of `hwget()` from `Src/hist.c:1721`. — C decl `hwget(char **startptr)`.
 pub fn hwget() -> Option<(i32, String)> {
     let pos = chwordpos.load(SeqCst);
     // c:1729 — DPUTS(1, "BUG: hwget() called with no words"); arm fires
@@ -2493,7 +2491,7 @@ pub fn hwget() -> Option<(i32, String)> {
     Some((start as i32, line[s..e].to_string()))
 }
 
-/// Port of `void hwrep(char *rep)` from `Src/hist.c:1748`.
+/// Port of `hwrep()` from `Src/hist.c:1748`. — C decl `hwrep(char *rep)`.
 ///
 /// C body:
 /// ```c
@@ -2547,7 +2545,7 @@ pub fn hwrep(rep: &str) {
     ihwend();
 }
 
-/// Port of `char *hgetline(void)` from `Src/hist.c:1769`.
+/// Port of `hgetline()` from `Src/hist.c:1769`. — C decl `hgetline(void)`.
 ///
 /// C body:
 /// ```c
@@ -2595,7 +2593,7 @@ pub fn hgetline() -> Option<String> {
     Some(truncated) // c:1786
 }
 
-/// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c:1793.
+/// Port of `getargspec()` from `Src/hist.c:1793`. — C decl `getargspec(int argc, int marg, int evset)`.
 /// Reads a word-designator off the input stream via `ingetc`, returning
 /// the resolved word index, `-1` for "no designator present" (caller
 /// must default), or `-2` for hard error.
@@ -2684,8 +2682,7 @@ pub fn getargspec(argc: i32, marg_arg: i32, evset: i32) -> i32 {
     ret // c:1829
 }
 
-/// Port of `static zlong hconsearch(char *str, int *marg)` from
-/// `Src/hist.c:1834-1854`.
+/// Port of `hconsearch()` from `Src/hist.c:1836`. — C decl `hconsearch(char *str, int *marg)`.
 ///
 /// C body (c:1836-1853):
 /// ```c
@@ -2745,7 +2742,7 @@ pub fn hconsearch(needle: &str) -> Option<(i64, i32)> {
     None // c:1853
 }
 
-/// Port of `int hcomsearch(char *str)` from Src/hist.c.
+/// Port of `hcomsearch()` from `Src/hist.c:1860`. — C decl `hcomsearch(char *str)`.
 pub fn hcomsearch(prefix: &str) -> Option<i64> {
     let mut cur = curhist.load(SeqCst);
     while let Some(prev) = up_histent(cur) {
@@ -2762,7 +2759,7 @@ pub fn hcomsearch(prefix: &str) -> Option<i64> {
     None
 }
 
-/// Port of `char *chabspath(char **pathptr)` from Src/hist.c.
+/// Port of `chabspath()` from `Src/hist.c:1878`. — C decl `chabspath(char **junkptr)`.
 pub fn chabspath(input: &str) -> Option<String> {
     if input.is_empty() {
         return Some(String::new());
@@ -2861,7 +2858,7 @@ pub fn chabspath(input: &str) -> Option<String> {
     }
 }
 
-/// Port of `int chrealpath(char **junkptr, char mode, int use_heap)` from `Src/hist.c:1971`.
+/// Port of `chrealpath()` from `Src/hist.c:1971`. — C decl `chrealpath(char **junkptr, char mode, int use_heap)`.
 /// Mode 'A' → chabspath then realpath; mode 'P' → realpath only.
 /// Handles non-existent paths by walking parent prefixes until one
 /// resolves, then re-appending the remaining tail (matches the C
@@ -2940,7 +2937,7 @@ pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> {
     }
 }
 
-/// Port of `int remtpath(char **junkptr, int count)` from Src/hist.c:2056.
+/// Port of `remtpath()` from `Src/hist.c:2056`. — C decl `remtpath(char **junkptr, int count)`.
 /// Implements the `:h` modifier (and `:hN` via `digitcount()`).
 ///
 /// The C body walks one cursor (`str`) backwards from `strend(*junkptr)`
@@ -3050,7 +3047,7 @@ pub fn remtpath(s: &str, count: i32) -> String {
     s[..str_ as usize].to_string() // c:2115 `*str = '\0'`
 }
 
-/// Port of `int remtext(char **junkptr)` from Src/hist.c:2122.
+/// Port of `remtext()` from `Src/hist.c:2122`. — C decl `remtext(char **junkptr)`.
 ///
 /// C body (c:2122-2132):
 /// ```c
@@ -3089,7 +3086,7 @@ pub fn remtext(s: &str) -> String {
     s.to_string() // c:2131
 }
 
-/// Port of `char *rembutext(char **str)` from Src/hist.c:2136.
+/// Port of `rembutext()` from `Src/hist.c:2136`. — C decl `rembutext(char **junkptr)`.
 pub fn rembutext(s: &str) -> String {
     // c:2136
     if let Some(slash_pos) = s.rfind('/') {
@@ -3105,7 +3102,7 @@ pub fn rembutext(s: &str) -> String {
     String::new()
 }
 
-/// Port of `char *remlpaths(char **str, int count)` from Src/hist.c:2152.
+/// Port of `remlpaths()` from `Src/hist.c:2152`. — C decl `remlpaths(char **junkptr, int count)`.
 /// Keeps the last `count` path components (the `:t` modifier family).
 ///
 /// The C body walks a single cursor backwards from `strend(*junkptr)`
@@ -3184,7 +3181,7 @@ pub fn remlpaths(s: &str, count: i32) -> String {
     s[..end].to_string()
 }
 
-/// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
+/// Port of `casemodify()` from `Src/hist.c:2196`. — C decl `casemodify(char *str, int how)`.
 /// Rust idiom replacement: `chars()` + `tow_lower`/`tow_upper` covers
 /// the C `iswupper`/`towlower` wide-char loop; the CASMOD_CAPS branch
 /// tracks word-boundary via the `nextupper` flag.
@@ -3372,8 +3369,7 @@ pub fn casemodify(s: &str, how: i32) -> String {
     result
 }
 
-/// Port of `int subst(char **strptr, char *in, char *out, int gbal,
-/// int forcepat)` from `Src/hist.c:2336`.
+/// Port of `subst()` from `Src/hist.c:2336`. — C decl `subst(char **strptr, char *in, char *out, int gbal, int forcepat)`.
 ///
 /// C body excerpt (c:2349-2358):
 /// ```c
@@ -3442,7 +3438,7 @@ pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> Stri
     }
 }
 
-/// Port of `char *convamps(char *out, char *in)` from Src/hist.c.
+/// Port of `convamps()` from `Src/hist.c:2395`. — C decl `convamps(char *out, char *in, int inlen)`.
 fn convamps(out: &str, in_pattern: &str) -> String {
     let mut result = String::with_capacity(out.len());
     let mut chars = out.chars().peekable();
@@ -3461,8 +3457,7 @@ fn convamps(out: &str, in_pattern: &str) -> String {
     result
 }
 
-/// Port of `static void checkcurline(Histent he)` from
-/// `Src/hist.c:2421`.
+/// Port of `checkcurline()` from `Src/hist.c:2422`. — C decl `checkcurline(Histent he)`.
 ///
 /// C body (c:2421-2429):
 /// ```c
@@ -3523,7 +3518,7 @@ pub fn checkcurline(he: &histent) {
     }
 }
 
-/// Port of `Histent quietgethist(zlong ev)` from Src/hist.c.
+/// Port of `quietgethist()` from `Src/hist.c:2433`. — C decl `quietgethist(int ev)`.
 pub fn quietgethist(ev: i64) -> Option<histent> {
     // c:2433
     // Lazy-history chokepoint: a miss BELOW the loaded floor pages the
@@ -3541,7 +3536,7 @@ pub fn quietgethist(ev: i64) -> Option<histent> {
     hit
 }
 
-/// Port of `Histent gethist(zlong ev)` from Src/hist.c.
+/// Port of `gethist()` from `Src/hist.c:2440`. — C decl `gethist(int ev)`.
 pub fn gethist(ev: i64) -> Option<histent> {
     // c:2440
     let ret = quietgethist(ev);
@@ -3552,8 +3547,7 @@ pub fn gethist(ev: i64) -> Option<histent> {
     ret
 }
 
-/// Port of `static char *getargs(Histent elist, int arg1, int arg2)`
-/// from `Src/hist.c:2454-2483`.
+/// Port of `getargs()` from `Src/hist.c:2454`. — C decl `getargs(Histent elist, int arg1, int arg2)`.
 ///
 /// C body (c:2456-2482):
 /// ```c
@@ -3630,7 +3624,7 @@ pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
     entry.node.nam.get(pos1..pos2).map(|s| s.to_string()) // c:2481
 }
 
-/// Port of `int quote(char **tr)` from `Src/hist.c:2486-2523`.
+/// Port of `quote()` from `Src/hist.c:2486`. — C decl `quote(char **tr)`.
 /// Wraps `*tr` in single quotes; `'` inside becomes `'\''` and any
 /// `inblank(c)` (space/tab/newline) outside quotes that wasn't
 /// preceded by `\` becomes `'<c>'`.
@@ -3669,7 +3663,8 @@ pub fn quote(s: &str) -> String {
     out
 }
 
-/// Port of `int quotebreak(char **tr)` from `Src/hist.c:2527`. Same
+/// Port of `quotebreak()` from `Src/hist.c:2527`. — C decl `quotebreak(char **tr)`.
+/// Same
 /// shape as `quote` but `inblank` chars get the `'<c>'` break-out
 /// treatment whether or not they're inside quotes.
 ///
@@ -3696,7 +3691,8 @@ pub fn quotebreak(s: &str) -> String {
     result
 }
 
-/// Port of `char *hdynread(int stop)` from `Src/hist.c:2562`. C body is
+/// Port of `hdynread()` from `Src/hist.c:2562`. — C decl `hdynread(int stop)`.
+/// C body is
 /// inside `#if 0` (the in-tree `hdynread2` variant is the live one), but
 /// the name-parity port mirrors the disabled body: read input chars via
 /// `ingetc()` until `stop`/newline/lexstop, honoring `\\`-escape, and
@@ -3739,7 +3735,7 @@ pub fn hdynread(stop: i32) -> Option<String> {
     Some(buf) // c:2584
 }
 
-/// Direct port of `static void ihungetc(int c)` from `Src/hist.c:989`.
+/// Port of `ihungetc()` from `Src/hist.c:989`. — C decl `ihungetc(int c)`.
 /// Push back `c` into the lexer input stream while history-rewriting
 /// is in progress: also rewinds chline (`hptr--`), undoes the
 /// `expanding`-driven `zlemetacs`/`zlemetall` advance, and tracks the
@@ -3822,8 +3818,8 @@ pub fn ihungetc(c: i32) {
     }
 }
 
-/// Direct port of `int getsubsargs(char *subline, int *gbalp, int *cflagp)`
-/// from `Src/hist.c:518`. Parses the substitution arguments of a
+/// Port of `getsubsargs()` from `Src/hist.c:518`. — C decl `getsubsargs(UNUSED(char *subline), int *gbalp, int *cflagp)`.
+/// Parses the substitution arguments of a
 /// `!:s/old/new/`-style history modifier: reads the delimiter via
 /// ingetc, slurps `old` and `new` chunks, stores them in `hsubl`/`hsubr`
 /// globals, then peeks the trailing `:G` (global) or fall-through char.
@@ -3897,7 +3893,7 @@ pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {
     0 // c:553
 }
 
-/// Port of `char *hdynread2(int stop)` from Src/hist.c.
+/// Port of `hdynread2()` from `Src/hist.c:2590`. — C decl `hdynread2(int stop)`.
 pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
     let mut out = String::new();
     let mut consumed = 0usize;
@@ -3922,7 +3918,7 @@ pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
     (out, consumed)
 }
 
-/// Port of `void inithist(void)` from Src/hist.c:2613.
+/// Port of `inithist()` from `Src/hist.c:2613`. — C decl `inithist(void)`.
 pub fn inithist() {
     // c:2613
     histsiz.store(1000, SeqCst);
@@ -3931,7 +3927,8 @@ pub fn inithist() {
     histlinect.store(0, SeqCst);
 }
 
-/// Port of `void resizehistents(void)` from Src/hist.c — free the
+/// Port of `resizehistents()` from `Src/hist.c:2620`. — C decl `resizehistents(void)`.
+/// free the
 /// oldest entries until `histlinect <= histsiz` (C loops
 /// `putoldhistentryontop(1); freehistnode(&hist_ring->node)`).
 /// `hist_ring` is strictly DESCENDING by histnum (see ring_get), so
@@ -3952,7 +3949,7 @@ pub fn resizehistents() {
     histlinect.store(cap, SeqCst);
 }
 
-/// Port of `void readhistline(char *line, ...)` from Src/hist.c.
+/// Port of `readhistline()` from `Src/hist.c:2635`. — C decl `readhistline(int start, char **bufp, int *bufsiz, FILE *in, int *readbytes)`.
 pub fn readhistline(line: &str) -> Option<histent> {
     let line = line.trim();
     if line.is_empty() {
@@ -3975,7 +3972,7 @@ pub fn readhistline(line: &str) -> Option<histent> {
     Some(make_histent(0, line.to_string()))
 }
 
-/// Port of `void readhistfile(char *fn, int err, int readflags)` from Src/hist.c:2675.
+/// Port of `readhistfile()` from `Src/hist.c:2675`. — C decl `readhistfile(char *fn, int err, int readflags)`.
 pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     // c:2675
     let path: String = match fn_path {
@@ -4237,7 +4234,7 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     resizehistents();
 }
 
-/// Port of `int flockhistfile(char *fn)` from Src/hist.c.
+/// Port of `flockhistfile()` from `Src/hist.c:2881`. — C decl `flockhistfile(char *fn, int keep_trying)`.
 pub fn flockhistfile(path: &str) -> i32 {
     #[cfg(unix)]
     {
@@ -4264,7 +4261,7 @@ pub fn flockhistfile(path: &str) -> i32 {
     }
 }
 
-/// Port of `void savehistfile(char *fn, int err, int writeflags)` from Src/hist.c:2922.
+/// Port of `savehistfile()` from `Src/hist.c:2922`. — C decl `savehistfile(char *fn, int err, int writeflags)`.
 ///
 /// The public Rust signature omits the C `err` argument; its value is
 /// recovered from the write flags. Every silent (`err == 0`) C call
@@ -4670,8 +4667,7 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
 /// Port of `int lockhistct` from Src/hist.c. Re-entrant lock counter.
 static lockhistct: AtomicI32 = AtomicI32::new(0);
 
-/// Port of `int checklocktime(char *lockfile, long *sleep_usp, time_t then)`
-/// from `Src/hist.c:3147`.
+/// Port of `checklocktime()` from `Src/hist.c:3147`. — C decl `checklocktime(char *lockfile, long *sleep_usp, time_t then)`.
 ///
 /// Decides what to do when a history lock file already exists, given
 /// its mtime (`then`). Returns `-1` (give up) when the lock file's
@@ -4718,7 +4714,7 @@ pub fn checklocktime(lockfile: &str, sleep_usp: &mut i64, then: i64) -> i32 {
     0 // c:3172
 }
 
-/// Port of `int lockhistfile(char *fn, int keep_trying)` from Src/hist.c:3182.
+/// Port of `lockhistfile()` from `Src/hist.c:3182`. — C decl `lockhistfile(char *fn, int keep_trying)`.
 /// Rust idiom replacement: `fs2::FileExt::try_lock_exclusive` covers
 /// the C `flock` + `link`-symlink retry loop; the `keep_trying`
 /// arg controls retry budget rather than mode flags.
@@ -4752,7 +4748,7 @@ pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {
     }
 }
 
-/// Port of `void unlockhistfile(char *fn)` from Src/hist.c.
+/// Port of `unlockhistfile()` from `Src/hist.c:3324`. — C decl `unlockhistfile(char *fn)`.
 pub fn unlockhistfile(path: &str) {
     let prev = lockhistct.fetch_sub(1, SeqCst);
     if prev <= 0 {
@@ -4765,7 +4761,7 @@ pub fn unlockhistfile(path: &str) {
     }
 }
 
-/// Port of `int histfileIsLocked(void)` from Src/hist.c.
+/// Port of `histfileIsLocked()` from `Src/hist.c:3350`. — C decl `histfileIsLocked(void)`.
 #[allow(non_snake_case)]
 pub fn histfileIsLocked() -> i32 {
     if lockhistct.load(SeqCst) > 0 {
@@ -4775,7 +4771,7 @@ pub fn histfileIsLocked() -> i32 {
     }
 }
 
-/// Port of `int bufferwords(LinkList list, char *buf, int *index, int flags)` from Src/hist.c.
+/// Port of `bufferwords()` from `Src/hist.c:3385`. — C decl `bufferwords(LinkList list, char *buf, int *index, int flags)`.
 /// Rust idiom replacement: char-by-char tokenizer covers the C
 /// shparser callout (`(z)` flag at subst.c:4186 always passes
 /// `NULL, 0`). The returned `(words, cursor_word_idx)` pair lets
@@ -4866,8 +4862,7 @@ pub fn bufferwords(line: &str, cursor_pos: usize) -> (Vec<String>, usize) {
     (words, word_idx)
 }
 
-/// Port of `void histsplitwords(char *lineptr, short **wordsp, int *nwordsp, int *nwordposp, int uselex)`
-/// from `Src/hist.c:3650`.
+/// Port of `histsplitwords()` from `Src/hist.c:3650`. — C decl `histsplitwords(char *lineptr, short **wordsp, int *nwordsp, int *nwordposp, int uselex)`.
 ///
 /// Returns word (start, end) byte-offset pairs. When `uselex == true`,
 /// runs the lex tokenizer (`bufferwords`) and matches each lexed
@@ -5010,8 +5005,7 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {
     words
 }
 
-/// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)`
-/// from Src/hist.c:3845.
+/// Port of `pushhiststack()` from `Src/hist.c:3845`. — C decl `pushhiststack(char *hf, zlong hs, zlong shs, int level)`.
 ///
 /// Saves the current history state (ring, sizes, counters, HISTFILE,
 /// lasthist) onto the save stack, then switches to a fresh empty
@@ -5073,7 +5067,7 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
     histsave_stack_pos.load(SeqCst)
 }
 
-/// Port of `int pophiststack(void)` from `Src/hist.c:3901`.
+/// Port of `pophiststack()` from `Src/hist.c:3901`. — C decl `pophiststack(void)`.
 ///
 /// C body:
 /// ```c
@@ -5139,8 +5133,7 @@ pub fn pophiststack() -> i32 {
     histsave_stack_pos.load(SeqCst) + 1
 }
 
-/// Port of `int saveandpophiststack(int pop_through, int writeflags)`
-/// from `Src/hist.c:3947`.
+/// Port of `saveandpophiststack()` from `Src/hist.c:3947`. — C decl `saveandpophiststack(int pop_through, int writeflags)`.
 ///
 /// C body:
 /// ```c
@@ -5452,6 +5445,17 @@ static strin: AtomicI32 = AtomicI32::new(0);
 // flag-value drift fix and the BINF/CONDF/MFF duplicates in
 // module.rs — single source of truth for C-pinned bit values.
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C inlines `getsparam("HISTFILE")` at each site that needs the
+/// history file and its `fn` argument is NULL: `hbegin` (`Src/hist.c:1192`),
+/// `hend` (`Src/hist.c:1528`), `readhistfile` (`Src/hist.c:2687`),
+/// `savehistfile` (`Src/hist.c:2932`), `lockhistfile` (`Src/hist.c:3188`),
+/// `unlockhistfile` (`Src/hist.c:3326`) and `pushhiststack`
+/// (`Src/hist.c:3863`). Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:831`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 /// Direct port of C's `getsparam("HISTFILE")` lookup used inside
 /// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
 /// when their `fn` arg is NULL. C reads from paramtab; was reading
@@ -5464,6 +5468,17 @@ fn resolve_histfile() -> Option<String> {
 // Helper inline accessors for the ring (private — match C internal use)
 // =========================================================================
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C's ring is the circular doubly-linked `Histent` list rooted at
+/// `mod_export Histent hist_ring;` (`Src/hist.c:103`), so C walks it
+/// with `he->up` / `he->down` pointer chases inline at every call site
+/// (e.g. `gethistent`, `Src/hist.c:1318`). zshrs stores the ring as a
+/// `Vec<histent>` under a `Mutex`, so the pointer chase becomes this
+/// lookup. Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:832`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn ring_get(ev: i64) -> Option<histent> {
     let ring = hist_ring.lock().unwrap();
     // hist_ring is strictly DESCENDING by histnum: entries are only ever added
@@ -5479,6 +5494,14 @@ fn ring_get(ev: i64) -> Option<histent> {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C hands out a borrowed `Histent` pointer straight into the ring
+/// (`struct histent`, `Src/zsh.h:2234`); Rust's `Mutex` guard cannot
+/// outlive the lock, so readers get an owned copy instead. Approved
+/// Rust-only helper: `tests/data/fake_fn_allowlist.txt:833`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn clone_histent(h: &histent) -> histent {
     histent {
         node: hashnode {
@@ -5497,6 +5520,14 @@ fn clone_histent(h: &histent) -> histent {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C has no index into `hist_ring` (`Src/hist.c:103`) at all: it holds
+/// the `Histent` pointer itself and moves with `up`/`down`
+/// (`up_histent`, `Src/hist.c:1304`). Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:834`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn ring_position(ev: i64) -> Option<usize> {
     // hist_ring is strictly descending by histnum (see ring_get); O(log n)
     // binary search instead of an O(n) linear `position` scan.
@@ -5507,22 +5538,62 @@ fn ring_position(ev: i64) -> Option<usize> {
         .ok()
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C reads `he->histnum` off the `Histent` it already holds
+/// (`struct histent`, `Src/zsh.h:2234`); the Vec-backed ring needs an
+/// index read under the lock. Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:835`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn ring_at(idx: usize) -> i64 {
     hist_ring.lock().unwrap()[idx].histnum
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C tracks the ring size in the global `zlong histlinect`
+/// (`Src/hist.c` extern, declared in `Src/zsh.h`) rather than measuring
+/// the list. Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:836`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn ring_len() -> usize {
     hist_ring.lock().unwrap().len()
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C spells the oldest entry `hist_ring->down` inline, as the
+/// `firsthist()` macro does (`Src/zsh.h:594`). Approved Rust-only
+/// helper: `tests/data/fake_fn_allowlist.txt:837`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn ring_oldest() -> Option<i64> {
     hist_ring.lock().unwrap().last().map(|h| h.histnum)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C spells the newest entry as `hist_ring` itself
+/// (`mod_export Histent hist_ring;`, `Src/hist.c:103`) and dereferences
+/// it in place. Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:838`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 fn ring_latest() -> Option<histent> {
     hist_ring.lock().unwrap().first().map(clone_histent)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C allocates a ring entry inline in `prepnexthistent` with
+/// `he = (Histent)zshcalloc(sizeof *he);` (`Src/hist.c:1400`) and then
+/// assigns the fields one at a time; there is no constructor function
+/// to port. Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:830`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 /// Construct a fresh `histent` for the ring. Rust-port helper —
 /// in C every call site inlines `zshcalloc(sizeof(struct histent))`
 /// plus field-by-field assignment (hist.c:1614/2098/...) so there
@@ -5550,12 +5621,29 @@ fn make_histent(num: i64, text: String) -> histent {
     }
 }
 
-/// Port of `zlong firsthist(void)` from Src/hist.c.
+/// Port of `firsthist()` from `Src/zsh.h:594`. — C decl `#define firsthist()         (hist_ring? hist_ring->down->histnum : curhist)`.
 pub fn firsthist() -> i64 {
     let ring = hist_ring.lock().unwrap();
     ring.last().map(|h| h.histnum).unwrap_or(1)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// No upstream C counterpart — this name exists nowhere in `Src/`.
+/// C has no standalone modifier applier: the `:h`/`:t`/`:r`/`:e`/`:s`/
+/// `:&`/`:q`/`:x`/`:l`/`:u`/`:A`/`:a`/`:P` chain is the `for (;;)` switch
+/// inlined in `histsubchar` (`Src/hist.c:830-961`), which dispatches to
+/// `chabspath` (`Src/hist.c:1878`), `chrealpath` (`Src/hist.c:1971`),
+/// `remtpath` (`Src/hist.c:2056`), `remtext` (`Src/hist.c:2122`),
+/// `rembutext` (`Src/hist.c:2136`), `remlpaths` (`Src/hist.c:2152`),
+/// `subst` (`Src/hist.c:2336`), `quote` (`Src/hist.c:2486`),
+/// `quotebreak` (`Src/hist.c:2527`) and `casemodify` (`Src/hist.c:2196`)
+/// — all of which ARE ported above. This wrapper drives the same
+/// dispatch for the parameter-expansion `${var:h}` path, which reads
+/// its modifier string from an already-expanded value rather than from
+/// `ingetc()`. Approved Rust-only helper:
+/// `tests/data/fake_fn_allowlist.txt:1045`.
+/// Deliberately left uncited so the port audit keeps reporting it.
 /// Apply chained history modifiers `:X:Y...` to `val`.
 /// Direct port of the modifier-loop body in `Src/hist.c:830-961`
 /// (the `for (;;)` switch on `:`-prefixed mod chars). Each branch
