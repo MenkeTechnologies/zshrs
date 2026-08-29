@@ -27,7 +27,31 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 use walkdir::WalkDir;
 
-const SRC_ROOT: &str = "src";
+/// The tree that genuinely must mirror zsh's C, 1:1.
+///
+/// NARROWED from `"src"` to `"src/ported"` on 2026-08-28, with maintainer
+/// sign-off, because the wider scope asserted something the architecture
+/// deliberately does not do. It reported 364 orphans, none of them a defect:
+///
+///   * 281 under `src/compsys/`, which ports zsh's `Completion/*` SHELL
+///     functions. Those have no C file by construction — the upstream
+///     originals are shell scripts, not `.c`.
+///   * 83 Rust-only helpers that are REQUIRED to live outside `src/ported/`
+///     — `vm_helper.rs`, `fusevm_bridge.rs`, `test_util.rs`, `tiers.rs`,
+///     `tolerant_sort.rs`, `subscript_escape.rs`, `pattern_data_escape.rs`
+///     and friends. `build.rs` rejects a function with no C counterpart
+///     INSIDE `src/ported/`, so this is exactly where such code is supposed
+///     to go; flagging it here punished the correct arrangement.
+///
+/// It had therefore been red since at least 2026-05-16, when `test_util.rs`
+/// landed — after this test was written — and it is not wired into CI, so
+/// nothing was watching it. A permanently-red audit reports nothing.
+///
+/// Narrowing the SCOPE does not relax the RULE: inside `src/ported/` the 1:1
+/// file mapping and the `/// Port of … from Src/…` citation are still
+/// required of every file and every top-level fn, and that is the tree where
+/// a violation would actually mean a faithless port.
+const SRC_ROOT: &str = "src/ported";
 const C_ROOT: &str = "src/zsh/Src";
 
 /// Files exempt from the 1:1 file-existence rule. These are pure
