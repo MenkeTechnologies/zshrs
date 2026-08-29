@@ -6,7 +6,7 @@
 # shell-word split of a (q)-quoted backslash string, and (q+)/(qq) rendering
 # of an undecodable byte.
 #
-# U+00A0 (the last three entries) is NOT a quoting gap. zshrs stores decoded
+# U+00A0 (the last four entries) is NOT a quoting gap. zshrs stores decoded
 # Rust `char`s where C stores metafied BYTES, and the token constants occupy
 # U+0080..U+00A2 (zsh_h.rs:180-206 — Bnull U+009F, Bnullkeep U+00A0, Nularg
 # U+00A1, Marker U+00A2). A user character in that range therefore IS a token
@@ -26,4 +26,5 @@ v=$'\M-\C-a'; print -r -- "[${(qq)v}]" | od -An -tW | tr -s ' '
 v=$'\M-a'; print -r -- "[${(q+)v}]" | od -An -tW | tr -s ' '
 v=$'\xc2\xa0'; print -r -- "[${(V)v}]"
 v=$'\xc2\xa0'; print -r -- "[${(q)v}]" | od -An -tW | tr -s ' '
+v=$'\xc2\xa0'; print -r -- "[${(qq)v}]" | od -An -tW | tr -s ' '
 v=$'\xc2\xa0'; print -r -- "[${(qqqq)v}]" | od -An -tW | tr -s ' '
