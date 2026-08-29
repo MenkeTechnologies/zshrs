@@ -48,6 +48,7 @@ mod dollar_lt_parity;
 mod echo_builtin_parity;
 mod eval_builtin_parity;
 mod emulation_builtin_fmt_parity;
+mod emulation_trap_function_parity;
 mod exec_parity;
 mod expansion_parity;
 mod export_unset_parity;
