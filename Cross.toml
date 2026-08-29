@@ -1,14 +1,13 @@
 # cross-rs per-target Docker image overrides.
 #
-# The terminal library (`ncursesw`/`ncurses`/`tinfo`/...) is chosen by
-# `build.rs::link_term_lib`, which reproduces zsh's own
-# `configure.ac:725-771` search order; for a cross target (host !=
-# target) it emits `-ltinfo` on linux without probing. On top of that
-# src/ported/modules/{cap,db_gdbm}.rs declare `#[link(name = "...")]`
-# for cap + gdbm. The default
-# `ghcr.io/cross-rs/aarch64-unknown-linux-gnu` image ships gcc-cross +
-# libc6:arm64 but NOT these dev headers, so cargo's linker invocation
-# fails with `cannot find -ltinfo` / `cannot find -lgdbm`.
+# src/ported/modules/{cap,db_gdbm}.rs declare `#[link(name = "...")]` for
+# cap + gdbm. The default `ghcr.io/cross-rs/aarch64-unknown-linux-gnu`
+# image ships gcc-cross + libc6:arm64 but NOT these dev headers, so
+# cargo's linker invocation fails with `cannot find -lgdbm`.
+#
+# No terminal library appears here any more: terminfo is read by pure Rust
+# (src/extensions/terminfo_db.rs), so there is nothing to cross-install and
+# no `-ltinfo` to resolve.
 #
 # `pre-build` runs once per cross-build inside the Docker image
 # before cargo. Enable arm64 / armhf multiarch then `apt-get install`
@@ -22,40 +21,40 @@
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
     "apt-get update",
-    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+    "apt-get install -y libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
 ]
 
 [target.arm-unknown-linux-gnueabihf]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
     "apt-get update",
-    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+    "apt-get install -y libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
 ]
 
 [target.i686-unknown-linux-gnu]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
     "apt-get update",
-    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+    "apt-get install -y libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
 ]
 
 [target.riscv64gc-unknown-linux-gnu]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
     "apt-get update",
-    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+    "apt-get install -y libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
 ]
 
 [target.powerpc64le-unknown-linux-gnu]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
     "apt-get update",
-    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+    "apt-get install -y libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
 ]
 
 [target.s390x-unknown-linux-gnu]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
     "apt-get update",
-    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+    "apt-get install -y libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
 ]

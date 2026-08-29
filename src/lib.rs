@@ -378,6 +378,18 @@ pub mod regex_mod;
 /// `stringsort` submodule.
 #[path = "extensions/stringsort.rs"]
 pub mod stringsort;
+/// `terminfo_caps` submodule — the frozen terminfo capability-name tables
+/// that replace ncurses' exported `boolnames`/`numnames`/`strnames` arrays.
+#[path = "extensions/terminfo_caps.rs"]
+pub mod terminfo_caps;
+/// `terminfo_db` submodule — pure-Rust reader for the compiled terminfo
+/// database, replacing `setupterm`/`tigetstr`/`tgetent`/… from libtinfo.
+#[path = "extensions/terminfo_db.rs"]
+pub mod terminfo_db;
+/// `tparm` submodule — the terminfo parameterized-string evaluator plus
+/// `tgoto` and `tputs` padding, replacing the last libtinfo entry points.
+#[path = "extensions/tparm.rs"]
+pub mod tparm;
 /// `syntax_highlight` submodule — native command-line syntax highlighting
 /// (port of fish highlight/highlight.rs, driven by the zshrs lexer).
 #[path = "extensions/syntax_highlight.rs"]

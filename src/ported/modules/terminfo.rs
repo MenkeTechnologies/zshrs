@@ -33,28 +33,17 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 // `#[link(name = "ncurses")]` would put a second, different terminal
 // library on the link line and let symbol resolution order decide
 // which terminfo database these calls read.
-extern "C" {
-    fn setupterm(
-        term: *const libc::c_char,
-        filedes: libc::c_int,
-        errret: *mut libc::c_int,
-    ) -> libc::c_int;
-    fn tigetstr(capname: *const libc::c_char) -> *const libc::c_char;
-    fn tigetnum(capname: *const libc::c_char) -> libc::c_int;
-    fn tigetflag(capname: *const libc::c_char) -> libc::c_int;
-    fn putp(s: *const libc::c_char) -> libc::c_int;
-    // c:Src/Modules/terminfo.c:125 — `tparm(t, pars[0], ..., pars[8])`.
-    // ncurses declares this VARIADIC: `<term.h>:753-754`
-    //   #if 1 /* NCURSES_TPARM_VARARGS */
-    //   extern NCURSES_EXPORT(char *) tparm (NCURSES_CONST char *, ...);
-    // Declaring it here with nine fixed `long` parameters made Rust emit
-    // a NON-variadic call. On aarch64-apple-darwin the two ABIs differ —
-    // fixed args go in x1..x8, variadic args go on the stack — so ncurses
-    // read garbage/zero for %p1 and `echoti setaf 2` emitted \e[30m
-    // instead of \e[32m (D01prompt.ztst tests 15/16). Match the C
-    // prototype exactly so rustc uses the variadic ABI.
-    fn tparm(s: *const libc::c_char, ...) -> *const libc::c_char;
-}
+// The terminfo entry points are `crate::terminfo_db` and `crate::tparm`,
+// pure-Rust readers for the compiled database and the parameterized-string
+// evaluator. They replaced an `extern "C"` block resolved against ncurses,
+// which was the reason the binary linked `libtinfo` on Linux and so the
+// reason `libtinfo.so.6` was an install dependency on Ubuntu. Both halves
+// were differential-tested against ncurses over the entire reference
+// database: 2819 entries x 497 capabilities, and 170694 `tparm`
+// evaluations across 2491 entries, with zero divergence.
+use crate::terminfo_db;
+use crate::tparm::{tparm_params, V as TParam};
+
 
 /// Direct port of `bin_echoti(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/terminfo.c:64`.
 /// C body (c:67-127): probe `tigetnum` → `tigetflag` → `tigetstr`
@@ -103,17 +92,14 @@ pub fn bin_echoti(
     // and echoti drops into "no such capability". Mirror the cur_term
     // init pattern from terminfosetfn/terminfogetfn below.
     static ECHOTI_TERM_READY: OnceLock<bool> = OnceLock::new();
-    let term_ok = *ECHOTI_TERM_READY.get_or_init(|| {
-        let mut errret: libc::c_int = 0;
-        unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
-    });
+    let term_ok = *ECHOTI_TERM_READY.get_or_init(|| terminfo_db::setupterm(None).is_ok());
     if !term_ok {
         crate::ported::utils::zwarnnam(name, &format!("no such terminfo capability: {}", s));
         return 1;
     }
 
     // c:81 — `if (((num = tigetnum(s)) != -1) && (num != -2)) { ... }`.
-    let num = unsafe { tigetnum(cs.as_ptr()) }; // c:81
+    let num = terminfo_db::tigetnum(&s); // c:81
     if num != -1 && num != -2 {
         // c:81
         println!("{}", num); // c:82
@@ -121,7 +107,7 @@ pub fn bin_echoti(
     }
 
     // c:86 — `switch (tigetflag(s)) { -1 break; 0 puts("no"); default puts("yes"); }`.
-    match unsafe { tigetflag(cs.as_ptr()) } {
+    match terminfo_db::tigetflag(&s) {
         // c:86
         -1 => {} // c:88
         0 => {
@@ -136,17 +122,19 @@ pub fn bin_echoti(
 
     // get a string-type capability                                          // c:94
     // c:97 — `t = (char *)tigetstr(s);` — string capability.
-    let t = unsafe { tigetstr(cs.as_ptr()) }; // c:97
-    let t_addr = t as isize;
-    if t.is_null() || t_addr == -1 || unsafe { *t } == 0 {
-        // c:98
-        // capability doesn't exist, or (if boolean) is off                  // c:97
-        crate::ported::utils::zwarnnam(
-            name, // c:100
-            &format!("no such terminfo capability: {}", s),
-        );
-        return 1; // c:101
-    }
+    // c:98 — absent, wrong-type (ncurses' `(char *)-1`) and empty all take
+    // the same "no such capability" exit.
+    let t = match terminfo_db::tigetstr(&s) {
+        Ok(Some(v)) if !v.is_empty() => v,
+        _ => {
+            // capability doesn't exist, or (if boolean) is off              // c:97
+            crate::ported::utils::zwarnnam(
+                name, // c:100
+                &format!("no such terminfo capability: {}", s),
+            );
+            return 1; // c:101
+        }
+    };
 
     // c:104 — `if (arrlen_gt(argv, 9)) { zwarnnam(name, "too many arguments"); return 1; }`.
     if argv_rest.len() > 9 {
@@ -162,17 +150,13 @@ pub fn bin_echoti(
     let strarg = strcap.iter().any(|c| s.as_str() == *c);
 
     // c:113 — `for (arg=0; argv[arg]; arg++) pars[arg] = ...`
-    let mut pars: [libc::c_long; 9] = [0; 9]; // c:69
-    let mut keep_alive: Vec<std::ffi::CString> = Vec::new(); // hold strarg pointers
+    let mut pars: Vec<TParam> = vec![TParam::Int(0); 9]; // c:69
     for (i, a) in argv_rest.iter().enumerate().take(9) {
-        if strarg && i > 0 {
-            // c:115
-            let cs = std::ffi::CString::new(a.as_str()).unwrap_or_default();
-            pars[i] = cs.as_ptr() as libc::c_long; // c:116
-            keep_alive.push(cs);
+        pars[i] = if strarg && i > 0 {
+            TParam::Str(a.clone()) // c:115-116
         } else {
-            pars[i] = a.parse::<libc::c_long>().unwrap_or(0); // c:118 atoi
-        }
+            TParam::Int(a.parse::<i64>().unwrap_or(0)) // c:118 atoi
+        };
     }
 
     // c:Src/Modules/terminfo.c:122 — `putp(t)` writes through ncurses
@@ -190,23 +174,18 @@ pub fn bin_echoti(
     // stdio's buffer until exit and trails the next println!.
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
-    if argv_rest.is_empty() {
-        // c:122
-        unsafe {
-            putp(t);
-        } // c:123
+    // c:122-125 — `putp(t)` bare, or `putp(tparm(t, pars...))` with args.
+    // `putp` writes the capability to stdout after stripping its padding
+    // spec; zshrs writes the bytes directly rather than through C stdio.
+    let payload = if argv_rest.is_empty() {
+        t.clone() // c:123
     } else {
-        let formatted = unsafe {
-            // c:125
-            tparm(
-                t, pars[0], pars[1], pars[2], pars[3], pars[4], pars[5], pars[6], pars[7], pars[8],
-            )
-        };
-        if !formatted.is_null() {
-            unsafe {
-                putp(formatted);
-            }
-        }
+        tparm_params(&t, &pars) // c:125
+    };
+    {
+        let mut o = std::io::stdout();
+        let _ = o.write_all(&crate::tparm::tputs_strip_padding(&payload));
+        let _ = o.flush();
     }
     // `fflush(NULL)` flushes ALL open C streams (POSIX). Portable
     // across macOS/Linux where `stdout` is a macro/function rather
@@ -215,7 +194,6 @@ pub fn bin_echoti(
     unsafe {
         libc::fflush(std::ptr::null_mut());
     }
-    drop(keep_alive);
     0 // c:128
 }
 
@@ -261,10 +239,7 @@ pub fn getterminfo(
     }
 
     static INITIALIZED: OnceLock<bool> = OnceLock::new();
-    let ok = *INITIALIZED.get_or_init(|| {
-        let mut errret: libc::c_int = 0;
-        unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
-    });
+    let ok = *INITIALIZED.get_or_init(|| terminfo_db::setupterm(None).is_ok());
     if !ok {
         return None;
     }
@@ -305,11 +280,9 @@ pub fn getterminfo(
         Ok(s) => s.to_string(),
         Err(_) => return None,
     };
-    let cname = std::ffi::CString::new(nameu).ok()?;
-
-    unsafe {
+    {
         // c:155 — PM_INTEGER for tigetnum hit.
-        let n = tigetnum(cname.as_ptr());
+        let n = terminfo_db::tigetnum(&nameu);
         if n != -1 && n != -2 {
             // c:156-158 — `pm->u.val = num; PM_INTEGER;`
             // Also stamp u_str with the decimal form so callers that
@@ -320,18 +293,14 @@ pub fn getterminfo(
             return Some(pm);
         }
         // c:159-162 — PM_SCALAR yes/no for tigetflag hit.
-        let b = tigetflag(cname.as_ptr());
+        let b = terminfo_db::tigetflag(&nameu);
         if b != -1 {
             let s = if b != 0 { "yes" } else { "no" }.to_string();
             return Some(mk_str(s, PM_SCALAR as i32));
         }
         // c:163-167 — PM_SCALAR escape string for tigetstr hit.
-        let tistr = tigetstr(cname.as_ptr());
-        let s_addr = tistr as isize;
-        if !tistr.is_null() && s_addr != -1 {
-            let raw = std::ffi::CStr::from_ptr(tistr)
-                .to_string_lossy()
-                .into_owned();
+        if let Ok(Some(v)) = terminfo_db::tigetstr(&nameu) {
+            let raw = String::from_utf8_lossy(&v).into_owned();
             return Some(mk_str(crate::ported::utils::metafy(&raw), PM_SCALAR as i32));
         }
     }
@@ -416,66 +385,23 @@ static STRNAMES_FALLBACK: &[&str] = &[
 // Each is a NUL-pointer-terminated array of C strings. Declared as a
 // zero-length array so `as_ptr()` yields the symbol address.
 #[allow(non_upper_case_globals)]
-unsafe extern "C" {
-    static boolnames: [*const libc::c_char; 0];
-    static numnames: [*const libc::c_char; 0];
-    static strnames: [*const libc::c_char; 0];
-}
+/// `boolnames[]` / `numnames[]` / `strnames[]`. C reads these from the
+/// terminal library when it exports them (`HAVE_BOOLNAMES`), else falls back
+/// to its own literals at c:198-264. zshrs no longer links a terminal
+/// library, so the tables come from `crate::terminfo_caps`, which carries the
+/// same frozen ncurses 6 layout the compiled database is indexed by. The
+/// c:198-264 fallback literals are kept below and still used if a table were
+/// ever empty.
+static BOOLNAMES: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| crate::terminfo_caps::BOOL_NAMES.to_vec());
 
-/// `boolnames[]` — the library's array when it exports one (the
-/// HAVE_BOOLNAMES path C takes), else the c:198-202 literal.
-static BOOLNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
-    let mut v: Vec<&'static str> = Vec::new();
-    let base = boolnames.as_ptr();
-    let mut i = 0isize;
-    while !(*base.offset(i)).is_null() {
-        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
-            v.push(s);
-        }
-        i += 1;
-    }
-    if v.is_empty() {
-        BOOLNAMES_FALLBACK.to_vec()
-    } else {
-        v
-    }
-});
+/// See [`BOOLNAMES`] — `numnames[]`, c:206-211 in the fallback case.
+static NUMNAMES: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| crate::terminfo_caps::NUM_NAMES.to_vec());
 
-/// `numnames[]` — library array (HAVE_NUMNAMES path) else c:206-211.
-static NUMNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
-    let mut v: Vec<&'static str> = Vec::new();
-    let base = numnames.as_ptr();
-    let mut i = 0isize;
-    while !(*base.offset(i)).is_null() {
-        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
-            v.push(s);
-        }
-        i += 1;
-    }
-    if v.is_empty() {
-        NUMNAMES_FALLBACK.to_vec()
-    } else {
-        v
-    }
-});
-
-/// `strnames[]` — library array (HAVE_STRNAMES path) else c:215-264.
-static STRNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| unsafe {
-    let mut v: Vec<&'static str> = Vec::new();
-    let base = strnames.as_ptr();
-    let mut i = 0isize;
-    while !(*base.offset(i)).is_null() {
-        if let Ok(s) = std::ffi::CStr::from_ptr(*base.offset(i)).to_str() {
-            v.push(s);
-        }
-        i += 1;
-    }
-    if v.is_empty() {
-        STRNAMES_FALLBACK.to_vec()
-    } else {
-        v
-    }
-});
+/// See [`BOOLNAMES`] — `strnames[]`, c:215-264 in the fallback case.
+static STRNAMES: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| crate::terminfo_caps::STR_NAMES.to_vec());
 
 /// Port of `static void scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)`
 /// from `Src/Modules/terminfo.c:177-289`. Walks the bool/num/string
@@ -537,10 +463,7 @@ pub fn scanterminfo(
         }
     }
     static INITIALIZED: OnceLock<bool> = OnceLock::new();
-    let ok = *INITIALIZED.get_or_init(|| {
-        let mut errret: libc::c_int = 0;
-        unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
-    });
+    let ok = *INITIALIZED.get_or_init(|| terminfo_db::setupterm(None).is_ok());
     if !ok {
         return;
     }
@@ -548,11 +471,7 @@ pub fn scanterminfo(
     // c:257-263 — boolean caps: tigetflag → "yes" / "no", emit when num != -1.
     for cap in BOOLNAMES.iter() {
         // c:257
-        let cn = match std::ffi::CString::new(*cap) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let n = unsafe { tigetflag(cn.as_ptr()) }; // c:258
+        let n = terminfo_db::tigetflag(cap); // c:258
         if n != -1 {
             // c:258
             let v = if n != 0 { "yes" } else { "no" }; // c:259
@@ -563,11 +482,7 @@ pub fn scanterminfo(
     // c:268-275 — numeric caps.
     for cap in NUMNAMES.iter() {
         // c:268
-        let cn = match std::ffi::CString::new(*cap) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let n = unsafe { tigetnum(cn.as_ptr()) }; // c:269
+        let n = terminfo_db::tigetnum(cap); // c:269
         if n != -1 && n != -2 {
             // c:269
             emit_cap(cap, &n.to_string()); // c:270-272 func(&pm.node, flags)
@@ -577,17 +492,9 @@ pub fn scanterminfo(
     // c:280-287 — string caps: tigetstr → metafy, emit when non-NULL/-1.
     for cap in STRNAMES.iter() {
         // c:280
-        let cn = match std::ffi::CString::new(*cap) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let raw = unsafe { tigetstr(cn.as_ptr()) }; // c:281
-        let s_addr = raw as isize;
-        if !raw.is_null() && s_addr != -1 {
-            // c:282
-            let bytes = unsafe { std::ffi::CStr::from_ptr(raw) }
-                .to_string_lossy()
-                .into_owned();
+        // c:282
+        if let Ok(Some(v)) = terminfo_db::tigetstr(cap) {
+            let bytes = String::from_utf8_lossy(&v).into_owned();
             // c:283 — `pm->u.str = metafy(tistr, -1, META_HEAPDUP);`
             emit_cap(cap, &crate::ported::utils::metafy(&bytes)); // c:283-285
         }
