@@ -2935,7 +2935,11 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // the numeric arg-eval below. `rand48` (mathfunc.c:154
     // STRMATHFUNC("rand48", math_string, MS_RAND48)) is the only one.
     if name == "rand48" {
-        return math_string(name, args_str, MS_RAND48);
+        return crate::ported::modules::mathfunc::math_string(
+            name,
+            args_str,
+            crate::ported::modules::mathfunc::MS_RAND48,
+        );
     }
 
     // Parse arguments. Keep both the float view (for trig) and the
@@ -3278,117 +3282,14 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     }
 }
 
-/// `MS_RAND48` — the only id in the string-mathfunc enum.
-/// c:Src/Modules/mathfunc.c:90-92 `enum { MS_RAND48 };`.
-const MS_RAND48: i32 = 0;
-
-/// Port of `math_string(name, arg, id)` (Src/Modules/mathfunc.c:438).
-/// String math functions receive their argument VERBATIM (un-evaluated)
-/// — for `rand48` the arg is the name of the parameter holding (and
-/// receiving) the 48-bit seed state as 12 hex digits.
-fn math_string(_name: &str, arg: &str, id: i32) -> mnumber {
-    extern "C" {
-        // c:erand48(xsubi[3]) — next double in [0,1), advances seed in place.
-        fn erand48(xsubi: *mut u16) -> f64;
-        fn seed48(seed16v: *mut u16) -> *mut u16;
-        fn rand() -> i32;
-    }
-    let mut ret = mnumber {
-        l: 0,
-        d: 0.0,
-        type_: MN_INTEGER,
-    }; // c:440 zero_mnumber
-       // c:446-453 — trim leading/trailing blanks from the verbatim arg.
-    let arg = arg.trim_matches(|c: char| c == ' ' || c == '\t');
-    match id {
-        MS_RAND48 => {
-            // c:460-461 — `static unsigned short seedbuf[3]; static int
-            // seedbuf_init;` persist the default (no-arg) seed across calls.
-            thread_local! {
-                static SEEDBUF: std::cell::Cell<[u16; 3]> = const { std::cell::Cell::new([0; 3]) };
-                static SEEDBUF_INIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-            }
-            let mut tmp_seedbuf: [u16; 3] = [0; 3]; // c:462
-            let use_static; // seedbufptr == seedbuf (the static default)
-            let mut do_init = true; // c:463
-            if !arg.is_empty() {
-                // c:465-494 — seed comes from the named parameter.
-                use_static = false; // c:467 seedbufptr = tmp_seedbuf
-                                    // c:468 — `(seedstr = getsparam(arg)) && strlen(seedstr) >= 12`
-                if let Some(seedstr) = crate::ported::params::getsparam(arg) {
-                    let sb = seedstr.as_bytes();
-                    if sb.len() >= 12 {
-                        do_init = false; // c:470
-                        let mut p = 0usize; // walks seedstr (c: seedstr++)
-                                            // c:474-492 — decode three u16 from 12 hex digits.
-                        for i in 0..3 {
-                            if do_init {
-                                break;
-                            } // c:474 `i < 3 && !do_init`
-                            let mut val: u16 = 0; // c:476 *seedptr = 0
-                            for j in 0..4 {
-                                let b = sb[p];
-                                if b.is_ascii_digit() {
-                                    val = val.wrapping_add((b - b'0') as u16); // c:480
-                                } else {
-                                    let lc = (b as char).to_ascii_lowercase();
-                                    if ('a'..='f').contains(&lc) {
-                                        // c:482-483
-                                        val = val.wrapping_add((lc as u8 - b'a' + 10) as u16);
-                                    } else {
-                                        do_init = true; // c:486
-                                        break;
-                                    }
-                                }
-                                p += 1; // c:489 seedstr++
-                                if j < 3 {
-                                    val = val.wrapping_mul(16); // c:491
-                                }
-                            }
-                            tmp_seedbuf[i] = val;
-                        }
-                    }
-                }
-            } else {
-                // c:497-506 — default static seed; initialise once, then
-                // re-init on every later call (do_init stays/becomes true).
-                use_static = true; // c:500 seedbufptr = seedbuf
-                if !SEEDBUF_INIT.with(|c| c.get()) {
-                    SEEDBUF_INIT.with(|c| c.set(true)); // c:503
-                } else {
-                    do_init = true; // c:505
-                }
-            }
-            // Working seed in a local we can pass by mutable pointer.
-            let mut seed: [u16; 3] = if use_static {
-                SEEDBUF.with(|c| c.get())
-            } else {
-                tmp_seedbuf
-            };
-            if do_init {
-                // c:507-518 — seed from rand(); seed48 for impls that need it.
-                seed[0] = unsafe { rand() } as u16;
-                seed[1] = unsafe { rand() } as u16;
-                seed[2] = unsafe { rand() } as u16;
-                unsafe {
-                    seed48(seed.as_mut_ptr());
-                }
-            }
-            ret.type_ = MN_FLOAT; // c:520
-            ret.d = unsafe { erand48(seed.as_mut_ptr()) }; // c:521
-            if use_static {
-                SEEDBUF.with(|c| c.set(seed)); // persist advanced static state
-            }
-            if !arg.is_empty() {
-                // c:523-529 — write the advanced state back as 12 hex digits.
-                let outbuf = format!("{:04x}{:04x}{:04x}", seed[0], seed[1], seed[2]);
-                crate::ported::params::setsparam(arg, &outbuf);
-            }
-        }
-        _ => {}
-    }
-    ret
-}
+// `MS_RAND48` and `math_string` are ports of `Src/Modules/mathfunc.c`
+// (c:91 and c:439). They live in the Rust mirror of that file,
+// `src/ported/modules/mathfunc.rs`; math.c's `callmathfunc`
+// (c:Src/math.c:1051-1052) dispatches into them the same way C's
+// `f->sfunc(n, a, f->funcid)` reaches mathfunc.c through the
+// `MathFunc` table. The duplicate bodies that used to sit here were
+// a second, less complete copy (they lacked the `errflag` bail at
+// c:495-496).
 
 /// Port of `op(int what)` from `Src/math.c:1154`.
 ///

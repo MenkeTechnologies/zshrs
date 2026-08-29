@@ -512,6 +512,72 @@ pub fn addbuiltins(nam: &str, binl: &mut [builtin]) -> i32 {
     ret // c:563
 }
 
+// Moved here from `src/ported/modules/datetime.rs`: this is a
+// `Src/module.c` function, and every module's `setfeatureenables`
+// (c:3450-3470) calls it, not just zsh/datetime's.
+/// Port of `static int setbuiltins(char const *nam, Builtin binl, int size,
+/// int *e)` from `Src/module.c:501`.
+///
+/// C body:
+/// ```c
+/// for(n = 0; n < size; n++) {
+///     Builtin b = &binl[n];
+///     if (e && *e++) {
+///         if (b->node.flags & BINF_ADDED) continue;
+///         if (addbuiltin(b)) { zwarnnam(nam, "name clash when adding builtin `%s'", …); ret = 1; }
+///         else b->node.flags |= BINF_ADDED;
+///     } else {
+///         if (!(b->node.flags & BINF_ADDED)) continue;
+///         if (deletebuiltin(b->node.nam)) { zwarnnam(nam, "builtin `%s' already deleted", …); ret = 1; }
+///         else b->node.flags &= ~BINF_ADDED;
+///     }
+/// }
+/// ```
+///
+/// !!! RUST-ONLY DEVIATION !!! C's `addbuiltin`/`deletebuiltin` insert into
+/// and remove from the live `builtintab`. zshrs's `builtintab`
+/// (`createbuiltintable()`) is an immutable statically-linked table that
+/// already holds every module builtin, so the only thing this can flip is
+/// the "is it visible right now" bit that `module_builtin_available`
+/// (`src/extensions/ext_builtins.rs`) reads — hence the
+/// `DISABLED_MODULE_BUILTINS` registry instead of a table mutation. The
+/// BINF_ADDED bookkeeping on the entry itself is unchanged from C.
+/// WARNING: param names don't match C — Rust=(nam, binl, e) vs C=(nam, binl, size, e)
+pub(crate) fn setbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin], e: Option<&[i32]>) -> i32 {
+    // c:501
+    use crate::ported::zsh_h::BINF_ADDED;
+    // c:503 — neither branch below can fail (see the deviation note above),
+    // so C's `ret` stays 0 here.
+    let ret = 0;
+    for (n, b) in binl.iter_mut().enumerate() {
+        // c:505
+        let on = e
+            .map(|a| a.get(n).copied().unwrap_or(0) != 0)
+            .unwrap_or(false); // c:507
+        if on {
+            if (b.node.flags & BINF_ADDED as i32) != 0 {
+                continue; // c:508-509
+            }
+            DISABLED_MODULE_BUILTINS
+                .lock()
+                .unwrap()
+                .remove(&b.node.nam); // c:511 addbuiltin(b)
+            b.node.flags |= BINF_ADDED as i32; // c:516
+        } else {
+            if (b.node.flags & BINF_ADDED as i32) == 0 {
+                continue; // c:518-519
+            }
+            DISABLED_MODULE_BUILTINS
+                .lock()
+                .unwrap()
+                .insert(b.node.nam.clone()); // c:521 deletebuiltin(b->node.nam)
+            b.node.flags &= !(BINF_ADDED as i32); // c:526
+        }
+    }
+    let _ = nam;
+    ret // c:530
+}
+
 /// Port of `Hookdef gethookdef(const char *n)` from `Src/module.c:849`.
 ///
 /// C body (c:849-861):
@@ -1230,6 +1296,59 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     }
     d.pm = None; // c:1159 d->pm = NULL
     0 // c:1160
+}
+
+// Moved here from `src/ported/modules/datetime.rs`: this is a
+// `Src/module.c` function, and every module's `setfeatureenables`
+// (c:3450-3470) calls it, not just zsh/datetime's.
+/// Port of `static int setparamdefs(char const *nam, Paramdef d, int size,
+/// int *e)` from `Src/module.c:1169`.
+///
+/// C body:
+/// ```c
+/// while (size--) {
+///     if (e && *e++) {
+///         if (d->pm) { d++; continue; }
+///         if (addparamdef(d)) { zwarnnam(nam, "error when adding parameter `%s'", d->name); ret = 1; }
+///     } else {
+///         if (!d->pm) { d++; continue; }
+///         if (deleteparamdef(d)) { zwarnnam(nam, "parameter `%s' already deleted", d->name); ret = 1; }
+///     }
+///     d++;
+/// }
+/// ```
+/// WARNING: param names don't match C — Rust=(nam, d, e) vs C=(nam, d, size, e)
+pub(crate) fn setparamdefs(nam: &str, d: &mut [crate::ported::zsh_h::paramdef], e: Option<&[i32]>) -> i32 {
+    // c:1169
+    let mut ret = 0; // c:1172
+    for (n, def) in d.iter_mut().enumerate() {
+        // c:1174 while (size--)
+        let on = e
+            .map(|a| a.get(n).copied().unwrap_or(0) != 0)
+            .unwrap_or(false); // c:1175
+        if on {
+            if def.pm.is_some() {
+                continue; // c:1176-1179
+            }
+            if addparamdef(def) != 0 {
+                // c:1180
+                zwarnnam(nam, &format!("error when adding parameter `{}'", def.name));
+                // c:1181
+                ret = 1; // c:1182
+            }
+        } else {
+            if def.pm.is_none() {
+                continue; // c:1185-1188
+            }
+            if deleteparamdef(def) != 0 {
+                // c:1189
+                zwarnnam(nam, &format!("parameter `{}' already deleted", def.name));
+                // c:1190
+                ret = 1; // c:1191
+            }
+        }
+    }
+    ret // c:1196
 }
 
 /// Port of `static int add_autoparam(const char *module, const char *pnam, int flags)`
