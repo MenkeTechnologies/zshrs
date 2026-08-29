@@ -419,20 +419,32 @@
             architecture cost to solve it for real.</p>
           </div>
           <div class="cat-card">
-            <h4>First shell with native LSP server + DAP debug adapter</h4>
-            <p><strong>World&rsquo;s first shell to ship Language Server
-            Protocol and Debug Adapter Protocol as first-class subsystems
-            of the shell binary itself.</strong> <code>zshrs --lsp</code>
+            <h4>First Bourne shell with native LSP server + DAP debug adapter</h4>
+            <p><strong>The first shell in the Bourne lineage to ship Language
+            Server Protocol and Debug Adapter Protocol as first-class
+            subsystems of the shell binary itself.</strong>
+            <code>zshrs --lsp</code>
             starts an LSP server on stdio (completion, hover,
             documentSymbol, foldingRange, semanticTokens, formatting,
             rename, diagnostics) consumed by any editor &mdash; JetBrains,
             VS Code, Helix, Neovim. <code>zshrs --dap HOST:PORT</code>
             speaks the full Debug Adapter Protocol over TCP (breakpoints,
             stepping, frames, scopes, variables, evaluate) so any DAP
-            client can debug zsh scripts. No other shell (bash, zsh,
-            fish, nu, elvish, oil, xonsh, murex) ships either &mdash;
-            bash-language-server is a Node-based third-party project,
-            not part of bash; no zsh equivalent exists at all. The
+            client can debug zsh scripts. Outside the Bourne tradition
+            this is not new: Nushell (<code>nu --lsp</code>) and Elvish
+            (<code>elvish -lsp</code>, since 0.18.0) both ship in-binary
+            language servers, and Endo (v0.1.0, F#-inspired, not POSIX)
+            ships LSP and DAP. Inside it, nothing does &mdash; bash, zsh,
+            ksh, dash and fish all ship neither:
+            <code>bash-language-server</code> and <code>fish-lsp</code>
+            are separate Node/TypeScript packages, zsh has no mainstream
+            server at all, and <code>vscode-bash-debug</code> is a VS Code
+            extension driving the external <code>bashdb</code> script.
+            zshrs&rsquo;s LSP also completes through its own live compsys
+            completers &mdash; the same <code>_git</code> /
+            <code>_docker</code> / <code>_ssh</code> functions a Tab press
+            drives &mdash; which no shell language server of any lineage
+            does. The
             JetBrains plugin at <code>editors/intellij/</code> drives
             both, and additionally surfaces every sourced zsh plugin
             (zinit / oh-my-zsh / prezto / antidote / antigen / zplug /
