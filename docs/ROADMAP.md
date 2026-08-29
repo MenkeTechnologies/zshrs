@@ -402,7 +402,7 @@ These features absorb the best of other shells. None ship before Phase G is done
 ## Today actions
 
 1. **G0 audit + lint** — sweep stops the friendly-output regression class permanently. 2 hours.
-2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.17.0** (`fusevm` in root `Cargo.toml`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
+2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.26.0** (`fusevm` in root `Cargo.toml:123`, features `jit`, `jit-disk-cache`, `aot`, `ffi`, `rkyv-archive`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
 3. **Decide priority of Phase H1 dogfood** — can be started in parallel with remaining assoc / `BUILTIN_EXPAND_WORD_RUNTIME` tail work by using a stripped-down `.zshrc` that avoids the long tail of zpwr-only constructs. Surfaces more bugs sooner.
 
 ---
@@ -415,8 +415,26 @@ These claims appear in README/RFC but are not yet backed by reproducible benchma
 - "2000-5000x cat fork avoidance"
 - "7x CI/CD pipeline speedup"
 - "100-400x script startup vs bash/zsh"
-- "180+ builtins" (count needs verification)
 - "23 coreutils builtins" (verified — listed in README)
-- "129 fusevm opcodes" (count needs verification against the pinned `fusevm` crate — see `rg '^\s*[A-Za-z_][A-Za-z0-9_]*\s*,'` / upstream docs)
 
 Phase M produces measured replacements. Until then, the README's "performance" section reads as architecture description, not benchmark report.
+
+### Counts verified against the tree (2026-08-29)
+
+These were on the "needs verification" list and are now measured, not estimated:
+
+| Claim | Measured | How |
+|---|---|---|
+| Builtins | **243** (152 + 91, disjoint) | `BUILTIN(` names in `src/ported/builtin.rs`, `EXT_BUILTIN_NAMES` in `src/extensions/ext_builtins.rs` |
+| fusevm opcodes | **235** | `Op` enum variants in `fusevm-0.26.0/src/op.rs` |
+| ZLE widgets | **193** | `IWIDGET_NAMES` in `src/ported/zle/zle_bindings.rs` |
+| Workspace Rust | **860 files / 915k lines** | every `*.rs` outside `target/` |
+| `src/ported/` | **106 files** | frozen port directory |
+| `src/extensions/` | **102 files** | non-port directory |
+| compsys mirror | **1,240 files** | `src/compsys/ported/` |
+| p10k engine | **14 files / 15,479 lines** | `src/extensions/p10k/` |
+| demo scripts | **375** | `examples/demos/*.zsh` |
+| assertion verbs | **14** | `zassert_*` in `src/extensions/ext_builtins.rs` |
+| behavioral pins | **174** | `#[test]` in `tests/no_tree_walker_dispatch.rs` |
+
+Numbers in README, the docs site, and `docs/INVENTIONS.md` are kept to these.

@@ -66,10 +66,10 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 
 `zshrs` eliminates these costs through a fundamentally different architecture:
 
-1. **Bytecode compilation** — Scripts compile to register-based bytecode (fusevm, 129 opcodes)
+1. **Bytecode compilation** — Scripts compile to register-based bytecode (fusevm 0.26.0, 235 opcodes)
 2. **Sharded rkyv image cache** — `~/.zshrs/images/{shard}.rkyv` per source root (zpwr, each zinit plugin, completions corpus, etc.) plus a top-level `index.rkyv` for two-level lookup (~150-200ns); per-shard rebuild keeps `git pull` blast radius bounded (e.g. 3-5s for zpwr alone vs 30s full corpus); sibling `catalog.db` (worker-hydrated, per-shard) provides SQL-queryable view + entry stats that survive rebuilds
 3. **Tiered JIT** — Linear JIT for straight-line code, Block JIT for loops/conditionals, native x86-64/aarch64 via Cranelift
-4. **Anti-fork builtins** — 180+ commands execute in-process, zero fork (23 coreutils, 4 xattr, 6 parallel primitives)
+4. **Anti-fork builtins** — 243 commands execute in-process, zero fork (152 zsh ports + 91 extensions: 23 coreutils, 4 xattr, 6 parallel/async primitives)
 5. **Megafat binary** — Optional Stryke integration adds 3200+ additional builtins
 
 **Measured improvements:**

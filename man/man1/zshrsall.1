@@ -94,7 +94,9 @@ runs the script with
 .B $0
 set to its path. See
 .BR zshrs (1)
-for the full flag table.
+for the full flag table, including the editor and developer tooling
+.RB ( \-\-lsp ", " \-\-dap ", " \-\-fmt ", " \-\-ztest ", " \-\-docs )
+and the parser-pipeline dumpers.
 .SH "PARITY MODES"
 .TP
 .B \-\-zsh
@@ -113,10 +115,53 @@ Identical behaviour to
 .BR /bin/ksh
 (ksh-93 dialect).
 .TP
-.B \-\-posix
+.BR \-\-posix ", " \-\-sh
 Identical behaviour to
 .BR /bin/sh
 (Bourne, dash).
+.TP
+.BR \-\-dash ", " \-\-ash
+Identical behaviour to
+.BR dash (1)
+and its
+.BR ash (1)
+ancestor.
+.TP
+.BR \-\-mksh ", " \-\-pdksh
+Identical behaviour to
+.BR mksh (1)
+and
+.BR pdksh (1);
+these differ from ksh-93 in option set and arithmetic edge cases, so they
+are separate modes rather than aliases of
+.BR \-\-ksh .
+.TP
+.B \-\-csh
+Identical behaviour to
+.BR csh (1).
+Outside the Bourne family; provided so argv[0] dispatch is complete.
+.PP
+Eight Bourne-family dialects run on one bytecode core, and each is
+verified against its own reference shell rather than against zsh's
+approximation of it. That makes two notions of fidelity available, and
+they are not the same shell:
+.B \-\-sh
+reproduces
+.BR /bin/sh ,
+while
+.B "\-\-sh \-\-zsh"
+reproduces
+.IR "zsh's model of" " /bin/sh" .
+The bare POSIX modes use XSI
+.BR echo ,
+where zsh's
+.B "emulate sh"
+sets
+.BR BSD_ECHO ;
+.B \-\-bash
+accepts bash's own
+.B "set \-o"
+names, including the six zsh has no option for.
 .PP
 Parity modes never write the cache, never connect to the daemon, and
 never load the extensions layer.
@@ -1942,6 +1987,22 @@ zsh-style wordcode (for parity comparison against
 Inspect a
 .B *.zwc
 bytecode bundle.
+.TP
+.B \-\-tiers
+Run a script, then report which fusevm execution tier took each of its
+chunks \(em and for the chunks that reached neither, which op kinds kept
+them out. The answer comes from fusevm's own eligibility and cache
+predicates, so it is the compiler's account rather than an estimate.
+.TP
+.B \-\-dump\-reflection
+JSON self-description of every builtin, keyword and option.
+.B \-\-dump\-reference\-html
+emits the same corpus as HTML;
+.B \-\-names
+lists every canonical name, one per line.
+.TP
+.B \-\-dump\-plugins
+JSON for every sourced plugin, grouped by the manager that installed it.
 .TP
 .B \-\-doctor
 Full diagnostic report; useful when filing issues.

@@ -41,6 +41,8 @@ zshrs instead exposes a **stable, published, versioned C ABI** — the
 runs `cargo add znative`, writes a handler, ships a `cdylib`, and it
 loads into any compatible zshrs — native speed, no shell source tree, no
 recompile, and version-mismatched plugins refused rather than crashing.
+Entry 17 in the filtered register, [`INVENTIONS.md`](INVENTIONS.md).
+
 First shell to make its native-plugin interface an independently-published,
 versioned ABI package instead of its own build-tree internals.
 

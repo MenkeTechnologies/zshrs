@@ -261,7 +261,9 @@ to its own dependent claim explicitly:
 
 Two stacked dependent claims, each with its own demonstrably-novel
 substrate. The recorder claim depends on the AOP claim;
-both are world-firsts in the Unix-shell category.
+both are world-firsts in the Unix-shell category. The recorder is entry 7
+and the AOP substrate entry 13 in the filtered register,
+[`INVENTIONS.md`](INVENTIONS.md), which states the near misses for each.
 
 ### Why the AOP-prerequisite makes this argument bulletproof
 

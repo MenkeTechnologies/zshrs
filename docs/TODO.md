@@ -27,7 +27,8 @@ Architectural reset of the cache + cross-shell coordination layer. Three world-f
 - `zsubscribe`, `zunsubscribe` — pub/sub on shell events (`shell:N.commands`, `*.chpwd`, `tag:prod.git_changes`)
 - `zjob` (planned) — `submit` / `status` / `list` / `attach` / `output` / `kill` for session-persistent supervised jobs surviving shell exit
 
-**Three stacked world-firsts on the daemon:**
+**Three stacked world-firsts on the daemon** (entries 9, 10 and 11 in
+[`INVENTIONS.md`](INVENTIONS.md))**:**
 
 1. **First shell with a dedicated companion daemon spanning bytecode cache + supervised jobs + cross-shell IPC + federation.** No prior art in any active shell — fish's `fishd` was scoped to var-sync only and removed in 2014. All other shells (bash, zsh, fish 3.x+, nu, elvish, dash, ksh, tcsh, mksh, xonsh, ion, oil, murex) are daemonless.
 2. **First shell with native session-persistent job supervision** — `zjob` makes long-running jobs survive shell exit at process-granularity (vs tmux's terminal-granularity). No shell has had this built in.
