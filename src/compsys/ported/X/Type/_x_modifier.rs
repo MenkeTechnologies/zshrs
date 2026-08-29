@@ -42,13 +42,23 @@ mod tests {
     use crate::ported::zle::complete::INCOMPFUNC;
     use std::sync::atomic::Ordering;
 
+    /// sh:6 publishes the fixed `Shift … Mod5` modifier list unconditionally,
+    /// so post-doshfunc-shift `_wanted` registers its own tag, `_all_labels`
+    /// adds those compiled-in candidates, and 0 is the correct return. See
+    /// Base/Core/_wanted.rs:45-54.
+    ///
+    /// This asserted 1 and was passing only because a leaked $PREFIX from an
+    /// earlier test made every candidate fail to match
+    /// (compcore.rs:4334-4373). It FAILS ALONE on a pristine binary, which is
+    /// how the mask was found once the reset below landed.
     #[test]
-    fn returns_one_without_completion_context() {
+    fn returns_zero_because_the_modifier_list_is_compiled_in() {
         let _g = crate::test_util::global_state_lock();
+        crate::test_util::reset_completion_state();
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = _x_modifier(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 
     #[test]
