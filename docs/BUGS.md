@@ -19,6 +19,43 @@ CI green pending the underlying fix.
 
 ---
 
+## #1121 — the `[[ … ]]` parse-error diagnostic prints the substituted word, not its source text — open
+
+**Status:** `open`, isolated 2026-08-29.
+
+`[[ word word ]]` with no operator is a parse error, and the message names the
+offending word. zsh reports the RAW parse-tree word, so the source spelling
+survives; zshrs reports it stripped to the bare parameter name.
+
+```
+              zsh                                         zshrs
+[[ lit f ]]   parse error: condition expected: lit        …: lit      agree
+[[ $t f ]]    parse error: condition expected: $t         …: t        DIFF
+[[ ${t} f ]]  parse error: condition expected: ${t}       …: t        DIFF
+[[ "$t" f ]]  parse error: condition expected: "$t"       …: t        DIFF
+[[ $arr f ]]  parse error: condition expected: $arr       …: arr      DIFF
+```
+
+**The literal case agrees**, so the message plumbing is correct and only the
+word's provenance is lost — the diagnostic is being built from the expanded /
+untokenized word rather than the raw one. c:Src/cond.c reports the parse-tree
+word, which is why `$`, `${}` and the quotes survive there.
+
+Scope is narrow: seven neighbouring error shapes were probed and all agree —
+`unknown condition: -q` (unary), `unknown condition: -foo` (binary), empty
+`[[ ]]`, bad subscript range, bad parameter flag, bad substitution op, and the
+`(I)` subscript-flag error. Only this one diagnostic differs.
+
+Cosmetic in isolation, but diagnostics are compared byte-for-byte by the
+corpus suites, so it costs a real parity cell wherever a config trips it.
+
+**Pinned** by `tests/parity/runtime_context_parity.rs::cond_parse_errors`,
+where the literal case is live and the substituted case is `#[ignore]`d against
+this entry. That module compares STDERR, since for a diagnostic the message is
+the behaviour.
+
+---
+
 ## #1120 — a global `TRAPEXIT` function fires an extra time when a function installs a string EXIT trap — open
 
 **Status:** `open`, isolated 2026-08-29.
@@ -1089,10 +1126,18 @@ zshrs bug, and the CI flakiness is the bug reporting itself.
 **Status:** `ignored` 2026-08-24. Not port bugs; each is the local oracle being
 older than the C the port follows, or a property of the debug build.
 
-The parity suites diff zshrs against the installed `/bin/zsh` **5.9** (2022-05),
-but the port is written against the vendored tree at
-`/Users/wizard/forkedRepos/zsh`, which reports `VERSION=5.9.0.3-test`. Where the
-two disagree the suite flags zshrs, and zshrs is right. Each test carries the
+The parity suites diff zshrs against the oracle the test helpers pick —
+`/opt/homebrew/bin/zsh`, **5.9.2** — while the port is written against the
+vendored tree at `/Users/wizard/forkedRepos/zsh`, which reports
+`VERSION=5.9.0.3-test`.
+
+Note the version numbers do NOT order the way the names suggest: 5.9.2 is a
+later RELEASE than the 5.9.0.3-test snapshot, yet still lacks every feature
+below. So the vendored tree is not simply "newer" — it carries changes that the
+released 5.9.x line does not have. Verified against both 5.9 (`/bin/zsh`) and
+5.9.2 (`/opt/homebrew/bin/zsh`): each rejects `:S`, dotted parameter names and
+`typeset -n`, and each is silent for `time` on a builtin. Where the two
+disagree the suite flags zshrs, and zshrs is ahead. Each test carries the
 citation in its `#[ignore]` reason.
 
 **`time` on builtins / current-shell actions — 3 tests**

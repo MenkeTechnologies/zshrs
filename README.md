@@ -629,19 +629,47 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
-| `zsh_construct_corpus` | 393 | Every sh/zsh construct outside modules |
-| `zsh_corpus_via_new_pipeline` | 123 | Native lex+parse+ZshCompiler path |
+| `parity` | 47,009 | Differential assertions against real `zsh` — expansion, completion, builtins, modules, job control, diagnostics |
+| `zsh_construct_corpus` | 396 | Every sh/zsh construct outside modules |
 | `no_tree_walker_dispatch` | 174 | Behavioral pins for the no-tree-walker invariant |
+| `zsh_corpus_via_new_pipeline` | 123 | Native lex+parse+ZshCompiler path |
+| `zsh_parser_probe` | 87 | AST-shape probes for every construct |
 | `compile_zsh_smoke` | 28 | Per-construct bytecode-level smoke |
 | `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
-| `zsh_parser_probe` | 87 | AST-shape probes for every construct |
-| `ztst_runner` | 70 | Real `.ztst` files from upstream zsh (0 failing; 1,292 individual cases pinned `#[ignore]` as known gaps — see [Compatibility measurement](#compatibility-measurement)) |
-| **Total** | **883** | All green on the new (default) pipeline |
+| `ztst_runner` | 70 files / 2,604 chunks | Real `.ztst` files from upstream zsh — see [Compatibility measurement](#compatibility-measurement) for the chunk-level score |
+| **Total** | **47,825** | excluding ztst chunks; see below for the ztst figure |
 
 ### Compatibility measurement
 
-Two independent measurements, both re-runnable. Numbers below were taken on
-macOS aarch64 against `zsh-5.9.2` as the oracle.
+Three independent measurements, all re-runnable. Numbers below were taken on
+macOS aarch64 against `zsh 5.9.2` (`/opt/homebrew/bin/zsh`) as the oracle.
+
+**Differential parity suite** — [`tests/parity/`](tests/parity) is the largest
+measurement here: 47,009 hand-written assertions run against real `zsh`,
+comparing stdout, exit status and (for diagnostics) stderr.
+
+```
+cargo test --test parity
+```
+
+Latest full run: **46,985 passed, 6 failed, 18 ignored**. Reading those two
+small numbers honestly:
+
+- Of the 6 failures, 3 were environmental — `binary_parity` spawns
+  `target/debug/zshrs-daemon`, which a concurrent `cargo clean` had removed;
+  rebuilding it (`cargo build -p zshrs-daemon`) restores 4/4. One more passes
+  in isolation and only fails under heavy parallel load. That leaves **2 real**:
+  a coproc job-table listing and dash-mode `getopts` state.
+- The 18 ignored are documented gaps, each `#[ignore]`d with a citation and an
+  entry in [`docs/BUGS.md`](docs/BUGS.md). Five are reference-version skew
+  rather than defects: the port follows the vendored C tree in
+  `~/forkedRepos/zsh` (`5.9.0.3-test`), which carries changes absent from the
+  released 5.9.x line — `time` on builtins, `:S` history-style substitution,
+  dotted parameter namespaces, `typeset -n`. Verified against BOTH 5.9 and
+  5.9.2: each rejects all four, so zshrs is ahead of the oracle, not wrong.
+  The rest are open bugs.
+- One case (`probe_b_row_149`) flips run to run with machine load; it is a
+  genuine residual job-control race, not a flaky test.
 
 **Differential fuzz** — [`bins/parity-fuzz.rs`](bins/parity-fuzz.rs) generates
 seed-replayable snippets per grammar mode, runs them through both shells, and
@@ -696,23 +724,58 @@ because the reference shells disagree with each other on exact codes.
 [`tests/ztst_runner.rs`](tests/ztst_runner.rs):
 
 ```
-cargo test --test ztst_runner
+cargo test --test ztst_runner -- --nocapture   # per-file chunk tallies
 ```
 
-70 passing, **0 failing**, 1,292 individual cases pinned `#[ignore]` with an
-explicit per-case gap reason. Those pins are the honest measure of remaining
-compatibility debt, concentrated in:
+**1,798 of 2,604 chunks pass (69.0%)**; 776 fail, 30 skip. 23 of the 70 files
+are 100% green.
 
-| Source | Gaps | Area |
-|---|---|---|
-| `Y03arguments.ztst` | 97 | `_arguments` completion spec |
-| `X05zleincarg.ztst` | 95 | ZLE incremental argument |
-| `X02zlevi.ztst` | 95 | ZLE vi mode |
-| `D04parameter.ztst` | 89 | Parameter expansion |
-| `B02typeset.ztst` | 74 | `typeset` semantics |
-| `Y02compmatch.ztst` | 58 | Completion matching |
-| `D10nofork.ztst` | 51 | No-fork command substitution |
-| `D07multibyte.ztst` | 45 | Multibyte handling |
+Read the cargo line with care: the 70 file-level tests report `ok`
+unconditionally. `run_ztst` prints `NOTE: N failures … (baseline mode — not
+failing CI)` and never asserts, so "70 passed, 0 failed" measures nothing. The
+chunk tally above — summed from the per-file lines under `--nocapture` — is the
+real figure.
+
+The failures are far more structural than 776 independent bugs. Six files score
+zero, and five of them for a single reason:
+
+| Source | Failed | Passed | Cause |
+|---|---|---|---|
+| `Y03arguments.ztst` | 97 | 0 | prep TIMEOUT |
+| `X05zleincarg.ztst` | 95 | 0 | prep TIMEOUT |
+| `X02zlevi.ztst` | 95 | 0 | prep TIMEOUT |
+| `Y02compmatch.ztst` | 58 | 0 | prep TIMEOUT |
+| `Y01completion.ztst` | 33 | 0 | prep TIMEOUT |
+| `V01zmodload.ztst` | 40 | 0 | prep exits 1 |
+| `D04parameter.ztst` | 48 | 197 | genuine per-chunk gaps |
+| `B02typeset.ztst` | 28 | 60 | genuine per-chunk gaps |
+| `V10private.ztst` | 28 | 14 | genuine per-chunk gaps |
+| `K01nameref.ztst` | 19 | 112 | genuine per-chunk gaps |
+
+**378 chunks — 49% of every failure — are blocked by the 10 s prep budget, not
+by shell behaviour.** Those files' `%prep` runs `comptestinit`, which spawns the
+shell under test inside `zsh/zpty` and runs `compinit` in it; against a debug
+build that needs 60-90 s. At `ZTST_TIMEOUT_MS=90000` the `Y03arguments` prep
+completes. Past it, the first pty completion round-trip then hangs, which wedges
+the file's shell and marks every later chunk "not run" — so this whole block is
+one bug plus one budget, not 378 defects. `zsh/zpty` itself is sound: `-r -m`,
+`-w` and `-t` all behave, and a spawn → `compinit` → `zle -C` sequence completes
+through a pty.
+
+The `D04`/`B02`/`V10`/`K01` shape is the opposite and the honest measure of
+remaining debt: broadly working, with a real tail.
+
+A second, independent accounting agrees. `tests/gen/ztst_failures.rs` pins 1,292
+individual chunks as `#[ignore]`d known gaps; running them
+(`cargo test --test ztst_runner -- --ignored`) gives **546 passed, 746 failed**.
+The 746 lines up with the 776 counted from the file-level tally, from a
+completely different code path, so the 69% figure is not an artifact of how one
+of them counts.
+
+It also means **546 of the 1,292 pins (42%) are stale** — they were pinned
+against gaps that have since been fixed and nobody un-pinned them. Read the pin
+list as an upper bound on debt, not a measurement of it; the chunk tally is the
+measurement.
 
 The gap between the fuzz figure and the ztst figure is intentional and worth
 reading carefully: the fuzzer samples the grammar it knows how to generate,
